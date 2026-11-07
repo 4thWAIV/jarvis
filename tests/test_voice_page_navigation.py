@@ -110,10 +110,11 @@ async def test_a_tab_and_the_brains_request_for_its_command_show_the_same(page_u
     async with async_api.async_playwright() as p:
         browser, page, voice, _ = await _open(p, page_url)
         try:
-            for title in ("Workflows", "Network", "Folders", "Agents"):
+            for title, tab_id in (("Work", "workflows"), ("Network", "network"), ("Folders", "folders"),
+                                  ("Agents", "agents")):
                 tab = f".right-tabs [role=tab][title={title}]"
                 command, args = await _marks(page, tab)
-                assert command == "right.tab.select" and args == {"tab": title.lower()}
+                assert command == "right.tab.select" and args == {"tab": tab_id}
                 await page.click(".right-tabs [role=tab][title=Queue]")
                 await page.click(tab)
                 by_hand = await page.evaluate(SHOWN)
@@ -141,7 +142,7 @@ async def test_a_workflow_opens_and_closes_the_same_by_hand_and_by_request(page_
     async with async_api.async_playwright() as p:
         browser, page, voice, _ = await _open(p, page_url)
         try:
-            await page.click(".right-tabs [role=tab][title=Workflows]")
+            await page.click(".right-tabs [role=tab][title=Work]")
             row = page.locator(".workflow-row[data-workflow-id=wf-1]")
             await row.wait_for(timeout=10000)
 

@@ -171,6 +171,16 @@ def page(before: int | None = None, limit: int = PAGE) -> list[ConversationItem]
     return _read("1=1", [], before, limit)
 
 
+def after(item_id: int, limit: int = PAGE) -> list[ConversationItem]:
+    """The items after `item_id`, oldest first, at most `limit`: the change
+    feed the knowledge ingest follows by cursor."""
+    limit = max(1, min(int(limit), PAGE * 5))
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM conversation_items WHERE id > ? ORDER BY id LIMIT ?",
+                            (int(item_id), limit)).fetchall()
+    return [_item(r) for r in rows]
+
+
 def thread(agent_session_id: str, before: int | None = None,
            limit: int = PAGE) -> list[ConversationItem]:
     """Everything to and from one agent, oldest first, the same way."""

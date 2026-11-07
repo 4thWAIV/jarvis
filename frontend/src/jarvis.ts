@@ -24,7 +24,7 @@ import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
 import { audioNeedsClick } from "./conversation/controlState";
 import { cueTest, sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
-         conversationJump } from "./voiceStatus";
+         conversationJump, markSpeechStopped } from "./voiceStatus";
 import { CUE_NAMES, HEARD, isPauseCue, PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type CueName,
          type PlaybackReport, type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
@@ -277,6 +277,7 @@ export function startJarvis(orb: Orb): void {
     uiClient.interrupt();
     socket.send({ type: "hush" });
     transition("listening");
+    markSpeechStopped();
   }
 
   stopSpeaking.current = hush;

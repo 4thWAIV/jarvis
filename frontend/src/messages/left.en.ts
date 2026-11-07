@@ -16,9 +16,7 @@ export const leftEn = {
 
   "left.orb.brainLogo": "{provider} brain",
 
-  // The status line under the orb (StatusControl.tsx).
-  "left.status.listening": "listening...",
-  "left.status.thinking": "thinking...",
+  // Stop, left of Send in the message input (StopControl.tsx).
   "left.status.stop": "Stop",
   "left.status.stopTitle": "Stop all speech now",
 
@@ -27,8 +25,6 @@ export const leftEn = {
   "left.mic.off": "Mic off",
   "left.mic.meter": "microphone input",
   "left.mic.mute": "Mute/Unmute",
-  "left.mic.turnOn": "Turn the microphone on",
-  "left.mic.turnOff": "Turn the microphone off",
   "left.mic.healthCause": "{state}: {cause}",
   "left.mic.mutedInactive": "Muted · microphone inactive",
   "left.mic.finishing": "Finishing",
@@ -49,6 +45,10 @@ export const leftEn = {
   "left.mic.state.busy": "Busy in another tab",
   "left.mic.state.interrupted": "Interrupted",
   "left.mic.state.unavailable": "Unavailable",
+  "left.audio.allOff": "Turn all audio off (microphone and JARVIS's speech)",
+  "left.audio.allOn": "Turn all audio on (microphone and JARVIS's speech)",
+  "left.audio.speaker.mute": "Mute JARVIS's speech: answers in text only",
+  "left.audio.speaker.unmute": "JARVIS's speech is muted: click to unmute",
 
   // What voice input says while it is not simply listening (voiceInput.ts).
   "left.input.asking": "Asking for the microphone…",
@@ -178,6 +178,7 @@ export const leftEn = {
   "left.reminder.text": "Sign in to your team server: messages between people and the Network view need it",
   "left.reminder.signIn": "Sign in",
   "left.reminder.later": "Later",
+  "left.reminder.chip": "Not signed in",
 
   // Settings (Settings.tsx): its sections, by their registered id.
   "left.settings.save": "Save",

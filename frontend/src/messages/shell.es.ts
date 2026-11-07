@@ -7,7 +7,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.right.folders": "Carpetas",
   "tabs.right.agents": "Agentes",
   "tabs.right.queue": "Cola",
-  "tabs.right.workflows": "Flujos",
+  "tabs.right.workflows": "Trabajo",
   "tabs.right.network": "Red",
   "tabs.right.diagnostics": "Diagnóstico",
 
@@ -17,12 +17,14 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.main.thread": "Hilo",
   "tabs.main.diagnostics": "Diagnóstico",
   "tabs.main.subsystem": "Subsistema",
+  "tabs.main.knowledge": "Conocimiento",
   "tabs.main.network": "Instancia",
   "tabs.main.teamServer": "Servidor del equipo",
   "tabs.main.queue": "Mensaje",
   "tabs.main.package": "Paquete de trabajo",
   "tabs.main.file": "Archivo",
   "tabs.main.settings": "Configuración",
+  "tabs.main.work": "Elemento de trabajo",
   "tabs.main.workflow": "Flujo de trabajo",
   "tabs.main.subagent": "Subagente",
 

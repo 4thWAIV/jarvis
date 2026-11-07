@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator, Callable, Optional
 
-from jarvis import bundle_archive, data_paths, folder_readers, package_story
+from jarvis import bundle_archive, data_paths, folder_readers, package_story, spoken_words
 from jarvis.folder_contract import FolderError
 from jarvis.messaging_files import QUARANTINE_ATTRIBUTE
 
@@ -418,11 +418,15 @@ def unpack(archive_path: Path, attachment_id: str,
 LOCAL_SOURCE = "local"
 
 
-async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
+async def unpack_held(chunks: AsyncIterator[bytes],
+                      check: Optional[Callable[[Path], Optional[str]]] = None
+                      ) -> tuple[Package, bool]:
     """Unpack a zip that is a file on this Mac, from its bytes as they are
     read from the held file (draft_files.Source.chunks): copied into a
     private file among the packages first, so the archive checked is the
-    archive unpacked, then `unpack` exactly as a received zip."""
+    archive unpacked, then `unpack` exactly as a received zip. `check(zip)`
+    says why that copy may not be unpacked (decision_stamp.problem), or
+    None."""
     root = data_paths.packages_dir()
     root.mkdir(parents=True, exist_ok=True)
     temp = root / f"{PARTIAL}{uuid.uuid4()}.zip"
@@ -433,6 +437,10 @@ async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
             async for chunk in chunks:
                 digest.update(chunk)
                 await asyncio.to_thread(f.write, chunk)
+        if check is not None:
+            refused = await asyncio.to_thread(check, temp)
+            if refused:
+                raise PackageError(refused)
         return await asyncio.to_thread(unpack, temp, LOCAL_SOURCE + digest.hexdigest()[:27])
     finally:
         temp.unlink(missing_ok=True)
@@ -455,21 +463,74 @@ def every() -> list[Package]:
 
 
 def find(reference: str, runs: Optional[str] = None) -> Package:
-    """A package by its folder name (its id), or by its own name when only
-    one package here has it; with `runs`, only one that runs that way."""
+    """A package by its folder name (its id), by its name and version
+    ("denice-pulses-1.0.1"), by its own name, or else by the words he called
+    it ("globe numbers", `matching`): the highest version of that name here,
+    the one unpacked last among equal versions; words that fit several
+    packages name each one's id instead. With `runs`, only one that runs
+    that way."""
     reference = str(reference or "").strip()
     packages = every()
-    found = ([p for p in packages if p.id == reference]
+    found = [p for p in packages if p.id == reference]
+    named = ([p for p in packages if f"{p.manifest.name}-{p.manifest.version}" == reference]
              or [p for p in packages if p.manifest.name == reference])
-    if len(found) == 1:
-        if runs and found[0].manifest.runs != runs:
-            raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, "
-                               f"not as {runs}.")
-        return found[0]
-    ids = ", ".join(p.id for p in (found or packages)) or "none"
-    if found:
-        raise PackageError(f"More than one package is called {reference}: {ids}. Use its id.")
-    raise PackageError(f"There is no package {reference!r} here. Packages here: {ids}.")
+    if not found and not named and reference:
+        # Not an exact name: the packages his words fit best, if they are
+        # all versions of one package.
+        fits = matching(reference)
+        if len({p.manifest.name for p in fits}) > 1:
+            raise PackageError(f"More than one package fits {reference!r}: "
+                               f"{', '.join(_newest_of_each(fits))}. Ask him which.")
+        named = fits
+    if not found and named:
+        # every() is newest first, and max keeps the first of equals.
+        found = [max(named, key=lambda p: version_key(p.manifest.version))]
+    if not found:
+        raise PackageError(f"There is no package {reference!r} here; list_packages lists "
+                           f"them.")
+    if runs and found[0].manifest.runs != runs:
+        raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, not as {runs}.")
+    return found[0]
+
+
+def _newest_of_each(packages: list[Package]) -> list[str]:
+    """The id of each name's highest version, in the order the names come."""
+    best: dict[str, Package] = {}
+    for p in packages:
+        if (p.manifest.name not in best
+                or version_key(p.manifest.version) > version_key(best[p.manifest.name]
+                                                                 .manifest.version)):
+            best[p.manifest.name] = p
+    return [p.id for p in best.values()]
+
+
+def version_key(version: str) -> tuple:
+    """A version compared part by part, numbers as numbers: 1.0.10 after 1.0.9."""
+    return tuple((int(part), "") if part.isdigit() else (-1, part)
+                 for part in re.split(r"[.+-]", version))
+
+
+def matching(words: str) -> list[Package]:
+    """The packages here, newest first, whose id, name and purpose fit
+    `words` best, folded as they are said ("the globe numbers package"):
+    each word shared counts for less the more packages have it, so "the"
+    or "package" barely counts and a word no package has counts against
+    none, and twice as much in its id or name as only in its purpose. Every package when `words` has none, and none when no package
+    shares any."""
+    packages = every()
+    wanted = set(spoken_words.folded_words(words))
+    if not wanted:
+        return packages
+    named = {p.id: set(spoken_words.folded_words(f"{p.id} {p.manifest.name}"))
+             for p in packages}
+    vocab = {p.id: named[p.id] | set(spoken_words.folded_words(p.manifest.purpose))
+             for p in packages}
+    having = {w: sum(w in v for v in vocab.values()) for w in wanted}
+    # A word in its name counts twice what a word only in its purpose does.
+    fit = {p.id: sum((2 if w in named[p.id] else 1) / having[w] for w in wanted & vocab[p.id])
+           for p in packages}
+    best = max(fit.values(), default=0)
+    return [p for p in packages if best and fit[p.id] == best]
 
 
 # -- running a step -------------------------------------------------------------------
@@ -594,6 +655,21 @@ def save_result(package: Package, name: str, data: bytes) -> Path:
         raise PackageError(f"{name!r} could not be saved in {package.id}'s results.") from None
     log.info("package %s: its page saved a result (%d bytes)", package.id, len(data))
     return package.folder / RESULTS / Path(*parts)
+
+
+def read_result(package: Package, name: str) -> Optional[bytes]:
+    """results/<name> in the package's folder as it is now, reached without
+    following a link, or None when it is not there (or is over
+    RESULT_MAX_BYTES): what a story waits on (story_teller.py)."""
+    parts = result_name(name)
+    try:
+        with folder_readers.opened_dir(package.folder, Path(RESULTS, *parts[:-1])) as fd:
+            handle = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            with os.fdopen(handle, "rb") as f:
+                data = f.read(RESULT_MAX_BYTES + 1)
+    except (FolderError, OSError):
+        return None
+    return data if len(data) <= RESULT_MAX_BYTES else None
 
 
 # -- an agent package's run ---------------------------------------------------------------

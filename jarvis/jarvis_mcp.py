@@ -1655,9 +1655,20 @@ TOOL_SPECS = [
     },
     {
         "name": "list_packages",
-        "description": "The work packages opened on this JARVIS: each one's id, name, "
-                       "version, purpose and folder.",
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": (
+            "The work packages unpacked on this JARVIS, newest first: each one's id, name, "
+            "version, how it runs and purpose, a page at a time. With `name`, only those "
+            "whose id, name and purpose share the most of those words: pass the words he "
+            "called it by (\"globe numbers\") to find the id of a package he asks for."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The words he called the package by; leave out to "
+                                        "list every package."},
+                "page": {"type": "integer", "description": "Which page, from 1."},
+            },
+        },
     },
     {
         "name": "run_package_command",
@@ -1693,12 +1704,17 @@ TOOL_SPECS = [
     {
         "name": "open_package_page",
         "description": (
-            "Show an open package whose package.json runs it as a page in the centre of his "
-            "screen, only on his go-ahead. He uses it there; what it saves goes in its "
-            "results folder, for package_results once he says he has finished."),
+            "Show an unpacked package whose package.json runs it as a page in the centre of "
+            "his screen, when he asks to see or open it: his asking is the go-ahead. He uses "
+            "it there; what it saves goes in its results folder, for package_results once he "
+            "says he has finished."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "properties": {"package": {"type": "string",
+                                       "description": "The package's id, its name and version "
+                                                      "(\"denice-pulses-1.0.1\"), its name, or the "
+                                                      "words he called it (\"globe numbers\"): "
+                                                      "the highest version of what fits."}},
             "required": ["package"],
         },
     },
@@ -1708,14 +1724,20 @@ TOOL_SPECS = [
             "Tell a page package's story, only when he asks: its page opens and JARVIS's "
             "voice reads the story the sender wrote, slide by slide, pointing at each part "
             "of the page as it is said. It returns at once; do not tell the story yourself. "
-            "`slide` starts from that slide (it also jumps a story being told); action "
-            "stop ends it. The page's Tell the story and Stop do the same."),
+            "A story that asks questions (a decision deck) stops after each question and "
+            "waits for his answer (his Choose on the page, or his words recorded with the "
+            "package's script), then goes on by itself; while it waits it is still running. "
+            "`slide` starts from that slide (it also jumps a story being told, and asks that "
+            "slide's question again); action resume goes on from the first question with no "
+            "answer (\"continue the decisions\"); action stop ends it, told or waiting; "
+            "action status says what it is doing and which question it waits for. The "
+            "page's Tell the story, Continue and Stop do the same."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string", "description": "The package's id."},
-                "action": {"type": "string", "enum": ["tell", "stop"],
-                           "description": "tell (the default) or stop."},
+                "action": {"type": "string", "enum": ["tell", "resume", "stop", "status"],
+                           "description": "tell (the default), resume, stop or status."},
                 "slide": {"type": "integer", "description": "The slide to start from, from 1."},
             },
             "required": ["package"],
@@ -2119,6 +2141,23 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "mute_speech",
+        "description": (
+            "Mute JARVIS's speech (the page's speaker), only when he asks: from now on JARVIS "
+            "answers in text only, and anything sounding stops at once. It can only make "
+            "JARVIS quieter: unmuting is his own click on the speaker or the headset, and "
+            "there is no tool for it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "turn_audio_off",
+        "description": (
+            "Turn all audio off (the page's headset), only when he asks: the microphone off "
+            "on every open page and JARVIS's speech muted. Turning audio back on is his own "
+            "click on the headset, and there is no tool for it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "voice_turn",
         "description": (
             "What he has said aloud and not yet sent (the page's Send now, Retry and Keep as "
@@ -2140,15 +2179,138 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "knowledge_status",
+        "description": (
+            "The knowledge engine's state (Diagnostics' Knowledge row): whether it is on, "
+            "running, paused for the conversation, how much it has read, its last ingest "
+            "pass and how many link proposals wait."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "knowledge_search",
+        "description": (
+            "Search everything JARVIS has read across projects (notes, the conversation, runs, "
+            "workflows, registered folders' documents) by words, before asking him to repeat "
+            "anything or saying you do not know. Each hit has its text, source and trust; "
+            "untrusted ones are other people's words. When he speaks Spanish, also give "
+            "query_en, the question in English. include_received false keeps to his own words. "
+            "The JSON comes a page at a time."),
+        "inputSchema": {"type": "object", "properties": {
+            "query": {"type": "string"}, "query_en": {"type": "string"},
+            "include_received": {"type": "boolean"},
+            "kinds": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "page": {"type": "integer", "minimum": 1}}, "required": ["query"]},
+    },
+    {
+        "name": "knowledge_entity",
+        "description": (
+            "Every typed match for a name (a topic such as Denice, a project, an agent, a "
+            "folder), each labelled by kind, and the first one's card: status (a planned "
+            "topic is planned, not implemented), aliases, a summary and its strongest links. "
+            "Or one entity by key."),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string"}, "key": {"type": "string"},
+            "page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "knowledge_proposals",
+        "description": (
+            "The links JARVIS proposes and has not made: a document that seems to be about a "
+            "topic, or two topics that may be the same. Each waits for his yes or no "
+            "(link_knowledge accept or reject)."),
+        "inputSchema": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "knowledge_topics",
+        "description": (
+            "His topic files: each topic's name, status, pin, aliases and the links he has "
+            "asserted."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "link_knowledge",
+        "description": (
+            "Only when he says so: accept or reject a proposal (its id from "
+            "knowledge_proposals), or link or unlink two topics (kind relates_to, depends_on, "
+            "stage_of, precedes or same_as) or a topic and a document (kind about_sources, "
+            "target its source). Written to his topic file."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["link", "unlink", "accept", "reject"]},
+            "proposal": {"type": "string"}, "topic": {"type": "string"},
+            "kind": {"type": "string"}, "target": {"type": "string"}}, "required": ["action"]},
+    },
+    {
+        "name": "change_topic",
+        "description": (
+            "Only when he says so: create a topic (name, status, exact and ambiguous "
+            "aliases), set its status, add or remove aliases, pin or unpin it."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["create", "status", "aliases", "pin", "unpin"]},
+            "topic": {"type": "string"}, "name": {"type": "string"},
+            "status": {"type": "string", "enum": ["implemented", "active", "planned", "retired", "unknown"]},
+            "exact": {"type": "array", "items": {"type": "string"}},
+            "ambiguous": {"type": "array", "items": {"type": "string"}},
+            "remove_aliases": {"type": "array", "items": {"type": "string"}}}, "required": ["action"]},
+    },
+    {
+        "name": "reindex_knowledge",
+        "description": (
+            "Only when he asks: refresh (read everything that changed now) or forget one "
+            "source (its jref) so nothing of it stays in the knowledge engine."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["refresh", "forget"]},
+            "source": {"type": "string"}}, "required": ["action"]},
+    },
+    {
+        "name": "knowledge_seeds",
+        "description": (
+            "Topics JARVIS offers to create and has not: for Denice, the topic and one per "
+            "stage of its roadmap, each quoting the README or roadmap, with whether he has "
+            "accepted or declined. Read them to him before he answers. The JSON comes a page "
+            "at a time: when it says there is more, call it again with the next page."),
+        "inputSchema": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "change_knowledge_seed",
+        "description": (
+            "Only when he says so: accept a seed (its topics are created; any he already "
+            "has stay as they are) or decline it (never offered again)."),
+        "inputSchema": {"type": "object", "properties": {
+            "seed": {"type": "string"}, "action": {"type": "string", "enum": ["accept", "decline"]}},
+            "required": ["seed", "action"]},
+    },
+    {
+        "name": "knowledge_indexes",
+        "description": (
+            "The extra indexes the knowledge engine made or would make to answer common "
+            "searches faster, each by the kinds and properties it serves, how often it was "
+            "used, and whether he pinned or forbade it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "change_knowledge_index",
+        "description": (
+            "Only when he says so: pin an extra index (kept even when unused), forbid it "
+            "(never made), or clear his choice, by its key from knowledge_indexes. Written "
+            "to his knowledge settings note."),
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string"}, "choice": {"type": "string", "enum": ["pin", "forbid", "clear"]}},
+            "required": ["key", "choice"]},
+    },
+    {
         "name": "attention_updates",
         "description": (
             "What is waiting for him: the background updates (Review updates on the page) "
-            "that JARVIS recorded instead of announcing them, such as messages delivered or "
-            "answered, sessions' messages and needs, runs that ended, people's messages "
+            "that JARVIS recorded instead of announcing them, such as messages not picked "
+            "up or answered, sessions' messages and needs, runs that ended, people's messages "
             "arriving. Gives the pending count, each update's kind, event and facts, whether "
             "he is engaged, away or unknown, and the settings for when updates may be "
-            "spoken. Use it when he asks what he missed or what is new."),
-        "inputSchema": {"type": "object", "properties": {}},
+            "spoken. Use it when he asks what he missed or what is new. The JSON comes a "
+            "page at a time: when it says there is more, call it again with the next page "
+            "before answering, so no update is missed."),
+        "inputSchema": {"type": "object",
+                        "properties": {"page": {"type": "integer", "minimum": 1}}},
     },
     {
         "name": "mark_updates_seen",
@@ -2209,6 +2371,122 @@ TOOL_SPECS = [
                 "workflow": {"type": "string", "description": "Its name as he said it, or its id."},
             },
             "required": ["workflow"],
+        },
+    },
+    {
+        "name": "work_status",
+        "description": (
+            "The Work list, from its one durable record: with no item, every work item "
+            "under its area (or its source folder), with its state, how many of its pieces "
+            "are blocked or waiting on him, and one useful update (an open decision first); "
+            "with one, its source (a zip or folder on this Mac), its pieces in dependency "
+            "order with exactly who is on each (an agent, a run, a workflow, or him, and the "
+            "agent's own worker label beside it), each piece's latest note, the pieces it "
+            "waits for, its evidence, everything holding it up, its open decisions (with "
+            "any package to look at first, which open_package_page shows) and answered "
+            "ones, and its latest events. The main list is the open items; with history, "
+            "the items closed or finished a while, which an item's id or title still reads. "
+            "The ONLY correct way to answer what work is in progress and who is doing it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"item": {"type": "string",
+                                    "description": "Its title as he said it, or its id."},
+                           "history": {"type": "boolean",
+                                       "description": "List the History instead of the open items."}},
+        },
+    },
+    {
+        "name": "answer_work_decision",
+        "description": (
+            "Record his answer to a work item's open decision, only when he gives it: the "
+            "agent doing the work reads it from the record. `decision` is the key "
+            "work_status shows; omit it when there is only one open."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Its title as he said it, or its id."},
+                "decision": {"type": "string"},
+                "answer": {"type": "string", "description": "His answer, in his words."},
+            },
+            "required": ["item", "answer"],
+        },
+    },
+    {
+        "name": "package_inbox",
+        "description": (
+            "The packages agents have sent him, waiting in his package inbox (the Queue tab's "
+            "Packages section): each one's id, title, who sent it, how many of its decisions "
+            "are answered, and where it stands (not opened, opened, partly answered, answered, "
+            "sent back, closed). With `package`, that one in full with every question it asks, "
+            "its options, the recommendation and what is recorded. With `closed`, the closed "
+            "ones. Arrivals are never announced: read this when he asks what packages he has. "
+            "Titles and questions are the sender's words."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string",
+                            "description": "Its id, or its title or sender as he said it."},
+                "closed": {"type": "boolean", "description": "List the closed ones instead."},
+            },
+        },
+    },
+    {
+        "name": "open_inbox_package",
+        "description": (
+            "Open one package from his inbox, only when he asks for it: a page package (a "
+            "decision deck, a presentation) is shown in the centre of his screen; any other "
+            "is unpacked for you to follow with him. Gives its package.json and, for a "
+            "decision package, every question to read him one at a time."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string",
+                                       "description": "Its id, or its title or sender as he said it."}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "answer_package_decision",
+        "description": (
+            "Record his answer to one decision of a package in his inbox, only when he gives "
+            "it: the package's own scripts/decide.py writes it to the package's record, and "
+            "the deck on his screen shows it within seconds. `option` is an option's id or "
+            "name, its letter, recommended, later (Decide later) or none (None of these); "
+            "`words` are his own words, kept as the answer's note."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string"},
+                "decision": {"type": "string",
+                             "description": "The decision's id; omit when only one is open."},
+                "option": {"type": "string"},
+                "words": {"type": "string"},
+            },
+            "required": ["package", "option"],
+        },
+    },
+    {
+        "name": "return_package_answers",
+        "description": (
+            "Send his answers to a package back, once every decision is answered (or, for a "
+            "package that asks nothing, once he has finished with it), and only when he says "
+            "so: the package's workflow gets them as its decisions, and a capture addressed to "
+            "the session that sent it holds them, to read back with read_capture and send "
+            "with steer_session only on his yes, as every message to a session."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string"}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "close_inbox_package",
+        "description": (
+            "Close a package in his inbox, only when he asks: after its answers went back it "
+            "is done; before, it is dismissed (set aside, whatever was answered kept)."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string"}},
+            "required": ["package"],
         },
     },
     {

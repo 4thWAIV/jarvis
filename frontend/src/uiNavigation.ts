@@ -8,7 +8,7 @@
  *
  *   - `rightTab` and `mainView` are read-only outside this module.
  *   - Each centre detail (workflow, thread, voice diagnostics, subsystem,
- *     network, queue item, work package page, received file) is a `detailSlot`, created by the module that
+ *     network, queue item, work package page, received file, work item) is a `detailSlot`, created by the module that
  *     owns its data, which registers that detail's open and close commands
  *     next to its own state. Opening shows the detail at once; closing it
  *     while it is shown goes back to Conversation. There are no effects
@@ -123,8 +123,8 @@ export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Ob
 }
 
 /** The close commands that take nothing and only let their slot go. */
-type PlainClose = "workflow.close" | "thread.close" | "voice.diagnostics.close" | "subsystem.close" | "network.close"
-  | "package.close" | "bundle.member.close";
+type PlainClose = "work.close" | "workflow.close" | "thread.close" | "voice.diagnostics.close" | "subsystem.close" | "network.close"
+  | "package.close" | "bundle.member.close" | "knowledge.close";
 
 /** A slot's close command: offered while the slot holds an item.
  *  `closed`, when given, is told the item it let go, whoever closed it. */

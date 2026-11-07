@@ -478,3 +478,146 @@ def test_a_page_that_connects_later_is_shown_the_package_until_it_is_closed(
     r = wired.client.delete(f"/api/packages/{described['id']}/page", headers=BROWSER)
     assert r.status_code == 204
     assert frame not in wired.server._opening_frames()
+
+
+# -- the guard: a package reaches his screen only on his own act -------------------------
+
+def _token():
+    return {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
+
+
+def test_a_tool_token_caller_unpacks_a_local_page_package_but_never_shows_it(
+        wired, shown, tmp_path, marks):
+    """A caller on the tool token is not acting for him: the zip is unpacked
+    and recorded, the page told to read its packages again, and nothing is
+    put on his screen or held for a page that connects later."""
+    from jarvis import packages_api
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)},
+                          headers=_token())
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["unpacked"] is True and got["problem"] == packages_api.NOT_HIS_ACT
+    assert work_packages.find(got["package"]["id"]).manifest.runs == "page"
+    assert shown == [] and wired.server._package_shown is None
+    assert not [f for f in wired.server._opening_frames() if f.get("type") == "package_page"]
+    assert wired.hints == [{"type": "packages"}]
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)},
+                          headers=BROWSER)
+    assert r.json()["problem"] is None and len(shown) == 1, "his own click still shows it"
+
+
+def test_a_tool_token_caller_may_not_open_a_page_or_tell_its_story(wired, shown, page):
+    from jarvis import packages_api
+    r = wired.client.post(f"/api/packages/{page.id}/page", headers=_token())
+    assert r.status_code == 403 and r.json()["error"] == packages_api.NOT_HIS_ACT
+    for body in ({"action": "tell"}, {}, {"action": "tell", "slide": 1}):
+        r = wired.client.post(f"/api/packages/{page.id}/story", json=body, headers=_token())
+        assert r.status_code == 403 and r.json()["error"] == packages_api.NOT_HIS_ACT
+    assert shown == [] and wired.server._package_shown is None
+    r = wired.client.post(f"/api/packages/{page.id}/story", json={"action": "stop"},
+                          headers=_token())
+    assert r.status_code != 403, "stopping a story shows nothing, so anyone may"
+    r = wired.client.post(f"/api/packages/{page.id}/page", headers=BROWSER)
+    assert r.status_code == 200 and len(shown) == 1, "his own click still shows it"
+
+
+def test_the_brain_shows_a_local_page_package_only_on_his_turn(wired, shown, tmp_path, marks):
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    refused = _call(wired, "open_local_package", origin="event", path=str(archive))
+    assert not refused["ok"] and "not_allowed_from_event" in refused["text"]
+    assert shown == [] and work_packages.every() == []
+    text = _call(wired, "open_local_package", path=str(archive))["text"]
+    assert "It is open in the centre of his screen" in text and len(shown) == 1
+
+
+# -- finding the package he asks for -------------------------------------------------------
+
+def _many_pages(tmp_path):
+    """Twenty-five page packages with purposes as long as tonight's live ones,
+    then two versions of the one he asks for, the newer unpacked last."""
+    def page_package(name, version, purpose, suffix, when):
+        manifest = {**PAGE, "name": name, "version": version, "purpose": purpose}
+        package, _ = work_packages.unpack(
+            write_zip(tmp_path, make_zip({"web/index.html": "x"}, manifest), f"{suffix}.zip"),
+            suffix)
+        os.utime(package.folder, (when, when))
+        return package
+    for i in range(25):
+        page_package(f"design-study-{i}", "1.0.0",
+                     "Show the design and plan for letting a workflow's detail or a page "
+                     "package take over the centre and the right side of the page, and "
+                     f"record the owner's answer to each of its ten decisions ({i}).",
+                     f"study{i:02d}", 1_000_000 + i)
+    older = page_package("denice-globe-numbers", "1.0.0", "The brain globe numbers, before "
+                         "and after: lower and larger.", "globe100", 2_000_000)
+    newer = page_package("denice-globe-numbers", "1.0.1", "The brain globe numbers, before "
+                         "and after: lower and larger.", "globe101", 2_000_001)
+    return older, newer
+
+
+def test_every_package_here_can_be_listed_and_none_is_cut_off(wired, tmp_path, marks):
+    # Tonight list_packages cut its block at 1,200 characters: 25 packages
+    # unpacked, four shown, the rest "… (truncated)", and no way to the rest.
+    _many_pages(tmp_path)
+    first = _call(wired, "list_packages")["text"]
+    assert first.startswith("27 packages unpacked here, newest first")
+    assert "page 1 of " in first and "(truncated)" not in first
+    pages = int(first.split("page 1 of ")[1].split(" ")[0])
+    listed = first + "".join(_call(wired, "list_packages", page=n)["text"]
+                             for n in range(2, pages + 1))
+    assert "(truncated)" not in listed
+    assert all(p.id in listed for p in work_packages.every())
+
+
+def test_he_names_a_package_and_the_brain_opens_its_newest_version(wired, tmp_path, marks,
+                                                                   monkeypatch):
+    older, newer = _many_pages(tmp_path)
+    found = _call(wired, "list_packages", name="the globe numbers package")["text"]
+    assert found.startswith("2 packages here have those words, newest first")
+    assert found.index(newer.id) < found.index(older.id) and "design-study" not in found
+    assert "No package here" in _call(wired, "list_packages", name="spaceship")["text"]
+    sent = []
+
+    async def emit(message):
+        sent.append(message)
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", {object()})
+    got = _call(wired, "open_package_page", package="denice-globe-numbers")
+    assert got["ok"] and got["text"].startswith(f"{newer.id} is open in the centre")
+    assert [m["package"]["id"] for m in sent] == [newer.id]
+    assert work_packages.find(older.id) == older
+    assert work_packages.find("denice-globe-numbers-1.0.0") == older
+    # His own words, not a name: the one they fit, or the ones they fit named.
+    assert work_packages.find("the globe numbers") == newer
+    with pytest.raises(work_packages.PackageError, match="More than one package fits"):
+        work_packages.find("design study")
+    sent.clear()
+    got = _call(wired, "open_package_page", package="globe numbers")
+    assert got["ok"] and [m["package"]["id"] for m in sent] == [newer.id]
+
+
+def test_a_decision_package_unpacks_here_only_with_its_check_s_stamp(wired, shown, tmp_path,
+                                                                      marks):
+    """A decision package (the shared deck's files) is unpacked from a file
+    on this Mac only once python -m jarvis.decision_package has checked it
+    and stamped it for this JARVIS (decision_stamp.py)."""
+    from jarvis import decision_stamp
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    files = {"web/index.html": "x", "deck-data.js": "window.DECK = {};",
+             "scripts/decide.py": "print()"}
+    archive = write_zip(folder, make_zip(files, PAGE), "deck.zip")
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)}, headers=_token())
+    assert r.status_code == 409 and "has not passed its check" in r.json()["error"]
+    stamped = folder / "stamped.zip"
+    decision_stamp.stamp(archive, stamped, "another JARVIS's token")
+    r = wired.client.post("/api/packages/local", json={"path": str(stamped)}, headers=_token())
+    assert r.status_code == 409 and "not checked for this JARVIS" in r.json()["error"]
+    decision_stamp.stamp(archive, stamped, data_paths.ensure_tool_token())
+    r = wired.client.post("/api/packages/local", json={"path": str(stamped)}, headers=_token())
+    assert r.status_code == 200, r.text

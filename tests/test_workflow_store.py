@@ -156,6 +156,26 @@ def test_the_log_reads_from_a_point_and_by_kind():
     assert [e.kind for e in ws.events(wid, kinds={"decision_needed"})] == ["decision_needed"]
 
 
+def test_an_answered_decision_key_is_never_asked_again():
+    wid = ws.start("Build", "hammer", [])
+    ws.record(_ev(wid, "decision_needed", "Which database?", key="db"))
+    ws.record(_ev(wid, "decision_made", "Settled.", key="db"))
+    ws.record(_ev(wid, "decision_needed", "Which database now?", key="db"))
+    ws.record(_ev(wid, "decision_made", "Answered.", key="db", answer="postgres"))
+    with pytest.raises(ws.WorkflowRefused,
+                       match="^Decision db was already answered; ask with a new key.$"):
+        ws.record(_ev(wid, "decision_needed", "Which cache?", key="db"))
+    assert ws.record(_ev(wid, "decision_needed", "Which cache?", key="cache")).open_decisions \
+        == ["cache"]
+
+
+def test_the_latest_events_are_the_newest_however_long_the_log():
+    wid = ws.start("Build", "hammer", [])
+    for n in range(510):
+        ws.record(_ev(wid, "note", f"Note {n}."))
+    assert [e.summary for e in ws.latest(wid, 3)] == ["Note 507.", "Note 508.", "Note 509."]
+
+
 def test_a_workflow_is_found_by_its_name_as_said():
     wid = ws.start("Speech-migration", "jarvis", [])
     assert [w.id for w in ws.find("speech migration")] == [wid]
@@ -228,3 +248,20 @@ def test_a_column_another_connection_added_first_is_not_an_error(monkeypatch):
     ws._connect().close()
     monkeypatch.setattr(run_store, "_connect", real)
     assert ws.start("Rebrand", "denice", ["copy"])
+
+
+def test_each_item_says_when_it_was_last_heard_from_and_when_a_running_one_goes_quiet():
+    wid = ws.start("Build", "hammer", ["plan", "build"])
+    ws.record(_ev(wid, "phase_started", item="plan"))
+    ws.record(_ev(wid, "task_added", item="write-spec", title="Write the spec", phase="plan"))
+    ws.record(_ev(wid, "task_started", item="write-spec"))
+    w = ws.record(_ev(wid, "task_progress", item="write-spec", done=1, total=3))
+    items = {i.slug: i for i in w.items}
+    last = max(e.at for e in ws.events(wid) if e.item == "write-spec")
+    assert items["write-spec"].heard_at == last
+    assert items["write-spec"].quiet_at == last + ws.SILENT_AFTER_SEC
+    # A phase is heard from through its tasks too.
+    assert items["plan"].heard_at == last
+    assert items["build"].heard_at is None and items["build"].quiet_at is None
+    w = ws.record(_ev(wid, "task_finished", item="write-spec"))
+    assert next(i for i in w.items if i.slug == "write-spec").quiet_at is None

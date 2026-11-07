@@ -71,7 +71,8 @@ async def _open(p, url, ui=None, reduced=False):
     voice = []
     await page.route_web_socket("**/ws/voice", ui or (lambda ws: (setattr(_open, "voice", ws),
                                                                 ws.on_message(lambda m: voice.append(m)))))
-    await page.goto(url + "?view=main")
+    # The Conversation view, where the microphone control is.
+    await page.goto(url)
     await show_diagnostics(page)
     await start_listening(page)
     await page.wait_for_function(
@@ -132,8 +133,12 @@ async def test_text_that_was_written_under_the_orb_goes_to_messages(page_playwri
         ws.send(json.dumps({"type": "notice", "text": "Rotating my context; one moment."}))
         ws.send(json.dumps({"type": "text", "text": "A sentence I could not voice."}))
         await page.wait_for_timeout(300)
-        status = await page.evaluate("document.querySelector('#status-text')?.textContent ?? ''")
-        assert "Rotating" not in status and "voice" not in status
+        # Nothing in the left column, and the conversation control's words
+        # are its own state's, not the notice's.
+        left = await page.evaluate("document.querySelector('#left-column').textContent")
+        assert "Rotating" not in left and "could not voice" not in left
+        control = await page.evaluate("document.querySelector('#conversation-control').textContent")
+        assert "Rotating" not in control and "could not voice" not in control
         assert await page.query_selector("#error-text") is None
         await page.click(".voice-summary-open")
         await page.wait_for_selector("#voice-diagnostics")
@@ -214,6 +219,16 @@ async def test_the_health_dot_opens_the_diagnostics_view(page_playwright, page_u
         await browser.close()
 
 
+# Where the lower right of the message input puts each control.
+PLACES = """() => {
+  const r = s => { const e = document.querySelector(s); if (!e) return undefined;
+                   const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
+  const got = {send: r('.composer-send'), mic: r('#mic-control')};
+  const dot = r('#health-dot');
+  return dot ? {...got, dot} : got;
+}"""
+
+
 @pytest.mark.asyncio
 async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url):
     """The dot appears only while voice input has a problem. Then it is a
@@ -222,7 +237,7 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
     pointing at it is refused, never drawn where it was."""
     from tests.test_voice_page_pipeline import _UiServer
     ui = _UiServer()
-    health = {"region": "left", "view": "left.fixed", "kind": "mic", "part": "health"}
+    health = {"region": "main", "view": "main.conversation", "kind": "mic", "part": "health"}
 
     async def point():
         rid, _ = ui.request({"kind": "indicate", "target": health, "reveal": "never"})
@@ -237,6 +252,7 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             await _health(page)
             assert await page.query_selector("#health-dot") is None
             assert (await point())["status"] != "completed"
+            before = await page.evaluate(PLACES)
             await _health(page, state="no-frames", cause="No audio from the microphone",
                           pipeline=pipeline(mic="bad"))
             dot = page.locator("#health-dot.bad")
@@ -250,8 +266,15 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             # are (test_voice_page_left_settings.LEFT_MISSED).
             reached = await point()
             assert reached["status"] == "completed", reached
+            # Left of Stop (absent here, so beside Send), in a slot kept
+            # while it is gone: Send and the microphone are exactly where
+            # they were.
+            shown = await page.evaluate(PLACES)
+            assert shown["dot"][0] + shown["dot"][2] <= shown["send"][0]
+            assert {k: shown[k] for k in ("send", "mic")} == before
             await _health(page)
             await page.wait_for_selector("#health-dot", state="detached")
+            assert await page.evaluate(PLACES) == before
             assert (await point())["status"] != "completed"
         finally:
             await browser.close()

@@ -83,7 +83,7 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_playwri
     async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         tabs = await page.evaluate("() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.title)")
-        assert tabs == ["Folders", "Agents", "Queue", "Workflows", "Network", "Diagnostics"], tabs
+        assert tabs == ["Folders", "Agents", "Queue", "Work", "Network", "Diagnostics"], tabs
         # Something unread is waiting: the tab is lit while another is open.
         await async_api.expect(page.locator(".right-tabs [aria-label='Queue']")).to_have_class(
             "control-button right-tab labelled-tab lit")
@@ -367,14 +367,15 @@ async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page
         before = await _rows(page, world, "waiting")
         routes.down = True
         await voice.ws.close()
-        await async_api.expect(page.locator(".queue-view .read-failure")).to_contain_text(
-            "Couldn't read the queue", timeout=15000)
+        # The package inbox, in the same view, says it could not read too.
+        queue_failure = page.locator(".queue-view .read-failure", has_text="Couldn't read the queue")
+        await async_api.expect(queue_failure).to_be_visible(timeout=15000)
         assert await _rows(page, world, "waiting") == before, "a failed read never empties the queue"
         routes.down = False
         routes.availability = "not_paired"
         await async_api.expect(page.locator(".queue-notice")).to_have_text(
             "Pair this JARVIS with the team server to send and receive messages.", timeout=20000)
-        await async_api.expect(page.locator(".queue-view .read-failure")).to_have_count(0)
+        await async_api.expect(queue_failure).to_have_count(0)
         assert await _rows(page, world, "waiting") == before
         assert await page.locator(".queue-new").is_disabled()
         await browser.close()

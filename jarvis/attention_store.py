@@ -1,7 +1,7 @@
 """attention_store.py — the durable record of background events.
 
 Every routine event JARVIS used to announce on its own (an agent's message
-delivered or answered, a session's message, a needs board, a session that
+not picked up or answered, a session's message, a needs board, a session that
 wants him, a run or a package run ending, a person's message arriving, not
 being signed in) is first an attention item here, linked to its source
 record by kind and id. Nothing is said by recording one: whether anything is
@@ -42,7 +42,7 @@ from contextlib import closing
 from dataclasses import dataclass, field, fields
 from typing import Callable, Iterable, Optional
 
-from jarvis import data_paths, run_store
+from jarvis import brain_activity, data_paths, run_store
 
 PENDING, SEEN, RESOLVED = "pending", "seen", "resolved"
 STATES = (PENDING, SEEN, RESOLVED)
@@ -242,6 +242,11 @@ def _text(value: dict) -> str:
 
 Clock = Callable[[], float]
 
+# Kinds that are counted and listed but never spoken, by the digest or
+# anyone: a package Tim was sent (package_inbox.py) waits in his backlog
+# until he asks for it. Recorded silent, and never raised to audible.
+SILENT_KINDS = frozenset({"package"})
+
 
 class AttentionStore:
     """The one writer of the attention tables. `on_change` is told after
@@ -270,6 +275,7 @@ class AttentionStore:
         revision, pending again, and a line of its history. `audible` is only
         ever raised here, never lowered (`set_audible` lowers it)."""
         now = self._clock()
+        audible = audible and kind not in SILENT_KINDS
         facts_text, untrusted_text = _text(facts or {}), _text(untrusted or {})
         with closing(_connect()) as conn, conn:
             row = conn.execute("SELECT * FROM attention_items WHERE kind = ? AND source_id = ?",
@@ -311,6 +317,7 @@ class AttentionStore:
         """Whether this node may speak of the item. Not a revision: being
         allowed to speak of it is not news, so it neither makes it pending
         again nor makes it younger."""
+        audible = audible and kind not in SILENT_KINDS
         with closing(_connect()) as conn, conn:
             conn.execute("UPDATE attention_items SET audible = ? WHERE kind = ? AND source_id = ?",
                          (int(audible), kind, str(source_id)))
@@ -366,8 +373,8 @@ class AttentionStore:
 
     def mark_seen(self, ids: Optional[Iterable[int]] = None) -> int:
         """He has reviewed these (every pending one when `ids` is None). How
-        many were marked. Seen is his act alone: no digest or playback sets
-        it."""
+        many were marked. Seen is his act: his click, his mark, or hearing it
+        read in full (`mark_seen_source`); no digest sets it."""
         now = self._clock()
         with closing(_connect()) as conn, conn:
             if ids is None:
@@ -381,6 +388,25 @@ class AttentionStore:
                     count += conn.execute(
                         "UPDATE attention_items SET state = ?, seen_at = ? "
                         "WHERE id = ? AND state = ?", (SEEN, now, item_id, PENDING)).rowcount
+        if count:
+            self._changed()
+        return count
+
+    def mark_seen_source(self, kind: str, source_id: str,
+                         revision: Optional[int] = None) -> int:
+        """He has heard this source read to him in full: its item is seen,
+        if still pending and, when `revision` is given, still at the
+        revision that was read (a newer one is news he has not heard). How
+        many were marked, 0 or 1."""
+        now = self._clock()
+        with closing(_connect()) as conn, conn:
+            sql = ("UPDATE attention_items SET state = ?, seen_at = ? "
+                   "WHERE kind = ? AND source_id = ? AND state = ?")
+            values = [SEEN, now, kind, str(source_id), PENDING]
+            if revision is not None:
+                sql += " AND revision = ?"
+                values.append(int(revision))
+            count = conn.execute(sql, values).rowcount
         if count:
             self._changed()
         return count
@@ -405,6 +431,7 @@ class AttentionStore:
             conn.executemany(
                 "INSERT INTO attention_presentations (digest_id, item_id, revision) "
                 "VALUES (?, ?, ?)", [(digest_id, i.id, i.revision) for i in items])
+        brain_activity.note(brain_activity.DIGEST, brain_activity.STARTED, id=str(digest_id))
         return digest_id
 
     def current_revisions(self, items: list[Item]) -> dict[int, tuple[int, str]]:
@@ -437,6 +464,8 @@ class AttentionStore:
                     " AND p.item_id = attention_items.id)) "
                     "WHERE id IN (SELECT item_id FROM attention_presentations WHERE digest_id = ?)",
                     (digest_id, digest_id))
+        # Its outcome on the brain activity feed; never its text or reason.
+        brain_activity.note(brain_activity.DIGEST, outcome, id=str(digest_id))
         self._changed()
 
     def last_digest_started(self) -> Optional[float]:

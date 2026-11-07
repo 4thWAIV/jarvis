@@ -31,7 +31,8 @@
  * words are playing now (jarvis.ts sets it as they start, and clears it as
  * the beat's last words end or the voice stops), and the package's view
  * hands it to its frame (packageBridge.ts). `storyState` is what the server
- * last said of the story (`package_story` frames).
+ * last said of the story (`package_story` frames), which the view also hands
+ * to the frame, so a deck shows which question JARVIS is waiting on.
  */
 
 import { liveRead, type LiveStore } from "./liveRead";
@@ -60,6 +61,8 @@ export interface StoryOutline {
   title: string;
   language: string;
   slides: string[];
+  /** The slides that ask a question and wait for his answer. */
+  asks?: number[];
 }
 
 /** A beat of a story, as its audio frames carry it (package_story.py). */
@@ -73,12 +76,21 @@ export interface StoryCue {
   last?: boolean;
 }
 
-/** What the server last said of a story (story_teller.py). */
+/** What the server last said of a story (story_teller.py): telling,
+ *  waiting for his answer to `question`, or paused (he spoke over a slide)
+ *  are all running; finished and stopped are not. */
 export interface StoryState {
   package: string;
-  state: "telling" | "finished" | "stopped";
+  state: "telling" | "waiting" | "paused" | "finished" | "stopped";
   slide: number;
   slides: number;
+  question?: string;
+}
+
+/** Whether a story in this state is running: Stop ends it. */
+export function storyRunning(state: StoryState | null, id: string): boolean {
+  return !!state && state.package === id &&
+    (state.state === "telling" || state.state === "waiting" || state.state === "paused");
 }
 
 /** The beat whose words are playing now, or none. */
@@ -155,14 +167,20 @@ export function showPackage(info: PackageInfo): void {
   if (openPackage.get()?.id !== info.id) void dispatch("package.open", { packageId: info.id }, { actor: "brain" });
 }
 
+/** A page package the server has just opened on his click: shown here at
+ *  once, as his own navigation (the inbox's Open, and Open page). */
+export function showOpenedPackage(info: PackageInfo): void {
+  described.set(info.id, info);
+  runBinding(bind("package.open", { packageId: info.id }));
+}
+
 /** The page's Open page: the server's one way to open it, then shown here
  *  at once. Null once it is open, else why not. */
 export async function openPackagePage(id: string): Promise<Said | null> {
   try {
     const info = (await answer<{ package: PackageInfo }>(
       await fetch(`${base(id)}/page`, { method: "POST" }))).package;
-    described.set(info.id, info);
-    runBinding(bind("package.open", { packageId: info.id }));
+    showOpenedPackage(info);
     return null;
   } catch (e) {
     return original(e);
@@ -206,9 +224,9 @@ export async function openLocalPackage(path: string): Promise<Said | null> {
   }
 }
 
-/** Tell its story from `slide` (from 1), or stop it: null once done, else
- *  why not. */
-export async function tellStory(id: string, action: "tell" | "stop",
+/** Tell its story from `slide` (from 1), resume it from the first question
+ *  with no answer, or stop it: null once done, else why not. */
+export async function tellStory(id: string, action: "tell" | "resume" | "stop",
                                 slide?: number): Promise<Said | null> {
   try {
     await answer(await fetch(`${base(id)}/story`, {

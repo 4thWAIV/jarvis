@@ -152,7 +152,7 @@ async def test_workflow_state_badges_remain_readable_in_both_themes(page_url, st
         server=WorkflowServer(); server.state=state
         await page.route('**/api/workflows**',server)
         await page.goto(page_url)
-        await page.click('.right-tabs [role=tab][title=Workflows]')
+        await page.click('.right-tabs [role=tab][title=Work]')
         await page.locator('.workflow-row').click()
         badge=page.locator('.workflow-detail-state')
         for name in ('classic','graphite'):

@@ -26,8 +26,9 @@ import {
  *  row's error is nothing but its value, itself worded by its own code. */
 // left.updates.prName: "PR 42" is GitHub's own name for a pull request, in both.
 // main.conversation.overlapLead: "· {second}", a mark before words worded by their own key.
+// main.knowledge.index.serves: "{kinds}: {paths}", kinds and property paths, no words of its own.
 const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError", "left.updates.prName",
-                                      "main.conversation.overlapLead"]);
+                                      "main.conversation.overlapLead", "main.knowledge.index.serves"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });

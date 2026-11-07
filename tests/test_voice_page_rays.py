@@ -520,7 +520,7 @@ async def test_hints_still_arrive_with_the_agents_tab_closed(page_playwright, pa
     async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(hint, {"type": "workflows"})])
         await page.route("**/api/workflows", workflows)
-        await page.click(".right-tabs [aria-label='Workflows']")
+        await page.click(".right-tabs [aria-label='Work']")
         # The hint is sent only once the view has made its first read, so the
         # read it causes cannot be mistaken for that one on a slow machine.
         await _until(lambda: calls["workflows"] > 0)

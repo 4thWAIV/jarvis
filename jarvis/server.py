@@ -16,9 +16,11 @@ import json
 import logging
 import os
 import difflib
+import hashlib
 import re
 import secrets
 import shlex
+import subprocess
 import sys
 import sqlite3
 import threading
@@ -54,11 +56,8 @@ def _parse_env_lines(text: str) -> list[tuple[str, str]]:
 
 
 def _env_file_path() -> Path:
-    # JARVIS_ENV_FILE exists so the test suite can neither read nor write the
-    # developer's live .env — the same reasoning as JARVIS_DATA_DIR. The boot
-    # loader below and the settings endpoints both go through here.
-    override = os.getenv("JARVIS_ENV_FILE", "").strip()
-    return Path(override) if override else data_paths.CONFIG_DIR / ".env"
+    # The boot loader below and the settings endpoints both go through here.
+    return data_paths.env_file_path()
 
 
 # Load .env file if present
@@ -79,6 +78,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
+from jarvis import host_resources
+from jarvis import knowledge_api
+from jarvis import knowledge_routes
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
@@ -93,11 +95,12 @@ from jarvis import voice_control
 from jarvis.voice_control import ReplyFailure, ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
-from jarvis import tool_activity
+from jarvis import brain_activity, tool_activity
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
 from jarvis import workflow_store
+from jarvis import work_api, work_store
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -105,6 +108,8 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
+from jarvis import decision_stamp
+from jarvis import package_inbox, package_inbox_api
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -635,7 +640,12 @@ DIGEST_PLAY_WAIT_SEC = 120.0
 
 def _hint_attention() -> None:
     """Tell every open page the attention record changed. From any thread."""
-    message = {"type": "attention"}
+    _hint_from_any_thread({"type": "attention"})
+
+
+def _hint_from_any_thread(message: dict) -> None:
+    """A hint to every page on /ws/sessions, from the event loop or a
+    worker thread."""
     try:
         asyncio.get_running_loop()
         _send_to_session_clients(message)
@@ -805,7 +815,8 @@ def _start_attention() -> None:
     digest = attention.Digest(
         attention_admission, _digest_ask, _digest_speak, _digest_played,
         _wrap_untrusted,
-        on_spoken=lambda text: _record(conversation_log.ItemKind.NOTICE, text))
+        on_spoken=lambda text: _record(conversation_log.ItemKind.NOTICE, text),
+        budget=_WRAP_CONTENT_CAP)
 
     async def look() -> None:
         while True:
@@ -1348,7 +1359,8 @@ async def start_brain_and_speech() -> None:
     global brain_instance, speech, _tts_client
     _tts_client = httpx.AsyncClient(timeout=15.0)
     speech = SpeechScheduler(lambda t: _synth_for_speech(t), _voice_emit, prepare=strip_markdown_for_tts,
-                             transport_ready=lambda: bool(voice_clients))
+                             transport_ready=lambda: bool(voice_clients),
+                             muted=voice_control.speech_muted)
     # Routine announcements wait while the floor is his or the brain's.
     speech.floor_held = conversation_floor.held
     await speech.start()
@@ -1867,14 +1879,22 @@ async def _say_notice(line: str, note: str, what: str, **links):
 
 async def _attend_message(event: dict) -> None:
     """A message JARVIS sent has moved on (gone from the queue, failed,
-    delivered, not picked up, answered): one attention item per message,
-    each step a revision of it. An answer itself goes on record in his
-    conversation, under the agent and the message it answers, first."""
+    delivered, not picked up, answered): one attention item per message.
+    Queued, sent and delivered are only progress (`_MESSAGE_PROGRESS`): on
+    record in the `messages` table and shown in the agent's thread, never an
+    update; each resolves whatever the item last said (not picked up), which
+    is no longer so. Every other step is a revision of it. An answer itself
+    goes on record in his conversation, under the agent and the message it
+    answers, first."""
     kind = event.get("kind")
     session = event.get("session") or {}
     message = event.get("message") or {}
+    _follow_inbox_messages()
     if kind == "sent":
         await _message_went(session.get("session_id", ""))
+    if kind in _MESSAGE_PROGRESS:
+        _attention_resolved("agent_message", _message_number(message))
+        return
     if kind == "answered" and message.get("reply"):
         _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
@@ -1887,6 +1907,11 @@ async def _attend_message(event: dict) -> None:
 
 # The message events the session watcher reports (`SessionWatcher.track`).
 _MESSAGE_EVENTS = ("sent", "send_failed", "delivered", "undelivered", "answered")
+# The steps that are only progress, never an update (`_attend_message`,
+# `_AgentDestination._attend`): a message waiting its turn, going and
+# arriving need nothing from him; "not picked up" and the ten-minute queue
+# check in Diagnostics say so when one gets stuck.
+_MESSAGE_PROGRESS = ("queued", "sent", "delivered")
 
 
 # How often the needs board is looked at. A file is rewritten by hand-paced
@@ -2430,6 +2455,73 @@ async def stop_folders() -> None:
     folder_catalog = None
 
 
+# --- The knowledge engine ----------------------------------------------------
+#
+# Off unless JARVIS_KNOWLEDGE is on (knowledge_client.enabled). Started after
+# startup settles and paced by the conversation floor and the machine's CPU
+# (knowledge_runtime.py); nothing on the voice path waits on it.
+
+knowledge: Optional["knowledge_runtime.KnowledgeRuntime"] = None
+_knowledge_task: Optional[asyncio.Task] = None
+
+
+def _knowledge_floor_busy() -> bool:
+    return conversation_floor.state() != attention.FLOOR_IDLE
+
+
+def _on_knowledge_proposals(new: list, gone: list) -> None:
+    """Each proposal the linker makes is an attention item, shown and never
+    spoken, and never acted on: only his yes writes it (knowledge_links).
+    One that is gone (accepted, turned down, or no longer found) is
+    resolved."""
+    for p in new:
+        _attend("knowledge_proposal", p["id"], str(p.get("kind") or "about"),
+                facts={"kind": p.get("kind")},
+                untrusted={"topic": p.get("topic_name") or "", "document": p.get("label") or "",
+                           "other": p.get("other_name") or ""},
+                audible=False)
+    for pid in gone:
+        _attention_resolved("knowledge_proposal", pid)
+
+
+def _offer_knowledge_seeds() -> None:
+    """Each open seed (what it would create, never created without his yes)
+    is a silent attention item, resolved when he answers it."""
+    from jarvis import knowledge_seeds
+    try:
+        for seed in knowledge_seeds.open_seeds():
+            _attend("knowledge_seed", seed["id"], "proposed", facts={"topics": len(seed["topics"])},
+                    untrusted={"topic": seed["title"]}, audible=False)
+    except Exception:
+        log.warning("knowledge seeds could not be offered", exc_info=True)
+
+
+def start_knowledge() -> None:
+    global knowledge, _knowledge_task
+    from jarvis import knowledge_client, knowledge_runtime
+    if not knowledge_client.enabled():
+        return
+    knowledge = knowledge_runtime.KnowledgeRuntime(
+        floor_busy=_knowledge_floor_busy,
+        cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    knowledge.proposal_listeners.append(_on_knowledge_proposals)
+    _offer_knowledge_seeds()
+    knowledge.change_listeners.append(lambda: _send_to_session_clients({"type": "knowledge"}))
+    _knowledge_task = _spawn(knowledge.run())
+    log.info("knowledge engine: starting after startup settles")
+
+
+async def stop_knowledge() -> None:
+    global knowledge, _knowledge_task
+    if _knowledge_task is not None:
+        _knowledge_task.cancel()
+        await asyncio.gather(_knowledge_task, return_exceptions=True)
+    _knowledge_task = None
+    if knowledge is not None:
+        await knowledge.stop()
+    knowledge = None
+
+
 async def start_session_watcher() -> None:
     global session_watcher
     session_watcher = session_watch.SessionWatcher(
@@ -2786,7 +2878,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     the socket loop keeps receiving `played` acks and interim text meanwhile.
     `heard` is the id the page gave this transcript; a capture made on this
     turn records it, so the page can move those words to the capture."""
-    global _turn_utt, _turn_heard
+    global _turn_utt, _turn_heard, _turn_reads
     if brain_instance is None or speech is None:
         return
     t0 = time.monotonic()
@@ -2813,7 +2905,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     await _turn_lock.acquire()
     utt = speech.begin_turn()
     reply = _ReplyText(utt.id)
-    _turn_utt, _turn_heard = utt, heard
+    reads: list = []
+    _turn_utt, _turn_heard, _turn_reads = utt, heard, reads
     try:
         try:
             try:
@@ -2841,7 +2934,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 raise
             finally:
                 reply.finish()  # an error also closes the live text stream, as failed
-                _turn_utt, _turn_heard = None, None
+                _turn_utt, _turn_heard, _turn_reads = None, None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
                 finally:
@@ -2861,7 +2954,9 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                     detail={"utt": utt.id, "reply_started_at": reply.at})
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
-        await speech.wait_for(utt, timeout=120.0)
+        # Heard in full, it is also what makes the updates it read seen.
+        heard_all = await speech.wait_for(utt, timeout=120.0)
+        _seen_once_heard(reads, utt, heard_all and result.stop_reason == "result")
         first_audio = (utt.first_sent_at - t0) if utt.first_sent_at is not None else None
         log.info("latency: first_delta=%s first_audio=%s turn=%.2fs ctx=%d out=%d tools=%s",
                  f"{result.first_delta_sec:.2f}s" if result.first_delta_sec is not None else "none",
@@ -3011,6 +3106,7 @@ async def lifespan(application: FastAPI):
     await start_brain_and_speech()
     await start_session_watcher()
     start_folders()
+    start_knowledge()
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -3045,6 +3141,7 @@ async def lifespan(application: FastAPI):
     await team_api.stop()
     await _stop_attention()
     await transcription_api.stop()
+    await stop_knowledge()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -3090,8 +3187,14 @@ def _follow_patience() -> float:
 
 def _voice_input_settings_changed(frame: dict) -> None:
     """His voice input settings changed: JARVIS's own wait follows his new
-    patience at once, and every page reads them again."""
+    patience at once, his speech mute stops what is sounding at once, and
+    every page reads them again."""
     _follow_patience()
+    if speech is not None and speech.has_speech_in_flight() and voice_control.speech_muted():
+        try:
+            asyncio.get_running_loop().create_task(_stop_speaking("his speech mute"))
+        except RuntimeError:                # no loop: nothing can be sounding
+            pass
     _send_to_session_clients(frame)
 
 
@@ -4194,6 +4297,17 @@ async def api_tools_activity(since: int = Query(0, ge=0)):
     return tool_activity.activity.since(since)
 
 
+@app.get("/api/brain/activity")
+async def api_brain_activity(since: int = Query(0, ge=0)):
+    """Everything the brain did after sequence number `since`
+    (brain_activity.py): its turns started, streaming and ended, its tool
+    calls, the messages to and from agents and people, digests and what was
+    spoken. Each event is a kind, a stage, a time, the brain provider and,
+    where there is one, the counterpart's name; never words, arguments or
+    results. `generation` and `oldest` are read as for /api/tools/activity."""
+    return brain_activity.feed.since(since)
+
+
 # The last conversation JARVIS talked about, so "that one" can be resolved.
 last_mentioned_session: str | None = None
 
@@ -4914,6 +5028,7 @@ def tool_read_message_reply(args: dict) -> str:
     name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "That session")
     if str(m.status) != run_store.MessageStatus.ANSWERED:
         return f"Message {number} to {name} has no answer yet: {_message_state(m, time.time())}."
+    _read_to_him("agent_message", number)
     if not m.reply:
         return f"{name} ended its turn on message {number} without saying anything."
     return _one_page(m.reply, _page_arg(args), f"{name}'s answer to message {number}",
@@ -4985,6 +5100,7 @@ def tool_read_session_message(args: dict) -> str:
     if m is None:
         return f"There is no message {number} from a session; session_messages has them."
     run_store.mark_session_message_read(number)
+    _read_to_him("session_message", number)
     name = _said_name({"voice_name": m.agent_name}, "A session")
     text = (f"Subject: {m.subject or '(none)'}\n\n{m.body or '(no text)'}")
     return _one_page(text, _page_arg(args), f"{name}'s message {number}",
@@ -5056,7 +5172,41 @@ _capture_ids = itertools.count(1)
 # clear them out from under it.
 _turn_utt = None
 _turn_heard: Optional[int] = None
+# The updates the brain read to him on this turn, as (kind, source id,
+# revision): each is seen once the turn's reply has been heard in full
+# (`_seen_once_heard`), never on the tool call alone.
+_turn_reads: Optional[list] = None
 _turn_lock = asyncio.Lock()
+
+
+def _read_to_him(kind: str, source_id) -> None:
+    """A reading tool has just given the brain this source on a turn he
+    drove: its update, if pending, waits to be seen until he has heard the
+    reply that reads it. Never raises."""
+    if (_turn_reads is None or attention_record is None or brain_instance is None
+            or brain_instance.current_origin != "user"):
+        return
+    try:
+        item = attention_record.get(kind, str(source_id))
+    except Exception:
+        log.warning("attention: %s was not looked up", kind, exc_info=True)
+        return
+    if item is not None and item.state == attention_store.PENDING:
+        _turn_reads.append((kind, str(source_id), item.revision))
+
+
+def _seen_once_heard(reads: list, utt, heard: bool) -> None:
+    """The turn's reply has ended: if he heard every word of it, the
+    updates it read to him are seen (`attention_api.mark_seen_source`), each
+    at the revision that was read. A reply cut off, skipped, failed or with
+    nothing said leaves them pending. Never raises."""
+    if not reads or not heard or not utt.chunks or attention_record is None:
+        return
+    for kind, source_id, revision in reads:
+        try:
+            attention_api.mark_seen_source(attention_record, kind, source_id, revision)
+        except Exception:
+            log.warning("attention: %s was not marked seen", kind, exc_info=True)
 
 
 def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:
@@ -5239,14 +5389,38 @@ def tool_capture(args: dict) -> str:
     if args.get("capture") is not None and number not in _captures:
         return ("There is no open capture by that number: it was sent, merged "
                 "or never made. Omit `capture` to open a new one.")
-    if number is None:
-        number = next(_capture_ids)
-        _captures[number] = {"id": number, "text": "", "to": "", "heard": [],
-                             "read": None, "state": "capturing"}
-    capture = _captures[number]
+    capture = _captures[number] if number is not None else _new_capture()
+    number = capture["id"]
     if capture.get("human"):
         return (f"Capture {number} is the review of a message to a person: change it "
                 f"with draft_message and review it again. Nothing was changed.")
+    _set_capture(capture, text, to, to_session)
+    if len(_unsent_captures()) > 1:
+        return (f"Capture {number} holds it. {_open_captures_note()} Each is "
+                f"read back and sent on its own, by its number; merge_captures "
+                f"only those that are parts of one message.")
+    if not capture.get("to_session"):
+        return (f"Capture {number} holds it, but it is not addressed to anyone yet: "
+                f"once he says who it is for, capture it again with that `to`. It is "
+                f"read back naming who it is for, so it cannot be read back until then.")
+    return (f"Capture {number} holds it. Read it back now with read_capture, without "
+            f"asking first: the read-back names {_plain_name(capture['to'], 'its session')} "
+            f"as who it is for. steer_session sends only a capture read back in full "
+            f"since it or its recipient last changed and then approved by his own yes.")
+
+
+def _new_capture() -> dict:
+    """A new, empty capture, open under the next number."""
+    number = next(_capture_ids)
+    _captures[number] = {"id": number, "text": "", "to": "", "heard": [],
+                         "read": None, "state": "capturing"}
+    return _captures[number]
+
+
+def _set_capture(capture: dict, text: str, to: str, to_session: Optional[str]) -> None:
+    """Put `text` in a capture, addressed to `to` (its session) when given:
+    a new text or a new recipient clears his approval, so it is read back
+    naming who it is for and approved again. On record and on the page."""
     readdressed = bool(to_session) and to_session != capture.get("to_session")
     changed = capture["text"] != text
     if changed or readdressed:
@@ -5260,18 +5434,6 @@ def tool_capture(args: dict) -> str:
     if changed or readdressed:
         _record_capture(capture, to_session)
     _capture_show(capture, "capturing")
-    if len(_unsent_captures()) > 1:
-        return (f"Capture {number} holds it. {_open_captures_note()} Each is "
-                f"read back and sent on its own, by its number; merge_captures "
-                f"only those that are parts of one message.")
-    if not capture.get("to_session"):
-        return (f"Capture {number} holds it, but it is not addressed to anyone yet: "
-                f"once he says who it is for, capture it again with that `to`. It is "
-                f"read back naming who it is for, so it cannot be read back until then.")
-    return (f"Capture {number} holds it. Read it back now with read_capture, without "
-            f"asking first: the read-back names {_plain_name(capture['to'], 'its session')} "
-            f"as who it is for. steer_session sends only a capture read back in full "
-            f"since it or its recipient last changed and then approved by his own yes.")
 
 
 def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
@@ -6053,13 +6215,17 @@ class _AgentDestination:
         await _message_went(self.item.session_id)
 
     def _attend(self, happened: str) -> None:
+        if happened in _MESSAGE_PROGRESS:
+            _attention_resolved("agent_message", self.item.message_id or 0)
+            return
         _attend("agent_message", self.item.message_id or 0, happened,
                 facts={"message_id": self.item.message_id or 0},
                 untrusted={"agent": self.item.voice_name or ""})
 
     async def report_queued(self, speech, why: str) -> None:
-        """Nothing is said: the message shows it queued, behind its
-        session's turn, and it goes as soon as the session is free."""
+        """Nothing is said and it is no update: the message shows it
+        queued, behind its session's turn, and it goes as soon as the
+        session is free."""
         self._attend("queued")
 
     async def report_outcome(self, speech, outcome: str) -> None:
@@ -6084,6 +6250,8 @@ class _CaptureBox:
 
     def sent(self, capture_id: Optional[int]) -> None:
         _capture_sent(capture_id)
+        # A package's answers may be what went (package_inbox.follow_messages).
+        _follow_inbox_messages()
 
     def reopen(self, capture_id: Optional[int]) -> None:
         # Not sent (cancelled, no voice, failed): the capture is his to deal
@@ -7157,6 +7325,7 @@ async def tool_mark_people_message_read(args: dict) -> str:
         return said
     if got.direction != "incoming":
         return "That is a message he sent; there is nothing to mark read."
+    _read_to_him("arrival", message_id)
     if got.receipts.read_at is not None:
         return "That message was already marked read."
     return "Marked read, sir: the sender is told he has read it."
@@ -7489,21 +7658,28 @@ def _package_opened(package: "work_packages.Package", fresh: bool, what_next: st
             f"package.json:\n{package.manifest.as_json()}{files}")
 
 
-async def _open_local_package(path: str) -> tuple[Optional["work_packages.Package"], bool, str]:
+async def _open_local_package(path: str, show: bool
+                              ) -> tuple[Optional["work_packages.Package"], bool, str]:
     """Open a package zip that is a file on this Mac: the brain's
     `open_local_package` and the page's Open package in the Folders view
     alike. The path is read by the folder catalog's ordinary-file rule
     (draft_files.Source: no link followed, keys, credentials and JARVIS's
     own data refused, a received file's size limit), unpacked exactly as a
     received zip, and a page package is then shown in the centre
-    (`_open_package_page`). (the package, unpacked now, "" or why it is not
-    shown) or (None, False, why not)."""
+    (`_open_package_page`) only when `show`: on his own act, his click on
+    the page (`packages_api.his_click`) or the brain's acting tool on his
+    turn; a caller on the tool token or an access key only unpacks it.
+    (the package, unpacked now, "" or why it is not shown) or (None, False,
+    why not)."""
     try:
         source = await asyncio.to_thread(draft_files.Source.open, path, "open")
     except draft_files.NotAttached as e:
         return None, False, str(e)
     try:
-        package, fresh = await work_packages.unpack_held(source.chunks())
+        # A decision package only with its check's stamp (decision_stamp.py).
+        token = data_paths.ensure_tool_token()
+        package, fresh = await work_packages.unpack_held(
+            source.chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (draft_files.NotAttached, work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     finally:
@@ -7512,6 +7688,8 @@ async def _open_local_package(path: str) -> tuple[Optional["work_packages.Packag
         _send_to_session_clients({"type": "packages"})
     if package.manifest.runs != work_packages.PAGE:
         return package, fresh, ""
+    if not show:
+        return package, fresh, packages_api.NOT_HIS_ACT
     _, problem = await _open_package_page(package.id)
     return package, fresh, problem
 
@@ -7519,7 +7697,8 @@ async def _open_local_package(path: str) -> tuple[Optional["work_packages.Packag
 async def tool_open_local_package(args: dict) -> str:
     """Open a package zip on this Mac, by its path: unpacked, and a page
     package shown in the centre."""
-    package, fresh, problem = await _open_local_package(str(args.get("path") or ""))
+    # An acting tool: it runs only on a turn he drove, so this is his act.
+    package, fresh, problem = await _open_local_package(str(args.get("path") or ""), True)
     if package is None:
         return f"{problem} Nothing was opened."
     if package.manifest.runs == work_packages.PAGE:
@@ -7557,17 +7736,22 @@ def _package_or_problem(args: dict, runs: Optional[str] = None
 
 
 def tool_list_packages(args: dict) -> str:
-    """The packages received and unpacked here."""
-    packages = work_packages.every()
+    """The packages unpacked here, newest first, a page at a time, or only
+    those whose id, name or purpose has the words he called one by."""
+    words = str(args.get("name") or "").strip()
+    packages = work_packages.matching(words)
     if not packages:
-        return "No packages have been opened here, sir."
+        return ("No packages have been opened here, sir." if not words else
+                "No package here is called that; list_packages without a name lists them all.")
     lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
-             f"{', with a story' if p.manifest.story else ''}, "
-             f"{p.manifest.purpose} ({p.folder})" for p in packages]
-    return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
+             f"{', with a story' if p.manifest.story else ''}, {p.manifest.purpose}"
+             for p in packages]
+    what = (f"{len(lines)} package{'s' if len(lines) != 1 else ''} "
+            f"{'unpacked here' if not words else 'here have those words'}, newest first; "
             f"run_package_command, run_package_agent, open_package_page and package_results "
-            f"take the id.\n"
-            + _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines)))
+            f"take the id")
+    head, chunk = _paged("\n".join(lines), _page_arg(args), what, "list_packages")
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_PACKAGE_WRAP_NAME, chunk)
 
 
 async def tool_run_package_command(args: dict) -> str:
@@ -7649,7 +7833,9 @@ async def tool_run_package_agent(args: dict) -> str:
 async def _open_package_page(reference: str
                              ) -> tuple[Optional["work_packages.Package"], str]:
     """Open a page package in the centre area of every page open: the
-    brain's `open_package_page` and the page's own route alike.
+    brain's `open_package_page` and the page's own route alike. Called only
+    on his own act (the page's routes check `packages_api.his_click`; the
+    brain's tools are ACTING_TOOLS), never for a tool-token caller.
     (the package, "") or (None, why not)."""
     try:
         package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
@@ -7670,30 +7856,72 @@ _package_shown: Optional[dict] = None
 
 
 async def _close_package_page(reference: str) -> None:
-    """The page's × on a package: no page that connects from now on shows it."""
+    """The page's ×: no page that connects from now on shows it, and its
+    story, told or waiting for an answer, is stopped."""
     global _package_shown
     if _package_shown is not None and _package_shown.get("id") == reference:
         _package_shown = None
+    if await story_teller.stop_for(reference, "by closing its page"):
+        _notes_for_brain.append(f"He closed package {reference}'s page, which stopped its "
+                                f"story.")
 
 
-# A page package's story (story_teller.py): the page's Tell the story and
-# Stop and the brain's tell_package_story go through `_package_story`.
-story_teller = StoryTeller(lambda: speech, _open_package_page, lambda f: _voice_emit(f))
+# A page package's story (story_teller.py): the page's Tell the story,
+# Continue and Stop and the brain's tell_package_story go through
+# `_package_story`. It goes on after an answer only once the floor is free,
+# so the reply to his answer is heard before the next slide.
+story_teller = StoryTeller(
+    lambda: speech, _open_package_page, lambda f: _voice_emit(f),
+    floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
+    note=_notes_for_brain.append)
+
+
+def _story_said(told: "story_teller_module.Told") -> str:
+    """What a running story is doing, in words: its package, slide and,
+    while it waits, the question it waits for."""
+    t = story_teller.telling
+    if t is None or told.package is None or t.package.id != told.package.id:
+        return ""
+    total = len(t.story.slides)
+    if t.state == story_teller_module.WAITING:
+        # The question's id is the sender's words (story.json), walled.
+        return (f"The story of {t.package.id} is waiting for his answer on slide {t.slide} "
+                f"of {total}. The question's id, from the package:\n"
+                + _wrap_untrusted(_PACKAGE_WRAP_NAME, str(t.question or "")))
+    if t.state == story_teller_module.PAUSED:
+        return (f"The story of {t.package.id} is paused at slide {t.slide} of {total}: he "
+                f"spoke over it.")
+    return f"The story of {t.package.id} is being told, at slide {t.slide} of {total}."
 
 
 async def _package_story(action: str, reference: str, slide: Optional[int] = None,
                          by: str = "on the page") -> tuple[bool, str]:
-    """Tell (from `slide`) or stop a page package's story: (done, what was
-    done or why not). Started from the page, the brain is told at its next
-    turn, so it knows what he is hearing."""
-    told = await story_teller.act(action, reference, slide)
+    """Tell (from `slide`), resume, stop or ask after a page package's
+    story: (done, what was done or why not). Started or stopped from the
+    page, the brain is told at its next turn, so it knows what he is
+    hearing."""
+    told = await story_teller.act(action, reference, slide, by=by)
     if told.package is None:
         return False, told.problem
-    if told.slide is None:
+    if action == story_teller_module.STATUS:
+        said = _story_said(told)
+        if said:
+            return True, said
+        e = told.ended
+        return True, (f"No story is running. The story of {e.package.id} ended "
+                      f"{'at its end' if e.state == story_teller_module.FINISHED else 'stopped'}"
+                      f" at slide {e.slide} of {len(e.story.slides)}.")
+    if action == story_teller_module.STOP:
+        if told.already:
+            e = told.ended
+            return True, (f"The story of {e.package.id} is already stopped"
+                          f"{' ' + e.by if e.by else ''}, at slide {e.slide} of "
+                          f"{len(e.story.slides)}; nothing of it is being read.")
+        waited = " It was waiting for his answer." if told.waiting else ""
         if by != "by voice":
             _notes_for_brain.append(f"Since your last turn he stopped the story of package "
-                                    f"{told.package.id} {by}.")
-        return True, f"Stopped the story of {told.package.id}."
+                                    f"{told.package.id} {by}.{waited}")
+        return True, f"Stopped the story of {told.package.id}.{waited}"
     total = len(told.story.slides)
     if by != "by voice":
         _notes_for_brain.append(
@@ -7703,7 +7931,8 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
 
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
-                   _open_local_package, _close_package_page)
+                   _open_local_package, _close_package_page,
+                   saved=lambda package: _inbox_saved(package))
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -7717,8 +7946,8 @@ async def tool_open_package_page(args: dict) -> str:
 
 
 async def tool_tell_package_story(args: dict) -> str:
-    """Tell a page package's story, from a slide, or stop it: the page's
-    Tell the story and Stop."""
+    """Tell a page package's story, from a slide, resume it, stop it, or
+    say what it is doing: the page's Tell the story, Continue and Stop."""
     action = str(args.get("action") or story_teller_module.TELL)
     slide = args.get("slide")
     try:
@@ -7729,16 +7958,21 @@ async def tool_tell_package_story(args: dict) -> str:
                                       by="by voice")
     if not done:
         return f"{said} Nothing was changed."
-    if action == story_teller_module.STOP or story_teller.telling is None:
+    if action in (story_teller_module.STOP, story_teller_module.STATUS) \
+            or story_teller.telling is None:
         return f"{said} Say nothing more about it unless he asks."
     story = story_teller.telling.story
     # The slides' titles are the sender's words: walled, for finding a slide
     # he names, never to be followed.
     titles = "\n".join(f"{n}. {title}" for n, title in enumerate(story.outline()["slides"], 1))
+    asks = ("At each slide that asks him a question it stops and waits for his answer: "
+            "his Choose on the page, or his words recorded with the package's own script "
+            "(run_package_command); then it goes on by itself. Do not move it on yourself. "
+            if any(s.waits for s in story.slides) else "")
     return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
-            f"points at each part on his screen as it is said; his speaking or Stop ends "
-            f"it. Do not repeat the story yourself. tell_package_story with a slide number "
-            f"goes to that slide. Its slides:\n"
+            f"points at each part on his screen as it is said. {asks}Stop ends it; action "
+            f"resume goes on from the first question with no answer; action status says "
+            f"what it is doing. Do not repeat the story yourself. Its slides:\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
@@ -7781,6 +8015,520 @@ TAINT_EXEMPT_TOOLS.update({
     "run_package_agent": ("it starts a package's run and says so; the brief goes to the run, "
                           "not back to the brain"),
     "open_package_page": "it opens a package's page on his screen and reads nothing back",
+})
+
+
+# --- The package inbox (package_inbox.py, package_inbox_api.py) -------------
+#
+# Every package an agent sends him arrives one way, make_package posting it
+# to POST /api/packages/inbox: checked and unpacked as any local zip is,
+# recorded, and shown nowhere. Its arrival is an attention item that is
+# counted and listed but never spoken (attention_store.SILENT_KINDS). He
+# opens one by his click or by asking; his answers are recorded by the
+# package's own scripts/decide.py; they go back as the workflow's decisions
+# and as a message to the sending session, which goes only on his yes. The
+# page's routes and the brain's tools call the same functions below.
+
+_INBOX_WRAP_NAME = "package"
+# How long the package's own decide.py may take to record one answer.
+DECIDE_TIMEOUT_SEC = 30
+
+
+def _hint_inbox(entries) -> None:
+    """The pages read the inbox again (the `packages` hint); a work item
+    whose packages changed is read again too (`work`). From any thread."""
+    _hint_from_any_thread({"type": "packages"})
+    if any(e.work_id for e in entries):
+        _hint_from_any_thread({"type": "work"})
+
+
+def _inbox_attend(entry) -> None:
+    """Its arrival, as an item counted and listed, never spoken: who sent
+    it, its title and how many decisions wait (the reduced update line)."""
+    _attend("package", entry.id, "arrived",
+            facts={"decisions": entry.decisions_total, "waiting": entry.waiting,
+                   "runs": entry.runs},
+            untrusted={"agent": entry.sender_name(), "package": entry.title})
+
+
+def _inbox_wait(entry, kind: str) -> None:
+    """Its workflow waits on his answers (wait_started at arrival), or no
+    longer does (wait_ended once returned or closed). Never raises: a
+    workflow that has finished or never opened the wait is left as it is."""
+    if not entry.workflow_id:
+        return
+    summary = (f"Waiting on Tim's answers to the package {entry.title}."
+               if kind == "wait_started" else f"The package {entry.title} is back from Tim.")
+    event = workflow_store.WorkflowEvent(entry.workflow_id, kind, None, summary,
+                                         {"key": entry.id})
+    try:
+        w = workflow_store.record(event)
+    except workflow_store.WorkflowRefused:
+        return
+    _workflow_recorded(w, event)
+
+
+def _inbox_closed(entries) -> None:
+    """Closed ones no longer want him, and their workflows no longer wait."""
+    for e in entries:
+        _attention_resolved("package", e.id)
+        _inbox_wait(e, "wait_ended")
+
+
+def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
+    """Why a package cannot be sent for this workflow or work item, or None."""
+    if workflow_id:
+        w = workflow_store.snapshot(workflow_id)
+        if w is None:
+            return f"There is no workflow {workflow_id}; nothing was received."
+        if w.state in {s.value for s in workflow_store.FINISHED}:
+            return f"Workflow {workflow_id} has finished; nothing was received."
+    if work_id:
+        item = work_store.get(work_id)
+        if item is None:
+            return f"There is no work item {work_id}; nothing was received."
+        if item.closed_at:
+            return f"Work item {work_id} is closed; nothing was received."
+    return None
+
+
+async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
+                                 work_id: str):
+    """A package for his inbox, from its zip's bytes: checked and unpacked
+    exactly as a zip on this Mac is (a decision package only with its
+    check's stamp, decision_stamp.py), recorded, then its attention item
+    and hints. Nothing is shown. (the arrival, the package, "") or (None,
+    None, why not)."""
+    problem = await asyncio.to_thread(_check_inbox_links, workflow_id, work_id)
+    if problem:
+        return None, None, problem
+
+    async def chunks():
+        yield data
+    try:
+        token = data_paths.ensure_tool_token()
+        package, fresh = await work_packages.unpack_held(
+            chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
+    except (work_packages.PackageError, OSError) as e:
+        return None, None, str(e)
+    agent = agent_directory.names_by_session().get(sender.session, "") if sender.session else ""
+    sender = package_inbox.Sender(sender.project, sender.session, agent)
+    try:
+        arrival = await asyncio.to_thread(
+            package_inbox.arrive, package, hashlib.sha256(data).hexdigest(), sender,
+            workflow_id=workflow_id, work_id=work_id)
+    except package_inbox.InboxRefused as e:
+        return None, None, str(e)
+    _inbox_closed(arrival.superseded)
+    if arrival.fresh:
+        _inbox_attend(arrival.entry)
+        _inbox_wait(arrival.entry, "wait_started")
+    _hint_inbox([arrival.entry, *arrival.superseded])
+    log.info("package inbox: %s arrived as %s%s", package.id, arrival.entry.id,
+             "" if arrival.fresh else " (already open)")
+    return arrival, package, ""
+
+
+def _inbox_one(reference: str):
+    """(the one open package `reference` names, None) or (None, what to say)."""
+    found = package_inbox.find(reference)
+    if not found:
+        return None, ("No package in the inbox fits that, sir; package_inbox lists them. "
+                      "Nothing was changed.")
+    if len(found) > 1:
+        return None, (f"That could be any of {_say_number(len(found))} packages in the inbox: "
+                      f"{', '.join(e.id for e in found)}. Ask him which. Nothing was changed.")
+    return found[0], None
+
+
+def _inbox_package(entry):
+    """(its unpacked package, None) or (None, why not)."""
+    try:
+        return work_packages.find(entry.package_id), None
+    except work_packages.PackageError as e:
+        return None, f"{e} Nothing was changed."
+
+
+def _inbox_recount(package, how: str) -> list:
+    """Read the deck's record again and move its rows' counts and states
+    on. From any thread. The rows that changed."""
+    answered, total = package_inbox.counts(package_inbox.questions(package))
+    moved = [package_inbox.counted(e.id, answered, total, how)
+             for e in package_inbox.for_package(package.id)]
+    if moved:
+        _hint_inbox(moved)
+    return moved
+
+
+def _inbox_saved(package) -> None:
+    """The deck's frame saved a result (his Choose on the slide)."""
+    try:
+        _inbox_recount(package, package_inbox.ON_THE_PAGE)
+    except Exception:
+        log.warning("package inbox: %s's answers were not counted", package.id, exc_info=True)
+
+
+async def _open_inbox_package(reference: str, how: str):
+    """Open one package from the inbox, on his act: the page's Open (his
+    click) and the brain's acting `open_inbox_package` alike. A page
+    package is shown in the centre (`_open_package_page`); any other is in
+    JARVIS's hands, to run with him. Opened, its attention item resolved.
+    (the row, the package, "" or why it is not shown) or (None, None, why
+    not)."""
+    entry, problem = await asyncio.to_thread(_inbox_one, reference)
+    if entry is None:
+        return None, None, problem
+    package, problem = await asyncio.to_thread(_inbox_package, entry)
+    if package is None:
+        return None, None, problem
+    shown = ""
+    if package.manifest.runs == work_packages.PAGE:
+        _, shown = await _open_package_page(package.id)
+        if shown:
+            return entry, package, shown
+    elif how == package_inbox.ON_THE_PAGE:
+        # Nothing is shown for a package that runs another way: JARVIS runs it.
+        return entry, package, ("It is not a page: ask JARVIS to open it, and it follows the "
+                                "package with you.")
+    try:
+        entry = await asyncio.to_thread(package_inbox.opened, entry.id, how)
+    except package_inbox.InboxRefused as e:
+        return None, None, str(e)
+    _attention_resolved("package", entry.id)
+    moved = await asyncio.to_thread(_inbox_recount, package, how)
+    entry = next((e for e in moved if e.id == entry.id), entry)
+    _hint_inbox([entry])
+    return entry, package, ""
+
+
+def _inbox_option(question, said: str) -> Optional[str]:
+    """The option `said` names: its id, its name, its letter, recommended,
+    later or none (decide.py's own words for them)."""
+    said = " ".join(str(said or "").split()).lower()
+    if said in package_inbox.SPECIAL:
+        return said
+    if said in ("recommended", "the recommended one"):
+        return question.recommended or None
+    for o in question.options:
+        if said in (o["id"].lower(), o["name"].lower()):
+            return o["id"]
+    letters = dict(zip("abcdefghij", question.options))
+    if said in letters:
+        return letters[said]["id"]
+    for special, words in package_inbox.SPECIAL.items():
+        if said == words.lower():
+            return special
+    return None
+
+
+async def _answer_inbox_decision(reference: str, decision: str, option: str, words: str,
+                                 how: str):
+    """Record his answer to one of a decision package's questions through
+    the package's own scripts/decide.py, run with a fixed argument list and
+    no shell: the brain's `answer_package_decision` and the Work tab's
+    answer alike. (the row, what was recorded) or (None, why not)."""
+    entry, problem = await asyncio.to_thread(_inbox_one, reference)
+    if entry is None:
+        return None, problem
+    package, problem = await asyncio.to_thread(_inbox_package, entry)
+    if package is None:
+        return None, problem
+    asked = await asyncio.to_thread(package_inbox.questions, package)
+    if not asked:
+        return None, f"{entry.id} asks no decisions. Nothing was recorded."
+    question = next((q for q in asked if q.id.lower() == decision.strip().lower()), None)
+    if question is None and not decision.strip():
+        open_ones = [q for q in asked if q.applies and not q.answer]
+        question = open_ones[0] if len(open_ones) == 1 else None
+    if question is None:
+        return None, (f"That is not one of its decisions; they are "
+                      f"{', '.join(q.id for q in asked)}. Nothing was recorded.")
+    if not question.applies:
+        return None, (f"{question.id} is not asked yet: it follows another decision's answer. "
+                      f"Nothing was recorded.")
+    chosen = _inbox_option(question, option)
+    if chosen is None:
+        return None, (f"{question.id} takes one of {', '.join(o['id'] for o in question.options)}"
+                      f", recommended, later or none. Nothing was recorded.")
+    note = " ".join(str(words or "").split())[:500]
+    argv = [sys.executable, "-I", str(package.folder / package_inbox.DECIDE), question.id, chosen]
+    if note:
+        argv.append(note)
+    try:
+        ran = await asyncio.to_thread(
+            subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
+            timeout=DECIDE_TIMEOUT_SEC, env={**os.environ, **work_packages.command_env(package)})
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"The package's decide.py could not run ({type(e).__name__}). Nothing was recorded."
+    if ran.returncode != 0:
+        return None, "The package's decide.py refused that answer. Nothing was recorded."
+    moved = await asyncio.to_thread(_inbox_recount, package, how)
+    entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
+    return entry, (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
+                   if entry.decisions_total else "Recorded.")
+
+
+def _inbox_answers_text(entry, package) -> str:
+    """The message that carries his answers back to the sending session,
+    read back to him before it goes: JARVIS's own words, the package's
+    folder name, each decision's and answer's id (package_inbox.ID) and his
+    own words, and where the package's full record is. No title, question
+    or option name: those are the sender's words."""
+    head = f"Tim's answers to your package {package.id} ({entry.id}):"
+    if entry.is_decisions:
+        lines = [head] + [f"- {q.id}: {q.answered_id() or 'not answered'}"
+                          for q in package_inbox.questions(package) if q.applies]
+        lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
+                     f" (and {package_inbox.SUMMARY} beside it).")
+    else:
+        lines = [f"Tim has finished with your package {package.id} ({entry.id}). Anything it "
+                 f"saved is in {package.folder / work_packages.RESULTS}."]
+    return "\n".join(lines)[:CAPTURE_MAX_CHARS]
+
+
+def _inbox_workflow_answers(entry, package) -> None:
+    """His answers, as the workflow's own decisions: each answered question
+    asked and answered at once under its id, so its reporter reads it with
+    `workflow_report.py answer <id> <decision>`. A key already answered
+    there is left as it is. Never raises."""
+    if not entry.workflow_id:
+        return
+    made = w = None
+    for q in package_inbox.questions(package):
+        if not (q.applies and q.answer) or not workflow_store.SLUG.fullmatch(q.id.lower()):
+            continue
+        key = q.id.lower()
+        try:
+            workflow_store.record(workflow_store.WorkflowEvent(
+                entry.workflow_id, "decision_needed", None, q.question or key,
+                {"key": key, "options": [o["name"] for o in q.options],
+                 "recommendation": q.option_name(q.recommended) if q.recommended else "",
+                 "package": entry.id}))
+            event = workflow_store.WorkflowEvent(
+                entry.workflow_id, "decision_made", None, f"Answered in the package: {key}.",
+                {"key": key, "answer": q.answered_words()[:workflow_store.SUMMARY_MAX],
+                 "by": "user"})
+            w, made = workflow_store.record(event), event
+        except workflow_store.WorkflowRefused:
+            continue
+    if made is not None:
+        _workflow_recorded(w, made)
+    _inbox_wait(entry, "wait_ended")
+
+
+async def _return_package_answers(reference: str, how: str):
+    """Send his answers back: the page's Send answers and the brain's acting
+    `return_package_answers` alike. First, when it belongs to a workflow,
+    as that workflow's decisions; then as a capture addressed to the session
+    that sent it, which is read back naming it and goes only on his yes or
+    Send, as every message to a session does. The row is returned once that
+    message has gone (`package_inbox.follow_messages`). (the row, what to
+    do next) or (None, why not)."""
+    entry, problem = await asyncio.to_thread(_inbox_one, reference)
+    if entry is None:
+        return None, problem
+    package, problem = await asyncio.to_thread(_inbox_package, entry)
+    if package is None:
+        return None, problem
+    try:
+        package_inbox.check_return(entry)
+    except package_inbox.InboxRefused as e:
+        return None, f"{e} Nothing was sent."
+    text = await asyncio.to_thread(_inbox_answers_text, entry, package)
+    # On the loop: it tells the pages and the attention record as it goes.
+    _inbox_workflow_answers(entry, package)
+    to = agent_directory.names_by_session().get(entry.from_session) if entry.from_session else None
+    capture = None
+    if to:
+        capture = _new_capture()
+        _set_capture(capture, text, to, entry.from_session)
+    try:
+        entry = await asyncio.to_thread(package_inbox.return_asked, entry.id,
+                                        capture["id"] if capture else None, how)
+    except package_inbox.InboxRefused as e:
+        return None, f"{e} Nothing was sent."
+    _hint_inbox([entry])
+    if capture is None:
+        return entry, ("Its answers are recorded" + (" and its workflow has them" if entry.workflow_id
+                       else "") + ", but the session that sent it is not running, so no message "
+                       "went back. It is returned.")
+    return entry, (f"Capture {capture['id']} holds the answers for "
+                   f"{_plain_name(to, 'its session')}. Read it back now with read_capture; it "
+                   f"goes only on his yes or Send.")
+
+
+async def _close_inbox_package(reference: str, how: str):
+    """Dismiss a package, or close one whose answers have gone back: the
+    page's Dismiss and Close and the brain's acting `close_inbox_package`
+    alike. (the row, "") or (None, why not)."""
+    entry, problem = await asyncio.to_thread(_inbox_one, reference)
+    if entry is None:
+        return None, problem
+    try:
+        entry = await asyncio.to_thread(package_inbox.close, entry.id, how)
+    except package_inbox.InboxRefused as e:
+        return None, f"{e} Nothing was changed."
+    _inbox_closed([entry])
+    _hint_inbox([entry])
+    return entry, ""
+
+
+def _follow_inbox_messages() -> None:
+    """A message JARVIS sent has moved on: an inbox row whose answers it
+    carries is returned, or closed once its session has answered. Never
+    raises."""
+    try:
+        moved = package_inbox.follow_messages()
+    except Exception:
+        log.warning("package inbox: messages were not followed", exc_info=True)
+        return
+    if moved:
+        _inbox_closed([e for e in moved if e.state == package_inbox.CLOSED])
+        _hint_inbox(moved)
+
+
+package_inbox_api.mount(app, package_inbox_api.Calls(
+    receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
+    give_back=_return_package_answers, close=_close_inbox_package))
+
+
+# The states as the brain reads them.
+_INBOX_STATE_SAID = {
+    package_inbox.ARRIVED: "not opened yet",
+    package_inbox.OPENED: "opened",
+    package_inbox.ANSWERING: "partly answered",
+    package_inbox.ANSWERED: "answered, not sent back yet",
+    package_inbox.RETURNED: "answers sent back, waiting for the sender",
+    package_inbox.CLOSED: "closed",
+}
+
+
+def _inbox_line(entry) -> str:
+    """One package as the brain reads it: the sender's words included, so
+    the caller walls it."""
+    counts = (f", {entry.decisions_answered} of {entry.decisions_total} decisions answered"
+              if entry.decisions_total else f", a {entry.runs} package")
+    why = f" ({entry.closed_why})" if entry.closed_why else ""
+    links = (f", for workflow {entry.workflow_id}" if entry.workflow_id else "") + \
+        (f", for work item {entry.work_id}" if entry.work_id else "")
+    return (f"{entry.id}: {entry.title}, from {entry.sender_name() or 'an unknown sender'}"
+            f"{counts}{links}. {_INBOX_STATE_SAID[entry.state]}{why}.")
+
+
+def _inbox_questions(asked) -> str:
+    lines = []
+    for q in asked:
+        options = "; ".join(f"{o['id']}: {o['name']}: {o['says']}" for o in q.options)
+        lines.append(f"decision {q.id}: {q.question}"
+                     + ("" if q.applies else " (not asked yet: it follows another answer)")
+                     + (f" Context: {q.context}" if q.context else "")
+                     + f" Options: {options}."
+                     + (f" Recommended: {q.recommended}, because {q.reason}" if q.recommended
+                        else "")
+                     + f" Recorded: {q.answered_words() or 'not answered'}.")
+    return "\n".join(lines)
+
+
+def tool_package_inbox(args: dict) -> str:
+    """The packages agents have sent him: the open ones, the closed ones, or
+    one in full with its questions."""
+    reference = str(args.get("package") or "").strip()
+    if reference:
+        entry, problem = _inbox_one(reference)
+        if entry is None:
+            return problem.replace(" Nothing was changed.", "")
+        package, _ = _inbox_package(entry)
+        asked = package_inbox.questions(package) if package else []
+        body = _inbox_line(entry) + (f"\nPurpose: {entry.purpose}" if entry.purpose else "")
+        if asked:
+            body += "\n" + _inbox_questions(asked)
+        return ("One package in his inbox.\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
+    rows = package_inbox.listing(closed=bool(args.get("closed")))
+    if not rows:
+        return ("No closed packages, sir." if args.get("closed")
+                else "The package inbox is empty, sir.")
+    n = len(rows)
+    head = (f"{_say_number(n).capitalize()} {'closed ' if args.get('closed') else ''}"
+            f"package{'s' if n != 1 else ''} in his inbox, newest first. Name the sender and the "
+            f"title when he asks; never open one he has not asked for.")
+    return head + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, "\n".join(_inbox_line(e) for e in rows))
+
+
+async def tool_open_inbox_package(args: dict) -> str:
+    """Open one package from his inbox, because he asked."""
+    # An acting tool: it runs only on a turn he drove, so this is his act.
+    entry, package, problem = await _open_inbox_package(str(args.get("package") or ""),
+                                                        package_inbox.BY_VOICE)
+    if entry is None:
+        return problem
+    if problem:
+        return f"{problem} It was not opened."
+    asked = package_inbox.questions(package)
+    if package.manifest.runs == work_packages.PAGE:
+        what_next = f"{entry.id} is open in the centre of his screen, sir. "
+        if asked:
+            what_next += ("Read him the first open decision and its recommendation from the "
+                          "list below. Record each answer he gives with answer_package_decision "
+                          "(the deck shows it within seconds); once every one is answered, ask "
+                          "whether to send the answers back, then return_package_answers.")
+        else:
+            what_next += ("When he says he has finished with it, return_package_answers tells "
+                          "the sender.")
+        body = package.manifest.as_json() + ("\n" + _inbox_questions(asked) if asked else "")
+        return what_next + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body)
+    return _package_opened(package, True, _PACKAGE_HOW[package.manifest.runs]
+                           + " When he has finished with it, return_package_answers tells the "
+                             "sender.")
+
+
+async def tool_answer_package_decision(args: dict) -> str:
+    """Record his answer to one of an inbox package's decisions."""
+    entry, said = await _answer_inbox_decision(
+        str(args.get("package") or ""), str(args.get("decision") or ""),
+        str(args.get("option") or ""), str(args.get("words") or ""), package_inbox.BY_VOICE)
+    if entry is None:
+        return said
+    if entry.decisions_total and entry.state == package_inbox.ANSWERED:
+        said += (" Every decision is answered: ask him whether to send the answers back "
+                 "(return_package_answers).")
+    return said
+
+
+async def tool_return_package_answers(args: dict) -> str:
+    """Send his answers back to the package's sender, on his word."""
+    entry, said = await _return_package_answers(str(args.get("package") or ""),
+                                                package_inbox.BY_VOICE)
+    return said
+
+
+async def tool_close_inbox_package(args: dict) -> str:
+    """Dismiss a package from his inbox, or close one whose answers went back."""
+    entry, problem = await _close_inbox_package(str(args.get("package") or ""),
+                                                package_inbox.BY_VOICE)
+    if entry is None:
+        return problem
+    return ("Closed, sir." if entry.closed_why == package_inbox.DONE
+            else "Dismissed, sir; what was answered is kept in its record.")
+
+
+TOOL_HANDLERS.update({
+    "package_inbox": tool_package_inbox,
+    "open_inbox_package": tool_open_inbox_package,
+    "answer_package_decision": tool_answer_package_decision,
+    "return_package_answers": tool_return_package_answers,
+    "close_inbox_package": tool_close_inbox_package,
+})
+ACTING_TOOLS.update({"open_inbox_package", "answer_package_decision",
+                     "return_package_answers", "close_inbox_package"})
+TAINTING_TOOLS.update({
+    "package_inbox": "the titles and questions of packages agents sent",
+    "open_inbox_package": "a package's own package.json, skill and questions, which an agent wrote",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "answer_package_decision": "it records his answer and says how many are answered, in "
+                               "JARVIS's words",
+    "return_package_answers": "it opens a capture of his answers for its read-back and says so",
+    "close_inbox_package": "it closes a package and says so",
 })
 
 
@@ -8512,7 +9260,7 @@ def _workflow_detail(w) -> str:
                      + (f" Options: {options}." if options else "")
                      + (f" Recommended: {o.detail['recommendation']}."
                         if o.detail.get("recommendation") else ""))
-    for e in workflow_store.events(w.id)[-WORKFLOW_EVENTS_SHOWN:]:
+    for e in workflow_store.latest(w.id, WORKFLOW_EVENTS_SHOWN):
         lines.append(f"event {e.seq} {e.kind}{' ' + e.item if e.item else ''}: {e.summary}")
     return "\n".join(lines)
 
@@ -8751,9 +9499,11 @@ def _voice_input_settings_said(settings: dict) -> str:
     sounds = ("A quiet sound plays when listening starts and when it stops. " if settings["sounds"]
               else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
+    speaking = ("JARVIS's speech is muted: it answers in text only, and only he can unmute it. "
+                if settings["speech_muted"] else "JARVIS's speech is on. ")
     said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
             f"from JARVIS, it will {switch}. {patience}{sounds}{_cues_said(settings)}"
-            f"These are {whose}'s settings")
+            f"{speaking}These are {whose}'s settings")
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
 
 
@@ -8892,6 +9642,11 @@ async def _stop_speaking(by: str) -> bool:
     was = speech.is_speaking
     log.info("hush: stopped by %s", by)
     await speech.barge_in(reason=f"hush ({by})")
+    # Stop means the story too, told or waiting for his answer: it is not
+    # left to start again at the next slide.
+    if story_teller.telling is not None:
+        was = True
+        await story_teller.stop(f"with Stop speaking ({by})")
     return was
 
 
@@ -8906,7 +9661,7 @@ async def tool_skip_reading(args: dict) -> str:
 async def tool_stop_speaking(args: dict) -> str:
     """The page's Stop, by voice: all audio, now. Nothing sounding, nothing
     is touched: his own reply still to come is not silenced in advance."""
-    if speech is None or not speech.is_speaking:
+    if speech is None or not (speech.is_speaking or story_teller.telling is not None):
         return "Nothing was being said, sir."
     await _stop_speaking("the brain")
     return "Stopped speaking, sir. No request was cancelled and nothing was undone."
@@ -8934,14 +9689,53 @@ async def tool_quiet_microphone(args: dict) -> str:
             "Only he can unmute it.")
 
 
+def _mute_speech() -> str | None:
+    """His speech mute on, as the page's speaker and headset turn it on:
+    `voice_control.change`, whose publish stops what is sounding. The
+    refusal's words, or None once it is on."""
+    try:
+        voice_control.change(speech_muted=True)
+    except (voice_control.Invalid, voice_control.Unreadable) as e:
+        return f"Nothing was changed, sir: {getattr(e, 'message', None) or e}"
+    return None
+
+
+async def tool_mute_speech(args: dict) -> str:
+    """The page's speaker muting JARVIS's speech, by voice or typing. Only
+    ever quieter: unmuting is his own click on the speaker or the headset."""
+    refused = _mute_speech()
+    if refused:
+        return refused
+    return ("Muted JARVIS's speech, sir: it answers in text only from now on, and anything "
+            "sounding has stopped. Only he can unmute it, with the speaker or the headset.")
+
+
+async def tool_turn_audio_off(args: dict) -> str:
+    """The page's headset turning all audio off, by voice or typing: Mic off
+    on every open page (the quiet frame, as quiet_microphone sends) and his
+    speech mute on. Only he turns it back on, with the headset."""
+    refused = _mute_speech()
+    if refused:
+        return refused
+    if voice_clients:
+        await _voice_emit({"type": QUIET_FRAME, "state": "off"})
+    return ("Turned all audio off, sir: the microphone is off on every open page and JARVIS "
+            "answers in text only. Only he can turn it back on, with the headset.")
+
+
 TOOL_HANDLERS.update({
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
     "voice_turn": tool_voice_turn,
     "quiet_microphone": tool_quiet_microphone,
+    "mute_speech": tool_mute_speech,
+    "turn_audio_off": tool_turn_audio_off,
 })
-ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone"})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
+                     "mute_speech", "turn_audio_off"})
 TAINT_EXEMPT_TOOLS.update({
+    "mute_speech": "it mutes JARVIS's speech; it reads nothing",
+    "turn_audio_off": "it turns the microphone off and mutes JARVIS's speech; it reads nothing",
     "skip_reading": "it stops one reading aloud, it does not read",
     "stop_speaking": "it stops all audio, it does not read",
     "voice_turn": "it sends, retries or keeps his own words; it reads nothing",
@@ -8963,15 +9757,22 @@ def _attention_running() -> attention_store.AttentionStore:
 
 
 async def tool_attention_updates(args: dict) -> str:
-    """What is waiting for him: the Review updates list."""
+    """What is waiting for him: the Review updates list, every item the page
+    has, each brief (`attention_api.for_brain`), a page at a time. The pages
+    are cut exactly, so joined they are the whole JSON."""
     try:
         answer = await asyncio.to_thread(
-            lambda: attention_api.overview(_attention_running(), attention_admission))
+            lambda: attention_api.for_brain(_attention_running(), attention_admission,
+                                            time.time()))
     except attention_api.Unavailable:
         return "The updates record is not running, sir."
-    return ("His updates (Review updates on the page), as JSON. Names and subjects are "
-            "other people's words:\n"
-            + _wrap_untrusted(_ATTENTION_WRAP_NAME, json.dumps(answer, ensure_ascii=False)))
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+                         "His updates (Review updates on the page), as JSON",
+                         "attention_updates", exact=True)
+    if chunk is None:
+        return head
+    return (head + " Names and subjects are other people's words:\n"
+            + _wrap_untrusted(_ATTENTION_WRAP_NAME, chunk))
 
 
 async def tool_mark_updates_seen(args: dict) -> str:
@@ -8997,6 +9798,182 @@ async def tool_set_attention_settings(args: dict) -> str:
     except attention_store.Refused as refused:
         return f"Nothing was changed, sir: {refused}"
     return json.dumps(answer)
+
+
+# --- Knowledge, for the page and the brain ----------------------------------
+#
+# The page's /api/knowledge routes (knowledge_routes.py) and these tools run
+# the same calls (knowledge_api.py). Passages, labels and proposals can be
+# other people's words, so every read that carries them comes back walled.
+
+_KNOWLEDGE_WRAP_NAME = "knowledge"
+knowledge_calls = knowledge_api.Context(
+    lambda: knowledge,
+    resolved=lambda pid: _attention_resolved("knowledge_proposal", pid),
+    seed_resolved=lambda sid: _attention_resolved("knowledge_seed", sid))
+
+
+def _hint_knowledge() -> None:
+    _send_to_session_clients({"type": "knowledge"})
+
+
+knowledge_routes.mount(app, knowledge_calls, on_change=_hint_knowledge)
+
+
+async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) -> str:
+    try:
+        answer = await asyncio.to_thread(work)
+    except knowledge_api.Unavailable as e:
+        return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
+    except knowledge_api.Refused as e:
+        # The engine's refusal can name what the call was given (a key, a
+        # kind, a target), so it is walled like the answers.
+        return ("Nothing was done, sir. The knowledge engine's refusal, which may "
+                "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
+    text = json.dumps(answer, ensure_ascii=False)
+    if not walled and len(text) <= REPLY_PAGE_CHARS:
+        return text
+    head, chunk = _paged(text, _page_arg(args), what or "The answer, as JSON", tool, exact=True)
+    if chunk is None:
+        return head
+    if not walled:
+        return head + "\n" + chunk
+    return (head + " Passages and names are what JARVIS read, each with its trust; "
+            "untrusted ones are other people's words:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, chunk))
+
+
+async def tool_knowledge_status(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.status(knowledge_calls),
+                                 "", "knowledge_status", walled=False)
+
+
+async def tool_knowledge_search(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.search(
+        knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
+        include_untrusted=args.get("include_received", True) is not False,
+        kinds=args.get("kinds"), limit=args.get("limit") or 10),
+        "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
+    return answer
+
+
+async def tool_knowledge_entity(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.entity(
+        knowledge_calls, name=args.get("name"), key=args.get("key")),
+        "Every match for that name and the first one's card, as JSON", "knowledge_entity", walled=True)
+    return answer
+
+
+async def tool_knowledge_proposals(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.proposals(knowledge_calls),
+                                 "The links JARVIS proposes, waiting for his yes, as JSON",
+                                 "knowledge_proposals", walled=True)
+
+
+async def tool_knowledge_topics(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.topics(knowledge_calls),
+                                 "", "knowledge_topics", walled=False)
+
+
+async def tool_link_knowledge(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.change_links(
+        knowledge_calls, action=str(args.get("action") or ""), topic=args.get("topic"),
+        kind=args.get("kind"), target=args.get("target"), proposal=args.get("proposal")),
+        "", "link_knowledge", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+def _topic_change_said(answer: dict) -> dict:
+    """What change_topic tells the brain: the topic's slug (checked to be
+    [a-z0-9-]) and its fixed status and pin words only. Its name and aliases
+    are not echoed, so nothing a session might have put in them reaches the
+    brain unwalled; knowledge_topics reads them."""
+    topic = answer.get("topic") or {}
+    return {"done": answer.get("done"), "topic": topic.get("slug"),
+            "status": topic.get("status"), "pinned": topic.get("pinned")}
+
+
+async def tool_change_topic(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: _topic_change_said(knowledge_api.change_topics(
+        knowledge_calls, action=str(args.get("action") or ""), topic=args.get("topic"),
+        name=args.get("name"), status=args.get("status"), exact=args.get("exact"),
+        ambiguous=args.get("ambiguous"), remove_aliases=args.get("remove_aliases"))),
+        "", "change_topic", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+async def tool_reindex_knowledge(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.maintain(
+        knowledge_calls, action=str(args.get("action") or ""), source=args.get("source")),
+        "", "reindex_knowledge", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+async def tool_knowledge_indexes(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.indexes(knowledge_calls),
+                                 "", "knowledge_indexes", walled=False)
+
+
+async def tool_change_knowledge_index(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.choose_index(
+        knowledge_calls, key=str(args.get("key") or ""), choice=str(args.get("choice") or "")),
+        "", "change_knowledge_index", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+async def tool_knowledge_seeds(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.seeds(knowledge_calls),
+                                 "", "knowledge_seeds", walled=False)
+
+
+async def tool_change_knowledge_seed(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.answer_seed(
+        knowledge_calls, seed=str(args.get("seed") or ""), action=str(args.get("action") or "")),
+        "", "change_knowledge_seed", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+TOOL_HANDLERS.update({
+    "knowledge_status": tool_knowledge_status,
+    "knowledge_search": tool_knowledge_search,
+    "knowledge_entity": tool_knowledge_entity,
+    "knowledge_proposals": tool_knowledge_proposals,
+    "knowledge_topics": tool_knowledge_topics,
+    "link_knowledge": tool_link_knowledge,
+    "change_topic": tool_change_topic,
+    "reindex_knowledge": tool_reindex_knowledge,
+    "knowledge_indexes": tool_knowledge_indexes,
+    "change_knowledge_index": tool_change_knowledge_index,
+    "knowledge_seeds": tool_knowledge_seeds,
+    "change_knowledge_seed": tool_change_knowledge_seed,
+})
+ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
+                     "change_knowledge_seed"})
+TAINTING_TOOLS.update({
+    "knowledge_search": "passages from agents, runs, workflows and other people",
+    "knowledge_entity": "labels and passages from what JARVIS read",
+    "knowledge_proposals": "the names of documents other people or agents wrote",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "knowledge_status": "it reports the engine's own state and counts",
+    "knowledge_topics": "it reads his own topic files' names, statuses and links",
+    "link_knowledge": "it writes his own topic files on his word, it does not read",
+    "change_topic": "it writes his own topic files on his word, it does not read",
+    "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
+    "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
+    "change_knowledge_index": "it writes his own settings note on his word, it does not read",
+    "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
+    "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
+})
 
 
 TOOL_HANDLERS.update({
@@ -9073,7 +10050,8 @@ def _subsystems() -> list:
         local_voice=(_voice_output_status() if os.environ.get("JARVIS_TTS_PROVIDER") == "local" else None),
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
-                 if folder_catalog is not None else None))
+                 if folder_catalog is not None else None),
+        knowledge_health=knowledge.health() if knowledge is not None else None)
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -9443,6 +10421,237 @@ TAINT_EXEMPT_TOOLS.update({
     "answer_workflow_decision": "it records his answer to a decision, it does not read",
     "dismiss_workflow": "it takes a finished workflow off the list, it does not read",
 })
+
+
+# --- The Work tracker (work_store.py, work_api.py) --------------------------
+#
+# Each piece of work in progress, on a zip or a folder, and exactly who is
+# on each of its pieces. Agents report to it as they do to the workflow
+# monitor; the Work tab and `work_status` read the same record, and his
+# answer to a decision goes through `work_api.answer_decision` from the page
+# and the brain alike. Every committed change is a `work` hint, written
+# after the record.
+
+_WORK_WRAP_NAME = "work"
+WORK_EVENTS_SHOWN = 12
+# What of a report is news to him: an attention item, never spoken here.
+_WORK_NEWS_STATES = {work_store.BLOCKED: "blocked", work_store.DONE: "done"}
+
+
+# Whether the news an item's attention item carries is still so, by its event.
+_WORK_NEWS_HOLDS = {
+    "decision_needed": lambda item: bool(item.decisions),
+    "blocked": lambda item: item.reported_state == work_store.BLOCKED,
+    "done": lambda item: item.reported_state == work_store.DONE,
+}
+
+
+def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
+    """After every change: the pages read the record again; a decision
+    needed, or a report that the item is blocked or done, is an attention
+    item, which is resolved once what it says is no longer so (the decision
+    answered with none left open, the item no longer blocked or done)."""
+    _send_to_session_clients({"type": "work"})
+    said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
+    if kind == work_store.CLOSED:
+        # Closed for good: nothing it said is news any longer.
+        _attention_resolved("work", item.id)
+    elif kind == work_store.DECISION_NEEDED:
+        _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
+    elif said_state in _WORK_NEWS_STATES:
+        _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})
+    elif _work_news_stale(item):
+        _attention_resolved("work", item.id)
+
+
+def _work_news_stale(item) -> bool:
+    """Whether the item's attention item says something no longer so.
+    Never raises: an item that cannot be read is left as it is."""
+    if attention_record is None:
+        return False
+    try:
+        news = attention_record.get("work", item.id)
+    except Exception:
+        log.warning("attention: work %s was not read", item.id, exc_info=True)
+        return False
+    holds = _WORK_NEWS_HOLDS.get(news.event) if news is not None else None
+    return holds is not None and not holds(item)
+
+
+work_api.mount(app, _work_recorded)
+
+
+def _work_who(piece, names: work_api.WhoNames) -> str:
+    if piece.who.kind == work_store.TIM:
+        owner = "him"
+    else:
+        name = names(piece.who)
+        owner = f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
+    # The worker label is the reporter's own words, never a record JARVIS checked.
+    return owner + (f", worker as the agent calls it: {piece.worker}" if piece.worker else "")
+
+
+def _work_piece(p, names: work_api.WhoNames) -> str:
+    """One piece, in dependency order: who is on it, its latest note, the
+    pieces it comes after (those not done yet named), and its evidence."""
+    line = f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}"
+    if p.note:
+        line += f"; latest note: {p.note}"
+    if p.after:
+        line += f"; after {', '.join(p.after)}"
+        line += f" (waits for {', '.join(p.waits_for)})" if p.waits_for else " (all done)"
+    if p.evidence:
+        line += "; evidence: " + ", ".join(f"{e.kind} {e.value}" for e in p.evidence)
+    return line
+
+
+# How each kind of blocker reads to the brain (work_store.BLOCKER_KINDS).
+_WORK_BLOCKER_SAID = {
+    work_store.DECISION_BLOCKER: "his decision {key}: {title}",
+    work_store.ITEM_BLOCKED: "the item is blocked: {text}",
+    work_store.PIECE_BLOCKED: "piece {key} ({title}) is blocked: {text}",
+    work_store.PIECE_WAITING: "piece {key} ({title}) waits on him: {text}",
+    work_store.PIECE_AFTER: "piece {key} ({title}) waits for {after}",
+}
+
+
+def _work_blocker(b) -> str:
+    return _WORK_BLOCKER_SAID[b.kind].format(key=b.key, title=b.title, text=b.text or "no note",
+                                             after=", ".join(b.waits_for))
+
+
+def _work_line(item) -> str:
+    """One item on the list: its state, how many decisions wait on him, how
+    many of its pieces are blocked or waiting on him, its one useful update,
+    and the first thing holding it up."""
+    package_questions = package_inbox.waiting_by_work().get(item.id, 0)
+    marks = [f"{n} {one if n == 1 else many}" for n, one, many in (
+        (len(item.decisions), "decision needed", "decisions needed"),
+        (package_questions, "package question waiting", "package questions waiting"),
+        (item.blocked_pieces, "piece blocked", "pieces blocked"),
+        (item.waiting_pieces, "piece waiting on him", "pieces waiting on him")) if n]
+    others = [b for b in item.blockers if b.kind != work_store.DECISION_BLOCKER]
+    return (f"{item.id}: {item.title}. {item.state}{', no recent update' if item.quiet else ''}"
+            + (", closed" if item.closed_at else "")
+            + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
+            + (f" Held up by: {_work_blocker(others[0])}"
+               + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
+
+
+def _work_detail(item) -> str:
+    """What the agents reporting it wrote: its title, area, source, what is
+    holding it up, pieces in order and who is on each, open decisions (with
+    the package each asks him to look at) and answered ones, and the latest
+    events. Untrusted."""
+    lines = [f"{item.id}: {item.title}. State {item.state}"
+             + (", no recent update" if item.quiet else "")
+             + (", closed" if item.closed_at else "")
+             + (", in History" if item.history else "") + ".",
+             f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
+             f"Source: {item.source_kind} {item.source_path} ({item.source}).",
+             f"Latest update: {item.latest_update}"]
+    lines += [f"held up by {_work_blocker(b)}" for b in item.blockers]
+    names = work_api.WhoNames()
+    for p in item.pieces:
+        lines.append(_work_piece(p, names))
+    for d in item.decisions:
+        lines.append(f"open decision {d.key}: {d.question}"
+                     + (f" Options: {d.options}." if d.options else "")
+                     + (f" Recommended: {d.recommendation}." if d.recommendation else "")
+                     + (f" Package to look at first: {d.package} (open_package_page shows it)."
+                        if d.package else ""))
+    for a in item.answered:
+        lines.append((f"withdrawn decision {a.key}: {a.question} Withdrawn by the agent that "
+                      f"asked it, not answered by him: {a.answer}" if a.where == work_store.WITHDRAWN
+                      else f"answered decision {a.key}: {a.question} His answer ({a.where}): "
+                           f"{a.answer}")
+                     + (f" Package: {a.package}." if a.package else ""))
+    for entry in package_inbox.for_work(item.id):
+        lines.append(f"package {_inbox_line(entry)} Its questions are answered with "
+                     f"answer_package_decision, package {entry.id}:")
+        package, _ = _inbox_package(entry)
+        if package is not None:
+            lines.append(_inbox_questions(package_inbox.questions(package)))
+    for e in work_store.latest(item.id, WORK_EVENTS_SHOWN):
+        lines.append(f"event {e.seq} {e.kind}: {e.summary}")
+    return "\n".join(lines)
+
+
+def _work_or_explain(reference: str):
+    """(the one item `reference` means, None) or (None, what to say)."""
+    found = work_store.find(reference)
+    if not found:
+        return None, "No work item goes by that name; work_status with no item lists them."
+    if len(found) > 1:
+        return None, (f"That could be any of {_say_number(len(found))} work items, sir; "
+                      "work_status with no item lists them by id.")
+    return found[0], None
+
+
+def tool_work_status(args: dict) -> str:
+    """Every work item, or one in full, from the Work tracker's record."""
+    reference = str(args.get("item") or "").strip()
+    if reference:
+        item, problem = _work_or_explain(reference)
+        if problem:
+            return problem
+        return (f"One work item, {item.state}{', in History' if item.history else ''}.\n"
+                + _wrap_untrusted(_WORK_WRAP_NAME, _work_detail(item)))
+    if args.get("history"):
+        past = work_store.listing(history=True)
+        if not past:
+            return "Nothing is in the Work History, sir."
+        return (f"{_say_number(len(past)).capitalize()} work item{'s' if len(past) != 1 else ''} "
+                "in History, the most recently closed or finished first.\n"
+                + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(_work_line(i) for i in past)))
+    items = work_store.listing()
+    in_history = len(work_store.listing(history=True))
+    later = (f" {_say_number(in_history).capitalize()} more in History; work_status with "
+             "history lists them." if in_history else "")
+    if not items:
+        return "Nothing is on the Work list, sir." + later
+    n = len(items)
+    waiting = sum(i.state == work_store.WAITING for i in items)
+    blocked = sum(i.state == work_store.BLOCKED or i.blocked_pieces > 0 for i in items)
+    lines = []
+    for group in work_store.grouped(items):
+        lines.append(f"{group.grouped_by} {group.name}:")
+        lines += [_work_line(i) for i in group.items]
+    return (f"{_say_number(n).capitalize()} work item{'s' if n != 1 else ''}"
+            + (f", {_say_number(waiting)} waiting on his decision" if waiting else "")
+            + (f", {_say_number(blocked)} blocked or with a blocked piece" if blocked else "")
+            + "." + later + "\n" + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
+
+
+async def tool_answer_work_decision(args: dict) -> str:
+    """Record his answer to one of a work item's open decisions."""
+    item, problem = _work_or_explain(str(args.get("item") or "").strip())
+    if problem:
+        return problem
+    keys = [d.key for d in item.decisions]
+    if not keys:
+        return "That work item has no open decision, sir."
+    asked = str(args.get("decision") or "").strip()
+    key = asked if asked in keys else (keys[0] if not asked and len(keys) == 1 else None)
+    if key is None:
+        return (f"That is not one of its open decisions, sir; work_status with item {item.id} "
+                "lists them.")
+    try:
+        item = await asyncio.to_thread(work_api.answer_decision, item.id, key,
+                                       args.get("answer"), "voice")
+    except work_store.WorkRefused as e:
+        return f"Nothing was recorded, sir: {e}"
+    _work_recorded(item, work_store.DECISION_MADE)
+    return "Recorded his answer, sir; the agent doing the work reads it from the record."
+
+
+TOOL_HANDLERS.update({
+    "work_status": tool_work_status,
+    "answer_work_decision": tool_answer_work_decision,
+})
+TAINTING_TOOLS["work_status"] = "a work item's reports, written by the agents doing it"
+ACTING_TOOLS.add("answer_work_decision")
+TAINT_EXEMPT_TOOLS["answer_work_decision"] = "it records his answer to a decision, it does not read"
 
 
 # --- The agents list, for the brain ----------------------------------------
@@ -12678,6 +13887,15 @@ async def voice_handler(ws: WebSocket):
                 if not typed and not turns.current(client, epoch):
                     continue                 # a stopped capture's late words
                 verdict = await speech.user_final(text, typed=typed)
+                if verdict != "echo" and story_teller.telling is not None \
+                        and story_teller_module.stop_words(text):
+                    # "Stop" stops a story at once, told or waiting, before
+                    # the brain hears it; asked again, it says it already is.
+                    stopped = await story_teller.stop("by his voice")
+                    if stopped.package is not None and not stopped.already:
+                        _notes_for_brain.append(
+                            f"His \"{text[:20]}\" stopped the story of package "
+                            f"{stopped.package.id}; it is stopped. Say so in a few words.")
                 if not typed and verdict != "echo":
                     # Accepted as his words (stop, cancel and "say that
                     # again" included). Typed words are the page's to report.

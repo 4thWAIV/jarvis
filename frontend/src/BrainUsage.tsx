@@ -1,7 +1,7 @@
 /**
  * Every brain JARVIS has, each with its own account box (WeeklyUsage.tsx):
  * how much of the week's limit is used, how far through the week it is, and
- * the reset dates. In the left column under the microphone. When there is
+ * the reset dates. In the left column under the Team Server tile. When there is
  * more than one, the one in use is marked BRAIN and the other STANDBY. Until
  * the list is read, the running brain's box alone, and a line saying the list
  * could not be read for as long as that is true (it is read again until it

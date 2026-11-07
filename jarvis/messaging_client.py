@@ -51,7 +51,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
-from jarvis import data_paths
+from jarvis import brain_activity, data_paths
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.team_client import TeamError
@@ -499,6 +499,8 @@ class Delivery:
         incoming = self.store.record_accepted(*ns, result)
         self.faults.check("client_after_local_save")
         log.info("messaging: %s accepted (attempt %d)", send.message_id, going.attempts)
+        brain_activity.note(brain_activity.PERSON_MESSAGE, brain_activity.ACCEPTED,
+                            id=str(send.message_id), counterpart=brain_activity.A_PERSON)
         if incoming:
             self._present(pairing, result.message)
         return True

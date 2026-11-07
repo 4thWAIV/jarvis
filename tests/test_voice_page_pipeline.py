@@ -428,8 +428,7 @@ BESIDE = [
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-2", "part": "dismiss"},
      ".workflow-row[data-workflow-id=wf-2]", ".workflow-item:has([data-workflow-id=wf-2]) .workflow-dismiss"),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "off"}, "#mic-control", "#btn-mic-off"),
+    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
 ]
 
 # What a leaf inside an object may not cross: its controls and the lines of
@@ -458,7 +457,8 @@ def _inside(x, y, box, tol=0.5):
 @pytest.mark.asyncio
 async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(page_url):
     """The workflow's Decisions tab, the Folders tabs, the microphone's mute
-    and off (under the row, in the lane kept below it), the reminder's
+    (under the row, in the lane kept below it; off, the row's last, is
+    reached straight from its side), the reminder's
     Sign in and a finished
     workflow's Dismiss each sit beside another part on the side their leaf
     comes from. Each is reached: along the fixed map to its object's
@@ -585,7 +585,6 @@ async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_ur
 # visibility no longer counting a holder as a cover: (the navigation that
 # shows it, the target).
 KEPT_ROOM = [
-    (None, {"region": "left", "view": "left.fixed", "kind": "status", "part": "text"}),
     (("right.tab.select", {"tab": "agents"}),
      {"region": "right", "view": "right.agents", "kind": "agentsList", "part": "next"}),
     (("main.tab.select", {"tab": "folders"}),
@@ -653,7 +652,6 @@ TOUR = [
     (("network.open", {"kind": "node", "nodeId": MINI_ID}), DETAIL_CPU, [f"main.network|node|{MINI_ID}"]),
     (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "database"},
      ["left.fixed|teamServer|"]),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, ["left.fixed|mic|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
      [WORKFLOW_BOX, "main.workflow.view", "main.workflow.phases"]),
@@ -663,10 +661,15 @@ TOUR = [
      ["main.folders|foldersList|", "main.folders.tabs"]),
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-1", "part": "row"},
-     ["right.panel"]),
+     # The Workflows list sits under the Work list in that tab (WorkPanel.tsx),
+     # so the route crosses into it too.
+     ["right.panel", "right.workflows|workflowsList|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
-     [WORKFLOW_BOX, "main.workflow.view"]),
+     [WORKFLOW_BOX, "main.workflow.view"]),    # Last, once every workflow has been read: the Conversation view, which
+    # a workflow being opened would otherwise take the centre from.
+    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"},
+     ["main.conversation|conversation|", "main.conversation|mic|"]),
 ]
 
 # Every control and line of text on show on the page but the target's own

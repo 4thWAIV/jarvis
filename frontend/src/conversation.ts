@@ -10,6 +10,7 @@
  * before a server record arrives, with utterance/turn correlation where available.
  */
 
+import { getJson } from "./fetchJson";
 import { codeWords, t, type Said } from "./locale";
 import { createStore } from "./store";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
@@ -93,12 +94,6 @@ registerCommand("thread.open", {
 });
 
 registerClose("thread.close", threadSlot);
-
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
-  return (await res.json()) as T;
-}
 
 export const getConversation = (before?: number | null) =>
   getJson<ConversationPage>(`/api/conversation${before != null ? `?before=${before}` : ""}`).then(noteAgents);

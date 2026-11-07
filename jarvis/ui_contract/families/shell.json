@@ -39,7 +39,7 @@
       "id": "right.workflows",
       "region": "right",
       "kind": "tab",
-      "label": "Workflows",
+      "label": "Work",
       "tab": "workflows"
     },
     {
@@ -69,6 +69,12 @@
       "label": "Centre notice"
     },
     {
+      "id": "main.corner",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Centre corner (the microphone, while the message input is not on screen)"
+    },
+    {
       "id": "main.conversation",
       "region": "main",
       "kind": "tab",
@@ -91,6 +97,14 @@
       "label": "Main",
       "tab": "main",
       "hidden": true
+    },
+    {
+      "id": "main.work",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work item",
+      "tab": "work",
+      "entity": "workItem"
     },
     {
       "id": "main.workflow",
@@ -155,6 +169,13 @@
       "label": "Received file",
       "tab": "file",
       "entity": "member"
+    },
+    {
+      "id": "main.knowledge",
+      "region": "main",
+      "kind": "detail",
+      "label": "Knowledge",
+      "tab": "knowledge"
     },
     {
       "id": "main.settings",
@@ -228,6 +249,7 @@
             "folders",
             "main",
             "workflow",
+            "work",
             "thread",
             "diagnostics",
             "subsystem",
@@ -235,7 +257,8 @@
             "queue",
             "package",
             "file",
-            "settings"
+            "settings",
+            "knowledge"
           ]
         }
       },

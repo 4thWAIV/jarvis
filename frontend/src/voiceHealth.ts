@@ -12,6 +12,7 @@
  * the counts not yet sent.
  */
 
+import { getJson } from "./fetchJson";
 import { liveRead } from "./liveRead";
 import { codedSaid, t, type Said } from "./locale";
 import { createStore } from "./store";
@@ -136,12 +137,6 @@ export function healthLost(): void {
 
 /** Moves on every "voice" hint on /ws/sessions. */
 export const voiceChanged = createStore(0);
-
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
-  return (await res.json()) as T;
-}
 
 export const summary = liveRead(() => getJson<Summary>("/api/voice/diagnostics"), [voiceChanged]);
 

@@ -89,7 +89,8 @@ async def _open(p, url, script=None, listen=True, before=None):
         await page.add_init_script(f"window.__transcribe = {json.dumps(script)};")
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.add_init_script(COUNT_MICROPHONES)
-    await page.goto(url + "?view=main")
+    # The Conversation view, where the microphone control is.
+    await page.goto(url)
     if listen:
         await start_listening(page)
     return browser, page, voice

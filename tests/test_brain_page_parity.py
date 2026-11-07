@@ -130,19 +130,23 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status", "attachment_location", "attention_updates")
+             "update_status", "attachment_location", "attention_updates", "work_status",
+             "knowledge_search", "knowledge_entity", "knowledge_proposals")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-            "mark_updates_seen",
-            "set_attention_settings")
+            "mute_speech", "turn_audio_off", "mark_updates_seen",
+            "set_attention_settings", "answer_work_decision",
+            "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
+            "change_knowledge_seed")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
-NEW_OWN_READS = ("speech_models", "voice_input_settings")
+NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
+                 "knowledge_indexes", "knowledge_seeds")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
@@ -179,12 +183,20 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("stop_speaking", {}),
     ("voice_turn", {"action": "send_now"}),
     ("quiet_microphone", {"state": "muted"}),
+    ("mute_speech", {}),
+    ("turn_audio_off", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
     ("open_local_package", {"path": "/tmp/x.zip"}),
     ("mark_updates_seen", {}),
     ("set_attention_settings", {"changes": {"away": True}}),
+    ("answer_work_decision", {"item": "x", "answer": "yes"}),
+    ("link_knowledge", {"action": "reject", "proposal": "x"}),
+    ("change_topic", {"action": "create", "name": "X"}),
+    ("reindex_knowledge", {"action": "refresh"}),
+    ("change_knowledge_index", {"key": "document|language,media_type", "choice": "pin"}),
+    ("change_knowledge_seed", {"seed": "denice", "action": "decline"}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -458,6 +470,25 @@ def test_answer_workflow_decision_is_recorded_as_his_by_voice(wired):
     assert ws.snapshot(wid).open == []
 
 
+def test_answer_work_decision_is_the_work_detail_s_answer(wired):
+    """The Work detail's answer and the brain's tool are one call
+    (work_api.answer_decision), recorded as his by voice; the record's words
+    come back walled."""
+    from jarvis import work_store as ws
+    folder = wired.tmp / "speech"
+    folder.mkdir()
+    item = ws.create("Speech migration", "folder", str(folder))
+    ws.record(ws.WorkEvent(item.id, "decision_needed", HOSTILE, {"key": "engine"}))
+    read = _call(wired, "work_status")
+    assert read["ok"] and "Matt" not in read["text"].partition("\n")[0]
+    assert read["text"].count("</session-output>") == 1
+    got = _call(wired, "answer_work_decision", item="speech migration", answer="kroko")
+    assert got["ok"] and got["text"].startswith("Recorded his answer")
+    made = ws.events(item.id, kinds={"decision_made"})[-1].detail
+    assert made == {"key": "engine", "answer": "kroko", "where": "voice"}
+    assert {"type": "work"} in wired.hints
+
+
 def test_dismiss_workflow_is_the_page_s_dismiss(wired):
     from jarvis import workflow_store as ws
     wid = ws.start("Rebrand", "site", ["plan"])
@@ -627,7 +658,8 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
                     "intervals": voice_control.INTERVAL_DEFAULTS,
                     "schedule": {"tentative": 1.0, "deciding": 1.75, "likely": 2.5, "send": 3.0},
                     "patience": 3.0, "sounds": True, "cues": voice_control.CUE_DEFAULTS,
-                    "volume": voice_control.VOLUME_DEFAULT, "scope": "member"}
+                    "volume": voice_control.VOLUME_DEFAULT, "speech_muted": False,
+                    "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
     assert "A quiet sound plays when listening starts" in _call(wired, "voice_input_settings")["text"]
@@ -718,18 +750,60 @@ def updates(wired, monkeypatch):
     return store
 
 
+@pytest.fixture
+def many_updates(updates):
+    """More updates than one tool result holds: twelve pending, three seen."""
+    for n in range(10):
+        updates.record("session_message", str(n), "arrived", facts={"message_id": n},
+                       untrusted={"agent": f"agent number {n} with a longish name"})
+    for n in range(3):
+        seen = updates.record("needs_board", f"project-{n}", "changed", facts={"items": n + 1},
+                              untrusted={"agent": f"builder {n}"})
+        updates.mark_seen([seen.id])
+    return updates
+
+
+def _attention_pages(wired) -> tuple[dict, int]:
+    """Every page of attention_updates joined back into its JSON, and how
+    many pages there were. Each page is walled on its own."""
+    import re
+    chunks, page, total = [], 1, 1
+    while page <= total:
+        got = _call(wired, "attention_updates", page=page)
+        assert got["ok"] and len(got["text"]) < 1500, "each page fits the tool cap whole"
+        _walled(got["text"])
+        head, block = got["text"].split("\n", 1)
+        total = int(re.search(r"page \d+ of (\d+)", head).group(1))
+        chunks.append(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
+        page += 1
+    return json.loads("".join(chunks)), total
+
+
 def test_attention_updates_is_review_updates_walled(wired, updates):
     page = wired.client.get("/api/attention").json()
-    got = _call(wired, "attention_updates")
-    assert got["ok"]
-    _walled(got["text"])
-    block = got["text"].split("\n", 1)[1]
-    told = json.loads(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
+    told, _ = _attention_pages(wired)
     assert page["pending"] == told["pending"] == 2
     assert [(i["id"], i["kind"], i["event"]) for i in told["items"]] == \
         [(i["id"], i["kind"], i["event"]) for i in page["items"]]
     assert told["settings"] == page["settings"]
     assert page["items"][1]["untrusted"]["agent"] == HOSTILE, "the page shows it as written"
+
+
+def test_the_brain_reads_every_update_the_page_shows(wired, many_updates):
+    """More than five updates: the brain reads them all, a page at a time,
+    the seen ones too, with the words each is about."""
+    page = wired.client.get("/api/attention").json()
+    told, pages = _attention_pages(wired)
+    assert len(page["items"]) == 15 and pages > 1
+    assert page["pending"] == told["pending"] == 12
+    assert [(i["id"], i["kind"], i["event"], i["state"]) for i in told["items"]] == \
+        [(i["id"], i["kind"], i["event"], i["state"]) for i in page["items"]]
+    for t, p in zip(told["items"], page["items"]):
+        if "session-output" not in json.dumps(p["untrusted"]):   # the wall breaks that one
+            assert t.get("words") == (p["untrusted"] or None)
+    assert told["settings"] == page["settings"]
+    beyond = _call(wired, "attention_updates", page=pages + 1)
+    assert f"there is no page {pages + 1}" in beyond["text"]
 
 
 def test_mark_updates_seen_is_the_seen_button(wired, updates):
@@ -780,3 +854,60 @@ def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wi
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "quiet_microphone" in names
     assert not names & {"unmute", "start_listening", "microphone_on", "listen"}
+
+
+# ── the speaker and the headset: speech mute and all audio off ─────────────
+
+def test_mute_speech_and_turn_audio_off_save_the_route_s_setting_and_only_ever_quieten(wired, monkeypatch):
+    """mute_speech saves the speaker's setting through the route's
+    voice_control.change; turn_audio_off also sends every page Mic off, the
+    frame the page applies through the same chooseQuiet as the headset.
+    Neither has an opposite: unmuting and turning audio on are his clicks."""
+    from jarvis import jarvis_mcp, voice_control
+    sent = []
+
+    async def emit(frame):
+        sent.append(frame)
+
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", {object()})
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is False
+    assert _call(wired, "mute_speech")["ok"]
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    assert sent == []
+    voice_control.change(speech_muted=False)
+    assert _call(wired, "turn_audio_off")["ok"]
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    assert sent == [{"type": "quiet", "state": "off"}]
+    assert "speech is muted" in _call(wired, "voice_input_settings")["text"]
+    # set_voice_input_settings cannot unmute: it does not take the mute.
+    _call(wired, "set_voice_input_settings", speech_muted=False, stop="keep")
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
+    assert {"mute_speech", "turn_audio_off"} <= names
+    assert not names & {"unmute_speech", "turn_audio_on", "audio_on"}
+
+
+def test_muting_speech_stops_what_is_sounding_at_once(wired, monkeypatch):
+    """The setting's publish stops speech in flight (the same _stop_speaking
+    as Stop); unmuting stops nothing."""
+    import asyncio
+    from jarvis import voice_control
+    stopped = []
+
+    async def stop(by):
+        stopped.append(by)
+        return True
+
+    monkeypatch.setattr(wired.server, "speech", SimpleNamespace(has_speech_in_flight=lambda: True,
+                                                                end_of_turn=3.0))
+    monkeypatch.setattr(wired.server, "_stop_speaking", stop)
+
+    async def change(muted):
+        voice_control.change(speech_muted=muted)
+        await asyncio.sleep(0)
+
+    asyncio.run(change(False))
+    assert stopped == []
+    asyncio.run(change(True))
+    assert stopped == ["his speech mute"]

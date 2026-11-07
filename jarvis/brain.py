@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+from jarvis import brain_activity
 from jarvis import brain_provider
 from jarvis import spoken_words
 from jarvis.brain_provider import (BrainProvider, ProviderEvent, ProviderSession, SessionInfo,
@@ -225,6 +226,7 @@ class _Turn:
     """Bookkeeping for the one turn in flight."""
 
     on_tool: Optional[Callable[[], None]] = None
+    activity: Optional[str] = None       # its id in brain_activity's feed
 
     def __init__(self, origin: str, on_delta: Optional[DeltaCallback],
                  session: Optional[ProviderSession] = None):
@@ -271,6 +273,8 @@ class Brain:
         self.config = config
         # Who runs the model; the brain knows it only through this.
         self.provider: BrainProvider = provider or brain_provider.provider(config.provider)
+        # The brain in force, named on every activity event (brain_activity.py).
+        brain_activity.feed.provider = getattr(self.provider, "name", None)
         self._session: Optional[ProviderSession] = None
         self._turn_lock = asyncio.Lock()
         self._inflight: Optional[_Turn] = None
@@ -860,6 +864,14 @@ class Brain:
             return TurnResult(origin, "", "rate_limited", rate_limit=self.rate_limit)
         t = _Turn(origin, on_delta, session)
         t.on_tool = on_tool
+        # The activity feed (brain_activity.py): started now, its output as
+        # counts while it streams, and one ending. Never its words.
+        try:
+            t.activity = brain_activity.feed.turn_started(
+                "warmup" if warmup else origin,
+                provider=getattr(self.provider, "name", None))
+        except Exception as e:
+            log.warning("brain activity not recorded: %s", type(e).__name__)
         self._inflight = t
         try:
             await asyncio.wait_for(self._send_and_wait(session, text, t), timeout)
@@ -883,6 +895,13 @@ class Brain:
             if self._inflight is t:
                 self._note_generation_taint()
                 self._inflight = None
+            if t.activity is not None:
+                brain_activity.safely(
+                    brain_activity.feed.turn_ended, t.activity,
+                    brain_activity.COMPLETED
+                    if t.stop_reason == "result" and t.done.is_set()
+                    else brain_activity.FAILED if t.done.is_set()
+                    else brain_activity.CANCELLED)
         if t.stop_reason == "result":
             self.context_tokens = t.context_tokens
             if warmup:
@@ -912,6 +931,9 @@ class Brain:
             if t.first_delta is None:
                 t.first_delta = time.monotonic() - t.started
             t.parts.append(ev.text)
+            if t.activity is not None:
+                brain_activity.safely(brain_activity.feed.turn_output,
+                                      t.activity, len(ev.text))
             if t.on_delta:
                 try:
                     t.on_delta(ev.text)

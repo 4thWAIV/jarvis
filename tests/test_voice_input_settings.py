@@ -18,7 +18,8 @@ from jarvis.speech import END_OF_TURN_SEC
 PAUSE = {"intervals": {"tentative": 1.0, "deciding": 0.75, "likely": 0.75, "send": 0.5},
          "schedule": {"tentative": 1.0, "deciding": 1.75, "likely": 2.5, "send": 3.0},
          "patience": 3.0}
-CUES = {"cues": voice_control.CUE_DEFAULTS, "volume": voice_control.VOLUME_DEFAULT, **PAUSE}
+CUES = {"cues": voice_control.CUE_DEFAULTS, "volume": voice_control.VOLUME_DEFAULT,
+        "speech_muted": False, **PAUSE}
 
 
 @pytest.fixture
@@ -415,3 +416,23 @@ def test_the_speech_heard_cue_is_its_own_setting_and_off_silences_only_it():
     assert settings["cues"]["heard"] == {"on": True, "tone": "pulse"}
     with pytest.raises(voice_control.Invalid):
         voice_control.change(cues={"heard": {"tone": "siren"}})
+
+
+# ── his speech mute ─────────────────────────────────────────────────────
+
+def test_the_speech_mute_is_saved_read_back_and_published(published):
+    assert voice_control.speech_muted() is False
+    got = voice_control.change(speech_muted=True)
+    assert got["speech_muted"] is True and voice_control.read()["speech_muted"] is True
+    assert voice_control.speech_muted() is True
+    assert published == [{"type": voice_control.FRAME}]
+    # Another setting changed keeps it; unmuting saves it off.
+    assert voice_control.change(stop="discard")["speech_muted"] is True
+    assert voice_control.change(speech_muted=False)["speech_muted"] is False
+
+
+def test_the_speech_mute_is_true_or_false(client):
+    r = client.post(voice_control.PATH, json={"speech_muted": "yes"})
+    assert r.status_code == 400 and r.json()["code"] == "invalid-speech-muted"
+    r = client.post(voice_control.PATH, json={"speech_muted": True})
+    assert r.status_code == 200 and r.json()["speech_muted"] is True

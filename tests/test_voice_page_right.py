@@ -150,7 +150,7 @@ async def test_pointing_at_an_agent_on_a_later_page_from_another_tab_reveals_it(
         browser, page, ui, _ = await _open(p, page_url)
         try:
             await page.wait_for_function("document.querySelectorAll('.agents-list li').length > 2")
-            await _tab(page, "Workflows")
+            await _tab(page, "Work")
             # Not on the page and not to be revealed: not found.
             result = await ui.indicate(_agent("27"), reveal="never")
             assert (result["status"], result["reason"]) == ("not_found", "not-mounted"), result

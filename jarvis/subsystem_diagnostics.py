@@ -191,6 +191,23 @@ SAID: dict[str, str | dict[str, str]] = {
     "discoveryDone": "Up to date",
     "discoveryDoneSince": "Up to date; last full look {age} ago",
     "discoveryNotYet": "Not yet looked",
+    "knowledgeOff": "Switched off",
+    "knowledgeRestarting": "Restarting: {reason}",
+    "knowledgeDown": "Left down after repeated restarts: {reason}",
+    "knowledgeReadOnly": "Read only: {problem}",
+    "knowledgeOk": {"one": "Running; {count} chunk indexed", "other": "Running; {count} chunks indexed"},
+    "knowledgeHeld": "Paused while the conversation needs the machine",
+    "knowledgeHeldCpu": "Paused: the processor is busy ({percent} percent)",
+    "knowledgeFree": "Free to work",
+    "knowledgeIngestNotYet": "No pass yet",
+    "knowledgeIngestOk": {"one": "Last pass {age} ago: {count} document read",
+                          "other": "Last pass {age} ago: {count} documents read"},
+    "knowledgeIngestMore": "Last pass {age} ago; more is left to read",
+    "knowledgeIngestFailed": "The last pass failed: {error}",
+    "knowledgeIngestRunning": "Reading now",
+    "knowledgeNoEmbedder": "No embedder chosen; search uses words and the graph",
+    "knowledgeEmbedding": {"one": "Embedding with {embedder}; {count} waiting",
+                           "other": "Embedding with {embedder}; {count} waiting"},
     "teamOnline": "Online",
     "teamOnlineSince": "Online, last contact {age} ago",
     "teamOnlineAs": "Online as {login}",
@@ -221,6 +238,10 @@ NAMES: dict[str, str] = {
     "workflows": "Workflow monitor",
     "folders": "Folder catalog",
     "team_server": "Team server",
+    "knowledge": "Knowledge engine",
+    "knowledgePace": "Pace",
+    "knowledgeEmbedder": "Embedder",
+    "knowledgeIngest": "Ingest",
     "watcher": "Session watcher",
     "outgoing": "Messages to agents",
     "queued": "Queued messages",
@@ -697,6 +718,65 @@ def folder_catalog(health: Optional[dict], b: Optional[Beat], now: float) -> Sub
     return s
 
 
+def knowledge(health: Optional[dict], now: float) -> Subsystem:
+    """The knowledge engine (knowledge_runtime.health): its process, its
+    pace and its embedder. Never worse than degraded: JARVIS answers from
+    its records and notes without it."""
+    if health is None:
+        return subsystem("knowledge", IDLE, say("knowledgeOff"), [])
+    state = health.get("state")
+    engine = health.get("engine") or {}
+    store = engine.get("store") or {}
+    if state == "starting" or state == "idle":
+        shown = (UNKNOWN, say("starting"))
+    elif state == "restarting":
+        shown = (DEGRADED, say("knowledgeRestarting", reason=health.get("reason") or ""))
+    elif state == "down":
+        shown = (DEGRADED, say("knowledgeDown", reason=health.get("reason") or ""))
+    elif store and not store.get("writable", True):
+        problems = store.get("problems") or [""]
+        shown = (DEGRADED, say("knowledgeReadOnly", problem=problems[-1]))
+    elif engine:
+        shown = (OK, say("knowledgeOk", count=(engine.get("keyword") or {}).get("chunks", 0)))
+    else:
+        shown = (UNKNOWN, say("starting"))
+    checks = [check("process", "process", *shown)]
+    if health.get("pace") == "hold":
+        cpu = health.get("cpu_percent")
+        line = (say("knowledgeHeldCpu", percent=round(cpu)) if health.get("pace_reason") == "cpu" and cpu
+                else say("knowledgeHeld"))
+        checks.append(check("pace", "knowledgePace", OK, line))
+    else:
+        checks.append(check("pace", "knowledgePace", OK, say("knowledgeFree")))
+    ingest = health.get("ingest")
+    if ingest is not None:
+        last = ingest.get("last_finished_at")
+        if ingest.get("running"):
+            line = (OK, say("knowledgeIngestRunning"))
+        elif ingest.get("error"):
+            line = (DEGRADED, say("knowledgeIngestFailed", error=ingest["error"]))
+        elif last is None:
+            line = (UNKNOWN, say("knowledgeIngestNotYet"))
+        elif ingest.get("more"):
+            line = (OK, say("knowledgeIngestMore", age=age(now - last)))
+        else:
+            line = (OK, say("knowledgeIngestOk", count=ingest.get("documents", 0), age=age(now - last)))
+        checks.append(check("ingest", "knowledgeIngest", *line))
+    vectors = engine.get("vectors") or {}
+    if engine:
+        if vectors.get("embedder"):
+            checks.append(check("embedder", "knowledgeEmbedder", OK,
+                                say("knowledgeEmbedding", embedder=vectors["embedder"],
+                                    count=vectors.get("waiting", 0))))
+        else:
+            checks.append(check("embedder", "knowledgeEmbedder", IDLE, say("knowledgeNoEmbedder")))
+    s = from_checks("knowledge", checks, shown[1])
+    s.state = shown[0]          # the process decides; the others inform
+    if s.state == OK and any(c.state == DEGRADED for c in checks):
+        s.state = DEGRADED      # a failing ingest is worth seeing
+    return s
+
+
 def team_server(team: dict, now: float) -> Subsystem:
     """The team server connection, from team_client's snapshot. Optional,
     so at worst degraded: a team server that is gone never turns the
@@ -743,6 +823,7 @@ def team_server(team: dict, now: float) -> Subsystem:
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
            team: Optional[dict] = None, folders: Optional[dict] = None,
+           knowledge_health: Optional[dict] = None,
            local_voice: Optional[dict] = None,
            now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
@@ -760,6 +841,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
+        knowledge(knowledge_health, now),
         team_server(team or {}, now),
     ]
 

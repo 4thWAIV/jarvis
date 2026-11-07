@@ -67,6 +67,12 @@ CATEGORIES: dict[str, Category] = {
     "workflows": Category(
         "Start workflows and report their steps to the Workflows view.",
         (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
+    "work": Category(
+        "Track work items and report who is on each piece to the Work tab.",
+        (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"))),
+    "packages": Category(
+        "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
+        (("POST", r"/api/packages/inbox"),)),
     "watch": Category(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),
@@ -140,21 +146,32 @@ def listing() -> list[dict]:
              "created_at": k.get("created_at")} for k in _read()]
 
 
-def allows(key: str | None, method: str, path: str) -> bool:
-    """Whether `key` is a live access key one of whose categories covers this
-    request. Never raises: an unreadable store admits nothing."""
+def _entry(key: str | None) -> dict | None:
+    """The stored entry of the live access key `key`, or None. Never raises:
+    an unreadable store has none."""
     if not key or not key.startswith(PREFIX):
-        return False
+        return None
     supplied = _digest(key)
     try:
         keys = _read()
     except (OSError, ValueError):
-        return False
-    for k in keys:
-        if secrets.compare_digest(str(k.get("sha256", "")), supplied):
-            return any(CATEGORIES[c].covers(method.upper(), path)
-                       for c in k.get("categories") or [] if c in CATEGORIES)
-    return False
+        return None
+    return next((k for k in keys if secrets.compare_digest(str(k.get("sha256", "")), supplied)),
+                None)
+
+
+def allows(key: str | None, method: str, path: str) -> bool:
+    """Whether `key` is a live access key one of whose categories covers this
+    request. Never raises: an unreadable store admits nothing."""
+    entry = _entry(key)
+    return entry is not None and any(CATEGORIES[c].covers(method.upper(), path)
+                                     for c in entry.get("categories") or [] if c in CATEGORIES)
+
+
+def label_of(key: str | None) -> str | None:
+    """The label of the live access key `key`, or None. Never raises."""
+    entry = _entry(key)
+    return str(entry.get("label") or "") if entry is not None else None
 
 
 def main(argv: list[str]) -> int:

@@ -10,7 +10,7 @@
   /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
      mirrored on the right. */
   --ray-lane: 4vw;
-  /* The two side panels: the left column (orb, status, mic, brains) and the
+  /* The two side panels: the left column (orb, team server, brains) and the
      right-hand display. One width for both, the only place either width is
      set. It never grows past 230px and only shrinks, with the window, so the
      centre area (whose edges are --panel-edge) is never covered. */
@@ -29,6 +29,15 @@
   --centre-notice-top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
   --centre-notice-height: 0px;
   --centre-view-top: calc(var(--centre-notice-top) + var(--centre-notice-height));
+  /* On every view but Conversation the notices are chips at the right end
+     of the tab row instead (CentreNotices.tsx sets this to their width), and
+     the tabs keep that room clear; nothing moves the view down. */
+  --centre-chip-room: 0px;
+  /* While the microphone is in the centre's lower-right corner (every view
+     but Conversation, #centre-mic) every centre view stops above it:
+     MicCorner sets this to the corner box's height and its gaps. */
+  --centre-corner-height: 0px;
+  --centre-view-bottom: calc(var(--footer-height) + var(--above-footer) + var(--centre-corner-height));
   /* The footer's height. Everything else on the page stops above it, so it
      always runs the full width of the page beneath them. */
   --footer-height: 40px;
@@ -64,7 +73,7 @@ html, body {
 }
 
 /* The upper left column: the orb, a fifth of the page wide and between a
-   third and a half of it high, with the status and mic controls below it.
+   third and a half of it high, with the team server's tile below it.
    The rest of the page is black. */
 /* The agents list is a tab of the right-hand panel (RightPanel.tsx). */
 /* Ending exactly where the right-hand panel does, --above-footer above the
@@ -164,29 +173,10 @@ html, body {
   pointer-events: auto;
 }
 
-/* Exactly the Stop button's height in every state, so nothing below moves. */
-#status-control {
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 #orb-canvas {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-#status-text {
-  color: var(--ui-accent);
-  font-size: 13px;
-  letter-spacing: 2px;
-  text-transform: lowercase;
-  font-weight: 300;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 10;
 }
 
 /* The footer spans the bottom of the page; what is in it keeps its place. */
@@ -198,7 +188,7 @@ html, body {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -396,6 +386,8 @@ html, body {
   height: var(--centre-header-height);
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
+  padding-right: var(--centre-chip-room);
+  box-sizing: border-box;
   display: flex;
   gap: 6px;
   z-index: 10;
@@ -643,7 +635,7 @@ html, body {
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -857,7 +849,23 @@ html, body {
 /* Microphone input meter — the answer to "is it even hearing me?", visible
    without opening a console. Deliberately small and out of the way: it is
    reassurance while things work and evidence when they do not. */
-/* The microphone control, centred under the status control. */
+/* The microphone control, at the message input's lower right, or in the
+   same corner of the centre area while the message input is not on screen
+   (#centre-mic, MicControl.tsx). */
+#health-slot { flex: none; width: 10px; height: 10px; display: flex; }
+#centre-mic {
+  position: fixed;
+  right: calc(var(--panel-edge) + var(--caption-gap) + 12px);
+  bottom: calc(var(--footer-height) + var(--above-footer) + 6px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 0;
+  border: 1px solid var(--ui-edge);
+  border-radius: 14px;
+  background: var(--ui-surface);
+  z-index: 30;
+}
 #mic-control {
   display: flex;
   flex-wrap: wrap;
@@ -895,6 +903,27 @@ html, body {
   height: 24px;
   border-radius: 6px;
 }
+
+/* The headset, the whole audio subsystem, drawn on the power button (Mic off),
+   and the speaker, what JARVIS says, beside it (AudioHeadset.tsx,
+   SpeakerButton.tsx). Grey while idle; the theme's blue while hearing or
+   speaking; on red, as Mute's, while muted or off. Neither moves: each state
+   is a still look. */
+.control-button.small.audio-headset:not(.muted),
+.control-button.small.audio-speaker { color: var(--ui-muted); }
+.audio-headset:not(.muted) .headset-band { stroke: var(--ui-secondary); }
+.audio-headset:not(.muted) .headset-boom.listening,
+.audio-headset:not(.muted) .headset-boom.starting { stroke: var(--ui-accent); }
+.audio-headset .headset-boom.listening circle { fill: var(--ui-accent); }
+.audio-headset.muted .headset-boom.listening circle { fill: currentColor; }
+.audio-headset .headset-cups.lit { stroke: var(--ui-accent); fill: var(--ui-accent); fill-opacity: 0.85; }
+.audio-headset .headset-stopped { stroke: var(--ui-muted); }
+.control-button.small.audio-speaker.speaking {
+  color: var(--ui-accent);
+  background: rgba(var(--ui-accent-rgb), 0.14);
+  border-color: rgba(var(--ui-accent-rgb), 0.35);
+}
+.audio-speaker.speaking .speaker-body { fill: var(--ui-accent); fill-opacity: 0.3; }
 
 /* Muted is unmistakable: solid bright red, a white crossed-out microphone. */
 .control-button.small.muted,
@@ -1150,7 +1179,7 @@ html, body {
 }
 
 /* Stop — shown only while he is speaking, because that is the only moment it
-   means anything. Escape does the same thing without reaching for the mouse. */
+   means anything; left of Send in the message input (StopControl.tsx). */
 #hush {
   height: 26px;
   padding: 0 22px;
@@ -1391,6 +1420,193 @@ html, body {
 }
 .settings-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* The Work tab of the right panel (WorkPanel.tsx): a row per work item, its
+   title, state and one useful update, then the Workflows view under its own
+   heading. The whole tab scrolls as one. */
+.right-view.work-panel { height: 100%; overflow-y: auto; overflow-x: hidden; gap: 10px; }
+.work-panel .workflows-view { height: auto; overflow: visible; padding: 0; }
+.work-section-head {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-secondary);
+}
+.work-groups { display: flex; flex-direction: column; gap: 10px; }
+.work-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.work-group-head {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-list { list-style: none; display: flex; flex-direction: column; gap: var(--agent-gap, 6px); padding: 0; margin: 0; }
+.work-row {
+  --wk: 125, 211, 252;       /* light blue: the colour of a work item */
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title state" "update update";
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: var(--ui-text);
+  background: rgba(var(--wk), 0.05);
+  border: 1px solid rgba(var(--wk), 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.work-row:hover { background: rgba(var(--wk), 0.12); }
+.work-row.selected { border-color: rgba(var(--wk), 0.9); box-shadow: 0 0 0 1px rgba(var(--wk), 0.4); }
+.work-row-title { grid-area: title; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-row-pills { grid-area: state; display: flex; gap: 4px; align-items: center; }
+/* How many of its decisions wait on him: a count on the amber. */
+.work-decision-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--ui-on-signal);
+  background: #fbbf24;
+}
+.work-update { grid-area: update; color: var(--ui-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-update.deciding { color: #fbbf24; }
+/* Blocked (red) or waiting on him (amber), the item or any of its pieces:
+   a coloured edge and dot, and a line counting the pieces. */
+.work-row[data-mark="blocked"] { border-left: 3px solid #ef4444; }
+.work-row[data-mark="waiting"] { border-left: 3px solid #fbbf24; }
+.work-blocker-line { grid-column: 1 / -1; color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-blocker-line[data-kind="piece_waiting"], .work-blocker-line[data-kind="piece_after"] { color: #fbbf24; }
+.work-history { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.work-list.history .work-row { opacity: 0.8; }
+.work-mark {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.work-mark.mark-blocked { background: #ef4444; }
+.work-mark.mark-waiting { background: #fbbf24; }
+.work-state {
+  align-self: center;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--ui-text);
+  background: var(--ui-raised);
+}
+.work-state.state-working { background: rgba(125, 211, 252, 0.25); }
+.work-state.state-verifying { background: rgba(167, 139, 250, 0.35); }
+.work-state.state-waiting_on_tim { background: #fbbf24; color: var(--ui-on-signal); }
+.work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
+.work-state.state-done { background: rgba(52, 211, 153, 0.3); }
+
+/* One work item in the centre (WorkDetail.tsx), where the Conversation view
+   sits: its head, then its source, update, decisions, pieces and reports,
+   scrolling. */
+#work-detail {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: var(--centre-view-bottom);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+  font-size: 13px;
+  color: var(--ui-text);
+  text-align: left;
+}
+.work-detail-head { flex: none; display: flex; align-items: center; gap: 12px; }
+.work-history-pill { padding: 1px 8px; border-radius: 99px; font-size: 10px; background: var(--ui-raised); color: var(--ui-secondary); }
+/* A decision waits on him: unmissable above every tab, and it opens Decisions. */
+.work-decision-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--ui-on-signal);
+  background: #fbbf24;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.work-decision-banner-question { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-decision-banner-go { flex: none; font-weight: 600; text-decoration: underline; }
+.work-tabs { flex: none; }
+.work-who, .work-answered, .work-blockers { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 6px 0 0; }
+.work-answered-question, .work-answered-answer { margin: 0; overflow-wrap: anywhere; }
+.work-answered-answer { color: var(--ui-secondary); }
+.work-answered-item { padding-left: 8px; border-left: 2px solid rgba(52, 211, 153, 0.5); }
+.work-blocker { padding-left: 8px; border-left: 2px solid #ef4444; overflow-wrap: anywhere; }
+.work-blocker[data-kind="decision"], .work-blocker[data-kind="piece_waiting"] { border-left-color: #fbbf24; }
+.work-blocker[data-kind="piece_after"] { border-left-color: var(--ui-edge); }
+.work-decision-package { margin: 4px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.work-detail-name { font-size: 20px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.work-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  border-radius: 10px;
+}
+.work-source, .work-latest { margin: 0; }
+.work-path { overflow-wrap: anywhere; }
+.work-source-missing, .work-source-wrong_kind { color: #fca5a5; }
+.work-source-present { color: var(--ui-secondary); }
+.work-quiet { color: #a78bfa; }
+.work-pieces, .work-events { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 6px 0 0; }
+.work-pieces { gap: 10px; }
+.work-piece { display: flex; flex-direction: column; gap: 3px; padding-left: 8px; border-left: 2px solid transparent; }
+.work-piece[data-mark="blocked"] { border-left-color: #ef4444; }
+.work-piece[data-mark="waiting"] { border-left-color: #fbbf24; }
+.work-piece-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.work-piece-step { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
+.work-piece-title { overflow-wrap: anywhere; }
+.work-piece-who { color: var(--ui-secondary); }
+/* The agent's own words, never JARVIS's: quoted, italic, apart from the owner. */
+.work-piece-worker { font-style: italic; color: var(--ui-muted); overflow-wrap: anywhere; }
+.work-piece-note, .work-piece-after { margin: 0 0 0 22px; color: var(--ui-secondary); overflow-wrap: anywhere; }
+.work-piece-after.waiting { color: #fbbf24; }
+.work-evidence { list-style: none; display: flex; flex-direction: column; gap: 3px; padding: 0; margin: 0 0 0 22px; }
+.work-evidence-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.work-evidence-kind { color: var(--ui-muted); font-size: 11px; flex: none; }
+.work-evidence-value { min-width: 0; overflow-wrap: anywhere; }
+a.work-evidence-value { color: #7dd3fc; }
+.work-evidence-copy {
+  flex: none;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ui-text);
+  background: var(--ui-raised);
+  border: 1px solid var(--ui-edge);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.work-event-at { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
+
 /* The Workflows view of the right panel (WorkflowsView.tsx): one compact row
    per workflow, boxed like an agent's row. */
 /* A summary only, at the panel's fixed width: nothing in it may push the
@@ -1603,7 +1819,7 @@ html, body {
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1936,7 +2152,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2066,7 +2282,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2111,7 +2327,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2144,7 +2360,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2302,7 +2518,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2550,7 +2766,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* The Team Server tile: a server symbol and its readiness word in a 62px
    column, beside three rows each led by a status dot. Full width of the
-   left column, under the microphone. */
+   left column, under the orb. */
 #team-server-tile .tile-body {
   grid-template-columns: 62px minmax(0, 1fr);
   gap: 8px;
@@ -2712,7 +2928,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2823,6 +3039,93 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 #updates-notice .updates-list li { display: flex; align-items: center; gap: 8px; }
 #updates-notice .updates-words { flex: 1; overflow-wrap: anywhere; }
+
+/* On a reading view (every view but Conversation) the notices are chips at
+   the right end of the tab row: about 24px tall, reserving no height, and
+   the tabs keep their width clear (--centre-chip-room). */
+#centre-notices.compact {
+  left: auto;
+  top: calc(var(--centre-header-top) + (var(--centre-header-height) - 32px) / 2);
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  z-index: 30;
+}
+/* The chip is the 24px pill drawn by ::before; the clear 8px band above it,
+   inside the target's own box, is the lane a pointer's leaf runs along to
+   reach a part beside another in the pill's one row (uiPipeline.ts). */
+#centre-notices.compact .centre-chip {
+  position: relative;
+  flex-wrap: nowrap;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 8px 2px 0;
+  gap: 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  white-space: nowrap;
+}
+#centre-notices.compact .centre-chip::before {
+  content: "";
+  position: absolute;
+  inset: 8px 0 0 0;
+  z-index: -1;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-surface) 90%, #fbbf24);
+}
+#centre-notices.compact #updates-notice.centre-chip::before {
+  border-color: rgba(94, 234, 212, 0.3);
+  background: color-mix(in srgb, var(--ui-surface) 92%, #5eead4);
+}
+#centre-notices.compact #team-reminder svg { width: 14px; height: 14px; }
+#centre-notices.compact .centre-chip > svg { margin-left: 6px; }
+#centre-notices.compact .centre-chip > span:not(.team-reminder-problem),
+#centre-notices.compact .centre-chip > p { flex: none; margin: 0; line-height: 22px; padding: 0 4px; }
+.centre-chip-button {
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  cursor: pointer;
+}
+.centre-chip-button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.centre-chip-button:disabled { opacity: 0.5; cursor: default; }
+#centre-notices.compact .centre-chip .settings-btn { height: 20px; padding: 0 8px; font-size: 11px; }
+#centre-notices.compact .team-reminder-problem {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  max-width: 320px;
+  white-space: normal;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ui-surface);
+}
+/* The chip's list: a small dropdown over the view, under the chip, opened
+   only by a click and closed by Escape, a click outside or the chip again. */
+#updates-notice .updates-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(420px, calc(100vw - 2 * (var(--panel-edge) + var(--caption-gap))));
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  white-space: normal;
+}
+#updates-notice .updates-dropdown .updates-list { max-height: none; flex: 1 1 auto; min-height: 0; }
+#updates-notice .updates-dropdown-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }
@@ -2999,7 +3302,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3248,7 +3551,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: grid;
   grid-template-columns: minmax(240px, 2fr) minmax(0, 3fr);
   gap: 14px;
@@ -3565,3 +3868,200 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
+
+/* ── Live activity on work nodes (nodeActivity.tsx) ────────────────────
+   data-activity on a Work row, a Work piece, a workflow phase, task card or
+   progress row: working (a glow travelling slowly along its edge), paused
+   (dimmed and still, marked "Paused"), blocked (still red), waiting (still
+   amber), done (still, a check). Every look comes from the record. The
+   motion runs only on working nodes and the "waits for" line of a piece
+   whose piece is working; reduced motion and Steady keep the look still. */
+@property --activity-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes activity-travel { to { --activity-angle: 360deg; } }
+@keyframes activity-edge { from { background-position: 0 -40px; } to { background-position: 0 calc(100% + 40px); } }
+@keyframes activity-flow { to { background-position: 0 12px; } }
+:root {
+  --activity-travel: activity-travel 4s linear infinite;
+  --activity-edge: activity-edge 2.8s linear infinite;
+  --activity-flow: activity-flow 0.8s linear infinite;
+}
+
+.work-row, .task-card, .progress-row, .work-piece { position: relative; }
+.work-row { --activity-rgb: 125, 211, 252; }
+.task-card, .progress-row, .phase-step { --activity-rgb: 251, 113, 133; }
+.work-piece { --activity-rgb: 125, 211, 252; }
+
+/* working: a bright arc travelling round the box's edge */
+.work-row[data-activity="working"]::after,
+.task-card[data-activity="working"]::after,
+.progress-row[data-activity="working"]::after,
+.phase-step[data-activity="working"] .phase-step-dot::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(from var(--activity-angle),
+    rgba(var(--activity-rgb), 0) 0deg, rgba(var(--activity-rgb), 0) 250deg,
+    rgba(var(--activity-rgb), 0.95) 330deg, rgba(var(--activity-rgb), 0) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: var(--activity-travel);
+  pointer-events: none;
+}
+.phase-step[data-activity="working"] .phase-step-dot::after { inset: -4px; }
+.progress-row { border-radius: 6px; }
+.work-row[data-activity="working"],
+.task-card[data-activity="working"],
+.progress-row[data-activity="working"] { box-shadow: 0 0 10px rgba(var(--activity-rgb), 0.18); }
+
+/* a piece has only its left edge: a glow travels down it */
+.work-piece[data-activity="working"] {
+  border-left-color: rgba(var(--activity-rgb), 0.35);
+  background: linear-gradient(to right, rgba(var(--activity-rgb), 0.08), transparent 60%);
+}
+.work-piece[data-activity="working"]::before {
+  content: "";
+  position: absolute;
+  left: -3px; top: 0; bottom: 0; width: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, rgba(var(--activity-rgb), 0), rgba(var(--activity-rgb), 1),
+                              rgba(var(--activity-rgb), 0)) no-repeat;
+  background-size: 4px 40px;
+  box-shadow: 0 0 6px rgba(var(--activity-rgb), 0.5);
+  animation: var(--activity-edge);
+  pointer-events: none;
+}
+
+/* paused: working, but nothing reported within the quiet window */
+[data-activity="paused"] { opacity: 0.6; filter: saturate(0.35); }
+.phase-step[data-activity="paused"] .phase-step-dot { border-style: dashed; box-shadow: none; }
+.work-piece[data-activity="paused"] { border-left: 2px dashed rgba(148, 163, 184, 0.7); }
+.activity-mark { display: inline-block; margin-right: 6px; vertical-align: baseline; }
+.activity-paused {
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+  border: 1px solid rgba(203, 213, 225, 0.6);
+  border-radius: 4px;
+}
+.activity-paused::before {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 7px;
+  margin-right: 4px;
+  border-left: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+}
+.phase-step .activity-paused { margin-right: 0; }
+
+/* blocked and waiting on him: still, red and amber */
+.work-row[data-activity="blocked"], .task-card[data-activity="blocked"],
+.progress-row[data-activity="blocked"] { border-color: #ef4444; background-color: rgba(239, 68, 68, 0.08); }
+.work-row[data-activity="waiting"], .task-card[data-activity="waiting"],
+.progress-row[data-activity="waiting"] { border-color: #fbbf24; background-color: rgba(251, 191, 36, 0.08); }
+.work-piece[data-activity="blocked"] { background: linear-gradient(to right, rgba(239, 68, 68, 0.1), transparent 60%); }
+.work-piece[data-activity="waiting"] { background: linear-gradient(to right, rgba(251, 191, 36, 0.1), transparent 60%); }
+.phase-step[data-activity="blocked"] .phase-step-dot { border-color: #ef4444; color: #fecaca; }
+.phase-step[data-activity="waiting"] .phase-step-dot { border-color: #fbbf24; color: #fde68a; box-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+
+/* done: still, with a check */
+.activity-done { color: #4ade80; font-weight: 700; }
+
+/* the "waits for" line flows while a piece it waits for is working */
+.work-piece-after[data-flow="on"] {
+  padding-left: 10px;
+  background: linear-gradient(to bottom, rgba(125, 211, 252, 0.95) 0 6px, transparent 6px 12px)
+              left top / 3px 12px repeat-y;
+  animation: var(--activity-flow);
+}
+
+/* reduced motion and Steady: the same colours and marks, standing still */
+@media (prefers-reduced-motion: reduce) {
+  :root { --activity-travel: none; --activity-edge: none; --activity-flow: none; }
+}
+:root[data-motion="steady"] { --activity-travel: none; --activity-edge: none; --activity-flow: none; }
+
+/* The package inbox: the Queue's Packages section (QueuePackages.tsx), a
+   package's reduced line in Updates waiting, and a work item's package
+   questions. Calm: a package waits until he asks for it. */
+.package-mark { flex: none; vertical-align: -2px; color: rgba(94, 234, 212, 0.9); }
+.package-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  border-radius: 8px;
+  background: rgba(94, 234, 212, 0.05);
+}
+.package-row.state-arrived { border-color: rgba(94, 234, 212, 0.6); }
+.package-row-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.package-row-head .row-person { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.package-progress { font-size: 10px; color: var(--ui-secondary); white-space: nowrap; }
+.package-progress[data-waiting] { color: rgba(253, 224, 71, 0.9); }
+.package-title { margin: 0; overflow-wrap: anywhere; color: var(--ui-text); }
+.package-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.package-said { font-size: 11px; }
+.package-closed-row { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--ui-secondary); }
+.package-closed-row .row-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#updates-notice .updates-list li.updates-package { flex-wrap: wrap; }
+.work-package { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+
+/* Knowledge (KnowledgeView.tsx): laid out as a subsystem's detail is, with
+   each passage marked as his words or someone else's. */
+#knowledge-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: var(--centre-view-bottom);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: var(--ui-leaf-lane);
+  overflow-y: auto;
+  z-index: 10;
+  font-size: 13px;
+  color: var(--ui-text);
+}
+#knowledge-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); }
+#knowledge-view h3 {
+  margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--ui-accent);
+}
+.knowledge-search { display: flex; gap: 8px; }
+.knowledge-search input { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3); background: transparent; color: var(--ui-text); }
+.knowledge-hits, .knowledge-proposals, .knowledge-topics { list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px; }
+.knowledge-hit, .knowledge-proposal, .knowledge-topics li { padding: 6px 8px; border-radius: 6px;
+  background: rgba(var(--ui-accent-rgb), 0.04); }
+.knowledge-hit.untrusted { border-left: 3px solid #fbbf24; }
+.knowledge-hit-head, .knowledge-topics li { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.knowledge-label { font-weight: 600; }
+.knowledge-kind, .knowledge-status, .knowledge-pinned, .knowledge-links, .knowledge-note { color: var(--ui-secondary); font-size: 12px; }
+.knowledge-trust { font-size: 11px; color: var(--ui-secondary); }
+.knowledge-trust.theirs { color: #fbbf24; }
+.knowledge-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.knowledge-proposal { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.knowledge-proposal-words { flex: 1; min-width: 200px; }
+#knowledge-view button:not(.workflow-close) {
+  background: transparent; border: 1px solid rgba(var(--ui-accent-rgb), 0.45); color: var(--ui-accent);
+  border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer;
+}
+#knowledge-view button:not(.workflow-close):hover { background: rgba(var(--ui-accent-rgb), 0.12); }
+#knowledge-view button:disabled { opacity: 0.5; cursor: default; }
+.knowledge-open {
+  background: transparent; border: 1px solid rgba(var(--ui-accent-rgb), 0.45); color: var(--ui-accent);
+  border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer;
+}
+.knowledge-open:hover { background: rgba(var(--ui-accent-rgb), 0.12); }
+.knowledge-seed-topics { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }

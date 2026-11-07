@@ -1,6 +1,6 @@
 """The left column, the menu, Settings, the sign-in reminder and the footer
 as the brain sees and moves them (MenuControl.tsx, Settings.tsx,
-TeamSignInReminder.tsx, OrbControl.tsx, StatusControl.tsx, MicControl.tsx,
+TeamSignInReminder.tsx, OrbControl.tsx, MicControl.tsx,
 TeamServerTile.tsx, WeeklyUsage.tsx, Footer.tsx).
 
 Every object and meaningful part is a registered target the white signal
@@ -42,6 +42,7 @@ UI_CONTRACT = load_contract()
 pytestmark = pytest.mark.page
 
 LEFT = {"region": "left", "view": "left.fixed"}
+MIC = {"region": "main", "view": "main.conversation"}
 
 
 def _week(provider="anthropic"):
@@ -168,16 +169,17 @@ async def _marks(page, selector):
 
 LEFT_TARGETS = [
     ({"kind": "orb"}, [None, "canvas", "logo"]),
-    ({"kind": "status"}, [None]),
     # A page loads not listening: Start listening stands where the meter goes.
-    ({"kind": "mic"}, [None, "listen", "mute", "off"]),
+    # The microphone moved to the Conversation's message input, right of
+    # Send; it is checked here with the left column's controls it left.
+    ({**MIC, "kind": "mic"}, [None, "listen", "mute", "off", "speaker"]),
     ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
 # A part beside another on the side its leaf comes from is reached over or
 # under its row (uiPipeline.ts leafEdge; the Team Server's last write and the
 # microphone's mute and off go under their rows, the mic in the lane it
-# keeps below it, --ui-leaf-lane). Every left target and part is reached.
+# keeps below it, --ui-leaf-lane). Every target and part is reached.
 LEFT_MISSED = []
 
 
@@ -248,7 +250,8 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
                                      ["Last write", "Escritura"]], words
             assert "de la semana transcurrido" in words["role"], words
             assert (words["listen"], words["mute"], words["off"]) == (
-                "Empezar a escuchar", "Silenciar/Activar sonido", "Apagar el micrófono"), words
+                "Empezar a escuchar", "Silenciar/Activar sonido",
+                "Apagar todo el audio (micrófono y voz de JARVIS)"), words
             assert words["reminder"].startswith("Inicie sesión en el servidor de su equipo"), words
             assert words["reminderButtons"] == ["Iniciar sesión", "Más tarde"], words
             assert await page.locator(".weekly-days").text_content() in ("4,0 días", "4.0 días")
@@ -295,8 +298,18 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             await page.wait_for_selector(".weekly-usage .weekly-figure")
             answer = await _ask(ui, {"kind": "map", "region": "left"})
             kinds = sorted({(t["ref"]["kind"], t["ref"].get("key")) for t in answer["map"]["targets"]})
-            assert kinds == [("brainAccount", "anthropic"), ("mic", None), ("orb", None), ("status", None),
-                             ("teamServer", None)]
+            assert kinds == [("brainAccount", "anthropic"), ("orb", None), ("teamServer", None)]
+            main = await _ask(ui, {"kind": "map", "view": "main.conversation"})
+            assert "mic" in {t["ref"]["kind"] for t in main["map"]["targets"]}
+            # Off Conversation the one microphone is in the centre's corner,
+            # mapped and reached there.
+            assert (await _navigate(ui, "main.tab.select", {"tab": "folders"}))["status"] == "completed"
+            corner = await _ask(ui, {"kind": "map", "view": "main.corner"})
+            assert [t["ref"]["kind"] for t in corner["map"]["targets"]] == ["mic"]
+            for part in ("listen", "mute", "off", "speaker"):
+                got = await _point(ui, {"region": "main", "view": "main.corner", "kind": "mic", "part": part})
+                assert got["status"] == "completed", (part, got)
+            assert await page.locator("#mic-control").count() == 1
             overlay = await _ask(ui, {"kind": "map", "region": "overlay"})
             assert "menu.toggle" in {c["id"] for c in overlay["map"]["commands"]}
             settings = await _ask(ui, {"kind": "map", "view": "main.settings"})

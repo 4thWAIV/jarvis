@@ -44,7 +44,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
-- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; voice controls and brain usage are on the left; Folders, Agents, Queue, Workflows, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input (on every other centre view the one microphone control and health dot sit in the centre area's lower-right corner, `MicControl.tsx` `MicCorner`, contract view `main.corner`); Folders, Agents, Queue, Work, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
 - **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
@@ -69,7 +69,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
   and then needs `JARVIS_ALLOWED_ORIGINS`.
   An agent the user lets do one kind of thing carries an access key
   instead of the token (`access_keys.py`): it opens only the routes of its
-  categories (`captures`, `agents`, `runs`, `workflows`, `watch`), never the voice
+  categories (`captures`, `agents`, `runs`, `workflows`, `work`, `watch`), never the voice
   socket, settings or `/internal/tool`. `python -m jarvis.access_keys create
   <label> <category>...` prints the key once; only its digest is stored.
 
@@ -174,8 +174,12 @@ looked for: arriving late (behind a permission prompt he then approves) it is
 delivered and answered as usual. Anything unresolved
 `session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
 watcher only ever looks for a bounded set; settled messages are never read
-again. Each step (queued, sent, delivered, undelivered, answered) moves the
-message's one attention item to its next revision; nothing is spoken of it.
+again. Each step that wants him (undelivered, answered, and a send that
+failed) moves the message's one attention item to its next revision;
+queued, sent and delivered are only progress, kept in the record and the
+agent's thread, and resolve the item instead (`server._MESSAGE_PROGRESS`),
+since what it last said (not picked up) is no longer so. Nothing is spoken
+of any step.
 The record is written before each
 event, and the open messages are read from the store each poll, so a restart
 follows on from where it stopped. The brain reads the record with
@@ -198,6 +202,11 @@ with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
 talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside
 `skills/` because that folder is copied into the brain's own home).
+A need tied to a work item (a decision, a blocker or a question about it)
+goes on that work item (`work_report.py decision`, a blocked piece or
+update), never on the needs board; the board is only for needs tied to no
+item. The skill says so, and the brain, asked what needs him, reads the
+work items' open decisions and blockers first, then the needs board.
 `python -m jarvis.session_skill install` renders it with this install's data paths
 into every Claude Code config root and the user's Codex home; preflight's
 `session_skill` check only reports whether it is there and current.
@@ -222,6 +231,98 @@ and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
+
+## The Work tracker
+The right panel's Work tab (the tab that was Workflows, id still
+`workflows`) lists each piece of work in progress: its title, its state
+(`planned`, `working`, `verifying`, `waiting_on_tim`, `blocked`, `done`;
+`verifying` is between working and done) and one useful update, an open
+decision's question first (Planning's Work view at 52a1837, bare minimum).
+Items are listed under their group (`work_store.grouped`, the API's
+`groups`): the optional `area` an item is given (`start --area`, `update
+--area`, an empty one clears it), else its source folder (the folder, or
+the folder a zip is in), headed by its last name. An item blocked or waiting
+on Tim, or with a piece that is (`blocked_pieces`, `waiting_pieces`, at read
+time), has a red or amber edge and dot in its row (`work.itemMark`,
+`WorkMarkDot`); a piece carries the same mark in the detail. Each piece keeps its latest note (the summary of the last report
+about it; migration 2 fills it from the log), an optional `worker` label
+(the reporting agent's own words for who did it, e.g. a coordinator's
+subagent, shown quoted and italic beside the JARVIS-verified owner, never in
+its place, and walled for the brain), the pieces it comes after (`--after
+key[,key]`: pieces of the same item, never itself or a circle; `waits_for`
+the ones not done) and its evidence (`--evidence`, repeatable, added to
+what it has: a commit, an absolute path or an http(s) URL, told apart by
+shape and never opened). The detail lists the pieces in dependency order,
+numbered, a URL as a link and a commit or path with Copy.
+The detail is tabbed (`work.tab.select`; `work.open` takes a `tab`):
+Overview (update, source, area, who), Decisions (open ones answered there,
+then the decided ones), Blocking (`blockers`, worked out at read time in
+`work_store.BLOCKER_KINDS` order: his decisions, the item blocked, blocked
+pieces, pieces waiting on him, pieces waiting on others), Pieces and
+Reports. While a decision is open a "Decision needed" banner above every
+tab opens Decisions, the Decisions tab is counted, and the list row counts
+the decisions beside its state; the row's third line is the first blocker
+that is not a decision, with how many more. A decision may name a page
+package (`decision --package <id or name>`); the Decisions tab's "Open the
+package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
+as the brain's `open_package_page`, on his click. A decision is answered by
+Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
+<key> "<reason>"`, kind `decision_withdrawn`): the route records the asker
+as its access key's label (`work_api.asker`, `web_auth.access_key_label`),
+never what the report says, refuses a page's withdrawal, and a decision
+asked before askers were recorded may be withdrawn by any reporter. A
+withdrawn decision is no longer open or counted, and is kept beside the
+answered ones (`answered`, `where` = `withdrawn`). An item closed
+(`work_report.py close`, kind `closed`, `closed_at`; nothing more is
+reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
+minutes) moves to History: `GET /api/work`'s `history`, newest first, under
+the list's History toggle (`work.showHistory`), each still opening in full;
+`work_status` with `history` lists them and finds one by id or title. The Workflows view stays below the list, under its
+own heading. The record is `work_store.py` (schema `work_schema`, through
+`run_store.migrate`): `work_events` is append-only and the truth;
+`work_items`, `work_pieces` and `work_decisions` are updated in the same
+transaction by `create` and `record`, the only writers. An item wraps a
+ZIP work package or a folder on this Mac, checked by a stat and never
+opened or run; each piece names exactly who is on it (`agent:<session id>`
+shown by its one name from the agent directory, `run:<id>`,
+`workflow:<id>` or `tim`), and a reported who must be a record JARVIS has.
+An open decision reads as waiting on Tim and a working or verifying item
+silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
+with `work_report.py` and an access key in the `work` category (the
+talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
+every change is a `work` hint on `/ws/sessions`, after the write; a
+decision, blocked and done are attention items, each resolved once it is no
+longer so (no decision open, no longer blocked or done:
+`server._work_news_stale`). A decision's key is asked once: an answered key
+is refused, so `work_report.py answer` reads the answer to that question. A
+row's pill is always the state, and a quiet item says so as its update. A
+read names the agents on its pieces from one directory read
+(`work_api.WhoNames`, `agent_directory.names_by_session`), and the latest
+events are `work_store.latest`. A row opens the item in the
+centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
+`work.close`) and the list stays in view. His answer is
+`work_api.answer_decision`, from the page and the brain's acting
+`answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
+the list by group with each item's blocked and waiting pieces, and an item's
+pieces in order with their notes, worker labels, what they wait for and
+their evidence. The page changes nothing but his answers, so there is no
+other acting tool.
+Each Work row and piece, and each phase and task of a workflow's detail,
+shows its live activity from the record (`nodeActivity.tsx`): working (a
+working or verifying piece or item, a running workflow item, whose
+read-time `quiet_at` is still ahead: `work_store.quiet_at` from its latest
+note or update, `QUIET_AFTER_SEC`; a workflow item's from its latest event,
+`heard_at`, `SILENT_AFTER_SEC`) has a glow travelling along its edge; past
+`quiet_at` it is paused, dimmed and still and marked "Paused"; blocked is
+still red, waiting on him still amber (a running workflow item while its
+workflow needs him), done still with a check. Each report that arrives
+while a view shows a node, read after a `work` or `workflows` hint, flashes
+it once (`useArrivalFlash`, against when that view began to show); a
+piece's "waits for" line flows while a piece it waits for is working. The
+page's one timer is for the soonest `quiet_at` ahead, so nothing redraws
+while nothing works. Reduced motion and Steady (`data-motion="steady"` on
+the document, which no setting sets yet) keep the looks and drop the
+motion and the flash.
 
 ## The team server
 `team_server/` is a separate service, not part of the JARVIS package: its own
@@ -362,11 +463,25 @@ a .zip's preview (`POST /api/packages/local`). The path is read by
 followed, a received file's size limit), copied privately and unpacked by
 `work_packages.unpack_held` exactly as a received zip (recorded under
 `local<sha>` in place of an attachment id), and a page package is shown at
-once. The page package shown is held by the server (`_package_shown`) and
+once when he asked. A package reaches his screen only on his own act: his
+click on a page JARVIS serves (`packages_api.his_click`: admitted by its
+`Origin`, `web_auth.BY_ORIGIN`) or a brain tool on a turn he drove (the
+ACTING_TOOLS). A caller on the tool token or an access key may unpack a
+package but never show it: `POST /api/packages/local` unpacks and answers
+`packages_api.NOT_HIS_ACT` as its `problem` (`_open_local_package(path,
+show)`), and `POST /api/packages/<id>/page` and a story told (`POST
+/api/packages/<id>/story`, any action but stop) are refused with 403.
+The page package shown is held by the server (`_package_shown`) and
 sent to every page that connects, so a reload keeps it; its × (`DELETE
 /api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
-`list_packages` and `package_results` read what is there. Results go back
+`list_packages` and `package_results` read what is there: `list_packages`
+pages every package here, newest first, and with `name` keeps those that
+fit best the words he called one by (`work_packages.matching`: a word counts
+for less the more packages have it, and twice in an id or name). Every tool
+that takes a package (`work_packages.find`) takes its id, its name and
+version ("denice-pulses-1.0.1"), its name (the highest version), or his
+words, which open the one package they fit or name each one they fit. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's
 own snapshot step (`FileSnapshots.add_to_draft`), so review and approval are
 unchanged. A package runs one of three ways, package.json's `runs`
@@ -396,11 +511,22 @@ file in the Queue, `POST /api/packages/<id>/page`) share
 voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. A
 page package may name a `story` (`package_story.py`, checked on unpack):
 slides of beats, each the words JARVIS says and the selectors it rings.
-The page's Tell the story and Stop (`POST /api/packages/<id>/story`) and
-the acting `tell_package_story` share `_package_story` and
-`story_teller.StoryTeller`, which opens the page and speaks the slides
-through `SpeechScheduler.narrate`, two slides queued at a time, as one
-NORMAL reply each, so barge-in, hush and turn-taking stop it as any reply.
+The page's Tell the story, Continue and Stop (`POST /api/packages/<id>/story`)
+and the acting `tell_package_story` (tell, resume, stop, status) share
+`_package_story` and `story_teller.StoryTeller`, which opens the page and
+speaks the slides through `SpeechScheduler.narrate`, one NORMAL reply each.
+A story may name its `answers` file and slides that `wait` for one question
+(`asks_when` for a child question): such a slide is told, then the story is
+WAITING, as running state the server knows (which question), until the
+answers file has a new answer (a Choose saved through the bridge, or
+`scripts/decide.py`), and goes on once `conversation_floor` is idle; an
+answered question is passed over unless told from its own slide; `resume`
+starts at the first with no answer. His speaking over a slide PAUSES it
+(on a waiting slide it waits), never ends it, so Stop always finds it. Stop
+ends it told, paused or waiting: the page's Stop, the tool, `_stop_speaking`
+(hush), a whole utterance of `Vocabulary.stop_words` (checked after
+`user_final`, before the brain hears it) and closing its page; a second
+stop says it is already stopped (`StoryTeller.ended`), never "no story".
 Each chunk carries its beat as `cue` on its `audio` frame (the way
 `capture` rides); the page sets `packages.storyCue` when that chunk STARTS
 playing and clears it when the beat's last chunk is played or the voice
@@ -412,7 +538,83 @@ state. The beats are spoken as the sender's narration and never reach the
 brain; the tool gives back only the slides' titles, walled. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
-(a page with a story).
+(a page with a story). Every package an agent sends Tim is made with
+one command, `python -m jarvis.make_package <content.json | folder>`
+(`make_package.py`), and `docs/making-a-package.md` is the only place
+that says how: a deck's content (a decision package, or a presentation
+when it has no decisions; `decision_package.py` reads, expands and checks
+it, the shared deck's `new_deck.py` builds it) or a hand-made package's
+folder (only `purpose` given; read back through
+`work_packages.recognise`). A deck is checked end to end in an isolated
+JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
+sizes and the story told to the end; for a decision package also voting,
+the story waiting at every question as a first-time user answers by click
+and by decide.py, Stop within 1 s from the page and the tool, and resume).
+Only then is it delivered unshown through `POST /api/packages/local`, a
+decision package stamped for the live JARVIS first, with a message to Tim.
+`_open_local_package` refuses a decision package (`deck-data.js` and
+`scripts/decide.py`, the shared deck's) without a matching stamp for its
+own tool token (`decision_stamp.py`), so no other way delivers one.
+`python -m jarvis.decision_package` is the command's old name.
+
+## The package inbox
+Every package an agent sends Tim arrives one way: `python -m
+jarvis.make_package` checks and builds it, then posts the zip's bytes to
+`POST /api/packages/inbox?project=&session=&workflow=&work=`
+(`decision_package.deliver`, the tool token, which the decision stamp needs
+anyway; the `packages` access-key category opens that one route and
+nothing else). `package_inbox_api.py` hands it to `server._receive_inbox_package`:
+the workflow or work item it names must exist and be open, the bytes are
+unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
+package only with its stamp), and `package_inbox.arrive` records it. Nothing
+calls `_open_package_page` on arrival. `package_inbox.py` is the only
+writer of `package_inbox` (one row per arrival) and
+`package_inbox_events` (each change, no words of the package), schema
+`package_inbox_schema` (`run_store.migrate`), each change one transaction
+with its revision, before any hint (`packages`, and `work` when it names a
+work item). States `arrived -> opened -> answering -> answered -> returned
+-> closed` (`done`, `dismissed`, `superseded`). The same bytes while open
+are the same row; an open package of the same name from the same sender
+(its session, else its project) is closed `superseded` in the same
+transaction. A decision package's questions are read from `deck-data.js`
+as JSON after `window.DECK = ` (never executed) and its answers from its
+own `results/decisions.json` (`package_inbox.questions`; a follow-up
+applies only once its parent's answer opens it); the row mirrors only the
+counts, read again after the frame saves a result (`packages_api.mount`'s
+`saved`) and after each answer. Arrival is an attention item of kind
+`package` (`untrusted`: the agent, the title; `facts`: decisions waiting)
+that is counted and listed but never spoken: `attention_store.SILENT_KINDS`
+keeps it out of every digest whatever a caller asks. Opening resolves it.
+The page shows the backlog as the Packages section at the top of the Queue
+tab (`QueuePackages.tsx`, signed in or not, closed ones behind Closed) and
+each arrival as one reduced line in Updates waiting (`UpdatesNotice.tsx`
+`PackageLine`: who, title, decisions waiting, Open and Seen; never expands
+or plays). Open is `_open_inbox_package`, on his click only
+(`packages_api.his_click`) or the acting `open_inbox_package`; a page package
+is shown in the centre, any other is in the brain's hands. His answers go
+through the package's own `scripts/decide.py`, run with a fixed argument
+list and no shell (`_answer_inbox_decision`: the acting
+`answer_package_decision` and `POST .../answer`, which the Work tab uses).
+`_return_package_answers` (the acting `return_package_answers`, `POST
+.../return`, the row's Send answers) needs every decision that applies
+answered (`package_inbox.check_return`); it records each answer as the
+workflow's own `decision_needed` then `decision_made` under the decision's
+id and ends the workflow's wait (`wait_started` at arrival, key the inbox
+id), then opens a capture addressed to the sending session (`_new_capture`
+and `_set_capture`, shared with `capture`) holding each answer and the
+record's path, which is read back and sent only on his yes or Send, as
+every message to a session. A sender no longer running gets no message and
+the row is returned at once. `package_inbox.follow_messages`, run on every
+message event (`_attend_message`) and every direct send, moves a row to
+`returned` once a message from its capture has gone to its session since
+he asked, and to `closed` `done` once that message is answered.
+`_close_inbox_package` (the acting `close_inbox_package`, `POST
+.../close`) dismisses one, or closes one already returned. `package_inbox`
+reads the backlog for the brain, walled. A package sent with `--work <id>`
+shows its questions on that work item's Decisions tab (`work_api.packages_json`
+on `GET /api/work/{id}`, `package_questions` on every item; the
+`workPackageQuestion` target), answered there into the same record, and
+`work_status` lists them.
 
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
@@ -745,6 +947,31 @@ no `/ws/sessions` hint, so a reader asks again with the last `seq` it saw.
 `internal_tool` runs the gates in `_dispatch_tool`, which returns the reply
 unchanged and how the call ended.
 
+## Brain activity
+The tool calls are one kind in the brain's one activity feed,
+`brain_activity.py` (`feed`; `tool_activity` records into it), which the
+Denice page reads at `GET /api/brain/activity?since=<seq>` (same
+`generation`, `seq` and `oldest` as above; `/api/tools/activity` reads only
+its `tool` events, in their old shape). Each event is a kind, a stage, a
+time, the brain provider in force and, where there is one, the counterpart
+(an agent's name, or "a person"); `record` refuses any field outside
+`FIELDS`, so no words, arguments, results or subjects. Each is recorded by
+the one writer of its fact: `turn` in `Brain._turn_locked` (`started` with
+its origin, `first_output`, `streaming` at most every `PROGRESS_EVERY_SEC`
+with `chars_per_sec`, then `completed`, `failed` or `cancelled`);
+`agent_message` in `run_store.create_message` / `update_message` (each status
+it takes, with the session id); `session_message` in
+`run_store.create_session_message`; `person_message` in
+`ServePresentation.present` (`sent`, `arrived`) and `Delivery.submit`
+(`accepted`); `digest` in `AttentionStore.begin_digest` / `finish_digest`;
+`speech` in `SpeechScheduler` (`started` when the page says it began to
+sound, `ended` with its outcome, through `Utterance.close_outcomes` or its
+retirement); `listening` in `TurnController` (its `state`
+setter: `started` when a turn starts gathering his speech, `ended` once it
+stops gathering, committed, discarded or its capture stopped; the turn's id
+only). Recording never raises into the caller. At most
+`brain_activity.KEEP_EVENTS`, oldest first dropped; no hint.
+
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
 where they are and nothing here creates, moves, edits or deletes one. The
@@ -811,6 +1038,26 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## The knowledge engine
+A document store, a typed graph, a keyword index and a vector index in a
+process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
+which imports nothing from `server.py`); the design is
+`docs/planning/work-package-bundles/design.md` and the build order
+`build-plan.md` beside it. It holds nothing that cannot be rebuilt from
+JARVIS's records, notes and folders, and `python -m jarvis.knowledge rebuild`
+drops it. Off unless `JARVIS_KNOWLEDGE` is on: then `knowledge_runtime.py`
+starts it after startup settles through `knowledge_client.Supervisor`
+(loopback only, its own token, `knowledge-address.json`, restarts after 1, 5
+and 30 s, down after three in ten minutes) and paces it every second: hold
+while the conversation floor is not idle or the CPU is over 70 percent. Ingest
+is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
+stopped and continued with the pace; it reads the brain's notes, the
+conversation log, finished runs, workflow events and registered folders'
+Markdown (through `folder_service`, FILES reader only) and keeps each source's
+watermark in the engine. No embedder is wired until one is chosen
+(`knowledge/embedder.py`'s `RUNNER`). Diagnostics shows its row (`knowledge`).
+Its process, crash and budget tests carry the `knowledge_engine` marker.
+
 ## Self-update
 A checkout whose `origin` is on github.com updates itself from GitHub through
 one service, `self_update.py`. A version is a pull request merged to main:
@@ -870,7 +1117,7 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
-queued, sent, delivered, not picked up or answered; a session's message,
+not picked up, answered or not sent; a session's message,
 needs board or needs-you; a session finishing; a run or package run ending;
 a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its
@@ -891,8 +1138,21 @@ all pass, one digest: the candidates' facts to the brain with other
 people's words walled, under the `digest` origin, where `/internal/tool`
 refuses every tool; at most two sentences or SILENT; discarded if the floor,
 the activity revision or any item moved meanwhile. A failed brain or voice
-says nothing in its place. Played (or SILENT) finishes with the items'
-revisions; only he marks them seen. The digest's brain turn takes the brain's
+says nothing in its place. A digest is made only from the candidates whose
+facts fit its walled block whole (`attention.fitting`, under
+`server._WRAP_CONTENT_CAP`, each name or subject at most
+`DIGEST_WORDS_CHARS`), so played (or SILENT) finishes with the revisions of
+only the items the brain was shown; the rest wait for the next. Seen is his
+act: his click, his mark, or hearing it read in full. The brain's reading
+tools (`read_message_reply` on an answer, `read_session_message`,
+`mark_people_message_read`) note the pending update they read on a turn he
+drove (`server._read_to_him`), and once that turn's reply has been heard in
+full (`speech.wait_for`, every chunk played) it is seen at the revision read
+(`server._seen_once_heard`, `attention_api.mark_seen_source`); a reply cut
+off, skipped or failed leaves it pending, and no digest marks anything
+seen. `attention_updates` gives the brain every item the page has, each
+brief (`attention_api.for_brain`), a page at a time
+(`server._paged(..., exact=True)`). The digest's brain turn takes the brain's
 turn lock for the few seconds it runs, so a turn of his that starts then
 waits behind it. The floor is `server.conversation_floor`
 (`_ConversationFloor`, an `attention.TurnState`), read from every open
@@ -949,7 +1209,9 @@ gathered as an unsent draft; that page, still open, resumes listening
 under a new epoch when the socket is back. The brain may only make input
 quieter: its acting `quiet_microphone` (muted or off) sends every page a
 `quiet` frame that it applies through `mic.chooseQuiet`, as his buttons do;
-there is no tool to unmute, turn on or start listening.
+there is no tool to unmute, turn on or start listening. The headset in the power
+button's place turns the whole audio system off and on (see "Playback and
+its outcomes").
 A quiet tone marks listening really starting (the recogniser ready for a
 streaming microphone: Start, Unmute, Mic on, a resume or a retry that got
 through) and a falling one its stopping for any reason (his Mic off or
@@ -1063,6 +1325,30 @@ why (`reason`, `voice_control.ReplyFailure`: `not_ready`, `down`,
 words in its language under the reply. No fault of the brain or of a turn
 is spoken. `voice_control.py` and `frontend/src/voiceControl.ts` hold the
 words both sides name.
+
+Three audio controls, each with its own job, in the microphone's control
+(`MicControl.tsx`, the message input and the centre's corner alike): Mute,
+unchanged (microphone processing only); the headset in the power button's
+place (`MicOffButton.tsx`, id `btn-mic-off`, target part `off`), which turns
+the whole audio system off (Mic off and his speech mute on) or back on (the
+microphone on and speech unmuted), drawn as the whole subsystem at a glance
+(`AudioHeadset.tsx`: the boom what JARVIS hears, the ear cups what it says,
+the power symbol when all is off; still, never animated); and the speaker
+at the end (`SpeakerButton.tsx`, part `speaker`), which mutes and unmutes
+speech, showing the mute and speaking, silent or stopped (for
+`STOPPED_SHOWN_MS` after Stop), still like the headset. Stop stays its own control. His speech mute
+is a voice input setting (`voice_control.py` `speech_muted`, per user,
+saved, published as `voice_input_settings` so every page and the brain
+agree): while it is on JARVIS answers in text only. The speech scheduler
+skips every utterance begun while it is on (`SpeechScheduler(muted=...)`,
+read as each starts), so nothing is synthesized or sent, and a muted
+read-back is not heard, so it approves nothing; turning it on stops what is
+sounding at once (the publish hook, `_stop_speaking`). The page's side is
+`audioState.ts` (`setSpeechMuted`, `setAllAudio`, the looks). The brain only
+makes them quieter: acting `mute_speech` (the same `voice_control.change`)
+and `turn_audio_off` (that, and the quiet frame's Mic off); unmuting and
+turning audio on are his clicks, and `set_voice_input_settings` does not
+take the mute.
 
 ## Speaking Spanish
 The language in force is `spoken_words.active_language()`, the one place it
@@ -1200,6 +1486,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `frontend/src/voiceHealth.ts` is the page's side of it
 - `tool_activity.py` — The brain's tool calls as a bounded in-memory feed
   and each tool's category (see "Tool activity")
+- `brain_activity.py` — Everything the brain does (turns, streaming, tool
+  calls, messages, digests, speech) as one bounded in-memory feed, no words
 - `subsystem_diagnostics.py` — Each subsystem's state, worked out at read
   time (see "Subsystem diagnostics"); `frontend/src/subsystems.ts` is the
   page's side of it
@@ -1259,6 +1547,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `data/messages/<project>/` (see "Messages from sessions")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `work_store.py` / `work_api.py` / `work_report.py` — The Work tracker's
+  record, its routes and shared calls, and the command agents report with
+  (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and
+  `WorkDetail.tsx` are the page's side
 - `access_keys.py` — Access keys by category, for agents the user lets
   reach some of JARVIS's routes without the tool token
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
@@ -1372,6 +1664,13 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   running a step, its results, and which files the brain may attach; the
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
+- `make_package.py` — The one command an agent makes and sends a package
+  with (see `docs/making-a-package.md`); `decision_package.py` reads,
+  expands, checks, builds and delivers a deck's content
+- `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
+  record, a deck's questions and answers read as data, and its routes (see
+  "The package inbox"); `frontend/src/packageInbox.ts` /
+  `QueuePackages.tsx` are the page's side
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper
@@ -1504,6 +1803,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 
 - `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
   the folder catalog's routes and tools off; its records are kept
+- `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
+  engine and its ingest (see "The knowledge engine")
+- `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
+  — the engine's memory budget; it is restarted past 1.5 times it
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
   background discovery and availability look (every test sets this)
 

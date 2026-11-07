@@ -24,6 +24,9 @@ EXPECTED = {
     "unlisted workflow read first, then replaces", "gone workflow refused, nothing opened",
     "reopening a shown-away detail shows it again", "close goes back to Conversation",
     "close while another view is shown keeps that view", "close with nothing open refused",
+    "work item opens in the centre with the Work list in view",
+    "unlisted work item read first, then replaces", "gone work item refused",
+    "work close goes back to Conversation",
     "subagent opens in the workflow slot", "thread named from the record",
     "thread read from JARVIS when not in the record", "thread with nothing on record refused",
     "voice diagnostics", "subsystem closes voice diagnostics", "voice input's row opens voice diagnostics",
@@ -60,7 +63,7 @@ SLOT_WRITES = re.compile(r"\b(\w+Slot)\.(?:show|close|adjust)\(")
 SLOT_OWNERS = {"workflowSlot": "workflows.ts", "threadSlot": "conversation.ts",
                "diagnosticsSlot": {"voiceHealth.ts", "subsystems.ts"}, "subsystemSlot": "subsystems.ts",
                "networkSlot": "network.ts", "queueSlot": "queue.ts", "packageSlot": "packages.ts",
-               "memberSlot": "bundles.ts", "settingsSlot": "Settings.tsx"}
+               "memberSlot": "bundles.ts", "settingsSlot": "Settings.tsx", "knowledgeSlot": "knowledge.ts"}
 
 
 def _sources():

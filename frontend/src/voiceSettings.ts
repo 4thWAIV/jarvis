@@ -49,6 +49,8 @@ export type VoiceInputChange = {
   /** Any cue, with only what changes. */
   cues?: Partial<Record<CueName, Partial<CueSetting>>>;
   volume?: number;
+  /** His speech mute: the speaker's and the headset's. */
+  speech_muted?: boolean;
 };
 
 /** Change any of the settings: the same call as the brain's

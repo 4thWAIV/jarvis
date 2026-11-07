@@ -34,6 +34,14 @@ SOURCE_ROOT = PACKAGE_DIR.parent if CHECKOUT else PACKAGE_DIR
 FRONTEND_DIST = PACKAGE_DIR / "web"
 
 DEFAULT_DATA_DIR = CONFIG_DIR / "data"
+
+
+def env_file_path() -> Path:
+    """The .env JARVIS loads at startup and its settings read and write.
+    JARVIS_ENV_FILE exists so the test suite can neither read nor write the
+    developer's live .env — the same reasoning as JARVIS_DATA_DIR."""
+    override = os.getenv("JARVIS_ENV_FILE", "").strip()
+    return Path(override) if override else CONFIG_DIR / ".env"
 _DEFAULT = DEFAULT_DATA_DIR
 
 
@@ -202,6 +210,18 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "2c16f743459089cbad3c0d7a412588125a21bdfb51d322bbfec8fd82d650fc19",  # a read-back sends only on his next-words yes
     "b7bce00cdff6eb4514e03d4d18b7ce83baa05ac1d09cc90808a4c08b156591dd",  # project notes edit and the read-back yes gate together
     "eb78a554d37262fba5681de97e38d3b548340455589c645174e33c006fc569bb",  # read back at once, naming who it is for
+    "444eea964bae36c9a187d9544a774d843f064f48aa59daabea70ca9ed7a140b8",  # queued updates dropped (c80a33b)
+    "4fdf13c5eda9e7d4b417fa0a287c15fc80981f55d1376c4def12678486c37996",  # the Work tracker (7e868d8)
+    "6d7eacda76c7a7c64b0ee245635fbaddc8a30eafaa15b290143ca5410ba7b190",  # find a package by the words he calls it
+    "598610094401cb5bc4666be6700b40a56550a59c004da84c1ee62d9cd3698e39",  # record a decision package's spoken answers with its decide.py
+    "7194e39323b805d7875a58d6d799b9590cdbf5eb67df5ce7009e674c6d532fea",  # the decision deck merged with finding packages by his words
+    "a499fbcd626b4bbeb236c7d67fa46f545f03deaaeb3d0bf8a4e15c861ebd9ec6",  # take him to a decision deck's slide through its story
+    "991d24e86b76b6cebef34e25295f81010be25d444619cb5cbad2f296fd679a87",  # a decision deck for every choice, merged with finding packages
+    "484ee9193daf7df09c707ac3b6d7802332eec92176f0ee7c21ef7165b7e34ab0",  # open a package by his words; only open_package_page opens a page package
+    "e56ed049cc2859973e5607e62375703aeb69f101e92272eb2c2df08972973019",  # a decision deck's story waits at each decision; stop, status, resume
+    "5b8ad413d1332d4272e2557bb1b3dcda5304c18dac1987d24c9eddc65ada3c4e",  # as shipped in 453b4ae8 (the Work tracker)
+    "c03992b7460ed11182fcc60f28bed34130af9d6b5ea8ee151dd96163a16cc147",  # as shipped in d2f6c50 (the package inbox)
+    "8c45e249c1257825d490bfda155f182e3f01af3c15c509fb5e3e132e1686d90a",  # the knowledge tools
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -601,9 +621,14 @@ def ensure_tool_token() -> str:
     being quietly replaced: it is somebody else's file, and deleting it is
     not ours to do.
     """
+    return _ensure_token(tool_token_path())
+
+
+def _ensure_token(path: Path) -> str:
+    """The one safe way to make or adopt a secret token file at `path`
+    (ensure_tool_token's rules, shared with ensure_knowledge_token)."""
     import secrets
     import stat as _stat
-    path = tool_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     token = secrets.token_urlsafe(32)
@@ -637,3 +662,27 @@ def ensure_tool_token() -> str:
         return token
     finally:
         os.close(fd)
+
+
+def knowledge_dir() -> Path:
+    """The knowledge engine's own directory (jarvis/knowledge). It holds only
+    derived state, so deleting it costs a rebuild, never data."""
+    return data_dir() / "knowledge"
+
+
+def knowledge_address_path() -> Path:
+    """Where the running knowledge engine says it can be reached: scheme,
+    host, port, pid and boot ID, 0600 (jarvis/knowledge/address.py)."""
+    return data_dir() / "knowledge-address.json"
+
+
+def knowledge_token_path() -> Path:
+    """The knowledge engine's bearer token, separate from the tool token so
+    leaking one opens nothing of the other. Only the server holds it."""
+    return data_dir() / "knowledge-token"
+
+
+def ensure_knowledge_token() -> str:
+    """Create the knowledge engine's token if absent and return it, under
+    exactly ensure_tool_token's rules."""
+    return _ensure_token(knowledge_token_path())

@@ -73,6 +73,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional, Sequence
 
+from jarvis import brain_activity
+
 log = logging.getLogger("jarvis.turns")
 
 # How often a commit waiting for the recogniser looks again (often, so the
@@ -134,6 +136,25 @@ class TurnController:
     or ended)."""
 
     _ids = itertools.count(1)
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @state.setter
+    def state(self, value: str) -> None:
+        # The one writer of whether his speech is being gathered: the brain
+        # activity feed's `listening` (brain_activity.py), started when a
+        # turn starts gathering and ended once it stops, whatever stops it.
+        was = getattr(self, "_state", "idle")
+        self._state = value
+        if value == "gathering" and was != "gathering":
+            self._listening_turn = self._turn.id if self._turn is not None else 0
+            brain_activity.safely(brain_activity.feed.listening, brain_activity.STARTED,
+                                  self._listening_turn)
+        elif was == "gathering" and value != "gathering":
+            brain_activity.safely(brain_activity.feed.listening, brain_activity.ENDED,
+                                  getattr(self, "_listening_turn", 0))
 
     def __init__(self, commit: Commit, *, hold: Optional[float] = None,
                  schedule: Optional[Schedule] = None,

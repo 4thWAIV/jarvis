@@ -1,0 +1,225 @@
+{
+  "family": "knowledge",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [
+    {
+      "id": "knowledge.open",
+      "label": "Open Knowledge in the centre: search what JARVIS has read, the link proposals waiting for his yes, and his topics",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ]
+    },
+    {
+      "id": "knowledge.close",
+      "label": "Close Knowledge",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ]
+    },
+    {
+      "id": "knowledge.search",
+      "label": "Search what JARVIS has read for some words, in the Knowledge view",
+      "view": "main.knowledge",
+      "args": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ]
+    },
+    {
+      "id": "knowledge.proposal.answer",
+      "label": "Accept or reject one link proposal; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "proposalId": {
+          "type": "key",
+          "entity": "knowledgeProposal"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "proposalId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
+    },
+    {
+      "id": "knowledge.index.choose",
+      "label": "Pin an extra index so it is kept, forbid it so it is never made, or clear his choice; only his own hand chooses here",
+      "view": "main.knowledge",
+      "args": {
+        "indexKey": {
+          "type": "key",
+          "entity": "knowledgeIndex"
+        },
+        "choice": {
+          "type": "enum",
+          "values": [
+            "pin",
+            "forbid",
+            "clear"
+          ]
+        }
+      },
+      "required": [
+        "indexKey",
+        "choice"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
+    },
+    {
+      "id": "knowledge.seed.answer",
+      "label": "Accept or decline one suggested set of topics; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "seedId": {
+          "type": "key",
+          "entity": "knowledgeSeed"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "decline"
+          ]
+        }
+      },
+      "required": [
+        "seedId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "knowledge",
+      "entity": null,
+      "label": "Knowledge",
+      "parts": [
+        "header",
+        "close",
+        "status",
+        "search",
+        "results",
+        "proposals",
+        "topics",
+        "indexes",
+        "seeds"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "knowledgeProposal",
+      "entity": "knowledgeProposal",
+      "label": "Link proposal",
+      "parts": [
+        "row",
+        "accept",
+        "reject"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "knowledgeIndex",
+      "entity": "knowledgeIndex",
+      "label": "Extra index",
+      "parts": [
+        "row",
+        "pin",
+        "forbid",
+        "clear"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "knowledgeSeed",
+      "entity": "knowledgeSeed",
+      "label": "Suggested topics",
+      "parts": [
+        "row",
+        "accept",
+        "decline"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    }
+  ]
+}

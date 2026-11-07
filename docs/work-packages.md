@@ -14,6 +14,9 @@ A package runs one of three ways, its `runs`:
 - `page`: the package's own HTML page opens in the centre of JARVIS's page,
   where the person uses it.
 
+To make one and send it, see [Making a package](making-a-package.md): one
+command for every kind. This page is the format and the receiver's side.
+
 The team is a few trusted people on a closed network, so there is no sandbox.
 Each step needs the receiver's spoken go-ahead in that turn, and the results go
 back through the usual draft, review and approval.
@@ -152,6 +155,9 @@ with the reason if it is not valid.
 | `say` | A beat's words, at most 800 characters. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
 | `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. |
 | `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
+| `answers` | Optional: `results/<name>.json`, a JSON object in the package's results keyed by question id (a decision deck's `results/decisions.json`). Needed when any slide `waits`. |
+| `waits` | Optional, on a slide: the id of the question it asks. Once the slide has been heard the story says nothing more until that question has an answer in `answers` (one it did not have when the slide began), then goes on by itself once nobody is speaking. |
+| `asks_when` | Optional, on a slide that waits: `{"question", "answers"}`. The slide's question is asked only once that question has one of those answers; otherwise it is passed over. |
 
 The page loads JARVIS's helper, which draws the pointer and the rings and
 runs the actions inside the page's own frame:
@@ -168,8 +174,21 @@ The story is spoken through JARVIS's usual voice, one beat after another.
 Each beat's words carry the beat with them to the page, and the page rings
 the beat's targets the moment those words start playing, then clears them
 as the last of them ends, so the pointing follows the voice rather than a
-timer. The person speaking, the Stop button beside it, Escape, or JARVIS's
-own Stop end both the voice and the rings.
+timer.
+
+A story that asks questions is told one at a time: a slide that `waits` is
+told, then the story waits for its answer, and JARVIS knows which question
+it waits for (`tell_package_story` action `status`, the `package_story`
+frame's `question`, a `story.state` message to the frame). A question
+already answered is passed over, unless the story was told from that very
+slide, when it is asked again. Telling, waiting and paused are all running.
+The person speaking over a slide pauses it there (on a slide that waits, it
+waits for the answer he may be giving). Stop ends it at once whatever it is
+doing: the Stop beside it, JARVIS's Stop speaking, the brain's
+`tell_package_story` stop, "stop" said as a whole utterance, or closing the
+package's page. Asked to stop again, JARVIS says it is already stopped.
+`resume` (the page's Continue) tells it again from the first question with
+no answer.
 
 Besides `save` and `listen`, the bridge carries the story:
 
@@ -177,6 +196,7 @@ Besides `save` and `listen`, the bridge carries the story:
 |---|---|
 | `{jarvis: "package", type: "story.cue", beat, targets, actions}` | a beat's words start playing (`beat` is `"<slide>.<beat>"`, both from 1) |
 | `{jarvis: "package", type: "story.clear"}` | its words have ended, or the voice stopped |
+| `{jarvis: "package", type: "story.state", state, slide, question}` | the story is `telling`, `waiting` (for `question`), `paused`, `finished` or `stopped` |
 
 | from the page | what JARVIS does |
 |---|---|
@@ -225,7 +245,7 @@ The brain's tools:
   `_open_package_page`, and `POST /api/packages/<id>/page`. Acting.
   JARVIS keeps the page package shown and shows it again on a page that
   connects later, a reload included, until its × is pressed.
-- `tell_package_story` (package, `action` tell or stop, `slide`): opens a
+- `tell_package_story` (package, `action` tell, resume, stop or status, `slide`): opens a
   page package's page and tells its story in JARVIS's voice from that slide,
   or stops it; telling another slide jumps there. The page's own way is Tell
   the story, the slide list and Stop above the frame; both go through the
@@ -246,18 +266,68 @@ The brain's tools:
 persona (`jarvis/jarvis_home/CLAUDE.md`, "Packages") tells the brain to offer
 to open a .zip, run it the way it runs, and reply with the results.
 
-## Sending one
+## Decks: decision packages and presentations
 
-Zip the package's folder with `package.json` at the root (a zip of the folder itself, with `package.json` one folder down, opens too):
+Decision packages and presentations are page packages built from one
+shared deck, `examples/packages/decision-deck/`, so they all look and work
+the same. A decision package asks the receiver a set of decisions and
+records the answers; a presentation has slides only, told in JARVIS's
+voice, with nothing to answer, no "Your answers" slide and nothing
+returned.
+
+A JARVIS unpacks a decision package (one holding `deck-data.js` and
+`scripts/decide.py`) from a file on this Mac only with a stamp for its own
+tool token that matches its files (`decision-check.json`, made by
+`jarvis/decision_stamp.py`: the SHA-256 of every other file and an HMAC of
+it by that token). Only the package command stamps one, after every check
+has passed, so a decision package reaches him no other way.
+
+### What the receiver gets
+
+The deck draws on a fixed 880 × 640 canvas scaled to fit the frame, so a
+decision slide shows its question, the recommendation and its reason, each
+option with its Choose button, Decide later, None of these, a words box and
+the recorded answer without scrolling, at both centre frame sizes (809 ×
+589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one). On a decision
+slide with pictures, the pictures take all the room the words and the vote
+row leave: the deck tries each option's picture above its words, beside
+them and, for two options, one option a row, and keeps whichever shows the
+smallest picture largest with nothing cut off. The canvas is never scaled
+past body text of about 22 px, however large the frame. Previous and Next, the arrow keys, a
+jump strip that marks answered decisions, and "n of N" move between
+slides; the current slide is kept in memory only. The last slide, "Your
+answers", lists every decision with its recorded answer, changed in place,
+and Approve all recommended, which asks once and then records the
+recommended option for every decision with no answer yet. Nothing is ever
+pre-selected.
+
+The answers go to `results/decisions.json`, `results/decisions.md` and
+`results/decisions.js` (the same record as a script, which is how the frame
+reads its own file). Each record is
+`{"<decision>": {"answer": "<option id>" | "later" | "none", "at", "choice", "note", "recommended"}}`.
+
+### Answers by voice
+
+The package carries `SKILL.md` for JARVIS, and JARVIS's own instructions
+say the same: when the person answers out loud, JARVIS runs, with
+`run_package_command` on the package,
 
 ```bash
-python3 examples/packages/zip_package.py examples/packages/spanish-speech-test
+"$JARVIS_PYTHON" scripts/decide.py <decision> <option> [his words]
+"$JARVIS_PYTHON" scripts/decide.py all-recommended
+"$JARVIS_PYTHON" scripts/decide.py show [<decision>]
 ```
 
-It writes `spanish-speech-test-1.0.0.zip`, leaving out `results/`, `model/`
-and `.DS_Store`, after checking that the file the package's `runs` needs,
-and its story if it names one, is there. Attach it to a message: pick it on the Queue page, or tell
-JARVIS to send it to the person, giving its full path.
+`<option>` is an option's id, its letter, `recommended`, `later` or `none`.
+`decide.py` writes the same three files, byte for byte as the page writes
+them, and the page reads `results/decisions.js` again every three seconds,
+so a spoken answer appears on screen.
+
+A page package's skill reaches the brain only when the brain opens the
+package itself (`open_package` or `open_local_package` return it). A deck
+opened from the page, by the Queue's or the Folders view's Open package,
+reaches the brain only through its instructions above, which do not depend
+on the skill.
 
 ## The example: spanish-speech-test
 

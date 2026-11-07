@@ -1,36 +1,49 @@
 /**
- * Turns the microphone off and on: off releases it, so the browser's
- * recording indicator goes out, and on asks for it again, which takes longer
- * than unmuting. Off is kept across a reload (mic.ts); turning it on is a
- * deliberate start of listening. See `setQuiet` in voiceInput.ts.
+ * The headset, in the power button's place: turns the whole audio system
+ * off and on. Off is Mic off (the microphone released, so the browser's
+ * recording indicator goes out; kept across a reload, mic.ts) and JARVIS's
+ * speech muted (voice_control.py, per user); on is the microphone on again,
+ * a deliberate start of listening, and speech unmuted (audioState.ts,
+ * `setAllAudio`). It is pressed while the microphone is off.
+ *
+ * It is drawn as the headset (AudioHeadset.tsx), the whole audio subsystem
+ * at a glance: what JARVIS hears on the boom, what it says on the ear cups,
+ * red while any of it is muted or off.
  */
 
 import { useSyncExternalStore } from "react";
+import { HeadsetGlyph } from "./AudioHeadset";
+import { setAllAudio, useHearing, useSaying } from "./audioState";
 import { useT } from "./locale";
-import { chooseQuiet, quiet } from "./mic";
+import { quiet } from "./mic";
 
 export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
   const t = useT();
   const off = useSyncExternalStore(quiet.subscribe, quiet.get) === "off";
+  const { look } = useHearing();
+  const saying = useSaying();
+  const allOff = off && saying === "muted";
+  const red = look === "muted" || look === "off" || saying === "muted";
+  const label = t(off ? "left.audio.allOn" : "left.audio.allOff");
   return (
     <button
       id="btn-mic-off"
+      type="button"
       ref={partRef}
       data-ui-action="microphone"
-      className={`control-button small${off ? " muted" : ""}`}
-      title={t(off ? "left.mic.turnOn" : "left.mic.turnOff")}
-      aria-label={t(off ? "left.mic.turnOn" : "left.mic.turnOff")}
+      data-hearing={look}
+      data-saying={saying}
+      data-all-off={allOff}
+      className={`control-button small audio-headset${red ? " muted" : ""}`}
+      title={label}
+      aria-label={label}
       aria-pressed={off}
       onClick={(e) => {
         e.stopPropagation();
-        chooseQuiet(off ? "none" : "off");
+        setAllAudio(off);
       }}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           strokeWidth={off ? 2.2 : 1.5} strokeLinecap="round">
-        <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-        <line x1="12" y1="2" x2="12" y2="12" />
-      </svg>
+      <HeadsetGlyph hearing={look} saying={saying} allOff={allOff} />
     </button>
   );
 }

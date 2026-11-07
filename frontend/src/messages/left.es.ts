@@ -9,8 +9,6 @@ export const leftEs: CatalogOf<typeof leftEn> = {
 
   "left.orb.brainLogo": "Cerebro {provider}",
 
-  "left.status.listening": "escuchando...",
-  "left.status.thinking": "pensando...",
   "left.status.stop": "Detener",
   "left.status.stopTitle": "Detener toda la voz ahora",
 
@@ -18,8 +16,6 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.mic.off": "Micrófono apagado",
   "left.mic.meter": "entrada del micrófono",
   "left.mic.mute": "Silenciar/Activar sonido",
-  "left.mic.turnOn": "Encender el micrófono",
-  "left.mic.turnOff": "Apagar el micrófono",
   "left.mic.healthCause": "{state}; causa: {cause}",
   "left.mic.mutedInactive": "Silenciado · micrófono inactivo",
   "left.mic.finishing": "Terminando",
@@ -39,6 +35,10 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.mic.state.busy": "Ocupado en otra pestaña",
   "left.mic.state.interrupted": "Interrumpido",
   "left.mic.state.unavailable": "No disponible",
+  "left.audio.allOff": "Apagar todo el audio (micrófono y voz de JARVIS)",
+  "left.audio.allOn": "Encender todo el audio (micrófono y voz de JARVIS)",
+  "left.audio.speaker.mute": "Silenciar la voz de JARVIS: responde solo por escrito",
+  "left.audio.speaker.unmute": "La voz de JARVIS está silenciada: haga clic para activarla",
 
   "left.input.asking": "Pidiendo el micrófono…",
   "left.input.blocked": "El micrófono está bloqueado para esta página. Permítalo en la barra de direcciones y vuelva a cargar. Escribir sigue funcionando.",
@@ -162,6 +162,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.reminder.text": "Inicie sesión en el servidor de su equipo: los mensajes entre personas y la vista de Red lo necesitan",
   "left.reminder.signIn": "Iniciar sesión",
   "left.reminder.later": "Más tarde",
+  "left.reminder.chip": "Sin sesión",
 
   "left.settings.save": "Guardar",
   "left.settings.close": "Cerrar",

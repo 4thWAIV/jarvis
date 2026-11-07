@@ -1872,3 +1872,29 @@ async def test_a_floor_that_cannot_be_read_holds_routine_speech(h):
     await s.say("Routine update.", label="announcement")
     await asyncio.sleep(0.4)
     assert h.audio() == []
+
+
+# ── his speech mute (voice_control.speech_muted) ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_while_speech_is_muted_nothing_is_synthesized_or_sent_and_nothing_is_heard():
+    muted = [True]
+    h = Harness(muted=lambda: muted[0])
+    await h.sched.start()
+    try:
+        said = await h.sched.say("Muted words. Not a sound.")
+        turn = h.sched.begin_turn()
+        h.sched.feed(turn, "A reply in text only. ")
+        readback = h.sched.read_aloud("Send this to chitauri.", capture=4)
+        await asyncio.sleep(0.2)
+        assert h.synth_calls == [] and h.audio() == []
+        for u in (said, turn, readback):
+            assert u.done and u.was_skipped and not u.heard_in_full
+        assert not await h.sched.wait_for(readback, timeout=0.2), "a muted read-back approves nothing"
+        # Unmuted, speech is as before.
+        muted[0] = False
+        await h.sched.say("Heard again.")
+        await h.ack_all()
+        assert h.synth_calls == ["Heard again."]
+    finally:
+        await h.sched.stop()

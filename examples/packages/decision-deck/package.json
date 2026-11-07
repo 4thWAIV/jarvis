@@ -1,0 +1,13 @@
+{
+  "name": "decision-deck-example",
+  "version": "1.0.0",
+  "purpose": "An example decision deck: three decisions on an office tea service, answered on the page or by voice.",
+  "runs": "page",
+  "entry": "index.html",
+  "story": "story.json",
+  "skill": "SKILL.md",
+  "returns": [
+    "results/decisions.json",
+    "results/decisions.md"
+  ]
+}

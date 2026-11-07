@@ -11,6 +11,9 @@
  *   - Main: the centre as it was before views (the capture boxes above the
  *     four-line captions), unchanged. Hidden from the header for now; the
  *     page opens on it at `?view=main`, so it keeps working and stays tested.
+ *   - A work item (WorkDetail.tsx), named by its title: offered while one
+ *     is open, which clicking its row in the Work tab does; the Work list
+ *     stays in view, and closing it goes back to Conversation.
  *   - Workflow (WorkflowDetail.tsx): one workflow in full. Offered only while
  *     one is open, which clicking its row in the Workflows view does; it is
  *     selected then, and closing it goes back to Conversation. A subagent's
@@ -60,6 +63,8 @@ import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
 import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
+import { WorkDetail } from "./WorkDetail";
+import { openWork, workList } from "./work";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
@@ -79,6 +84,9 @@ import { PackageView } from "./PackageView";
 import { openBundleMember } from "./bundles";
 import { BundleMemberView } from "./BundleMemberView";
 import { settingsOpen, SettingsView } from "./Settings";
+import { MicCorner, MicPortal } from "./MicControl";
+import { openKnowledge } from "./knowledge";
+import { KnowledgeView } from "./KnowledgeView";
 
 function MainView() {
   return (
@@ -125,6 +133,12 @@ const VIEWS: MainTabView[] = [
     hidden: true,
   },
 ];
+
+const KNOWLEDGE_VIEW: MainTabView = {
+  id: "knowledge",
+  icon: null,
+  view: () => <KnowledgeView />,
+};
 
 const THREAD_VIEW: MainTabView = {
   id: "thread",
@@ -174,6 +188,12 @@ const SETTINGS_VIEW: MainTabView = {
   view: () => <SettingsView />,
 };
 
+const WORK_VIEW: MainTabView = {
+  id: "work",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
   icon: null,
@@ -187,6 +207,9 @@ const WORKFLOW_VIEW: MainTabView = {
 export function CentreArea() {
   const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
+  const work = useSyncExternalStore(openWork.subscribe, openWork.get);
+  const workTitle = ((l) => [...(l?.items ?? []), ...(l?.history ?? [])])(
+    useSyncExternalStore(workList.subscribe, workList.get).value).find((i) => i.id === work)?.title;
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
@@ -200,6 +223,7 @@ export function CentreArea() {
   const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
   const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
+  const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
   const t = useT();
   const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
@@ -221,6 +245,9 @@ export function CentreArea() {
                       view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
                                                     member={fileOpen} /> }] : []),
     ...(settings ? [titled(SETTINGS_VIEW)] : []),
+    ...(knowledgeOpen ? [titled(KNOWLEDGE_VIEW)] : []),
+    ...(work ? [{ ...WORK_VIEW, title: workTitle ?? t("tabs.main.work"),
+                  view: () => <WorkDetail key={work} id={work} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
@@ -259,6 +286,9 @@ export function CentreArea() {
       )}
       {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
         && view.view()}
+      {/* The microphone: in the message input on Conversation, else here. */}
+      {view.id !== conversation.id && <MicCorner />}
+      <MicPortal />
     </>
   );
 }

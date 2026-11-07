@@ -52,7 +52,7 @@ async def _browser(p):
 
 
 async def _page(context, url, *, stop="keep", switch="stop", settings_status=200, script=None,
-                storage=None, view="?view=main", sounds=True, init=(), **settings):
+                storage=None, view="", sounds=True, init=(), **settings):
     page = await context.new_page()
     # Routed before the fake transcription socket is installed: Playwright's
     # socket routing replaces window.WebSocket with its own relay, and routed
@@ -269,7 +269,7 @@ async def test_a_stopped_capture_that_cannot_finish_leaves_its_words_as_an_unsen
         page_playwright, page_url):
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        page = await _page(context, page_url, stop="keep", view="")
+        page = await _page(context, page_url, stop="keep")
         await _listening(page)
         await page.evaluate(NEVER_FINISH)
         await page.click("#btn-mic-off")
@@ -317,7 +317,9 @@ async def test_changing_a_setting_while_listening_starts_stops_and_sends_nothing
         assert await page.evaluate("window.__liveTracks()") == 1
         assert page.voice.finals() == [] and _sent(page.voice, "turn_discard") == []
 
-        # The next stop follows the new setting.
+        # The next stop follows the new setting. Mic off is on the
+        # Conversation view, under Settings: closing Settings stops nothing.
+        await page.click("#settings-view .settings-head .workflow-close")
         await page.click("#btn-mic-off")
         assert await _until(lambda: _sent(page.voice, "turn_discard"))
         await context.close()
@@ -416,7 +418,7 @@ async def test_a_retry_within_the_grant_takes_nothing_from_another_page(page_pla
 async def test_typing_works_while_voice_is_quiet(page_playwright, page_url):
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        page = await _page(context, page_url, view="")
+        page = await _page(context, page_url)
         await page.click("#btn-mic-off")
         await page.fill("#conversation-draft", "status report")
         await page.press("#conversation-draft", "Enter")
@@ -433,7 +435,7 @@ async def test_mute_turns_what_was_said_into_an_unsent_draft_and_unmute_never_se
         page_playwright, page_url):
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        page = await _page(context, page_url, view="", script={"finalOnFinish": "at seven"})
+        page = await _page(context, page_url, script={"finalOnFinish": "at seven"})
         await _listening(page)
         await page.evaluate("window.__hear('book a table', true)")      # gathered, not committed
         assert await _until(page.voice.finals)

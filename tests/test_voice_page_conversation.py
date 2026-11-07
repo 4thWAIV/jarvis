@@ -42,7 +42,8 @@ class _Voice:
             self.ws.send(json.dumps(m))
 
 
-async def _open(p, url, voice=None):
+async def _open(p, url, voice=None, routes=None):
+    """`routes`: more of the page's requests answered here, by URL pattern."""
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -51,6 +52,8 @@ async def _open(p, url, voice=None):
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice or _Voice())
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
+    for pattern, handler in (routes or {}).items():
+        await page.route(pattern, handler)
     await page.goto(url)
     await start_listening(page)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
@@ -464,4 +467,73 @@ async def test_disconnected_submission_preserves_draft_with_error(page_url):
         assert await page.get_by_role("alert").inner_text() == "Not connected"
         assert "has not been sent" in await page.locator("#conversation-control .control-note").inner_text()
         assert not [m for m in voice.got if m.get("type") == "transcript"]
+        await browser.close()
+
+
+SEND_PLACE = """() => {
+  const r = s => { const b = document.querySelector(s).getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
+  const footer = document.querySelector('.composer-footer');
+  return {send: r('.composer-send'), mic: r('#mic-control'), stop: r('#stop-slot'), health: r('#health-slot'),
+          gap: parseFloat(getComputedStyle(footer).columnGap),
+          shown: getComputedStyle(document.querySelector('#stop-slot')).display !== 'none'};
+}"""
+
+
+def _right(box):
+    return box[0] + box[2]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_stop_sits_left_of_send_and_only_what_is_left_of_it_moves(page_playwright, page_url):
+    """Stop is in the message input's lower right, immediately left of Send,
+    then the microphone. Absent, it takes no room: the health dot's slot
+    moves up to Send, and Send and the microphone are exactly where they
+    were whether Stop shows or not."""
+    voice = _Voice()
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, voice)
+        hidden = await page.evaluate(SEND_PLACE)
+        assert not hidden["shown"]
+        # Stop absent: the health slot is Send's left neighbour, one gap away.
+        assert abs(hidden["send"][0] - _right(hidden["health"]) - hidden["gap"]) < 0.5, hidden
+        assert _right(hidden["send"]) <= hidden["mic"][0]
+        voice.send({"type": "reply", "utt": 1, "text": "All six agents are idle, sir.", "done": True},
+                   {"type": "status", "state": "speaking"},
+                   {"type": "audio", "utt": 1, "idx": 0, "data": _silence_wav(1.2),
+                    "text": "All six agents are idle, sir.", "kind": "reply"})
+        await page.wait_for_selector("#hush", state="visible")
+        shown = await page.evaluate(SEND_PLACE)
+        assert shown["shown"]
+        assert (shown["send"], shown["mic"]) == (hidden["send"], hidden["mic"])
+        # Health slot, Stop, Send: each one gap from the next.
+        assert abs(shown["send"][0] - _right(shown["stop"]) - shown["gap"]) < 0.5, shown
+        assert abs(shown["stop"][0] - _right(shown["health"]) - shown["gap"]) < 0.5, shown
+        voice.send({"type": "status", "state": "idle"})
+        await page.wait_for_selector("#hush", state="hidden")
+        again = await page.evaluate(SEND_PLACE)
+        assert (again["send"], again["mic"], again["health"]) == (hidden["send"], hidden["mic"], hidden["health"])
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_off_conversation_the_one_microphone_is_in_the_centre_corner_and_works(page_playwright, page_url):
+    """Away from the Conversation view the same microphone control (one
+    instance) is in the centre area's lower-right corner: it mutes there,
+    and back on Conversation it is in the message input, still muted."""
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url)
+        assert await page.locator(".composer-footer #mic-control").count() == 1
+        await page.click(".centre-tabs [data-ui-tab=folders]")
+        await page.locator("#centre-mic #mic-control").wait_for()
+        assert await page.locator("#mic-control").count() == 1
+        await page.click("#btn-mute")
+        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        place = await page.evaluate("""() => { const c = document.querySelector('#centre-mic').getBoundingClientRect();
+          return {right: c.right, bottom: c.bottom, w: innerWidth, h: innerHeight}; }""")
+        assert place["right"] > place["w"] * 0.6 and place["bottom"] > place["h"] * 0.8, place
+        await page.click(".centre-tabs [data-ui-tab=conversation]")
+        await page.locator(".composer-footer #mic-control").wait_for()
+        assert await page.locator("#centre-mic").count() == 0
+        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        await page.click("#btn-mute")
         await browser.close()

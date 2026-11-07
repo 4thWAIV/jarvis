@@ -148,7 +148,15 @@ export const UI_CONTRACT = {
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
-    "member": "^[A-Za-z0-9]{1,64}$"
+    "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
+    "workItem": "^[A-Za-z0-9._-]{1,128}$",
+    "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
+    "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
+    "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
+    "member": "^[A-Za-z0-9]{1,64}$",
+    "knowledgeProposal": "^[0-9a-f]{24}$",
+    "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
     "enum",
@@ -297,7 +305,7 @@ export const UI_CONTRACT = {
       "id": "right.workflows",
       "region": "right",
       "kind": "tab",
-      "label": "Workflows",
+      "label": "Work",
       "tab": "workflows"
     },
     {
@@ -327,6 +335,12 @@ export const UI_CONTRACT = {
       "label": "Centre notice"
     },
     {
+      "id": "main.corner",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Centre corner (the microphone, while the message input is not on screen)"
+    },
+    {
       "id": "main.conversation",
       "region": "main",
       "kind": "tab",
@@ -349,6 +363,14 @@ export const UI_CONTRACT = {
       "label": "Main",
       "tab": "main",
       "hidden": true
+    },
+    {
+      "id": "main.work",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work item",
+      "tab": "work",
+      "entity": "workItem"
     },
     {
       "id": "main.workflow",
@@ -413,6 +435,13 @@ export const UI_CONTRACT = {
       "label": "Received file",
       "tab": "file",
       "entity": "member"
+    },
+    {
+      "id": "main.knowledge",
+      "region": "main",
+      "kind": "detail",
+      "label": "Knowledge",
+      "tab": "knowledge"
     },
     {
       "id": "main.settings",
@@ -487,6 +516,7 @@ export const UI_CONTRACT = {
             "folders",
             "main",
             "workflow",
+            "work",
             "thread",
             "diagnostics",
             "subsystem",
@@ -494,7 +524,8 @@ export const UI_CONTRACT = {
             "queue",
             "package",
             "file",
-            "settings"
+            "settings",
+            "knowledge"
           ]
         }
       },
@@ -562,6 +593,60 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "network"
+    },
+    {
+      "id": "work.open",
+      "label": "Open one work item's detail in the centre, on its first tab or the one named; the Work list stays in view",
+      "view": "main.work",
+      "args": {
+        "itemId": {
+          "type": "key",
+          "entity": "workItem"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "decisions",
+            "blocking",
+            "pieces",
+            "reports"
+          ]
+        }
+      },
+      "required": [
+        "itemId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "work.close",
+      "label": "Close the work item's detail",
+      "view": "main.work",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
     },
     {
       "id": "workflow.open",
@@ -1468,6 +1553,60 @@ export const UI_CONTRACT = {
       "family": "workflows"
     },
     {
+      "id": "work.tab.select",
+      "label": "Show one of the open work item's tabs",
+      "view": "main.work",
+      "args": {
+        "itemId": {
+          "type": "key",
+          "entity": "workItem"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "decisions",
+            "blocking",
+            "pieces",
+            "reports"
+          ]
+        }
+      },
+      "required": [
+        "itemId",
+        "tab"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "work"
+    },
+    {
+      "id": "work.showHistory",
+      "label": "Show or hide the Work tab's History: items closed, or done a while",
+      "view": "right.workflows",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "work"
+    },
+    {
       "id": "voice.range",
       "label": "Show the last 15 minutes, hour or day of the voice record in the Diagnostics view (zooming out)",
       "view": "main.diagnostics",
@@ -2079,6 +2218,145 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "packages"
+    },
+    {
+      "id": "knowledge.open",
+      "label": "Open Knowledge in the centre: search what JARVIS has read, the link proposals waiting for his yes, and his topics",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.close",
+      "label": "Close Knowledge",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.search",
+      "label": "Search what JARVIS has read for some words, in the Knowledge view",
+      "view": "main.knowledge",
+      "args": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.proposal.answer",
+      "label": "Accept or reject one link proposal; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "proposalId": {
+          "type": "key",
+          "entity": "knowledgeProposal"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "proposalId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.index.choose",
+      "label": "Pin an extra index so it is kept, forbid it so it is never made, or clear his choice; only his own hand chooses here",
+      "view": "main.knowledge",
+      "args": {
+        "indexKey": {
+          "type": "key",
+          "entity": "knowledgeIndex"
+        },
+        "choice": {
+          "type": "enum",
+          "values": [
+            "pin",
+            "forbid",
+            "clear"
+          ]
+        }
+      },
+      "required": [
+        "indexKey",
+        "choice"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.seed.answer",
+      "label": "Accept or decline one suggested set of topics; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "seedId": {
+          "type": "key",
+          "entity": "knowledgeSeed"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "decline"
+          ]
+        }
+      },
+      "required": [
+        "seedId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
     }
   ],
   "kinds": [
@@ -2267,39 +2545,6 @@ export const UI_CONTRACT = {
       "parts": [
         "canvas",
         "logo"
-      ],
-      "presentations": [
-        {
-          "view": "left.fixed"
-        }
-      ],
-      "family": "left"
-    },
-    {
-      "kind": "status",
-      "entity": null,
-      "label": "Status",
-      "parts": [
-        "text",
-        "stop"
-      ],
-      "presentations": [
-        {
-          "view": "left.fixed"
-        }
-      ],
-      "family": "left"
-    },
-    {
-      "kind": "mic",
-      "entity": null,
-      "label": "Microphone",
-      "parts": [
-        "meter",
-        "health",
-        "mute",
-        "off",
-        "listen"
       ],
       "presentations": [
         {
@@ -2662,11 +2907,39 @@ export const UI_CONTRACT = {
       "entity": null,
       "label": "Queue",
       "parts": [
+        "packages",
+        "closedPackages",
         "waiting",
         "active",
         "history",
         "more",
         "new"
+      ],
+      "presentations": [
+        {
+          "view": "right.queue",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "queue"
+            }
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "kind": "inboxPackage",
+      "entity": "inboxPackage",
+      "label": "Package in the inbox: who sent it, its title and how many decisions wait",
+      "parts": [
+        "row",
+        "sender",
+        "title",
+        "progress",
+        "open",
+        "return",
+        "close"
       ],
       "presentations": [
         {
@@ -2886,7 +3159,8 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "state",
-        "progress"
+        "progress",
+        "activity"
       ],
       "presentations": [
         {
@@ -2906,7 +3180,8 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "state",
-        "progress"
+        "progress",
+        "activity"
       ],
       "presentations": [
         {
@@ -3063,6 +3338,213 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "workflows"
+    },
+    {
+      "kind": "workList",
+      "entity": null,
+      "label": "Work list",
+      "parts": [
+        "list",
+        "showHistory",
+        "history"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workGroup",
+      "entity": "workGroup",
+      "label": "Work group",
+      "parts": [
+        "head"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workItem",
+      "entity": "workItem",
+      "label": "Work item",
+      "parts": [
+        "row",
+        "state",
+        "update",
+        "mark",
+        "decisionCount",
+        "blocker",
+        "activity",
+        "header",
+        "close",
+        "banner",
+        "source",
+        "who",
+        "pieces",
+        "decisions",
+        "packages",
+        "answered",
+        "blocking",
+        "reports",
+        "tab.overview",
+        "tab.decisions",
+        "tab.blocking",
+        "tab.pieces",
+        "tab.reports"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "parts": [
+            "row",
+            "state",
+            "update",
+            "mark",
+            "decisionCount",
+            "blocker",
+            "activity"
+          ],
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        },
+        {
+          "view": "main.work",
+          "parts": [
+            "header",
+            "state",
+            "update",
+            "close",
+            "banner",
+            "source",
+            "who",
+            "pieces",
+            "decisions",
+            "packages",
+            "answered",
+            "blocking",
+            "reports",
+            "tab.overview",
+            "tab.decisions",
+            "tab.blocking",
+            "tab.pieces",
+            "tab.reports"
+          ],
+          "reveal": {
+            "command": "work.open",
+            "args": {
+              "itemId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workPiece",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workPart"
+      ],
+      "label": "Work piece",
+      "parts": [
+        "row",
+        "who",
+        "worker",
+        "state",
+        "mark",
+        "activity",
+        "note",
+        "after",
+        "evidence"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workDecision",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workPart"
+      ],
+      "label": "Work decision",
+      "parts": [
+        "row",
+        "options",
+        "answer",
+        "package"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workPackageQuestion",
+      "entity": null,
+      "keyOf": [
+        "inboxPackage",
+        "workPart"
+      ],
+      "label": "A question a package sent for a work item asks",
+      "parts": [
+        "row",
+        "options",
+        "answer"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workBlocker",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workBlocker"
+      ],
+      "label": "What holds a work item up",
+      "parts": [
+        "row"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
     },
     {
       "kind": "subsystem",
@@ -3377,6 +3859,54 @@ export const UI_CONTRACT = {
       "family": "conversation"
     },
     {
+      "kind": "status",
+      "entity": null,
+      "label": "Status",
+      "parts": [
+        "stop"
+      ],
+      "presentations": [
+        {
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
+        }
+      ],
+      "family": "conversation"
+    },
+    {
+      "kind": "mic",
+      "entity": null,
+      "label": "Microphone",
+      "parts": [
+        "meter",
+        "health",
+        "mute",
+        "off",
+        "listen",
+        "speaker"
+      ],
+      "presentations": [
+        {
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
+        },
+        {
+          "view": "main.corner"
+        }
+      ],
+      "family": "conversation"
+    },
+    {
       "kind": "conversationRecord",
       "entity": "record",
       "label": "Conversation record",
@@ -3511,6 +4041,7 @@ export const UI_CONTRACT = {
         "story",
         "tell",
         "fromSlide",
+        "resume",
         "stop"
       ],
       "presentations": [
@@ -3544,6 +4075,93 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "packages"
+    },
+    {
+      "kind": "knowledge",
+      "entity": null,
+      "label": "Knowledge",
+      "parts": [
+        "header",
+        "close",
+        "status",
+        "search",
+        "results",
+        "proposals",
+        "topics",
+        "indexes",
+        "seeds"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeProposal",
+      "entity": "knowledgeProposal",
+      "label": "Link proposal",
+      "parts": [
+        "row",
+        "accept",
+        "reject"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeIndex",
+      "entity": "knowledgeIndex",
+      "label": "Extra index",
+      "parts": [
+        "row",
+        "pin",
+        "forbid",
+        "clear"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeSeed",
+      "entity": "knowledgeSeed",
+      "label": "Suggested topics",
+      "parts": [
+        "row",
+        "accept",
+        "decline"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
     }
   ],
   "families": [
@@ -3580,6 +4198,10 @@ export const UI_CONTRACT = {
       "owner": "coverage-main"
     },
     {
+      "family": "work",
+      "owner": "coverage-main"
+    },
+    {
       "family": "diagnostics",
       "owner": "coverage-right"
     },
@@ -3594,6 +4216,10 @@ export const UI_CONTRACT = {
     {
       "family": "packages",
       "owner": "integrator"
+    },
+    {
+      "family": "knowledge",
+      "owner": "coverage-main"
     }
   ]
 } as const;
@@ -3724,7 +4350,13 @@ export interface CommandArgs {
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings"; };
+  "knowledge.close": { };
+  "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
+  "knowledge.open": { };
+  "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
+  "knowledge.search": { query: string; };
+  "knowledge.seed.answer": { seedId: string; answer: "accept" | "decline"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -3760,6 +4392,10 @@ export interface CommandArgs {
   "voice.quiet": { quiet: boolean; };
   "voice.range": { range: "15m" | "1h" | "1d"; };
   "voice.zoom": { at?: number; };
+  "work.close": { };
+  "work.open": { itemId: string; tab?: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
+  "work.showHistory": { shown: boolean; };
+  "work.tab.select": { itemId: string; tab: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };

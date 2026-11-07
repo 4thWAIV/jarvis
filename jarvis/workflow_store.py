@@ -128,6 +128,10 @@ class Item:
     state: ItemState
     done: int | None
     total: int | None
+    # Read time only: its latest event (a phase's own or any of its tasks'),
+    # and, while it is running, when it goes quiet with no event after that.
+    heard_at: float | None = None
+    quiet_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -404,6 +408,10 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
             _set_item(conn, wid, slug, outcome)
     elif kind in _OPENS:
         key = _open_key(event)
+        # An answered key is never asked again: its reporter reads the answer
+        # by key (`workflow_report.py answer`), so a new question needs a new key.
+        if kind == "decision_needed" and _answered(conn, wid, key):
+            raise WorkflowRefused(f"Decision {key} was already answered; ask with a new key.")
         conn.execute(
             "INSERT OR REPLACE INTO workflow_open (workflow_id, kind, key, summary, detail, "
             "opened_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -427,6 +435,13 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
         if outcome not in {s.value for s in FINISHED}:
             raise WorkflowRefused("A finished workflow succeeded, failed or was cancelled.")
         conn.execute("UPDATE workflows SET finished_at=? WHERE id=?", (now, wid))
+
+
+def _answered(conn, wid: str, key: str) -> bool:
+    """Whether a decision_made under `key` carried an answer."""
+    rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
+                        "AND kind='decision_made'", (wid,))
+    return any("answer" in e.detail and _open_key(e) == key for e in map(_event, rows))
 
 
 def _open_key(event: WorkflowEvent) -> str:
@@ -467,12 +482,35 @@ def _dismissed(row, now: float) -> bool:
     return row["finished_at"] is not None and now - row["finished_at"] > LINGER_SEC
 
 
+def _heard(conn, wid: str, rows) -> dict[str, float]:
+    """Each item's latest event: its own, and for a phase its tasks' too."""
+    own = {r["item"]: r["at"] for r in conn.execute(
+        "SELECT item, MAX(at) AS at FROM workflow_events WHERE workflow_id=? AND item IS NOT NULL "
+        "GROUP BY item", (wid,))}
+    heard = {r["slug"]: own[r["slug"]] for r in rows if r["slug"] in own}
+    for r in rows:
+        if r["kind"] == "task" and r["phase"] and r["slug"] in own:
+            heard[r["phase"]] = max(heard.get(r["phase"], 0.0), own[r["slug"]])
+    return heard
+
+
+def _quiet_at(state: str, heard_at: float | None) -> float | None:
+    """When a running item goes quiet: SILENT_AFTER_SEC after its latest
+    event (at once if it has none). None for any other state."""
+    if state != ItemState.running.value:
+        return None
+    return (heard_at or 0.0) + SILENT_AFTER_SEC
+
+
 def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
     wid = row["id"]
+    rows = conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? ORDER BY position",
+                        (wid,)).fetchall()
+    heard = _heard(conn, wid, rows)
     items = [Item(r["slug"], r["kind"], r["phase"], r["title"], ItemState(r["state"]),
-                  r["done"], r["total"])
-             for r in conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? "
-                                   "ORDER BY position", (wid,))]
+                  r["done"], r["total"], heard_at=heard.get(r["slug"]),
+                  quiet_at=_quiet_at(r["state"], heard.get(r["slug"])))
+             for r in rows]
     open_items = [OpenItem(r["kind"], r["key"], r["summary"], json.loads(r["detail"]),
                            r["opened_at"])
                   for r in conn.execute("SELECT * FROM workflow_open WHERE workflow_id=? "
@@ -522,6 +560,11 @@ def recent(limit: int = 20) -> list[WorkflowSnapshot]:
         return [_snapshot(conn, r, now) for r in rows]
 
 
+def _event(row) -> WorkflowEvent:
+    return WorkflowEvent(row["workflow_id"], row["kind"], row["item"], row["summary"],
+                         json.loads(row["detail"]), row["at"], row["seq"])
+
+
 def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
            limit: int = 500) -> list[WorkflowEvent]:
     """The log, oldest first, from just after `after` (an event's seq)."""
@@ -533,9 +576,15 @@ def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
     sql += " ORDER BY seq LIMIT ?"
     args.append(limit)
     with closing(_connect()) as conn:
-        return [WorkflowEvent(r["workflow_id"], r["kind"], r["item"], r["summary"],
-                              json.loads(r["detail"]), r["at"], r["seq"])
-                for r in conn.execute(sql, args)]
+        return [_event(r) for r in conn.execute(sql, args)]
+
+
+def latest(workflow_id: str, count: int) -> list[WorkflowEvent]:
+    """A workflow's newest `count` events, oldest of them first."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
+                            "ORDER BY seq DESC LIMIT ?", (workflow_id, count)).fetchall()
+    return [_event(r) for r in reversed(rows)]
 
 
 def find(reference: str) -> list[WorkflowSnapshot]:

@@ -229,6 +229,8 @@ async def test_turning_capture_sounds_off_in_settings_saves_it_and_silences_the_
         await page.wait_for_timeout(500)
         assert await _cues(page) == ["start"]
         assert await page.evaluate("window.__liveTracks()") == 1
+        # Mic off is on the Conversation view, under Settings.
+        await page.click("#settings-view .settings-head .workflow-close")
         await page.click("#btn-mic-off")
         await page.wait_for_function("window.__liveTracks() === 0", timeout=3000)
         await page.wait_for_timeout(800)
