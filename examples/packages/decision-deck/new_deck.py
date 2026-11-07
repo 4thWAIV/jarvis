@@ -171,9 +171,30 @@ def order(deck: dict) -> list[dict]:
     return out + [{"answers": True}]
 
 
+# What JARVIS asks at the end of every decision slide, before it waits.
+ASK = {"en": "Which do you choose? Press Choose on one, or tell me.",
+       "es": "¿Cuál elige? Pulse el botón de una, o dígamelo."}
+
+
+def parents(deck: dict) -> dict:
+    """{child decision: {"question": parent, "answers": [options that open it]}}."""
+    out: dict = {}
+    for d in deck["decisions"]:
+        for o in d["options"]:
+            for child in o.get("opens", []):
+                out.setdefault(child, {"question": d["id"], "answers": []})["answers"].append(o["id"])
+    return out
+
+
 def story(deck: dict) -> dict:
+    """The story JARVIS tells over the deck: one decision at a time. Each
+    decision slide is explained, then asks, then waits (`waits`) until
+    results/decisions.json has its answer; a child question is asked only
+    once its parent has an answer that opens it (`asks_when`)."""
     decisions = deck["decisions"]
     by_id = {d["id"]: d for d in decisions}
+    opened = parents(deck)
+    ask = ASK.get(deck.get("language", "en"), ASK["en"])
     slides = []
     for n, s in enumerate(order(deck), 1):
         go = {"click": f"#go-{n}"}
@@ -186,8 +207,13 @@ def story(deck: dict) -> dict:
                  "actions": [go], "targets": [f"#d-{d['id']} .question"]},
                 {"say": spoken(d.get("say") or f"I recommend {rec['name']}. {d['reason']}"),
                  "targets": [f"#opt-{d['id']}-{rec['id']}"]},
+                {"say": ask, "targets": [f"#d-{d['id']} .options"]},
             ]
-            slides.append({"title": d.get("short") or d["id"], "target": f"#d-{d['id']}", "beats": beats})
+            slide = {"title": d.get("short") or d["id"], "target": f"#d-{d['id']}",
+                     "waits": d["id"], "beats": beats}
+            if d["id"] in opened:
+                slide["asks_when"] = opened[d["id"]]
+            slides.append(slide)
         elif "answers" in s:
             slides.append({"title": "Your answers", "target": "#answers", "beats": [
                 {"say": "Your answers are recorded here. You can change any of them, "
@@ -206,7 +232,8 @@ def story(deck: dict) -> dict:
         for b in slide["beats"]:
             if len(b["say"]) > SAY_MAX:
                 raise Bad(f"A beat on {slide['title']} is over {SAY_MAX} characters.")
-    return {"title": deck["title"], "language": deck.get("language", "en"), "slides": slides}
+    return {"title": deck["title"], "language": deck.get("language", "en"),
+            "answers": RETURNS[0], "slides": slides}
 
 
 def manifest(deck: dict) -> dict:

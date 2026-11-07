@@ -43,6 +43,7 @@
   function withId(node, id) { if (id) node.id = id; return node; }
 
   var DECISIONS = DECK.decisions || [];
+  var LETTERS = "ABCDEFGHIJ";
   function byId(id) { return DECISIONS.filter(function (d) { return d.id === id; })[0]; }
   function optionOf(d, id) { return (d.options || []).filter(function (o) { return o.id === id; })[0]; }
 
@@ -187,8 +188,22 @@
     say("Saving…");
   }
 
+  // JARVIS's story says which question it is waiting on: that slide is
+  // brought up and says so; any other state clears it.
+  function asking(m) {
+    DECISIONS.forEach(function (d) {
+      var on = m.state === "waiting" && m.question === d.id;
+      views[d.id].section.classList.toggle("asking", on);
+      if (on && slides[current].decision !== d.id) show(slideOf(d.id));
+    });
+  }
+
   window.addEventListener("message", function (event) {
     var m = event.data;
+    if (event.source === window.parent && m && m.jarvis === "package" && m.type === "story.state") {
+      asking(m);
+      return;
+    }
     if (event.source !== window.parent || !m || m.jarvis !== "package" || m.type !== "saved") return;
     if (!(m.id in pending)) return;
     delete pending[m.id];
@@ -311,6 +326,8 @@
     var kicker = "Decision " + (index + 1) + " of " + DECISIONS.length + " · " + d.id;
     if (PARENT[d.id]) kicker += " · asked when " + opensText(d);
     head(section, kicker, d.question, "question");
+    // Shown while JARVIS's story is waiting for this answer (story.state).
+    section.appendChild(el("p", "waiting", "Waiting for your answer: choose one, or say it"));
     var rec = optionOf(d, d.recommended);
     var why = el("p", "recommends");
     if (rec) {
@@ -346,12 +363,16 @@
     options.style.setProperty("--columns", String(pictured ? Math.min(4, n) : d.picture ? Math.min(2, n)
                                                 : n === 4 ? 2 : Math.min(3, n)));
     var buttons = {};
-    (d.options || []).forEach(function (o) {
+    (d.options || []).forEach(function (o, i) {
       var card = el("article", "option" + (o.id === d.recommended ? " recommended" : ""));
       card.id = "opt-" + d.id + "-" + o.id;
+      card.appendChild(el("span", "yours", "✓ Your choice"));
       if (o.picture) card.appendChild(figure(typeof o.picture === "string" ? { src: o.picture } : o.picture));
       var text = card.appendChild(el("div", "option-text"));
-      var name = text.appendChild(el("h3", "", o.name));
+      // The letter is what he can say ("B"), as scripts/decide.py takes it.
+      var name = text.appendChild(el("h3"));
+      name.appendChild(el("span", "letter", LETTERS[i] + "."));
+      name.appendChild(document.createTextNode(" " + o.name));
       if (o.id === d.recommended) name.appendChild(el("span", "badge", "Recommended"));
       text.appendChild(inline(el("p", "says"), o.says));
       if (o.opens && o.opens.length) text.appendChild(el("p", "opens", "Then asks: " + o.opens.map(function (c) {
@@ -360,6 +381,7 @@
       }).join(", ")));
       var b = text.appendChild(el("button", "choose", "Choose"));
       b.type = "button";
+      b.setAttribute("aria-label", "Choose " + LETTERS[i] + ": " + o.name);
       b.addEventListener("click", function () { choose(d, o.id); });
       buttons[o.id] = { card: card, button: b };
       options.appendChild(card);
@@ -387,7 +409,7 @@
     });
     var recorded = section.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
-    views[d.id] = { section: section, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
+    views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
     return section;
   }
 
@@ -505,8 +527,9 @@
         var chosen = !!e && e.answer === id;
         v.buttons[id].card.classList.toggle("chosen", chosen);
         v.buttons[id].button.setAttribute("aria-pressed", String(chosen));
-        v.buttons[id].button.textContent = chosen ? "Chosen" : "Choose";
+        v.buttons[id].button.textContent = chosen ? "✓ Chosen" : "Choose";
       });
+      v.options.classList.toggle("answered", !!e && !!optionOf(d, e.answer));
       v.later.setAttribute("aria-pressed", String(!!e && e.answer === "later"));
       v.none.setAttribute("aria-pressed", String(!!e && e.answer === "none"));
       if (document.activeElement !== v.words) v.words.value = e ? e.note : v.words.value;

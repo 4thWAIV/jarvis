@@ -599,3 +599,25 @@ def test_he_names_a_package_and_the_brain_opens_its_newest_version(wired, tmp_pa
     sent.clear()
     got = _call(wired, "open_package_page", package="globe numbers")
     assert got["ok"] and [m["package"]["id"] for m in sent] == [newer.id]
+
+
+def test_a_decision_package_unpacks_here_only_with_its_check_s_stamp(wired, shown, tmp_path,
+                                                                      marks):
+    """A decision package (the shared deck's files) is unpacked from a file
+    on this Mac only once python -m jarvis.decision_package has checked it
+    and stamped it for this JARVIS (decision_stamp.py)."""
+    from jarvis import decision_stamp
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    files = {"web/index.html": "x", "deck-data.js": "window.DECK = {};",
+             "scripts/decide.py": "print()"}
+    archive = write_zip(folder, make_zip(files, PAGE), "deck.zip")
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)}, headers=_token())
+    assert r.status_code == 409 and "has not passed its check" in r.json()["error"]
+    stamped = folder / "stamped.zip"
+    decision_stamp.stamp(archive, stamped, "another JARVIS's token")
+    r = wired.client.post("/api/packages/local", json={"path": str(stamped)}, headers=_token())
+    assert r.status_code == 409 and "not checked for this JARVIS" in r.json()["error"]
+    decision_stamp.stamp(archive, stamped, data_paths.ensure_tool_token())
+    r = wired.client.post("/api/packages/local", json={"path": str(stamped)}, headers=_token())
+    assert r.status_code == 200, r.text

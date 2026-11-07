@@ -418,11 +418,15 @@ def unpack(archive_path: Path, attachment_id: str,
 LOCAL_SOURCE = "local"
 
 
-async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
+async def unpack_held(chunks: AsyncIterator[bytes],
+                      check: Optional[Callable[[Path], Optional[str]]] = None
+                      ) -> tuple[Package, bool]:
     """Unpack a zip that is a file on this Mac, from its bytes as they are
     read from the held file (draft_files.Source.chunks): copied into a
     private file among the packages first, so the archive checked is the
-    archive unpacked, then `unpack` exactly as a received zip."""
+    archive unpacked, then `unpack` exactly as a received zip. `check(zip)`
+    says why that copy may not be unpacked (decision_stamp.problem), or
+    None."""
     root = data_paths.packages_dir()
     root.mkdir(parents=True, exist_ok=True)
     temp = root / f"{PARTIAL}{uuid.uuid4()}.zip"
@@ -433,6 +437,10 @@ async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
             async for chunk in chunks:
                 digest.update(chunk)
                 await asyncio.to_thread(f.write, chunk)
+        if check is not None:
+            refused = await asyncio.to_thread(check, temp)
+            if refused:
+                raise PackageError(refused)
         return await asyncio.to_thread(unpack, temp, LOCAL_SOURCE + digest.hexdigest()[:27])
     finally:
         temp.unlink(missing_ok=True)
