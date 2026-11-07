@@ -52,6 +52,9 @@ export interface WorkPiece {
   after: string[];
   waits_for: string[];
   evidence: WorkEvidence[];
+  /** While working or verifying, when it goes quiet with no further report
+   *  (epoch seconds); null in any other state. */
+  quiet_at: number | null;
 }
 
 export interface WorkDecision {
@@ -117,6 +120,8 @@ export interface WorkItem {
   closed_at: number | null;
   /** Closed, or done a while: listed under History. */
   history: boolean;
+  /** As a piece's, from the item's latest report. */
+  quiet_at: number | null;
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */

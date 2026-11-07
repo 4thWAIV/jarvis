@@ -45,7 +45,7 @@ SHOTS = Path(os.environ.get("JARVIS_WORK_SHOTS") or tempfile.gettempdir())
 
 def _piece(key, title, state, who, **more):
     return {"key": key, "title": title, "state": state, "who": who, "note": "", "note_at": None,
-            "worker": "", "after": [], "waits_for": [], "evidence": [], **more}
+            "worker": "", "after": [], "waits_for": [], "evidence": [], "quiet_at": None, **more}
 
 
 DECISION = {"key": "engine", "question": "Which engine is the default?", "options": ["Kroko", "Apple"],
@@ -70,7 +70,7 @@ def _item(deciding=True, quiet=False):
         "area": "Voice", "blocked_pieces": 1, "waiting_pieces": 0, "closed_at": None, "history": False,
         "pieces": [_piece("engine", "Wire the engine", "verifying",
                           {"kind": "agent", "ref": "s-1", "name": "Builder"},
-                          note="Engine wired; checking it.", note_at=9_999_999_000.0,
+                          note="Engine wired; checking it.", note_at=9_999_999_000.0, quiet_at=9_999_999_600.0,
                           worker="engine build agent",
                           evidence=[{"kind": "commit", "value": "abc1234"},
                                     {"kind": "url", "value": "https://example.com/pr/7"}]),
@@ -83,6 +83,7 @@ def _item(deciding=True, quiet=False):
                      {"key": "tone", "question": "Which tone?", "answer": "dry", "where": "page",
                       "answered_at": 9_999_997_000.0, "package": ""}],
         "blockers": blockers,
+        "quiet_at": None if deciding else (1_000_000.0 if quiet else 9_999_999_999.0 + 600),
     }
 
 

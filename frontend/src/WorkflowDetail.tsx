@@ -23,6 +23,12 @@
  *     recommended one lit, and a box for any other answer;
  *   - Events: the whole log, filtered by kind.
  *
+ * Each phase and task shows its live activity (nodeActivity.tsx): a
+ * travelling glow while it is running and has had an event within the quiet
+ * window, "Paused" once quiet, still red when blocked or failed, still amber
+ * while the workflow waits on his decision, and one flash for each event on
+ * it.
+ *
  * The subagents its attached sessions dispatched while it ran are listed
  * under the Overview, and each one's transcript follows the attached
  * agents' in Transcript. A subagent that belongs to no running workflow is
@@ -65,6 +71,8 @@ import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiBox, useUiTarget, type Availability } from "./uiRegistry";
 import { kindDecl, splitKey } from "./uiValidate";
 import { TaskBar, useTick } from "./WorkflowsView";
+import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+         workflowItemStanding } from "./nodeActivity";
 import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
 import { ago, answerDecision, dismissals, dismissWorkflow, FINISHED, getEvents,
@@ -241,7 +249,9 @@ function OneWorkflow({ id }: { id: string }) {
   const selected = tabs.find((t) => t.id === tab) ?? tabs[0];
   const row = useRef<HTMLDivElement | null>(null);
   useTabParts(row, id, ui.part, tabs.length > 0);
+  const since = useShownSince(id);
   return (
+    <ShownSince.Provider value={since}>
     <div id="workflow-detail" ref={ui.whole}>
       <div className="workflow-detail-head" ref={ui.part("header")}>
         <WorkflowOrb state={w?.state ?? "running"} size={88} particles={600} />
@@ -270,6 +280,7 @@ function OneWorkflow({ id }: { id: string }) {
         </div>
       </>}
     </div>
+    </ShownSince.Provider>
   );
 }
 
@@ -408,21 +419,33 @@ function Phases({ w }: { w: Workflow }) {
   return (
     <ol className="phase-stepper" ref={stepper}>
       {phases.map(({ item, at }, n) => (
-        <PhaseStep key={item.slug} workflowId={w.id} item={item} at={at} n={n}
+        <PhaseStep key={item.slug} workflowId={w.id} workflowState={w.state} item={item} at={at} n={n}
                    own={tasks.filter((t) => t.phase === item.slug)} />
       ))}
     </ol>
   );
 }
 
-function PhaseStep({ workflowId, item, at, n, own }: {
-  workflowId: string; item: WorkflowItem; at: string; n: number; own: WorkflowItem[] }) {
+/** A phase's or task's live activity (nodeActivity.tsx) and the ref that
+ *  flashes it once for each event on it. */
+function useItemActivity(item: WorkflowItem, workflowState: string) {
+  const now = useActivityClock([item.quiet_at]);
+  return { activity: activityOf(workflowItemStanding(item.state, workflowState), item.quiet_at, now),
+           arrived: useArrivalFlash(item.heard_at) };
+}
+
+function PhaseStep({ workflowId, workflowState, item, at, n, own }: {
+  workflowId: string; workflowState: string; item: WorkflowItem; at: string; n: number; own: WorkflowItem[] }) {
   const ui = useDetailTarget("workflowPhase", `${workflowId}/${item.slug}`, item.title);
   const done = own.filter((t) => t.state === "done" || t.state === "skipped").length;
+  const { activity, arrived } = useItemActivity(item, workflowState);
   return (
-    <li className={`phase-step at-${at}`} data-phase={item.slug} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-      <span className="phase-step-dot" ref={ui.part("state")}>{at === "done" ? "✓" : n + 1}</span>
+    <li className={`phase-step at-${at}`} data-phase={item.slug} data-activity={activity ?? undefined}
+        ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <span className="phase-step-dot" ref={(el) => { ui.part("state")(el); arrived(el); }}>
+        {at === "done" ? "✓" : n + 1}</span>
       <span className="phase-step-title">{item.title}</span>
+      {activity === "paused" && <ActivityMark activity={activity} target={ui.part("activity")} />}
       {own.length > 0 && <><TaskBar done={done} total={own.length} />
         <span className="phase-step-count" ref={ui.part("progress")}>{done}/{own.length}</span></>}
     </li>
@@ -441,21 +464,25 @@ function Tasks({ w }: { w: Workflow }) {
       {groups.map((g) => (
         <section key={g.phase.slug} className={`task-column at-${g.at}`}>
           <h5>{g.phase.title}</h5>
-          {g.tasks.map((t) => <TaskCard key={t.slug} workflowId={w.id} task={t} />)}
+          {g.tasks.map((t) => <TaskCard key={t.slug} workflowId={w.id} workflowState={w.state} task={t} />)}
         </section>
       ))}
       {loose.length > 0 && <section className="task-column"><h5>{t("main.workflow.otherTasks")}</h5>
-        {loose.map((t) => <TaskCard key={t.slug} workflowId={w.id} task={t} />)}</section>}
+        {loose.map((t) => <TaskCard key={t.slug} workflowId={w.id} workflowState={w.state} task={t} />)}</section>}
     </div>
   );
 }
 
-function TaskCard({ workflowId, task: t }: { workflowId: string; task: WorkflowItem }) {
+function TaskCard({ workflowId, workflowState, task: t }: {
+  workflowId: string; workflowState: string; task: WorkflowItem }) {
   const ui = useDetailTarget("workflowTask", `${workflowId}/${t.slug}`, t.title);
+  const { activity, arrived } = useItemActivity(t, workflowState);
   return (
-    <div className={`task-card item-${t.state}`} data-task={t.slug} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+    <div className={`task-card item-${t.state}`} data-task={t.slug} data-activity={activity ?? undefined}
+         ref={(el) => { ui.whole(el); ui.part("row")(el); arrived(el); }}>
       <ItemIcon item={t} partRef={ui.part("state")} />
-      <span className="task-card-title">{t.title}</span>
+      <span className="task-card-title">{t.title}
+        {activity === "paused" && <> <ActivityMark activity={activity} target={ui.part("activity")} /></>}</span>
       {t.total ? <TaskBar done={t.done ?? 0} total={t.total} barRef={ui.part("progress")} /> : null}
     </div>
   );
@@ -468,17 +495,21 @@ function Progress({ w }: { w: Workflow }) {
       <div className="workflow-overview-rings">
         <DoneRings w={w} size={120} />
       </div>
-      {counted.map((t) => <ProgressRow key={t.slug} workflowId={w.id} task={t} />)}
+      {counted.map((t) => <ProgressRow key={t.slug} workflowId={w.id} workflowState={w.state} task={t} />)}
     </div>
   );
 }
 
 /** A counted task on the Progress tab: the same task, its bar large. */
-function ProgressRow({ workflowId, task: t }: { workflowId: string; task: WorkflowItem }) {
+function ProgressRow({ workflowId, workflowState, task: t }: {
+  workflowId: string; workflowState: string; task: WorkflowItem }) {
   const ui = useDetailTarget("workflowTask", `${workflowId}/${t.slug}`, t.title);
+  const { activity, arrived } = useItemActivity(t, workflowState);
   return (
-    <div className="progress-row" ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-      <ItemIcon item={t} partRef={ui.part("state")} /><span className="task-card-title">{t.title}</span>
+    <div className="progress-row" data-activity={activity ?? undefined}
+         ref={(el) => { ui.whole(el); ui.part("row")(el); arrived(el); }}>
+      <ItemIcon item={t} partRef={ui.part("state")} /><span className="task-card-title">{t.title}
+        {activity === "paused" && <> <ActivityMark activity={activity} target={ui.part("activity")} /></>}</span>
       <TaskBar done={t.done ?? 0} total={t.total ?? 0} />
       <span className="phase-step-count" ref={ui.part("progress")}>{t.done ?? 0}/{t.total}</span>
     </div>

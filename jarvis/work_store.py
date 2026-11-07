@@ -222,6 +222,9 @@ class Piece:
     after: list[str] = field(default_factory=list)       # keys of the pieces it comes after
     waits_for: list[str] = field(default_factory=list)   # of those, the ones not done yet
     evidence: list[Evidence] = field(default_factory=list)
+    # Read time only: while working or verifying, when it goes quiet with no
+    # report after its latest note. None in any other state.
+    quiet_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +295,8 @@ class WorkItem:
     history: bool = False     # closed, or done for DONE_LINGER_SEC: listed under History
     answered: list[Answered] = field(default_factory=list)  # newest first
     blockers: list[Blocker] = field(default_factory=list)   # in BLOCKER_KINDS order
+    # Read time only: as a piece's, from its latest report.
+    quiet_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -660,6 +665,14 @@ def _in_order(pieces: list[Piece]) -> list[Piece]:
     return placed
 
 
+def quiet_at(state: str, heard_at: Optional[float]) -> Optional[float]:
+    """When something working or verifying goes quiet: QUIET_AFTER_SEC after
+    it was last heard from (at once if never). None in any other state."""
+    if state not in ACTIVE:
+        return None
+    return (heard_at or 0.0) + QUIET_AFTER_SEC
+
+
 def _pieces(conn, item_id: str) -> list[Piece]:
     rows = conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
                         (item_id,)).fetchall()
@@ -671,7 +684,8 @@ def _pieces(conn, item_id: str) -> list[Piece]:
             r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), r["state"],
             note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
-            evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])]))
+            evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
+            quiet_at=quiet_at(r["state"], r["note_at"])))
     return _in_order(pieces)
 
 
@@ -705,7 +719,7 @@ def _item(conn, row, now: float) -> WorkItem:
         id=item_id, title=row["title"], source_kind=row["source_kind"],
         source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
         state=state, reported_state=reported,
-        quiet=state in ACTIVE and now - row["updated_at"] > QUIET_AFTER_SEC,
+        quiet=state in ACTIVE and now > quiet_at(state, row["updated_at"]),
         latest_update=row["latest_update"],
         headline=decisions[0].question if decisions and reported != DONE else row["latest_update"],
         revision=row["revision"], created_at=row["created_at"], updated_at=row["updated_at"],
@@ -715,7 +729,8 @@ def _item(conn, row, now: float) -> WorkItem:
         waiting_pieces=sum(p.state == WAITING for p in pieces),
         closed_at=row["closed_at"], history=_in_history(row, now),
         pieces=pieces, decisions=decisions, answered=answered,
-        blockers=_blockers(row, pieces, decisions))
+        blockers=_blockers(row, pieces, decisions),
+        quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]))
 
 
 def _in_history(row, now: float) -> bool:

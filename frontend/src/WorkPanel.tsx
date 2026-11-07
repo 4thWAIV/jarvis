@@ -10,7 +10,10 @@
  * says how many beside its state, and its third line is the first thing
  * holding it up besides those decisions, with how many more. Clicking a row
  * opens the item in the centre area (WorkDetail.tsx) through `work.open`,
- * and the list stays in view.
+ * and the list stays in view. Each row shows its live activity
+ * (nodeActivity.tsx): a travelling glow while it is working and reporting,
+ * "Paused" once it has gone quiet, a check once done, and one flash for
+ * each report that arrives.
  *
  * Under the open items, History (`work.showHistory`): the items closed, or
  * done a while, the most recently finished first, each still opening in
@@ -27,6 +30,8 @@ import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
+import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+         workStanding } from "./nodeActivity";
 import { blockerWords, itemMark, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
          type WorkMark } from "./work";
 
@@ -38,10 +43,12 @@ export function WorkPanel() {
                            label: t("right.work.title"), socket: RIGHT_SOCKET });
   const items = new Map((live.value?.items ?? []).map((i) => [i.id, i]));
   const groups = live.value?.groups ?? [];
+  const since = useShownSince();
   const history = live.value?.history ?? [];
   const historyShown = useSyncExternalStore(showHistory.subscribe, showHistory.get);
   useEffect(() => () => showHistory.set(false), []);
   return (
+    <ShownSince.Provider value={since}>
     <div className="right-view work-panel">
       <section className="work-section" aria-label={t("right.work.title")}>
         {live.error && <p className="read-failure">{t("right.work.readFailed", { error: live.error })}</p>}
@@ -69,6 +76,7 @@ export function WorkPanel() {
       <h3 className="work-section-head">{t("right.work.workflows")}</h3>
       <WorkflowsView />
     </div>
+    </ShownSince.Provider>
   );
 }
 
@@ -95,16 +103,20 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
                            label: item.title, socket: RIGHT_SOCKET });
   const deciding = item.decisions.length > 0 && item.state === "waiting_on_tim";
   const mark = itemMark(item);
+  const activity = activityOf(workStanding(item.state), item.quiet_at, useActivityClock([item.quiet_at]));
+  const arrived = useArrivalFlash(item.updated_at);
   // The decisions are the update line already; the third line is the rest.
   const holding = item.blockers.filter((b) => b.kind !== "decision");
   const decisionCount = t("right.work.decisionCount", { count: item.decisions.length });
   return (
     <li>
       <button type="button" className={`work-row${selected ? " selected" : ""}`} data-work-id={item.id}
-              data-state={item.state} data-mark={mark ?? undefined} title={item.title} ref={row(ui)}
+              data-state={item.state} data-mark={mark ?? undefined} data-activity={activity ?? undefined}
+              title={item.title} ref={(el) => { row(ui)(el); arrived(el); }}
               {...bindingProps(bind("work.open", { itemId: item.id }))}>
         <span className="work-row-title">
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
+          <ActivityMark activity={activity} target={ui.part("activity")} />
           {item.title}</span>
         <span className="work-row-pills">
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}

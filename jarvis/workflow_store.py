@@ -128,6 +128,10 @@ class Item:
     state: ItemState
     done: int | None
     total: int | None
+    # Read time only: its latest event (a phase's own or any of its tasks'),
+    # and, while it is running, when it goes quiet with no event after that.
+    heard_at: float | None = None
+    quiet_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -478,12 +482,35 @@ def _dismissed(row, now: float) -> bool:
     return row["finished_at"] is not None and now - row["finished_at"] > LINGER_SEC
 
 
+def _heard(conn, wid: str, rows) -> dict[str, float]:
+    """Each item's latest event: its own, and for a phase its tasks' too."""
+    own = {r["item"]: r["at"] for r in conn.execute(
+        "SELECT item, MAX(at) AS at FROM workflow_events WHERE workflow_id=? AND item IS NOT NULL "
+        "GROUP BY item", (wid,))}
+    heard = {r["slug"]: own[r["slug"]] for r in rows if r["slug"] in own}
+    for r in rows:
+        if r["kind"] == "task" and r["phase"] and r["slug"] in own:
+            heard[r["phase"]] = max(heard.get(r["phase"], 0.0), own[r["slug"]])
+    return heard
+
+
+def _quiet_at(state: str, heard_at: float | None) -> float | None:
+    """When a running item goes quiet: SILENT_AFTER_SEC after its latest
+    event (at once if it has none). None for any other state."""
+    if state != ItemState.running.value:
+        return None
+    return (heard_at or 0.0) + SILENT_AFTER_SEC
+
+
 def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
     wid = row["id"]
+    rows = conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? ORDER BY position",
+                        (wid,)).fetchall()
+    heard = _heard(conn, wid, rows)
     items = [Item(r["slug"], r["kind"], r["phase"], r["title"], ItemState(r["state"]),
-                  r["done"], r["total"])
-             for r in conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? "
-                                   "ORDER BY position", (wid,))]
+                  r["done"], r["total"], heard_at=heard.get(r["slug"]),
+                  quiet_at=_quiet_at(r["state"], heard.get(r["slug"])))
+             for r in rows]
     open_items = [OpenItem(r["kind"], r["key"], r["summary"], json.loads(r["detail"]),
                            r["opened_at"])
                   for r in conn.execute("SELECT * FROM workflow_open WHERE workflow_id=? "

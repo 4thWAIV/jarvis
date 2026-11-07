@@ -26,6 +26,10 @@ export interface WorkflowItem {
   state: string;
   done: number | null;
   total: number | null;
+  /** Its latest event (a phase's own or its tasks'), epoch seconds, or null. */
+  heard_at: number | null;
+  /** While running, when it goes quiet with no further event; else null. */
+  quiet_at: number | null;
 }
 
 export interface OpenItem {
