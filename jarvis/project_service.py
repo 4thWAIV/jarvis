@@ -25,6 +25,10 @@ from jarvis.project_store import ProjectError, ProjectStore
 RUNS_SHOWN = 10
 
 
+# The confirmed accomplishments a context pack names per project (design 8.1).
+BRIEF_DONE = 5
+
+
 class ProjectService:
     def __init__(self, store: ProjectStore, folders: Callable[[], Any],
                  owner: Callable[[], Optional[str]] = lambda: None,
@@ -119,6 +123,37 @@ class ProjectService:
         owners = set(self.owners())
         return [{"id": p.id, "name": p.display_name} for p in self.store.projects_of_folder(folder.id)
                 if p.owner_id in owners]
+
+    def project_holding(self, path: str) -> Optional[str]:
+        """The one project holding a path, for a run started there by
+        folder or legacy name; None when none or several hold it (several
+        are never guessed between)."""
+        found = self.projects_for_path(path)
+        return found[0]["id"] if len(found) == 1 else None
+
+    def brief(self, *, project: Optional[str] = None, work: Optional[str] = None) -> dict:
+        """The records a context pack is made from (design 8.1, tier 0):
+        the work's title and outcome, and each of its projects (primary
+        first), or the one project: name, summary, notes slug, aliases,
+        folders by name and part (no paths) and the last confirmed
+        accomplishments. Proposed ones never count."""
+        w = self.store.work(work) if work else None
+        if w is not None:
+            ids = [x["project_id"] for x in sorted(w.projects, key=lambda x: x["role"] != "primary")]
+        elif project:
+            ids = [self.resolve(project).id]
+        else:
+            ids = []
+        out = []
+        for pid in ids:
+            p = self.store.require(pid)
+            out.append({
+                "id": p.id, "name": p.display_name, "summary": p.summary, "notes_slug": p.notes_slug,
+                "aliases": sorted({a["alias_key"] for a in self.store.aliases(p.id)}),
+                "folders": [{"name": self._folder_facts(f.folder_id)["name"], "part": f.part,
+                             "home": f.is_home} for f in self.store.folders_of(p.id)],
+                "accomplishments": [a.title for a in self.store.accomplishments(p.id, limit=BRIEF_DONE)]})
+        return {"work": {"id": w.id, "title": w.title, "outcome": w.outcome} if w else None, "projects": out}
 
     def detail(self, reference: str) -> dict:
         p = self.resolve(reference)

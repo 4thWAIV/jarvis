@@ -512,7 +512,22 @@ TOOL_SPECS = [
                               "description": ("A registered folder's ID, from "
                                               "list_folders or find_folder, to run "
                                               "in instead of a project. Never "
-                                              "together with project.")},
+                                              "together with project. With "
+                                              "project_id or work_id, one of "
+                                              "their folders.")},
+                "project_id": {"type": "string",
+                               "description": ("One of his project records' IDs, "
+                                               "from projects: it "
+                                               "runs in that project's home "
+                                               "folder, or the folder_id given if "
+                                               "it is one of the project's. Never "
+                                               "together with project.")},
+                "work_id": {"type": "string",
+                            "description": ("A piece of work's ID, from works: it "
+                                            "runs in folder_id when that is a "
+                                            "folder of the work's projects or its "
+                                            "own, else its primary project's home. "
+                                            "Never together with project.")},
                 "prompt": {"type": "string",
                            "description": ("The complete instruction for the run, "
                                            "already written out.")},
@@ -2280,9 +2295,13 @@ TOOL_SPECS = [
             "the project's notes, the topics it touches with their status (planned is planned, "
             "not implemented), and the passages that match, with their sources. purpose is the "
             "task in his words; project its project. include_received adds other people's "
-            "words, walled. The same pack a run gets when run context is on."),
+            "words, walled. The same pack a run gets when run context is on. With "
+            "work_id or project_id (or a project name one record goes by), the pack is "
+            "made from the records: the work, its projects' summaries, folders and "
+            "confirmed accomplishments."),
         "inputSchema": {"type": "object", "properties": {
             "purpose": {"type": "string"}, "project": {"type": "string"},
+            "project_id": {"type": "string"}, "work_id": {"type": "string"},
             "include_received": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}},
             "required": ["purpose"]},
     },

@@ -9270,21 +9270,35 @@ async def tool_spawn_run(args: dict) -> str:
         return "There was nothing to start."
     reference = str(args.get("project") or "").strip()
     in_folder = bool(str(args.get("folder_id") or "").strip())
-    if reference and in_folder:
-        return ("A project or a registered folder, sir, not both. "
+    by_record = bool(str(args.get("project_id") or "").strip() or str(args.get("work_id") or "").strip())
+    if reference and (in_folder or by_record):
+        return ("A project by name, or a registered folder or project record, sir, not both. "
                 "Which should it run in?")
-    if not (reference or in_folder):
+    if not (reference or in_folder or by_record):
         return "Which project should I start that in, sir?"
     model = _normalise_model(str(args.get("model") or ""))
 
-    # A registered folder is resolved by the folder service alone, so where
-    # a run may work is decided by the same checks as what may be read.
-    if in_folder:
+    # A project record or a piece of work is placed by the project service,
+    # a registered folder by the folder service alone, so where a run may
+    # work is decided by the same checks as what may be read.
+    binding: Optional[dict] = None
+    if by_record:
+        name, path, folder_id, binding, problem = await _record_work_target(args)
+    elif in_folder:
         name, path, folder_id, problem = await _folder_work_target(args)
     else:
         (name, path, problem), folder_id = _resolve_project_or_explain(reference), None
     if problem:
         return problem
+    # Started by folder or by name: its project is the one project holding
+    # that folder, never a guess between several (design 5.3).
+    if binding is None and projects is not None:
+        try:
+            held = await asyncio.to_thread(projects.project_holding, path)
+        except Exception:  # noqa: BLE001 - a run is not refused for its project's sake
+            log.debug("the run's project could not be worked out", exc_info=True)
+            held = None
+        binding = {"project_id": held, "work_id": None} if held else None
     redirect = _live_session_redirect(name, path, args, "spawn_run")
     if redirect:
         return redirect
@@ -9314,10 +9328,13 @@ async def tool_spawn_run(args: dict) -> str:
     # skip permissions.
     context = ""
     if context_service.run_context_enabled() and args.get("context", True) is not False:
+        def made() -> str:
+            scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
+                if binding and projects is not None else None
+            return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
+                                        search=knowledge_api.context_search(knowledge_calls)).text
         try:
-            context = (await asyncio.to_thread(
-                lambda: context_service.pack(purpose=prompt, project=name, trust="own",
-                                             search=knowledge_api.context_search(knowledge_calls)))).text
+            context = await asyncio.to_thread(made)
         except Exception:
             log.warning("the run's context pack could not be made", exc_info=True)
             context = ""
@@ -9326,7 +9343,7 @@ async def tool_spawn_run(args: dict) -> str:
     try:
         run_id = await run_executor_instance.spawn(
             composed, name, path, "voice", resume_from=resume_from, model=model,
-            folder_id=folder_id)
+            folder_id=folder_id, **_bound(binding))
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
@@ -10107,10 +10124,33 @@ async def tool_change_knowledge_seed(args: dict) -> str:
     return answer
 
 
+def _records_scope(args: dict) -> Optional[dict]:
+    """The project records a context pack is about (`ProjectService.brief`):
+    the work or project named by ID, else the one project his `project`
+    name or alias resolves to, else None (a legacy name only). Off the event
+    loop; a named ID that is no record is refused."""
+    from jarvis.project_store import ProjectError
+    pid = str(args.get("project_id") or "").strip() or None
+    wid = str(args.get("work_id") or "").strip() or None
+    name = str(args.get("project") or "").strip() or None
+    if projects is None:
+        if pid or wid:
+            raise knowledge_api.Refused("project records are not running (the folder catalog is off)")
+        return None
+    try:
+        if pid or wid:
+            return projects.brief(project=pid, work=wid)
+        if name and len(projects.find(name)) == 1:
+            return projects.brief(project=name)
+    except ProjectError as e:
+        raise knowledge_api.Refused(str(e)) from None
+    return None
+
+
 async def tool_work_context(args: dict) -> str:
     return await _knowledge_tool(args, lambda: knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
-        include_received=args.get("include_received") is True),
+        include_received=args.get("include_received") is True, scope=_records_scope(args)),
         "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
 
 
@@ -12642,6 +12682,34 @@ async def _folder_work_target(args: dict):
     return _said_name({"voice_name": f.display_name}, "that folder"), str(root), f.id, None
 
 
+async def _record_work_target(args: dict):
+    """(name, path, folder_id, binding, None) for a run started for a
+    project record or a piece of work, or (None, None, None, None, what to
+    say). Where is `ProjectService.run_location`'s (design 5.3): with a
+    work, a live folder of one of its projects or one of its own folders;
+    a project alone, its home folder; then the folder service's own
+    checks. The name is the project's (or the folder's) behind the
+    voice-name wall."""
+    from jarvis.project_store import ProjectError
+    if projects is None:
+        return None, None, None, None, "Project records are not running, sir (the folder catalog is off)."
+    pid = str(args.get("project_id") or "").strip() or None
+    wid = str(args.get("work_id") or "").strip() or None
+    fid = _folder_id(args) if str(args.get("folder_id") or "").strip() else None
+    if str(args.get("folder_id") or "").strip() and fid is None:
+        return None, None, None, None, "That is not a folder ID, sir; it comes from list_folders or find_folder."
+    try:
+        record, f, root = await asyncio.to_thread(
+            lambda: projects.run_location(project=pid, work=wid, folder_id=fid))
+    except ProjectError as e:
+        return None, None, None, None, f"Nothing was started, sir: {e}."
+    except FolderError as e:
+        return None, None, None, None, _folder_refusal(e)
+    label = record["display_name"] if record else f.display_name
+    binding = {"project_id": record["id"] if record else None, "work_id": wid}
+    return _said_name({"voice_name": label}, "that project"), str(root), f.id, binding, None
+
+
 async def tool_list_folders(args: dict) -> str:
     query = str(args.get("query") or "")
     got, said = await _folder_call(lambda s: s.list_folders(query=query))
@@ -13785,6 +13853,12 @@ async def api_cancel_run(run_id: str):
 RUN_STILL_ACTIVE = "Run is still active — cancel it first"
 
 
+def _bound(binding: Optional[dict]) -> dict:
+    """A run's project and work as `spawn`'s keywords, only when there are
+    any, so a run with neither is spawned exactly as before."""
+    return {k: v for k, v in (binding or {}).items() if v}
+
+
 async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Optional[str]]:
     """Run a finished run's prompt again, resuming from it, for the page's
     retry route and the brain's `retry_run` alike: (the new run's id, None),
@@ -13795,15 +13869,24 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
         return None, RUN_STILL_ACTIVE
     # A run in a registered folder is checked again: the folder may have
     # been removed, moved or made unavailable since it ran.
+    # One started for a piece of work is placed again through the project
+    # service (still a folder of the work's?), which also checks the folder.
     path, folder_id = original["project_path"], original.get("folder_id")
-    if folder_id:
+    binding = {"project_id": original.get("project_id"), "work_id": original.get("work_id")}
+    if original.get("work_id"):
+        _name, path, folder_id, _again, problem = await _record_work_target(
+            {"project_id": original.get("project_id"), "work_id": original.get("work_id"),
+             "folder_id": folder_id})
+        if problem:
+            return None, problem
+    elif folder_id:
         _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
         if problem:
             return None, problem
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
         resume_from=original["id"], folder_id=folder_id,
-        package_id=original.get("package_id"))
+        package_id=original.get("package_id"), **_bound(binding))
     return new_id, None
 
 

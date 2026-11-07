@@ -407,3 +407,15 @@ his pin and forbid for extra indexes; phase 2's context pack (tier 0 and
 tier 1, `work_context`, run context behind `JARVIS_RUN_CONTEXT`) and the
 Denice seed are built too, ahead of phase 1's project records. Phase 5 waits
 on the embedder.
+
+Phase 1's project records are built: `project_schema` and
+`project_store.py`, `project_seed.py` candidates (as attention items, made
+projects only on his yes), `project_service.py` with its routes and the
+brain's project tools, the Project view, Projects in the Folders tab, each
+Work tab item's projects, the run columns `project_id` and `work_id`, and
+`spawn_run` and Retry placed by `run_location`. The context pack and
+`work_context` are made from the records (`ProjectService.brief`). Not yet
+built from phase 1: `workspace_ref.py` and the node ID backup, the
+WorkView centre view, a switch between projects and folders in the tab (the
+projects are listed under the folders instead), and `projects_view.py`
+reimplemented over the service.
