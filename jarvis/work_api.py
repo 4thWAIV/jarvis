@@ -33,6 +33,10 @@ from jarvis import agent_directory, run_store, workflow_store, work_store
 Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
 
 
+# The newest reports one item's detail shows.
+EVENTS_SHOWN = 50
+
+
 class StartRequest(BaseModel):
     title: str
     source: dict
@@ -51,19 +55,27 @@ class AnswerRequest(BaseModel):
 
 # ── who, by name ────────────────────────────────────────────────────────
 
-def who_name(person: work_store.Who) -> Optional[str]:
-    """The one name of the record a piece names, or None when JARVIS has no
-    such record (or for Tim, whom each side words itself)."""
-    if person.kind == work_store.AGENT:
-        found = next((a for a in agent_directory.agents() if a.session_id == person.ref), None)
-        return found.name if found else None
-    if person.kind == work_store.RUN:
-        run = run_store.get_run(person.ref)
-        return run["project_name"] if run else None
-    if person.kind == work_store.WORKFLOW:
-        flow = workflow_store.snapshot(person.ref)
-        return flow.name if flow else None
-    return None
+class WhoNames:
+    """The one name of the record each piece names, for one read: the agent
+    directory is built at most once however many pieces name agents."""
+
+    def __init__(self) -> None:
+        self._agents: Optional[dict[str, str]] = None
+
+    def __call__(self, person: work_store.Who) -> Optional[str]:
+        """The name, or None when JARVIS has no such record (or for Tim,
+        whom each side words itself)."""
+        if person.kind == work_store.AGENT:
+            if self._agents is None:
+                self._agents = agent_directory.names_by_session()
+            return self._agents.get(person.ref)
+        if person.kind == work_store.RUN:
+            run = run_store.get_run(person.ref)
+            return run["project_name"] if run else None
+        if person.kind == work_store.WORKFLOW:
+            flow = workflow_store.snapshot(person.ref)
+            return flow.name if flow else None
+        return None
 
 
 def _check_who(detail: dict) -> None:
@@ -72,14 +84,15 @@ def _check_who(detail: dict) -> None:
     if not isinstance(on, dict):
         return
     person = work_store.who(on.get("kind"), on.get("ref"))
-    if person.kind != work_store.TIM and who_name(person) is None:
+    if person.kind != work_store.TIM and WhoNames()(person) is None:
         raise work_store.WorkRefused(f"JARVIS has no {person.kind} {person.ref}.")
 
 
-def item_json(item: work_store.WorkItem) -> dict:
+def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None) -> dict:
+    names = names or WhoNames()
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
-        raw["who"]["name"] = who_name(piece.who)
+        raw["who"]["name"] = names(piece.who)
     return out
 
 
@@ -105,7 +118,10 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
 
     @app.get("/api/work")
     async def list_work():
-        items = await asyncio.to_thread(lambda: [item_json(i) for i in work_store.listing()])
+        def read():
+            names = WhoNames()
+            return [item_json(i, names) for i in work_store.listing()]
+        items = await asyncio.to_thread(read)
         return {"items": items}
 
     @app.get("/api/work/{item_id}")
@@ -115,7 +131,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
             if item is None:
                 return None
             return {"item": item_json(item),
-                    "events": [event_json(e) for e in work_store.events(item_id)[-50:]]}
+                    "events": [event_json(e) for e in work_store.latest(item_id, EVENTS_SHOWN)]}
         found = await asyncio.to_thread(read)
         if found is None:
             raise HTTPException(status_code=404, detail="No such work item")

@@ -112,6 +112,59 @@ def test_a_decision_is_news_his_answer_resolves_it_and_only_he_answers(wired):
     assert _events(store)[-1] == ("work", "blocked")
 
 
+def test_news_is_resolved_once_it_is_no_longer_so_and_only_then(wired):
+    server, _, store, folder = wired
+    client = TestClient(server.app)
+    key = _key()
+    wid = _start(client, key, folder)
+
+    def report(kind, summary, **detail):
+        r = client.post(f"/api/work/{wid}/events", headers=key,
+                        json={"kind": kind, "summary": summary, "detail": detail})
+        assert r.status_code == 200, r.text
+
+    def news():
+        return store.get("work", wid)
+
+    report("update", "Blocked on CI.", state="blocked")
+    assert (news().event, news().state) == ("blocked", "pending")
+    report("update", "Still blocked.")
+    assert news().state == "pending", "no state said: still blocked"
+    report("update", "CI is green.", state="working")
+    assert news().state == "resolved", "no longer blocked"
+
+    report("update", "Shipped.", state="done")
+    report("decision_needed", "Tag it?", key="tag")
+    report("decision_needed", "Announce it?", key="announce")
+    client.post(f"/api/work/{wid}/decisions/tag", json={"answer": "Yes"}, headers=ORIGIN)
+    assert news().state == "pending", "another decision is still open"
+    client.post(f"/api/work/{wid}/decisions/announce", json={"answer": "No"}, headers=ORIGIN)
+    assert news().state == "resolved"
+
+    report("update", "Blocked again.", state="blocked")
+    report("update", "Note.", state="blocked")
+    assert news().state == "pending"
+
+
+def test_a_list_reads_the_agent_directory_once(wired, monkeypatch):
+    server, _, _, folder = wired
+    client = TestClient(server.app)
+    key = _key()
+    from jarvis import agent_directory, work_store
+    reads = []
+    monkeypatch.setattr(agent_directory, "names_by_session",
+                        lambda: reads.append(1) or {"s-1": "Builder", "s-2": "Tester"})
+    for _ in range(3):
+        wid = _start(client, key, folder)
+        for n, session in enumerate(("s-1", "s-2")):
+            work_store.record(work_store.WorkEvent(
+                wid, "piece", "On it.", {"key": f"p{n}", "who": {"kind": "agent", "ref": session}}))
+    reads.clear()
+    items = client.get("/api/work").json()["items"]
+    assert {p["who"]["name"] for i in items for p in i["pieces"]} == {"Builder", "Tester"}
+    assert len(reads) == 1
+
+
 def test_the_page_reads_the_list_and_one_item_with_its_events(wired):
     server, _, _, folder = wired
     client = TestClient(server.app)

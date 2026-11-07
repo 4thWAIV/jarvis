@@ -23,7 +23,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.main.package": "Paquete de trabajo",
   "tabs.main.file": "Archivo",
   "tabs.main.settings": "Configuración",
-  "tabs.main.work": "Trabajo",
+  "tabs.main.work": "Elemento de trabajo",
   "tabs.main.workflow": "Flujo de trabajo",
   "tabs.main.subagent": "Subagente",
 

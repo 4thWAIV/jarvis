@@ -246,7 +246,14 @@ An open decision reads as waiting on Tim and a working item silent for
 with `work_report.py` and an access key in the `work` category (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
 every change is a `work` hint on `/ws/sessions`, after the write; a
-decision, blocked and done are attention items. A row opens the item in the
+decision, blocked and done are attention items, each resolved once it is no
+longer so (no decision open, no longer blocked or done:
+`server._work_news_stale`). A decision's key is asked once: an answered key
+is refused, so `work_report.py answer` reads the answer to that question. A
+row's pill is always the state, and a quiet item says so as its update. A
+read names the agents on its pieces from one directory read
+(`work_api.WhoNames`, `agent_directory.names_by_session`), and the latest
+events are `work_store.latest`. A row opens the item in the
 centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `work.close`) and the list stays in view. His answer is
 `work_api.answer_decision`, from the page and the brain's acting

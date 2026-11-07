@@ -9545,27 +9545,50 @@ WORK_EVENTS_SHOWN = 12
 _WORK_NEWS_STATES = {work_store.BLOCKED: "blocked", work_store.DONE: "done"}
 
 
+# Whether the news an item's attention item carries is still so, by its event.
+_WORK_NEWS_HOLDS = {
+    "decision_needed": lambda item: bool(item.decisions),
+    "blocked": lambda item: item.reported_state == work_store.BLOCKED,
+    "done": lambda item: item.reported_state == work_store.DONE,
+}
+
+
 def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
     """After every change: the pages read the record again; a decision
     needed, or a report that the item is blocked or done, is an attention
-    item, and his answer resolves it once nothing else is waiting on him."""
+    item, which is resolved once what it says is no longer so (the decision
+    answered with none left open, the item no longer blocked or done)."""
     _send_to_session_clients({"type": "work"})
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
     if kind == work_store.DECISION_NEEDED:
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
     elif said_state in _WORK_NEWS_STATES:
         _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})
-    elif kind == work_store.DECISION_MADE and item.state != work_store.WAITING:
+    elif _work_news_stale(item):
         _attention_resolved("work", item.id)
+
+
+def _work_news_stale(item) -> bool:
+    """Whether the item's attention item says something no longer so.
+    Never raises: an item that cannot be read is left as it is."""
+    if attention_record is None:
+        return False
+    try:
+        news = attention_record.get("work", item.id)
+    except Exception:
+        log.warning("attention: work %s was not read", item.id, exc_info=True)
+        return False
+    holds = _WORK_NEWS_HOLDS.get(news.event) if news is not None else None
+    return holds is not None and not holds(item)
 
 
 work_api.mount(app, _work_recorded)
 
 
-def _work_who(piece) -> str:
+def _work_who(piece, names: work_api.WhoNames) -> str:
     if piece.who.kind == work_store.TIM:
         return "him"
-    name = work_api.who_name(piece.who)
+    name = names(piece.who)
     return f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
 
 
@@ -9576,13 +9599,14 @@ def _work_detail(item) -> str:
              + (", no recent update" if item.quiet else "") + ".",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}"]
+    names = work_api.WhoNames()
     for p in item.pieces:
-        lines.append(f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p)}")
+        lines.append(f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}")
     for d in item.decisions:
         lines.append(f"open decision {d.key}: {d.question}"
                      + (f" Options: {d.options}." if d.options else "")
                      + (f" Recommended: {d.recommendation}." if d.recommendation else ""))
-    for e in work_store.events(item.id)[-WORK_EVENTS_SHOWN:]:
+    for e in work_store.latest(item.id, WORK_EVENTS_SHOWN):
         lines.append(f"event {e.seq} {e.kind}: {e.summary}")
     return "\n".join(lines)
 

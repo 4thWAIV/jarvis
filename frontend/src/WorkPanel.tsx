@@ -2,8 +2,8 @@
  * The right panel's Work tab (the tab that was Workflows, in its place): a
  * row per work item with its title, its state and one useful update, an
  * open decision's question taking priority over the latest report. A
- * working item that has reported nothing for a while says "No recent
- * update". Clicking a row opens the item in the centre area (WorkDetail.tsx)
+ * working item that has reported nothing for a while keeps its state and
+ * says "No recent update" as its update. Clicking a row opens the item in the centre area (WorkDetail.tsx)
  * through `work.open`, and the list stays in view.
  *
  * Below it, under its own heading, the Workflows view as it was
@@ -53,9 +53,10 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
               {...bindingProps(bind("work.open", { itemId: item.id }))}>
         <span className="work-row-title">{item.title}</span>
         <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
-          {item.quiet ? t("right.work.quiet") : STATE_WORDS[item.state]}</span>
+          {STATE_WORDS[item.state]}</span>
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
-          {deciding ? t("right.work.decision", { question: item.headline }) : item.headline}</span>
+          {deciding ? t("right.work.decision", { question: item.headline })
+            : item.quiet ? t("right.work.quiet") : item.headline}</span>
       </button>
     </li>
   );

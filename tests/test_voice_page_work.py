@@ -27,12 +27,12 @@ from tests.test_voice_page_workflows import _Sessions
 pytestmark = pytest.mark.page
 
 
-def _item(deciding=True):
+def _item(deciding=True, quiet=False):
     return {
         "id": "work-1", "title": "Speech migration", "source_kind": "folder",
         "source_path": "/Users/someone/code/speech", "source": "present",
         "state": "waiting_on_tim" if deciding else "working", "reported_state": "working",
-        "quiet": False, "latest_update": "Engine wired.",
+        "quiet": quiet, "latest_update": "Engine wired.",
         "headline": "Which engine is the default?" if deciding else "Engine wired.",
         "revision": 3, "created_at": 1_000_000.0, "updated_at": 9_999_999_999.0,
         "pieces": [{"key": "engine", "title": "Wire the engine", "state": "working",
@@ -50,6 +50,7 @@ class _Work:
 
     def __init__(self):
         self.deciding = True
+        self.quiet = False
         self.lists = 0
         self.posted = []
 
@@ -61,7 +62,7 @@ class _Work:
             await route.fulfill(json={"item": _item(self.deciding)})
         elif path == "api/work":
             self.lists += 1
-            await route.fulfill(json={"items": [_item(self.deciding)]})
+            await route.fulfill(json={"items": [_item(self.deciding, self.quiet)]})
         else:
             await route.fulfill(json={"item": _item(self.deciding), "events": [
                 {"item_id": "work-1", "kind": "update", "summary": "Engine wired.", "detail": {},
@@ -125,6 +126,12 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
             "() => document.querySelector('.work-row').dataset.state === 'working'", timeout=10000)
         assert work.lists > before
         await async_api.expect(page.locator(".work-row .work-update")).to_have_text("Engine wired.")
+        # Gone quiet: the pill still says its state, and the update says it is quiet.
+        work.quiet = True
+        sessions.ws.send(json.dumps({"type": "work"}))
+        await async_api.expect(page.locator(".work-row .work-update")).to_have_text(
+            "No recent update", timeout=10000)
+        await async_api.expect(page.locator(".work-row .work-state")).to_have_text("Working")
 
         await page.click("#work-detail .workflow-close")
         await page.wait_for_selector("#work-detail", state="detached")

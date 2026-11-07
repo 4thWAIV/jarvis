@@ -144,6 +144,12 @@ def agents() -> list[Agent]:
     return [a for a, _ in _entries()]
 
 
+def names_by_session() -> dict[str, str]:
+    """Each running agent's one name by its session id, the directory read
+    once: for a caller naming many agents by id in one go."""
+    return {a.session_id: a.name for a in agents()}
+
+
 def _prefer_real(matches: list[tuple[Agent, session_watch.SessionState]]):
     """A `fresh` conversation (never prompted) is noise beside a real one;
     only when every match is fresh are they all kept."""

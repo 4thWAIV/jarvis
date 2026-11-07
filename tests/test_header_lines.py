@@ -633,9 +633,6 @@ EXEMPT = {
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
-    "work_store.events": (
-        "it reads the Work log back as records; every printer of them is "
-        "`_work_detail`, driven, inside an untrusted block"),
     "work_report._line": (
         "the work reporter's command line: it prints the item's state and who is on "
         "each piece to the agent that ran it, in its own terminal, never to the brain"),

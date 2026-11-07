@@ -13,6 +13,7 @@
  * drawn as plain text.
  */
 
+import { getJson, postAnswer } from "./fetchJson";
 import { liveRead } from "./liveRead";
 import { t, wordsOf } from "./locale";
 import { createStore } from "./store";
@@ -79,12 +80,6 @@ export const workChanged = createStore(0);
 export const STATE_WORDS = wordsOf<WorkState>(
   ["planned", "working", "waiting_on_tim", "blocked", "done"], (s) => t(`right.work.state.${s}`));
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
-  return (await res.json()) as T;
-}
-
 /** Every item, as the server orders them (not done first, newest first). */
 export const workItems = liveRead(
   () => getJson<{ items: WorkItem[] }>("/api/work").then((r) => r.items), [workChanged]);
@@ -122,17 +117,6 @@ registerCommand("work.open", {
 registerClose("work.close", slot);
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
-export async function answerWorkDecision(id: string, key: string, answer: string): Promise<string | null> {
-  const res = await fetch(`/api/work/${encodeURIComponent(id)}/decisions/${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ answer }),
-  }).catch(() => null);
-  if (res?.ok) {
-    workChanged.set(workChanged.get() + 1);
-    return null;
-  }
-  if (!res) return t("right.workflows.noAnswer");
-  const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
-  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
-}
+export const answerWorkDecision = (id: string, key: string, answer: string) =>
+  postAnswer(`/api/work/${encodeURIComponent(id)}/decisions/${encodeURIComponent(key)}`,
+             answer, workChanged);

@@ -91,6 +91,18 @@ def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
         _ev(ws, item, "decision_made", "Again.", key="engine", answer="Apple")
     answered = ws.events(item.id, kinds={"decision_made"})
     assert answered[-1].detail == {"key": "engine", "answer": "Kroko", "where": "voice"}
+    with pytest.raises(ws.WorkRefused, match="already answered; ask with a new key"):
+        _ev(ws, item, "decision_needed", "Which voice?", key="engine", options=["Fish"])
+    assert ws.get(item.id).decisions == [], "an answered key is never re-opened"
+
+
+def test_the_latest_events_are_the_newest_however_long_the_log(ws, folder):
+    item = ws.create("Speech", "folder", folder)
+    for n in range(250):
+        _ev(ws, item, "update", f"Step {n}.")
+    newest = ws.latest(item.id, 3)
+    assert [e.summary for e in newest] == ["Step 247.", "Step 248.", "Step 249."]
+    assert newest[0].seq < newest[-1].seq
 
 
 def test_a_working_item_with_nothing_reported_reads_quiet(ws, folder, monkeypatch):

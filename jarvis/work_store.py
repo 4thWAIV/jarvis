@@ -328,6 +328,11 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
             raise WorkRefused(f"Give at most {OPTIONS_MAX} options, as a list.")
         options = [o for o in (_one_line(o, TITLE_MAX) for o in options) if o]
         recommendation = _one_line(detail.get("recommendation"), SUMMARY_MAX)
+        # An answered key is never asked again: its reporter reads the answer
+        # by key (`work_report.py answer`), so a new question needs a new key.
+        if conn.execute("SELECT 1 FROM work_decisions WHERE item_id=? AND key=? AND answer "
+                        "IS NOT NULL", (item_id, key)).fetchone():
+            raise WorkRefused(f"Decision {key} was already answered; ask with a new key.")
         conn.execute(
             "INSERT OR REPLACE INTO work_decisions (item_id, key, question, options, "
             "recommendation, opened_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -425,6 +430,11 @@ def listing(limit: int = LIST_MAX) -> list[WorkItem]:
         return [_item(conn, r, now) for r in rows]
 
 
+def _event(row) -> WorkEvent:
+    return WorkEvent(row["item_id"], row["kind"], row["summary"], json.loads(row["detail"]),
+                     row["at"], row["seq"])
+
+
 def events(item_id: str, after: int = 0, kinds: Optional[set[str]] = None,
            limit: int = 200) -> list[WorkEvent]:
     """The log, oldest first, from just after `after` (an event's seq)."""
@@ -436,8 +446,15 @@ def events(item_id: str, after: int = 0, kinds: Optional[set[str]] = None,
     sql += " ORDER BY seq LIMIT ?"
     args.append(limit)
     with closing(_connect()) as conn:
-        return [WorkEvent(r["item_id"], r["kind"], r["summary"], json.loads(r["detail"]),
-                          r["at"], r["seq"]) for r in conn.execute(sql, args)]
+        return [_event(r) for r in conn.execute(sql, args)]
+
+
+def latest(item_id: str, count: int) -> list[WorkEvent]:
+    """An item's newest `count` events, oldest of them first."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM work_events WHERE item_id=? ORDER BY seq DESC LIMIT ?",
+                            (item_id, count)).fetchall()
+    return [_event(r) for r in reversed(rows)]
 
 
 def find(reference: str) -> list[WorkItem]:
