@@ -522,6 +522,10 @@
       s.el.classList.toggle("current", j === current);
       s.jump.setAttribute("aria-current", j === current ? "true" : "false");
     });
+    var jump = slides[current].jump;
+    if (jump.offsetLeft < strip.scrollLeft) strip.scrollLeft = jump.offsetLeft - 40;
+    else if (jump.offsetLeft + jump.offsetWidth > strip.scrollLeft + strip.clientWidth)
+      strip.scrollLeft = jump.offsetLeft + jump.offsetWidth - strip.clientWidth + 40;
     count.textContent = (current + 1) + " of " + slides.length;
     document.getElementById("prev").disabled = current === 0;
     document.getElementById("next").disabled = current === slides.length - 1;
