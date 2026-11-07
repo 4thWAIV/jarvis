@@ -4,8 +4,10 @@
     python3 examples/packages/decision-deck/new_deck.py DECK.json OUT_FOLDER [OUT.zip]
 
 DECK.json is the deck: its package fields, slides and decisions (the format
-is in docs/work-packages.md, "Decision packages"; this folder's deck-data.js
-is an example, and may be given in its place). OUT_FOLDER gets the shared
+is in docs/making-a-package.md, whose command, python -m jarvis.make_package,
+is the one way a deck is made and sent; this folder's deck-data.js is an
+example, and may be given in its place). A deck with no decisions is a
+presentation. OUT_FOLDER gets the shared
 deck's own files (index.html, deck.css, deck.js, SKILL.md,
 scripts/decide.py) copied from this folder, then deck-data.js, story.json
 and package.json made from the data, and every picture the data names,
@@ -25,10 +27,17 @@ sys.path.insert(0, str(TEMPLATE.parent))
 import zip_package  # noqa: E402  (examples/packages/zip_package.py)
 
 FIXED = ["index.html", "deck.css", "deck.js", "SKILL.md", "scripts/decide.py"]
+# A presentation (a deck with no decisions) has nothing to answer, so it
+# carries neither the answering skill nor decide.py, and returns nothing.
+VOTING = ("SKILL.md", "scripts/decide.py")
 DATA_PREFIX = "window.DECK = "
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RETURNS = ["results/decisions.json", "results/decisions.md"]
 SAY_MAX = 800
+# Words a slide may carry, so no slide is a wall of text: a content slide's
+# body, and each part of a decision. Split a longer slide in two.
+SLIDE_WORDS = 60
+DECISION_WORDS = {"question": 30, "reason": 40, "context": 40, "says": 40}
 
 
 class Bad(Exception):
@@ -58,9 +67,43 @@ def pictures_of(deck: dict) -> list[str]:
                 take(p)
     for d in deck.get("decisions", []):
         take(d.get("picture"))
+        take(d.get("compare"))
         for o in d.get("options", []):
             take(o.get("picture"))
     return found
+
+
+def words(text) -> int:
+    return len(re.sub(r"\*\*|`", "", str(text or "")).split())
+
+
+def block_words(b: dict) -> int:
+    n = sum(words(b.get(k)) for k in ("p", "lead", "note", "caption"))
+    for pt in b.get("points", []):
+        n += words(pt) if isinstance(pt, str) else words(pt.get("b")) + words(pt.get("text"))
+    for f in b.get("facts", []):
+        n += words(f.get("n")) + words(f.get("text"))
+    for pic in b.get("pictures", []):
+        n += words(pic.get("caption"))
+    table = b.get("table") or {}
+    for row in [table.get("head") or []] + list(table.get("rows") or []):
+        n += sum(words(c) for c in row)
+    return n
+
+
+def check_words(deck: dict) -> None:
+    for s in deck.get("slides", []):
+        if "decision" in s:
+            continue
+        n = sum(block_words(b) for b in s.get("blocks", []))
+        if n > SLIDE_WORDS:
+            raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {SLIDE_WORDS}. Split it in two.")
+    for d in deck.get("decisions", []):
+        parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
+        parts += [("says", o.get("says")) for o in d["options"]]
+        for field, text in parts:
+            if words(text) > DECISION_WORDS[field]:
+                raise Bad(f"{d['id']}'s {field} has {words(text)} words; at most {DECISION_WORDS[field]}.")
 
 
 def check(deck: dict, source_dir: Path) -> None:
@@ -68,8 +111,8 @@ def check(deck: dict, source_dir: Path) -> None:
         if not str(deck.get(field) or "").strip():
             raise Bad(f"The deck has no {field}.")
     decisions = deck.get("decisions") or []
-    if not decisions:
-        raise Bad("The deck has no decisions.")
+    if not decisions and not [s for s in deck.get("slides", []) if "decision" not in s]:
+        raise Bad("The deck has neither decisions nor slides.")
     ids = [d.get("id", "") for d in decisions]
     for d in decisions:
         ident = d.get("id", "")
@@ -110,6 +153,7 @@ def check(deck: dict, source_dir: Path) -> None:
             raise Bad(f"A slide places decision {s['decision']!r}, which is not one.")
         if "decision" not in s and not s.get("title"):
             raise Bad("Every content slide needs a title.")
+    check_words(deck)
     for pic in pictures_of(deck):
         p = Path(pic)
         if not pic or p.is_absolute() or ".." in p.parts:
@@ -128,13 +172,35 @@ def order(deck: dict) -> list[dict]:
     decisions, then every decision not placed, then the answers slide."""
     placed = {s["decision"] for s in deck.get("slides", []) if "decision" in s}
     out = list(deck.get("slides", []))
-    out += [{"decision": d["id"]} for d in deck["decisions"] if d["id"] not in placed]
-    return out + [{"answers": True}]
+    out += [{"decision": d["id"]} for d in deck.get("decisions", []) if d["id"] not in placed]
+    return out + ([{"answers": True}] if deck.get("decisions") else [])
+
+
+# What JARVIS asks at the end of every decision slide, before it waits.
+ASK = {"en": "Which do you choose? Press Choose on one, or tell me.",
+       "es": "¿Cuál elige? Pulse el botón de una, o dígamelo."}
+
+
+def parents(deck: dict) -> dict:
+    """{child decision: {"question": parent, "answers": [options that open it]}}."""
+    out: dict = {}
+    for d in deck.get("decisions", []):
+        for o in d["options"]:
+            for child in o.get("opens", []):
+                out.setdefault(child, {"question": d["id"], "answers": []})["answers"].append(o["id"])
+    return out
 
 
 def story(deck: dict) -> dict:
-    decisions = deck["decisions"]
+    """The story JARVIS tells over the deck: one decision at a time. Each
+    decision slide is explained, then asks, then waits (`waits`) until
+    results/decisions.json has its answer; a child question is asked only
+    once its parent has an answer that opens it (`asks_when`). A
+    presentation (no decisions) is told straight through."""
+    decisions = deck.get("decisions", [])
     by_id = {d["id"]: d for d in decisions}
+    opened = parents(deck)
+    ask = ASK.get(deck.get("language", "en"), ASK["en"])
     slides = []
     for n, s in enumerate(order(deck), 1):
         go = {"click": f"#go-{n}"}
@@ -147,8 +213,13 @@ def story(deck: dict) -> dict:
                  "actions": [go], "targets": [f"#d-{d['id']} .question"]},
                 {"say": spoken(d.get("say") or f"I recommend {rec['name']}. {d['reason']}"),
                  "targets": [f"#opt-{d['id']}-{rec['id']}"]},
+                {"say": ask, "targets": [f"#d-{d['id']} .options"]},
             ]
-            slides.append({"title": d.get("short") or d["id"], "target": f"#d-{d['id']}", "beats": beats})
+            slide = {"title": d.get("short") or d["id"], "target": f"#d-{d['id']}",
+                     "waits": d["id"], "beats": beats}
+            if d["id"] in opened:
+                slide["asks_when"] = opened[d["id"]]
+            slides.append(slide)
         elif "answers" in s:
             slides.append({"title": "Your answers", "target": "#answers", "beats": [
                 {"say": "Your answers are recorded here. You can change any of them, "
@@ -167,13 +238,14 @@ def story(deck: dict) -> dict:
         for b in slide["beats"]:
             if len(b["say"]) > SAY_MAX:
                 raise Bad(f"A beat on {slide['title']} is over {SAY_MAX} characters.")
-    return {"title": deck["title"], "language": deck.get("language", "en"), "slides": slides}
+    return {"title": deck["title"], "language": deck.get("language", "en"),
+            "answers": RETURNS[0], "slides": slides}
 
 
 def manifest(deck: dict) -> dict:
+    voting = {"skill": "SKILL.md", "returns": RETURNS} if deck.get("decisions") else {"returns": []}
     return {"name": deck["name"], "version": deck["version"], "purpose": deck["purpose"],
-            "runs": "page", "entry": "index.html", "story": "story.json", "skill": "SKILL.md",
-            "returns": RETURNS}
+            "runs": "page", "entry": "index.html", "story": "story.json", **voting}
 
 
 def write(path: Path, text: str) -> None:
@@ -182,10 +254,15 @@ def write(path: Path, text: str) -> None:
 
 
 def build(source: Path, out: Path) -> Path:
-    deck = read_source(source)
-    check(deck, source.parent)
+    return build_deck(read_source(source), source.parent, out)
+
+
+def build_deck(deck: dict, source_dir: Path, out: Path) -> Path:
+    """Build `deck` (already read, pictures beside `source_dir`) into `out`."""
+    source = source_dir / "deck.json"
+    check(deck, source_dir)
     out.mkdir(parents=True, exist_ok=True)
-    for name in FIXED:
+    for name in [f for f in FIXED if deck.get("decisions") or f not in VOTING]:
         if (TEMPLATE / name).resolve() != (out / name).resolve():
             (out / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(TEMPLATE / name, out / name)

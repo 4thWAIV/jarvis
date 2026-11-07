@@ -26,11 +26,14 @@
  * helper (jarvis/package_story.js) points at the targets. The frame says
  * `story.ready` once its helper has loaded (the beat playing now is posted
  * again) and `story.missing` {beat, targets} for selectors it could not find.
+ * JARVIS also posts `story.state` {state, slide, question?} whenever the
+ * story's state changes (telling, waiting for his answer, paused, finished,
+ * stopped), so a deck can show which question is waiting for him.
  */
 
 import { t, type Said } from "./locale";
 import { inputStatus } from "./mic";
-import { saveResult, storyCue } from "./packages";
+import { saveResult, storyCue, storyState } from "./packages";
 import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
 
 export const BRIDGE = "package";
@@ -105,6 +108,12 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     post({ type: "story.cue", beat: mine.beat, targets: mine.targets, actions: mine.actions });
   };
   const unsubscribe = storyCue.subscribe(() => showCue());
+  const showState = () => {
+    const state = storyState.get();
+    if (!state || state.package !== packageId) return;
+    post({ type: "story.state", state: state.state, slide: state.slide, question: state.question ?? null });
+  };
+  const unsubscribeState = storyState.subscribe(showState);
 
   const onMessage = (event: MessageEvent) => {
     if (event.source !== frame.contentWindow) return;
@@ -112,7 +121,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     if (!message || typeof message !== "object" || message.jarvis !== BRIDGE) return;
     if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
-    else if (message.type === "story.ready") showCue(true);
+    else if (message.type === "story.ready") { showCue(true); showState(); }
     else if (message.type === "story.missing" && Array.isArray(message.targets)) {
       events.onStoryMissing({ words: () => t("main.package.story.notFound"),
                               detail: message.targets.map(String).join(", ") });
@@ -123,6 +132,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   return () => {
     window.removeEventListener("message", onMessage);
     unsubscribe();
+    unsubscribeState();
     stopListening?.();
   };
 }

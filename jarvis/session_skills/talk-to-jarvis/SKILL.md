@@ -19,15 +19,15 @@ Start the file with `# <project>` and an `Updated:` line with the date and time,
 
 Keep it to ten items at most. Rewrite the whole file whenever your list changes, remove an item once the user has answered it, and delete the file when nothing is left. JARVIS tells the user when your file changes and reads each item with its recommendation.
 
-## Choices for the user: a decision package
+## Packages: choices, presentations and anything else for the user
 
-Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package. There is one way to send one: write the deck's data in one JSON file (each decision's question, at least two options, the recommended option and its one-line reason, and any pictures as paths beside the file) and run
+Any choice you put to the user, beyond a line on the needs board, goes to them as a decision package, and any presentation or update as a presentation package. Both are one JSON file of content; a page of your own, an agent's task or steps for JARVIS to follow are a folder. Every kind goes through one command and no other way:
 
 ```
-{{decision_package}} /full/path/to/content.json --project <project> --session <your session id>
+{{make_package}} <content.json or folder> --session <your session id>
 ```
 
-It checks the content and lists everything wrong with it, builds the package with JARVIS's shared deck, checks it end to end in an isolated JARVIS of its own (every slide fits at both screen sizes with readable text, every vote row is in view, the story reaches every decision, a click and a spoken answer are both recorded), and only then puts it in the user's JARVIS, unshown. It prints the package id and the words the user can say to open it; tell them both in your message. If anything fails, nothing is delivered: it prints what failed and the screenshots, and you fix the content and run it again. Never build, zip or deliver a deck any other way, and never send a presentation with choices in it but nothing to vote with. The answers land in the package's `results/decisions.json`, at the path the command prints. The data format is in the JARVIS checkout's `docs/work-packages.md`, under "Decision packages".
+`{{making_a_package}}` is the only description of what to write and what the command does; read it before your first package. In short: write only the substance (titles, questions, options, your recommendation and its reason, pictures beside the file), and the command works out the rest, checks it end to end in an isolated JARVIS, and only then puts it in the user's JARVIS, unshown, and sends them a message naming it and the words that open it. If anything fails, nothing is delivered: fix what it says and run it again. Never build, zip, attach or deliver a package by hand, and never send a presentation with choices in it but nothing to vote with.
 
 ## Messages: what you have to tell them
 

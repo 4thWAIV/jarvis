@@ -16,6 +16,7 @@
 
   var DECK = window.DECK || { title: "", slides: [], decisions: [] };
   var W = 880, H = 640;                        // the fixed canvas, scaled to fit
+  var MAX_SCALE = 22 / 18;                     // 18 px body text, at most 22 px on screen
   var RECORDED = "results/decisions.js";
   var FOLLOW_MS = 3000;
   var inFrame = window.parent !== window;
@@ -42,6 +43,7 @@
   function withId(node, id) { if (id) node.id = id; return node; }
 
   var DECISIONS = DECK.decisions || [];
+  var LETTERS = "ABCDEFGHIJ";
   function byId(id) { return DECISIONS.filter(function (d) { return d.id === id; })[0]; }
   function optionOf(d, id) { return (d.options || []).filter(function (o) { return o.id === id; })[0]; }
 
@@ -186,8 +188,22 @@
     say("Saving…");
   }
 
+  // JARVIS's story says which question it is waiting on: that slide is
+  // brought up and says so; any other state clears it.
+  function asking(m) {
+    DECISIONS.forEach(function (d) {
+      var on = m.state === "waiting" && m.question === d.id;
+      views[d.id].section.classList.toggle("asking", on);
+      if (on && slides[current].decision !== d.id) show(slideOf(d.id));
+    });
+  }
+
   window.addEventListener("message", function (event) {
     var m = event.data;
+    if (event.source === window.parent && m && m.jarvis === "package" && m.type === "story.state") {
+      asking(m);
+      return;
+    }
     if (event.source !== window.parent || !m || m.jarvis !== "package" || m.type !== "saved") return;
     if (!(m.id in pending)) return;
     delete pending[m.id];
@@ -310,6 +326,8 @@
     var kicker = "Decision " + (index + 1) + " of " + DECISIONS.length + " · " + d.id;
     if (PARENT[d.id]) kicker += " · asked when " + opensText(d);
     head(section, kicker, d.question, "question");
+    // Shown while JARVIS's story is waiting for this answer (story.state).
+    section.appendChild(el("p", "waiting", "Waiting for your answer: choose one, or say it"));
     var rec = optionOf(d, d.recommended);
     var why = el("p", "recommends");
     if (rec) {
@@ -324,29 +342,46 @@
     // alone go in one line above them.
     if (d.context && !d.picture) section.appendChild(inline(el("p", "why"), d.context));
     var body = section.appendChild(el("div", "body decide"));
+    // A slide with pictures gives them the room the words and the vote row
+    // leave: they size to the space, never to a fixed thumbnail.
+    var pictured = (d.options || []).some(function (o) { return o.picture; });
+    if (pictured || d.picture || d.compare) section.classList.add("fill");
     if (d.picture) {
       body.classList.add("with-context");
       var side = body.appendChild(el("div", "context"));
       side.appendChild(figure(typeof d.picture === "string" ? { src: d.picture } : d.picture));
       if (d.context) side.appendChild(inline(el("p", "why"), d.context));
     }
-    var options = body.appendChild(el("div", "options"));
+    var main = d.picture ? body.appendChild(el("div", "main")) : body;
+    if (d.compare) {
+      var compare = figure(typeof d.compare === "string" ? { src: d.compare } : d.compare);
+      compare.classList.add("compare");
+      main.appendChild(compare);
+    }
+    var options = main.appendChild(el("div", "options" + (pictured ? " has-pictures" : "")));
     var n = (d.options || []).length;
-    options.style.setProperty("--columns", String(d.picture ? Math.min(2, n) : n === 4 ? 2 : Math.min(3, n)));
+    options.style.setProperty("--columns", String(pictured ? Math.min(4, n) : d.picture ? Math.min(2, n)
+                                                : n === 4 ? 2 : Math.min(3, n)));
     var buttons = {};
-    (d.options || []).forEach(function (o) {
+    (d.options || []).forEach(function (o, i) {
       var card = el("article", "option" + (o.id === d.recommended ? " recommended" : ""));
       card.id = "opt-" + d.id + "-" + o.id;
+      card.appendChild(el("span", "yours", "✓ Your choice"));
       if (o.picture) card.appendChild(figure(typeof o.picture === "string" ? { src: o.picture } : o.picture));
-      var name = card.appendChild(el("h3", "", o.name));
+      var text = card.appendChild(el("div", "option-text"));
+      // The letter is what he can say ("B"), as scripts/decide.py takes it.
+      var name = text.appendChild(el("h3"));
+      name.appendChild(el("span", "letter", LETTERS[i] + "."));
+      name.appendChild(document.createTextNode(" " + o.name));
       if (o.id === d.recommended) name.appendChild(el("span", "badge", "Recommended"));
-      card.appendChild(inline(el("p", "says"), o.says));
-      if (o.opens && o.opens.length) card.appendChild(el("p", "opens", "Then asks: " + o.opens.map(function (c) {
+      text.appendChild(inline(el("p", "says"), o.says));
+      if (o.opens && o.opens.length) text.appendChild(el("p", "opens", "Then asks: " + o.opens.map(function (c) {
         var child = byId(c);
         return child ? child.short || child.id : c;
       }).join(", ")));
-      var b = card.appendChild(el("button", "choose", "Choose"));
+      var b = text.appendChild(el("button", "choose", "Choose"));
       b.type = "button";
+      b.setAttribute("aria-label", "Choose " + LETTERS[i] + ": " + o.name);
       b.addEventListener("click", function () { choose(d, o.id); });
       buttons[o.id] = { card: card, button: b };
       options.appendChild(card);
@@ -374,7 +409,7 @@
     });
     var recorded = section.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
-    views[d.id] = { section: section, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
+    views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
     return section;
   }
 
@@ -470,7 +505,8 @@
         slides.push({ el: contentSlide(s, n), title: s.short || s.title });
       }
     });
-    slides.push({ el: answersSlide(), title: "Your answers" });
+    // A presentation (no decisions) has nothing to answer: no answers slide.
+    if (DECISIONS.length) slides.push({ el: answersSlide(), title: "Your answers" });
     slides.forEach(function (s, i) {
       track.appendChild(s.el);
       var b = el("button", "jump" + (s.decision ? " decision" : ""), String(i + 1));
@@ -484,6 +520,7 @@
   }
 
   function render() {
+    if (!DECISIONS.length) return;          // a presentation records nothing
     var answered = 0;
     DECISIONS.forEach(function (d) {
       var e = record[d.id], v = views[d.id], row = answerRows[d.id], open = applies(d, record);
@@ -492,8 +529,9 @@
         var chosen = !!e && e.answer === id;
         v.buttons[id].card.classList.toggle("chosen", chosen);
         v.buttons[id].button.setAttribute("aria-pressed", String(chosen));
-        v.buttons[id].button.textContent = chosen ? "Chosen" : "Choose";
+        v.buttons[id].button.textContent = chosen ? "✓ Chosen" : "Choose";
       });
+      v.options.classList.toggle("answered", !!e && !!optionOf(d, e.answer));
       v.later.setAttribute("aria-pressed", String(!!e && e.answer === "later"));
       v.none.setAttribute("aria-pressed", String(!!e && e.answer === "none"));
       if (document.activeElement !== v.words) v.words.value = e ? e.note : v.words.value;
@@ -544,7 +582,8 @@
   // ── fitting the frame ─────────────────────────────────────────────────
   var stage = document.getElementById("stage");
   function fit() {
-    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    // Never larger than MAX_SCALE: body text stays at most about 22 px.
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
     stage.style.transform = "scale(" + s + ")";
     stage.style.left = Math.max(0, (window.innerWidth - W * s) / 2) + "px";
     stage.style.top = Math.max(0, (window.innerHeight - H * s) / 2) + "px";
@@ -553,9 +592,47 @@
 
   // A decision slide's voting area is always in sight: its pictures give up
   // height until the slide fits the canvas.
+  function shown(img) {
+    var r = img.getBoundingClientRect();
+    if (!img.naturalWidth || !r.width || !r.height) return 0;
+    var k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+    return img.naturalWidth * img.naturalHeight * k * k;
+  }
+
+  function cut(section) {
+    if (section.scrollHeight > section.clientHeight + 1) return true;
+    return [].slice.call(section.querySelectorAll(".option")).some(function (c) {
+      return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1;
+    });
+  }
+
+  // Try each way in turn and keep the one that shows the smallest picture
+  // on the slide largest, with nothing cut off.
+  function arrange(section, box, ways) {
+    var imgs = [].slice.call(section.querySelectorAll(".picture img"));
+    var best = ways[0], bestArea = -1;
+    ways.forEach(function (way) {
+      ways.forEach(function (w) { box.classList.remove(w); });
+      box.classList.add(way);
+      if (cut(section)) return;
+      var area = Math.min.apply(null, imgs.map(shown));
+      if (area > bestArea) { best = way; bestArea = area; }
+    });
+    ways.forEach(function (w) { box.classList.remove(w); });
+    box.classList.add(best);
+  }
+
   function shrinkPictures() {
     DECISIONS.forEach(function (d) {
       var section = views[d.id].section;
+      // Pictured options try each arrangement (picture above its words,
+      // beside them, or, for two options, one option a row) and keep the one
+      // that shows the smallest picture largest with nothing cut off.
+      var opts = section.querySelector(".options.has-pictures");
+      if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
+      var compare = section.querySelector(".compare");
+      if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
+      if (section.classList.contains("fill")) return;   // pictures already fit the space
       var pics = [].slice.call(section.querySelectorAll(".picture img"));
       var limit = 220;
       while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
@@ -573,7 +650,7 @@
   render();
   shrinkPictures();
   window.addEventListener("load", shrinkPictures);   // once pictures have their sizes
-  loadRecorded().then(function (start) {
+  if (DECISIONS.length) loadRecorded().then(function (start) {
     if (start) { record = clean(start); render(); }
     say(inFrame ? (start ? "Read the answers recorded." : "Answers are saved in results.")
                 : "Outside JARVIS: nothing is saved.");

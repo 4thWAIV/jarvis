@@ -1724,14 +1724,20 @@ TOOL_SPECS = [
             "Tell a page package's story, only when he asks: its page opens and JARVIS's "
             "voice reads the story the sender wrote, slide by slide, pointing at each part "
             "of the page as it is said. It returns at once; do not tell the story yourself. "
-            "`slide` starts from that slide (it also jumps a story being told); action "
-            "stop ends it. The page's Tell the story and Stop do the same."),
+            "A story that asks questions (a decision deck) stops after each question and "
+            "waits for his answer (his Choose on the page, or his words recorded with the "
+            "package's script), then goes on by itself; while it waits it is still running. "
+            "`slide` starts from that slide (it also jumps a story being told, and asks that "
+            "slide's question again); action resume goes on from the first question with no "
+            "answer (\"continue the decisions\"); action stop ends it, told or waiting; "
+            "action status says what it is doing and which question it waits for. The "
+            "page's Tell the story, Continue and Stop do the same."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string", "description": "The package's id."},
-                "action": {"type": "string", "enum": ["tell", "stop"],
-                           "description": "tell (the default) or stop."},
+                "action": {"type": "string", "enum": ["tell", "resume", "stop", "status"],
+                           "description": "tell (the default), resume, stop or status."},
                 "slide": {"type": "integer", "description": "The slide to start from, from 1."},
             },
             "required": ["package"],

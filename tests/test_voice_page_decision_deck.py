@@ -13,6 +13,7 @@ as run_package_command runs it) then shows in the frame.
 import asyncio
 import importlib
 import json
+import re
 import os
 import subprocess
 import sys
@@ -93,7 +94,7 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             # area is inside the frame's visible box.
             await frame.locator("#go-3").click()
             slide = frame.locator("#d-kettle-kind")
-            await async_api.expect(slide).to_have_class("slide decision current")
+            await async_api.expect(slide).to_have_class(re.compile(r"\bcurrent\b"))
             choose = frame.locator("#opt-kettle-kind-tap .choose")
             box, view = await choose.bounding_box(), await iframe.bounding_box()
             assert view["y"] <= box["y"] and box["y"] + box["height"] <= view["y"] + view["height"]

@@ -36,11 +36,13 @@ def _reporter(script: str) -> str:
         data_paths.PACKAGE_DIR / script, "--cert", data_paths.CONFIG_DIR / "cert.pem"))
 
 
-def _decision_package() -> str:
-    """The decision package command, run from this checkout with the Python
-    this install runs on, quoted for a shell."""
-    return (f"cd {shlex.quote(str(data_paths.SOURCE_ROOT))} && "
-            f"{shlex.quote(sys.executable)} -m jarvis.decision_package")
+def _make_package() -> str:
+    """The package command with the Python this install runs on, quoted for a
+    shell. It runs from any folder (so the project defaults to the session's
+    own), finding JARVIS by PYTHONPATH; -P keeps the session's folder off
+    sys.path, so nothing there is imported in JARVIS's place."""
+    return (f"PYTHONPATH={shlex.quote(str(data_paths.PACKAGE_DIR.parent))} "
+            f"{shlex.quote(sys.executable)} -P -m jarvis.make_package")
 
 
 def render() -> str:
@@ -50,7 +52,9 @@ def render() -> str:
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
-            .replace("{{decision_package}}", _decision_package()))
+            .replace("{{make_package}}", _make_package())
+            .replace("{{making_a_package}}",
+                     str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md")))
 
 
 def targets() -> list[Path]:

@@ -15,7 +15,9 @@ import pytest
 from jarvis import decision_check, decision_package as dp
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "packages" / "decision-deck"
-SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>\n'
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
+       '<rect width="320" height="200" fill="#38bdf8"/></svg>\n')
 
 
 def small_deck() -> dict:
@@ -27,12 +29,16 @@ def small_deck() -> dict:
                                {"picture": "pictures/plate.svg", "alt": "A plate"}]}],
         "decisions": [
             {"id": "where", "short": "Where", "question": "Where do we eat?",
-             "options": [{"id": "in", "name": "In the office", "says": "Food brought in."},
-                         {"id": "out", "name": "A restaurant", "says": "A walk away."}],
+             "options": [{"id": "in", "name": "In the office", "says": "Food brought in.",
+                          "picture": "pictures/plate.svg"},
+                         {"id": "out", "name": "A restaurant", "says": "A walk away.",
+                          "picture": "pictures/plate.svg"}],
              "recommended": "in", "reason": "Nobody has to book a table."},
             {"id": "when", "short": "When", "question": "What time?",
-             "options": [{"id": "noon", "name": "Noon", "says": "Before the stand-up."},
-                         {"id": "one", "name": "One o'clock", "says": "After it."}],
+             "options": [{"id": "noon", "name": "Noon", "says": "Before the stand-up.",
+                          "picture": "pictures/plate.svg"},
+                         {"id": "one", "name": "One o'clock", "says": "After it.",
+                          "picture": "pictures/plate.svg"}],
              "recommended": "noon", "reason": "The afternoon stays free."},
         ],
     }
@@ -180,3 +186,136 @@ def test_the_deck_given_is_not_changed(tmp_path):
     before = copy.deepcopy(deck)
     problems(tmp_path, deck)
     assert deck == before
+
+
+# -- the short form: the agent supplies the substance, the system the rest --------------
+
+def brief() -> dict:
+    return {
+        "title": "Team lunch",
+        "decisions": [
+            {"question": "Where do we eat on Friday?",
+             "options": [{"name": "In the office", "says": "Food is brought in.",
+                          "recommended": True, "opens": ["What time?"],
+                          "picture": "pictures/plate.svg"},
+                         {"name": "A restaurant", "says": "A short walk away.",
+                          "picture": "pictures/plate.svg"}],
+             "reason": "Nobody has to book a table."},
+            {"short": "When", "question": "What time?",
+             "text_only": "A time of day has no picture that shows it.",
+             "options": [{"name": "Noon", "says": "Before the stand-up."},
+                         {"name": "None", "says": "Whenever."}],
+             "recommended": "Noon", "reason": "The afternoon stays free."},
+        ],
+        "slides": [{"decision": "When"}],
+    }
+
+
+def test_the_short_form_is_filled_in_and_valid(tmp_path):
+    deck = dp.validate(write(tmp_path, brief()))
+    assert (deck["name"], deck["version"]) == ("team-lunch", "1.0.0")
+    where, when = deck["decisions"]
+    assert where["id"] == "where-do-we-eat-on-friday"[:len(where["id"])]
+    assert where["recommended"] == "in-the-office"
+    assert where["options"][0]["opens"] == ["when"] and "recommended" not in where["options"][0]
+    assert [o["id"] for o in when["options"]] == ["noon", "none-option"]
+    assert when["recommended"] == "noon" and deck["slides"] == [{"decision": "when"}]
+
+
+def test_a_full_form_deck_passes_through_expansion_unchanged():
+    deck = small_deck()
+    assert dp.expand(deck) == {**deck, "purpose": deck["purpose"]}
+    example = dp.read(EXAMPLE / "deck-data.js")
+    assert dp.expand(example) == example
+
+
+def test_a_misspelt_field_is_named_not_ignored(tmp_path):
+    deck = brief()
+    deck["decisions"][0]["recomended"] = "x"
+    deck["decisions"][1]["options"][0]["sais"] = "x"
+    said = " ".join(problems_of_expanded(tmp_path, deck))
+    assert "'recomended' is not a field of a decision; did you mean 'recommended'?" in said
+    assert "'sais'" in said and "did you mean 'says'" in said
+
+
+def problems_of_expanded(tmp_path, deck):
+    content = write(tmp_path, deck)
+    return dp.problems_of(dp.expand(dp.read(content)), content.parent)
+
+
+def test_a_short_form_without_a_recommendation_is_refused(tmp_path):
+    deck = brief()
+    del deck["decisions"][0]["options"][0]["recommended"]
+    assert any("recommendation" in p for p in problems_of_expanded(tmp_path, deck))
+
+
+def test_check_only_validates_and_stops(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(dp, "post", lambda *a, **k: pytest.fail("delivered"))
+    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
+    assert dp.main([str(write(tmp_path, brief())), "--check-only"]) == 0
+    assert "2 decision(s), package team-lunch-1.0.0" in capsys.readouterr().out
+
+
+def test_the_printed_example_is_itself_a_valid_deck(tmp_path, capsys):
+    assert dp.main(["--example"]) == 0
+    content = tmp_path / "content.json"
+    content.write_text(capsys.readouterr().out)
+    for pic in dp.builder().pictures_of(json.loads(content.read_text())):
+        (tmp_path / pic).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / pic).write_bytes(PNG)
+    assert dp.main([str(content), "--check-only"]) == 0
+
+
+def test_a_short_form_builds_and_delivers_end_to_end(tmp_path, monkeypatch, capsys):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    monkeypatch.setattr(decision_check, "check",
+                        lambda archive, deck, out: decision_check.Result(passed=[deck["name"]]))
+    assert dp.main([str(write(tmp_path / "in", brief())), "--out", str(tmp_path / "out"),
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    archive = tmp_path / "out" / "team-lunch-1.0.0.zip"
+    package = json.loads(zipfile.ZipFile(archive).read("package.json"))
+    assert package["name"] == "team-lunch" and package["runs"] == "page"
+    story = json.loads(zipfile.ZipFile(archive).read("story.json"))
+    assert [s["title"] for s in story["slides"]][-1] == "Your answers"
+    assert len(delivery.calls) == 1
+
+
+def test_every_option_is_pictured_unless_the_decision_says_why_not(tmp_path):
+    deck = small_deck()
+    del deck["decisions"][1]["options"][1]["picture"]
+    [problem] = problems(tmp_path, deck)
+    assert "Decision when: option one has no picture" in problem and "text_only" in problem
+    deck["decisions"][1]["text_only"] = "too short"
+    assert len(problems(tmp_path, deck)) == 1
+    deck["decisions"][1]["text_only"] = "A time of day has no picture that shows it better."
+    assert problems(tmp_path, deck) == []
+
+
+def test_only_a_stamped_decision_package_unpacks_and_only_for_its_token(tmp_path):
+    from jarvis import decision_stamp
+    out = tmp_path / "out"
+    deck = dp.validate(write(tmp_path / "in", small_deck()))
+    archive = dp.build(tmp_path / "in" / "content.json", out, deck)
+    assert decision_stamp.is_decision_package(archive)
+    assert "has not passed its check" in decision_stamp.problem(archive, "token-a")
+    stamped = tmp_path / "stamped.zip"
+    decision_stamp.stamp(archive, stamped, "token-a")
+    assert decision_stamp.problem(stamped, "token-a") is None
+    assert "not checked for this JARVIS" in decision_stamp.problem(stamped, "token-b")
+    decision_stamp.stamp(stamped, stamped, "token-b")       # stamped again in place
+    assert decision_stamp.problem(stamped, "token-b") is None
+    with zipfile.ZipFile(archive) as a, zipfile.ZipFile(stamped) as b:
+        names = [n for n in b.namelist() if not n.endswith(decision_stamp.STAMP)]
+        assert sorted(names) == sorted(a.namelist())
+        assert all(a.read(n) == b.read(n) for n in names), "the files checked are the files sent"
+    changed = tmp_path / "changed.zip"
+    with zipfile.ZipFile(stamped) as b, zipfile.ZipFile(changed, "w") as c:
+        for info in b.infolist():
+            data = b.read(info)
+            c.writestr(info, data + b"// changed" if info.filename.endswith("deck.js") else data)
+    assert "changed after its check" in decision_stamp.problem(changed, "token-b")
+    plain = tmp_path / "plain.zip"
+    with zipfile.ZipFile(plain, "w") as z:
+        z.writestr("package.json", "{}")
+    assert decision_stamp.problem(plain, "token-a") is None, "only decision packages"

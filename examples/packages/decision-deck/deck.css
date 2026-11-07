@@ -101,7 +101,7 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .points { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .facts { list-style: none; padding: 0; display: flex; gap: 14px; }
 .facts li { flex: 1; background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; }
-.facts b { display: block; font-size: 30px; color: var(--accent); }
+.facts b { display: block; font-size: 26px; color: var(--accent); }
 .table { border-collapse: collapse; width: 100%; }
 .table th, .table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
 .table thead th { color: var(--muted); font-weight: 600; }
@@ -110,37 +110,102 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .picture img { display: block; max-width: 100%; max-height: 300px; object-fit: contain; border-radius: 6px; }
 .picture figcaption { color: var(--muted); margin-top: 4px; }
 
-/* ── a decision ── */
+/* ── a decision ──
+   One question a slide. Every option is a card with its picture as large as
+   the slide allows and one Choose bar across its foot, at least 44 px here
+   (33 px at the smaller centre size). Recommended is a blue tag, never the
+   chosen green, so nothing looks answered before it is. Once answered, the
+   chosen card is ringed in green under "Your choice" and the others fade. */
 .recommends { color: var(--text); }
-.recommends b { color: var(--chosen); }
+.recommends b { color: var(--accent); }
 .decide.with-context { display: grid; grid-template-columns: 290px 1fr; gap: 16px; align-items: start; }
 .context { display: flex; flex-direction: column; gap: 8px; }
 .context .picture img { max-height: 220px; }
 .why { color: var(--muted); margin: 0; }
-.options { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: 10px; }
+.options { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: 12px; }
 .option {
+  position: relative;
   display: flex; flex-direction: column; gap: 6px;
-  background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px;
+  background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; padding: 10px 12px 12px;
+  transition: opacity .2s ease, border-color .2s ease;
 }
-.option.recommended { border-color: var(--chosen); }
-.option.chosen { background: var(--raised); box-shadow: inset 0 0 0 2px var(--chosen); }
-.option h3 { font-size: 19px; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.option h3 { font-size: 19px; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.option .letter { color: var(--muted); font-weight: 600; }
 .option .picture img { max-height: 120px; }
 .says, .opens { margin: 0; }
 .opens { color: var(--muted); }
-.badge { font-size: 18px; font-weight: 500; color: var(--chosen); }
-.choose { margin-top: auto; align-self: flex-start; }
+.badge {
+  font-size: 18px; font-weight: 650; color: var(--accent-ink);
+  background: var(--accent); border-radius: 999px; padding: 1px 9px;
+}
+.option-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; }
+.choose {
+  margin-top: auto; width: 100%; min-height: 44px; font-size: 19px; font-weight: 650;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); border-radius: 8px;
+}
+.choose:hover:not(:disabled) { filter: brightness(1.1); }
+.yours { display: none; }
+/* Answered: the chosen card ringed and named, the others faded. */
+.options.answered .option:not(.chosen) { opacity: 0.45; }
+.options.answered .option:not(.chosen) .choose { background: var(--raised); border-color: var(--edge); color: var(--text); }
+.option.chosen { border-color: var(--chosen); box-shadow: 0 0 0 3px var(--chosen); background: var(--raised); }
+.option.chosen .yours {
+  display: block; position: absolute; top: -13px; left: 12px; z-index: 1;
+  font-size: 18px; font-weight: 700; color: var(--chosen-ink); background: var(--chosen);
+  border-radius: 999px; padding: 1px 10px;
+}
 .choose[aria-pressed="true"] { background: var(--chosen); border-color: var(--chosen); color: var(--chosen-ink); }
 
+/* A decision with pictures: the body takes every pixel the words and the
+   vote row leave, and the pictures size to it (a compare picture above the
+   options, each option's picture filling its share of the width). */
+.slide.decision.fill .decide { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.slide.decision.fill .main { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.slide.decision.fill .context { min-height: 0; }
+.slide.decision.fill .context .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.decide .compare { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; }
+.options.has-pictures { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-top: 6px; }
+.options.has-pictures .option { min-height: 0; }
+.options.has-pictures .option-text { flex: none; }
+.options.has-pictures .option .picture { flex: 1 1 0; min-height: 50px; display: flex; flex-direction: column; }
+.slide.decision.fill .picture img,
+.slide.decision.fill .option .picture img,
+.slide.decision.fill .context .picture img {
+  flex: 1 1 0; min-height: 0; width: 100%; height: 100%; max-height: none; object-fit: contain;
+}
+/* A compare picture above the options, or beside them in one column. */
+.slide.decision.fill .compare-side { flex-direction: row; }
+.compare-side > .compare { flex: 1 1 0; min-width: 0; min-height: 0; }
+.compare-side > .options { flex: 0 0 46%; grid-template-columns: minmax(0, 1fr); align-content: start; }
+/* How the pictured options are arranged is chosen by deck.js (arrange):
+   the picture above its words, beside them, or one option a row. The
+   Choose bar is always across the foot of the option's words. */
+.options.has-pictures.side .option, .options.has-pictures.rows .option { flex-direction: row; align-items: stretch; }
+.options.has-pictures.side .option .picture, .options.has-pictures.rows .option .picture { flex: 1 1 0; min-width: 0; min-height: 0; }
+.options.has-pictures.side .option-text { flex: 0 0 46%; display: flex; flex-direction: column; }
+.options.has-pictures.rows { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); }
+.options.has-pictures.rows .option-text { flex: 0 0 250px; display: flex; flex-direction: column; }
+
 .vote { display: flex; gap: 8px; align-items: center; }
-.vote [aria-pressed="true"] { border-color: var(--later); background: var(--raised); box-shadow: inset 0 0 0 2px var(--later); }
+.vote button, .vote .words { min-height: 44px; }
+.vote [aria-pressed="true"] { border-color: var(--later); background: var(--raised); box-shadow: inset 0 0 0 3px var(--later); }
 .words {
   flex: 1 1 auto; min-width: 0; background: var(--surface); border: 1px solid var(--edge);
   border-radius: 6px; padding: 4px 10px;
 }
 .recorded { color: var(--muted); }
-.recorded.done { color: var(--chosen); }
+.recorded.done { color: var(--chosen); font-weight: 650; }
 .slide.not-asked .question { color: var(--muted); }
+/* JARVIS has asked this question and is waiting: said on the slide itself. */
+.waiting { display: none; }
+.slide.asking .waiting {
+  display: block; position: absolute; top: 6px; right: 28px; z-index: 2;
+  color: var(--accent-ink); background: var(--later); border-radius: 6px;
+  padding: 1px 10px; font-weight: 650; animation: asking 1.6s ease-in-out infinite;
+}
+@keyframes asking { 50% { filter: brightness(1.15); } }
+@media (prefers-reduced-motion: reduce) { .slide.asking .waiting { animation: none; } }
 
 /* ── your answers ── */
 .answer-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 0 1 auto; min-height: 0; }

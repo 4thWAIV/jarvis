@@ -44,8 +44,9 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
-from jarvis import data_paths
+from jarvis import data_paths, decision_stamp, package_story
 
 FRONTEND = data_paths.SOURCE_ROOT / "frontend"
 # The two centre frame sizes, in a 1440 x 900 and a 1280 x 800 window: the
@@ -59,6 +60,15 @@ READY_SEC = 90
 BUILD_SEC = 300
 STORY_SEC = 240
 FOLLOW_SEC = 10          # the deck reads its record every 3 s
+# Longer than any beat of the stand-in voice: a story that waits for an
+# answer says and shows nothing more in this time.
+WAIT_LONGER_SEC = 3.0
+# Stop ends the story's words and its cue within this.
+STOP_WITHIN_SEC = 1.0
+# Every vote control at least this tall, and every option's picture drawn
+# at least this large each way, in the frame's own pixels.
+MIN_CONTROL_PX = 32
+MIN_PICTURE_PX = 60
 # Audio plays without a click, for the story; WebGL is off, so the orb
 # stands still (as it does on a Mac without WebGL) instead of costing several
 # cores in software rendering. The package frame does not use it.
@@ -283,80 +293,465 @@ MEASURE = """
 """.replace("MIN", str(TEXT_MIN_PX)).replace("MAX", str(TEXT_MAX_PX))
 
 
-async def _check_size(browser, jarvis: Isolated, deck: dict, story: dict,
-                      package_id: str, window: tuple[int, int], frame_size: tuple[int, int],
-                      shots: Path, result: Result) -> None:
-    label = f"{frame_size[0]}x{frame_size[1]}"
-    folder = jarvis.package_folder(package_id)
-    shutil.rmtree(folder / "results", ignore_errors=True)
-    context = await browser.new_context(viewport={"width": window[0], "height": window[1]})
-    page = await context.new_page()
-    stories: list[dict] = []
+# What is wrong with the voting on the decision slide showing now: every
+# vote control visible, at least MIN_CONTROL px tall and inside the slide and
+# the frame; exactly one Choose on each option; each option's picture drawn
+# at least MIN_PICTURE px each way.
+VOTING = """
+() => {
+  const problems = [];
+  const slide = document.querySelector("#track > .slide.current");
+  if (!slide.classList.contains("decision")) return problems;
+  const box = slide.getBoundingClientRect();
+  const say = (el) => (el.getAttribute("aria-label") || el.textContent || el.placeholder || el.tagName)
+    .trim().replace(/\\s+/g, " ").slice(0, 40);
+  for (const el of slide.querySelectorAll(".choose, .vote button, .vote .words")) {
+    const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+    if (cs.display === "none" || cs.visibility !== "visible" || parseFloat(cs.opacity) < 0.9 || !r.width)
+      problems.push(`"${say(el)}" is not visible`);
+    else if (r.height < MIN_CONTROL - 0.05)
+      problems.push(`"${say(el)}" is ${r.height.toFixed(1)}px tall, under MIN_CONTROLpx`);
+    if (r.top < box.top - 1 || r.bottom > box.bottom + 1 || r.left < -1 || r.right > innerWidth + 1
+        || r.bottom > innerHeight + 1)
+      problems.push(`"${say(el)}" is not inside the slide and the frame`);
+  }
+  for (const card of slide.querySelectorAll(".option")) {
+    const n = card.querySelectorAll(".choose").length;
+    if (n !== 1) problems.push(`option ${card.id} has ${n} Choose controls, not one`);
+    for (const img of card.querySelectorAll(".picture img")) {
+      const r = img.getBoundingClientRect();
+      if (!img.naturalWidth) { problems.push(`option ${card.id}'s picture did not load`); continue; }
+      const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+      const w = img.naturalWidth * k, h = img.naturalHeight * k;
+      if (w < MIN_PICTURE || h < MIN_PICTURE)
+        problems.push(`option ${card.id}'s picture is drawn ${Math.round(w)} x ${Math.round(h)}px, under MIN_PICTUREpx`);
+    }
+  }
+  return problems;
+}
+""".replace("MIN_CONTROL", str(MIN_CONTROL_PX)).replace("MIN_PICTURE", str(MIN_PICTURE_PX))
 
-    def heard(ws):
+
+class Deck:
+    """The voice page in one browser context with the package open in its
+    real frame, and every frame the voice socket brought, timed."""
+
+    def __init__(self, browser, jarvis: Isolated, deck: dict, story: dict, package_id: str,
+                 shots: Path, result: Result):
+        self.browser, self.jarvis, self.deck, self.story = browser, jarvis, deck, story
+        self.package_id, self.shots, self.result = package_id, shots, result
+        self.parsed = package_story.parse(json.dumps(story).encode())
+        self.frames: list[tuple[float, dict]] = []
+        self.page = self.inner = self.iframe = None
+        self.size = (0, 0)
+        self.shot_n = 0
+
+    def _heard(self, ws):
         if ws.url.endswith("/ws/voice"):
-            ws.on("framereceived", lambda payload: _story_frame(payload, stories))
+            ws.on("framereceived", self._frame)
 
-    page.on("websocket", heard)
-    await page.add_init_script(RECORD)
-    try:
-        await page.goto(jarvis.base + "/", wait_until="load")
-        # Open by name, once the page is on JARVIS's voice socket.
+    def _frame(self, payload):
+        try:
+            frame = json.loads(payload)
+        except (TypeError, ValueError):
+            return
+        if isinstance(frame, dict):
+            self.frames.append((time.monotonic(), frame))
+
+    async def open(self, window: tuple[int, int], frame_size: tuple[int, int]) -> bool:
+        """The page loaded, the package opened by its title, the frame sized."""
+        label = f"{frame_size[0]}x{frame_size[1]}"
+        self.size = frame_size
+        context = await self.browser.new_context(viewport={"width": window[0],
+                                                           "height": window[1]})
+        self.page = await context.new_page()
+        self.page.on("websocket", self._heard)
+        await self.page.add_init_script(RECORD)
+        await self.page.goto(self.jarvis.base + "/", wait_until="load")
         deadline, said, ok = time.monotonic() + 30, "", False
         while time.monotonic() < deadline:
-            ok, said = await asyncio.to_thread(jarvis.tool, "open_package_page",
-                                               package=deck["title"])
+            ok, said = await asyncio.to_thread(self.jarvis.tool, "open_package_page",
+                                               package=self.deck["title"])
             if ok and "No JARVIS page is open" not in said:
                 break
             await asyncio.sleep(0.5)
-        if not result.expect(ok and package_id in said,
-                             f"{label}: open_package_page opened it by its title",
-                             f"{label}: open_package_page by its title said: {said}"):
-            return
-        iframe = page.locator("#package-view iframe")
-        await iframe.wait_for(timeout=20000)
-        inner = None
+        if not self.result.expect(ok and self.package_id in said,
+                                  f"{label}: open_package_page opened it by its title",
+                                  f"{label}: open_package_page by its title said: {said}"):
+            return False
+        await self.find_frame()
+        size = await self.fit()
+        return self.result.expect(size == frame_size, f"{label}: the package frame is {label}",
+                                  f"{label}: the package frame stayed {size[0]}x{size[1]}")
+
+    async def find_frame(self) -> None:
+        self.iframe = self.page.locator("#package-view iframe")
+        await self.iframe.wait_for(timeout=20000)
         for _ in range(100):
-            inner = next((f for f in page.frames if f"/{package_id}/files/" in f.url), None)
-            if inner is not None and await inner.locator("#go-1").count():
-                break
+            self.inner = next((f for f in self.page.frames
+                               if f"/{self.package_id}/files/" in f.url), None)
+            if self.inner is not None and await self.inner.locator("#go-1").count():
+                return
             await asyncio.sleep(0.2)
-        if inner is None:
-            raise CheckFailed(f"{label}: the package's frame never loaded")
-        size = await _fit_frame(page, iframe, frame_size)
-        if not result.expect(size == frame_size, f"{label}: the package frame is {label}",
-                             f"{label}: the package frame stayed {size[0]}x{size[1]}"):
+        raise CheckFailed("the package's frame never loaded")
+
+    async def reload(self) -> None:
+        """A fresh page (the server shows the package again), so the deck
+        reads the record as it is now."""
+        await self.page.reload(wait_until="load")
+        await self.find_frame()
+        await self.fit()
+
+    async def fit(self) -> tuple[int, int]:
+        return await _fit_frame(self.page, self.iframe, self.size)
+
+    async def close(self) -> None:
+        if self.page is not None:
+            await self.page.context.close()
+
+    async def shoot(self, name: str, whole: bool = False) -> Path:
+        self.shot_n += 1
+        folder = self.shots / "flow"
+        folder.mkdir(parents=True, exist_ok=True)
+        shot = folder / f"{self.shot_n:02d}-{name}.png"
+        with contextlib.suppress(Exception):
+            if whole:
+                await self.page.screenshot(path=str(shot))
+            else:
+                await self.iframe.screenshot(path=str(shot))
+            self.result.screenshots.append(shot)
+        return shot
+
+    # -- the story's frames -----------------------------------------------------------
+
+    def stories(self, since: float = 0.0) -> list[dict]:
+        return [f for t, f in self.frames if t >= since and f.get("type") == "package_story"
+                and f.get("package") == self.package_id]
+
+    def cued_audio(self, since: float) -> list[dict]:
+        return [f for t, f in self.frames if t >= since and f.get("type") == "audio"
+                and isinstance(f.get("cue"), dict)
+                and f["cue"].get("package") == self.package_id]
+
+    async def story_frame(self, since: float, wanted, timeout: float) -> Optional[dict]:
+        """The first story frame since `since` for which `wanted` holds, or
+        None; also None as soon as a frame arrives that ends the story when
+        that is not what was wanted."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for f in self.stories(since):
+                if wanted(f):
+                    return f
+            await asyncio.sleep(0.05)
+        return None
+
+    async def tool(self, name: str, **arguments) -> tuple[bool, str]:
+        return await asyncio.to_thread(self.jarvis.tool, name, **arguments)
+
+    def clear_answers(self) -> None:
+        shutil.rmtree(self.jarvis.package_folder(self.package_id) / "results",
+                      ignore_errors=True)
+
+    def answers(self) -> dict:
+        path = self.jarvis.package_folder(self.package_id) / "results" / "decisions.json"
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    async def current_slide(self) -> str:
+        return await self.inner.evaluate(
+            "() => (document.querySelector('#track > .slide.current') || {}).id || ''")
+
+    async def rings(self) -> int:
+        return await self.inner.evaluate(
+            "() => document.querySelectorAll('.jarvis-story-ring').length")
+
+    async def press_stop(self) -> None:
+        await self.page.locator("#package-view .package-story button").last.click()
+
+
+async def _check_layout(d: Deck, label: str) -> None:
+    """Every slide fits and, on a decision slide, every vote control is
+    visible, tall enough and in the frame; each slide photographed."""
+    result = d.result
+    slides = await d.inner.eval_on_selector_all(
+        "#track > .slide", "els => els.map(e => [e.id, e.classList.contains('decision')])")
+    bad = 0
+    voting_bad = 0
+    for n, (slide_id, decision) in enumerate(slides, 1):
+        await d.fit()
+        await d.inner.click(f"#go-{n}")
+        await d.inner.wait_for_selector(f"#{slide_id}.current")
+        measured = await d.inner.evaluate(MEASURE)
+        voting = await d.inner.evaluate(VOTING)
+        shot = d.shots / label / f"{n:02d}-{slide_id}.png"
+        await d.iframe.screenshot(path=str(shot))
+        result.screenshots.append(shot)
+        for problem in measured["problems"]:
+            bad += 1
+            result.failures.append(f"{label} slide {n} ({slide_id}): {problem} [{shot}]")
+        for problem in voting:
+            voting_bad += 1
+            result.failures.append(f"{label} slide {n} ({slide_id}) voting: {problem} [{shot}]")
+    if not bad:
+        result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px")
+    if not voting_bad and d.deck.get("decisions"):
+        result.passed.append(f"{label}: every vote control is visible, at least "
+                             f"{MIN_CONTROL_PX} px tall and inside the frame, one Choose on "
+                             f"each option, every option picture at least {MIN_PICTURE_PX} px")
+
+
+async def _answer(d: Deck, question: str, option: str, by_click: bool) -> tuple[bool, str]:
+    """Answer one question on the page (Choose, or Decide later) or by
+    voice (decide.py through run_package_command): (ok, how)."""
+    if by_click:
+        selector = (f"#d-{question} .later" if option == "later"
+                    else f"#opt-{question}-{option} .choose")
+        await d.inner.click(selector)
+        try:
+            await d.inner.wait_for_function(
+                "() => document.getElementById('status').textContent === 'Saved.'",
+                timeout=15000)
+        except Exception as e:                      # the save never came back
+            return False, f"the page's click on {selector} did not save: {e}"
+        return True, f"a click on {option} on the page"
+    ok, said = await d.tool("run_package_command", package=d.package_id,
+                            command=f'"$JARVIS_PYTHON" scripts/decide.py {question} {option}')
+    return ok and "Recorded:" in said, f"decide.py {question} {option}: {said[:200]}"
+
+
+async def _check_first_time(d: Deck) -> None:
+    """From slide 1, as a first-time user: at each question the story waits
+    (nothing more after longer than a beat), then an answer, by page and by
+    voice in turn, moves it to the next question; every question that
+    applies ends answered, in order."""
+    result, story = d.result, d.parsed
+    d.clear_answers()
+    await d.reload()
+    await d.inner.evaluate("() => { window.__shown = []; window.__rings = []; }")
+    since = time.monotonic()
+    ok, said = await d.tool("tell_package_story", package=d.package_id, slide=1)
+    if not result.expect(ok, "first time: tell_package_story started from slide 1",
+                         f"first time: tell_package_story said: {said}"):
+        return
+    asked: list[str] = []
+    last_slide, n = 0, 0
+    voice_shown = False
+    while True:
+        record = d.answers()
+        upcoming = [s for s in story.open_questions(record) if s > last_slide]
+        if not upcoming:
+            break
+        slide = upcoming[0]
+        question = story.slides[slide - 1].waits
+        frame = await d.story_frame(
+            since, lambda f: f.get("state") in ("waiting", "finished", "stopped")
+            and not (f.get("state") == "waiting" and f.get("slide", 0) <= last_slide),
+            STORY_SEC)
+        if frame is None or frame.get("question") != question:
+            result.failures.append(f"first time: expected the story to wait for {question} "
+                                   f"(slide {slide}); it said {frame}")
+            await d.shoot(f"not-waiting-{question}", whole=True)
             return
+        waited_at = time.monotonic()
+        on = await d.current_slide()
+        asking = await d.inner.evaluate(
+            "(id) => document.getElementById(id).classList.contains('asking')", f"d-{question}")
+        await asyncio.sleep(WAIT_LONGER_SEC)
+        later = [f for f in d.stories(waited_at) if f is not frame]
+        moved = await d.current_slide()
+        audio = d.cued_audio(waited_at + 0.2)
+        shot = await d.shoot(f"waiting-{question}")
+        if not result.expect(
+                on == moved == f"d-{question}" and asking and not later and not audio,
+                f"first time: the story waits at {question} (slide {slide}): nothing more "
+                f"said or shown in {WAIT_LONGER_SEC:.0f}s",
+                f"first time: at {question} the story did not wait: slide {on} -> {moved}, "
+                f"asking shown {asking}, frames since {later}, {len(audio)} cued audio "
+                f"[{shot}]"):
+            return
+        asked.append(question)
+        by_click = n % 2 == 0
+        decision = next(x for x in d.deck["decisions"] if x["id"] == question)
+        option = "later" if n == 1 else decision["recommended"]
+        since = time.monotonic()
+        ok, how = await _answer(d, question, option, by_click)
+        if not result.expect(ok, f"first time: answered {question} by {how}",
+                             f"first time: answering {question} failed: {how}"):
+            return
+        if not by_click and not voice_shown:
+            voice_shown = True
+            wanted = "Recorded: Decide later" if option == "later" else "Recorded: "
+            try:
+                await d.inner.wait_for_function(
+                    "([sel, want]) => document.querySelector(sel).textContent.startsWith(want)",
+                    arg=[f"#d-{question} .recorded", wanted], timeout=FOLLOW_SEC * 1000)
+                shown = True
+            except Exception:
+                shown = False
+            shot = await d.shoot(f"voice-answer-{question}")
+            result.expect(shown, f"first time: the spoken answer to {question} appeared on "
+                                 f"its slide",
+                          f"first time: the spoken answer to {question} never showed [{shot}]")
+        elif by_click and n == 0:
+            await d.shoot(f"chosen-{question}")
+        last_slide, n = slide, n + 1
+    end = await d.story_frame(since, lambda f: f.get("state") in ("finished", "stopped"),
+                              STORY_SEC)
+    record = d.answers()
+    expected = [s.waits for s in story.slides if s.waits and story.applies(s, record)]
+    result.expect(end is not None and end.get("state") == "finished",
+                  "first time: the story went on to its end once the last was answered",
+                  f"first time: the story ended {end}")
+    result.expect(asked == expected and not story.open_questions(record),
+                  f"first time: every question answered, in order ({', '.join(asked)})",
+                  f"first time: asked {asked}, expected {expected}; open: "
+                  f"{story.open_questions(record)}")
+    rung = set(await d.inner.evaluate("() => window.__rings"))
+    told = {f.get("slide") for f in d.stories(0) if f.get("state") == "telling"}
+    beats = [f"{n}.{b}" for n, s in enumerate(d.story["slides"], 1) if n in told
+             for b, beat in enumerate(s["beats"], 1) if beat.get("targets")]
+    unrung = [b for b in beats if b not in rung]
+    result.expect(not unrung, "first time: every beat told pointed at its targets",
+                  f"first time: story beats {', '.join(unrung)} pointed at nothing")
+    await d.shoot("answers", whole=True)
 
-        slides = await inner.eval_on_selector_all(
-            "#track > .slide", "els => els.map(e => [e.id, e.classList.contains('decision')])")
-        bad = 0
-        for n, (slide_id, _decision) in enumerate(slides, 1):
-            await _fit_frame(page, iframe, frame_size)
-            await inner.click(f"#go-{n}")
-            await inner.wait_for_selector(f"#{slide_id}.current")
-            measured = await inner.evaluate(MEASURE)
-            shot = shots / label / f"{n:02d}-{slide_id}.png"
-            await iframe.screenshot(path=str(shot))
-            result.screenshots.append(shot)
-            for problem in measured["problems"]:
-                bad += 1
-                result.failures.append(f"{label} slide {n} ({slide_id}): {problem} [{shot}]")
-        if not bad:
-            result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px, "
-                                 f"every vote row in view")
 
-        await _fit_frame(page, iframe, frame_size)
-        await _check_story(jarvis, inner, story, package_id, slides, stories, label, result)
-        await _check_choose(inner, deck, folder, label, shots, iframe, result)
-        await _check_voice(jarvis, inner, deck, package_id, label, shots, iframe, result)
-    finally:
-        if result.failures:
-            shot = shots / label / "last.png"
-            with contextlib.suppress(Exception):
-                await page.screenshot(path=str(shot))
-                result.screenshots.append(shot)
-        await context.close()
+async def _stopped_within(d: Deck, since: float, what: str) -> None:
+    """The story says stopped, its cue is gone from the frame and no more of
+    its words are sent, within STOP_WITHIN_SEC; the server says no story is
+    running."""
+    result = d.result
+    frame = await d.story_frame(since, lambda f: f.get("state") == "stopped", STOP_WITHIN_SEC)
+    deadline = since + STOP_WITHIN_SEC
+    rings = await d.rings()
+    while rings and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+        rings = await d.rings()
+    took = time.monotonic() - since
+    await asyncio.sleep(1.0)
+    stop_at = next((t for t, f in d.frames if t >= since and f.get("type") == "stop"), None)
+    after = d.cued_audio(since + STOP_WITHIN_SEC)
+    ok, status = await d.tool("tell_package_story", package=d.package_id, action="status")
+    shot = await d.shoot(f"stopped-{what.replace(' ', '-')}")
+    result.expect(frame is not None and not rings and not after and "No story is running" in status,
+                  f"stop {what}: stopped within {STOP_WITHIN_SEC:.0f}s (cue gone in "
+                  f"{took:.2f}s{', voice stopped' if stop_at else ''}), and the server says "
+                  f"no story is running",
+                  f"stop {what}: frame {frame}, {rings} rings left, {len(after)} more cued "
+                  f"audio, status \"{status}\" [{shot}]")
+
+
+async def _check_stop(d: Deck) -> None:
+    """Stop during narration and while waiting, from the page's Stop and
+    from the brain's tool; asked again, it is already stopped."""
+    result, story = d.result, d.parsed
+    first_question = next(n for n, s in enumerate(story.slides, 1) if s.waits)
+    for how in ("the page", "the brain's tool"):
+        for when in ("during narration", "while waiting"):
+            d.clear_answers()
+            since = time.monotonic()
+            slide = 1 if when == "during narration" else first_question
+            ok, said = await d.tool("tell_package_story", package=d.package_id, slide=slide)
+            if not result.expect(ok, f"stop by {how} {when}: told from slide {slide}",
+                                 f"stop by {how} {when}: tell said {said}"):
+                return
+            if when == "during narration":
+                started = False
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline and not (d.cued_audio(since)
+                                                           and await d.rings()):
+                    await asyncio.sleep(0.05)
+                started = bool(d.cued_audio(since))
+            else:
+                started = await d.story_frame(since, lambda f: f.get("state") == "waiting",
+                                              STORY_SEC) is not None
+            if not result.expect(started, f"stop by {how} {when}: the story was "
+                                           f"{'speaking' if when == 'during narration' else 'waiting'}",
+                                 f"stop by {how} {when}: the story never got there"):
+                return
+            await d.shoot(f"before-stop-{'page' if how == 'the page' else 'tool'}-"
+                          f"{when.split()[0]}")
+            at = time.monotonic()
+            if how == "the page":
+                await d.press_stop()
+            else:
+                ok, said = await d.tool("tell_package_story", package=d.package_id,
+                                        action="stop")
+                result.expect(ok and said.startswith("Stopped the story"),
+                              f"stop by {how} {when}: the tool said it stopped",
+                              f"stop by {how} {when}: the tool said {said}")
+            await _stopped_within(d, at, f"by {how} {when}")
+    ok, said = await d.tool("tell_package_story", package=d.package_id, action="stop")
+    result.expect(ok and "already stopped" in said and "No story" not in said,
+                  "stop again: the brain is told it is already stopped, never that there is "
+                  "no story",
+                  f"stop again said: {said}")
+
+
+async def _check_resume(d: Deck) -> None:
+    """After a Stop, resume picks up at the first question with no answer."""
+    result, story = d.result, d.parsed
+    d.clear_answers()
+    first = next(n for n, s in enumerate(story.slides, 1) if s.waits)
+    question = story.slides[first - 1].waits
+    decision = next(x for x in d.deck["decisions"] if x["id"] == question)
+    ok, how = await _answer(d, question, decision["recommended"], by_click=False)
+    if not result.expect(ok, f"resume: answered {question} first", f"resume: {how}"):
+        return
+    await d.reload()
+    since = time.monotonic()
+    await d.tool("tell_package_story", package=d.package_id, slide=1)
+    await d.story_frame(since, lambda f: f.get("state") == "telling", 20)
+    await d.tool("tell_package_story", package=d.package_id, action="stop")
+    open_ = story.open_questions(d.answers())
+    if not open_:
+        result.passed.append("resume: nothing left to ask after one answer")
+        return
+    want = open_[0]
+    since = time.monotonic()
+    ok, said = await d.tool("tell_package_story", package=d.package_id, action="resume")
+    first_frame = await d.story_frame(since, lambda f: f.get("state") == "telling", 20)
+    waiting = await d.story_frame(since, lambda f: f.get("state") == "waiting", STORY_SEC)
+    shot = await d.shoot("resumed")
+    result.expect(ok and f"from slide {want} " in said and first_frame is not None
+                  and first_frame.get("slide") == want and waiting is not None
+                  and waiting.get("question") == story.slides[want - 1].waits,
+                  f"resume: picked up at slide {want}, the first question with no answer",
+                  f"resume: said \"{said}\", first frame {first_frame}, waiting {waiting} "
+                  f"[{shot}]")
+    await d.tool("tell_package_story", package=d.package_id, action="stop")
+
+
+async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
+                      package_id: str, shots: Path, result: Result) -> None:
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        try:
+            for n, (window, frame_size) in enumerate(SIZES):
+                label = f"{frame_size[0]}x{frame_size[1]}"
+                (shots / label).mkdir(parents=True, exist_ok=True)
+                d = Deck(browser, jarvis, deck, story, package_id, shots, result)
+                try:
+                    if not await d.open(window, frame_size):
+                        continue
+                    await _check_layout(d, label)
+                    if n == 0:
+                        # The story's behaviour, once, at the larger size. A
+                        # presentation (no decisions) has no question to wait
+                        # at, stop at or resume from: it is told to the end.
+                        await _check_first_time(d)
+                        if deck.get("decisions"):
+                            await _check_stop(d)
+                            await _check_resume(d)
+                finally:
+                    if result.failures:
+                        await d.shoot(f"last-{label}", whole=True)
+                    await d.close()
+        finally:
+            await browser.close()
 
 
 async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, int]:
@@ -377,116 +772,6 @@ async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, in
     return size
 
 
-def _story_frame(payload, stories: list[dict]) -> None:
-    try:
-        frame = json.loads(payload)
-    except (TypeError, ValueError):
-        return
-    if isinstance(frame, dict) and frame.get("type") == "package_story":
-        stories.append(frame)
-
-
-async def _check_story(jarvis, inner, story, package_id, slides, stories, label, result):
-    await inner.evaluate("() => { window.__shown = []; window.__rings = []; }")
-    ok, said = await asyncio.to_thread(jarvis.tool, "tell_package_story", package=package_id)
-    if not result.expect(ok, f"{label}: tell_package_story started",
-                         f"{label}: tell_package_story said: {said}"):
-        return
-    deadline = time.monotonic() + STORY_SEC
-    while time.monotonic() < deadline and not any(
-            f.get("package") == package_id and f.get("state") in ("finished", "stopped")
-            for f in stories):
-        await asyncio.sleep(0.5)
-    ended = next((f["state"] for f in stories if f.get("state") in ("finished", "stopped")), None)
-    result.expect(ended == "finished", f"{label}: the story was told to the end",
-                  f"{label}: the story {'was ' + ended if ended else 'did not end'} within "
-                  f"{STORY_SEC}s")
-    shown = set(await inner.evaluate("() => window.__shown"))
-    missed = [s for s, decision in slides if decision and s not in shown]
-    result.expect(not missed, f"{label}: the story reached every decision slide",
-                  f"{label}: the story never brought up {', '.join(missed)}")
-    rung = set(await inner.evaluate("() => window.__rings"))
-    beats = [f"{n}.{b}" for n, s in enumerate(story["slides"], 1)
-             for b, beat in enumerate(s["beats"], 1) if beat.get("targets")]
-    unrung = [b for b in beats if b not in rung]
-    result.expect(not unrung, f"{label}: every beat pointed at its targets",
-                  f"{label}: story beats {', '.join(unrung)} pointed at nothing (a target "
-                  f"is missing or the beat was not heard)")
-
-
-def _slide_of(decision_id: str) -> str:
-    return f"#d-{decision_id}"
-
-
-async def _show(inner, decision_id: str) -> None:
-    number = await inner.evaluate(
-        "(id) => [...document.querySelectorAll('#track > .slide')].findIndex(s => s.id === id) + 1",
-        f"d-{decision_id}")
-    await inner.click(f"#go-{number}")
-
-
-async def _check_choose(inner, deck, folder, label, shots, iframe, result):
-    first = deck["decisions"][0]
-    await _show(inner, first["id"])
-    await inner.click(f"#opt-{first['id']}-{first['recommended']} .choose")
-    try:
-        await inner.wait_for_function(
-            "() => document.getElementById('status').textContent === 'Saved.'", timeout=15000)
-        saved = json.loads((folder / "results" / "decisions.json").read_text())
-    except Exception as e:                         # a timeout, or no record written
-        result.failures.append(f"{label}: Choose on {first['id']} did not save: {e}")
-        return
-    shot = shots / label / "choose.png"
-    await iframe.screenshot(path=str(shot))
-    result.screenshots.append(shot)
-    result.expect(saved.get(first["id"], {}).get("answer") == first["recommended"],
-                  f"{label}: Choose saved {first['id']} to results/decisions.json",
-                  f"{label}: Choose on {first['id']} saved {saved}")
-
-
-async def _check_voice(jarvis, inner, deck, package_id, label, shots, iframe, result):
-    asked = {c for d in deck["decisions"] for o in d["options"] for c in o.get("opens") or []}
-    tops = [d for d in deck["decisions"] if d["id"] not in asked]
-    decision = tops[-1] if len(tops) > 1 else tops[0]
-    option = next(o for o in decision["options"] if o["id"] != decision["recommended"])
-    ok, said = await asyncio.to_thread(
-        jarvis.tool, "run_package_command", package=package_id,
-        command=f'"$JARVIS_PYTHON" scripts/decide.py {decision["id"]} {option["id"]}')
-    if not result.expect(ok and "Recorded:" in said,
-                         f"{label}: decide.py recorded {decision['id']} by voice",
-                         f"{label}: decide.py said: {said}"):
-        return
-    await _show(inner, decision["id"])
-    wanted = f"Recorded: {option['name']}"
-    try:
-        await inner.wait_for_function(
-            "([sel, want]) => document.querySelector(sel).textContent.startsWith(want)",
-            arg=[f"{_slide_of(decision['id'])} .recorded", wanted], timeout=FOLLOW_SEC * 1000)
-        shown = True
-    except Exception:
-        shown = False
-    shot = shots / label / "voice.png"
-    await iframe.screenshot(path=str(shot))
-    result.screenshots.append(shot)
-    result.expect(shown, f"{label}: the spoken answer appeared on screen",
-                  f"{label}: the spoken answer to {decision['id']} never showed "
-                  f"\"{wanted}\" [{shot}]")
-
-
-async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
-                      package_id: str, shots: Path, result: Result) -> None:
-    from playwright.async_api import async_playwright
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
-        try:
-            for window, frame_size in SIZES:
-                (shots / f"{frame_size[0]}x{frame_size[1]}").mkdir(parents=True, exist_ok=True)
-                await _check_size(browser, jarvis, deck, story, package_id, window,
-                                  frame_size, shots, result)
-        finally:
-            await browser.close()
-
-
 # -- the whole check --------------------------------------------------------------------
 
 def check(archive: Path, deck: dict, folder: Path) -> Result:
@@ -499,7 +784,11 @@ def check(archive: Path, deck: dict, folder: Path) -> Result:
         dist = built_page()
         jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
                           deck.get("language", "en"), dist)
-        delivered = deliver(archive, jarvis.base, jarvis.token)
+        # Stamped for the isolated JARVIS, which, like the live one, unpacks
+        # a decision package only with a stamp for its own token.
+        checked = folder / f"checked-{archive.name}"
+        decision_stamp.stamp(archive, checked, jarvis.token)
+        delivered = deliver(checked, jarvis.base, jarvis.token)
         package_id = delivered.package["id"]
         result.passed.append(f"unpacked in the isolated JARVIS as {package_id}")
         ok, said = jarvis.tool("list_packages", name=deck["title"])

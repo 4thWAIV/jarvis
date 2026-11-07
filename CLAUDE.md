@@ -446,11 +446,22 @@ file in the Queue, `POST /api/packages/<id>/page`) share
 voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. A
 page package may name a `story` (`package_story.py`, checked on unpack):
 slides of beats, each the words JARVIS says and the selectors it rings.
-The page's Tell the story and Stop (`POST /api/packages/<id>/story`) and
-the acting `tell_package_story` share `_package_story` and
-`story_teller.StoryTeller`, which opens the page and speaks the slides
-through `SpeechScheduler.narrate`, two slides queued at a time, as one
-NORMAL reply each, so barge-in, hush and turn-taking stop it as any reply.
+The page's Tell the story, Continue and Stop (`POST /api/packages/<id>/story`)
+and the acting `tell_package_story` (tell, resume, stop, status) share
+`_package_story` and `story_teller.StoryTeller`, which opens the page and
+speaks the slides through `SpeechScheduler.narrate`, one NORMAL reply each.
+A story may name its `answers` file and slides that `wait` for one question
+(`asks_when` for a child question): such a slide is told, then the story is
+WAITING, as running state the server knows (which question), until the
+answers file has a new answer (a Choose saved through the bridge, or
+`scripts/decide.py`), and goes on once `conversation_floor` is idle; an
+answered question is passed over unless told from its own slide; `resume`
+starts at the first with no answer. His speaking over a slide PAUSES it
+(on a waiting slide it waits), never ends it, so Stop always finds it. Stop
+ends it told, paused or waiting: the page's Stop, the tool, `_stop_speaking`
+(hush), a whole utterance of `Vocabulary.stop_words` (checked after
+`user_final`, before the brain hears it) and closing its page; a second
+stop says it is already stopped (`StoryTeller.ended`), never "no story".
 Each chunk carries its beat as `cue` on its `audio` frame (the way
 `capture` rides); the page sets `packages.storyCue` when that chunk STARTS
 playing and clears it when the beat's last chunk is played or the voice
@@ -462,14 +473,24 @@ state. The beats are spoken as the sender's narration and never reach the
 brain; the tool gives back only the slides' titles, walled. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
-(a page with a story). A decision package (a page package from the shared deck,
-`examples/packages/decision-deck/`, whose answers `scripts/decide.py` also
-records by voice) reaches him only through `python -m
-jarvis.decision_package <content.json>`: it validates the content, builds
-with the deck's own `new_deck.py`, checks it end to end in an isolated
-JARVIS (`decision_check.py`, `decision_check_server.py`) and only then
-unpacks it unshown into the live one (docs/work-packages.md, "Decision
-packages").
+(a page with a story). Every package an agent sends Tim is made with
+one command, `python -m jarvis.make_package <content.json | folder>`
+(`make_package.py`), and `docs/making-a-package.md` is the only place
+that says how: a deck's content (a decision package, or a presentation
+when it has no decisions; `decision_package.py` reads, expands and checks
+it, the shared deck's `new_deck.py` builds it) or a hand-made package's
+folder (only `purpose` given; read back through
+`work_packages.recognise`). A deck is checked end to end in an isolated
+JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
+sizes and the story told to the end; for a decision package also voting,
+the story waiting at every question as a first-time user answers by click
+and by decide.py, Stop within 1 s from the page and the tool, and resume).
+Only then is it delivered unshown through `POST /api/packages/local`, a
+decision package stamped for the live JARVIS first, with a message to Tim.
+`_open_local_package` refuses a decision package (`deck-data.js` and
+`scripts/decide.py`, the shared deck's) without a matching stamp for its
+own tool token (`decision_stamp.py`), so no other way delivers one.
+`python -m jarvis.decision_package` is the command's old name.
 
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
@@ -1496,6 +1517,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   running a step, its results, and which files the brain may attach; the
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
+- `make_package.py` — The one command an agent makes and sends a package
+  with (see `docs/making-a-package.md`); `decision_package.py` reads,
+  expands, checks, builds and delivers a deck's content
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper

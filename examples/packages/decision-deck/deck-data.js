@@ -72,18 +72,19 @@ window.DECK = {
    "id": "kettle-kind",
    "short": "Kettle",
    "question": "What heats the water?",
-   "picture": "pictures/kettles.svg",
    "context": "The office has a sink and one socket by it, and no hob.",
    "options": [
     {
      "id": "electric",
      "name": "An electric kettle",
-     "says": "Three minutes to the boil; it switches itself off."
+     "says": "Three minutes to the boil; it switches itself off.",
+     "picture": "pictures/electric-kettle.svg"
     },
     {
      "id": "tap",
      "name": "A hot water tap",
-     "says": "Boiling water at once; a plumber fits it."
+     "says": "Boiling water at once; a plumber fits it.",
+     "picture": "pictures/hot-tap.svg"
     }
    ],
    "recommended": "electric",
@@ -97,7 +98,8 @@ window.DECK = {
     {
      "id": "house-blend",
      "name": "One house blend",
-     "says": "One tin to keep full. Everyone drinks the same."
+     "says": "One tin to keep full. Everyone drinks the same.",
+     "picture": "pictures/house-blend.svg"
     },
     {
      "id": "selection",
@@ -105,12 +107,14 @@ window.DECK = {
      "says": "A few teas for different tastes. Needs a shelf.",
      "opens": [
       "selection-size"
-     ]
+     ],
+     "picture": "pictures/selection.svg"
     },
     {
      "id": "bring-your-own",
      "name": "Bring your own",
-     "says": "The office buys none; people keep their own."
+     "says": "The office buys none; people keep their own.",
+     "picture": "pictures/bring-your-own.svg"
     }
    ],
    "recommended": "selection",
@@ -124,12 +128,14 @@ window.DECK = {
     {
      "id": "three",
      "name": "Three",
-     "says": "A black, a green and an herbal."
+     "says": "A black, a green and an herbal.",
+     "picture": "pictures/three-kinds.svg"
     },
     {
      "id": "six",
      "name": "Six",
-     "says": "Two of each kind; more to keep stocked."
+     "says": "Two of each kind; more to keep stocked.",
+     "picture": "pictures/six-kinds.svg"
     }
    ],
    "recommended": "three",

@@ -103,6 +103,7 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
+from jarvis import decision_stamp
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -7580,7 +7581,10 @@ async def _open_local_package(path: str, show: bool
     except draft_files.NotAttached as e:
         return None, False, str(e)
     try:
-        package, fresh = await work_packages.unpack_held(source.chunks())
+        # A decision package only with its check's stamp (decision_stamp.py).
+        token = data_paths.ensure_tool_token()
+        package, fresh = await work_packages.unpack_held(
+            source.chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (draft_files.NotAttached, work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     finally:
@@ -7757,30 +7761,71 @@ _package_shown: Optional[dict] = None
 
 
 async def _close_package_page(reference: str) -> None:
-    """The page's × on a package: no page that connects from now on shows it."""
+    """The page's ×: no page that connects from now on shows it, and its
+    story, told or waiting for an answer, is stopped."""
     global _package_shown
     if _package_shown is not None and _package_shown.get("id") == reference:
         _package_shown = None
+    if await story_teller.stop_for(reference, "by closing its page"):
+        _notes_for_brain.append(f"He closed package {reference}'s page, which stopped its "
+                                f"story.")
 
 
-# A page package's story (story_teller.py): the page's Tell the story and
-# Stop and the brain's tell_package_story go through `_package_story`.
-story_teller = StoryTeller(lambda: speech, _open_package_page, lambda f: _voice_emit(f))
+# A page package's story (story_teller.py): the page's Tell the story,
+# Continue and Stop and the brain's tell_package_story go through
+# `_package_story`. It goes on after an answer only once the floor is free,
+# so the reply to his answer is heard before the next slide.
+story_teller = StoryTeller(
+    lambda: speech, _open_package_page, lambda f: _voice_emit(f),
+    floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
+    note=_notes_for_brain.append)
+
+
+def _story_said(told: "story_teller_module.Told") -> str:
+    """What a running story is doing, in words: its package, slide and,
+    while it waits, the question it waits for."""
+    t = story_teller.telling
+    if t is None or told.package is None or t.package.id != told.package.id:
+        return ""
+    total = len(t.story.slides)
+    if t.state == story_teller_module.WAITING:
+        return (f"The story of {t.package.id} is waiting for his answer to question "
+                f"{t.question} on slide {t.slide} of {total}.")
+    if t.state == story_teller_module.PAUSED:
+        return (f"The story of {t.package.id} is paused at slide {t.slide} of {total}: he "
+                f"spoke over it.")
+    return f"The story of {t.package.id} is being told, at slide {t.slide} of {total}."
 
 
 async def _package_story(action: str, reference: str, slide: Optional[int] = None,
                          by: str = "on the page") -> tuple[bool, str]:
-    """Tell (from `slide`) or stop a page package's story: (done, what was
-    done or why not). Started from the page, the brain is told at its next
-    turn, so it knows what he is hearing."""
-    told = await story_teller.act(action, reference, slide)
+    """Tell (from `slide`), resume, stop or ask after a page package's
+    story: (done, what was done or why not). Started or stopped from the
+    page, the brain is told at its next turn, so it knows what he is
+    hearing."""
+    told = await story_teller.act(action, reference, slide, by=by)
     if told.package is None:
         return False, told.problem
-    if told.slide is None:
+    if action == story_teller_module.STATUS:
+        said = _story_said(told)
+        if said:
+            return True, said
+        e = told.ended
+        return True, (f"No story is running. The story of {e.package.id} ended "
+                      f"{'at its end' if e.state == story_teller_module.FINISHED else 'stopped'}"
+                      f" at slide {e.slide} of {len(e.story.slides)}.")
+    if action == story_teller_module.STOP:
+        if told.already:
+            e = told.ended
+            return True, (f"The story of {e.package.id} is already stopped"
+                          f"{' ' + e.by if e.by else ''}, at slide {e.slide} of "
+                          f"{len(e.story.slides)}; nothing of it is being read.")
+        waited = (f" It was waiting for his answer to question {told.waiting}."
+                  if told.waiting else "")
         if by != "by voice":
             _notes_for_brain.append(f"Since your last turn he stopped the story of package "
-                                    f"{told.package.id} {by}.")
-        return True, f"Stopped the story of {told.package.id}."
+                                    f"{told.package.id} {by}.{waited}")
+        return True, f"Stopped the story of {told.package.id}.{waited}"
     total = len(told.story.slides)
     if by != "by voice":
         _notes_for_brain.append(
@@ -7804,8 +7849,8 @@ async def tool_open_package_page(args: dict) -> str:
 
 
 async def tool_tell_package_story(args: dict) -> str:
-    """Tell a page package's story, from a slide, or stop it: the page's
-    Tell the story and Stop."""
+    """Tell a page package's story, from a slide, resume it, stop it, or
+    say what it is doing: the page's Tell the story, Continue and Stop."""
     action = str(args.get("action") or story_teller_module.TELL)
     slide = args.get("slide")
     try:
@@ -7816,16 +7861,21 @@ async def tool_tell_package_story(args: dict) -> str:
                                       by="by voice")
     if not done:
         return f"{said} Nothing was changed."
-    if action == story_teller_module.STOP or story_teller.telling is None:
+    if action in (story_teller_module.STOP, story_teller_module.STATUS) \
+            or story_teller.telling is None:
         return f"{said} Say nothing more about it unless he asks."
     story = story_teller.telling.story
     # The slides' titles are the sender's words: walled, for finding a slide
     # he names, never to be followed.
     titles = "\n".join(f"{n}. {title}" for n, title in enumerate(story.outline()["slides"], 1))
+    asks = ("At each slide that asks him a question it stops and waits for his answer: "
+            "his Choose on the page, or his words recorded with the package's own script "
+            "(run_package_command); then it goes on by itself. Do not move it on yourself. "
+            if any(s.waits for s in story.slides) else "")
     return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
-            f"points at each part on his screen as it is said; his speaking or Stop ends "
-            f"it. Do not repeat the story yourself. tell_package_story with a slide number "
-            f"goes to that slide. Its slides:\n"
+            f"points at each part on his screen as it is said. {asks}Stop ends it; action "
+            f"resume goes on from the first question with no answer; action status says "
+            f"what it is doing. Do not repeat the story yourself. Its slides:\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
@@ -8981,6 +9031,11 @@ async def _stop_speaking(by: str) -> bool:
     was = speech.is_speaking
     log.info("hush: stopped by %s", by)
     await speech.barge_in(reason=f"hush ({by})")
+    # Stop means the story too, told or waiting for his answer: it is not
+    # left to start again at the next slide.
+    if story_teller.telling is not None:
+        was = True
+        await story_teller.stop(f"with Stop speaking ({by})")
     return was
 
 
@@ -8995,7 +9050,7 @@ async def tool_skip_reading(args: dict) -> str:
 async def tool_stop_speaking(args: dict) -> str:
     """The page's Stop, by voice: all audio, now. Nothing sounding, nothing
     is touched: his own reply still to come is not silenced in advance."""
-    if speech is None or not speech.is_speaking:
+    if speech is None or not (speech.is_speaking or story_teller.telling is not None):
         return "Nothing was being said, sir."
     await _stop_speaking("the brain")
     return "Stopped speaking, sir. No request was cancelled and nothing was undone."
@@ -12957,6 +13012,15 @@ async def voice_handler(ws: WebSocket):
                 if not typed and not turns.current(client, epoch):
                     continue                 # a stopped capture's late words
                 verdict = await speech.user_final(text, typed=typed)
+                if verdict != "echo" and story_teller.telling is not None \
+                        and story_teller_module.stop_words(text):
+                    # "Stop" stops a story at once, told or waiting, before
+                    # the brain hears it; asked again, it says it already is.
+                    stopped = await story_teller.stop("by his voice")
+                    if stopped.package is not None and not stopped.already:
+                        _notes_for_brain.append(
+                            f"His \"{text[:20]}\" stopped the story of package "
+                            f"{stopped.package.id}; it is stopped. Say so in a few words.")
                 if not typed and verdict != "echo":
                     # Accepted as his words (stop, cancel and "say that
                     # again" included). Typed words are the page's to report.
