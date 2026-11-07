@@ -327,6 +327,12 @@ export const UI_CONTRACT = {
       "label": "Centre notice"
     },
     {
+      "id": "main.corner",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Centre corner (the microphone, while the message input is not on screen)"
+    },
+    {
       "id": "main.conversation",
       "region": "main",
       "kind": "tab",
@@ -3383,6 +3389,9 @@ export const UI_CONTRACT = {
               "tab": "conversation"
             }
           }
+        },
+        {
+          "view": "main.corner"
         }
       ],
       "family": "conversation"

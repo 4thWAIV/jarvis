@@ -510,3 +510,27 @@ async def test_stop_sits_left_of_send_and_only_what_is_left_of_it_moves(page_pla
         again = await page.evaluate(SEND_PLACE)
         assert (again["send"], again["mic"], again["health"]) == (hidden["send"], hidden["mic"], hidden["health"])
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_off_conversation_the_one_microphone_is_in_the_centre_corner_and_works(page_playwright, page_url):
+    """Away from the Conversation view the same microphone control (one
+    instance) is in the centre area's lower-right corner: it mutes there,
+    and back on Conversation it is in the message input, still muted."""
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url)
+        assert await page.locator(".composer-footer #mic-control").count() == 1
+        await page.click(".centre-tabs [data-ui-tab=folders]")
+        await page.locator("#centre-mic #mic-control").wait_for()
+        assert await page.locator("#mic-control").count() == 1
+        await page.click("#btn-mute")
+        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        place = await page.evaluate("""() => { const c = document.querySelector('#centre-mic').getBoundingClientRect();
+          return {right: c.right, bottom: c.bottom, w: innerWidth, h: innerHeight}; }""")
+        assert place["right"] > place["w"] * 0.6 and place["bottom"] > place["h"] * 0.8, place
+        await page.click(".centre-tabs [data-ui-tab=conversation]")
+        await page.locator(".composer-footer #mic-control").wait_for()
+        assert await page.locator("#centre-mic").count() == 0
+        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        await page.click("#btn-mute")
+        await browser.close()

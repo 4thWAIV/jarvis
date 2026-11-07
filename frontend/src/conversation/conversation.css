@@ -57,7 +57,8 @@
    it is empty, and Stop takes no room while it is absent, so only the dot
    moves and Send and the microphone never do; the microphone is one row that never wraps, so no state of it
    changes the composer's height. */
-.composer-footer #health-slot { margin-left: auto; flex: none; width: 10px; height: 10px; display: flex; }
+.mic-host { display: contents; }
+.composer-footer #health-slot { margin-left: auto; }
 .composer-footer #stop-slot { flex: none; display: flex; }
 .composer-footer #hush { height: 28px; padding: 0 14px; font-size: 12px; letter-spacing: 0.12em; }
 .composer-footer #stop-slot[data-shown="false"] { display: none; }

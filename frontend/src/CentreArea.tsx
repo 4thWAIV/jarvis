@@ -79,6 +79,7 @@ import { PackageView } from "./PackageView";
 import { openBundleMember } from "./bundles";
 import { BundleMemberView } from "./BundleMemberView";
 import { settingsOpen, SettingsView } from "./Settings";
+import { MicCorner, MicPortal } from "./MicControl";
 
 function MainView() {
   return (
@@ -259,6 +260,9 @@ export function CentreArea() {
       )}
       {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
         && view.view()}
+      {/* The microphone: in the message input on Conversation, else here. */}
+      {view.id !== conversation.id && <MicCorner />}
+      <MicPortal />
     </>
   );
 }

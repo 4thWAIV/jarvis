@@ -838,7 +838,23 @@ html, body {
 /* Microphone input meter — the answer to "is it even hearing me?", visible
    without opening a console. Deliberately small and out of the way: it is
    reassurance while things work and evidence when they do not. */
-/* The microphone control, at the message input's lower right. */
+/* The microphone control, at the message input's lower right, or in the
+   same corner of the centre area while the message input is not on screen
+   (#centre-mic, MicControl.tsx). */
+#health-slot { flex: none; width: 10px; height: 10px; display: flex; }
+#centre-mic {
+  position: fixed;
+  right: calc(var(--panel-edge) + var(--caption-gap) + 12px);
+  bottom: calc(var(--footer-height) + var(--above-footer) + 6px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 0;
+  border: 1px solid var(--ui-edge);
+  border-radius: 14px;
+  background: var(--ui-surface);
+  z-index: 30;
+}
 #mic-control {
   display: flex;
   flex-wrap: wrap;

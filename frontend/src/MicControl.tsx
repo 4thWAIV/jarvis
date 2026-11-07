@@ -1,6 +1,8 @@
 /**
  * The microphone control, at the lower right of the Conversation's message
- * input (Composer.tsx), right of Send: the level meter (a red
+ * input (Composer.tsx), right of Send, or, while the message input is not
+ * on screen, in the same corner of the centre area (MicCorner): one
+ * control, drawn where it is (MicPortal): the level meter (a red
  * "Muted", "Muted · microphone inactive" or "Mic off" in its place while
  * nothing is sent, "Finishing" while the words from before a stop are
  * finished, and Start listening while this page is not listening), mute,
@@ -18,9 +20,11 @@
  */
 
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { codeWords, saidShown, useT, type Translate } from "./locale";
 import { inputStatus, quiet, startListening, voiceInputSettings } from "./mic";
+import { createStore, type Store } from "./store";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
@@ -114,24 +118,67 @@ function useMicTarget(): MicTarget {
   return ui;
 }
 
-/** The microphone's one target, shared by its two places in the message
- *  input's lower right: the health dot (MicHealth), left of Stop, and the
- *  rest (MicControl), right of Send. */
-export function MicTarget({ children }: { children: ReactNode }) {
+/** Where the microphone is drawn: the message input's lower right while
+ *  the Conversation view is on screen, else the same corner of the centre
+ *  area (MicCorner). Each place gives two hosts, one for the health dot and
+ *  one for the rest. */
+type Place = "composer" | "corner";
+type Hosts = { health: Element | null; mic: Element | null };
+const hosts: Record<Place, Store<Hosts>> = {
+  composer: createStore<Hosts>({ health: null, mic: null }),
+  corner: createStore<Hosts>({ health: null, mic: null }),
+};
+const hostRef = (place: Place, which: keyof Hosts) => (el: Element | null) => {
+  const now = hosts[place].get();
+  if (now[which] !== el) hosts[place].set({ ...now, [which]: el });
+};
+const VIEW: Record<Place, "main.conversation" | "main.corner"> = { composer: "main.conversation", corner: "main.corner" };
+
+/** A host for the microphone's health dot or the rest of it in the
+ *  message input; it takes no box of its own. */
+export function MicHost({ which }: { which: keyof Hosts }) {
+  return <span className="mic-host" ref={hostRef("composer", which)} />;
+}
+
+/** The centre area's lower-right corner, holding the microphone while the
+ *  message input is not on screen (any centre view but Conversation). */
+export function MicCorner() {
+  return <div id="centre-mic"><span className="mic-host" ref={hostRef("corner", "health")} />
+    <span className="mic-host" ref={hostRef("corner", "mic")} /></div>;
+}
+
+/** The one microphone control and its one target, drawn into the corner
+ *  while it is shown, else into the message input. */
+export function MicPortal() {
+  const corner = useSyncExternalStore(hosts.corner.subscribe, hosts.corner.get);
+  const composer = useSyncExternalStore(hosts.composer.subscribe, hosts.composer.get);
+  const place: Place = corner.health && corner.mic ? "corner" : "composer";
+  const at = place === "corner" ? corner : composer;
+  if (!at.health || !at.mic) return null;
+  return <MicTarget key={place} view={VIEW[place]}>
+    {createPortal(<MicHealth />, at.health)}
+    {createPortal(<MicControl />, at.mic)}
+  </MicTarget>;
+}
+
+/** The microphone's one target, shared by its two parts' places: the
+ *  health dot (MicHealth), left of Stop, and the rest (MicControl), right
+ *  of Send, or both in the centre's corner. */
+function MicTarget({ view, children }: { view: "main.conversation" | "main.corner"; children: ReactNode }) {
   const t = useT();
-  const ui = useUiTarget({ ref: { region: "main", view: "main.conversation", kind: "mic" }, label: t("targets.microphone"),
+  const ui = useUiTarget({ ref: { region: "main", view, kind: "mic" }, label: t("targets.microphone"),
                            socket: CENTRE_SOCKET });
   return <MicTargetContext.Provider value={ui}>{children}</MicTargetContext.Provider>;
 }
 
 /** The health dot's slot: kept at the dot's width while there is no
  *  problem, so nothing beside it moves when the dot comes or goes. */
-export function MicHealth() {
+function MicHealth() {
   const ui = useMicTarget();
   return <span id="health-slot"><HealthDot partRef={ui.part("health")} /></span>;
 }
 
-export function MicControl() {
+function MicControl() {
   const t = useT();
   const ui = useMicTarget();
   const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);

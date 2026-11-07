@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../locale";
-import { MicControl, MicHealth, MicTarget } from "../MicControl";
+import { MicHost } from "../MicControl";
 import { StopControl } from "../StopControl";
 import { createStore } from "../store";
 import { sendTyped } from "../voiceStatus";
@@ -66,14 +66,14 @@ export function Composer({ partRef, heading }: { partRef: (el: Element | null) =
           e.preventDefault(); send();
         }
       }} />
-    <div className="composer-footer"><MicTarget>
+    <div className="composer-footer">
       <span id="composer-help">{t("main.conversation.composerHelp")}</span>
-      <MicHealth />
+      <MicHost which="health" />
       <StopControl />
       <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
         <span className="composer-send-word">{t("main.conversation.send")}</span> <span aria-hidden="true">↑</span>
       </button>
-      <MicControl />
-    </MicTarget></div>
+      <MicHost which="mic" />
+    </div>
   </form>;
 }

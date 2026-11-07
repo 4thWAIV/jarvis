@@ -300,6 +300,15 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             assert kinds == [("brainAccount", "anthropic"), ("orb", None), ("teamServer", None)]
             main = await _ask(ui, {"kind": "map", "view": "main.conversation"})
             assert "mic" in {t["ref"]["kind"] for t in main["map"]["targets"]}
+            # Off Conversation the one microphone is in the centre's corner,
+            # mapped and reached there.
+            assert (await _navigate(ui, "main.tab.select", {"tab": "folders"}))["status"] == "completed"
+            corner = await _ask(ui, {"kind": "map", "view": "main.corner"})
+            assert [t["ref"]["kind"] for t in corner["map"]["targets"]] == ["mic"]
+            for part in ("listen", "mute", "off"):
+                got = await _point(ui, {"region": "main", "view": "main.corner", "kind": "mic", "part": part})
+                assert got["status"] == "completed", (part, got)
+            assert await page.locator("#mic-control").count() == 1
             overlay = await _ask(ui, {"kind": "map", "region": "overlay"})
             assert "menu.toggle" in {c["id"] for c in overlay["map"]["commands"]}
             settings = await _ask(ui, {"kind": "map", "view": "main.settings"})
