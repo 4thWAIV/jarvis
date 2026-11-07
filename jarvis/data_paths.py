@@ -207,6 +207,8 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "6d7eacda76c7a7c64b0ee245635fbaddc8a30eafaa15b290143ca5410ba7b190",  # find a package by the words he calls it
     "598610094401cb5bc4666be6700b40a56550a59c004da84c1ee62d9cd3698e39",  # record a decision package's spoken answers with its decide.py
     "7194e39323b805d7875a58d6d799b9590cdbf5eb67df5ce7009e674c6d532fea",  # the decision deck merged with finding packages by his words
+    "a499fbcd626b4bbeb236c7d67fa46f545f03deaaeb3d0bf8a4e15c861ebd9ec6",  # take him to a decision deck's slide through its story
+    "991d24e86b76b6cebef34e25295f81010be25d444619cb5cbad2f296fd679a87",  # a decision deck for every choice, merged with finding packages
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

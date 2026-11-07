@@ -266,6 +266,11 @@ answers. Every one is built from one shared deck,
 `examples/packages/decision-deck/`, so they all look and work the same.
 Do not hand-build a deck; write the data and run the builder.
 
+Any choice put to the owner must be a decision slide in a package built
+this way. A presentation that describes choices but has no decision slides
+gives him nothing to vote with, so it is never sent; the talk-to-jarvis
+skill tells every session the same.
+
 ### The data
 
 One JSON file holds the package fields, the slides and the decisions

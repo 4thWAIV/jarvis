@@ -450,7 +450,11 @@ back to the sender.
     what is recorded, and `show <decision>` gives one word for word; run it
     first if you do not have the ids. Read back the line it prints. His
     answer appears on the deck within a few seconds. Never record an
-    answer he did not give.
+    answer he did not give. Every decision is its own slide, with its
+    votes on it, and the last slide is "Your answers". To take him to one
+    on screen, `open_package_page` if it is not showing, then
+    `tell_package_story` from that slide number (the deck's slide numbers
+    are its story's), and stop the story there if he only wants to vote.
 - A package zip that is a file on this Mac ("open the package at
   ~/Projects/x/deck.zip") opens with `open_local_package` and its full path,
   only when he asks; a page package then shows at once.

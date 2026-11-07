@@ -19,6 +19,16 @@ Start the file with `# <project>` and an `Updated:` line with the date and time,
 
 Keep it to ten items at most. Rewrite the whole file whenever your list changes, remove an item once the user has answered it, and delete the file when nothing is left. JARVIS tells the user when your file changes and reads each item with its recommendation.
 
+## Choices for the user: a decision package
+
+Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package built with JARVIS's shared deck. Never hand-build a deck, and never send a presentation with choices in it but nothing to vote with. Write the deck's data (each decision's question, options, recommended option and one reason) and build it:
+
+```
+python3 <JARVIS checkout>/examples/packages/decision-deck/new_deck.py deck.json <folder>
+```
+
+It writes `<name>-<version>.zip` beside the folder. Every decision gets a slide the user votes on, by click or out loud through JARVIS, and the answers land in the package's `results/decisions.json`. The data format is in the JARVIS checkout's `docs/work-packages.md`, under "Decision packages".
+
 ## Messages: what you have to tell them
 
 To tell the user something that is not a decision, question or blocker, such as a finished piece of work or a report, send it as a message. Write one file per message to `{{messages_dir}}/<project>/<short-name>.md`, where `<project>` is the name of your project's folder.
