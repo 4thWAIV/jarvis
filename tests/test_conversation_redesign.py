@@ -4,7 +4,7 @@ import json
 import time
 
 import pytest
-from tests.voice_page_input import start_listening
+from tests.voice_page_input import his_scroll, start_listening
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_conversation import _Voice, _open, _record_item
 from tests.test_voice_page_captions import _silence_wav
@@ -222,6 +222,9 @@ async def test_remote_skip_removes_queued_reply_without_stopping_other_audio(pag
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p,page_url,voice)
+        await page.evaluate("""() => { window.__sources = 0;
+          const start = AudioBufferSourceNode.prototype.start;
+          AudioBufferSourceNode.prototype.start = function (...a) { window.__sources += 1; return start.apply(this, a); }; }""")
         # Reply 8 is prefetched behind a capture: its skip must not stop the capture,
         # and it must not remain in the player's decoded or still-decoding queue.
         voice.send({'type':'audio','utt':7,'idx':0,'capture':5,'text':'Capture readback.',
@@ -230,8 +233,10 @@ async def test_remote_skip_removes_queued_reply_without_stopping_other_audio(pag
                    {'type':'audio','utt':8,'idx':0,'text':'A queued reply.',
                     'kind':'reply','data':_silence_wav(.2)},
                    {'type':'reading_skipped','utt':8})
-        await asyncio.sleep(1.5)
-        assert [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 7]
+        await _played(page, voice, 0, utt=7)
+        # The page has moved on from the capture's end (this runs after it):
+        # a reply 8 still queued would have started then.
+        assert await page.evaluate('window.__sources') == 1
         assert not [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 8]
         assert await page.locator('.history-turn.jarvis').inner_text() == 'A queued reply.'
         await browser.close()
@@ -260,21 +265,10 @@ GAP = "(() => { const b = document.querySelector('.conversation-history'); retur
 TOP = "document.querySelector('.conversation-history').scrollTop"
 
 
-async def _his_scroll(page, act):
-    """Does what he does to scroll the history (`act`) and waits for that
-    scroll to end. The wheel and the keys scroll smoothly, so the list read
-    part way through is not where he left it."""
-    await page.evaluate("""() => { window.__scrollEnded = false;
-      document.querySelector('.conversation-history').addEventListener(
-        'scrollend', () => { window.__scrollEnded = true; }, {once: true}); }""")
-    await act()
-    await page.wait_for_function('window.__scrollEnded')
-
-
 async def _wheel(page, dy):
     box = await page.locator('.conversation-history').bounding_box()
     await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-    await _his_scroll(page, lambda: page.mouse.wheel(0, dy))
+    await his_scroll(page, lambda: page.mouse.wheel(0, dy))
 
 
 @pytest.mark.asyncio
@@ -411,7 +405,7 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
 
         # The keys move it as his too, and Jump to latest brings it back.
         await page.locator('.chat-message .chat-copy').last.focus()
-        await _his_scroll(page, lambda: page.keyboard.press('PageUp'))
+        await his_scroll(page, lambda: page.keyboard.press('PageUp'))
         await page.wait_for_selector('.conversation-jump')
         # How far PageUp moves depends on how tall the history is beside the
         # bottom box; what matters is that it stays where his key left it.
@@ -511,13 +505,13 @@ def _chunks(said, start=0, seconds=.3):
             for i in range(start, len(said))]
 
 
-async def _played(page, voice, idx, timeout=20):
-    """Until the page says chunk `idx` of the reply has played."""
+async def _played(page, voice, idx, timeout=20, utt=70):
+    """Until the page says chunk `idx` of the reply (`utt`) has played."""
     for _ in range(int(timeout / .1)):
-        if any(m.get('type') == 'played' and m.get('utt') == 70 and m.get('idx') == idx for m in voice.got):
+        if any(m.get('type') == 'played' and m.get('utt') == utt and m.get('idx') == idx for m in voice.got):
             return
         await asyncio.sleep(.1)
-    raise AssertionError(f'chunk {idx} never played')
+    raise AssertionError(f'chunk {idx} of {utt} never played')
 
 
 async def _read_a_long_reply(page, voice, said, upto=None):

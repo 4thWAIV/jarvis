@@ -20,6 +20,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _record_item, _Voice
+from tests.voice_page_input import his_scroll
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -499,7 +500,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         # Scrolled up by him (a wheel: a scroll the page makes is not his).
         box = await page.locator(".conversation-history").bounding_box()
         await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        await page.mouse.wheel(0, -400)
+        await his_scroll(page, lambda: page.mouse.wheel(0, -400))
         await page.wait_for_selector(".conversation-jump")
         scrolled = await page.evaluate("document.querySelector('.conversation-history').scrollTop")
 
