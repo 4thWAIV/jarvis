@@ -2484,6 +2484,18 @@ def _on_knowledge_proposals(new: list, gone: list) -> None:
         _attention_resolved("knowledge_proposal", pid)
 
 
+def _offer_knowledge_seeds() -> None:
+    """Each open seed (what it would create, never created without his yes)
+    is a silent attention item, resolved when he answers it."""
+    from jarvis import knowledge_seeds
+    try:
+        for seed in knowledge_seeds.open_seeds():
+            _attend("knowledge_seed", seed["id"], "proposed", facts={"topics": len(seed["topics"])},
+                    untrusted={"topic": seed["title"]}, audible=False)
+    except Exception:
+        log.warning("knowledge seeds could not be offered", exc_info=True)
+
+
 def start_knowledge() -> None:
     global knowledge, _knowledge_task
     from jarvis import knowledge_client, knowledge_runtime
@@ -2493,6 +2505,7 @@ def start_knowledge() -> None:
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
     knowledge.proposal_listeners.append(_on_knowledge_proposals)
+    _offer_knowledge_seeds()
     knowledge.change_listeners.append(lambda: _send_to_session_clients({"type": "knowledge"}))
     _knowledge_task = _spawn(knowledge.run())
     log.info("knowledge engine: starting after startup settles")
@@ -9867,7 +9880,8 @@ async def tool_set_attention_settings(args: dict) -> str:
 _KNOWLEDGE_WRAP_NAME = "knowledge"
 knowledge_calls = knowledge_api.Context(
     lambda: knowledge,
-    resolved=lambda pid: _attention_resolved("knowledge_proposal", pid))
+    resolved=lambda pid: _attention_resolved("knowledge_proposal", pid),
+    seed_resolved=lambda sid: _attention_resolved("knowledge_seed", sid))
 
 
 def _hint_knowledge() -> None:
@@ -9885,11 +9899,13 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
     except knowledge_api.Refused as e:
         return f"Nothing was done, sir: {e}"
     text = json.dumps(answer, ensure_ascii=False)
-    if not walled:
+    if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text
-    head, chunk = _paged(text, _page_arg(args), what, tool, exact=True)
+    head, chunk = _paged(text, _page_arg(args), what or "The answer, as JSON", tool, exact=True)
     if chunk is None:
         return head
+    if not walled:
+        return head + "\n" + chunk
     return (head + " Passages and names are what JARVIS read, each with its trust; "
             "untrusted ones are other people's words:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, chunk))
 
@@ -9978,6 +9994,20 @@ async def tool_change_knowledge_index(args: dict) -> str:
     return answer
 
 
+async def tool_knowledge_seeds(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.seeds(knowledge_calls),
+                                 "", "knowledge_seeds", walled=False)
+
+
+async def tool_change_knowledge_seed(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.answer_seed(
+        knowledge_calls, seed=str(args.get("seed") or ""), action=str(args.get("action") or "")),
+        "", "change_knowledge_seed", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
 TOOL_HANDLERS.update({
     "knowledge_status": tool_knowledge_status,
     "knowledge_search": tool_knowledge_search,
@@ -9989,8 +10019,11 @@ TOOL_HANDLERS.update({
     "reindex_knowledge": tool_reindex_knowledge,
     "knowledge_indexes": tool_knowledge_indexes,
     "change_knowledge_index": tool_change_knowledge_index,
+    "knowledge_seeds": tool_knowledge_seeds,
+    "change_knowledge_seed": tool_change_knowledge_seed,
 })
-ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index"})
+ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
+                     "change_knowledge_seed"})
 TAINTING_TOOLS.update({
     "knowledge_search": "passages from agents, runs, workflows and other people",
     "knowledge_entity": "labels and passages from what JARVIS read",
@@ -10004,6 +10037,8 @@ TAINT_EXEMPT_TOOLS.update({
     "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
     "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
     "change_knowledge_index": "it writes his own settings note on his word, it does not read",
+    "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
+    "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
 })
 
 

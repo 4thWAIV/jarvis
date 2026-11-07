@@ -13,6 +13,8 @@ section 13), so page and voice do exactly the same thing.
 | `maintain`      | POST /api/knowledge/maintenance        | reindex_knowledge   | acting          |
 | `indexes`       | GET  /api/knowledge/indexes            | knowledge_indexes   | read            |
 | `choose_index`  | POST /api/knowledge/indexes            | change_knowledge_index | acting       |
+| `seeds`         | GET  /api/knowledge/seeds              | knowledge_seeds     | read            |
+| `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
 is off or down they refuse with `Unavailable`, and the brain answers from
@@ -26,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from jarvis import knowledge_client, knowledge_links
+from jarvis import knowledge_client, knowledge_links, knowledge_seeds
 
 SEARCH_LIMIT_MAX = 50
 RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path"]
@@ -45,9 +47,11 @@ class Context:
     """What the calls need from the server: the runtime (None when the engine
     is switched off) and how to resolve a proposal's attention item."""
 
-    def __init__(self, runtime: Callable[[], Any], resolved: Callable[[str], None] = lambda pid: None) -> None:
+    def __init__(self, runtime: Callable[[], Any], resolved: Callable[[str], None] = lambda pid: None,
+                 seed_resolved: Callable[[str], None] = lambda sid: None) -> None:
         self._runtime = runtime
         self.resolved = resolved
+        self.seed_resolved = seed_resolved
 
     @property
     def runtime(self):
@@ -316,3 +320,22 @@ def choose_index(ctx: Context, *, key: str, choice: str) -> dict:
     except Unavailable:
         pass                      # the next ingest pass hands them over
     return {"done": choice, "key": key, **choices}
+
+
+# --- seeds: topics offered, created only on his yes ---------------------------------
+
+def seeds(ctx: Context) -> dict:
+    """What each seed would create, quoted from JARVIS's own README and
+    roadmap, and whether it is open, accepted or declined. Needs no engine."""
+    return {"seeds": knowledge_seeds.seeds()}
+
+
+def answer_seed(ctx: Context, *, seed: str, action: str) -> dict:
+    """accept or decline a seed, on his word."""
+    try:
+        result = knowledge_seeds.answer(seed, action)
+    except (knowledge_seeds.SeedError, knowledge_links.TopicError) as e:
+        raise Refused(str(e)) from e
+    ctx.seed_resolved(seed)
+    ctx.wake_ingest()
+    return result

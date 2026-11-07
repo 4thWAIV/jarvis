@@ -111,6 +111,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__knowledge_topics,mcp__jarvis__link_knowledge,"
         "mcp__jarvis__change_topic,mcp__jarvis__reindex_knowledge,"
         "mcp__jarvis__knowledge_indexes,mcp__jarvis__change_knowledge_index,"
+        "mcp__jarvis__knowledge_seeds,mcp__jarvis__change_knowledge_seed,"
         "mcp__jarvis__attention_updates,mcp__jarvis__mark_updates_seen,"
         "mcp__jarvis__set_attention_settings,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"

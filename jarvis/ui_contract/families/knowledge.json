@@ -109,6 +109,32 @@
         "human"
       ],
       "effects": []
+    },
+    {
+      "id": "knowledge.seed.answer",
+      "label": "Accept or decline one suggested set of topics; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "seedId": {
+          "type": "key",
+          "entity": "knowledgeSeed"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "decline"
+          ]
+        }
+      },
+      "required": [
+        "seedId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
     }
   ],
   "kinds": [
@@ -124,7 +150,8 @@
         "results",
         "proposals",
         "topics",
-        "indexes"
+        "indexes",
+        "seeds"
       ],
       "presentations": [
         {
@@ -164,6 +191,25 @@
         "pin",
         "forbid",
         "clear"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "knowledgeSeed",
+      "entity": "knowledgeSeed",
+      "label": "Suggested topics",
+      "parts": [
+        "row",
+        "accept",
+        "decline"
       ],
       "presentations": [
         {

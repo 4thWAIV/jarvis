@@ -155,6 +155,7 @@ export const UI_CONTRACT = {
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
+    "knowledgeSeed": "^[a-z0-9-]{1,40}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
@@ -2329,6 +2330,33 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "knowledge"
+    },
+    {
+      "id": "knowledge.seed.answer",
+      "label": "Accept or decline one suggested set of topics; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "seedId": {
+          "type": "key",
+          "entity": "knowledgeSeed"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "decline"
+          ]
+        }
+      },
+      "required": [
+        "seedId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
     }
   ],
   "kinds": [
@@ -4061,7 +4089,8 @@ export const UI_CONTRACT = {
         "results",
         "proposals",
         "topics",
-        "indexes"
+        "indexes",
+        "seeds"
       ],
       "presentations": [
         {
@@ -4103,6 +4132,26 @@ export const UI_CONTRACT = {
         "pin",
         "forbid",
         "clear"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeSeed",
+      "entity": "knowledgeSeed",
+      "label": "Suggested topics",
+      "parts": [
+        "row",
+        "accept",
+        "decline"
       ],
       "presentations": [
         {
@@ -4307,6 +4356,7 @@ export interface CommandArgs {
   "knowledge.open": { };
   "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
   "knowledge.search": { query: string; };
+  "knowledge.seed.answer": { seedId: string; answer: "accept" | "decline"; };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };

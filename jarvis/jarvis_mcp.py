@@ -2263,6 +2263,24 @@ TOOL_SPECS = [
             "source": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "knowledge_seeds",
+        "description": (
+            "Topics JARVIS offers to create and has not: for Denice, the topic and one per "
+            "stage of its roadmap, each quoting the README or roadmap, with whether he has "
+            "accepted or declined. Read them to him before he answers. The JSON comes a page "
+            "at a time: when it says there is more, call it again with the next page."),
+        "inputSchema": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "change_knowledge_seed",
+        "description": (
+            "Only when he says so: accept a seed (its topics are created; any he already "
+            "has stay as they are) or decline it (never offered again)."),
+        "inputSchema": {"type": "object", "properties": {
+            "seed": {"type": "string"}, "action": {"type": "string", "enum": ["accept", "decline"]}},
+            "required": ["seed", "action"]},
+    },
+    {
         "name": "knowledge_indexes",
         "description": (
             "The extra indexes the knowledge engine made or would make to answer common "

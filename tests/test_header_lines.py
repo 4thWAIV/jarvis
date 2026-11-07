@@ -354,6 +354,15 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "knowledge_seeds.answer": (
+        "the seed's names, statuses, aliases and bodies are quotations from "
+        "JARVIS's own README and roadmap (knowledge_seeds.denice), written to "
+        "his topic files on his word; the refusals it raises name only the "
+        "seed's fixed state words. Driven by tests/test_knowledge_seeds.py"),
+    "knowledge_seeds.status_of": (
+        "it reads the seed's own topic slugs and his settings note and gives "
+        "back one of the fixed words open, accepted or declined. Driven by "
+        "tests/test_knowledge_seeds.py"),
     "server.tool_change_topic": (
         "the `name`, `status` and aliases it passes are the brain's arguments, "
         "written to his topic file; what it gives back is `_topic_change_said`: "
