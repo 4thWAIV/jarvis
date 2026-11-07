@@ -75,6 +75,7 @@ STATE = """() => {
 }"""
 
 
+@pytest.mark.webgl    # the graphics row and the orbs' contexts need WebGL
 @pytest.mark.asyncio(loop_scope="session")
 async def test_communications_down_is_red_in_the_list_and_on_the_tab(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
@@ -192,6 +193,7 @@ async def test_with_webgl_switched_off_the_page_still_runs_and_says_why(page_pla
         await browser.close()
 
 
+@pytest.mark.webgl    # the graphics row and the orbs' contexts need WebGL
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_lost_graphics_context_is_shown_until_it_comes_back(page_playwright, page_url):
     async with page_playwright as p:
@@ -290,6 +292,7 @@ async def _drawn(canvas) -> int:
         .data.filter((v, i) => i % 4 === 3 && v > 0).length""")
 
 
+@pytest.mark.webgl    # the graphics row and the orbs' contexts need WebGL
 @pytest.mark.asyncio(loop_scope="session")
 async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwright, page_url):
     async with page_playwright as p:
@@ -324,6 +327,7 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwri
         await browser.close()
 
 
+@pytest.mark.webgl    # the graphics row and the orbs' contexts need WebGL
 @pytest.mark.asyncio(loop_scope="session")
 async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_playwright, page_url):
     async with page_playwright as p:
