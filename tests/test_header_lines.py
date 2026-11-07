@@ -655,7 +655,7 @@ EXEMPT = {
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
-    "decision_check.check": (
+    "decision_check._check": (
         "it records pass and fail lines naming the package id and the deck's own "
         "title for the command's printout; nothing reaches the brain"),
     "decision_check.open": (

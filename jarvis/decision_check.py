@@ -58,7 +58,15 @@ PORTS = range(19000, 29000)
 STAND_IN_KEY = "stand-in-for-the-check"
 READY_SEC = 90
 BUILD_SEC = 300
-STORY_SEC = 240
+# How long the story may take to reach its next step (a slide's wait, its
+# end, being stopped) before that step fails, naming it. A slide of the
+# stand-in voice takes a few seconds.
+STORY_SEC = 60
+# The whole check, by the wall clock: a Mac that slept part way through, or
+# anything else that stalls it, fails it in this time, never hangs it.
+CHECK_SEC = 10 * 60
+# One script run in the page or its frame, or one browser action.
+EVAL_SEC = 15
 FOLLOW_SEC = 10          # the deck reads its record every 3 s
 # Longer than any beat of the stand-in voice: a story that waits for an
 # answer says and shows nothing more in this time.
@@ -364,6 +372,9 @@ class Deck:
         self.size = frame_size
         context = await self.browser.new_context(viewport={"width": window[0],
                                                            "height": window[1]})
+        # Every browser action and wait is bounded; none waits for ever.
+        context.set_default_timeout(EVAL_SEC * 1000)
+        context.set_default_navigation_timeout(60_000)
         self.page = await context.new_page()
         self.page.on("websocket", self._heard)
         await self.page.add_init_script(RECORD)
@@ -460,12 +471,31 @@ class Deck:
             return {}
 
     async def current_slide(self) -> str:
-        return await self.inner.evaluate(
-            "() => (document.querySelector('#track > .slide.current') || {}).id || ''")
+        return await self.js(
+            "() => (document.querySelector('#track > .slide.current') || {}).id || ''",
+            what="reading the slide shown")
 
     async def rings(self) -> int:
-        return await self.inner.evaluate(
-            "() => document.querySelectorAll('.jarvis-story-ring').length")
+        return await self.js("() => document.querySelectorAll('.jarvis-story-ring').length",
+                             what="counting the story's rings")
+
+    async def js(self, script: str, arg=None, what: str = "a script in the package frame"):
+        """`script` run in the package's frame, given at most EVAL_SEC: a
+        frame that does not answer fails the step it was for, by name."""
+        run = self.inner.evaluate(script) if arg is None else self.inner.evaluate(script, arg)
+        try:
+            return await asyncio.wait_for(run, EVAL_SEC)
+        except asyncio.TimeoutError:
+            raise CheckFailed(f"{what}: the package frame did not answer in "
+                              f"{EVAL_SEC}s") from None
+
+    def heard_so_far(self, since: float) -> str:
+        """What the voice socket brought since `since`, for a failure: how
+        much of the story's audio was sent, and its last story frame."""
+        audio = self.cued_audio(since)
+        last = (self.stories(since) or [None])[-1]
+        return (f"{len(audio)} chunk(s) of the story's audio were sent to the page; its "
+                f"last story frame was {last}")
 
     async def press_stop(self) -> None:
         await self.page.locator("#package-view .package-story button").last.click()
@@ -475,16 +505,17 @@ async def _check_layout(d: Deck, label: str) -> None:
     """Every slide fits and, on a decision slide, every vote control is
     visible, tall enough and in the frame; each slide photographed."""
     result = d.result
-    slides = await d.inner.eval_on_selector_all(
-        "#track > .slide", "els => els.map(e => [e.id, e.classList.contains('decision')])")
+    slides = await d.js(
+        "() => [...document.querySelectorAll('#track > .slide')]"
+        ".map(e => [e.id, e.classList.contains('decision')])", what=f"{label}: listing the slides")
     bad = 0
     voting_bad = 0
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
         await d.inner.click(f"#go-{n}")
         await d.inner.wait_for_selector(f"#{slide_id}.current")
-        measured = await d.inner.evaluate(MEASURE)
-        voting = await d.inner.evaluate(VOTING)
+        measured = await d.js(MEASURE, what=f"{label}: measuring slide {n}")
+        voting = await d.js(VOTING, what=f"{label}: checking slide {n}'s voting")
         shot = d.shots / label / f"{n:02d}-{slide_id}.png"
         await d.iframe.screenshot(path=str(shot))
         result.screenshots.append(shot)
@@ -529,7 +560,7 @@ async def _check_first_time(d: Deck) -> None:
     result, story = d.result, d.parsed
     d.clear_answers()
     await d.reload()
-    await d.inner.evaluate("() => { window.__shown = []; window.__rings = []; }")
+    await d.js("() => { window.__shown = []; window.__rings = []; }", what="first time: setup")
     since = time.monotonic()
     ok, said = await d.tool("tell_package_story", package=d.package_id, slide=1)
     if not result.expect(ok, "first time: tell_package_story started from slide 1",
@@ -550,14 +581,16 @@ async def _check_first_time(d: Deck) -> None:
             and not (f.get("state") == "waiting" and f.get("slide", 0) <= last_slide),
             STORY_SEC)
         if frame is None or frame.get("question") != question:
-            result.failures.append(f"first time: expected the story to wait for {question} "
-                                   f"(slide {slide}); it said {frame}")
+            result.failures.append(
+                f"first time: the story did not reach its wait for {question} (slide "
+                f"{slide}) within {STORY_SEC}s; it said {frame}. {d.heard_so_far(since)}")
             await d.shoot(f"not-waiting-{question}", whole=True)
             return
         waited_at = time.monotonic()
         on = await d.current_slide()
-        asking = await d.inner.evaluate(
-            "(id) => document.getElementById(id).classList.contains('asking')", f"d-{question}")
+        asking = await d.js(
+            "(id) => document.getElementById(id).classList.contains('asking')", f"d-{question}",
+            what=f"first time: reading whether {question}'s slide says it waits")
         await asyncio.sleep(WAIT_LONGER_SEC)
         later = [f for f in d.stories(waited_at) if f is not frame]
         moved = await d.current_slide()
@@ -608,7 +641,7 @@ async def _check_first_time(d: Deck) -> None:
                   f"first time: every question answered, in order ({', '.join(asked)})",
                   f"first time: asked {asked}, expected {expected}; open: "
                   f"{story.open_questions(record)}")
-    rung = set(await d.inner.evaluate("() => window.__rings"))
+    rung = set(await d.js("() => window.__rings", what="first time: reading the rings"))
     told = {f.get("slide") for f in d.stories(0) if f.get("state") == "telling"}
     beats = [f"{n}.{b}" for n, s in enumerate(d.story["slides"], 1) if n in told
              for b, beat in enumerate(s["beats"], 1) if beat.get("targets")]
@@ -742,16 +775,64 @@ async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
                         # The story's behaviour, once, at the larger size. A
                         # presentation (no decisions) has no question to wait
                         # at, stop at or resume from: it is told to the end.
-                        await _check_first_time(d)
+                        # Each step goes on only if the one before passed,
+                        # so a failure ends the check at once.
+                        steps = [_check_first_time]
                         if deck.get("decisions"):
-                            await _check_stop(d)
-                            await _check_resume(d)
+                            steps += [_check_stop, _check_resume]
+                        for step in steps:
+                            if result.failures:
+                                break
+                            await step(d)
                 finally:
                     if result.failures:
                         await d.shoot(f"last-{label}", whole=True)
                     await d.close()
+                if result.failures:
+                    break
         finally:
             await browser.close()
+
+
+async def _within_the_wall_clock(work, result: Result) -> None:
+    """Run `work`, ended with a failure once CHECK_SEC have passed by the wall
+    clock. The event loop's own clock stops while the Mac sleeps, so a
+    timeout on it alone can wait for hours."""
+    started = time.time()
+    task = asyncio.ensure_future(work)
+    while not task.done():
+        await asyncio.wait({task}, timeout=1)
+        if not task.done() and time.time() - started > CHECK_SEC:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            result.failures.append(
+                f"The check did not finish within {CHECK_SEC // 60} minutes by the clock "
+                f"(it ran {round(time.time() - started)}s; the Mac may have slept, or a step "
+                f"stalled): ended.")
+            return
+    task.result()
+
+
+@contextlib.contextmanager
+def _awake():
+    """The Mac kept from sleeping while the check runs: `caffeinate` (part of
+    macOS) holds the assertions for as long as this process lives. A Mac that
+    sleeps mid-check stops the stand-in voice's playback, the server's
+    timers and the check's own, so a story never reaches its wait."""
+    tool = shutil.which("caffeinate")
+    held = None
+    if tool:
+        held = subprocess.Popen([tool, "-i", "-s", "-w", str(os.getpid())],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+    try:
+        yield
+    finally:
+        if held is not None and held.poll() is None:
+            held.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                held.wait(5)
 
 
 async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, int]:
@@ -775,7 +856,13 @@ async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, in
 # -- the whole check --------------------------------------------------------------------
 
 def check(archive: Path, deck: dict, folder: Path) -> Result:
-    """Check the zip in an isolated JARVIS; screenshots go under `folder`."""
+    """Check the zip in an isolated JARVIS; screenshots go under `folder`.
+    The Mac is kept awake while it runs (_awake)."""
+    with _awake():
+        return _check(archive, deck, folder)
+
+
+def _check(archive: Path, deck: dict, folder: Path) -> Result:
     from jarvis.decision_package import deliver
     result = Result()
     folder.mkdir(parents=True, exist_ok=True)
@@ -796,7 +883,8 @@ def check(archive: Path, deck: dict, folder: Path) -> Result:
                       f"list_packages found it by its title's words",
                       f"list_packages by \"{deck['title']}\" said: {said}")
         story = json.loads((jarvis.package_folder(package_id) / "story.json").read_text())
-        asyncio.run(_in_browser(jarvis, deck, story, package_id, folder, result))
+        asyncio.run(_within_the_wall_clock(
+            _in_browser(jarvis, deck, story, package_id, folder, result), result))
     except (CheckFailed, OSError, subprocess.SubprocessError) as e:
         result.failures.append(str(e))
     except Exception as e:                          # a browser that would not start, a crash
