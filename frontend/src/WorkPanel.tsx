@@ -123,9 +123,9 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
           <ActivityMark activity={activity} target={ui.part("activity")} />
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
-          <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
+          <span className={`work-state state-${item.state}`} ref={ui.part("state")}
+                title={item.state === "activity_unknown" ? t("right.work.activityUnknownReason") : undefined}>
             {STATE_WORDS[item.state]}</span>
-          {item.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         </span>
         {item.projects.length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>
