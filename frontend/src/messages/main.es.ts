@@ -257,6 +257,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.folders.error.stale_cursor": "La ubicación de la carpeta cambió desde esa página; empiece de nuevo.",
   "main.folders.error.idempotency_conflict": "Esa clave de solicitud ya se usó para otra solicitud.",
   "main.folders.error.reader_changed": "Esa ubicación ahora se leería de otra forma; compruébela de nuevo.",
+  "main.folders.error.too_large": "Esa carpeta es demasiado grande para tomarla como una sola referencia.",
 
   "main.folder.folder": "Carpeta",
   "main.folder.refusal.missing": "Ya no hay nada en esta ubicación.",
@@ -1040,6 +1041,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.knowledge_proposal.same_as": "JARVIS propone que {name} puede ser el mismo tema que otro; espera su sí",
   "main.updates.event.knowledge_seed.proposed": "JARVIS sugiere crear los temas de {name}; no se crea nada sin su sí",
   "main.updates.event.project_candidate.proposed": "JARVIS propone {name} como proyecto; no se crea nada sin su sí",
+  "main.updates.event.node_id.minted": "Esta Mac recibió un ID de nodo nuevo aunque se había guardado uno; vea Diagnóstico, Servidor del equipo",
   "main.updates.event.communications.down": "Las comunicaciones con los agentes no funcionan",
   "main.updates.event.brain.down": "El cerebro no funciona; vea Diagnóstico",
   "main.updates.event.brain.sign_in": "La sesión del cerebro caducó: ejecute claude en una terminal e inicie sesión, luego reinicie JARVIS",

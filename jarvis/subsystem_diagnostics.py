@@ -70,6 +70,8 @@ LOST_SESSIONS_DOWN = 2
 # A message queued this long for its session's turn is held: found live, a
 # session idle for two hours that JARVIS read as mid-turn kept two.
 QUEUED_LONG_SEC = 600.0
+# How long a node ID made although one had been kept is shown as degraded.
+NODE_ID_NOTICE_SEC = 7 * 24 * 3600.0
 
 # A message file a session dropped that has waited this long was not taken.
 FILE_WAITING_SEC = 60.0
@@ -224,6 +226,7 @@ SAID: dict[str, str | dict[str, str]] = {
     "teamError": "{error}",
     "teamConnecting": "Connecting",
     "teamPairing": "Waiting for this Mac to be approved on the team server",
+    "nodeIdMinted": "This Mac was given a new node ID {age} ago, although one had been kept; references made under the old one still resolve here",
     "teamNotConnected": "Not connected",
 }
 
@@ -252,6 +255,7 @@ NAMES: dict[str, str] = {
     "connection": "Connection",
     "recogniser": "Recogniser",
     "server": "Server",
+    "nodeId": "Node ID",
     "usage": "Usage limit",
     "process": "Process",
     "toolCalls": "Tool calls",
@@ -777,10 +781,12 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
     return s
 
 
-def team_server(team: dict, now: float) -> Subsystem:
+def team_server(team: dict, now: float, minted: Optional[dict] = None) -> Subsystem:
     """The team server connection, from team_client's snapshot. Optional,
     so at worst degraded: a team server that is gone never turns the
-    Diagnostics tab red."""
+    Diagnostics tab red. A node ID made although one had been kept
+    (`data_paths.node_id_minted`) is a check of its own, degraded for
+    NODE_ID_NOTICE_SEC, since this node is who the network knows."""
     state = team.get("state")
     since = ""
     last = team.get("last_contact_at")
@@ -816,6 +822,10 @@ def team_server(team: dict, now: float) -> Subsystem:
     if server:
         name_said, name_text = named("server")
         checks.append(Check("server", name_text, IDLE, server, name_said))
+    if minted and isinstance(minted.get("at"), (int, float)):
+        when = now - minted["at"]
+        checks.append(check("node_id", "nodeId", DEGRADED if when < NODE_ID_NOTICE_SEC else IDLE,
+                            say("nodeIdMinted", age=age(when))))
     return subsystem("team_server", shown[0], shown[1], checks)
 
 
@@ -842,7 +852,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
-        team_server(team or {}, now),
+        team_server(team or {}, now, data_paths.node_id_minted()),
     ]
 
 

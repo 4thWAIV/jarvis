@@ -249,6 +249,7 @@ export const rightEn = {
   "right.subsystem.name.connection": "Connection",
   "right.subsystem.name.recogniser": "Recogniser",
   "right.subsystem.name.server": "Server",
+  "right.subsystem.name.nodeId": "Node ID",
   "right.subsystem.name.usage": "Usage limit",
   "right.subsystem.name.process": "Process",
   "right.subsystem.name.toolCalls": "Tool calls",
@@ -381,6 +382,7 @@ export const rightEn = {
   "right.subsystem.said.teamError": "{error}",
   "right.subsystem.said.teamConnecting": "Connecting",
   "right.subsystem.said.teamPairing": "Waiting for this Mac to be approved on the team server",
+  "right.subsystem.said.nodeIdMinted": "This Mac was given a new node ID {age} ago, although one had been kept; references made under the old one still resolve here",
   "right.subsystem.said.teamNotConnected": "Not connected",
   // This page's own row (subsystems.ts pageSubsystem).
   "right.subsystem.said.pageReadFailed": "Can't read JARVIS ({error})",

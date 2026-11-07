@@ -281,6 +281,7 @@ export const mainEn = {
   "main.folders.error.stale_cursor": "The folder's location changed since that page; start again.",
   "main.folders.error.idempotency_conflict": "That request key was already used for a different request.",
   "main.folders.error.reader_changed": "That location would now be read differently; check it again.",
+  "main.folders.error.too_large": "That folder is too large to take as one reference.",
 
   // One folder in full (FolderDetail.tsx).
   "main.folder.folder": "Folder",
@@ -1087,6 +1088,7 @@ export const mainEn = {
   "main.updates.event.knowledge_proposal.same_as": "JARVIS proposes that {name} may be the same as another topic; it waits for your yes",
   "main.updates.event.knowledge_seed.proposed": "JARVIS suggests creating the {name} topics; nothing is created without your yes",
   "main.updates.event.project_candidate.proposed": "JARVIS proposes {name} as a project; nothing is made without your yes",
+  "main.updates.event.node_id.minted": "This Mac was given a new node ID although one had been kept; see Diagnostics, Team server",
   "main.updates.event.communications.down": "Communications with the agents are down",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",
   "main.updates.event.brain.sign_in": "The brain's login has expired: run claude in a terminal and log in, then restart JARVIS",

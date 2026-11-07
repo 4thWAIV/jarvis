@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from jarvis import folder_discovery, folder_policy, folder_readers
+from jarvis import folder_discovery, folder_policy, folder_readers, workspace_ref
 from jarvis.claude_provider import ClaudeTranscripts
 from jarvis.codex_provider import CodexTranscripts
 from jarvis.folder_contract import (Availability, CATALOG_PAGE, CandidateState, FolderError,
@@ -524,6 +524,33 @@ class FolderService:
             "clipped_lines": window.clipped_lines, "skipped_records": window.skipped,
             "sessions": sessions,
         }
+
+    # ── hashes, for references (workspace_ref.py) ─────────────────────────
+
+    def file_hash(self, folder_id, path, location_revision=None) -> dict:
+        """One file's SHA-256 and size, under exactly a read's checks and
+        read through the descriptor the check opened."""
+        f, policy, root = self._readable(folder_id, location_revision)
+        rel = relative_path(path)
+        if not rel.parts:
+            raise FolderError("not_a_directory")
+        self._check_visible(policy, root, rel, False)
+        if folder_readers.kind_of(root, rel) == "link":
+            raise FolderError("forbidden")          # never followed
+        with folder_readers.opened_file(root, rel) as (fd, _info):
+            digest, size = workspace_ref.file_hash(fd)
+        return {**self._provenance(f, rel), "sha256": digest, "size": size}
+
+    def tree_hash(self, folder_id, path="", location_revision=None) -> dict:
+        """A subtree's Merkle hash and listing (`workspace_ref.tree_hash`):
+        only what the reader shows, links never followed."""
+        f, policy, root = self._readable(folder_id, location_revision)
+        rel = relative_path(path)
+        if rel.parts:
+            self._check_visible(policy, root, rel, True)
+        tree = workspace_ref.tree_hash(
+            root, rel, lambda p, is_dir: folder_policy.entry_visible(policy, root, p, is_dir))
+        return {**self._provenance(f, rel), **tree.json()}
 
     # ── discovery ───────────────────────────────────────────────────────
 

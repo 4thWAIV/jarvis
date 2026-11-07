@@ -803,6 +803,19 @@ async def _digest_played(utterance) -> bool:
     return speech is not None and await speech.wait_for(utterance, DIGEST_PLAY_WAIT_SEC)
 
 
+def _attend_node_id_minted() -> None:
+    """A node ID made although one had been kept (data_paths.node_id) is an
+    attention item, once per new ID, while Diagnostics still shows it;
+    never spoken."""
+    minted = data_paths.node_id_minted()
+    if not minted or not isinstance(minted.get("at"), (int, float)):
+        return
+    if time.time() - minted["at"] > subsystem_diagnostics.NODE_ID_NOTICE_SEC:
+        return
+    _attend("node_id", minted.get("node_id") or "", "minted",
+            facts={"previous_kept": bool(minted.get("previous"))}, audible=False)
+
+
 def _start_attention() -> None:
     """The attention record, its admission policy and the digest loop. A
     failure leaves routine events unrecorded and everything else running."""
@@ -813,6 +826,7 @@ def _start_attention() -> None:
         log.warning("attention: the record could not be opened", exc_info=True)
         return
     attention_store.use(attention_record)
+    _attend_node_id_minted()
     attention_admission = attention.Admission(
         attention_record, conversation_floor, human_activity.recorder.current)
     digest = attention.Digest(
