@@ -160,6 +160,32 @@ def _node(engine: Engine, request: Request) -> Answer:
     return Answer(200, doc)
 
 
+@route("GET", "/v1/edges/{key:path}")
+@_guard
+def _edges(engine: Engine, request: Request) -> Answer:
+    q = request.query
+    direction = q.get("dir", "out")
+    if direction not in ("out", "in"):
+        raise BadRequest("dir is out or in")
+    limit = int(q.get("limit") or 100)
+    if not 0 < limit <= 1000:
+        raise BadRequest("limit is 1 to 1000")
+    found = []
+    for edge in engine.graph.edges(request.params["key"], direction, q.get("kind") or None,
+                                   _at(request), q.get("after") or None):
+        if len(found) == limit:
+            return Answer(200, {"edges": found, "after": found[-1]["kind"] + "\x00" + (
+                found[-1]["to"] if direction == "out" else found[-1]["from"])})
+        found.append(edge)
+    return Answer(200, {"edges": found, "after": None})
+
+
+@route("POST", "/v1/walk")
+@_guard
+def _walk(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.graph.walk(request.body or {}))
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

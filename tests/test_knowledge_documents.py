@@ -62,7 +62,7 @@ def test_the_schema_refuses(engine, bad, words):
 
 
 def test_system_properties_are_filled_and_references_are_not_kept(engine):
-    engine.docs.write([doc("doc:a", path="a.md", folder="folder:1")])
+    engine.docs.write([{"_key": "folder:1", "_kind": "folder"}, doc("doc:a", path="a.md", folder="folder:1")])
     got = engine.docs.get("doc:a")
     assert got["_trust"] == "own" and got["_ns"] == "local" and got["_owner"] == "local"
     assert len(got["_hash"]) == 64 and got["_ord"] >= 1 and got["_lsn"] >= 1
@@ -105,7 +105,6 @@ def _corpus(rng: random.Random, n: int, start: int = 0) -> list[dict]:
             out.append(doc(f"chunk:{i}", "chunk", text=f"text {i}", language=rng.choice(["en", "es"]),
                            span=[rng.randint(0, 99), rng.randint(100, 999)],
                            heading_path=rng.sample(["Intro", "Plan", "Café"], rng.randint(0, 2)),
-                           document=f"doc:{rng.randint(0, n)}",
                            _trust=rng.choice(["own", "untrusted"])))
         else:
             out.append(doc(f"topic:{i}", "topic", pinned=rng.random() < 0.3,

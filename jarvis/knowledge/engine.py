@@ -52,6 +52,7 @@ class Engine:
         self._close_lock = threading.Lock()
         self.store = None  # the storage core, opened by open()
         self.docs = None   # the document store over it
+        self.graph = None  # the typed graph over the documents
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -79,6 +80,8 @@ class Engine:
         self.store = Store(self.directory, parts=default_parts(),
                            compact_in_child=self.compact_in_child)
         self.docs = DocumentStore(self.store)
+        from jarvis.knowledge.graph import Graph
+        self.graph = Graph(self.docs)
 
     compact_in_child = True
 
@@ -106,7 +109,11 @@ class Engine:
             raise DocumentError("puts and deletes are lists")
         if not all(isinstance(k, str) for k in deletes):
             raise DocumentError("deletes are keys")
-        return self.docs.write(puts, deletes)
+        edges, edge_deletes = body.get("edges") or [], body.get("edge_deletes") or []
+        if not isinstance(edges, list) or not isinstance(edge_deletes, list):
+            raise DocumentError("edges and edge_deletes are lists")
+        return self.docs.write(puts, deletes,
+                               extra=lambda pending: self.graph.ops(edges, edge_deletes, pending))
 
     def maintain(self) -> None:
         """One maintenance step, run by the engine's own timer while the

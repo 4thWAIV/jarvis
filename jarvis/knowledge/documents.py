@@ -252,7 +252,7 @@ class DocumentStore:
         self._pending: dict[bytes, int] = {}
         self.mem_index: dict[bytes, set[int]] = {}
         self._mem_entries: dict[int, list[bytes]] = {}
-        self.reference_hook: Optional[Callable[[dict, dict], list[Op]]] = None
+        self.reference_hook: Optional[Callable[[dict, dict, dict], list[Op]]] = None
         self.delete_hook: Optional[Callable[[bytes], list[Op]]] = None
         self.forget_hooks: list[Callable[[set[bytes]], dict[int, set[bytes]]]] = []
         self._load()
@@ -387,7 +387,8 @@ class DocumentStore:
                 raise DocumentError(f"{path}: NaN")
         return out
 
-    def plan(self, puts: list[dict], deletes: list[str]) -> tuple[list[Op], list[bytes]]:
+    def plan(self, puts: list[dict], deletes: list[str],
+             pending: Optional[dict] = None) -> tuple[list[Op], list[bytes]]:
         """The log operations of one transaction: new field IDs first, then
         each document with its ordinal, its reference edges, and deletes.
         Holds new ordinals as pending until `release`."""
@@ -411,7 +412,8 @@ class DocumentStore:
                     reserved.append(key)
                 ops.append(Op(DOCS, key, encode_doc(o, doc)))
                 if self.reference_hook is not None:
-                    ops.extend(self.reference_hook(raw, doc))
+                    ops.extend(self.reference_hook(raw, doc, pending if pending is not None
+                                                   else pending_of(puts, deletes)))
             for key_text in deletes:
                 key = key_text.encode()
                 ops.append(Op(DOCS, key, None))
@@ -425,10 +427,16 @@ class DocumentStore:
             for key in reserved:
                 self._pending.pop(key, None)
 
-    def write(self, puts: list[dict] = (), deletes: list[str] = (), extra: list[Op] = ()) -> int:
-        ops, reserved = self.plan(list(puts), list(deletes))
+    def write(self, puts: list[dict] = (), deletes: list[str] = (),
+              extra: Optional[Callable[[dict], list[Op]]] = None) -> int:
+        """One transaction. `extra(pending)` adds operations checked against
+        the documents this transaction puts and deletes (the graph's edges)."""
+        puts, deletes = list(puts), list(deletes)
+        pending = pending_of(puts, deletes)
+        ops, reserved = self.plan(puts, deletes, pending)
         try:
-            return self.store.commit(ops + list(extra))
+            more = extra(pending) if extra is not None else []
+            return self.store.commit(ops + more)
         finally:
             self.release(reserved)
 
@@ -569,6 +577,12 @@ class DocumentStore:
         report = self.store.forget(families)
         report["documents"] = len(keys)
         return report
+
+
+def pending_of(puts: list, deletes: list) -> dict:
+    pending: dict = {d["_key"]: d for d in puts if isinstance(d, dict) and isinstance(d.get("_key"), str)}
+    pending.update({k: None for k in deletes})
+    return pending
 
 
 def _sort_key(doc: dict, path: str):

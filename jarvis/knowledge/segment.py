@@ -179,7 +179,7 @@ class BlockPool:
         self.hits = 0
         self.misses = 0
 
-    def get(self, ident) -> Optional[list[Version]]:
+    def get(self, ident):
         with self._lock:
             if ident in self._protected:
                 self._protected.move_to_end(ident)
@@ -196,7 +196,7 @@ class BlockPool:
             self.misses += 1
             return None
 
-    def put(self, ident, versions: list[Version], size: int, pinned: bool = False) -> None:
+    def put(self, ident, versions, size: int, pinned: bool = False) -> None:
         with self._lock:
             if ident in self._protected or ident in self._probation:
                 return
@@ -278,7 +278,8 @@ class Segment:
     def might_have(self, key: bytes) -> bool:
         return all(self.bloom[p >> 3] & (1 << (p & 7)) for p in _bloom_positions(key, self.bloom_bits))
 
-    def block(self, index: int) -> list[Version]:
+    def _block(self, index: int) -> tuple[list[Version], list[bytes]]:
+        """A block's versions and, beside them, their keys for bisection."""
         ident = (self.file_id, index)
         cached = self.pool.get(ident)
         if cached is not None:
@@ -291,23 +292,23 @@ class Segment:
             raise SegmentCorrupt(f"{self.path.name}: block {index} fails its CRC")
         raw_bytes = zlib.decompress(body) if comp else body
         versions = decode_block(raw_bytes)
-        self.pool.put(ident, versions, raw)
-        return versions
+        entry = (versions, [v.key for v in versions])
+        self.pool.put(ident, entry, raw)
+        return entry
+
+    def block(self, index: int) -> list[Version]:
+        return self._block(index)[0]
 
     def versions(self, key: bytes) -> list[Version]:
         """Every version of `key` here, newest first."""
         if not self.first_keys or not self.might_have(key):
             return []
         index = max(0, bisect.bisect_right(self.first_keys, key) - 1)
-        out = []
-        # A key's versions may continue past a block's end only when the
-        # writer split inside one key, which it never does; one block holds them.
-        for v in self.block(index):
-            if v.key == key:
-                out.append(v)
-            elif v.key > key:
-                break
-        return out
+        # The writer never splits one key's versions across blocks.
+        versions, keys = self._block(index)
+        lo = bisect.bisect_left(keys, key)
+        hi = bisect.bisect_right(keys, key, lo)
+        return versions[lo:hi]
 
     def scan(self, start: bytes = b"", end: Optional[bytes] = None) -> Iterator[Version]:
         """Every version with start <= key < end, in key order, newest first."""
@@ -317,9 +318,9 @@ class Segment:
         for i in range(index, len(self.first_keys)):
             if end is not None and self.first_keys[i] >= end:
                 return
-            for v in self.block(i):
-                if v.key < start:
-                    continue
+            versions, keys = self._block(i)
+            lo = bisect.bisect_left(keys, start) if i == index else 0
+            for v in versions[lo:]:
                 if end is not None and v.key >= end:
                     return
                 yield v

@@ -265,6 +265,16 @@ and its deadline work the same whatever produces the rows.
 - The compaction plan names the parts it builds, and the child builds
   exactly those. Reason: the child must make the same files the engine
   would.
+- An edge to a document that does not exist is refused, and a reference
+  property is checked against the edge table like any edge. Reason: the
+  graph never holds a dangling edge, so a walk never meets one; ingest
+  writes a parent before or with its children.
+- `possibly_same` may be written only with origin `extracted`. Reason: it
+  is a proposal, never an asserted link.
+- Until the cache tiers arrive (phase 4), a walk reads edges and documents
+  through the block pool; the two-hop walk measured 6.2 ms p95 on the
+  synthetic corpus at a load of about 11. Reason: it already meets its
+  10 ms budget, so resident adjacency can wait for importance scores.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
