@@ -130,7 +130,7 @@ def test_an_answer_that_cannot_be_applied_says_why_on_the_item(wired, marks, tmp
 
 
 def test_approve_while_a_piece_still_works_is_noted_not_lost(wired, marks, tmp_path, item):
-    _piece(wired, item.id, "polish", auth=_key(), state="working")
+    _piece(wired, item.id, "polish", auth=_key("polisher"), state="working")
     inbox_id = _sent(wired, tmp_path, item)
     _answer_by_page(wired, inbox_id, "approve")
     got = work_store.get(item.id)

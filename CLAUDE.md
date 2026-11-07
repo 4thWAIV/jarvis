@@ -338,7 +338,16 @@ with `--work <item>` asking the well-known question `approve-item`, options
 its decide.py by voice or the Work tab, is `work_api.review_from_package`,
 called from `server._inbox_recount`, which records it through the same
 `work_api.review` (once per answer: `source` on the event,
-`work_store.reviewed`). Migration 5 links each
+`work_store.reviewed`), with `where` "package". Every act of his in a
+review package shows on the item at once (`package_review`: "Approved by
+you in the package, 16:33" on its Overview, Decisions tab and list row): an
+answer that cannot be applied (Approve while a piece still works) is noted
+with why (`review_noted`, `not_applied`), and signing the package off with
+no answer notes "Review closed without a verdict" (`no_verdict`,
+`work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
+yet and Add work still beside it. Answers already on record are applied at
+server start (`work_api.apply_package_reviews`, once each; never from a
+package he set aside or that was replaced). Migration 5 links each
 held piece or item that named nothing to its item's one open decision, or,
 with none open, to the one he answered since it was held (released by the
 sweep), leaves any other unlinked (flagged), and moves every open item and
