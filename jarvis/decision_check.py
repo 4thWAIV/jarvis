@@ -13,6 +13,8 @@ by its title's words with `list_packages` and opened by name with
 `open_package_page`, both through that JARVIS's /internal/tool. Then, in the
 real sandboxed package frame at each centre size (809 x 589 and 662 x 489):
 
+- the deck's own styles are in force: deck.css loaded, the 880 x 640
+  canvas styled, the page not the browser's default and one slide shown;
 - every slide fits: the deck inside the frame, nothing outside its slide,
   nothing scrolled or cut off, and every word from 13 to 25 px;
 - every decision slide has its vote row in view;
@@ -301,6 +303,29 @@ MEASURE = """
 """.replace("MIN", str(TEXT_MIN_PX)).replace("MAX", str(TEXT_MAX_PX))
 
 
+# What is wrong with the deck's own styles in the frame: [] when deck.css is
+# in force (a file the frame was refused is named beside it, Deck.refused).
+# Without it the deck is the browser's default black text at default sizes
+# on a bare page, every slide stacked, which the text sizes alone do not
+# catch: the canvas is still scaled by deck.js.
+STYLED = """
+() => {
+  const problems = [];
+  const stage = document.getElementById("stage");
+  const s = stage ? getComputedStyle(stage) : null;
+  if (!s || s.position !== "absolute" || s.width !== "880px" || s.height !== "640px")
+    problems.push(`its canvas is not styled (#stage is ${s ? s.position + " " + s.width + " x " + s.height : "missing"}, not absolute 880px x 640px)`);
+  const body = getComputedStyle(document.body);
+  if (body.backgroundColor === "rgba(0, 0, 0, 0)" || body.color === "rgb(0, 0, 0)")
+    problems.push(`its page is the browser's default (background ${body.backgroundColor}, text ${body.color})`);
+  const shown = [...document.querySelectorAll("#track > .slide")].filter((e) =>
+    getComputedStyle(e).display !== "none" && getComputedStyle(e).visibility === "visible").length;
+  if (shown > 1) problems.push(`${shown} slides show at once, not one`);
+  return problems;
+}
+"""
+
+
 # What is wrong with the voting on the decision slide showing now: every
 # vote control visible, at least MIN_CONTROL px tall and inside the slide and
 # the frame; exactly one Choose on each option; each option's picture drawn
@@ -350,9 +375,28 @@ class Deck:
         self.package_id, self.shots, self.result = package_id, shots, result
         self.parsed = package_story.parse(json.dumps(story).encode())
         self.frames: list[tuple[float, dict]] = []
+        # Each file of the package the frame asked for and did not get (its
+        # results are read before any exist, so they are not counted).
+        self.refused: list[str] = []
         self.page = self.inner = self.iframe = None
         self.size = (0, 0)
         self.shot_n = 0
+
+    def _not_got(self, url: str, why: str) -> None:
+        mark = f"/{self.package_id}/files/"
+        if mark in url:
+            name = url.split(mark, 1)[1].split("?", 1)[0]
+            if not name.startswith("results/"):
+                self.refused.append(f"{name} {why}")
+
+    def _answered(self, response):
+        if response.status >= 400:
+            self._not_got(response.url, f"answered {response.status}")
+
+    def _failed(self, request):
+        # The frame has no origin, so an error answer it was refused (a 404
+        # read as a stylesheet) is blocked by the browser and arrives here.
+        self._not_got(request.url, f"did not load ({request.failure})")
 
     def _heard(self, ws):
         if ws.url.endswith("/ws/voice"):
@@ -377,6 +421,8 @@ class Deck:
         context.set_default_navigation_timeout(60_000)
         self.page = await context.new_page()
         self.page.on("websocket", self._heard)
+        self.page.on("response", self._answered)
+        self.page.on("requestfailed", self._failed)
         await self.page.add_init_script(RECORD)
         await self.page.goto(self.jarvis.base + "/", wait_until="load")
         deadline, said, ok = time.monotonic() + 30, "", False
@@ -505,6 +551,15 @@ async def _check_layout(d: Deck, label: str) -> None:
     """Every slide fits and, on a decision slide, every vote control is
     visible, tall enough and in the frame; each slide photographed."""
     result = d.result
+    unstyled = await d.js(STYLED, what=f"{label}: checking the deck's styles")
+    if unstyled:
+        shot = d.shots / label / "unstyled.png"
+        await d.iframe.screenshot(path=str(shot))
+        result.screenshots.append(shot)
+        result.failures += [f"{label}: the deck is not styled: {problem} [{shot}]"
+                            for problem in sorted(set(d.refused)) + unstyled]
+        return
+    result.passed.append(f"{label}: the deck's own styles are in force in the frame")
     slides = await d.js(
         "() => [...document.querySelectorAll('#track > .slide')]"
         ".map(e => [e.id, e.classList.contains('decision')])", what=f"{label}: listing the slides")

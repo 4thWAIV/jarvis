@@ -45,7 +45,7 @@ EXPECTED = {
     "takeover: another item in its slot restores it", "takeover: closing the item restores it",
     "takeover: a right tab opens over it, and closes", "takeover: the flyout closes, the takeover stays",
     "takeover: a package, and another package restores it", "takeover key: toggles, never while typing",
-    "takeover: the read-back sheet opens in the flyout's place", "takeover: no sheet without a takeover",
+    "takeover: the read-back sheet opens in the flyout's place", "takeover: no sheet without a takeover", "takeover: a work item takes over by its id",
 }
 
 

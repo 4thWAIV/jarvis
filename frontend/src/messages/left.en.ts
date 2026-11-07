@@ -237,6 +237,8 @@ export const leftEn = {
   "left.you.name": "Name",
   "left.you.namePlaceholder": "Your name",
   "left.you.honorific": "Honorific",
+  "left.you.steady": "Steady",
+  "left.you.steadyHint": "Steady keeps every look but holds still: no travelling glow, flow or flash. For this browser.",
   "left.you.honorific.sir": "Sir",
   "left.you.honorific.maam": "Ma'am",
   "left.you.honorific.senor": "Señor",

@@ -26,13 +26,14 @@ the record is next read (`sweep_waits`). Done is his alone to give: no
 report says done; his review (APPROVED, REVIEW_RETURNED, WORK_ADDED) is.
 
 Read-time only, never stored: the item's state, worked out from its pieces
-(`_computed`: working while any piece works, waiting on him only when
-nothing can go on), with how many open decisions also wait on him; a
+(`_computed`: a working report is a claim, never telemetry, so it reads
+activity_unknown, which is also how an item reads while a piece claims
+work; waiting on him only when nothing can go on), with how many open decisions also wait on him; a
 decision he answered with no report since and no piece working shows the
 item as waiting for its asker to start (`follow_up`), flagged on Blocking as
 "answered, no follow-up" after FOLLOW_UP_AFTER_SEC; a wait on him with no
 link, open for wait_links.UNLINKED_AFTER_SEC, is flagged as "waiting, no link
-to an answer"; a working or verifying item with no event for QUIET_AFTER_SEC reads as
+to an answer"; a verifying item with no event for QUIET_AFTER_SEC reads as
 `quiet` ("no recent update"); whether it is in History (closed, or done for
 DONE_LINGER_SEC; nothing is ever deleted); what is holding it up
 (`blockers`); the group an item is listed under (its area,
@@ -79,7 +80,23 @@ STATES = (PLANNED, READY, WORKING, VERIFYING, WAITING, BLOCKED, DONE)
 # reported only with what holds it (`until`), and no report moves it on.
 HELD = (WAITING, BLOCKED)
 # The states that should be reporting: silent for QUIET_AFTER_SEC is quiet.
-ACTIVE = (WORKING, VERIFYING)
+ACTIVE = (VERIFYING,)
+# WORKING is retained only as a legacy reporter claim. No provider currently
+# supplies exact assignment-bound, current token-generation evidence. Fail closed.
+ACTIVITY_UNKNOWN = "activity_unknown"
+PUBLIC_STATES = (PLANNED, READY, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE)
+ACTIVITY_REASON = "Current token generation for this Work assignment is not confirmed."
+
+
+def public_state(reported: str) -> str:
+    """A report is not telemetry. Never promote a stored claim to Working.
+
+    CLI turn starts, transcript freshness, run state and session-wide tokens
+    cannot establish current generation on this particular assignment.
+    Do not add a positive path until that evidence is supplied by a trusted
+    provider adapter with exact assignment identity and end/disconnect handling.
+    """
+    return ACTIVITY_UNKNOWN if reported == WORKING else reported
 
 # Where an item's work is: a ZIP work package or a folder, on this Mac.
 ZIP, FOLDER = "zip", "folder"
@@ -110,8 +127,15 @@ REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
 # WORK_ADDED adds a piece in his words.
 APPROVED, REVIEW_RETURNED, WORK_ADDED = "approved", "review_returned", "work_added"
 REVIEW_KINDS = (APPROVED, REVIEW_RETURNED, WORK_ADDED)
+# What his act in a review package came to when it changed nothing itself:
+# signed off with no verdict, or a verdict that could not be applied (why).
+# Recorded by the server, so the item always says what his act did.
+REVIEW_NOTED = "review_noted"
+NO_VERDICT, NOT_APPLIED = "no_verdict", "not_applied"
 # Everything only he does: never a reporter's to send.
-HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS
+HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS + (REVIEW_NOTED,)
+# His review acts, as the item shows the latest of them.
+_REVIEW_ACTS = REVIEW_KINDS + (REVIEW_NOTED,)
 CREATED = "created"
 
 # What an item is listed under: the area it was given, else its source folder.
@@ -321,7 +345,7 @@ class Piece:
     after: list[str] = field(default_factory=list)       # keys of the pieces it comes after
     waits_for: list[str] = field(default_factory=list)   # of those, the ones not done yet
     evidence: list[Evidence] = field(default_factory=list)
-    # Read time only: while working or verifying, when it goes quiet with no
+    # Read time only: while verifying, when it goes quiet with no
     # report after its latest note. None in any other state.
     quiet_at: Optional[float] = None
     # Held (waiting on him, or blocked): what holds it, each a wait_links
@@ -332,6 +356,7 @@ class Piece:
     waiting_since: Optional[float] = None
     # Read time only: held with nothing named, for UNLINKED_AFTER_SEC.
     unlinked: bool = False
+    activity_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -371,6 +396,17 @@ class Blocker:
 
 
 @dataclass(frozen=True)
+class PackageReview:
+    """What his latest act in a review package did to the item: approved,
+    review_returned or work_added (his review, applied), no_verdict (signed
+    off with none), or not_applied (with why)."""
+    outcome: str
+    at: float
+    why: str
+    package: str
+
+
+@dataclass(frozen=True)
 class FollowUp:
     """He answered a decision and nothing has been reported since, with no
     piece working: waiting for the decision's asker to start."""
@@ -398,12 +434,11 @@ class WorkItem:
     source_kind: str
     source_path: str
     source: str               # present, missing or wrong_kind: the stat, now
-    # Worked out from the record (`_computed`), never taken from a report:
-    # working while any piece works, waiting on him only when nothing can go
-    # on and something waits on him, ready to close when every piece is done.
+    # Worked out from the record (`_computed`), never taken from a report,
+    # and never Working: a working claim reads activity_unknown.
     state: str
-    reported_state: str
-    quiet: bool               # working or verifying, and nothing reported for QUIET_AFTER_SEC
+    reported_state: str       # audit intent, never an activity claim
+    quiet: bool               # verifying or claimed working, nothing reported for QUIET_AFTER_SEC
     latest_update: str
     headline: str             # the one useful update: an open decision's question first
     revision: int
@@ -423,6 +458,7 @@ class WorkItem:
     # Read time only: as a piece's, from its latest report.
     quiet_at: Optional[float] = None
     follow_up: Optional[FollowUp] = None
+    package_review: Optional[PackageReview] = None
     # Open decisions that wait on him while the item itself goes on (its
     # state is not waiting on him): "Working — 2 decisions also wait on you".
     also_waiting: int = 0
@@ -432,6 +468,7 @@ class WorkItem:
     approvable: bool = False               # he can approve it now (`approvable`)
     review_note: str = ""                  # his words when he said it is not done yet
     review_note_at: Optional[float] = None
+    activity_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -778,6 +815,12 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         return _apply_piece(conn, item_id, summary, detail, now)
     if kind in REVIEW_KINDS:
         return _review(conn, item_id, kind, summary, detail, now)
+    if kind == REVIEW_NOTED:
+        outcome = detail.get("outcome")
+        if outcome not in (NO_VERDICT, NOT_APPLIED):
+            raise WorkRefused("A review noted is no_verdict or not_applied.")
+        return {"outcome": outcome, "why": _one_line(detail.get("why"), SUMMARY_MAX),
+                "where": "package", "source": _source(detail)}
     if kind == CLOSED:
         conn.execute("UPDATE work_items SET closed_at=? WHERE id=?", (now, item_id))
         return {}
@@ -861,12 +904,11 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
     ready for review back to working, his note kept on it), or add work (a
     new piece in his words, ready for its agent). Approving refuses while a
     decision of his is open or a piece is held."""
-    where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
+    # Where he gave it: the page, his voice, or a review package.
+    where = detail.get("where") if detail.get("where") in ("page", "voice", "package") else "page"
     kept: dict = {"by": "tim", "where": where}
     if isinstance(detail.get("source"), dict):
-        # Given in a review package: which one, and which answer of his.
-        kept["source"] = {"package": str(detail["source"].get("package") or ""),
-                          "answered_at": str(detail["source"].get("answered_at") or "")}
+        kept["source"] = _source(detail)
     if kind == APPROVED:
         open_ones = [r["key"] for r in conn.execute(
             f"SELECT key FROM work_decisions WHERE item_id=? AND {_open()}", (item_id,))]
@@ -1070,7 +1112,7 @@ def _in_order(pieces: list[Piece]) -> list[Piece]:
 
 
 def quiet_at(state: str, heard_at: Optional[float]) -> Optional[float]:
-    """When something working or verifying goes quiet: QUIET_AFTER_SEC after
+    """When something ready for review goes quiet: QUIET_AFTER_SEC after
     it was last heard from (at once if never). None in any other state."""
     if state not in ACTIVE:
         return None
@@ -1094,13 +1136,14 @@ def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
     for r in rows:
         after = json.loads(r["after_keys"])
         pieces.append(Piece(
-            r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), r["state"],
+            r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), public_state(r["state"]),
             note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
             evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
-            quiet_at=quiet_at(r["state"], r["note_at"]), until=holds_of(r["until"]),
+            quiet_at=quiet_at(public_state(r["state"]), r["note_at"]), until=holds_of(r["until"]),
             then=r["then_state"], waiting_since=r["waiting_since"],
-            unlinked=_unlinked(r, now)))
+            unlinked=_unlinked(r, now),
+            activity_reason=ACTIVITY_REASON if r["state"] == WORKING else ""))
     return _in_order(pieces)
 
 
@@ -1150,8 +1193,7 @@ def _item(conn, row, now: float) -> WorkItem:
         id=item_id, title=row["title"], source_kind=row["source_kind"],
         source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
         state=state, reported_state=reported,
-        quiet=state in ACTIVE and (now > quiet_at(state, row["updated_at"]) or (
-            state == WORKING and bool(pieces) and not any(_moving(p, now) for p in pieces))),
+        quiet=_quiet(state, row, pieces, now),
         latest_update=row["latest_update"],
         headline=decisions[0].question if state == WAITING and decisions else row["latest_update"],
         revision=row["revision"], created_at=row["created_at"], updated_at=row["updated_at"],
@@ -1163,42 +1205,54 @@ def _item(conn, row, now: float) -> WorkItem:
         pieces=pieces, decisions=decisions, answered=answered,
         blockers=_blockers(row, pieces, decisions, follow_up, now),
         quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]),
-        follow_up=follow_up,
+        follow_up=follow_up, package_review=_package_review(conn, item_id),
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
         approvable=approvable(row, pieces, decisions),
-        review_note_at=row["review_note_at"])
+        review_note_at=row["review_note_at"],
+        activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "")
+
+
+def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
+    """Ready for review with nothing heard for QUIET_AFTER_SEC. A working
+    claim (activity_unknown) is never "quiet": a claim was never activity
+    to fall silent from."""
+    return state == VERIFYING and now > quiet_at(state, row["updated_at"])
 
 
 def _moving(piece: Piece, now: float) -> bool:
-    """A piece going on now: working, and heard from within QUIET_AFTER_SEC."""
-    return piece.state == WORKING and piece.quiet_at is not None and now <= piece.quiet_at
+    """A piece whose agent claims it is working and has reported within
+    QUIET_AFTER_SEC. Still a claim (activity_unknown), never telemetry."""
+    return (piece.state == ACTIVITY_UNKNOWN and piece.note_at is not None
+            and now - piece.note_at <= QUIET_AFTER_SEC)
 
 
 def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -> str:
     """The item's state, from the record. Reported done is done. With
-    pieces: working only while a piece is working and has reported within
-    QUIET_AFTER_SEC (a paused piece is not progress); else ready or planned
+    pieces: activity_unknown (claimed working) while a piece claims work and
+    has reported within QUIET_AFTER_SEC (a paused claim is not progress); else ready or planned
     while one can be picked up (a planned piece whose pieces before it are
     not done cannot); else waiting on him while a decision or a piece waits
-    on him; else ready for his review, blocked, or working but paused (its
-    `quiet` says so), in that order. With none, waiting on him while a
-    decision is open, else as reported."""
+    on him; else activity_unknown but quiet (paused), blocked, or ready
+    for his review, in that order. Ready for review only once he can approve
+    it (`approvable`): a list row and its header never disagree. With none,
+    waiting on him while a decision is open, else as reported (a working
+    report as activity_unknown)."""
     if row["state"] == DONE:
         return DONE
     if not pieces:
-        return WAITING if decisions else row["state"]
+        return WAITING if decisions else public_state(row["state"])
     live = {p.state for p in pieces if p.state != DONE}
     if any(_moving(p, now) for p in pieces):
-        return WORKING
+        return ACTIVITY_UNKNOWN
     if READY in live:
         return READY
     if any(p.state == PLANNED and not p.waits_for for p in pieces):
         return PLANNED
     if WAITING in live or decisions:
         return WAITING
-    for state in (VERIFYING, BLOCKED, WORKING):
+    for state in (ACTIVITY_UNKNOWN, BLOCKED, VERIFYING):
         if state in live:
             return state
     return PLANNED if live else VERIFYING
@@ -1209,7 +1263,7 @@ def approvable(row, pieces: list[Piece], decisions: list[Decision]) -> bool:
     open, and no piece waiting on him, blocked or still working."""
     return (row["state"] != DONE and row["closed_at"] is None and not decisions
             and row["state"] not in HELD
-            and not any(p.state in HELD + (WORKING,) for p in pieces))
+            and not any(p.state in HELD + (ACTIVITY_UNKNOWN,) for p in pieces))
 
 
 def asker_label(asked_by: str) -> str:
@@ -1222,7 +1276,7 @@ def _follow_up(conn, row, pieces: list[Piece], decisions: list[Decision],
     """His latest answer, when nothing has been reported since and no piece
     is working: the item waits for the decision's asker to start."""
     if (decisions or row["closed_at"] is not None or row["state"] == DONE
-            or any(p.state in ACTIVE for p in pieces)):
+            or any(p.state in (ACTIVITY_UNKNOWN, VERIFYING) for p in pieces)):
         return None
     last = conn.execute("SELECT key, question, asked_by, answered_at FROM work_decisions WHERE "
                         "item_id=? AND answer IS NOT NULL ORDER BY answered_at DESC LIMIT 1",
@@ -1458,15 +1512,47 @@ def sweep_waits() -> "wait_links.Settled":
     return wait_links.Settled(work=moved)
 
 
+def _source(detail: dict) -> dict:
+    """Which review package and which answer of his (when he gave it; "" for
+    a sign-off with no answer) an act came from."""
+    given = detail.get("source") if isinstance(detail.get("source"), dict) else {}
+    return {"package": str(given.get("package") or ""),
+            "answered_at": str(given.get("answered_at") or "")}
+
+
 def reviewed(item_id: str, source: dict) -> bool:
-    """Whether his review given in a package (`source`: the inbox id and
-    when he answered) is already on the item's record."""
+    """Whether his act in a review package (`source`: the inbox id and when
+    he answered) is already on the item's record, applied or noted."""
     with closing(_connect()) as conn:
         return conn.execute(
             f"SELECT 1 FROM work_events WHERE item_id=? AND kind IN "
-            f"({','.join('?' * len(REVIEW_KINDS))}) AND json_extract(detail, '$.source.package')=? "
+            f"({','.join('?' * len(_REVIEW_ACTS))}) AND json_extract(detail, '$.source.package')=? "
             "AND json_extract(detail, '$.source.answered_at')=?",
-            (item_id, *REVIEW_KINDS, source["package"], source["answered_at"])).fetchone() is not None
+            (item_id, *_REVIEW_ACTS, source["package"], source["answered_at"])).fetchone() is not None
+
+
+def reviewed_since(item_id: str, since: float) -> bool:
+    """Whether he has reviewed the item (approved it, said it is not done
+    yet or added work, anywhere) since `since`."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            f"SELECT 1 FROM work_events WHERE item_id=? AND kind IN "
+            f"({','.join('?' * len(REVIEW_KINDS))}) AND at>=?",
+            (item_id, *REVIEW_KINDS, since)).fetchone() is not None
+
+
+def _package_review(conn, item_id: str) -> "Optional[PackageReview]":
+    """His latest review act, when it was in a review package: what it did."""
+    row = conn.execute(f"SELECT kind, detail, at FROM work_events WHERE item_id=? AND kind IN "
+                       f"({','.join('?' * len(_REVIEW_ACTS))}) ORDER BY seq DESC LIMIT 1",
+                       (item_id, *_REVIEW_ACTS)).fetchone()
+    if row is None:
+        return None
+    detail = json.loads(row["detail"])
+    if not (detail.get("source") or {}).get("package"):
+        return None
+    outcome = detail.get("outcome") if row["kind"] == REVIEW_NOTED else row["kind"]
+    return PackageReview(outcome, row["at"], detail.get("why", ""), detail["source"]["package"])
 
 
 @dataclass(frozen=True)

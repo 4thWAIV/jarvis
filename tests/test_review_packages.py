@@ -87,14 +87,17 @@ def test_approve_in_the_package_approves_the_item(wired, marks, tmp_path, item):
     got = work_store.get(item.id)
     assert got.state == "done" and got.approved_at
     [event] = [e for e in work_store.events(item.id) if e.kind == work_store.APPROVED]
-    assert event.detail["source"]["package"] == inbox_id and event.detail["where"] == "voice"
+    assert event.detail["source"]["package"] == inbox_id and event.detail["where"] == "package"
+    shown = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert shown["package_review"]["outcome"] == "approved", "the item says what his act did"
+    assert shown["latest_update"].startswith("Approved by him in the package")
 
 
 def test_not_done_in_the_package_is_not_done_yet_with_his_note(wired, marks, tmp_path, item):
     inbox_id = _sent(wired, tmp_path, item)
     _answer_by_page(wired, inbox_id, "not-done", "The empty state is missing.")
     got = work_store.get(item.id)
-    assert (got.state, got.review_note) == ("working", "The empty state is missing.")
+    assert (got.state, got.review_note) == ("activity_unknown", "The empty state is missing.")
     folder = data_paths.answers_dir() / "inbox"
     assert any("The empty state is missing." in p.read_text() for p in folder.glob("*.md"))
 
@@ -114,11 +117,25 @@ def test_his_review_is_recorded_once_per_answer(wired, marks, tmp_path, item):
     assert len(reviews) == 1
 
 
-def test_a_review_with_no_words_is_not_taken_and_says_why(wired, marks, tmp_path, item):
+def test_an_answer_that_cannot_be_applied_says_why_on_the_item(wired, marks, tmp_path, item):
     inbox_id = _sent(wired, tmp_path, item)
     said = _answer_by_page(wired, inbox_id, "not-done")["said"]
-    assert "not taken as his review" in said and "his words" in said, said
-    assert work_store.get(item.id).state == "verifying"
+    assert "was not applied" in said and "his words" in said, said
+    got = work_store.get(item.id)
+    assert got.state == "verifying"
+    assert got.package_review.outcome == "not_applied" and "his words" in got.package_review.why
+    # Noted once: counted again, nothing more is written.
+    wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
+    assert len([e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]) == 1
+
+
+def test_approve_while_a_piece_still_works_is_noted_not_lost(wired, marks, tmp_path, item):
+    _piece(wired, item.id, "polish", auth=_key("polisher"), state="working")
+    inbox_id = _sent(wired, tmp_path, item)
+    _answer_by_page(wired, inbox_id, "approve")
+    got = work_store.get(item.id)
+    assert got.state == "activity_unknown" and got.package_review.outcome == "not_applied"
+    assert "still working" in got.package_review.why
 
 
 def test_a_package_for_no_item_reviews_nothing(wired, marks, tmp_path, item):
@@ -142,5 +159,97 @@ def test_any_other_package_question_does_on_the_page_and_the_server(wired, marks
     _sent(wired, tmp_path, item, also_ask=True)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
     assert got["approvable"] is False
+    assert got["state"] == "waiting_on_tim", "not ready for review while a question waits on him"
     assert wired.client.get("/api/work").json()["items"][0]["approvable"] is False
     assert "still asks him" in _review(wired, item.id, "approve", ok=False)["error"]
+
+
+# -- his acts on record before the link went live, and his sign-off ---------------
+
+def _decide(inbox_id, option, words=""):
+    """His answer through the package's own decide.py alone, as before the
+    link went live: nothing counted, nothing reviewed."""
+    import subprocess
+    import sys
+    from jarvis import package_inbox, work_packages
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    argv = [sys.executable, "-I", str(package.folder / "scripts" / "decide.py"), "approve-item",
+            option] + ([words] if words else [])
+    assert subprocess.run(argv, cwd=package.folder, capture_output=True).returncode == 0
+    return package
+
+
+def _approvals(item):
+    return [e for e in work_store.events(item.id) if e.kind == work_store.APPROVED]
+
+
+def test_an_approval_on_record_closes_the_item_at_start_once(wired, marks, tmp_path, item):
+    """Tim's approve on the sign-off review package, before the restart."""
+    from jarvis import package_inbox, work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    _decide(inbox_id, "approve")
+    with pytest.MonkeyPatch.context() as m:
+        # Signed off before the link existed: nothing applied it then.
+        m.setattr(wired.server, "_review_from_package", lambda *a, **k: None)
+        package_id = package_inbox.get(inbox_id).package_id
+        r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+        assert r.status_code == 200, r.text
+    assert work_store.get(item.id).state == "verifying"
+    assert work_api.apply_package_reviews() == 1
+    got = work_store.get(item.id)
+    assert got.state == "done" and got.approved_at and got.package_review.outcome == "approved"
+    assert work_api.apply_package_reviews() == 0 and len(_approvals(item)) == 1
+
+
+def test_signing_off_applies_an_answer_given_without_a_count(wired, marks, tmp_path, item):
+    from jarvis import package_inbox
+    inbox_id = _sent(wired, tmp_path, item)
+    _decide(inbox_id, "approve")
+    package_id = package_inbox.get(inbox_id).package_id
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert work_store.get(item.id).state == "done" and len(_approvals(item)) == 1
+
+
+def test_signing_off_unanswered_says_review_closed_without_a_verdict(wired, marks, tmp_path, item):
+    """The takeover review, signed off with no answer: the item says so."""
+    from jarvis import package_inbox, work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    package_id = package_inbox.get(inbox_id).package_id
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert r.status_code == 200, r.text
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert got["package_review"]["outcome"] == "no_verdict"
+    assert got["latest_update"].startswith("Review closed without a verdict")
+    assert got["state"] == "verifying" and got["approvable"] is True, "his review is still his"
+    assert work_api.apply_package_reviews() == 0, "noted once"
+
+
+def test_a_package_he_set_aside_is_no_review(wired, marks, tmp_path, item):
+    from jarvis import work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    _decide(inbox_id, "approve")
+    wired.client.post(f"{INBOX}/{inbox_id}/close", headers=BROWSER)
+    assert work_api.apply_package_reviews() == 0
+    assert work_store.get(item.id).state == "verifying"
+
+
+def test_the_server_applies_them_at_start(wired):
+    import inspect
+    assert "_apply_package_reviews" in inspect.getsource(wired.server.lifespan)
+
+
+def test_signing_off_unanswered_after_he_reviewed_it_another_way_says_nothing(
+        wired, marks, tmp_path, item):
+    """Takeover mode: approved in its header, then its review package signed
+    off unanswered (or swept at start): no "without a verdict" after it."""
+    from jarvis import package_inbox, work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    _review(wired, item.id, "approve")
+    package_id = package_inbox.get(inbox_id).package_id
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(wired.server, "_review_from_package", lambda *a, **k: None)
+        wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert work_api.apply_package_reviews() == 0
+    got = work_store.get(item.id)
+    assert got.state == "done" and got.package_review is None
+    assert not [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]

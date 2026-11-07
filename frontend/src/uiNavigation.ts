@@ -20,8 +20,8 @@
  *     `runBinding`; `bindingProps` gives a button its handler and the
  *     `data-ui-command` / `data-ui-args` marks that say what it runs.
  *
- *   - `layout` is the page's arrangement: normal, or one workflow or page
- *     package taking over the centre and the right side (the right panel
+ *   - `layout` is the page's arrangement: normal, or one workflow, work
+ *     item or page package taking over the centre and the right side (the right panel
  *     folds to a rail of its tab icons, the takeover bar replaces the centre
  *     tabs). It holds only while the centre shows that view and its slot
  *     holds that item: every command that changes either restores the
@@ -42,7 +42,7 @@ export type MainTab = CommandArgs["main.tab.select"]["tab"];
 /** The centre's views that hold one item at a time. */
 export type DetailTab = Exclude<MainTab, "conversation" | "folders" | "main">;
 /** The details that can take over the page. */
-export type TakeoverView = "workflow" | "package";
+export type TakeoverView = "workflow" | "work" | "package";
 
 /** The page's arrangement: normal, or one item taking over, with the right
  *  panel's tab opened over it from the rail (`flyout`), or the read-back's

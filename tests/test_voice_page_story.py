@@ -33,6 +33,14 @@ pytestmark = pytest.mark.page
 SECONDS_PER_WORD = 0.12
 SLACK = 0.35          # seconds: a frame, a postMessage and a paint, on a busy machine
 
+# The orb off (WebGL off: it stands still, as it does on a Mac whose graphics
+# have gone). Headless Chromium draws it in software, 130-220 ms a frame on
+# the page's main thread, and the sandboxed frame shares that thread: every
+# cue and clear posted to the frame waited behind a frame of the orb, so the
+# rings ran up to a frame late against the audio. The orb has nothing to do
+# with the story, so it is not drawn here.
+STORY_BROWSER_ARGS = BROWSER_ARGS + ["--disable-webgl", "--disable-3d-apis"]
+
 RECORD = """
 (() => {
   if (window === window.top) {
@@ -47,7 +55,9 @@ RECORD = """
     new MutationObserver((records) => {
       for (const r of records) {
         for (const n of r.addedNodes) if (n.classList && n.classList.contains("jarvis-story-ring"))
-          window.__rings.push({beat: n.dataset.beat, target: n.dataset.target, added: Date.now()});
+          window.__rings.push({beat: n.dataset.beat, target: n.dataset.target, added: Date.now(),
+                               shown: [...document.querySelectorAll(n.dataset.target)]
+                                 .some((e) => e.checkVisibility())});
         for (const n of r.removedNodes) if (n.classList && n.classList.contains("jarvis-story-ring"))
           for (const ring of window.__rings)
             if (ring.beat === n.dataset.beat && ring.target === n.dataset.target && !ring.removed)
@@ -160,7 +170,7 @@ async def _deck(p, page_url, jarvis_app, voice):
     from jarvis import packages_api
     server, client, package = jarvis_app
     try:
-        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        browser = await p.chromium.launch(headless=True, args=STORY_BROWSER_ARGS)
     except Exception as e:                          # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
@@ -181,6 +191,19 @@ async def _deck(p, page_url, jarvis_app, voice):
     return browser, page, frame
 
 
+def _inner(page):
+    """The deck's own frame, where its rings are recorded."""
+    return next(f for f in page.frames if "/files/index.html" in f.url)
+
+
+async def _ringed(page, test: str):
+    """Waits until a ring the frame recorded passes `test` (a JavaScript
+    predicate on a recorded ring). A beat lasts under a second, so a ring
+    looked for in the page now and then can come and go unseen; the record
+    holds every ring the frame drew."""
+    await _inner(page).wait_for_function(f"window.__rings.some({test})", timeout=60000)
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_url, jarvis_app,
                                                        voice):
@@ -194,18 +217,14 @@ async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_ur
                 "Telling slide 1 of 3.")
             # Part way through: the detail view the story opened is open,
             # and ringed, while its words are heard.
-            await async_api.expect(frame.locator(
-                ".jarvis-story-ring[data-target='#detail-green .temp']")).to_have_count(
-                1, timeout=60000)
-            await async_api.expect(frame.locator("#detail-green")).to_be_visible()
+            await _ringed(page, "(r) => r.target === '#detail-green .temp' && r.shown")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "The story is told.", timeout=60000)
             await async_api.expect(frame.locator(".jarvis-story-ring")).to_have_count(0)
             await async_api.expect(frame.locator("#detail-green")).to_be_hidden()
 
             starts = await page.evaluate("window.__audioStarts")
-            inner = next(f for f in page.frames if "/files/index.html" in f.url)
-            rings = await inner.evaluate("window.__rings")
+            rings = await _inner(page).evaluate("window.__rings")
         finally:
             await voice.speech.stop()
         await browser.close()
@@ -247,11 +266,12 @@ async def test_stop_ends_the_voice_and_the_rings_and_a_slide_can_be_chosen(
             await page.click("#package-view .package-story button:has-text('Tell the story')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "Telling slide 2 of 3.")
-            await async_api.expect(frame.locator(
-                ".jarvis-story-ring[data-beat='2.1']")).to_have_count(1, timeout=20000)
+            await _ringed(page, "(r) => r.beat === '2.1'")
             await page.click("#package-view .package-story button:has-text('Stop')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text("Stopped.")
             await async_api.expect(frame.locator(".jarvis-story-ring")).to_have_count(0)
+            rings = await _inner(page).evaluate("window.__rings")
+            assert rings[0]["beat"] == "2.1", "the slide chosen is told from its first beat"
             heard = len(voice.audio)
             await asyncio.sleep(1.5)
             assert len(voice.audio) == heard, "nothing more is said once it is stopped"
@@ -271,7 +291,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
     server, _, package = jarvis_app
     async with page_playwright as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+            browser = await p.chromium.launch(headless=True, args=STORY_BROWSER_ARGS)
         except Exception as e:                          # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
@@ -303,8 +323,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "The story is told.", timeout=90000)
             starts = await page.evaluate("window.__audioStarts")
-            inner = next(f for f in page.frames if "/files/index.html" in f.url)
-            rings = await inner.evaluate("window.__rings")
+            rings = await _inner(page).evaluate("window.__rings")
         finally:
             await voice.speech.stop()
         await browser.close()

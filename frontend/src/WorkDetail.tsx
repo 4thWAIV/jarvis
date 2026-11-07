@@ -50,7 +50,8 @@ import { PackageMark } from "./QueuePackages";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { answerWorkDecision, blockerWords, followUpWords, reviewWork, type ReviewAction, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { TakeoverButton } from "./TakeoverBar";
+import { answerWorkDecision, blockerWords, followUpWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -101,7 +102,9 @@ export function WorkDetail({ id }: { id: string }) {
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
         {item && <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
           {STATE_WORDS[item.state]}</span>}
+          {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
+        <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("work.close", {}))}>×</button>
@@ -186,6 +189,12 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
   );
 }
 
+/** What his act in a review package did, with when: on the Overview and
+ *  the Decisions tab alike, so every act of his shows a change. */
+function PackageReviewLine({ review }: { review: WorkPackageReview }) {
+  return <p className="work-package-review" data-outcome={review.outcome}>{packageReviewWords(review)}</p>;
+}
+
 /** Its state, latest update, source and area, and who is on it. */
 function Overview({ item, part }: { item: WorkItem; part: Part }) {
   const t = useT();
@@ -198,6 +207,7 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
     <>
       {item.approved_at ? <p className="work-approved">
         {t("main.work.review.approved", { when: formatDateTime(item.approved_at * 1000, { dateStyle: "medium", timeStyle: "short" }) })}</p> : null}
+      {item.package_review && <PackageReviewLine review={item.package_review} />}
       {item.review_note && <p className="work-review-note">
         {t("main.work.review.note", { note: item.review_note })}</p>}
       <p className="work-latest" ref={(el) => { part("update")(el); arrived(el); }}>
@@ -212,7 +222,7 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
         <span className={`work-source-${item.source}`}>{t(`main.work.found.${item.source}`)}</span>
         {item.area && <> · <span className="work-area">{t("main.work.area", { area: item.area })}</span></>}
       </p>
-      {item.projects.length > 0 && (
+      {(item.projects ?? []).length > 0 && (
         <p className="work-projects" ref={part("project")}>
           {item.projects.map((p) => (
             <button key={p.id} type="button" className="knowledge-open"
@@ -236,6 +246,7 @@ function Decisions({ item, packages, part }: { item: WorkItem; packages: InboxDe
   const t = useT();
   return (
     <>
+      {item.package_review && <PackageReviewLine review={item.package_review} />}
       <section ref={part("decisions")}>
         <h3 className="work-section-head">{t("main.work.decisions")}</h3>
         {item.decisions.length === 0 && packages.length === 0
@@ -368,6 +379,7 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
         </span>
         <span className={`work-state state-${piece.state}`} ref={ui.part("state")}>{STATE_WORDS[piece.state]}</span>
+        {piece.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
       </div>
       {piece.note && (
         <p className="work-piece-note" ref={ui.part("note")}>

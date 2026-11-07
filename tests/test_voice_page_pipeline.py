@@ -29,7 +29,8 @@ from tests.test_voice_page_network import MINI_ID, SIGNED_OUT, _Sessions, _Team
 from tests.test_voice_page_workflows import _finished, _workflow
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
-pytestmark = pytest.mark.page
+# WebGL on: white attention leaves the orb along its pipeline, drawn with WebGL on.
+pytestmark = [pytest.mark.page, pytest.mark.webgl]
 
 TILE_CPU = {"region": "right", "view": "right.network", "kind": "node", "key": MINI_ID, "part": "cpu"}
 DETAIL_CPU = {"region": "main", "view": "main.network", "kind": "node", "key": MINI_ID, "part": "cpu"}
@@ -660,7 +661,9 @@ TOUR = [
      ["main.folders|foldersList|", "main.folders.tabs"]),
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-1", "part": "row"},
-     ["right.panel"]),
+     # The Workflows list sits under the Work list in that tab (WorkPanel.tsx),
+     # so the route crosses into it too.
+     ["right.panel", "right.workflows|workflowsList|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
      [WORKFLOW_BOX, "main.workflow.view"]),    # Last, once every workflow has been read: the Conversation view, which

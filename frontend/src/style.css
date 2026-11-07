@@ -1528,6 +1528,8 @@ html, body {
 .work-review form { display: flex; gap: 6px; flex: 1; min-width: 0; }
 .work-review input { flex: 1; min-width: 0; }
 .work-approved { color: #34d399; }
+.work-package-review { color: #fbbf24; }
+.work-package-review[data-outcome="approved"] { color: #34d399; }
 .work-review-note { color: #fbbf24; }
 
 /* One work item in the centre (WorkDetail.tsx), where the Conversation view
@@ -4195,17 +4197,13 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .readback-chip.reading { box-shadow: 0 0 10px rgba(251, 191, 36, 0.6); }
 #takeover-sheet {
   position: fixed;
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 8px);
+  top: var(--centre-notice-top);
+  left: calc(var(--panel-edge) + var(--caption-gap));
   right: var(--centre-right);
-  width: min(460px, 45vw);
-  max-height: calc(100vh - var(--centre-header-top) - var(--centre-header-height) - 8px
-                   - var(--footer-height) - var(--above-footer));
-  overflow-y: auto;
-  padding: 12px;
+  padding: 4px 12px 10px;
   border: 1px solid rgba(251, 191, 36, 0.45);
   border-radius: 12px;
   background: var(--ui-surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   z-index: 35;
 }
 /* Take over, beside × in a workflow's or a package's head; it takes the
@@ -4246,7 +4244,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   z-index: 40;
 }
-#takeover-sheet .capture-list { max-height: none; }
+#takeover-sheet .capture-list { max-height: 30vh; }
 .folders-panel-switch { display: flex; gap: 4px; margin-bottom: 8px; }
 .folders-panel-switch-option { flex: 1; padding: 4px 8px; border-radius: 6px; font: inherit; font-size: 12px;
   background: transparent; color: var(--ui-secondary); border: 1px solid rgba(var(--ui-accent-rgb), 0.25); cursor: pointer; }

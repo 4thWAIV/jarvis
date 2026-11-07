@@ -311,11 +311,15 @@ it up), recorded as `wait_ended` with by, how and when; a blocker in words
 is cleared by its reporter's `--cleared`. The sweep releases holds already
 answered. An item with pieces is never reported held (it is the piece that
 waits), and its state is worked out from them (`work_store._computed`):
-working only while a piece is working and has reported within
-`QUIET_AFTER_SEC` (`_moving`: a paused piece is not progress, so it never
-hides what waits on him), else ready or planned while a piece can be picked
-up, else waiting on him while a decision or piece waits on him, else ready
-for review, blocked, or working but paused (`quiet`), in that order; open decisions still show
+a working report is a claim, never telemetry, so it is never shown as
+Working: it reads `activity_unknown` ("Activity unconfirmed",
+`work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
+piece and on an item alike. An item reads activity_unknown while a piece
+claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
+ready or planned while a piece can be picked up, else waiting on him while
+a decision or piece waits on him, else activity_unknown (a claim gone
+silent: the stalled flag builds on exactly this), blocked, or ready for
+review (only once he can approve it), in that order; open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
@@ -338,7 +342,16 @@ with `--work <item>` asking the well-known question `approve-item`, options
 its decide.py by voice or the Work tab, is `work_api.review_from_package`,
 called from `server._inbox_recount`, which records it through the same
 `work_api.review` (once per answer: `source` on the event,
-`work_store.reviewed`). Migration 5 links each
+`work_store.reviewed`), with `where` "package". Every act of his in a
+review package shows on the item at once (`package_review`: "Approved by
+you in the package, 16:33" on its Overview, Decisions tab and list row): an
+answer that cannot be applied (Approve while a piece still works) is noted
+with why (`review_noted`, `not_applied`), and signing the package off with
+no answer notes "Review closed without a verdict" (`no_verdict`,
+`work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
+yet and Add work still beside it. Answers already on record are applied at
+server start (`work_api.apply_package_reviews`, once each; never from a
+package he set aside or that was replaced). Migration 5 links each
 held piece or item that named nothing to its item's one open decision, or,
 with none open, to the one he answered since it was held (released by the
 sweep), leaves any other unlinked (flagged), and moves every open item and
@@ -2057,7 +2070,9 @@ Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
 
-Every CI run uploads a `test-timing` artifact (14 days, failed runs too): both pytest steps' junit XML (`unit.xml`, `page.xml`), the runner's size, and its load sampled every 30 s through the page step; the steps' logs carry `--durations` and a timed bare vite build and Chromium launch.
+CI runs the suite and the page tests as two jobs side by side (`test` and `page` in `ci.yml`); the workflow run, which self-update reads, passes only when both do. Each uploads its timing (14 days, failed runs too): `test-timing` (`unit.xml`, the runner's size) and `test-timing-page` (`page.xml`, the runner's size and its load sampled every 30 s through the page step); the steps' logs carry `--durations`, and the page job's a timed bare vite build and Chromium launch.
+
+A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to every launch a page test makes): headless Chromium draws the orbs in software on the page's main thread and everything else waits behind it. A test that looks at the orbs' drawing, the rays or the graphics row is marked `webgl` and keeps it.
 
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
