@@ -68,6 +68,9 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "knowledge_topics", "link_knowledge", "change_topic", "reindex_knowledge",
         "knowledge_indexes", "change_knowledge_index", "knowledge_seeds", "change_knowledge_seed",
         "work_context",
+        "projects", "project_detail", "project_candidates", "project_history", "works", "work_detail",
+        "change_project", "change_project_folder", "change_project_candidate", "change_work",
+        "change_accomplishment",
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (

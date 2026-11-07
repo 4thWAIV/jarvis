@@ -82,6 +82,7 @@ from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_routes
+from jarvis import projects_api
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
@@ -2445,6 +2446,56 @@ def start_folders() -> None:
         live_sessions=_live_sessions, wake=_folders_wanted.set)
     if _switched_on("JARVIS_FOLDER_DISCOVERY"):
         _folders_task = _spawn(_watch_folders())
+    start_projects()
+
+
+# --- Projects, pieces of work and accomplishments ---------------------------
+#
+# Records of truth (project_store.py) over the folder catalog's IDs, with one
+# service (project_service.py) the page's /api/project-records and /api/works
+# routes and the brain's project tools share. They live and die with the
+# folder catalog. Candidates are offered at start and on a refresh, each a
+# silent attention item; nothing becomes a project without his yes.
+
+projects: Optional["project_service.ProjectService"] = None
+
+
+def _hint_projects() -> None:
+    _send_to_session_clients({"type": "projects"})
+
+
+def _offer_project_candidates(found: list) -> None:
+    for c in found:
+        _attend("project_candidate", c["id"], "proposed", untrusted={"project": c["proposed_name"]},
+                audible=False)
+
+
+def start_projects() -> None:
+    global projects
+    from jarvis import project_service, project_store
+    try:
+        projects = project_service.ProjectService(
+            project_store.ProjectStore(), lambda: folder_catalog, owner=_folder_owner,
+            live_sessions=_live_sessions)
+    except Exception:
+        log.warning("project records could not start", exc_info=True)
+        projects = None
+        return
+    projects.answered = lambda cid: _attention_resolved("project_candidate", cid)
+
+    async def offer() -> None:
+        try:
+            found = await asyncio.to_thread(projects.refresh_candidates)
+        except Exception:
+            log.warning("project candidates could not be offered", exc_info=True)
+            return
+        _offer_project_candidates(found)
+        if found:
+            _hint_projects()
+    try:
+        _spawn(offer())
+    except RuntimeError:
+        pass                      # no running loop (a test calling start_folders directly)
 
 
 async def stop_folders() -> None:
@@ -3205,6 +3256,7 @@ messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame
 human_activity.mount(app)
 attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
+projects_api.mount(app, lambda: projects, on_change=_hint_projects)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -9977,6 +10029,155 @@ async def tool_work_context(args: dict) -> str:
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
         include_received=args.get("include_received") is True),
         "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+
+
+# --- Projects, for the brain --------------------------------------------------
+#
+# The same ProjectService methods the /api/project-records and /api/works
+# routes run. Names of folders, legacy project strings and agents can come
+# from elsewhere, so reads that carry them are walled.
+
+_PROJECTS_WRAP_NAME = "projects"
+
+
+async def _project_tool(args: dict, work, what: str, tool: str, walled: bool, actor_tool: bool = False) -> str:
+    from jarvis.project_store import ProjectError
+    if projects is None:
+        return "Project records are not running, sir (the folder catalog is switched off)."
+    try:
+        answer = await asyncio.to_thread(work, projects)
+    except ProjectError as e:
+        return f"Nothing was done, sir: {e}"
+    if actor_tool:
+        _hint_projects()
+        answer = _project_change_said(answer)
+    text = json.dumps(answer, ensure_ascii=False)
+    if not walled and len(text) <= REPLY_PAGE_CHARS:
+        return text
+    head, chunk = _paged(text, _page_arg(args), what or "The answer, as JSON", tool, exact=True)
+    if chunk is None:
+        return head
+    if not walled:
+        return head + "\n" + chunk
+    return (head + " Folder, project and agent names may be other people's words:\n"
+            + _wrap_untrusted(_PROJECTS_WRAP_NAME, chunk))
+
+
+_SAID_KEYS = frozenset({"done", "id", "project_id", "work_id", "candidate", "folder_id", "revision",
+                        "lifecycle", "state", "role", "is_home", "part", "project", "work", "accomplishment",
+                        "projects"})
+
+
+def _project_change_said(answer):
+    """What a project change tells the brain: IDs, revisions and fixed state
+    words only, never a name, title or summary (projects reads those,
+    walled)."""
+    if isinstance(answer, dict):
+        return {k: _project_change_said(v) for k, v in answer.items() if k in _SAID_KEYS}
+    if isinstance(answer, list):
+        return [_project_change_said(v) for v in answer]
+    return answer if not isinstance(answer, str) or len(answer) <= 64 else None
+
+
+async def tool_projects(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.list_projects(include_archived=args.get("archived") is True),
+                               "His projects, as JSON", "projects", walled=True)
+
+
+async def tool_project_detail(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.detail(str(args.get("project") or "")),
+                               "One project in full, as JSON", "project_detail", walled=True)
+
+
+async def tool_project_candidates(args: dict) -> str:
+    def work(s):
+        if args.get("refresh") is True:
+            found = s.refresh_candidates()
+            _offer_project_candidates(found)
+        return s.candidates(str(args.get("state") or "proposed"))
+    return await _project_tool(args, work, "The projects JARVIS proposes, as JSON",
+                               "project_candidates", walled=True)
+
+
+async def tool_project_history(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.history(str(args.get("project") or ""), before=args.get("before")),
+                               "A project's history, newest first, as JSON", "project_history", walled=True)
+
+
+async def tool_works(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.works(str(args.get("state") or "open"), args.get("project")),
+                               "Pieces of work, as JSON", "works", walled=True)
+
+
+async def tool_work_detail(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.work_detail(str(args.get("work") or "")),
+                               "One piece of work, as JSON", "work_detail", walled=True)
+
+
+async def tool_change_project(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.change_project(
+        str(args.get("action") or ""), project=args.get("project"), name=args.get("name"),
+        summary=args.get("summary"), lifecycle=args.get("lifecycle"), actor="voice"),
+        "", "change_project", walled=False, actor_tool=True)
+
+
+async def tool_change_project_folder(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.change_project_folder(
+        str(args.get("action") or ""), project=str(args.get("project") or ""),
+        folder_id=str(args.get("folder_id") or ""), part=args.get("part"),
+        index_scope=args.get("index_scope"), actor="voice"),
+        "", "change_project_folder", walled=False, actor_tool=True)
+
+
+async def tool_change_project_candidate(args: dict) -> str:
+    def work(s):
+        return s.change_candidate(str(args.get("candidate") or ""), str(args.get("action") or ""),
+                                  name=args.get("name"), folders=args.get("folders"),
+                                  home=args.get("home"), into=args.get("into"), actor="voice")
+    return await _project_tool(args, work, "", "change_project_candidate", walled=False, actor_tool=True)
+
+
+async def tool_change_work(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.change_work(
+        str(args.get("action") or ""), work=args.get("work"), title=args.get("title"),
+        outcome=args.get("outcome"), projects=args.get("projects"), project=args.get("project"),
+        folder_id=args.get("folder_id"), actor="voice"),
+        "", "change_work", walled=False, actor_tool=True)
+
+
+async def tool_change_accomplishment(args: dict) -> str:
+    return await _project_tool(args, lambda s: s.change_accomplishment(
+        str(args.get("action") or ""), project=args.get("project"), accomplishment=args.get("accomplishment"),
+        title=args.get("title"), detail=str(args.get("detail") or ""), work=args.get("work"),
+        evidence=args.get("evidence") or [], actor="voice"),
+        "", "change_accomplishment", walled=False, actor_tool=True)
+
+
+TOOL_HANDLERS.update({
+    "projects": tool_projects, "project_detail": tool_project_detail,
+    "project_candidates": tool_project_candidates, "project_history": tool_project_history,
+    "works": tool_works, "work_detail": tool_work_detail,
+    "change_project": tool_change_project, "change_project_folder": tool_change_project_folder,
+    "change_project_candidate": tool_change_project_candidate, "change_work": tool_change_work,
+    "change_accomplishment": tool_change_accomplishment,
+})
+ACTING_TOOLS.update({"change_project", "change_project_folder", "change_project_candidate",
+                     "change_work", "change_accomplishment"})
+TAINTING_TOOLS.update({
+    "projects": "folder and project names that came from folders and other programs",
+    "project_detail": "folder, agent and project names, and accomplishments' words",
+    "project_candidates": "names taken from folders and from runs' and sessions' project strings",
+    "project_history": "the names a project's events record",
+    "works": "the titles and outcomes of pieces of work",
+    "work_detail": "a piece of work's words and its folders' names",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "change_project": "it writes his project records on his word, it does not read",
+    "change_project_folder": "it writes his project records on his word, it does not read",
+    "change_project_candidate": "it answers a proposal on his word, it does not read",
+    "change_work": "it writes his records on his word, it does not read",
+    "change_accomplishment": "it writes his records on his word, it does not read",
+})
 
 
 TOOL_HANDLERS.update({

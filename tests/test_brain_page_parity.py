@@ -131,7 +131,8 @@ def _walled(text: str) -> None:
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
              "update_status", "attachment_location", "attention_updates", "work_status",
-             "knowledge_search", "knowledge_entity", "knowledge_proposals", "work_context")
+             "knowledge_search", "knowledge_entity", "knowledge_proposals", "work_context",
+             "projects", "project_detail", "project_candidates", "project_history", "works", "work_detail")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
@@ -141,7 +142,8 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "mute_speech", "turn_audio_off", "mark_updates_seen",
             "set_attention_settings", "answer_work_decision",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
-            "change_knowledge_seed")
+            "change_knowledge_seed", "change_project", "change_project_folder",
+            "change_project_candidate", "change_work", "change_accomplishment")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
@@ -197,6 +199,11 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("reindex_knowledge", {"action": "refresh"}),
     ("change_knowledge_index", {"key": "document|language,media_type", "choice": "pin"}),
     ("change_knowledge_seed", {"seed": "denice", "action": "decline"}),
+    ("change_project", {"action": "add", "name": "X"}),
+    ("change_project_folder", {"action": "link", "project": "x", "folder_id": "y"}),
+    ("change_project_candidate", {"action": "ignore", "candidate": "x"}),
+    ("change_work", {"action": "start", "title": "x", "projects": ["x"]}),
+    ("change_accomplishment", {"action": "record", "project": "x", "title": "x"}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
