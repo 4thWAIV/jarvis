@@ -128,10 +128,18 @@ const hosts: Record<Place, Store<Hosts>> = {
   composer: createStore<Hosts>({ health: null, mic: null }),
   corner: createStore<Hosts>({ health: null, mic: null }),
 };
-const hostRef = (place: Place, which: keyof Hosts) => (el: Element | null) => {
+// One callback per host, made once, so a re-render of what holds it never
+// hands React a new ref (which would clear and set the host, and move the
+// control out and back).
+const setHost = (place: Place, which: keyof Hosts) => (el: Element | null) => {
   const now = hosts[place].get();
   if (now[which] !== el) hosts[place].set({ ...now, [which]: el });
 };
+const HOST_REFS = {
+  composer: { health: setHost("composer", "health"), mic: setHost("composer", "mic") },
+  corner: { health: setHost("corner", "health"), mic: setHost("corner", "mic") },
+};
+const hostRef = (place: Place, which: keyof Hosts) => HOST_REFS[place][which];
 const VIEW: Record<Place, "main.conversation" | "main.corner"> = { composer: "main.conversation", corner: "main.corner" };
 
 /** A host for the microphone's health dot or the rest of it in the
