@@ -1,35 +1,13 @@
-"""The one way an agent sends Tim a decision package.
-
-    python -m jarvis.decision_package CONTENT.json [--project P] [--session ID]
-                                      [--out DIR] [--deliver-to URL]
-
-CONTENT.json is the deck's data in the decision deck's format
-(docs/work-packages.md, "Decision packages"): the package fields, the slides
-and the decisions, each with its options, the recommended option and the one
-reason for it, and pictures by path, found beside CONTENT.json. The command:
-
-1. checks the content, and refuses with every problem listed;
-2. builds the package with the shared deck's own builder,
-   examples/packages/decision-deck/new_deck.py, which it calls unchanged;
-3. checks it end to end in a real, isolated JARVIS (decision_check.py):
-   found by its title's words and opened by name through that JARVIS's own
-   tools, every slide fitting its real frame at both centre sizes with
-   readable text and the vote row in view, its story reaching every
-   decision, a Choose saving, and an answer by voice showing on screen,
-   with a screenshot of each;
-4. only if every check passed, unpacks it into the live JARVIS without
-   showing it (POST /api/packages/local with the tool token) and prints the
-   package id and the words Tim can say to open it. On any failure nothing
-   is delivered, and what failed is printed with the screenshots.
-
---project and --session name who is asking; they are printed and kept in
-DIR/delivery.json beside the package's id and where its answers are written.
---deliver-to sends to another JARVIS in place of the live one on
-https://127.0.0.1:8340 (the tests use a stand-in).
+"""A deck's content: reading it, working out what the agent left out
+(`expand`), checking it (`problems_of`), building it with the shared deck's
+own builder (examples/packages/decision-deck/new_deck.py) and delivering a
+zip into a JARVIS unshown (`deliver`, POST /api/packages/local with the tool
+token). `python -m jarvis.make_package` is the command that uses them, and
+docs/making-a-package.md is how; `python -m jarvis.decision_package` is that
+same command's old name.
 """
 from __future__ import annotations
 
-import argparse
 import contextlib
 import copy
 import difflib
@@ -39,7 +17,6 @@ import json
 import re
 import ssl
 import sys
-import tempfile
 import unicodedata
 import urllib.error
 import urllib.request
@@ -147,10 +124,14 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         problems.append(f"The language is {deck.get('language')!r}; it is one of "
                         f"{', '.join(LANGUAGES)}.")
 
-    decisions = deck.get("decisions")
-    if not isinstance(decisions, list) or not decisions:
-        problems.append("The deck has no decisions.")
+    decisions = deck.get("decisions", [])
+    if not isinstance(decisions, list):
+        problems.append("The deck's decisions must be a list.")
         decisions = []
+    if not decisions and not [s for s in deck.get("slides") or []
+                              if isinstance(s, dict) and "decision" not in s]:
+        problems.append("The deck has neither decisions nor slides: give `decisions` for a "
+                        "decision package, or only `slides` for a presentation.")
     ids = [d.get("id") for d in decisions if isinstance(d, dict)]
     for n, d in enumerate(decisions, 1):
         if not isinstance(d, dict):
@@ -225,6 +206,7 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         if total > CAPS["slide"]:
             problems.append(f"{where}: it has {total} characters of words; at most "
                             f"{CAPS['slide']}. Split it into two slides.")
+    problems += too_many_words(deck)
 
     for pic in builder().pictures_of(deck) if not problems else []:
         p = Path(pic)
@@ -235,6 +217,32 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         elif not _is_image(folder / p):
             problems.append(f"Picture {pic} is not a PNG, JPEG, GIF, WebP or SVG image.")
     return problems
+
+
+def too_many_words(deck: dict) -> list[str]:
+    """Every slide and decision part over the builder's word limits
+    (new_deck.SLIDE_WORDS, DECISION_WORDS), all at once: the builder itself
+    stops at the first."""
+    deck_builder, out = builder(), []
+    for n, s in enumerate(deck.get("slides") or [], 1):
+        if not isinstance(s, dict) or "decision" in s:
+            continue
+        count = sum(deck_builder.block_words(b) for b in s.get("blocks") or []
+                    if isinstance(b, dict))
+        if count > deck_builder.SLIDE_WORDS:
+            out.append(f"Slide {n} ({_text(s.get('title')) or 'no title'}): it has {count} "
+                       f"words; at most {deck_builder.SLIDE_WORDS}. Split it into two slides.")
+    for n, d in enumerate(deck.get("decisions") or [], 1):
+        if not isinstance(d, dict):
+            continue
+        parts = [(f, d.get(f)) for f in ("question", "reason", "context")]
+        parts += [("says", o.get("says")) for o in d.get("options") or [] if isinstance(o, dict)]
+        for field, text in parts:
+            count, limit = deck_builder.words(text), deck_builder.DECISION_WORDS[field]
+            if count > limit:
+                out.append(f"Decision {d.get('id') or n}: a {field} has {count} words; "
+                           f"at most {limit}.")
+    return out
 
 
 def validate(content: Path) -> dict:
@@ -256,7 +264,7 @@ KEYS = {
     "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
-                 "picture", "say"),
+                 "picture", "compare", "say"),
     "option": ("id", "name", "says", "picture", "opens", "recommended"),
 }
 
@@ -268,6 +276,18 @@ def slug(text, fallback: str) -> str:
     return words or fallback
 
 
+def short_name(text) -> str:
+    """The jump strip's name for a slide: the words of `text` that fit
+    CAPS["short"], whole words only, its punctuation at the ends dropped."""
+    words, out = _text(text).split(), ""
+    for word in words:
+        joined = f"{out} {word}".strip()
+        if len(joined) > CAPS["short"]:
+            break
+        out = joined
+    return (out or _text(text)[:CAPS["short"]]).strip(" ,.;:?¿!¡")
+
+
 def _unique(base: str, taken: set[str]) -> str:
     ident, n = base, 2
     while ident in taken:
@@ -276,20 +296,26 @@ def _unique(base: str, taken: set[str]) -> str:
     return ident
 
 
+def unknown_fields(where: str, item, kind: str, fields: tuple[str, ...]) -> list[str]:
+    """Each key of `item` not in `fields`, named with the field it was
+    probably meant to be: a misspelt field would otherwise be silently
+    ignored."""
+    out: list[str] = []
+    for key in item if isinstance(item, dict) else ():
+        if key not in fields:
+            near = difflib.get_close_matches(key, fields, n=1)
+            out.append(f"{where}: {key!r} is not a field of a {kind}"
+                       + (f"; did you mean {near[0]!r}?" if near else
+                          f"; the fields are {', '.join(fields)}."))
+    return out
+
+
 def unknown_keys(deck: dict) -> list[str]:
-    """A misspelt field is silently ignored by the deck; name it, with the
-    field it was probably meant to be."""
+    """Every misspelt field in the deck (KEYS)."""
     out: list[str] = []
 
     def look(where: str, item, kind: str):
-        if not isinstance(item, dict):
-            return
-        for key in item:
-            if key not in KEYS[kind]:
-                near = difflib.get_close_matches(key, KEYS[kind], n=1)
-                out.append(f"{where}: {key!r} is not a field of a {kind}"
-                           + (f"; did you mean {near[0]!r}?" if near else
-                              f"; the fields are {', '.join(KEYS[kind])}."))
+        out.extend(unknown_fields(where, item, kind, KEYS[kind]))
 
     look("The deck", deck, "deck")
     for n, s in enumerate(deck.get("slides") or [], 1):
@@ -319,14 +345,14 @@ def expand(deck: dict) -> dict:
     title = _text(deck.get("title")).strip()
     if title:
         deck.setdefault("name", slug(title, "decisions"))
-        deck.setdefault("purpose", f"Decisions: {title}")
+        deck.setdefault("purpose", f"Decisions: {title}" if deck.get("decisions") else title)
     deck.setdefault("version", "1.0.0")
     decisions = [d for d in deck.get("decisions") or [] if isinstance(d, dict)]
     taken: set[str] = {d["id"] for d in decisions if isinstance(d.get("id"), str)}
     for n, d in enumerate(decisions, 1):
         question = _text(d.get("question")).strip()
         if not d.get("short") and question:
-            d["short"] = question[:CAPS["short"]].rstrip(" ,.;:?¿")
+            d["short"] = short_name(question)
         if not d.get("id"):
             d["id"] = _unique(slug(d.get("short") or question, f"decision-{n}"), taken)
     refs: dict[str, str] = {}
@@ -438,96 +464,13 @@ def deliver(archive: Path, base: str, token: str) -> Delivered:
     return Delivered(answer["package"], bool(answer.get("unpacked")))
 
 
-def words_to_open(deck: dict) -> str:
-    return f"Open the {deck['title']} package."
-
-
 # -- the command -----------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m jarvis.decision_package",
-        description="Validate, build, check in an isolated JARVIS, and deliver a decision "
-                    "package. docs/work-packages.md, \"Decision packages\", has the format.")
-    parser.add_argument("content", type=Path, nargs="?",
-                        help="the deck's data, one JSON file")
-    parser.add_argument("--example", action="store_true",
-                        help="print a minimal content file to start from, and stop")
-    parser.add_argument("--check-only", action="store_true",
-                        help="validate the content and stop: nothing is built or delivered")
-    parser.add_argument("--project", default="", help="the project asking")
-    parser.add_argument("--session", default="", help="the session asking")
-    parser.add_argument("--out", type=Path, default=None,
-                        help="where the package, its zip and the screenshots go "
-                             "(default: a new temporary folder)")
-    parser.add_argument("--deliver-to", default=LIVE, help=argparse.SUPPRESS)
-    args = parser.parse_args(argv)
-
-    if args.example:
-        print(json.dumps(EXAMPLE, indent=2))
-        return 0
-    if args.content is None:
-        parser.error("give the content file (or --example to see one)")
-    content = args.content.resolve()
-    if args.check_only:
-        try:
-            deck = validate(content)
-        except Refused as e:
-            print("The content needs these changes:")
-            for line in e.problems:
-                print(f"  - {line}")
-            return 1
-        print(f"The content is right: {len(deck['decisions'])} decision(s), "
-              f"package {deck['name']}-{deck['version']}.")
-        return 0
-    out = (args.out or Path(tempfile.mkdtemp(prefix="decision-package-"))).resolve()
-    out.mkdir(parents=True, exist_ok=True)
-    try:
-        deck = validate(content)
-        archive = build(content, out, deck)
-    except Refused as e:
-        print("Not built. The content needs these changes:")
-        for line in e.problems:
-            print(f"  - {line}")
-        return 1
-    print(f"Built {archive}")
-
-    from jarvis import decision_check
-    print("Checking it in an isolated JARVIS…", flush=True)
-    result = decision_check.check(archive, deck, out / "check")
-    if not result.ok:
-        if result.passed:
-            print("These checks passed:")
-            for line in result.passed:
-                print(f"  ok: {line}")
-        print("Not delivered. These checks failed:")
-        for line in result.failures:
-            print(f"  - {line}")
-        print("Screenshots:")
-        for shot in result.screenshots:
-            print(f"  {shot}")
-        return 1
-    print(f"Every check passed ({len(result.passed)}). Screenshots are in {out / 'check'}.")
-    for line in result.passed:
-        print(f"  ok: {line}")
-
-    try:
-        delivered = deliver(archive, args.deliver_to, data_paths.ensure_tool_token())
-    except OSError as e:
-        print(f"Not delivered: {e}")
-        return 1
-    package_id = delivered.package["id"]
-    record = {"package": package_id, "title": deck["title"], "project": args.project,
-              "session": args.session, "zip": str(archive),
-              "answers": str(data_paths.packages_dir() / package_id / "results"
-                             / "decisions.json")}
-    (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(f"Delivered: package {package_id}"
-          + ("" if delivered.unpacked else " (it was already there)")
-          + (f", asked by {args.project}" if args.project else "")
-          + (f" session {args.session}" if args.session else "") + ".")
-    print(f"Tim can say: \"{words_to_open(deck)}\" (or \"Open package {package_id}.\")")
-    return 0
+    """The old name of `python -m jarvis.make_package`, kept for the sessions
+    whose installed talk-to-jarvis skill still names it: the same command."""
+    from jarvis import make_package
+    return make_package.main(argv, prog="python -m jarvis.decision_package")
 
 
 if __name__ == "__main__":
