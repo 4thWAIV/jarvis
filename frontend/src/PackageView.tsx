@@ -23,7 +23,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge } from "./packageBridge";
-import { entryUrl, storyState, tellStory, type PackageInfo } from "./packages";
+import { entryUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 
@@ -62,7 +62,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
   );
 }
 
-type StoryPart = "story" | "tell" | "fromSlide" | "stop";
+type StoryPart = "story" | "tell" | "fromSlide" | "resume" | "stop";
 
 function StoryControls({ info, onSaid, part }: {
   info: PackageInfo; onSaid: (s: Said | null) => void; part: (name: StoryPart) => (el: Element | null) => void }) {
@@ -70,9 +70,10 @@ function StoryControls({ info, onSaid, part }: {
   const state = useSyncExternalStore(storyState.subscribe, storyState.get);
   const [slide, setSlide] = useState(1);
   const [busy, setBusy] = useState(false);
-  const telling = state?.package === info.id && state.state === "telling";
+  const running = storyRunning(state, info.id);
+  const mine = state?.package === info.id ? state : null;
   const slides = info.story?.slides ?? [];
-  const act = async (action: "tell" | "stop") => {
+  const act = async (action: "tell" | "resume" | "stop") => {
     setBusy(true);
     const problem = await tellStory(info.id, action, action === "tell" ? slide : undefined);
     setBusy(false);
@@ -82,7 +83,7 @@ function StoryControls({ info, onSaid, part }: {
     <section className="package-story" aria-label={t("main.package.story.label")} ref={part("story")}>
       <button data-ui-action="domain" type="button" className="folder-button" disabled={busy}
               ref={part("tell")} onClick={() => void act("tell")}>
-        {telling ? t("main.package.story.tellFrom") : t("main.package.story.tell")}
+        {running ? t("main.package.story.tellFrom") : t("main.package.story.tell")}
       </button>
       <label>
         {t("main.package.story.fromSlide")}{" "}
@@ -91,12 +92,18 @@ function StoryControls({ info, onSaid, part }: {
           {slides.map((title, n) => <option key={n} value={n + 1}>{n + 1}. {title}</option>)}
         </select>
       </label>
-      <button data-ui-action="domain" type="button" className="folder-button" disabled={busy || !telling}
+      {!running && (info.story?.asks?.length ?? 0) > 0 && (
+        <button data-ui-action="domain" type="button" className="folder-button" disabled={busy}
+                ref={part("resume")} onClick={() => void act("resume")}>{t("main.package.story.continue")}</button>
+      )}
+      <button data-ui-action="domain" type="button" className="folder-button" disabled={busy || !running}
               ref={part("stop")} onClick={() => void act("stop")}>{t("main.package.story.stop")}</button>
       <span className="package-story-now" role="status">
-        {telling ? t("main.package.story.telling", { slide: state.slide, slides: state.slides })
-          : state?.package === info.id && state.state === "finished" ? t("main.package.story.told")
-            : state?.package === info.id && state.state === "stopped" ? t("main.package.story.stopped") : ""}
+        {mine?.state === "telling" ? t("main.package.story.telling", { slide: mine.slide, slides: mine.slides })
+          : mine?.state === "waiting" ? t("main.package.story.waiting", { slide: mine.slide, slides: mine.slides })
+            : mine?.state === "paused" ? t("main.package.story.paused", { slide: mine.slide, slides: mine.slides })
+              : mine?.state === "finished" ? t("main.package.story.told")
+                : mine?.state === "stopped" ? t("main.package.story.stopped") : ""}
       </span>
     </section>
   );

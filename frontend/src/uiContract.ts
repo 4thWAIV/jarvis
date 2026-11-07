@@ -3696,6 +3696,7 @@ export const UI_CONTRACT = {
         "story",
         "tell",
         "fromSlide",
+        "resume",
         "stop"
       ],
       "presentations": [

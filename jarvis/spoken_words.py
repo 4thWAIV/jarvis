@@ -130,11 +130,12 @@ class Vocabulary:
     switch_command: str
     switch_to: str
     send_phrases: tuple = ()
+    stop_words: frozenset = frozenset()
 
 
 def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
                 replay_phrases, replay_filler, clear_command,
-                switch_command, switch_to, send_phrases=()) -> Vocabulary:
+                switch_command, switch_to, send_phrases=(), stop_words=()) -> Vocabulary:
     return Vocabulary(
         yes_words=frozenset(_key(w) for w in yes_words),
         yes_phrases=tuple(_key(p) for p in yes_phrases),
@@ -146,6 +147,7 @@ def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
         switch_command=_key(switch_command),
         switch_to=switch_to,
         send_phrases=tuple(_key(p) for p in send_phrases),
+        stop_words=frozenset(_key(w) for w in stop_words),
     )
 
 
@@ -180,6 +182,9 @@ _ENGLISH = _vocabulary(
     # Approving a read-back (`server._send_answer`): an explicit instruction
     # to send is his yes, optionally naming where ("send it to chitauri").
     send_phrases=("send it", "send that", "send them", "send this", "send", "go ahead and send"),
+    # A whole utterance of these (story_teller.stop_words) stops a story
+    # being told or waiting for his answer, before the brain hears it.
+    stop_words=("stop",),
 )
 
 # Latin American Spanish (es-MX), as approved: "dale", not Spain's "vale".
@@ -201,6 +206,7 @@ _SPANISH = _vocabulary(
     switch_to=ENGLISH,
     send_phrases=("envíalo", "envíala", "envíalos", "mándalo", "mándala", "mándalos",
                   "envía", "manda"),
+    stop_words=("alto", "detente"),
 )
 
 VOCABULARIES = {ENGLISH: _ENGLISH, SPANISH: _SPANISH}

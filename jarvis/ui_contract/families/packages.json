@@ -45,7 +45,7 @@
      "effects": [{"effect": "list.paged"}]}
   ],
   "kinds": [
-    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["header", "frame", "close", "story", "tell", "fromSlide", "stop"],
+    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["header", "frame", "close", "story", "tell", "fromSlide", "resume", "stop"],
      "presentations": [{"view": "main.package",
                         "reveal": {"command": "package.open", "args": {"packageId": "$key"}}}]},
     {"kind": "bundleMember", "entity": "member", "label": "Received file", "parts": ["header", "show", "close", "pages", "body", "more"],

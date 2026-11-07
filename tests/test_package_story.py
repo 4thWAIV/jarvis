@@ -58,7 +58,8 @@ def test_the_example_story_is_checked_and_each_beat_first_shows_its_slide(deck):
     assert json.loads(deck.manifest.as_json())["story"] == "story.json"
     story = deck.story()
     assert story.outline() == {"title": "A pot of tea", "language": "en", "slides": [
-        "Three things a good pot of tea needs", "Four steps", "Each tea has its own time"]}
+        "Three things a good pot of tea needs", "Four steps", "Each tea has its own time"],
+        "asks": []}
     cues = story.cues(deck.id, 3)
     words, cue = cues[1]
     assert words == "Green tea wants water well off the boil."
@@ -196,20 +197,22 @@ async def test_stop_ends_the_voice_and_the_story(h, deck):
     heard = len(h.audio())
     await h.ack_all(rounds=3)
     assert len(h.audio()) == heard, "nothing more is said once it is stopped"
-    assert (await t.teller.stop()).problem == "No story is being told."
+    again = await t.teller.stop()
+    assert again.already and again.ended.state == "stopped", "a second Stop: already, not none"
 
 
 @pytest.mark.asyncio
-async def test_his_speaking_stops_the_story(h, deck):
+async def test_his_speaking_pauses_the_story_and_it_is_still_running(h, deck):
     t = Teller(h)
     await t.teller.tell(deck.id)
     await h.ack_all(rounds=2)
     await h.sched.barge_in(reason="he spoke")
     for _ in range(50):
-        if t.teller.telling is None:
+        if t.frames and t.frames[-1]["state"] == "paused":
             break
         await asyncio.sleep(0.02)
-    assert t.teller.telling is None and t.states()[-1][0] == "stopped"
+    assert t.states()[-1][0] == "paused" and t.teller.status()["state"] == "paused"
+    assert (await t.teller.stop()).package.id == deck.id
 
 
 @pytest.mark.asyncio
@@ -243,7 +246,7 @@ def test_the_page_and_the_brain_tell_it_through_one_function(wired, deck, monkey
     from jarvis.story_teller import Told
     server, calls = wired.server, []
 
-    async def act(action, reference, slide=None):
+    async def act(action, reference, slide=None, by="on the page"):
         calls.append((action, reference, slide))
         package = work_packages.find(reference)
         if action == "stop":
