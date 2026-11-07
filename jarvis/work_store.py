@@ -863,6 +863,10 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
     decision of his is open or a piece is held."""
     where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
     kept: dict = {"by": "tim", "where": where}
+    if isinstance(detail.get("source"), dict):
+        # Given in a review package: which one, and which answer of his.
+        kept["source"] = {"package": str(detail["source"].get("package") or ""),
+                          "answered_at": str(detail["source"].get("answered_at") or "")}
     if kind == APPROVED:
         open_ones = [r["key"] for r in conn.execute(
             f"SELECT key FROM work_decisions WHERE item_id=? AND {_open()}", (item_id,))]
@@ -1452,6 +1456,17 @@ def sweep_waits() -> "wait_links.Settled":
         if moved:
             conn.commit()
     return wait_links.Settled(work=moved)
+
+
+def reviewed(item_id: str, source: dict) -> bool:
+    """Whether his review given in a package (`source`: the inbox id and
+    when he answered) is already on the item's record."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            f"SELECT 1 FROM work_events WHERE item_id=? AND kind IN "
+            f"({','.join('?' * len(REVIEW_KINDS))}) AND json_extract(detail, '$.source.package')=? "
+            "AND json_extract(detail, '$.source.answered_at')=?",
+            (item_id, *REVIEW_KINDS, source["package"], source["answered_at"])).fetchone() is not None
 
 
 @dataclass(frozen=True)
