@@ -29,6 +29,10 @@ DATA_PREFIX = "window.DECK = "
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RETURNS = ["results/decisions.json", "results/decisions.md"]
 SAY_MAX = 800
+# Words a slide may carry, so no slide is a wall of text: a content slide's
+# body, and each part of a decision. Split a longer slide in two.
+SLIDE_WORDS = 60
+DECISION_WORDS = {"question": 30, "reason": 40, "context": 40, "says": 40}
 
 
 class Bad(Exception):
@@ -58,9 +62,43 @@ def pictures_of(deck: dict) -> list[str]:
                 take(p)
     for d in deck.get("decisions", []):
         take(d.get("picture"))
+        take(d.get("compare"))
         for o in d.get("options", []):
             take(o.get("picture"))
     return found
+
+
+def words(text) -> int:
+    return len(re.sub(r"\*\*|`", "", str(text or "")).split())
+
+
+def block_words(b: dict) -> int:
+    n = sum(words(b.get(k)) for k in ("p", "lead", "note", "caption"))
+    for pt in b.get("points", []):
+        n += words(pt) if isinstance(pt, str) else words(pt.get("b")) + words(pt.get("text"))
+    for f in b.get("facts", []):
+        n += words(f.get("n")) + words(f.get("text"))
+    for pic in b.get("pictures", []):
+        n += words(pic.get("caption"))
+    table = b.get("table") or {}
+    for row in [table.get("head") or []] + list(table.get("rows") or []):
+        n += sum(words(c) for c in row)
+    return n
+
+
+def check_words(deck: dict) -> None:
+    for s in deck.get("slides", []):
+        if "decision" in s:
+            continue
+        n = sum(block_words(b) for b in s.get("blocks", []))
+        if n > SLIDE_WORDS:
+            raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {SLIDE_WORDS}. Split it in two.")
+    for d in deck["decisions"]:
+        parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
+        parts += [("says", o.get("says")) for o in d["options"]]
+        for field, text in parts:
+            if words(text) > DECISION_WORDS[field]:
+                raise Bad(f"{d['id']}'s {field} has {words(text)} words; at most {DECISION_WORDS[field]}.")
 
 
 def check(deck: dict, source_dir: Path) -> None:
@@ -110,6 +148,7 @@ def check(deck: dict, source_dir: Path) -> None:
             raise Bad(f"A slide places decision {s['decision']!r}, which is not one.")
         if "decision" not in s and not s.get("title"):
             raise Bad("Every content slide needs a title.")
+    check_words(deck)
     for pic in pictures_of(deck):
         p = Path(pic)
         if not pic or p.is_absolute() or ".." in p.parts:

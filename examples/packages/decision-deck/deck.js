@@ -16,6 +16,7 @@
 
   var DECK = window.DECK || { title: "", slides: [], decisions: [] };
   var W = 880, H = 640;                        // the fixed canvas, scaled to fit
+  var MAX_SCALE = 22 / 18;                     // 18 px body text, at most 22 px on screen
   var RECORDED = "results/decisions.js";
   var FOLLOW_MS = 3000;
   var inFrame = window.parent !== window;
@@ -324,28 +325,40 @@
     // alone go in one line above them.
     if (d.context && !d.picture) section.appendChild(inline(el("p", "why"), d.context));
     var body = section.appendChild(el("div", "body decide"));
+    // A slide with pictures gives them the room the words and the vote row
+    // leave: they size to the space, never to a fixed thumbnail.
+    var pictured = (d.options || []).some(function (o) { return o.picture; });
+    if (pictured || d.picture || d.compare) section.classList.add("fill");
     if (d.picture) {
       body.classList.add("with-context");
       var side = body.appendChild(el("div", "context"));
       side.appendChild(figure(typeof d.picture === "string" ? { src: d.picture } : d.picture));
       if (d.context) side.appendChild(inline(el("p", "why"), d.context));
     }
-    var options = body.appendChild(el("div", "options"));
+    var main = d.picture ? body.appendChild(el("div", "main")) : body;
+    if (d.compare) {
+      var compare = figure(typeof d.compare === "string" ? { src: d.compare } : d.compare);
+      compare.classList.add("compare");
+      main.appendChild(compare);
+    }
+    var options = main.appendChild(el("div", "options" + (pictured ? " has-pictures" : "")));
     var n = (d.options || []).length;
-    options.style.setProperty("--columns", String(d.picture ? Math.min(2, n) : n === 4 ? 2 : Math.min(3, n)));
+    options.style.setProperty("--columns", String(pictured ? Math.min(4, n) : d.picture ? Math.min(2, n)
+                                                : n === 4 ? 2 : Math.min(3, n)));
     var buttons = {};
     (d.options || []).forEach(function (o) {
       var card = el("article", "option" + (o.id === d.recommended ? " recommended" : ""));
       card.id = "opt-" + d.id + "-" + o.id;
       if (o.picture) card.appendChild(figure(typeof o.picture === "string" ? { src: o.picture } : o.picture));
-      var name = card.appendChild(el("h3", "", o.name));
+      var text = card.appendChild(el("div", "option-text"));
+      var name = text.appendChild(el("h3", "", o.name));
       if (o.id === d.recommended) name.appendChild(el("span", "badge", "Recommended"));
-      card.appendChild(inline(el("p", "says"), o.says));
-      if (o.opens && o.opens.length) card.appendChild(el("p", "opens", "Then asks: " + o.opens.map(function (c) {
+      text.appendChild(inline(el("p", "says"), o.says));
+      if (o.opens && o.opens.length) text.appendChild(el("p", "opens", "Then asks: " + o.opens.map(function (c) {
         var child = byId(c);
         return child ? child.short || child.id : c;
       }).join(", ")));
-      var b = card.appendChild(el("button", "choose", "Choose"));
+      var b = text.appendChild(el("button", "choose", "Choose"));
       b.type = "button";
       b.addEventListener("click", function () { choose(d, o.id); });
       buttons[o.id] = { card: card, button: b };
@@ -544,7 +557,8 @@
   // ── fitting the frame ─────────────────────────────────────────────────
   var stage = document.getElementById("stage");
   function fit() {
-    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    // Never larger than MAX_SCALE: body text stays at most about 22 px.
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
     stage.style.transform = "scale(" + s + ")";
     stage.style.left = Math.max(0, (window.innerWidth - W * s) / 2) + "px";
     stage.style.top = Math.max(0, (window.innerHeight - H * s) / 2) + "px";
@@ -553,9 +567,47 @@
 
   // A decision slide's voting area is always in sight: its pictures give up
   // height until the slide fits the canvas.
+  function shown(img) {
+    var r = img.getBoundingClientRect();
+    if (!img.naturalWidth || !r.width || !r.height) return 0;
+    var k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+    return img.naturalWidth * img.naturalHeight * k * k;
+  }
+
+  function cut(section) {
+    if (section.scrollHeight > section.clientHeight + 1) return true;
+    return [].slice.call(section.querySelectorAll(".option")).some(function (c) {
+      return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1;
+    });
+  }
+
+  // Try each way in turn and keep the one that shows the smallest picture
+  // on the slide largest, with nothing cut off.
+  function arrange(section, box, ways) {
+    var imgs = [].slice.call(section.querySelectorAll(".picture img"));
+    var best = ways[0], bestArea = -1;
+    ways.forEach(function (way) {
+      ways.forEach(function (w) { box.classList.remove(w); });
+      box.classList.add(way);
+      if (cut(section)) return;
+      var area = Math.min.apply(null, imgs.map(shown));
+      if (area > bestArea) { best = way; bestArea = area; }
+    });
+    ways.forEach(function (w) { box.classList.remove(w); });
+    box.classList.add(best);
+  }
+
   function shrinkPictures() {
     DECISIONS.forEach(function (d) {
       var section = views[d.id].section;
+      // Pictured options try each arrangement (picture above its words,
+      // beside them, or, for two options, one option a row) and keep the one
+      // that shows the smallest picture largest with nothing cut off.
+      var opts = section.querySelector(".options.has-pictures");
+      if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
+      var compare = section.querySelector(".compare");
+      if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
+      if (section.classList.contains("fill")) return;   // pictures already fit the space
       var pics = [].slice.call(section.querySelectorAll(".picture img"));
       var limit = 220;
       while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {

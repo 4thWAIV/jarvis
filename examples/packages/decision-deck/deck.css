@@ -129,7 +129,48 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .says, .opens { margin: 0; }
 .opens { color: var(--muted); }
 .badge { font-size: 18px; font-weight: 500; color: var(--chosen); }
+.option-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; }
 .choose { margin-top: auto; align-self: flex-start; }
+
+/* A decision with pictures: the body takes every pixel the words and the
+   vote row leave, and the pictures size to it (a compare picture above the
+   options, each option's picture filling its share of the width). */
+.slide.decision.fill .decide { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.slide.decision.fill .main { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.slide.decision.fill .context { min-height: 0; }
+.slide.decision.fill .context .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.decide .compare { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; }
+.options.has-pictures { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.options.has-pictures .option { min-height: 0; }
+.options.has-pictures .option-text { flex: none; }
+.options.has-pictures .option .picture { flex: 1 1 0; min-height: 50px; display: flex; flex-direction: column; }
+.slide.decision.fill .picture img,
+.slide.decision.fill .option .picture img,
+.slide.decision.fill .context .picture img {
+  flex: 1 1 0; min-height: 0; width: 100%; height: 100%; max-height: none; object-fit: contain;
+}
+/* A compare picture above the options, or beside them in one column. */
+.slide.decision.fill .compare-side { flex-direction: row; }
+.compare-side > .compare { flex: 1 1 0; min-width: 0; min-height: 0; }
+.compare-side > .options { flex: 0 0 46%; grid-template-columns: minmax(0, 1fr); align-content: start; }
+/* On a slide with pictures, Choose sits beside the option's name. */
+.slide.decision.fill .option-text { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 4px; align-items: start; }
+.slide.decision.fill .option-text > :not(.choose) { grid-column: 1; }
+.slide.decision.fill .option-text .choose { grid-column: 2; grid-row: 1; margin: 0; }
+/* How the pictured options are arranged is chosen by deck.js (arrange):
+   the picture above its words, beside them, or one option a row. */
+.options.has-pictures .option-text { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 4px; align-items: start; }
+.options.has-pictures .option-text > :not(.choose) { grid-column: 1; }
+.options.has-pictures .option-text .choose { grid-column: 2; grid-row: 1; margin: 0; }
+.options.has-pictures.side .option, .options.has-pictures.rows .option { flex-direction: row; align-items: stretch; }
+.options.has-pictures.side .option .picture, .options.has-pictures.rows .option .picture { flex: 1 1 0; min-width: 0; min-height: 0; }
+.options.has-pictures.side .option-text { flex: 0 0 46%; display: flex; flex-direction: column; }
+.options.has-pictures.side .option-text .choose { margin-top: auto; }
+.options.has-pictures.rows { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); }
+.options.has-pictures.rows .option-text { flex: 0 0 240px; display: flex; flex-direction: column; }
+.options.has-pictures.rows .option-text .choose { margin-top: auto; }
+
 .choose[aria-pressed="true"] { background: var(--chosen); border-color: var(--chosen); color: var(--chosen-ink); }
 
 .vote { display: flex; gap: 8px; align-items: center; }

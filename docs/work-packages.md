@@ -285,10 +285,14 @@ One JSON file holds the package fields, the slides and the decisions
 | `language` | The story's language, `en` (the default) or `es`. |
 | `slides` | The slides before the decisions, in order. Each has a `title`, and optionally an `id` (for story targets), a `kicker`, a `short` name for the jump strip, `say` (its story line) or its own `beats` (a story slide's beats; the builder adds the click that brings the slide up), and `blocks`. An entry `{"decision": "<id>"}` places that decision's slide there; decisions not placed follow the slides. The "Your answers" slide is always last. |
 | `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text", "id"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows", "rowIds", "rowHeads"}}`, or `{"picture": path, "alt", "caption"}` / `{"pictures": [{"src", "alt", "caption", "id"}]}`. Any block may have an `id`. Text may use `**bold**` and `` `code` ``. |
-| `decisions` | The decisions, in order. Each has an `id` (a slug: a-z, 0-9 and `-`), a `short` name, the `question`, its `options`, the `recommended` option's id and the one `reason` for it, and optionally `context` (a line of words) and a `picture` (shown beside the options), and `say` (its story line in place of the recommendation). |
+| `decisions` | The decisions, in order. Each has an `id` (a slug: a-z, 0-9 and `-`), a `short` name, the `question`, its `options`, the `recommended` option's id and the one `reason` for it, and optionally `context` (a line of words), a `picture` (shown beside the options), a `compare` picture (shown large above the options, or beside them), and `say` (its story line in place of the recommendation). |
 | `options` | Each has an `id` (a slug; not `later`, `none` or `recommended`), a `name`, what it `says`, optionally a `picture`, and optionally `opens`: the ids of child questions asked only when this option is chosen. A child has one parent. |
 
 Pictures are paths inside the package, found beside the data file.
+
+No slide is a wall of text: the builder refuses a slide with more than 60
+words of body text (split it in two), and a decision whose question is
+over 30 words or whose reason, context or any option's words are over 40.
 
 ### Sending one
 
@@ -354,8 +358,12 @@ The deck draws on a fixed 880 × 640 canvas scaled to fit the frame, so a
 decision slide shows its question, the recommendation and its reason, each
 option with its Choose button, Decide later, None of these, a words box and
 the recorded answer without scrolling, at both centre frame sizes (809 ×
-589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one). A picture
-gives up height until the slide fits. Previous and Next, the arrow keys, a
+589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one). On a decision
+slide with pictures, the pictures take all the room the words and the vote
+row leave: the deck tries each option's picture above its words, beside
+them and, for two options, one option a row, and keeps whichever shows the
+smallest picture largest with nothing cut off. The canvas is never scaled
+past body text of about 22 px, however large the frame. Previous and Next, the arrow keys, a
 jump strip that marks answered decisions, and "n of N" move between
 slides; the current slide is kept in memory only. The last slide, "Your
 answers", lists every decision with its recorded answer, changed in place,
