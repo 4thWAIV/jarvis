@@ -633,6 +633,38 @@ EXEMPT = {
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
+    # The decision package command (decision_package.py) and its check in an
+    # isolated JARVIS (decision_check.py): the `id`, `title` and `state` they
+    # read are the deck author's own content file, the package's id that
+    # JARVIS assigned, and the story frames' fixed states, never a session's
+    # record or a run row; and everything they build is printed to the
+    # terminal of the agent that ran the command, never given to the brain.
+    "decision_package.problems_of": (
+        "it lists what is wrong with the author's own content file, by its own "
+        "decision and option ids and titles, for the agent that ran the command"),
+    "decision_package.deliver": (
+        "it raises the receiving JARVIS's own refusal (`error` from "
+        "/api/packages/local) to the command's runner; nothing reaches the brain"),
+    "decision_package.words_to_open": (
+        "it builds the sentence the command prints for its runner from the deck's "
+        "own title, which the author wrote; the brain never receives it"),
+    "decision_package.main": (
+        "the command line: it prints the checks, the package id and the --project "
+        "its runner gave to that runner's terminal, never to the brain"),
+    "decision_check.check": (
+        "it records pass and fail lines naming the package id and the deck's own "
+        "title for the command's printout; nothing reaches the brain"),
+    "decision_check._check_size": (
+        "it opens the package in the isolated JARVIS by the deck's own title and "
+        "records that tool's answer in the command's printout"),
+    "decision_check._check_story": (
+        "it records whether the story ended, by the story frames' fixed states, in "
+        "the command's printout"),
+    "decision_check._check_choose": (
+        "it records the deck's own first decision id in the command's printout"),
+    "decision_check._check_voice": (
+        "it records the deck's own decision id and option name in the command's "
+        "printout"),
     "work_report._line": (
         "the work reporter's command line: it prints the item's state and who is on "
         "each piece to the agent that ran it, in its own terminal, never to the brain"),

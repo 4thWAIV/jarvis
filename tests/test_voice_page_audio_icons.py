@@ -38,8 +38,11 @@ LOOK = """() => ({hearing: document.querySelector('#btn-mic-off').dataset.hearin
                  cups: document.querySelector('#btn-mic-off').dataset.saying,
                  allOff: document.querySelector('#btn-mic-off').dataset.allOff,
                  speaker: document.querySelector('#btn-speaker').dataset.saying})"""
-# Every running animation on the headset (none: it never moves).
-HEADSET_MOVES = "() => document.getElementById('btn-mic-off').getAnimations({subtree: true}).length"
+# Every animation running on the headset and the speaker (none: they never
+# move). The buttons' colour transitions on a change of state are not motion.
+ICONS_MOVE = """() => ['btn-mic-off', 'btn-speaker']
+  .reduce((n, id) => n + document.getElementById(id).getAnimations({subtree: true})
+    .filter(a => a instanceof CSSAnimation).length, 0)"""
 
 
 class Settings:
@@ -115,7 +118,7 @@ async def test_the_speaker_mutes_and_unmutes_speech_and_stop_stays_its_own(page_
         browser, page, settings = await _opened(p, page_url, voice)
         await _speak(page, voice, 41)
         assert (await page.evaluate(LOOK))["cups"] == "speaking"
-        assert await page.evaluate(HEADSET_MOVES) == 0, "the headset never moves"
+        assert await page.evaluate(ICONS_MOVE) == 0, "the headset and the speaker never move"
         await page.wait_for_selector("#hush")
         # Stop is Stop: it stops, and mutes nothing.
         await page.click("#hush")

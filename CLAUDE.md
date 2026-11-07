@@ -1168,7 +1168,7 @@ microphone on and speech unmuted), drawn as the whole subsystem at a glance
 the power symbol when all is off; still, never animated); and the speaker
 at the end (`SpeakerButton.tsx`, part `speaker`), which mutes and unmutes
 speech, showing the mute and speaking, silent or stopped (for
-`STOPPED_SHOWN_MS` after Stop). Stop stays its own control. His speech mute
+`STOPPED_SHOWN_MS` after Stop), still like the headset. Stop stays its own control. His speech mute
 is a voice input setting (`voice_control.py` `speech_muted`, per user,
 saved, published as `voice_input_settings` so every page and the brain
 agree): while it is on JARVIS answers in text only. The speech scheduler

@@ -907,9 +907,8 @@ html, body {
 /* The headset, the whole audio subsystem, drawn on the power button (Mic off),
    and the speaker, what JARVIS says, beside it (AudioHeadset.tsx,
    SpeakerButton.tsx). Grey while idle; the theme's blue while hearing or
-   speaking; on red, as Mute's, while muted or off. The headset never moves:
-   each state is a still look. The speaker's waves pulse while speaking and
-   stand still under reduced motion. */
+   speaking; on red, as Mute's, while muted or off. Neither moves: each state
+   is a still look. */
 .control-button.small.audio-headset:not(.muted),
 .control-button.small.audio-speaker { color: var(--ui-muted); }
 .audio-headset:not(.muted) .headset-band { stroke: var(--ui-secondary); }
@@ -925,12 +924,6 @@ html, body {
   border-color: rgba(var(--ui-accent-rgb), 0.35);
 }
 .audio-speaker.speaking .speaker-body { fill: var(--ui-accent); fill-opacity: 0.3; }
-@keyframes audio-pulse { 0%, 100% { opacity: 0.35; } 35% { opacity: 1; } }
-.audio-speaker .speaker-wave { animation: audio-pulse 1.2s ease-in-out infinite; }
-.audio-speaker .speaker-wave.second { animation-delay: 0.3s; }
-@media (prefers-reduced-motion: reduce) {
-  .audio-speaker .speaker-wave { animation: none; }
-}
 
 /* Muted is unmistakable: solid bright red, a white crossed-out microphone. */
 .control-button.small.muted,

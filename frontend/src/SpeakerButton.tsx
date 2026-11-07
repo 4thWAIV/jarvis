@@ -4,9 +4,9 @@
  * nothing: the server makes no audio for it, and what is sounding stops at
  * once (voice_control.py, `speech_muted`; the same change as the brain's
  * `mute_speech`, which can only mute). Its look is the mute and what JARVIS
- * is doing: red and crossed while muted, lit with pulsing waves while
- * speaking (still under reduced motion), grey while silent, a small square
- * for a moment after Stop. Stop stays its own control.
+ * is doing, still in every state: red and crossed while muted, blue with its
+ * waves while speaking, grey while silent, a small square for a moment
+ * after Stop. Stop stays its own control.
  */
 
 import { setSpeechMuted, useSaying } from "./audioState";
