@@ -174,12 +174,12 @@ looked for: arriving late (behind a permission prompt he then approves) it is
 delivered and answered as usual. Anything unresolved
 `session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
 watcher only ever looks for a bounded set; settled messages are never read
-again. Each step that wants him (queued, undelivered, answered, and a send
-that failed) moves the message's one attention item to its next revision;
-sent and delivered are only progress, kept in the record and the agent's
-thread, and resolve the item instead (`server._MESSAGE_PROGRESS`), since
-what it last said (queued, not picked up) is no longer so. Nothing is
-spoken of any step.
+again. Each step that wants him (undelivered, answered, and a send that
+failed) moves the message's one attention item to its next revision;
+queued, sent and delivered are only progress, kept in the record and the
+agent's thread, and resolve the item instead (`server._MESSAGE_PROGRESS`),
+since what it last said (not picked up) is no longer so. Nothing is spoken
+of any step.
 The record is written before each
 event, and the open messages are read from the store each poll, so a restart
 follows on from where it stopped. The brain reads the record with
@@ -904,7 +904,7 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
-queued, not picked up, answered or not sent; a session's message,
+not picked up, answered or not sent; a session's message,
 needs board or needs-you; a session finishing; a run or package run ending;
 a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its
@@ -925,8 +925,21 @@ all pass, one digest: the candidates' facts to the brain with other
 people's words walled, under the `digest` origin, where `/internal/tool`
 refuses every tool; at most two sentences or SILENT; discarded if the floor,
 the activity revision or any item moved meanwhile. A failed brain or voice
-says nothing in its place. Played (or SILENT) finishes with the items'
-revisions; only he marks them seen. The digest's brain turn takes the brain's
+says nothing in its place. A digest is made only from the candidates whose
+facts fit its walled block whole (`attention.fitting`, under
+`server._WRAP_CONTENT_CAP`, each name or subject at most
+`DIGEST_WORDS_CHARS`), so played (or SILENT) finishes with the revisions of
+only the items the brain was shown; the rest wait for the next. Seen is his
+act: his click, his mark, or hearing it read in full. The brain's reading
+tools (`read_message_reply` on an answer, `read_session_message`,
+`mark_people_message_read`) note the pending update they read on a turn he
+drove (`server._read_to_him`), and once that turn's reply has been heard in
+full (`speech.wait_for`, every chunk played) it is seen at the revision read
+(`server._seen_once_heard`, `attention_api.mark_seen_source`); a reply cut
+off, skipped or failed leaves it pending, and no digest marks anything
+seen. `attention_updates` gives the brain every item the page has, each
+brief (`attention_api.for_brain`), a page at a time
+(`server._paged(..., exact=True)`). The digest's brain turn takes the brain's
 turn lock for the few seconds it runs, so a turn of his that starts then
 waits behind it. The floor is `server.conversation_floor`
 (`_ConversationFloor`, an `attention.TurnState`), read from every open

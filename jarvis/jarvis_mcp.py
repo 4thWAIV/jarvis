@@ -2143,12 +2143,15 @@ TOOL_SPECS = [
         "name": "attention_updates",
         "description": (
             "What is waiting for him: the background updates (Review updates on the page) "
-            "that JARVIS recorded instead of announcing them, such as messages queued, not "
-            "picked up or answered, sessions' messages and needs, runs that ended, people's messages "
+            "that JARVIS recorded instead of announcing them, such as messages not picked "
+            "up or answered, sessions' messages and needs, runs that ended, people's messages "
             "arriving. Gives the pending count, each update's kind, event and facts, whether "
             "he is engaged, away or unknown, and the settings for when updates may be "
-            "spoken. Use it when he asks what he missed or what is new."),
-        "inputSchema": {"type": "object", "properties": {}},
+            "spoken. Use it when he asks what he missed or what is new. The JSON comes a "
+            "page at a time: when it says there is more, call it again with the next page "
+            "before answering, so no update is missed."),
+        "inputSchema": {"type": "object",
+                        "properties": {"page": {"type": "integer", "minimum": 1}}},
     },
     {
         "name": "mark_updates_seen",

@@ -341,7 +341,7 @@ async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeyp
     (m,) = _messages(server)
     assert m.status == "queued" and wire.sent == []
     assert wire.speech.said == []
-    assert recorded(attention) == [("agent_message", str(m.id), "queued")]
+    assert recorded(attention) == [], "queued is only progress, never an update"
     assert n not in server._captures, "queued counts as gone: the capture closes"
     assert _drew(wire) == []
 

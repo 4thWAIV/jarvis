@@ -718,18 +718,60 @@ def updates(wired, monkeypatch):
     return store
 
 
+@pytest.fixture
+def many_updates(updates):
+    """More updates than one tool result holds: twelve pending, three seen."""
+    for n in range(10):
+        updates.record("session_message", str(n), "arrived", facts={"message_id": n},
+                       untrusted={"agent": f"agent number {n} with a longish name"})
+    for n in range(3):
+        seen = updates.record("needs_board", f"project-{n}", "changed", facts={"items": n + 1},
+                              untrusted={"agent": f"builder {n}"})
+        updates.mark_seen([seen.id])
+    return updates
+
+
+def _attention_pages(wired) -> tuple[dict, int]:
+    """Every page of attention_updates joined back into its JSON, and how
+    many pages there were. Each page is walled on its own."""
+    import re
+    chunks, page, total = [], 1, 1
+    while page <= total:
+        got = _call(wired, "attention_updates", page=page)
+        assert got["ok"] and len(got["text"]) < 1500, "each page fits the tool cap whole"
+        _walled(got["text"])
+        head, block = got["text"].split("\n", 1)
+        total = int(re.search(r"page \d+ of (\d+)", head).group(1))
+        chunks.append(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
+        page += 1
+    return json.loads("".join(chunks)), total
+
+
 def test_attention_updates_is_review_updates_walled(wired, updates):
     page = wired.client.get("/api/attention").json()
-    got = _call(wired, "attention_updates")
-    assert got["ok"]
-    _walled(got["text"])
-    block = got["text"].split("\n", 1)[1]
-    told = json.loads(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
+    told, _ = _attention_pages(wired)
     assert page["pending"] == told["pending"] == 2
     assert [(i["id"], i["kind"], i["event"]) for i in told["items"]] == \
         [(i["id"], i["kind"], i["event"]) for i in page["items"]]
     assert told["settings"] == page["settings"]
     assert page["items"][1]["untrusted"]["agent"] == HOSTILE, "the page shows it as written"
+
+
+def test_the_brain_reads_every_update_the_page_shows(wired, many_updates):
+    """More than five updates: the brain reads them all, a page at a time,
+    the seen ones too, with the words each is about."""
+    page = wired.client.get("/api/attention").json()
+    told, pages = _attention_pages(wired)
+    assert len(page["items"]) == 15 and pages > 1
+    assert page["pending"] == told["pending"] == 12
+    assert [(i["id"], i["kind"], i["event"], i["state"]) for i in told["items"]] == \
+        [(i["id"], i["kind"], i["event"], i["state"]) for i in page["items"]]
+    for t, p in zip(told["items"], page["items"]):
+        if "session-output" not in json.dumps(p["untrusted"]):   # the wall breaks that one
+            assert t.get("words") == (p["untrusted"] or None)
+    assert told["settings"] == page["settings"]
+    beyond = _call(wired, "attention_updates", page=pages + 1)
+    assert f"there is no page {pages + 1}" in beyond["text"]
 
 
 def test_mark_updates_seen_is_the_seen_button(wired, updates):

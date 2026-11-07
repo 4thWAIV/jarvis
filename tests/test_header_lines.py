@@ -354,6 +354,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server.report_queued": (
+        "a message waiting its turn is only progress (`_MESSAGE_PROGRESS`): "
+        "`_AgentDestination._attend` resolves the message's update and records "
+        "no words, so the name it is handed reaches no string. Pinned by "
+        "tests/test_agent_transmission_pins.py and test_speech_call_sites.py"),
     "server.tool_project_notes": (
         "the `text` and `stamp` it prints are a project note's, read from "
         "JARVIS's own projects folder, and every one goes back only inside the "
@@ -1193,25 +1198,6 @@ def _drive_perform_steer(server, session, monkeypatch):
     return said + view()
 
 
-def _drive_perform_steer_queued(server, session, monkeypatch):
-    """When the message waits its turn (`_AgentDestination.report_queued`,
-    through `transmission.perform`): nothing said, an attention item."""
-    import asyncio
-
-    view = _attended(server, monkeypatch)
-    speech = _Speech()
-    monkeypatch.setattr(server, "speech", speech)
-    monkeypatch.setattr(server, "_why_message_waits",
-                        lambda session_id, message_id=None: "is in the middle of a turn")
-    item = server._StagedSteer(session_id=session.session_id,
-                               voice_name=session.voice_name,
-                               project=session.project,
-                               prompt="carry on",
-                               socket_path=session.socket_path)
-    asyncio.run(server._perform_steer(item))
-    return speech.said + view()
-
-
 def _drive_perform_dialog(server, session, monkeypatch):
     import asyncio
 
@@ -1273,7 +1259,6 @@ DRIVERS = {
     "server.refusal": _drive_steer_session,
     "server.unheard": _drive_steer_session,
     "server.report_outcome": _drive_perform_steer,
-    "server.report_queued": _drive_perform_steer_queued,
     "server._perform_dialog": _drive_perform_dialog,
 }
 

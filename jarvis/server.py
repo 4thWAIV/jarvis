@@ -805,7 +805,8 @@ def _start_attention() -> None:
     digest = attention.Digest(
         attention_admission, _digest_ask, _digest_speak, _digest_played,
         _wrap_untrusted,
-        on_spoken=lambda text: _record(conversation_log.ItemKind.NOTICE, text))
+        on_spoken=lambda text: _record(conversation_log.ItemKind.NOTICE, text),
+        budget=_WRAP_CONTENT_CAP)
 
     async def look() -> None:
         while True:
@@ -1868,9 +1869,9 @@ async def _say_notice(line: str, note: str, what: str, **links):
 async def _attend_message(event: dict) -> None:
     """A message JARVIS sent has moved on (gone from the queue, failed,
     delivered, not picked up, answered): one attention item per message.
-    Sent and delivered are only progress (`_MESSAGE_PROGRESS`): on record in
-    the `messages` table and shown in the agent's thread, never an update;
-    each resolves whatever the item last said (queued, not picked up), which
+    Queued, sent and delivered are only progress (`_MESSAGE_PROGRESS`): on
+    record in the `messages` table and shown in the agent's thread, never an
+    update; each resolves whatever the item last said (not picked up), which
     is no longer so. Every other step is a revision of it. An answer itself
     goes on record in his conversation, under the agent and the message it
     answers, first."""
@@ -1894,8 +1895,11 @@ async def _attend_message(event: dict) -> None:
 
 # The message events the session watcher reports (`SessionWatcher.track`).
 _MESSAGE_EVENTS = ("sent", "send_failed", "delivered", "undelivered", "answered")
-# The steps that are only progress, never an update (`_attend_message`).
-_MESSAGE_PROGRESS = ("sent", "delivered")
+# The steps that are only progress, never an update (`_attend_message`,
+# `_AgentDestination._attend`): a message waiting its turn, going and
+# arriving need nothing from him; "not picked up" and the ten-minute queue
+# check in Diagnostics say so when one gets stuck.
+_MESSAGE_PROGRESS = ("queued", "sent", "delivered")
 
 
 # How often the needs board is looked at. A file is rewritten by hand-paced
@@ -2795,7 +2799,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     the socket loop keeps receiving `played` acks and interim text meanwhile.
     `heard` is the id the page gave this transcript; a capture made on this
     turn records it, so the page can move those words to the capture."""
-    global _turn_utt, _turn_heard
+    global _turn_utt, _turn_heard, _turn_reads
     if brain_instance is None or speech is None:
         return
     t0 = time.monotonic()
@@ -2822,7 +2826,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     await _turn_lock.acquire()
     utt = speech.begin_turn()
     reply = _ReplyText(utt.id)
-    _turn_utt, _turn_heard = utt, heard
+    reads: list = []
+    _turn_utt, _turn_heard, _turn_reads = utt, heard, reads
     try:
         try:
             try:
@@ -2850,7 +2855,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 raise
             finally:
                 reply.finish()  # an error also closes the live text stream, as failed
-                _turn_utt, _turn_heard = None, None
+                _turn_utt, _turn_heard, _turn_reads = None, None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
                 finally:
@@ -2870,7 +2875,9 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                     detail={"utt": utt.id, "reply_started_at": reply.at})
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
-        await speech.wait_for(utt, timeout=120.0)
+        # Heard in full, it is also what makes the updates it read seen.
+        heard_all = await speech.wait_for(utt, timeout=120.0)
+        _seen_once_heard(reads, utt, heard_all and result.stop_reason == "result")
         first_audio = (utt.first_sent_at - t0) if utt.first_sent_at is not None else None
         log.info("latency: first_delta=%s first_audio=%s turn=%.2fs ctx=%d out=%d tools=%s",
                  f"{result.first_delta_sec:.2f}s" if result.first_delta_sec is not None else "none",
@@ -4934,6 +4941,7 @@ def tool_read_message_reply(args: dict) -> str:
     name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "That session")
     if str(m.status) != run_store.MessageStatus.ANSWERED:
         return f"Message {number} to {name} has no answer yet: {_message_state(m, time.time())}."
+    _read_to_him("agent_message", number)
     if not m.reply:
         return f"{name} ended its turn on message {number} without saying anything."
     return _one_page(m.reply, _page_arg(args), f"{name}'s answer to message {number}",
@@ -5005,6 +5013,7 @@ def tool_read_session_message(args: dict) -> str:
     if m is None:
         return f"There is no message {number} from a session; session_messages has them."
     run_store.mark_session_message_read(number)
+    _read_to_him("session_message", number)
     name = _said_name({"voice_name": m.agent_name}, "A session")
     text = (f"Subject: {m.subject or '(none)'}\n\n{m.body or '(no text)'}")
     return _one_page(text, _page_arg(args), f"{name}'s message {number}",
@@ -5076,7 +5085,41 @@ _capture_ids = itertools.count(1)
 # clear them out from under it.
 _turn_utt = None
 _turn_heard: Optional[int] = None
+# The updates the brain read to him on this turn, as (kind, source id,
+# revision): each is seen once the turn's reply has been heard in full
+# (`_seen_once_heard`), never on the tool call alone.
+_turn_reads: Optional[list] = None
 _turn_lock = asyncio.Lock()
+
+
+def _read_to_him(kind: str, source_id) -> None:
+    """A reading tool has just given the brain this source on a turn he
+    drove: its update, if pending, waits to be seen until he has heard the
+    reply that reads it. Never raises."""
+    if (_turn_reads is None or attention_record is None or brain_instance is None
+            or brain_instance.current_origin != "user"):
+        return
+    try:
+        item = attention_record.get(kind, str(source_id))
+    except Exception:
+        log.warning("attention: %s was not looked up", kind, exc_info=True)
+        return
+    if item is not None and item.state == attention_store.PENDING:
+        _turn_reads.append((kind, str(source_id), item.revision))
+
+
+def _seen_once_heard(reads: list, utt, heard: bool) -> None:
+    """The turn's reply has ended: if he heard every word of it, the
+    updates it read to him are seen (`attention_api.mark_seen_source`), each
+    at the revision that was read. A reply cut off, skipped, failed or with
+    nothing said leaves them pending. Never raises."""
+    if not reads or not heard or not utt.chunks or attention_record is None:
+        return
+    for kind, source_id, revision in reads:
+        try:
+            attention_api.mark_seen_source(attention_record, kind, source_id, revision)
+        except Exception:
+            log.warning("attention: %s was not marked seen", kind, exc_info=True)
 
 
 def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:
@@ -6073,13 +6116,17 @@ class _AgentDestination:
         await _message_went(self.item.session_id)
 
     def _attend(self, happened: str) -> None:
+        if happened in _MESSAGE_PROGRESS:
+            _attention_resolved("agent_message", self.item.message_id or 0)
+            return
         _attend("agent_message", self.item.message_id or 0, happened,
                 facts={"message_id": self.item.message_id or 0},
                 untrusted={"agent": self.item.voice_name or ""})
 
     async def report_queued(self, speech, why: str) -> None:
-        """Nothing is said: the message shows it queued, behind its
-        session's turn, and it goes as soon as the session is free."""
+        """Nothing is said and it is no update: the message shows it
+        queued, behind its session's turn, and it goes as soon as the
+        session is free."""
         self._attend("queued")
 
     async def report_outcome(self, speech, outcome: str) -> None:
@@ -7177,6 +7224,7 @@ async def tool_mark_people_message_read(args: dict) -> str:
         return said
     if got.direction != "incoming":
         return "That is a message he sent; there is nothing to mark read."
+    _read_to_him("arrival", message_id)
     if got.receipts.read_at is not None:
         return "That message was already marked read."
     return "Marked read, sir: the sender is told he has read it."
@@ -8992,15 +9040,22 @@ def _attention_running() -> attention_store.AttentionStore:
 
 
 async def tool_attention_updates(args: dict) -> str:
-    """What is waiting for him: the Review updates list."""
+    """What is waiting for him: the Review updates list, every item the page
+    has, each brief (`attention_api.for_brain`), a page at a time. The pages
+    are cut exactly, so joined they are the whole JSON."""
     try:
         answer = await asyncio.to_thread(
-            lambda: attention_api.overview(_attention_running(), attention_admission))
+            lambda: attention_api.for_brain(_attention_running(), attention_admission,
+                                            time.time()))
     except attention_api.Unavailable:
         return "The updates record is not running, sir."
-    return ("His updates (Review updates on the page), as JSON. Names and subjects are "
-            "other people's words:\n"
-            + _wrap_untrusted(_ATTENTION_WRAP_NAME, json.dumps(answer, ensure_ascii=False)))
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+                         "His updates (Review updates on the page), as JSON",
+                         "attention_updates", exact=True)
+    if chunk is None:
+        return head
+    return (head + " Names and subjects are other people's words:\n"
+            + _wrap_untrusted(_ATTENTION_WRAP_NAME, chunk))
 
 
 async def tool_mark_updates_seen(args: dict) -> str:

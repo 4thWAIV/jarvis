@@ -9,8 +9,9 @@ say); what arrived while he was away is counted, never played; the brain's
 answer is bounded and SILENT says nothing; a failed brain or voice leaves
 the items as they were with nothing said in their place; a continuation or
 a changed item between generation and playback discards the digest; only a
-fully played digest (or SILENT) finishes with its items, and nothing marks
-an item seen but his own act.
+fully played digest (or SILENT) finishes with its items, and only with those
+it showed the brain; and seen is his act: his click, his mark, or hearing it
+read in full.
 """
 from __future__ import annotations
 
@@ -386,3 +387,54 @@ def test_the_spoken_text_is_bounded():
     assert len(text) <= attention.DIGEST_CHARS_MAX and text.endswith(".")
     assert attention.spoken_text("") is None
     assert attention.spoken_text("SILENT") is None
+
+
+# ── seen by hearing it, and a digest only of what fits ───────────────────
+
+def test_a_source_heard_in_full_is_seen_at_the_revision_read():
+    store = AttentionStore(node_id=lambda: "node-a")
+    first = store.record("agent_message", "7", "undelivered")
+    store.record("agent_message", "7", "answered")
+    assert store.mark_seen_source("agent_message", "7", revision=first.revision) == 0, \
+        "a newer revision is news he has not heard"
+    assert store.mark_seen_source("agent_message", "7", revision=2) == 1
+    assert store.get("agent_message", "7").state == attention_store.SEEN
+    assert store.mark_seen_source("agent_message", "7") == 0, "seen once"
+    assert store.mark_seen_source("agent_message", "8") == 0, "no such source"
+
+
+def test_the_digest_takes_only_the_oldest_updates_that_fit():
+    store = AttentionStore(node_id=lambda: "node-a")
+    items = [store.record("session_message", str(n), "arrived", facts={"message_id": n},
+                          untrusted={"agent": f"agent {n} " + "x" * 400}) for n in range(12)]
+    kept = attention.fitting(items, 0.0, 1200)
+    assert 1 < len(kept) < len(items) and kept == items[:len(kept)]
+    assert len(attention._updates_text(kept, 0.0)) <= 1200
+    assert attention.fitting(items, 0.0, None) == items
+    one = attention.fitting(items[:1], 0.0, 10)
+    assert one == items[:1], "the oldest always goes, its words shortened to fit"
+    assert len(attention._updates_text(one, 0.0)) < 400
+
+
+@pytest.mark.asyncio
+async def test_a_digest_finishes_only_with_the_updates_it_showed(world):
+    clock, turn, activity, store, admission, _ = world
+    activity.touch()
+    admission.observe()
+    for n in range(12):
+        store.record("session_message", str(n), "arrived", facts={"message_id": n},
+                     untrusted={"agent": f"agent {n} " + "x" * 150})
+    clock.advance(61)
+    activity.touch()
+    admission.observe()
+    clock.advance(11)
+    brain, voice = Brain(), Voice()
+    digest = Digest(admission, brain, voice.speak, voice.played, wrap, budget=1200)
+    assert await digest.consider() == attention_store.PLAYED
+    block = brain.prompts[0]
+    shown = json.loads(block[block.index("\n", block.index("<session-output")) + 1:
+                             block.rindex("\n</session-output>")])
+    assert 1 < len(shown) < 12
+    left = store.candidates(0)
+    assert len(left) == 12 - len(shown), "the ones it did not show are still offered"
+    assert {i.id for i in left}.isdisjoint({u["id"] for u in shown})

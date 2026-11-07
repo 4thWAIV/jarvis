@@ -8,6 +8,10 @@ same answer with the same validation.
                                  the admission settings
   POST /api/attention/seen       mark items seen ({"ids": [...]}, or every
                                  pending one when ids is absent)
+
+The brain's attention_updates gives `for_brain`, the same items briefer and
+in pages; its reading tools mark a source's update seen through
+`mark_seen_source` once the reply that read it to him was heard in full.
   GET  /api/attention/settings   the admission policy's trial values
   PUT  /api/attention/settings   change some of them (validated; the saved
                                  values come back)
@@ -45,13 +49,47 @@ class Unavailable(Exception):
 Running = Callable[[], tuple[Optional[AttentionStore], Optional[Admission]]]
 
 
-def overview(store: AttentionStore, admission: Optional[Admission]) -> dict:
+def _overview(store: AttentionStore, admission: Optional[Admission],
+              shape: Callable[[attention_store.Item], dict]) -> dict:
+    """The count, his availability and the settings, then the items (pending
+    first, then the last ones seen or resolved), each in `shape`."""
     pending = store.items((attention_store.PENDING,))
     done = store.items((attention_store.SEEN, attention_store.RESOLVED), limit=RECENT_DONE)
     return {"pending": len(pending),
             "availability": admission.availability() if admission else "unknown",
-            "items": [i.public() for i in pending + done],
-            "settings": asdict(attention_store.settings())}
+            "settings": asdict(attention_store.settings()),
+            "items": [shape(i) for i in pending + done]}
+
+
+def overview(store: AttentionStore, admission: Optional[Admission]) -> dict:
+    """What the page's Review updates reads."""
+    return _overview(store, admission, lambda i: i.public())
+
+
+def brief(item: attention_store.Item, now: float) -> dict:
+    """One item as the brain's tool gives it: what the page shows of it
+    (its kind, event, facts and the words it is about, its state) without
+    the timestamps, so a page of the tool holds several."""
+    out = {"id": item.id, "kind": item.kind, "event": item.event, "state": item.state,
+           "minutes_ago": int(max(0.0, now - item.updated_at) // 60)}
+    if item.facts:
+        out["facts"] = item.facts
+    if item.untrusted:
+        out["words"] = item.untrusted
+    return out
+
+
+def for_brain(store: AttentionStore, admission: Optional[Admission], now: float) -> dict:
+    """The overview with each item brief: the same items, in the same order,
+    as the page's, and the count and settings ahead of them."""
+    return _overview(store, admission, lambda i: brief(i, now))
+
+
+def mark_seen_source(store: AttentionStore, kind: str, source_id: str,
+                     revision: Optional[int] = None) -> int:
+    """He has heard this source read to him in full (the brain's reading
+    tools, once the reply that read it was heard): its update is seen."""
+    return store.mark_seen_source(kind, str(source_id), revision)
 
 
 def mark_seen(store: AttentionStore, ids: Optional[list]) -> dict:

@@ -692,8 +692,9 @@ async def test_sent_and_delivered_are_never_an_update(server, monkeypatch, atten
                                                ("undelivered", "delivered")])
 async def test_progress_resolves_what_the_update_last_said(server, monkeypatch, attention,
                                                            before, progress):
-    """Queued, then sent; not picked up, then delivered after all: what the
-    update said is no longer so, so it leaves the queue, and the answer is
+    """Queued (an update recorded before queued stopped being one), then
+    sent; not picked up, then delivered after all: what the update said is
+    no longer so, so it leaves the queue, and the answer is
     the same item's next revision, pending again."""
     monkeypatch.setattr(server, "speech", _Speech())
     monkeypatch.setattr(server, "attention_record", attention)

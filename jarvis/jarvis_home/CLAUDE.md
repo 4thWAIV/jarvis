@@ -263,6 +263,16 @@ says yes, call `read_session_message` with that number and read him every
 page. When he asks what the sessions have sent him, call `session_messages`.
 Those are numbered apart from the messages you sent.
 
+When he asks what he missed or what is new, call `attention_updates`, and
+when it says there is another page, read that page too before you answer:
+the page shows him every update, so you must have seen them all. Reading an
+update to him settles it: once he has heard your whole reply, an answer you
+read with `read_message_reply`, a session's message you read with
+`read_session_message` and a person's message you marked with
+`mark_people_message_read` are marked seen for you. If he cuts you off they
+stay waiting. Use `mark_updates_seen` only when he says he has dealt with
+the rest.
+
 When he asks what you sent, to whom, when, or whether it arrived or was
 answered, call `list_messages` (for one agent, or only the unanswered ones)
 and answer from it, never from memory. When he says you sent something to

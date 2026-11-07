@@ -366,8 +366,8 @@ class AttentionStore:
 
     def mark_seen(self, ids: Optional[Iterable[int]] = None) -> int:
         """He has reviewed these (every pending one when `ids` is None). How
-        many were marked. Seen is his act alone: no digest or playback sets
-        it."""
+        many were marked. Seen is his act: his click, his mark, or hearing it
+        read in full (`mark_seen_source`); no digest sets it."""
         now = self._clock()
         with closing(_connect()) as conn, conn:
             if ids is None:
@@ -381,6 +381,25 @@ class AttentionStore:
                     count += conn.execute(
                         "UPDATE attention_items SET state = ?, seen_at = ? "
                         "WHERE id = ? AND state = ?", (SEEN, now, item_id, PENDING)).rowcount
+        if count:
+            self._changed()
+        return count
+
+    def mark_seen_source(self, kind: str, source_id: str,
+                         revision: Optional[int] = None) -> int:
+        """He has heard this source read to him in full: its item is seen,
+        if still pending and, when `revision` is given, still at the
+        revision that was read (a newer one is news he has not heard). How
+        many were marked, 0 or 1."""
+        now = self._clock()
+        with closing(_connect()) as conn, conn:
+            sql = ("UPDATE attention_items SET state = ?, seen_at = ? "
+                   "WHERE kind = ? AND source_id = ? AND state = ?")
+            values = [SEEN, now, kind, str(source_id), PENDING]
+            if revision is not None:
+                sql += " AND revision = ?"
+                values.append(int(revision))
+            count = conn.execute(sql, values).rowcount
         if count:
             self._changed()
         return count
