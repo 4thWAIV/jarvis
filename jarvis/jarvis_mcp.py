@@ -2292,6 +2292,84 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "package_inbox",
+        "description": (
+            "The packages agents have sent him, waiting in his package inbox (the Queue tab's "
+            "Packages section): each one's id, title, who sent it, how many of its decisions "
+            "are answered, and where it stands (not opened, opened, partly answered, answered, "
+            "sent back, closed). With `package`, that one in full with every question it asks, "
+            "its options, the recommendation and what is recorded. With `closed`, the closed "
+            "ones. Arrivals are never announced: read this when he asks what packages he has. "
+            "Titles and questions are the sender's words."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string",
+                            "description": "Its id, or its title or sender as he said it."},
+                "closed": {"type": "boolean", "description": "List the closed ones instead."},
+            },
+        },
+    },
+    {
+        "name": "open_inbox_package",
+        "description": (
+            "Open one package from his inbox, only when he asks for it: a page package (a "
+            "decision deck, a presentation) is shown in the centre of his screen; any other "
+            "is unpacked for you to follow with him. Gives its package.json and, for a "
+            "decision package, every question to read him one at a time."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string",
+                                       "description": "Its id, or its title or sender as he said it."}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "answer_package_decision",
+        "description": (
+            "Record his answer to one decision of a package in his inbox, only when he gives "
+            "it: the package's own scripts/decide.py writes it to the package's record, and "
+            "the deck on his screen shows it within seconds. `option` is an option's id or "
+            "name, its letter, recommended, later (Decide later) or none (None of these); "
+            "`words` are his own words, kept as the answer's note."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string"},
+                "decision": {"type": "string",
+                             "description": "The decision's id; omit when only one is open."},
+                "option": {"type": "string"},
+                "words": {"type": "string"},
+            },
+            "required": ["package", "option"],
+        },
+    },
+    {
+        "name": "return_package_answers",
+        "description": (
+            "Send his answers to a package back, once every decision is answered (or, for a "
+            "package that asks nothing, once he has finished with it), and only when he says "
+            "so: the package's workflow gets them as its decisions, and a capture addressed to "
+            "the session that sent it holds them, to read back with read_capture and send "
+            "with steer_session only on his yes, as every message to a session."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string"}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "close_inbox_package",
+        "description": (
+            "Close a package in his inbox, only when he asks: after its answers went back it "
+            "is done; before, it is dismissed (set aside, whatever was answered kept)."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string"}},
+            "required": ["package"],
+        },
+    },
+    {
         "name": "retry_run",
         "description": (
             "Run a finished run's own instruction again, picking up where it left off — the "

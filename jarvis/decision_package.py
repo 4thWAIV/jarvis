@@ -1,8 +1,8 @@
 """A deck's content: reading it, working out what the agent left out
 (`expand`), checking it (`problems_of`), building it with the shared deck's
 own builder (examples/packages/decision-deck/new_deck.py) and delivering a
-zip into a JARVIS unshown (`deliver`, POST /api/packages/local with the tool
-token). `python -m jarvis.make_package` is the command that uses them, and
+zip into a JARVIS's package inbox unshown (`deliver`, POST /api/packages/inbox
+with the tool token). `python -m jarvis.make_package` is the command that uses them, and
 docs/making-a-package.md is how; `python -m jarvis.decision_package` is that
 same command's old name.
 """
@@ -19,6 +19,7 @@ import ssl
 import sys
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,7 @@ from pathlib import Path
 from jarvis import data_paths
 
 LIVE = "https://127.0.0.1:8340"
-LOCAL_ROUTE = "/api/packages/local"
+INBOX_ROUTE = "/api/packages/inbox"
 BUILDER = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "new_deck.py"
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
@@ -305,10 +306,10 @@ def short_name(text) -> str:
     return (out or _text(text)[:CAPS["short"]]).strip(" ,.;:?¿!¡")
 
 
-def _unique(base: str, taken: set[str]) -> str:
-    ident, n = base, 2
+def _unique(wanted: str, taken: set[str]) -> str:
+    ident, n = wanted, 2
     while ident in taken:
-        ident, n = f"{base}-{n}", n + 1
+        ident, n = f"{wanted}-{n}", n + 1
     taken.add(ident)
     return ident
 
@@ -444,7 +445,8 @@ def build(content: Path, out: Path, deck: dict) -> Path:
 @dataclass(frozen=True)
 class Delivered:
     package: dict          # the package as JARVIS describes it (packages_api.describe)
-    unpacked: bool         # False: the same bytes were already there
+    unpacked: bool         # False: the same bytes were already open in the inbox
+    inbox: dict            # its row in the package inbox (package_inbox_api.entry_json)
 
 
 def _context(url: str) -> ssl.SSLContext | None:
@@ -458,11 +460,14 @@ def _context(url: str) -> ssl.SSLContext | None:
     return context
 
 
-def post(url: str, token: str, body: dict, timeout: float = 60) -> dict:
-    """One JSON POST with the tool token; the answer, or OSError saying why."""
+def post(url: str, token: str, body: dict | bytes, timeout: float = 60) -> dict:
+    """One POST with the tool token, of JSON or of a zip's bytes; the
+    answer, or OSError saying why."""
+    raw = isinstance(body, bytes)
     request = urllib.request.Request(
-        url, data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        url, data=body if raw else json.dumps(body).encode(), method="POST",
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/zip" if raw else "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=_context(url)) as r:
             return json.loads(r.read() or b"{}")
@@ -473,13 +478,19 @@ def post(url: str, token: str, body: dict, timeout: float = 60) -> dict:
         raise OSError(f"{url} could not be reached: {e.reason}") from None
 
 
-def deliver(archive: Path, base: str, token: str) -> Delivered:
-    """Unpack the zip into the JARVIS at `base`, never shown: a tool-token
-    caller only unpacks (packages_api.NOT_HIS_ACT)."""
-    answer = post(base.rstrip("/") + LOCAL_ROUTE, token, {"path": str(archive)})
-    if "package" not in answer:
-        raise OSError(f"JARVIS did not unpack it: {answer.get('error') or answer}")
-    return Delivered(answer["package"], bool(answer.get("unpacked")))
+def deliver(archive: Path, base: str, token: str, project: str = "", session: str = "",
+            workflow: str = "", work: str = "") -> Delivered:
+    """Send the zip to the package inbox of the JARVIS at `base`: checked,
+    unpacked and recorded there, never shown (package_inbox.py). `session`
+    is who the answers go back to; `workflow` and `work` link it to the
+    workflow or work item it is for."""
+    query = urllib.parse.urlencode({k: v for k, v in (
+        ("project", project), ("session", session), ("workflow", workflow), ("work", work)) if v})
+    url = base.rstrip("/") + INBOX_ROUTE + (f"?{query}" if query else "")
+    answer = post(url, token, archive.read_bytes())
+    if "package" not in answer or "inbox" not in answer:
+        raise OSError(f"JARVIS did not take it: {answer.get('error') or answer}")
+    return Delivered(answer["package"], bool(answer.get("arrived")), answer["inbox"])
 
 
 # -- the command -----------------------------------------------------------------------

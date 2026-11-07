@@ -115,7 +115,8 @@ def mount(app: FastAPI,
           open_received: Callable[[uuid.UUID, uuid.UUID],
                                   Awaitable[tuple[Package | None, bool, str]]],
           open_local: Callable[[str, bool], Awaitable[tuple[Package | None, bool, str]]],
-          close_page: Callable[[str], Awaitable[None]]) -> None:
+          close_page: Callable[[str], Awaitable[None]],
+          saved: Optional[Callable[[Package], None]] = None) -> None:
     """`open_page(reference)` opens a page package in every page's centre
     area: (the package, "") or (None, why not). `story(action, reference,
     slide)` tells or stops its story: (done, what was done or why not).
@@ -125,7 +126,11 @@ def mount(app: FastAPI,
     package, unpacked now, "" or why it is not shown) or (None, False, why
     not). Showing (`open_page`, a story told, `open_local`'s show) is only
     ever asked for on his click (`his_click`).
-    `close_page(reference)` forgets the package a newly connected page shows."""
+    `close_page(reference)` forgets the package a newly connected page shows.
+    `saved(package)` is told after the frame has saved a result (the inbox
+    reads a deck's answers again)."""
+
+    on_saved = saved
 
     async def list_packages():
         packages = await asyncio.to_thread(work_packages.every)
@@ -153,6 +158,8 @@ def mount(app: FastAPI,
             saved = await asyncio.to_thread(work_packages.save_result, package, name, data)
         except PackageError as e:
             return _refused(e, 400)
+        if on_saved is not None:
+            await asyncio.to_thread(on_saved, package)
         return {"saved": saved.relative_to(package.folder).as_posix(), "bytes": len(data)}
 
     async def open_package_page(package_id: str, request: Request):

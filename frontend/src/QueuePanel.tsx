@@ -1,5 +1,7 @@
 /**
- * The right panel's Queue: one owner's work, newest arrival first. Waiting
+ * The right panel's Queue: at its top the Packages agents sent him
+ * (QueuePackages.tsx, shown signed in or not), then one owner's work,
+ * newest arrival first. Waiting
  * at the top (what has come in and not been taken up), Active under it
  * (opened work, outgoing exchanges and whatever is on its way out, kept
  * together), and the dismissed items behind a collapsed Dismissed, read a
@@ -38,6 +40,7 @@ import {
   directory, historyError, NEW, openQueue, pendingCommands, queue, queueReadError, readHistory, restore,
 } from "./queue";
 import { Cue, DELIVERY_CUE, QueueIcon } from "./QueueIcons";
+import { QueuePackages } from "./QueuePackages";
 import {
   active, cues, DELIVERY_WORDS, dismissed, jarvisLabel, latestFrom, messagesOf, personName, previewOf,
   sendWords, subjectOf, turnWords, unsentDrafts, waiting, type Directory, type ItemRecord,
@@ -131,9 +134,11 @@ export function QueuePanel() {
   useTick(30000);
   useLayoutEffect(() => { queueLaidOut.set(queueLaidOut.get() + 1); });
 
+  const packages = <QueuePackages part={ui.part("packages")} closedPart={ui.part("closedPackages")} />;
   if (!state.offered) {
     return (
       <div className="right-view queue-view" ref={ui.whole}>
+        {packages}
         <p className="queue-notice">{t("right.queue.notOffered")}</p>
       </div>
     );
@@ -143,6 +148,7 @@ export function QueuePanel() {
   const unsent = unsentDrafts(state);
   return (
     <div className="right-view queue-view" ref={ui.whole}>
+      {packages}
       {state.availability && state.availability !== "available" && (
         <p className="queue-notice" data-availability={state.availability}>
           {t(`right.queue.availability.${state.availability}`)}

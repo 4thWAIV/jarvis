@@ -11,6 +11,12 @@
  * nothing routine is spoken until Resume. None of these speak, send or
  * approve anything.
  *
+ * A package an agent sent (kind `package`, package_inbox.py) is one reduced
+ * line: a small package mark, who sent it, its title and how many decisions
+ * wait, then Open and Seen. Nothing else: no preview, no picture, no sound;
+ * it never expands, plays or takes the centre by itself. Open is his click
+ * (the inbox's one Open); Seen leaves the package in the backlog.
+ *
  * On every other view (`compact`, CentreNotices.tsx) it is one small chip in
  * the tab row ("3 updates") that never opens by itself: clicking it opens
  * the same list as a small dropdown over the view, with Mark all seen and
@@ -28,9 +34,11 @@
  * opening it with `updates.review`.
  */
 
-import { useEffect, useSyncExternalStore } from "react";
-import { attention, itemName, itemWords, markSeen, setAway } from "./attention";
-import { useT } from "./locale";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { attention, itemName, itemWords, markSeen, setAway, type AttentionItem } from "./attention";
+import { SaidText, useT, type Said } from "./locale";
+import { openInbox } from "./packageInbox";
+import { PackageMark } from "./QueuePackages";
 import { createStore } from "./store";
 import { bind, bindingProps, mainView } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
@@ -110,7 +118,7 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   );
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
-      {pending.map((item) => (
+      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} /> : (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -159,5 +167,29 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
       {hold}
       {list}
     </div>
+  );
+}
+
+/** A package's reduced line: who sent it, its title and how many decisions
+ *  wait, with Open and Seen. The words are the sender's, drawn as text. */
+function PackageLine({ item }: { item: AttentionItem }) {
+  const t = useT();
+  const [said, setSaid] = useState<Said | null>(null);
+  const waiting = Number(item.facts.waiting ?? 0);
+  const words = t("main.updates.package.line", {
+    sender: item.untrusted.agent || t("main.updates.someone"), title: item.untrusted.package ?? "",
+  }) + (waiting > 0 ? `, ${t("main.updates.package.waiting", { count: waiting })}` : "");
+  return (
+    <li className="updates-package" data-inbox-id={item.source_id}>
+      <PackageMark />
+      <span className="updates-words">{words}</span>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void openInbox(item.source_id).then(setSaid)}>
+        {t("main.updates.package.open")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void markSeen([item.id])}>
+        {t("main.updates.markSeen")}</button>
+      {said && <SaidText said={said} className="file-state" />}
+    </li>
   );
 }

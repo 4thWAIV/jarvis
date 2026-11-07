@@ -3,7 +3,7 @@
 This page is the only description of how to make a package and send it to Tim. Every kind goes through one command, and nothing else: never build, zip, attach or deliver a package by hand.
 
 ```bash
-python -m jarvis.make_package <content.json | folder> --session <your session id>
+python -m jarvis.make_package <content.json | folder> --session <your session id> [--workflow <id>] [--work <id>]
 ```
 
 Run it with JARVIS's own Python. The talk-to-jarvis skill gives the exact command for this Mac, which works from any folder. From inside the JARVIS checkout it is `.venv/bin/python -m jarvis.make_package`, and then give `--project <your project>` as well, since the project otherwise defaults to the name of the folder you run it from.
@@ -75,6 +75,6 @@ Worked out for you: `name` (from the folder's name), `version`, `runs` (from whi
 1. Checks the content and lists everything to change at once. `--check-only` stops here.
 2. Builds and zips it. A deck is built by the shared deck, `examples/packages/decision-deck/`.
 3. Checks it again. A deck is opened in an isolated JARVIS of its own, never Tim's: found and opened by its title, every slide fitting at both screen sizes with readable text, and its story told to the end. For a decision package it also checks that every vote control is visible and large enough, that the story waits at each question until it is answered (by a Choose click and by voice in turn), that Stop ends it within a second from the page and from JARVIS, and that it resumes at the first unanswered question. Every slide and step is photographed. A folder's zip is read the way Tim's JARVIS will read it.
-4. Only if everything passed, puts it in Tim's JARVIS without showing it (a decision package stamped as checked first, since his JARVIS opens no other), and sends him a message naming it and the words that open it.
+4. Only if everything passed, sends it to Tim's package inbox (a decision package stamped as checked first, since his JARVIS opens no other). It is unpacked there and listed in the Packages section of his Queue tab and in his updates, as one line naming you, its title and how many decisions wait. It is never shown and never spoken until he asks for it.
 
-It prints the package id. A decision package's answers are recorded in its `results/decisions.json`, at the path it prints and in `delivery.json` in its output folder. If anything fails nothing is delivered: fix what it says and run it again.
+It prints the inbox id and the package id. Once he has answered and says to send the answers back, they come to your session (`--session`) as a message, read back to him first and sent on his yes; with `--workflow <id>` they also come back as that workflow's decisions, one per decision id (`workflow_report.py answer <id> <decision id>`), and the workflow waits on them meanwhile. With `--work <id>` its questions show on that work item's Decisions tab, where he can answer them too. A newer version of a package you sent replaces the older one while it is still open. The package closes once your session has answered that message, or when he closes it. A decision package's answers are recorded in its `results/decisions.json`, at the path it prints and in `delivery.json` in its output folder. If anything fails nothing is delivered: fix what it says and run it again.

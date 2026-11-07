@@ -242,6 +242,11 @@ def _text(value: dict) -> str:
 
 Clock = Callable[[], float]
 
+# Kinds that are counted and listed but never spoken, by the digest or
+# anyone: a package Tim was sent (package_inbox.py) waits in his backlog
+# until he asks for it. Recorded silent, and never raised to audible.
+SILENT_KINDS = frozenset({"package"})
+
 
 class AttentionStore:
     """The one writer of the attention tables. `on_change` is told after
@@ -270,6 +275,7 @@ class AttentionStore:
         revision, pending again, and a line of its history. `audible` is only
         ever raised here, never lowered (`set_audible` lowers it)."""
         now = self._clock()
+        audible = audible and kind not in SILENT_KINDS
         facts_text, untrusted_text = _text(facts or {}), _text(untrusted or {})
         with closing(_connect()) as conn, conn:
             row = conn.execute("SELECT * FROM attention_items WHERE kind = ? AND source_id = ?",
@@ -311,6 +317,7 @@ class AttentionStore:
         """Whether this node may speak of the item. Not a revision: being
         allowed to speak of it is not news, so it neither makes it pending
         again nor makes it younger."""
+        audible = audible and kind not in SILENT_KINDS
         with closing(_connect()) as conn, conn:
             conn.execute("UPDATE attention_items SET audible = ? WHERE kind = ? AND source_id = ?",
                          (int(audible), kind, str(source_id)))

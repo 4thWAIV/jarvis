@@ -14,8 +14,11 @@
  *         and who is on it;
  *       Decisions: each open decision, answered here (DecisionCard.tsx),
  *         with "Open the package" when it names one (the server's one way
- *         to open a page package, the brain's open_package_page too), then
- *         the decided ones: his answers, and those withdrawn by their asker;
+ *         to open a page package, the brain's open_package_page too); then
+ *         the questions of the packages sent for it (`make_package --work`,
+ *         package_inbox.py), answered here into the package's own record;
+ *         then the decided ones: his answers, and those withdrawn by their
+ *         asker;
  *       Blocking: everything holding it up, in the server's order;
  *       Pieces: in dependency order, each with exactly who is on it, the
  *         reporting agent's own worker label beside that (quoted, marked as
@@ -40,7 +43,10 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { DecisionCard } from "./DecisionCard";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
+import { answerInbox, inboxProgress, openInbox, optionFor, type InboxDetail,
+         type InboxQuestion } from "./packageInbox";
 import { openPackagePage } from "./packages";
+import { PackageMark } from "./QueuePackages";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
@@ -67,10 +73,13 @@ export function WorkDetail({ id }: { id: string }) {
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
   const shownTab = useSyncExternalStore(workTab.subscribe, workTab.get);
   const tab = shownTab.itemId === id ? shownTab.tab : "overview";
-  const deciding = item ? item.decisions.length : 0;
+  const packages = live.value?.packages ?? [];
+  const asked = packages.flatMap((p) => p.questions.filter((q) => q.applies && !q.answer)
+    .map((q) => ({ question: q.question })));
+  const deciding = item ? item.decisions.length + asked.length : 0;
   const views: Record<WorkTab, (item: WorkItem) => ReactNode> = {
     overview: (i) => <Overview item={i} part={ui.part} />,
-    decisions: (i) => <Decisions item={i} part={ui.part} />,
+    decisions: (i) => <Decisions item={i} packages={packages} part={ui.part} />,
     blocking: (i) => <Blocking item={i} part={ui.part} />,
     pieces: (i) => <Pieces item={i} part={ui.part} />,
     reports: () => <Reports events={events} part={ui.part} />,
@@ -102,7 +111,8 @@ export function WorkDetail({ id }: { id: string }) {
         <button type="button" className="work-decision-banner" ref={ui.part("banner")}
                 {...bindingProps(bind("work.tab.select", { itemId: id, tab: "decisions" }))}>
           <strong>{t("main.work.banner.title", { count: deciding })}</strong>
-          <span className="work-decision-banner-question">{item.decisions[0].question}</span>
+          <span className="work-decision-banner-question">
+            {(item.decisions[0] ?? asked[0]).question}</span>
           <span className="work-decision-banner-go">{t("main.work.banner.go")}</span>
         </button>
       )}
@@ -165,19 +175,26 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
   );
 }
 
-/** Each open decision, answered here, then the answered ones. */
-function Decisions({ item, part }: { item: WorkItem; part: Part }) {
+/** Each open decision, answered here, then the questions of the packages
+ *  sent for it, then the answered ones. */
+function Decisions({ item, packages, part }: { item: WorkItem; packages: InboxDetail[]; part: Part }) {
   const t = useT();
   return (
     <>
       <section ref={part("decisions")}>
         <h3 className="work-section-head">{t("main.work.decisions")}</h3>
-        {item.decisions.length === 0
+        {item.decisions.length === 0 && packages.length === 0
           ? <p className="workflow-empty">{t("main.work.noDecisions")}</p>
           : <ul className="workflow-decisions-list">
               {item.decisions.map((d) => <Decision key={d.key} itemId={item.id} decision={d} />)}
             </ul>}
       </section>
+      {packages.length > 0 && (
+        <section ref={part("packages")}>
+          <h3 className="work-section-head">{t("main.work.packages")}</h3>
+          {packages.map((p) => <PackageQuestions key={p.inbox.id} detail={p} />)}
+        </section>
+      )}
       <section ref={part("answered")}>
         <h3 className="work-section-head">{t("main.work.answered")}</h3>
         {item.answered.length === 0
@@ -365,4 +382,61 @@ function OpenPackage({ reference, target }: { reference: string; target: (el: El
       {problem && <SaidText said={problem} className="file-state" />}
     </p>
   );
+}
+
+/** One package sent for the item: its title and sender, Open the package
+ *  (the inbox's one Open, his click), and each question it asks, answered
+ *  here through the package's own record (the brain's
+ *  answer_package_decision too). The words are the sender's. */
+function PackageQuestions({ detail }: { detail: InboxDetail }) {
+  const t = useT();
+  const [problem, setProblem] = useState<Said | null>(null);
+  const entry = detail.inbox;
+  return (
+    <div className="work-package" data-inbox-id={entry.id}>
+      <p className="work-decision-package">
+        <PackageMark />{" "}
+        <span>{t("main.work.packageFrom", { title: entry.title, sender: entry.sender })}</span>{" "}
+        <span className="package-progress">{inboxProgress(entry)}</span>{" "}
+        <button type="button" className="file-action" data-ui-action="domain"
+                onClick={() => void openInbox(entry.id).then(setProblem)}>
+          {t("main.work.openPackage")}</button>
+        {problem && <SaidText said={problem} className="file-state" />}
+      </p>
+      <ul className="workflow-decisions-list">
+        {detail.questions.map((q) => <PackageQuestion key={q.id} inboxId={entry.id} question={q} />)}
+      </ul>
+    </div>
+  );
+}
+
+function PackageQuestion({ inboxId, question: q }: { inboxId: string; question: InboxQuestion }) {
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "main", view: "main.work", kind: "workPackageQuestion",
+                                  key: `${inboxId}/${q.id}` }, label: q.question, socket: CENTRE_SOCKET });
+  if (!q.applies || q.answer) {
+    return (
+      <li className="work-answered-item" data-key={q.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+        <p className="work-answered-question">{q.question}</p>
+        <p className="work-answered-answer">
+          {q.answer ? t("main.work.packageAnswered", { answer: answerWords(q, t) }) : t("main.work.packageNotAsked")}
+        </p>
+      </li>
+    );
+  }
+  const recommended = q.options.find((o) => o.id === q.recommended);
+  return <DecisionCard question={q.question} options={q.options.map((o) => o.name)}
+                       recommendation={recommended ? recommended.name : null} ui={ui} dataKey={q.id}
+                       answer={(value) => {
+                         const { option, words } = optionFor(q, value);
+                         return answerInbox(inboxId, q.id, option, words);
+                       }} />;
+}
+
+/** A recorded answer in words: the option's name, or Decide later / None of these. */
+function answerWords(q: InboxQuestion, t: ReturnType<typeof useT>): string {
+  const a = q.answer!;
+  const name = a.choice || q.options.find((o) => o.id === a.answer)?.name
+    || (a.answer === "later" || a.answer === "none" ? t(`main.work.packageSpecial.${a.answer}`) : a.answer);
+  return a.note ? `${name} (${a.note})` : name;
 }

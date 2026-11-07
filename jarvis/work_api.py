@@ -2,7 +2,8 @@
 
   GET  /api/work                          the open items, the groups the Work tab lists them
                                           in, and History (closed, or done a while)
-  GET  /api/work/{id}                     one item, with its latest events
+  GET  /api/work/{id}                     one item, with its latest events and the open
+                                          packages sent for it, with their questions
   GET  /api/work/{id}/events              its log (?after=<seq>&kinds=a,b)
   POST /api/work                          begin tracking one (a reporter)
   POST /api/work/{id}/events              one report: update, piece, decision_needed,
@@ -30,7 +31,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jarvis import agent_directory, run_store, web_auth, workflow_store, work_store
+from jarvis import (agent_directory, package_inbox, package_inbox_api, run_store, web_auth,
+                    workflow_store, work_store)
 
 # (the item as it is now, the kind of change, what the report said)
 Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
@@ -99,12 +101,24 @@ def asker(scope: dict) -> str:
     return f"key:{label}" if label is not None else str(scope.get(web_auth.ADMITTED) or "")
 
 
-def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None) -> dict:
+def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
+              package_questions: Optional[dict[str, int]] = None) -> dict:
+    """An item as the page shows it, with `package_questions`: how many
+    questions the packages sent for it still wait on him for (package_inbox
+    rows' counts, `package_inbox.waiting_by_work`, read once per listing)."""
     names = names or WhoNames()
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
         raw["who"]["name"] = names(piece.who)
+    waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
+    out["package_questions"] = waiting.get(item.id, 0)
     return out
+
+
+def packages_json(item_id: str) -> list[dict]:
+    """The open packages sent for this item (`make_package --work`), each
+    with its questions and what is recorded, oldest first."""
+    return [package_inbox_api.detail(e) for e in package_inbox.for_work(item_id)]
 
 
 def group_json(group: work_store.WorkGroup) -> dict:
@@ -140,11 +154,12 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
     @app.get("/api/work")
     async def list_work():
         def read():
-            names = WhoNames()
+            names, waiting = WhoNames(), package_inbox.waiting_by_work()
             items = work_store.listing()
-            return {"items": [item_json(i, names) for i in items],
+            return {"items": [item_json(i, names, waiting) for i in items],
                     "groups": [group_json(g) for g in work_store.grouped(items)],
-                    "history": [item_json(i, names) for i in work_store.listing(history=True)]}
+                    "history": [item_json(i, names, waiting)
+                                for i in work_store.listing(history=True)]}
         return await asyncio.to_thread(read)
 
     @app.get("/api/work/{item_id}")
@@ -153,7 +168,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
             item = work_store.get(item_id)
             if item is None:
                 return None
-            return {"item": item_json(item),
+            return {"item": item_json(item), "packages": packages_json(item_id),
                     "events": [event_json(e) for e in work_store.latest(item_id, EVENTS_SHOWN)]}
         found = await asyncio.to_thread(read)
         if found is None:

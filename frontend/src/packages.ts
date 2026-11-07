@@ -167,14 +167,20 @@ export function showPackage(info: PackageInfo): void {
   if (openPackage.get()?.id !== info.id) void dispatch("package.open", { packageId: info.id }, { actor: "brain" });
 }
 
+/** A page package the server has just opened on his click: shown here at
+ *  once, as his own navigation (the inbox's Open, and Open page). */
+export function showOpenedPackage(info: PackageInfo): void {
+  described.set(info.id, info);
+  runBinding(bind("package.open", { packageId: info.id }));
+}
+
 /** The page's Open page: the server's one way to open it, then shown here
  *  at once. Null once it is open, else why not. */
 export async function openPackagePage(id: string): Promise<Said | null> {
   try {
     const info = (await answer<{ package: PackageInfo }>(
       await fetch(`${base(id)}/page`, { method: "POST" }))).package;
-    described.set(info.id, info);
-    runBinding(bind("package.open", { packageId: info.id }));
+    showOpenedPackage(info);
     return null;
   } catch (e) {
     return original(e);

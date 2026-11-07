@@ -1,7 +1,7 @@
 """The one command that makes a package and sends it to Tim
 (jarvis/make_package.py): a presentation deck (no votes), a hand-made
-package's folder with only its purpose given, the version and the message to
-Tim worked out. Content checks shared with decision packages are in
+package's folder with only its purpose given, the version worked out, and
+the package sent to Tim's package inbox with who sent it. Content checks shared with decision packages are in
 tests/test_decision_package.py; the isolated JARVIS here is a stand-in."""
 from __future__ import annotations
 
@@ -27,10 +27,6 @@ def passing_check(monkeypatch, seen=None):
             seen.append(deck)
         return decision_check.Result(passed=["everything"])
     monkeypatch.setattr(decision_check, "check", check)
-
-
-def messages() -> list[Path]:
-    return sorted(data_paths.session_messages_dir().glob("*/*.md"))
 
 
 # -- a presentation ---------------------------------------------------------------------
@@ -69,19 +65,25 @@ def test_the_presentation_example_is_valid(tmp_path, capsys):
 
 # -- what is worked out -----------------------------------------------------------------
 
-def test_tim_is_sent_a_message_naming_the_package(tmp_path, monkeypatch):
-    monkeypatch.setattr(dp, "post", _Delivery())
+def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, capsys):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
     passing_check(monkeypatch)
     assert mp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
-                    "--project", "lunch", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [message] = messages()
-    assert message.parent.name == "lunch"
-    text = message.read_text()
-    assert text.startswith("# A decision package is ready for you: Team lunch\n")
-    assert '"Open the Team lunch package."' in text and "lunch-decisions-1.0.0-local1" in text
-    assert "It asks 2 decisions" in text
+                    "--project", "lunch", "--session", "sess-1", "--workflow", "wf-1",
+                    "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    [(url, _token, body)] = delivery.calls
+    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?")
+    assert "project=lunch" in url and "session=sess-1" in url and "workflow=wf-1" in url \
+        and "work=work-1" in url
+    assert isinstance(body, bytes) and body[:2] == b"PK", "the zip's own bytes"
+    out = capsys.readouterr().out
+    assert "Arrived in Tim's package inbox as pkg-0123456789ab" in out
+    assert "Nothing is shown until he asks for it" in out
+    assert not list(data_paths.session_messages_dir().glob("*/*.md")), \
+        "no message: the inbox tells him"
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
-    assert record["message"] == str(message)
+    assert record["inbox"] == "pkg-0123456789ab" and record["session"] == "sess-1"
 
 
 def test_the_version_follows_the_highest_already_delivered(tmp_path, monkeypatch):
@@ -153,9 +155,8 @@ def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsy
     names = zipfile.ZipFile(archive).namelist()
     assert "app.js" in names and "story.json" in names and "results/old.json" not in names
     assert len(delivery.calls) == 1
-    [message] = messages()
-    assert '"Open the globe numbers package."' in message.read_text()
-    assert "Built a page package" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Built a page package" in out and "Arrived in Tim's package inbox" in out
 
 
 @pytest.mark.parametrize("change, said", [
