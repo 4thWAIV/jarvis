@@ -1,0 +1,105 @@
+"""The page's knowledge routes, /api/knowledge. Thin: each runs one of
+knowledge_api's calls (the same the brain's tools run) off the event loop
+and returns its answer; `Refused` is 400, `Unavailable` 503. They sit behind
+the web boundary like every route (web_auth.py): a change needs the page's
+origin or the tool token, and no access-key category covers them. A change
+is followed by a `knowledge` hint on /ws/sessions (`on_change`).
+
+  GET  /api/knowledge/health         the engine's state, ingest and counts
+  POST /api/knowledge/search         {text, query_en, include_untrusted, kinds, limit}
+  GET  /api/knowledge/entity         ?name= typed matches and a card, or ?key=
+  GET  /api/knowledge/proposals      what the linker proposes, waiting for his yes
+  POST /api/knowledge/links          {action: link|unlink|accept|reject, topic, kind, target, proposal}
+  GET  /api/knowledge/topics         the topic files
+  POST /api/knowledge/topics         {action: create|status|aliases|pin|unpin, ...}
+  POST /api/knowledge/maintenance    {action: refresh|forget, source}
+"""
+from __future__ import annotations
+
+import asyncio
+from typing import Callable, Optional
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from jarvis import knowledge_api as ka
+
+PREFIX = "/api/knowledge"
+_SEARCH = {"text", "query_en", "include_untrusted", "kinds", "limit"}
+_LINKS = {"action", "topic", "kind", "target", "proposal"}
+_TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
+_MAINTAIN = {"action", "source"}
+
+
+def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
+
+    async def run(work: Callable[[], object], changes: bool = False):
+        try:
+            result = await asyncio.to_thread(work)
+        except ka.Refused as e:
+            return JSONResponse({"error": "refused", "message": str(e)}, status_code=400)
+        except ka.Unavailable as e:
+            return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
+        if changes:
+            on_change()
+        return JSONResponse(result)
+
+    async def fields(request: Request, allowed: set[str]) -> Optional[dict]:
+        try:
+            body = await request.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict) or set(body) - allowed:
+            return None
+        return body
+
+    def bad() -> JSONResponse:
+        return JSONResponse({"error": "refused", "message": "that request is not one these routes take"},
+                            status_code=400)
+
+    async def health():
+        return await run(lambda: ka.status(ctx))
+
+    async def search(request: Request):
+        b = await fields(request, _SEARCH)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
+                                           include_untrusted=b.get("include_untrusted", True) is not False,
+                                           kinds=b.get("kinds"), limit=b.get("limit") or 10))
+
+    async def entity(name: Optional[str] = None, key: Optional[str] = None):
+        return await run(lambda: ka.entity(ctx, name=name, key=key))
+
+    async def proposals():
+        return await run(lambda: ka.proposals(ctx))
+
+    async def links(request: Request):
+        b = await fields(request, _LINKS)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.change_links(ctx, **b), changes=True)
+
+    async def topics():
+        return await run(lambda: ka.topics(ctx))
+
+    async def change_topics(request: Request):
+        b = await fields(request, _TOPICS)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.change_topics(ctx, **b), changes=True)
+
+    async def maintenance(request: Request):
+        b = await fields(request, _MAINTAIN)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.maintain(ctx, **b), changes=True)
+
+    app.add_api_route(f"{PREFIX}/health", health, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/search", search, methods=["POST"])
+    app.add_api_route(f"{PREFIX}/entity", entity, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/proposals", proposals, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/links", links, methods=["POST"])
+    app.add_api_route(f"{PREFIX}/topics", topics, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/topics", change_topics, methods=["POST"])
+    app.add_api_route(f"{PREFIX}/maintenance", maintenance, methods=["POST"])

@@ -411,6 +411,11 @@ EXEMPT = {
         "name through _plain_name; the capture it opens holds only the "
         "package's folder name, slug ids and his own words "
         "(_inbox_answers_text), never a title, question or option name"),
+    "knowledge_api.call": (
+        "it turns an engine refusal into knowledge_api.Refused; the engine's "
+        "`detail` is the engine's own wording about a request, and every route "
+        "and tool answers it as a refusal, never as a line JARVIS speaks as its "
+        "own. Driven by tests/test_knowledge_api.py"),
     "knowledge_ingest.replace_authored": (
         "it builds engine route paths from a topic's own key (`topic:<slug>`, "
         "a slug knowledge_links checks against [a-z0-9-]) and reads edges' "

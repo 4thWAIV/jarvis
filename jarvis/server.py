@@ -79,6 +79,8 @@ from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
 from jarvis import host_resources
+from jarvis import knowledge_api
+from jarvis import knowledge_routes
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
@@ -9783,6 +9785,127 @@ async def tool_set_attention_settings(args: dict) -> str:
     except attention_store.Refused as refused:
         return f"Nothing was changed, sir: {refused}"
     return json.dumps(answer)
+
+
+# --- Knowledge, for the page and the brain ----------------------------------
+#
+# The page's /api/knowledge routes (knowledge_routes.py) and these tools run
+# the same calls (knowledge_api.py). Passages, labels and proposals can be
+# other people's words, so every read that carries them comes back walled.
+
+_KNOWLEDGE_WRAP_NAME = "knowledge"
+knowledge_calls = knowledge_api.Context(
+    lambda: knowledge,
+    resolved=lambda pid: _attention_resolved("knowledge_proposal", pid))
+
+
+def _hint_knowledge() -> None:
+    _send_to_session_clients({"type": "knowledge"})
+
+
+knowledge_routes.mount(app, knowledge_calls, on_change=_hint_knowledge)
+
+
+async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) -> str:
+    try:
+        answer = await asyncio.to_thread(work)
+    except knowledge_api.Unavailable as e:
+        return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
+    except knowledge_api.Refused as e:
+        return f"Nothing was done, sir: {e}"
+    text = json.dumps(answer, ensure_ascii=False)
+    if not walled:
+        return text
+    head, chunk = _paged(text, _page_arg(args), what, tool, exact=True)
+    if chunk is None:
+        return head
+    return (head + " Passages and names are what JARVIS read, each with its trust; "
+            "untrusted ones are other people's words:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, chunk))
+
+
+async def tool_knowledge_status(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.status(knowledge_calls),
+                                 "", "knowledge_status", walled=False)
+
+
+async def tool_knowledge_search(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.search(
+        knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
+        include_untrusted=args.get("include_received", True) is not False,
+        kinds=args.get("kinds"), limit=args.get("limit") or 10),
+        "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
+
+
+async def tool_knowledge_entity(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.entity(
+        knowledge_calls, name=args.get("name"), key=args.get("key")),
+        "Every match for that name and the first one's card, as JSON", "knowledge_entity", walled=True)
+
+
+async def tool_knowledge_proposals(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.proposals(knowledge_calls),
+                                 "The links JARVIS proposes, waiting for his yes, as JSON",
+                                 "knowledge_proposals", walled=True)
+
+
+async def tool_knowledge_topics(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.topics(knowledge_calls),
+                                 "", "knowledge_topics", walled=False)
+
+
+async def tool_link_knowledge(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.change_links(
+        knowledge_calls, action=str(args.get("action") or ""), topic=args.get("topic"),
+        kind=args.get("kind"), target=args.get("target"), proposal=args.get("proposal")),
+        "", "link_knowledge", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+async def tool_change_topic(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.change_topics(
+        knowledge_calls, action=str(args.get("action") or ""), topic=args.get("topic"),
+        name=args.get("name"), status=args.get("status"), exact=args.get("exact"),
+        ambiguous=args.get("ambiguous"), remove_aliases=args.get("remove_aliases")),
+        "", "change_topic", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+async def tool_reindex_knowledge(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.maintain(
+        knowledge_calls, action=str(args.get("action") or ""), source=args.get("source")),
+        "", "reindex_knowledge", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
+TOOL_HANDLERS.update({
+    "knowledge_status": tool_knowledge_status,
+    "knowledge_search": tool_knowledge_search,
+    "knowledge_entity": tool_knowledge_entity,
+    "knowledge_proposals": tool_knowledge_proposals,
+    "knowledge_topics": tool_knowledge_topics,
+    "link_knowledge": tool_link_knowledge,
+    "change_topic": tool_change_topic,
+    "reindex_knowledge": tool_reindex_knowledge,
+})
+ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge"})
+TAINTING_TOOLS.update({
+    "knowledge_search": "passages from agents, runs, workflows and other people",
+    "knowledge_entity": "labels and passages from what JARVIS read",
+    "knowledge_proposals": "the names of documents other people or agents wrote",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "knowledge_status": "it reports the engine's own state and counts",
+    "knowledge_topics": "it reads his own topic files' names, statuses and links",
+    "link_knowledge": "it writes his own topic files on his word, it does not read",
+    "change_topic": "it writes his own topic files on his word, it does not read",
+    "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
+})
 
 
 TOOL_HANDLERS.update({

@@ -2179,6 +2179,90 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "knowledge_status",
+        "description": (
+            "The knowledge engine's state (Diagnostics' Knowledge row): whether it is on, "
+            "running, paused for the conversation, how much it has read, its last ingest "
+            "pass and how many link proposals wait."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "knowledge_search",
+        "description": (
+            "Search everything JARVIS has read across projects (notes, the conversation, runs, "
+            "workflows, registered folders' documents) by words, before asking him to repeat "
+            "anything or saying you do not know. Each hit has its text, source and trust; "
+            "untrusted ones are other people's words. When he speaks Spanish, also give "
+            "query_en, the question in English. include_received false keeps to his own words. "
+            "The JSON comes a page at a time."),
+        "inputSchema": {"type": "object", "properties": {
+            "query": {"type": "string"}, "query_en": {"type": "string"},
+            "include_received": {"type": "boolean"},
+            "kinds": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "page": {"type": "integer", "minimum": 1}}, "required": ["query"]},
+    },
+    {
+        "name": "knowledge_entity",
+        "description": (
+            "Every typed match for a name (a topic such as Denice, a project, an agent, a "
+            "folder), each labelled by kind, and the first one's card: status (a planned "
+            "topic is planned, not implemented), aliases, a summary and its strongest links. "
+            "Or one entity by key."),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string"}, "key": {"type": "string"},
+            "page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "knowledge_proposals",
+        "description": (
+            "The links JARVIS proposes and has not made: a document that seems to be about a "
+            "topic, or two topics that may be the same. Each waits for his yes or no "
+            "(link_knowledge accept or reject)."),
+        "inputSchema": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "knowledge_topics",
+        "description": (
+            "His topic files: each topic's name, status, pin, aliases and the links he has "
+            "asserted."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "link_knowledge",
+        "description": (
+            "Only when he says so: accept or reject a proposal (its id from "
+            "knowledge_proposals), or link or unlink two topics (kind relates_to, depends_on, "
+            "stage_of, precedes or same_as) or a topic and a document (kind about_sources, "
+            "target its source). Written to his topic file."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["link", "unlink", "accept", "reject"]},
+            "proposal": {"type": "string"}, "topic": {"type": "string"},
+            "kind": {"type": "string"}, "target": {"type": "string"}}, "required": ["action"]},
+    },
+    {
+        "name": "change_topic",
+        "description": (
+            "Only when he says so: create a topic (name, status, exact and ambiguous "
+            "aliases), set its status, add or remove aliases, pin or unpin it."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["create", "status", "aliases", "pin", "unpin"]},
+            "topic": {"type": "string"}, "name": {"type": "string"},
+            "status": {"type": "string", "enum": ["implemented", "active", "planned", "retired", "unknown"]},
+            "exact": {"type": "array", "items": {"type": "string"}},
+            "ambiguous": {"type": "array", "items": {"type": "string"}},
+            "remove_aliases": {"type": "array", "items": {"type": "string"}}}, "required": ["action"]},
+    },
+    {
+        "name": "reindex_knowledge",
+        "description": (
+            "Only when he asks: refresh (read everything that changed now) or forget one "
+            "source (its jref) so nothing of it stays in the knowledge engine."),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["refresh", "forget"]},
+            "source": {"type": "string"}}, "required": ["action"]},
+    },
+    {
         "name": "attention_updates",
         "description": (
             "What is waiting for him: the background updates (Review updates on the page) "
