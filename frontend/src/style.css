@@ -3879,11 +3879,11 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 @property --activity-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
 @keyframes activity-travel { to { --activity-angle: 360deg; } }
 @keyframes activity-edge { from { background-position: 0 -40px; } to { background-position: 0 calc(100% + 40px); } }
-@keyframes activity-flow { to { background-position: 0 24px; } }
+@keyframes activity-flow { to { background-position: 0 12px; } }
 :root {
   --activity-travel: activity-travel 4s linear infinite;
   --activity-edge: activity-edge 2.8s linear infinite;
-  --activity-flow: activity-flow 1.6s linear infinite;
+  --activity-flow: activity-flow 0.8s linear infinite;
 }
 
 .work-row, .task-card, .progress-row, .work-piece { position: relative; }
@@ -3917,14 +3917,19 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .progress-row[data-activity="working"] { box-shadow: 0 0 10px rgba(var(--activity-rgb), 0.18); }
 
 /* a piece has only its left edge: a glow travels down it */
-.work-piece[data-activity="working"] { border-left-color: rgba(var(--activity-rgb), 0.35); }
+.work-piece[data-activity="working"] {
+  border-left-color: rgba(var(--activity-rgb), 0.35);
+  background: linear-gradient(to right, rgba(var(--activity-rgb), 0.08), transparent 60%);
+}
 .work-piece[data-activity="working"]::before {
   content: "";
   position: absolute;
-  left: -2px; top: 0; bottom: 0; width: 2px;
+  left: -3px; top: 0; bottom: 0; width: 4px;
+  border-radius: 2px;
   background: linear-gradient(to bottom, rgba(var(--activity-rgb), 0), rgba(var(--activity-rgb), 1),
                               rgba(var(--activity-rgb), 0)) no-repeat;
-  background-size: 2px 40px;
+  background-size: 4px 40px;
+  box-shadow: 0 0 6px rgba(var(--activity-rgb), 0.5);
   animation: var(--activity-edge);
   pointer-events: none;
 }
@@ -3945,7 +3950,15 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   border: 1px solid rgba(203, 213, 225, 0.6);
   border-radius: 4px;
 }
-.activity-paused::before { content: "❚❚"; margin-right: 4px; font-size: 8px; letter-spacing: -1px; }
+.activity-paused::before {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 7px;
+  margin-right: 4px;
+  border-left: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+}
 .phase-step .activity-paused { margin-right: 0; }
 
 /* blocked and waiting on him: still, red and amber */
@@ -3964,8 +3977,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 /* the "waits for" line flows while a piece it waits for is working */
 .work-piece-after[data-flow="on"] {
   padding-left: 10px;
-  background: repeating-linear-gradient(to bottom, rgba(125, 211, 252, 0.9) 0 6px, transparent 6px 12px)
-              left top / 2px 100% no-repeat;
+  background: linear-gradient(to bottom, rgba(125, 211, 252, 0.95) 0 6px, transparent 6px 12px)
+              left top / 3px 12px repeat-y;
   animation: var(--activity-flow);
 }
 

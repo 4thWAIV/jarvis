@@ -13,7 +13,8 @@ looks and drop the motion and the flash.
 
 Headless Chromium on the built page, with the routes and both sockets
 replaced by Playwright. With JARVIS_WORK_MOTION_FRAMES set to a folder, it
-also saves frames of each look in motion there, for the presentation.
+records the page there, with where and when each look in motion shows
+(clips.json), for the presentation.
 """
 
 import asyncio
@@ -148,19 +149,20 @@ async def _animation(page, selector, pseudo):
         [selector, pseudo])
 
 
+SHOWN = {"t0": 0.0, "clips": []}
+
+
 async def _frames(page, selector, name, seconds=4.2):
-    """Frames of one part of the page in motion for `seconds`, each with the
-    moment it was taken (times.txt), for the presentation."""
+    """Note the part of the page and the stretch of the page's recording
+    (record_video, from SHOWN["t0"]) that show `name` in motion, for the
+    presentation (clips.json beside the video)."""
     if not FRAMES:
         return
-    folder = Path(FRAMES) / name
-    folder.mkdir(parents=True, exist_ok=True)
-    times, start, n = [], time.monotonic(), 0
-    while time.monotonic() - start < seconds:
-        times.append(time.monotonic() - start)
-        await page.locator(selector).screenshot(path=str(folder / f"{n:03}.png"), animations="allow")
-        n += 1
-    (folder / "times.txt").write_text("\n".join(f"{t:.3f}" for t in times))
+    box = await page.locator(selector).bounding_box()
+    start = time.monotonic() - SHOWN["t0"]
+    await asyncio.sleep(seconds)
+    SHOWN["clips"].append({"name": name, "box": box, "start": start, "end": time.monotonic() - SHOWN["t0"]})
+    (Path(FRAMES) / "clips.json").write_text(json.dumps(SHOWN["clips"]))
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -171,7 +173,10 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
-        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        size = {"width": 1440, "height": 900}
+        recording = {"record_video_dir": FRAMES, "record_video_size": size} if FRAMES else {}
+        page = await (await browser.new_context(viewport=size, **recording)).new_page()
+        SHOWN["t0"] = time.monotonic()
         await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.add_init_script(FLASH_SPY)
         await page.route_web_socket("**/ws/voice", _Voice())
@@ -229,8 +234,8 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         flashed = await page.evaluate("window.__flashes")
         assert sorted(flashed) == ["engine", "work-1"], flashed
         if FRAMES:
-            capture = asyncio.create_task(_frames(page, "#work-detail .work-pieces", "flash", seconds=1.6))
-            await asyncio.sleep(0.3)
+            capture = asyncio.create_task(_frames(page, "#work-detail .work-pieces", "flash", seconds=2.4))
+            await asyncio.sleep(1.0)
             work.engine_heard = time.time()
             sessions.ws.send(json.dumps({"type": "work"}))
             await capture
@@ -295,4 +300,5 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         assert await page.locator(phase).get_attribute("data-activity") == "working"
         assert await _animation(page, phase + " .phase-step-dot", "::after") == "activity-travel"
         await _frames(page, "#workflow-detail .phase-stepper", "phases")
+        await page.context.close()
         await browser.close()
