@@ -4255,3 +4255,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   z-index: 40;
 }
 #takeover-sheet .capture-list { max-height: 30vh; }
+.folders-panel-switch { display: flex; gap: 4px; margin-bottom: 8px; }
+.folders-panel-switch-option { flex: 1; padding: 4px 8px; border-radius: 6px; font: inherit; font-size: 12px;
+  background: transparent; color: var(--ui-secondary); border: 1px solid rgba(var(--ui-accent-rgb), 0.25); cursor: pointer; }
+.folders-panel-switch-option.selected { color: var(--ui-accent); border-color: rgba(var(--ui-accent-rgb), 0.6);
+  background: rgba(var(--ui-accent-rgb), 0.1); }
+.project-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
+  background: #34d399; vertical-align: middle; }

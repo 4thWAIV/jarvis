@@ -43,6 +43,16 @@ export interface ProjectRow extends ProjectRecord {
   folders: number;
   home: FolderFacts | null;
   open_works: number;
+  /** Agents working in its folders now. */
+  agents_now: number;
+  /** Accomplishments proposed and waiting for his Confirm. */
+  to_confirm: number;
+}
+
+export interface ProjectListing {
+  projects: ProjectRow[];
+  /** Registered folders that are in a project; the rest are independent. */
+  linked_folders: string[];
 }
 
 export interface Work { id: string; title: string; outcome: string; state: string; updated_at: number }
@@ -80,8 +90,7 @@ export interface Candidate {
 export const projectsChanged = createStore(0);
 const changed = () => projectsChanged.set(projectsChanged.get() + 1);
 
-export const projectList = liveRead(
-  () => getJson<{ projects: ProjectRow[] }>("/api/project-records").then((b) => b.projects), [projectsChanged]);
+export const projectList = liveRead(() => getJson<ProjectListing>("/api/project-records"), [projectsChanged]);
 export const projectCandidates = liveRead(
   () => getJson<{ candidates: Candidate[] }>("/api/project-records/candidates").then((b) => b.candidates),
   [projectsChanged]);
@@ -118,7 +127,7 @@ export const openProject = projectSlot.value;
 registerCommand("project.open", {
   availability: () => ({ available: true }),
   async execute({ projectId }, { signal }) {
-    if (!(projectList.get().value ?? []).some((p) => p.id === projectId)) {
+    if (!(projectList.get().value?.projects ?? []).some((p) => p.id === projectId)) {
       const read = await readForOpen(`/api/project-records/${encodeURIComponent(projectId)}`, signal);
       if ("refused" in read) return read.refused;
     }
@@ -151,4 +160,15 @@ registerCommand("project.accomplishment.answer", {
     return refused === null ? { status: "completed", effects: [] }
       : { status: "unavailable", effects: [], reason: refused };
   },
+});
+
+/** How the Projects and folders tab shows: projects (with the independent
+ *  folders and what waits for him) or the plain folder list. Changed only
+ *  by `folders.panel.show`, its switch and the brain alike. */
+export type PanelView = "projects" | "folders";
+export const panelView = createStore<PanelView>("projects");
+
+registerCommand("folders.panel.show", {
+  availability: () => ({ available: true }),
+  execute({ view }) { panelView.set(view); return { status: "completed", effects: ["list.filtered"] }; },
 });

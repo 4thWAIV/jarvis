@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
-from jarvis import data_paths, run_store
+from jarvis import data_paths, run_store, workspace_ref
 from jarvis.agent_directory import spoken_key
 
 SCHEMA_VERSION = 1
@@ -216,8 +216,8 @@ class ProjectError(ValueError):
 
 def subject(kind: str, record_id: str) -> str:
     """The reference a record is named by in events and bindings
-    (`jref:1:<node>:<kind>:<id>`, design 4.2)."""
-    return f"jref:1:{data_paths.node_id()}:{kind}:{record_id}"
+    (`workspace_ref.format`, design 4.2)."""
+    return workspace_ref.format(workspace_ref.ref(kind, record_id))
 
 
 @dataclass
@@ -836,6 +836,11 @@ class ProjectStore:
             self._event(conn, "accomplishment", aid, "recorded" if confirm else "proposed", 1, actor,
                         {"project_id": project_id, "title": title})
             return self._acc(conn, conn.execute("SELECT * FROM accomplishments WHERE id = ?", (aid,)).fetchone())
+
+    def accomplishment(self, accomplishment_id: str) -> Optional[Accomplishment]:
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM accomplishments WHERE id = ?", (accomplishment_id,)).fetchone()
+            return self._acc(conn, row) if row is not None else None
 
     def answer_accomplishment(self, accomplishment_id: str, action: str, *, actor: str = "page") -> Accomplishment:
         if action not in ("confirm", "withdraw"):

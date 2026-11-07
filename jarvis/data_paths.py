@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -588,17 +589,122 @@ def node_id() -> str:
     return _node_id[1]
 
 
-def _read_or_make_node_id(path: Path) -> str:
+def node_id_backup_path() -> Path:
+    """The node ID's copy, written once beside it: `node_id()` restores
+    from it before it ever makes a new ID (design 4.1)."""
+    return data_dir() / "node-id.bak"
+
+
+def node_id_previous_path() -> Path:
+    """Every node ID this data directory had before a new one was made
+    anyway, one per line, so references made under them still resolve here
+    (`workspace_ref.is_self`)."""
+    return data_dir() / "node-id.previous"
+
+
+def node_id_minted_path() -> Path:
+    """The record that a node ID was made although one had been kept: when,
+    why and the one before it, if it could be read. Diagnostics and an
+    attention item read it; nothing removes it."""
+    return data_dir() / "node-id.minted.json"
+
+
+def _uuid_in(path: Path) -> Optional[str]:
+    """The UUID a file holds, None when there is no file, and raises
+    ValueError or OSError when it holds something else or cannot be read."""
     try:
         return str(uuid.UUID(path.read_text().strip()))
     except FileNotFoundError:
-        pass
+        return None
+
+
+def _read_or_make_node_id(path: Path) -> str:
+    backup = path.with_name(node_id_backup_path().name)
+    problem = None
+    try:
+        found = _uuid_in(path)
     except (OSError, ValueError) as e:
-        log.warning(f"data_paths: unusable node ID replaced ({type(e).__name__})")
+        found, problem = None, f"node-id unusable ({type(e).__name__})"
+        log.warning(f"data_paths: unusable node ID ({type(e).__name__})")
+    if found is not None:
+        try:
+            if _uuid_in(backup) is None:
+                _write_atomically(backup, found + "\n")
+        except (OSError, ValueError):
+            _write_atomically(backup, found + "\n")
+        return found
+    try:
+        kept = _uuid_in(backup)
+    except (OSError, ValueError) as e:
+        kept, problem = None, (problem or "node-id missing") + f"; its copy unusable ({type(e).__name__})"
+    if kept is not None:
+        log.warning("data_paths: the node ID was restored from its copy")
+        if not _write_atomically(path, kept + "\n"):
+            log.warning("data_paths: the restored node ID could not be written; it lasts this run only")
+        return kept
+    if backup.exists() and problem is None:
+        problem = "node-id missing; its copy unusable"
+    # One had been kept and could not be used: the old one is kept when it
+    # can still be read, so its references resolve here, and it is said.
+    previous = (_salvaged(path) or _salvaged(backup)) if problem is not None else None
     made = str(uuid.uuid4())
     if not _write_atomically(path, made + "\n"):
         log.warning("data_paths: the node ID could not be kept; it lasts this run only")
+    else:
+        _write_atomically(backup, made + "\n")
+    if problem is not None:
+        _note_minted(path, made, problem, previous)
     return made
+
+
+_UUID_SHAPE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _salvaged(path: Path) -> Optional[str]:
+    """A UUID still legible in a file that is no longer a clean node ID
+    (trailing bytes, a half write), or None."""
+    try:
+        found = _UUID_SHAPE.search(path.read_bytes().decode("utf-8", "replace"))
+    except OSError:
+        return None
+    return str(uuid.UUID(found.group(0))) if found else None
+
+
+def _note_minted(path: Path, made: str, why: str, previous: Optional[str]) -> None:
+    log.warning(f"data_paths: a new node ID was made although one had been kept ({why})")
+    if previous:
+        try:
+            with open(path.with_name(node_id_previous_path().name), "a") as fh:
+                fh.write(previous + "\n")
+        except OSError:
+            log.warning("data_paths: the previous node ID could not be kept")
+    _write_atomically(path.with_name(node_id_minted_path().name),
+                      json.dumps({"at": time.time(), "node_id": made, "why": why,
+                                  "previous": previous}) + "\n")
+
+
+def node_id_minted() -> Optional[dict]:
+    """When this data directory's node ID was made although one had been
+    kept, or None."""
+    try:
+        return json.loads(node_id_minted_path().read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def previous_node_ids() -> list[str]:
+    """The node IDs this data directory had before, oldest first."""
+    try:
+        lines = node_id_previous_path().read_text().split()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(str(uuid.UUID(line)))
+        except ValueError:
+            continue
+    return out
 
 
 def human_activity_path() -> Path:

@@ -4,7 +4,7 @@ import type { CatalogOf } from "../locale";
 import type { shellEn } from "./shell.en";
 
 export const shellEs: CatalogOf<typeof shellEn> = {
-  "tabs.right.folders": "Carpetas",
+  "tabs.right.folders": "Proyectos y carpetas",
   "tabs.right.agents": "Agentes",
   "tabs.right.queue": "Cola",
   "tabs.right.workflows": "Trabajo",

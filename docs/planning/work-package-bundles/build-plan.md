@@ -414,8 +414,29 @@ projects only on his yes), `project_service.py` with its routes and the
 brain's project tools, the Project view, Projects in the Folders tab, each
 Work tab item's projects, the run columns `project_id` and `work_id`, and
 `spawn_run` and Retry placed by `run_location`. The context pack and
-`work_context` are made from the records (`ProjectService.brief`). Not yet
-built from phase 1: `workspace_ref.py` and the node ID backup, the
-WorkView centre view, a switch between projects and folders in the tab (the
-projects are listed under the folders instead), and `projects_view.py`
-reimplemented over the service.
+`work_context` are made from the records (`ProjectService.brief`). The
+rest of phase 1 followed: `workspace_ref.py` and the node ID backup, the
+Projects and folders switch, and `projects_view.py` over the service. The
+Work view is not built: `/api/work` (`work_store`) is the one record of
+work, and Planning folds `/api/works` into it. Routine choices made for it:
+
+- References also name `conversation`, `conversation_day`,
+  `workflow_event` and `candidate`, which the engine and the project events
+  already use; the design's list leaves them out.
+- `attachment`, `package`, `knowledge`, `agent` and those four resolve as
+  `unsupported` until the phases that read them (6 to 8).
+- A record's hash leaves out `revision`, `created_at`, `updated_at`,
+  `node_id` and `owner_id`: bookkeeping, or this workspace's own.
+- A tree is refused as `too_large` past 20,000 entries or 30 s (a new
+  folder error code): a reference is to something he picked.
+- A node ID counts as made anyway only when one had been kept (an unusable
+  `node-id` or `node-id.bak`); a first start records nothing. The old ID is
+  kept when a UUID can still be read from either file.
+- Diagnostics shows it on the team server row (the network is who knows a
+  node), degraded for seven days and then idle; the attention item is
+  silent.
+- The tab opens on Projects; the folder search and Open Folders are on the
+  Folders side of the switch.
+- spawn_run's start (context pack, compose, spawn, keep the pack) is one
+  function, `server._spawn_placed`, and a run's pack is
+  `knowledge_api.run_pack`.

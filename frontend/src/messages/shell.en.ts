@@ -6,7 +6,7 @@
 
 export const shellEn = {
   // The right panel's tabs (RightPanel.tsx), by their registered tab id.
-  "tabs.right.folders": "Folders",
+  "tabs.right.folders": "Projects and folders",
   "tabs.right.agents": "Agents",
   "tabs.right.queue": "Queue",
   "tabs.right.workflows": "Work",

@@ -376,6 +376,11 @@ EXEMPT = {
         "the events go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
     "server.tool_works": (
         "the pieces of work go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "workspace_ref.parse": (
+        "it turns a reference's text into its fields; its refusals are fixed "
+        "words, and the only values they name are the version and the kind it "
+        "read, digits and lowercase letters by the grammar. Driven by "
+        "tests/test_workspace_ref.py"),
     "context_service._project_lines": (
         "it lines up one project for the pack from his own project records "
         "(name, summary, folder names, confirmed accomplishments) and his "

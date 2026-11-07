@@ -399,3 +399,34 @@ def test_the_open_endpoint_does_not_freeze_the_event_loop(monkeypatch):
 
     assert response.status_code in (400, 404)
     assert ticks > 5, f"the event loop was blocked for the whole walk ({ticks=})"
+
+
+# --- over his project records (one meaning of "project") ---------------------
+
+def test_with_project_records_sessions_and_runs_join_under_the_record(tmp_path):
+    from jarvis import data_paths, folder_service, folder_store
+    from jarvis import project_service, project_store
+    run_store.init_db()
+    folders = folder_service.FolderService(folder_store.FolderStore(), data_paths.node_id)
+    repo, docs, other = tmp_path / "repo", tmp_path / "docs", tmp_path / "other"
+    for d in (repo, docs, other):
+        d.mkdir()
+    ids = [folders.register(request_key=str(d), path=str(d), role="source")["folder"]["id"]
+           for d in (repo, docs)]
+    service = project_service.ProjectService(project_store.ProjectStore(), lambda: folders)
+    p = service.store.create("local", "Step Checker")
+    service.store.link_folder(p.id, ids[0], home=True)
+    service.store.link_folder(p.id, ids[1], part="docs")
+
+    sessions = [_session("s1", "repo", str(repo / ".claude" / "worktrees" / "w1")),
+                _session("s2", "other", str(other))]
+    runs = [_run("docs", str(docs), created_at=2000.0),
+            dict(_run("whatever", "/nowhere", created_at=3000.0), project_id=p.id)]
+    views = pv.build_project_views(sessions, runs, exists=ALWAYS_EXISTS, projects=service)
+    by_name = {v.name: v for v in views}
+    record = by_name["Step Checker"]
+    assert record.project_id == p.id
+    assert [s.session_id for s in record.sessions] == ["s1"] and len(record.runs) == 2
+    assert {str(repo.resolve()), str(docs.resolve())} <= set(record.paths)
+    assert by_name["other"].project_id is None
+    assert pv.list_item(record)["project_id"] == p.id

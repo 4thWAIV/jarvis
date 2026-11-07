@@ -1186,6 +1186,37 @@ started by folder or name takes the one project holding its folder, never
 a guess between several; Retry places a work's run again the same way.
 The context pack (`context_service.pack`'s `scope`, from
 `ProjectService.brief`) and `work_context` are made from these records.
+The Folders tab is "Projects and folders": its switch
+(`folders.panel.show`) shows projects first (lifecycle, open work, a dot
+while an agent works in one of its folders, accomplishments to confirm),
+then the independent folders (in no project), then the proposals waiting
+for him, or the plain folder list. A run's pack is
+`knowledge_api.run_pack`, and spawn_run starts every run through
+`server._spawn_placed`. `/api/work` (`work_store`) is the one record of
+work; `/api/works` is being folded into it, so nothing new is built on it.
+`projects_view.py` (the dashboard's /api/projects/view) joins sessions and
+runs by the one project holding their folder, else by name.
+
+## Workspace references
+`workspace_ref.py` is the one place identity and references are defined,
+parsed, printed, hashed and resolved (design section 4): `Workspace`,
+`owner_of`, `is_self` (the node ID now or any in `node-id.previous`),
+`WorkspaceRef` and its text form `jref:1:<node>:<kind>:<id>[@<revision>]
+[/<path>][#sha256=|#tree=]` (`parse` and `format` only; one spelling each),
+`check_path` (bundle_archive's entry rule, NFC, canonical), `canonical_json`
+and `record_hash`, a file's hash through the descriptor the folder service
+checked (`FolderService.file_hash`), a tree's Merkle hash
+(`FolderService.tree_hash`: links, submodules, refused entries and tracked
+files gone listed as left out, git-ignored entries summarised, git only
+after `xcode-select -p`), and `resolve` (here, changed, moved, missing,
+refused, foreign_node; attachments, packages and knowledge nodes are
+`unsupported` until their phases). The project store's subjects and the
+knowledge ingest's sources are printed by it. `data_paths.node_id()` keeps
+`node-id.bak` and restores from it before ever making a new ID; one made
+anyway keeps the old ID in `node-id.previous`, writes
+`node-id.minted.json`, and is shown in Diagnostics (the team server row's
+`node_id` check, degraded for `NODE_ID_NOTICE_SEC`) and as an attention
+item.
 
 ## The knowledge engine
 A document store, a typed graph, a keyword index and a vector index in a
