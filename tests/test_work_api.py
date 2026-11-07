@@ -62,6 +62,16 @@ def test_a_work_key_tracks_and_reports_and_opens_nothing_else(wired):
     r = client.post(f"/api/work/{wid}/events", headers=key,
                     json={"kind": "update", "summary": "Engine wired.", "detail": {"state": "working"}})
     assert r.status_code == 200 and r.json()["item"]["headline"] == "Engine wired."
+    assert r.json()["item"]["state"] == "activity_unknown"
+    assert "not confirmed" in r.json()["item"]["activity_reason"]
+    detail = client.get(f"/api/work/{wid}", headers=key).json()["item"]
+    assert detail["state"] == "activity_unknown"
+    listed = client.get("/api/work", headers=key).json()["items"]
+    assert next(x for x in listed if x["id"] == wid)["state"] == "activity_unknown"
+    from jarvis import work_store
+    item = work_store.get(wid)
+    assert "not confirmed" in server._work_line(item)
+    assert "not confirmed" in server._work_detail(item)
     for path in ("/api/restart", "/api/workflows", f"/api/work/{wid}/decisions/x"):
         assert client.post(path, json={}, headers=key).status_code == 403, path
     assert client.post("/api/work", json={"title": "x", "source": {}},
@@ -218,7 +228,7 @@ def test_the_reporter_starts_reports_and_reads_his_answer(wired, monkeypatch, ca
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "piece", wid, "copy", "Copy pass.",
                              "--who", "tim", "--state", "working"]) == 0
-    assert capsys.readouterr().out.strip() == f"{wid} working (copy: tim)"
+    assert capsys.readouterr().out.strip() == f"{wid} activity_unknown (copy: tim)"
     assert work_report.main(["work_report.py", "decision", wid, "tone", "Which tone?",
                              "--option", "dry", "--option", "warm"]) == 0
     capsys.readouterr()

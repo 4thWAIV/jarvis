@@ -30,6 +30,7 @@
  * when it is not the ordinary one.
  */
 
+import { motion, setMotion } from "./motion";
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
@@ -259,6 +260,8 @@ function YouSection() {
   const nameUi = useSettingsItem("name", t("left.you.name"));
   const honorificUi = useSettingsItem("honorific", t("left.you.honorific"));
   const saveUi = useSettingsItem("saveYou", t("left.settings.save"));
+  const steadyUi = useSettingsItem("steady", t("left.you.steady"));
+  const steady = useSyncExternalStore(motion.subscribe, motion.get) === "steady";
 
   useEffect(() => {
     if (stored.value && !filled) {
@@ -294,6 +297,11 @@ function YouSection() {
         <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}
                 ref={saveUi.whole}>{t("left.settings.save")}</button>
       </div>
+      <SettingsRow label={t("left.you.steady")} labelRef={steadyUi.part("label")} htmlFor="settings-steady">
+        <input data-ui-action="input" id="settings-steady" type="checkbox" checked={steady} ref={steadyUi.whole}
+               onChange={(e) => setMotion(e.target.checked ? "steady" : "full")} />
+      </SettingsRow>
+      <p className="settings-hint">{t("left.you.steadyHint")}</p>
     </>
   );
 }

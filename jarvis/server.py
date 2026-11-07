@@ -3163,6 +3163,8 @@ async def lifespan(application: FastAPI):
         log.warning("dispatch migration skipped", exc_info=True)
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
+    # Every review he made in a package before now is on its item.
+    await asyncio.to_thread(_apply_package_reviews)
     # Every wait still open on an answer he has already given ends now.
     await asyncio.to_thread(wait_links.sweep)
 
@@ -8234,7 +8236,38 @@ def _inbox_recount(package, how: str) -> list:
     for q in asked:
         if q.applies and q.answer:
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
+    for entry in package_inbox.for_package(package.id):
+        _review_from_package(entry, package)
     return moved
+
+
+def _review_from_package(entry, package, signed_off: bool = False):
+    """His act in a review package, on the item it was sent for at once:
+    his answer as his review (work_api.review_from_package, the same review
+    as the page's and review_work's), or, signed off, the review closed
+    without a verdict (work_api.signed_off_review). From any thread. The
+    item as it now is, or None when nothing changed. Never raises."""
+    try:
+        item = (work_api.signed_off_review if signed_off
+                else work_api.review_from_package)(entry, package)
+    except Exception:
+        log.warning("package inbox: %s's review was not read", entry.id, exc_info=True)
+        return None
+    if item is not None:
+        _hint_from_any_thread({"type": "work"})
+    return item
+
+
+def _apply_package_reviews() -> None:
+    """At start: every review act he made in a package before now, on its
+    item once (work_api.apply_package_reviews). Never raises."""
+    try:
+        moved = work_api.apply_package_reviews()
+    except Exception:
+        log.warning("package reviews were not applied at start", exc_info=True)
+        return
+    if moved:
+        log.info("package reviews: %d item(s) moved by answers already on record", moved)
 
 
 # --- What waits on his answer (wait_links.py) --------------------------------
@@ -8390,8 +8423,18 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
-    return entry, (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
-                   if entry.decisions_total else "Recorded.")
+    said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
+            if entry.decisions_total else "Recorded.")
+    if (question.id == work_api.REVIEW_QUESTION and entry.work_id
+            and chosen in work_api.REVIEW_OPTIONS):
+        # Recorded already in the recount: what it did is on the item.
+        item = await asyncio.to_thread(work_store.get, entry.work_id)
+        did = item.package_review if item else None
+        said += (f" It was not applied to {entry.work_id}: {did.why}"
+                 if did and did.outcome == work_store.NOT_APPLIED
+                 else f" It is his review of {entry.work_id}; the item is now {item.state}."
+                 if item else "")
+    return entry, said
 
 
 def _sign_off_text(entry, package) -> str:
@@ -8534,6 +8577,8 @@ async def _sign_off_package(reference: str, how: str):
     # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
     _inbox_sign_off_work(entry, package, how)
+    # A review package's item shows what his sign-off did, at once.
+    await asyncio.to_thread(_review_from_package, entry, package, True)
     to = agent_directory.names_by_session().get(entry.from_session) if entry.from_session else None
     capture = None
     if to:
@@ -9970,7 +10015,26 @@ async def tool_turn_audio_off(args: dict) -> str:
             "answers in text only. Only he can turn it back on, with the headset.")
 
 
+# Steady (Settings, You): this browser's motion preference (motion.ts). The
+# brain asks every open page to hold still or move again, only as he asks.
+MOTION_FRAME = "motion"
+MOTIONS = ("steady", "full")
+
+
+async def tool_set_motion(args: dict) -> str:
+    """Settings, You's Steady, by voice or typing, on every open page."""
+    chosen = args.get("motion")
+    if chosen not in MOTIONS:
+        return "Say which: steady or full. Nothing was changed."
+    if not voice_clients:
+        return "No JARVIS page is open, sir, so there is nothing to hold still."
+    await _voice_emit({"type": MOTION_FRAME, "motion": chosen})
+    return ("Steady on every open page, sir: everything holds still." if chosen == "steady"
+            else "Motion is back on every open page, sir.")
+
+
 TOOL_HANDLERS.update({
+    "set_motion": tool_set_motion,
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
     "voice_turn": tool_voice_turn,
@@ -9979,8 +10043,9 @@ TOOL_HANDLERS.update({
     "turn_audio_off": tool_turn_audio_off,
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-                     "mute_speech", "turn_audio_off"})
+                     "mute_speech", "turn_audio_off", "set_motion"})
 TAINT_EXEMPT_TOOLS.update({
+    "set_motion": "it turns the page's motion steady or back; it reads nothing",
     "mute_speech": "it mutes JARVIS's speech; it reads nothing",
     "turn_audio_off": "it turns the microphone off and mutes JARVIS's speech; it reads nothing",
     "skip_reading": "it stops one reading aloud, it does not read",
@@ -10073,7 +10138,10 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
     except knowledge_api.Unavailable as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
-        return f"Nothing was done, sir: {e}"
+        # The engine's refusal can name what the call was given (a key, a
+        # kind, a target), so it is walled like the answers.
+        return ("Nothing was done, sir. The knowledge engine's refusal, which may "
+                "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
     text = json.dumps(answer, ensure_ascii=False)
     if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text
@@ -10954,6 +11022,8 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
     """One piece, in dependency order: who is on it, its latest note, the
     pieces it comes after (those not done yet named), and its evidence."""
     line = f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}"
+    if p.activity_reason:
+        line += f"; {p.activity_reason}"
     if p.note:
         line += f"; latest note: {p.note}"
     if p.after:
@@ -11028,6 +11098,7 @@ def _work_line(item) -> str:
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
             + (f" {named}" if (named := _work_projects(item)) else "")
             + _work_follow_up(item)
+            + (f" {item.activity_reason}" if item.activity_reason else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
 
@@ -11046,6 +11117,8 @@ def _work_detail(item) -> str:
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+    if item.activity_reason:
+        lines.append(item.activity_reason)
     if named := _work_projects(item):
         lines.insert(3, named)
     if item.approved_at is not None:

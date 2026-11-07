@@ -359,6 +359,11 @@ async def test_while_taken_over_updates_and_a_read_back_keep_the_layout_and_a_re
             await async_api.expect(sheet.locator(".capture-box")).to_be_visible()
             await async_api.expect(sheet).to_contain_text("Deploy at noon.")
             assert await page.evaluate("document.documentElement.dataset.layout") == "takeover"
+            # The sheet covers nothing: the item's head and every tab start below it.
+            sheet_box = await page.evaluate(RECT, "#takeover-sheet")
+            for part in ("#workflow-detail .workflow-detail-head", "#workflow-detail .workflow-tabs"):
+                box = await page.evaluate(RECT, part)
+                assert box["top"] >= sheet_box["bottom"], (part, box, sheet_box)
             await _shot(page, "readback-sheet")
             # Send on the sheet is the box's own Send.
             await sheet.locator(".capture-send").click()
@@ -380,5 +385,32 @@ async def test_while_taken_over_updates_and_a_read_back_keep_the_layout_and_a_re
             await async_api.expect(page.locator(".centre-tabs")).to_be_visible()
             assert await page.locator("#takeover-bar").count() == 0
             assert await page.evaluate("document.documentElement.dataset.layout") == "normal"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_work_item_takes_over_by_its_button_and_restores(page_url):
+    from tests.test_voice_page_work import _Work
+    work = _Work()
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url, "1440", [("**/api/work", work), ("**/api/work/**", work)])
+        try:
+            opened = await voice.navigate("work.open", {"itemId": "work-1"})
+            assert opened["status"] == "completed", opened
+            button = page.locator("#work-detail .takeover-enter")
+            assert await button.get_attribute("data-ui-command") == "layout.takeover"
+            await button.click()
+            bar = page.locator("#takeover-bar")
+            await async_api.expect(bar).to_be_visible()
+            title = await page.locator("#work-detail .work-detail-name").text_content()
+            await async_api.expect(bar.locator(".takeover-name")).to_have_text(title)
+            detail = await page.evaluate(RECT, "#work-detail")
+            rail = await page.evaluate(RECT, "#right-column")
+            assert detail["right"] <= rail["left"] and rail["width"] <= 60, (detail, rail)
+            await _shot(page, "work-taken-over")
+            closed = await voice.navigate("work.close", {})
+            assert "layout.restored" in closed["effects"], closed
+            await async_api.expect(bar).to_have_count(0)
         finally:
             await browser.close()

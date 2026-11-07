@@ -116,6 +116,8 @@ export const rightEn = {
   "right.work.project": "Project: {names}",
   "right.work.decision": "Decision: {question}",
   "right.work.state.planned": "Planned",
+  "right.work.activityUnknownReason": "Current token generation for this Work assignment is not confirmed.",
+  "right.work.state.activity_unknown": "Activity unconfirmed",
   "right.work.state.working": "Working",
   "right.work.state.verifying": "Ready for review",
   "right.work.state.waiting_on_tim": "Waiting on you",

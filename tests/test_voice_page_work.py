@@ -61,7 +61,7 @@ def _item(deciding=True, quiet=False):
         blockers.insert(0, {"kind": "decision", "key": "engine", "title": DECISION["question"],
                             "text": "", "waits_for": []})
     return {
-        "id": "work-1", "title": "Speech migration", "source_kind": "folder",
+        "id": "work-1", "title": "Speech migration", "source_kind": "folder", "projects": [],
         "source_path": "/Users/someone/code/speech", "source": "present",
         "state": "waiting_on_tim" if deciding else "working", "reported_state": "working",
         "quiet": quiet, "latest_update": "Engine wired.",
@@ -262,7 +262,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         before = work.lists
         sessions.ws.send(json.dumps({"type": "work"}))
         await page.wait_for_function(
-            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'working'",
+            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'activity_unknown'",
             timeout=10000)
         assert work.lists > before
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
@@ -274,7 +274,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         sessions.ws.send(json.dumps({"type": "work"}))
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "No recent update", timeout=10000)
-        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Working")
+        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Activity unconfirmed")
 
         # History: opened, its item still opens in full.
         await page.click(".work-panel .work-history .workflows-done-toggle")
@@ -357,8 +357,9 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         for item_id in ("work-r", "work-w"):
             row = page.locator(f".work-row[data-work-id={item_id}]")
             await row.wait_for(timeout=10000)
-            # Paused, and "Ready for review" for one: the title still has its room.
-            await async_api.expect(row.locator(".activity-paused")).to_have_text("Paused")
+            # A long state beside it ("Ready for review", "Activity unconfirmed"):
+            # the title still has its room, and a claim draws no activity.
+            await async_api.expect(row.locator(".activity-mark")).to_have_count(0)
             sizes = await row.evaluate("""(r) => ({
               title: r.querySelector('.work-row-title').getBoundingClientRect().width,
               row: r.getBoundingClientRect().width,

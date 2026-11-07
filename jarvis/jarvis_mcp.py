@@ -2156,6 +2156,18 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "set_motion",
+        "description": (
+            "Settings, You's Steady on every open JARVIS page, only when he asks: `steady` "
+            "holds everything still (no travelling glow, flow or flash; every look kept), "
+            "`full` brings the motion back."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"motion": {"type": "string", "enum": ["steady", "full"]}},
+            "required": ["motion"],
+        },
+    },
+    {
         "name": "mute_speech",
         "description": (
             "Mute JARVIS's speech (the page's speaker), only when he asks: from now on JARVIS "
