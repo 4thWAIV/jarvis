@@ -958,8 +958,8 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
                                             (item_id,))}
     if len(taken) >= PIECES_MAX:
         raise WorkRefused(f"A work item has at most {PIECES_MAX} pieces.")
-    base = re.sub(r"[^a-z0-9]+", "-", note.lower()).strip("-")[:40].strip("-") or "his-request"
-    key = next(k for k in (base if n == 1 else f"{base}-{n}" for n in range(1, PIECES_MAX + 2))
+    stem = re.sub(r"[^a-z0-9]+", "-", note.lower()).strip("-")[:40].strip("-") or "his-request"
+    key = next(k for k in (stem if n == 1 else f"{stem}-{n}" for n in range(1, PIECES_MAX + 2))
                if k not in taken)
     last = conn.execute("SELECT who_kind, who_ref FROM work_pieces WHERE item_id=? AND "
                         "who_kind<>? ORDER BY note_at DESC LIMIT 1", (item_id, TIM)).fetchone()

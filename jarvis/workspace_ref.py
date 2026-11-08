@@ -180,8 +180,12 @@ def format(r: WorkspaceRef) -> str:  # noqa: A001 - the design's name for the on
     return out
 
 
-_TEXT = re.compile(r"jref:(?P<v>[0-9]+):(?P<node>[^:/@#]+):(?P<kind>[a-z_]+):(?P<id>[^@/#]+)"
-                   r"(?:@(?P<rev>[0-9]+))?(?:/(?P<path>[^#]*))?(?:#(?P<h>sha256|tree)=(?P<hex>[0-9a-f]{64}))?")
+# No control character or line separator anywhere in a reference: a value
+# ending in a newline is not a reference with something stuck on it.
+_NO_BREAK = r"\x00-\x1f\x7f-\x9f\u2028\u2029"
+_TEXT = re.compile(rf"jref:(?P<v>[0-9]+):(?P<node>[^:/@#{_NO_BREAK}]+):(?P<kind>[a-z_]+)"
+                   rf":(?P<id>[^@/#{_NO_BREAK}]+)(?:@(?P<rev>[0-9]+))?(?:/(?P<path>[^#{_NO_BREAK}]*))?"
+                   r"(?:#(?P<h>sha256|tree)=(?P<hex>[0-9a-f]{64}))?")
 
 
 def parse(text: str) -> WorkspaceRef:

@@ -160,6 +160,12 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         await async_api.expect(chip.get_by_role("button", name="3 updates")).to_be_visible()
         await async_api.expect(reminder.get_by_role("button", name="Sign in")).to_be_visible()
         assert await chip.locator(".updates-list").count() == 0, "never opens by itself"
+        # The corner's height reaches the view through a ResizeObserver once
+        # the microphone is in it: wait for that, as a frame would.
+        await page.wait_for_function("""() => { const v = document.querySelector('#folders-view'),
+          m = document.querySelector('#centre-mic #mic-control');
+          return !!(v && m) && v.getBoundingClientRect().bottom
+            <= document.querySelector('#centre-mic').getBoundingClientRect().top; }""", timeout=5000)
         shape = await page.evaluate(GEOMETRY)
         assert shape["noticeHeight"] in ("", "0px"), shape
         for c in (shape["chip"], shape["reminder"]):
