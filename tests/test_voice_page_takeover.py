@@ -140,6 +140,12 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
                 .to_have_attribute("aria-selected", "true")
             assert await page.locator("#right-column.rail").count() == 0
             assert await page.locator("#right-column .right-panel").count() == 1
+            # The corner's height reaches the frame through a ResizeObserver
+            # once the microphone is back in it: wait for that, as a frame would.
+            await page.wait_for_function(
+                "(want) => { const r = document.querySelector('#package-view iframe')"
+                "?.getBoundingClientRect(); return !!r && Math.abs(r.bottom - want) < 0.5; }",
+                arg=normal["bottom"], timeout=5000)
             assert await page.evaluate(RECT, "#package-view iframe") == normal
             assert await page.locator("#centre-mic #mic-control").count() == 1
         finally:

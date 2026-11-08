@@ -376,7 +376,7 @@ def answer_decision(item_id: str, key: str, answer: str, where: str) -> work_sto
 
 
 # A project folder's name as an answers folder may be named.
-_PROJECT = re.compile(r"[^/\x00]{1,255}")
+_PROJECT = re.compile(r"[^/\x00-\x1f\x7f-\x9f\u2028\u2029]{1,255}")
 
 
 def answer_path(item: work_store.WorkItem, name: str):
