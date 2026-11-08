@@ -16,6 +16,7 @@ def ws(monkeypatch, tmp_path):
     importlib.reload(data_paths)
     from jarvis import run_store
     importlib.reload(run_store)
+    run_store.init_db()
     from jarvis import work_store
     importlib.reload(work_store)
     return work_store

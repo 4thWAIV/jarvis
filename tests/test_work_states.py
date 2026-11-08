@@ -335,7 +335,8 @@ def test_his_voice_reviews_through_the_same_call(wired, item):
     said = _call(wired, "review_work", item=item.id, action="approve")["text"]
     assert said.startswith("Approved") and work_store.get(item.id).state == "done"
     said = _call(wired, "review_work", item=item.id, action="not_done", words="Again.")["text"]
-    assert "back to working" in said and work_store.get(item.id).review_note == "Again."
+    assert "feedback is saved" in said and work_store.get(item.id).review_note == "Again."
+    assert "agents are told" not in said
     said = _call(wired, "review_work", item=item.id, action="add_work", words="Docs")["text"]
     assert "new piece" in said and "docs" in _pieces(item.id)
     refused = _call(wired, "review_work", origin="event", item=item.id, action="approve")

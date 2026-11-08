@@ -1825,6 +1825,9 @@ def _on_session_event(event: dict) -> None:
     """Watcher callback. The watcher marshals this onto the event loop thread
     via call_soon_threadsafe before calling it, so scheduling work here with
     _spawn directly (no further thread-hop) is safe."""
+    if event.get("kind") == "work_delivery":
+        _send_to_session_clients({"type": "work"})
+        return
     event = _with_agent_name(event)
     kind = event.get("kind")
     session = event.get("session") or {}
@@ -11297,8 +11300,8 @@ def _review_said(action: str) -> str:
     if action == work_api.APPROVE:
         return "Approved, sir: it is done."
     if action == work_api.NOT_DONE:
-        return "Sent back to working with his note, sir; its agents are told."
-    return "Added as a new piece, sir; its agents are told."
+        return "His feedback is saved. Owner delivery and pickup are tracked on the Work item."
+    return "Added as a new piece. Owner delivery and pickup are tracked on the Work item."
 
 
 async def tool_review_work(args: dict) -> str:

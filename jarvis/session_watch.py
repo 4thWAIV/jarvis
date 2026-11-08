@@ -1877,6 +1877,9 @@ class SessionWatcher:
         # the answer, in place of the `needs_you` or `finished` it would
         # otherwise have earned.
         awaiting = self._track_messages(snap, now)
+        from jarvis import work_delivery
+        if self.messages is not None and work_delivery.poll(snap, now):
+            self._publish("work_delivery", SessionState(session_id="", cwd="", project="", state=""), now)
         self.send_queued(snap, now)
 
         for s in snap.sessions:

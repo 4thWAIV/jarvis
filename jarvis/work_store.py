@@ -314,7 +314,19 @@ _WAIT_LINKS = """
         || latest_update WHERE state = 'done' AND closed_at IS NULL;
 """ + _link_held("work_pieces", "item_id") + _link_held("work_items", "id")
 
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS}
+_DELIVERIES = """
+    CREATE TABLE work_deliveries (
+        event_seq INTEGER NOT NULL REFERENCES work_events(seq),
+        item_id TEXT NOT NULL REFERENCES work_items(id),
+        session_id TEXT NOT NULL,
+        message_id INTEGER REFERENCES messages(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        reason TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY(event_seq, session_id)
+    );
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS, 6: _DELIVERIES}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -656,6 +668,10 @@ def record(event: WorkEvent) -> WorkItem:
         if event.kind in (DECISION_MADE, DECISION_SIGNED_OFF, DECISION_WITHDRAWN):
             moved = _answered(conn, event.item_id, kept, event.kind, now)
         _insert_event(conn, event.item_id, event.kind, summary, kept, now)
+        if event.kind in (WORK_ADDED, REVIEW_RETURNED, DECISION_MADE):
+            from jarvis import work_delivery
+            seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            work_delivery.schedule(conn, event.item_id, seq, kept if event.kind == WORK_ADDED else {})
         conn.commit()
     wait_links.tell(moved)
     return get(event.item_id)

@@ -130,6 +130,8 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
     and `projects`: the projects holding its source (`projects_for_path`)."""
     names = names or WhoNames()
     out = dataclasses.asdict(item)
+    from jarvis import work_delivery
+    out["owner_notifications"] = work_delivery.deliveries(item.id)
     for piece, raw in zip(item.pieces, out["pieces"]):
         raw["who"]["name"] = names(piece.who)
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
