@@ -36,3 +36,23 @@ async def until_async(predicate, timeout: float = LIMIT_SEC, step: float = STEP_
         if value or time.monotonic() >= deadline:
             return value
         await asyncio.sleep(step)
+
+
+_TWO_FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
+async def settled(page, measure: str, arg=None, timeout: float = LIMIT_SEC):
+    """For a page's layout: run the JavaScript function `measure` (with
+    `arg`) until it gives the same value two animation frames running, and
+    return that value. Layout read straight after an action, or after a
+    fixed wait, can catch it before the page has drawn it or part way
+    through a transition."""
+    deadline = time.monotonic() + timeout
+    value = await page.evaluate(measure, arg)
+    while True:
+        await page.evaluate(_TWO_FRAMES)
+        again = await page.evaluate(measure, arg)
+        if again == value or time.monotonic() >= deadline:
+            return again
+        value = again
+

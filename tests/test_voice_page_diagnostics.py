@@ -8,11 +8,13 @@ Headless Chromium on the built page (built by test_agents_list_fits.py's
 fixture), with /api/usage/week replaced by Playwright.
 """
 
+import asyncio
 import json
 
 import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import settled
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -36,8 +38,12 @@ async def _shown(page_playwright, page_url, body, status=200, logo=True):
         except Exception as e:                          # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.route("**/api/usage/week", lambda route: route.fulfill(
-            status=status, content_type="application/json", body=json.dumps(body)))
+        read = asyncio.Event()
+
+        async def week(route):
+            await route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
+            read.set()
+        await page.route("**/api/usage/week", week)
         # A stand-in logo file, or none (a 404) to see the slot stay empty.
         svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
         await page.route("**/providers/*.svg", lambda route: route.fulfill(
@@ -45,8 +51,10 @@ async def _shown(page_playwright, page_url, body, status=200, logo=True):
             status=404, content_type="text/plain", body=""))
         await page.goto(page_url)
         await page.wait_for_selector(".weekly-usage")
-        await page.wait_for_timeout(300)
-        out = await page.evaluate("""() => {
+        # Before its read is answered the box shows dashes, as with nothing
+        # measured: measured once the week is in and drawn.
+        await asyncio.wait_for(read.wait(), 15)
+        out = await settled(page, """() => {
           const view = document.querySelector('.weekly-usage');
           const n = document.querySelector('.weekly-ahead');
           const chart = document.querySelector('.weekly-chart');

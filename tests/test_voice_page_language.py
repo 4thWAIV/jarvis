@@ -132,6 +132,7 @@ async def test_a_change_made_elsewhere_arrives_on_the_socket(page_url):
 async def test_a_page_that_connects_reads_the_language_and_a_late_read_does_not_undo_it(page_url):
     server = _Server()
     server.language = "en"                    # what a slow read will say...
+    answered = asyncio.Event()
 
     async def slow(route):
         await asyncio.sleep(1.5)
@@ -140,6 +141,7 @@ async def test_a_page_that_connects_reads_the_language_and_a_late_read_does_not_
                                 body=json.dumps(server.language_status()))
         except Exception:                     # pragma: no cover - the page went first
             pass
+        answered.set()
 
     async with async_api.async_playwright() as p:
         try:
@@ -153,6 +155,7 @@ async def test_a_page_that_connects_reads_the_language_and_a_late_read_does_not_
         await page.route_web_socket("**/ws/sessions", _Sessions(language="es"))
         await page.goto(page_url)
         await _tabs_are(page, SPANISH_TABS)
-        await page.wait_for_timeout(2500)     # the slow read has answered "en"
+        await asyncio.wait_for(answered.wait(), 15)   # the slow read has answered "en"...
+        await page.wait_for_timeout(500)              # ...and the page has had time to take it
         assert await page.evaluate(TABS) == SPANISH_TABS
         await browser.close()
