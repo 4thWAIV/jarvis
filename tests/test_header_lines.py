@@ -825,9 +825,18 @@ EXEMPT = {
     "server._read_message_aloud": (
         "it speaks one session's message aloud to him, as he asked (Read), through the "
         "voice; its words never reach the brain, whose tool gets only a fixed sentence"),
-    "server.api_reply_session_message": (
+    "server._read_answer_aloud": (
+        "it speaks one agent's answer aloud to him, as he asked (Read), through the voice; "
+        "its words never reach the brain, whose tool gets only a fixed sentence"),
+    "server._answer_reply_capture": (
+        "it opens a capture to the session that answered; its only words are its own "
+        "refusal naming the message by number, and the recipient through the directory"),
+    "server._replying": (
         "its note to the brain names the capture by number and its recipient through "
-        "_plain_name, which refuses anything but a plain name; no word of the message"),
+        "_recipient_name's wall; no word of the message"),
+    "server._reply_said": (
+        "it answers with the capture's number and its recipient through _recipient_name's "
+        "wall; his own reply text goes into the capture, never into the answer"),
     "server._recipient_name": (
         "it names a capture's recipient by the agent directory's one name through "
         "_said_name, which refuses anything but a plain name with spaces"),
@@ -842,9 +851,6 @@ EXEMPT = {
         "it reads a subagent's description or Codex nickname (its dispatcher's words) only "
         "as the sender's name, which the page shows as text and the brain reads only inside "
         "the session messages' untrusted wall"),
-    "server.tool_reply_to_session_message": (
-        "it answers with the capture's number and its recipient through _plain_name; his "
-        "own reply text goes into the capture, never into the answer"),
     "work_store._item_reason": (
         "it words the item's reason with the subagent's description (its dispatcher's "
         "words), data the page shows as text and the brain reads only inside "

@@ -223,6 +223,13 @@ brain's `read_session_message_aloud` too), seen only once heard in full
 (`_seen_once_heard`'s rule); Reply (`POST .../reply`, the brain's
 `reply_to_session_message`, `_reply_capture`) opens a capture addressed to
 its sender, read back and sent on his yes through `steer_session`.
+An agent's answer to one of his messages (`agent_message`, `answered`)
+has the same Read, Reply and Seen on its Updates entry: Read (`POST
+/api/agent-messages/{id}/read`, the brain's `read_message_reply_aloud`,
+`_read_answer_aloud`) speaks "<agent> answers: <reply>", seen once heard
+(`_speak_message`, shared with a session message's Read); Reply (`POST
+.../reply`, the brain's `reply_to_message`) opens a capture to the session
+that answered (`_capture_to_sender`, shared with `_reply_capture`).
 Every message to Tim can be replied to: a session's message (Reply); an
 agent's answer to a message and a session needing him (a capture to that
 agent, `capture` with `to`, then `steer_session`); a person's message (the

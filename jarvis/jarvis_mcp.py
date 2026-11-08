@@ -204,6 +204,28 @@ TOOL_SPECS = [
                         "required": ["message"]},
     },
     {
+        "name": "read_message_reply_aloud",
+        "description": (
+            "Read an agent's answer to one of his messages aloud, that answer only, as the "
+            "Updates entry's Read does, only when he asks. Its update counts as seen only "
+            "once he has heard it in full."),
+        "inputSchema": {"type": "object",
+                        "properties": {"message": {"type": "integer"}},
+                        "required": ["message"]},
+    },
+    {
+        "name": "reply_to_message",
+        "description": (
+            "His reply to an agent's answer to his message: a capture addressed to the "
+            "session that answered, holding his words when given. Read it back with "
+            "read_capture; it goes only on his yes, as every message to a session does."),
+        "inputSchema": {"type": "object",
+                        "properties": {"message": {"type": "integer"},
+                                       "text": {"type": "string",
+                                                "description": "His reply, in his words."}},
+                        "required": ["message"]},
+    },
+    {
         "name": "session_needs",
         "description": (
             "What every Claude Code session has written down as needing the user: "

@@ -171,6 +171,8 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_motion",
     "mcp__jarvis__read_session_message_aloud",
     "mcp__jarvis__reply_to_session_message",
+    "mcp__jarvis__read_message_reply_aloud",
+    "mcp__jarvis__reply_to_message",
     # Mute speech and all audio off, never their opposites: only ever quieter.
     "mcp__jarvis__mute_speech",
     "mcp__jarvis__turn_audio_off",

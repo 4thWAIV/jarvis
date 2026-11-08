@@ -486,3 +486,68 @@ def test_a_read_back_names_its_recipient_as_the_directory_names_it(server, monke
     monkeypatch.setattr(server.agent_directory, "names_by_session", lambda: {})
     assert server._read_back_lead({"to": "Landorphan Taxes", "to_session": "x"}) == \
         "To Landorphan Taxes."
+
+
+# --- an agent's answer to his message: the same Read, Reply and Seen ------------------
+
+def _answered(server, monkeypatch, attention, reply="Done: all tests pass."):
+    """His message to Agent Guard, answered, with its update pending."""
+    monkeypatch.setattr(server, "attention_record", attention)
+    store = server.run_store
+    mid = store.create_message(GUARD, "anthropic", "Agent Guard", "guard", "Run the tests.",
+                               status=store.MessageStatus.SENT)
+    store.update_message(mid, status=store.MessageStatus.ANSWERED, reply=reply)
+    attention.record("agent_message", str(mid), "answered", facts={"message_id": mid},
+                     untrusted={"agent": "Agent Guard"})
+    return mid
+
+
+def test_read_speaks_an_agent_s_answer_and_it_is_seen_once_heard(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    mid = _answered(server, monkeypatch, attention)
+    client = TestClient(server.app)
+    r = client.post(f"/api/agent-messages/{mid}/read", headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["reading"], r.text
+    assert server.said == ["Agent Guard answers: Done: all tests pass."], "that answer only"
+    (item,) = attention.items(("pending", "seen", "resolved"))
+    assert item.state == "seen"
+    unanswered = server.run_store.create_message(GUARD, "anthropic", "Agent Guard", "guard", "x")
+    assert client.post(f"/api/agent-messages/{unanswered}/read", headers=ORIGIN).status_code == 404
+    assert client.post(f"/api/agent-messages/{mid}/read").status_code == 403, "his click only"
+
+
+def test_an_answer_cut_off_stays_pending(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    mid = _answered(server, monkeypatch, attention)
+    server.speech.heard = False
+    TestClient(server.app).post(f"/api/agent-messages/{mid}/read", headers=ORIGIN)
+    (item,) = attention.items(("pending", "seen", "resolved"))
+    assert item.state == "pending"
+
+
+def test_reply_to_an_answer_is_a_capture_to_the_session_that_answered(server, monkeypatch,
+                                                                      attention):
+    from fastapi.testclient import TestClient
+    from jarvis import transmission
+    mid = _answered(server, monkeypatch, attention)
+    r = TestClient(server.app).post(f"/api/agent-messages/{mid}/reply", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    capture = server._captures[r.json()["capture"]]
+    assert (capture["to_session"], server._read_back_lead(capture)) == (GUARD, "To Agent Guard.")
+
+    async def reply():
+        return server.tool_reply_to_message({"message": mid, "text": "Ship it."})
+    said = asyncio.run(reply())
+    newest = max(server._captures.values(), key=lambda c: c["id"])
+    assert (newest["to_session"], newest["text"]) == (GUARD, "Ship it.")
+    assert "read_capture" in said and not transmission.accepted(newest)
+
+
+def test_the_brain_reads_an_answer_aloud_through_the_same_call(server, monkeypatch, attention):
+    import inspect
+    mid = _answered(server, monkeypatch, attention)
+    said = asyncio.run(server.tool_read_message_reply_aloud({"message": mid}))
+    assert said.startswith("Reading the answer") and server.said == [
+        "Agent Guard answers: Done: all tests pass."]
+    assert "_read_answer_aloud(" in inspect.getsource(server.api_read_answer)
+    assert "_read_answer_aloud(" in inspect.getsource(server.tool_read_message_reply_aloud)
