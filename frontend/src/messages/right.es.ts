@@ -50,7 +50,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.packages.unprovenClaim": "Las respuestas no van a ninguna parte: nada probó que la sesión que nombra lo enviara",
   "right.packages.answered": "{answered} de {total} respondidas",
   "right.packages.state.arrived": "Sin abrir",
-  "right.packages.state.opened": "Abierto",
+  "right.packages.state.opened": "Abierto, sin terminar",
   "right.packages.state.answering": "Respondiéndose",
   "right.packages.state.answered": "Listo para devolver",
   "right.packages.closed.signed_off": "Firmado",

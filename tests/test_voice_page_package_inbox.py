@@ -147,6 +147,12 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await async_api.expect(page.locator("#package-view iframe")).to_be_visible()
         await async_api.expect(row.locator(".package-progress")).to_have_text("0 of 2 answered")
         assert package_inbox.get(inbox_id).state == package_inbox.OPENED
+        # Opening is not seeing: the update stays pending, its line still in
+        # Updates waiting (Open's click closed the dropdown: open it again),
+        # until his Seen or Done.
+        assert server.attention_record.get("package", inbox_id).state == "pending"
+        await page.click("#updates-notice button[aria-expanded]")
+        await async_api.expect(line).to_have_count(1)
         await page.wait_for_timeout(1500)
         await _shot(page, "2-opened-deck")
 
@@ -182,6 +188,7 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await done.click()
         await async_api.expect(page.locator("#package-view")).to_have_count(0)
         await async_api.expect(row).to_have_count(0)
+        assert server.attention_record.get("package", inbox_id).state == "resolved"
         await async_api.expect(page.locator(".queue-packages .queue-history-toggle")) \
             .to_contain_text("Closed (1)")
         entry = package_inbox.get(inbox_id)

@@ -8788,7 +8788,9 @@ async def _open_inbox_package(reference: str, how: str):
     """Open one package from the inbox, on his act: the page's Open (his
     click) and the brain's acting `open_inbox_package` alike. A page
     package is shown in the centre (`_open_package_page`); any other is in
-    JARVIS's hands, to run with him. Opened, its attention item resolved.
+    JARVIS's hands, to run with him. Opened, and nothing he would read as
+    seen: its update stays pending until his Seen on its line or his Done
+    (`_sign_off_package`), and the Queue words it "opened, not done".
     (the row, the package, "" or why it is not shown) or (None, None, why
     not)."""
     entry, problem = await asyncio.to_thread(_inbox_one, reference)
@@ -8810,7 +8812,6 @@ async def _open_inbox_package(reference: str, how: str):
         entry = await asyncio.to_thread(package_inbox.opened, entry.id, how)
     except package_inbox.InboxRefused as e:
         return None, None, str(e)
-    _attention_resolved("package", entry.id)
     moved = await asyncio.to_thread(_inbox_recount, package, how)
     entry = next((e for e in moved if e.id == entry.id), entry)
     _hint_inbox([entry])
@@ -9096,7 +9097,7 @@ package_inbox_api.mount(app, package_inbox_api.Calls(
 # The states as the brain reads them.
 _INBOX_STATE_SAID = {
     package_inbox.ARRIVED: "not opened yet",
-    package_inbox.OPENED: "opened",
+    package_inbox.OPENED: "opened, not done yet (still in his updates)",
     package_inbox.ANSWERING: "partly answered",
     package_inbox.ANSWERED: "answered, not sent back yet",
     package_inbox.CLOSED: "closed",

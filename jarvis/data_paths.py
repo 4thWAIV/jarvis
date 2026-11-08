@@ -230,6 +230,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "eb1d240a52fed28de7f3fcaf01df1257102a059f8e8968db5177a8369d851b02",  # review_work: done is his alone
     "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
     "d7a681178ec7ad2c7d150f6309c64541469c6f79fef776ea0d23b2ff074ca54e",  # vector search in the Knowledge section
+    "8ba8ab347ca7f229009cb049e6dc7d97fc46b8176e89b2d45f40c390544e8ee4",  # opening an inbox package is not seeing it
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

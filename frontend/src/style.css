@@ -4041,7 +4041,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   border-radius: 8px;
   background: rgba(94, 234, 212, 0.05);
 }
-.package-row.state-arrived { border-color: rgba(94, 234, 212, 0.6); }
+.package-row.state-arrived,
+.package-row.state-opened { border-color: rgba(94, 234, 212, 0.6); }
 .package-row-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .package-row-head .row-person { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .package-progress { font-size: 10px; color: var(--ui-secondary); white-space: nowrap; }
