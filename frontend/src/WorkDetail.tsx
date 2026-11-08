@@ -180,11 +180,11 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
                 onClick={() => setAsking("not_done")}>{t("main.work.review.notDone")}</button>
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("add_work")}>{t("main.work.review.addWork")}</button>
-      </> : <form data-ui-action="domain" onSubmit={(e) => { e.preventDefault(); if (words.trim()) act(asking, words); }}>
+      </> : <form data-ui-action="domain" onSubmit={(e) => { e.preventDefault(); if (words.trim() || asking === "not_done") act(asking, words); }}>
         <input data-ui-action="input" type="text" value={words} autoFocus aria-label={t(`main.work.review.${asking}`)}
                placeholder={t(`main.work.review.${asking}`)} onChange={(e) => setWords(e.target.value)} />
         <button type="submit" className="settings-btn" data-ui-action="domain"
-                disabled={busy || !words.trim()}>{t("main.work.review.send")}</button>
+                disabled={busy || (!words.trim() && asking !== "not_done")}>{t("main.work.review.send")}</button>
         <button type="button" className="settings-btn" data-ui-action="domain"
                 onClick={() => { setAsking(null); setWords(""); setProblem(null); }}>{t("main.common.cancel")}</button>
       </form>}

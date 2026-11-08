@@ -128,6 +128,8 @@ REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
 # REVIEW_RETURNED ("not done yet") sends it back to working with his note;
 # WORK_ADDED adds a piece in his words.
 APPROVED, REVIEW_RETURNED, WORK_ADDED = "approved", "review_returned", "work_added"
+# What "not done yet" with no words of his says as its note.
+NO_NOTE = "no note given"
 REVIEW_KINDS = (APPROVED, REVIEW_RETURNED, WORK_ADDED)
 # What his act in a review package came to when it changed nothing itself:
 # signed off with no verdict, or a verdict that could not be applied (why).
@@ -1035,6 +1037,9 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
                      (DONE, now, item_id))
         return {**kept, "state": DONE}
     note = _one_line(detail.get("words"), SUMMARY_MAX)
+    if not note and kind == REVIEW_RETURNED:
+        # Not done yet needs no words: it goes back to working all the same.
+        note = NO_NOTE
     if not note:
         raise WorkRefused("Say it in his words.")
     kept["words"] = note

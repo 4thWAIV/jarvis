@@ -679,11 +679,42 @@ def refs(package_id: str) -> set:
 
 
 def adopt(package: Package, sha256: str, how: str) -> Entry:
-    """A record for a package unpacked here before the inbox, or outside it
-    (an older local one), so it is signed off the same way: arrived from no
-    one known, and opened, since he has it in front of him."""
-    entry = arrive(package, sha256, Sender()).entry
+    """A record for a package with no open row, so it is signed off the
+    same way, opened, since he has it in front of him: one unpacked here
+    before the inbox or outside it arrived from no one known; one signed off
+    before and answered since keeps its last row's sender, workflow and work
+    item, so what he answers now still goes where it was sent for."""
+    last = latest_for_package(package.id)
+    sender = Sender(last.from_project, last.from_session, last.from_agent) if last else Sender()
+    entry = arrive(package, sha256, sender, workflow_id=last.workflow_id or "" if last else "",
+                   work_id=last.work_id or "" if last else "").entry
     return opened(entry.id, how)
+
+
+def latest_for_package(package_id: str) -> Optional[Entry]:
+    """The newest row of this unpacked package, open or closed, or None."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM package_inbox WHERE package_id=? "
+                           "ORDER BY arrived_at DESC LIMIT 1", (package_id,)).fetchone()
+    return _entry(row) if row else None
+
+
+def rows_for_package(package_id: str) -> list[Entry]:
+    """Every row this unpacked package has had, open or closed."""
+    with closing(_connect()) as conn:
+        return [_entry(r) for r in conn.execute(
+            "SELECT * FROM package_inbox WHERE package_id=? ORDER BY arrived_at", (package_id,))]
+
+
+def for_review(package_id: str) -> list[Entry]:
+    """The rows his answers in this package count for: its open rows, else
+    its newest row once he has signed it off (he may answer in it after
+    pressing Done), never one he set aside or that was replaced."""
+    rows = for_package(package_id)
+    if rows:
+        return rows
+    last = latest_for_package(package_id)
+    return [last] if last is not None and last.closed_why == SIGNED_OFF else []
 
 
 # A message's statuses once it has gone to its session (run_store.MessageStatus).

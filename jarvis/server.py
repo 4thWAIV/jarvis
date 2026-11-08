@@ -8693,7 +8693,7 @@ def _inbox_recount(package, how: str) -> list:
     for q in asked:
         if q.applies and q.answer:
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
-    for entry in package_inbox.for_package(package.id):
+    for entry in package_inbox.for_review(package.id):
         _review_from_package(entry, package)
     return moved
 
