@@ -2475,6 +2475,18 @@ export const UI_CONTRACT = {
       "family": "knowledge"
     },
     {
+      "id": "knowledge.embedder.install",
+      "label": "Download, check and install the embedding model vector search runs on; only his own hand starts it here",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
+    },
+    {
       "id": "folders.panel.show",
       "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
       "view": "right.folders",
@@ -4429,7 +4441,8 @@ export const UI_CONTRACT = {
         "proposals",
         "topics",
         "indexes",
-        "seeds"
+        "seeds",
+        "vectors"
       ],
       "presentations": [
         {
@@ -4827,6 +4840,7 @@ export interface CommandArgs {
   "folders.panel.show": { view: "projects" | "folders"; };
   "folders.search": { text?: string; };
   "knowledge.close": { };
+  "knowledge.embedder.install": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
   "knowledge.open": { };
   "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };

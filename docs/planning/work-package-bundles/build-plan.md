@@ -442,3 +442,32 @@ work, and Planning folds `/api/works` into it. Routine choices made for it:
 - spawn_run's start (context pack, compose, spawn, keep the pack) is one
   function, `server._spawn_placed`, and a run's pack is
   `knowledge_api.run_pack`.
+
+Phase 5 is built: vector search, measured in the engine itself
+(`phase5/results.md`): keyword + graph missed 30 percent of the question
+set, keyword + vector + graph misses 20 percent, vectors lifting the
+knowledge questions from 14 to 18 of 25. Routine choices made for it:
+
+- Runtime and model: onnxruntime 1.23.2 running multilingual-e5-small
+  (int8, Xenova's export at 761b726d): the only candidate in the D4 trial
+  that made vectors find anything, 10 ms a question, 13 minutes for the
+  corpus, one space for both languages, MIT.
+- No tokenizer library: `knowledge/unigram.py` reads the model's
+  SentencePiece file and gives `tokenizers`' ids on every chunk, so
+  onnxruntime is the one new dependency.
+- The install writes a compact tokenizer file (`tokenizer.bin`) in a child
+  process, since parsing the JSON in a long-lived process keeps some
+  200 MB.
+- Fusion weights 1, 1, 2 (match, near, about): the smallest graph weight
+  on the 80 percent plateau; equal weights let vectors push out the
+  status questions' answers, as in the trial.
+- Agents become graph nodes from the conversation's agent messages
+  (`said_by`), marked untrusted since a name can come from a session's
+  title.
+- The ingest's watermarks carry a schema; schema 2 (each chunk's `at` and
+  speaker) reads every source again once.
+- The engine's memory budget grows by 600 MB while the model is installed
+  (about 560 measured).
+- 4 intra-op threads, no memory arena, no weight prepacking; ingest
+  batches of 4, a question ahead of any batch.
+- `JARVIS_KNOWLEDGE` stays off by default.

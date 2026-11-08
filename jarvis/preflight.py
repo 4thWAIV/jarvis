@@ -689,6 +689,25 @@ def _check_speech_input_sync() -> Check:
                  message=f"The speech model is installed at {transcriber.model_dir(model)}.")
 
 
+def _check_vector_search_sync() -> Check:
+    """Whether the knowledge engine's vector search can run: onnxruntime
+    importable and the embedding model installed (files only; it never
+    loads the model). Search works by words and the graph without it."""
+    from jarvis import embedding_models
+    runtime = embedding_models.runtime_problem()
+    if runtime:
+        return Check(name="vector_search", status=STATUS_WARN,
+                     message=f"Vector search cannot run: {runtime}. Search still finds by words.",
+                     remedy="Run: .venv/bin/pip install -r requirements.txt")
+    problem = embedding_models.model_problem()
+    if problem:
+        return Check(name="vector_search", status=STATUS_WARN,
+                     message=f"The embedding model is {problem}. Search still finds by words.",
+                     remedy=f"Run: {embedding_models.SETUP_COMMAND}")
+    return Check(name="vector_search", status=STATUS_OK,
+                 message=f"The embedding model is installed at {embedding_models.model_dir()}.")
+
+
 # ── running them all ─────────────────────────────────────────────────────
 
 # JARVIS's own checks. The brain provider's (for Claude Code: the CLI, its
@@ -696,7 +715,7 @@ def _check_speech_input_sync() -> Check:
 _ASYNC_CHECKS = (_check_accessibility,)
 _SYNC_CHECKS = (_check_fish_api_key_sync, _check_cross_session_inbound_sync,
                 _check_screen_recording_sync, _check_session_skill_sync,
-                _check_speech_input_sync)
+                _check_speech_input_sync, _check_vector_search_sync)
 
 
 async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:

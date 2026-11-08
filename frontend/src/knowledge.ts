@@ -26,6 +26,25 @@ export interface KnowledgeStatus {
   ingest?: { passes?: number; last_finished_at?: number | null; documents?: number; more?: boolean } | null;
 }
 
+export interface Embedder {
+  name: string;
+  label: string;
+  download_bytes: number;
+  installed: boolean;
+  problem: string | null;
+  runtime_problem: string | null;
+  install: { state: string; done_bytes: number; total_bytes: number; error: string | null } | null;
+  engine: { running: boolean; space: string | null; embedded: number | null; waiting: number | null; rows: number };
+}
+
+/** Why a hit ranked: each list that found it, with its rank there. */
+export interface HitWhy {
+  match?: { rank: number };
+  near?: { rank: number; score: number };
+  about?: { rank: number; edge: string; entity: string };
+  walk?: unknown;
+}
+
 export interface Hit {
   key: string;
   kind: string;
@@ -36,6 +55,7 @@ export interface Hit {
   text: string | null;
   heading_path: string[] | null;
   score: number | null;
+  why?: HitWhy | null;
 }
 
 export interface Proposal {
@@ -101,6 +121,22 @@ export const topics = liveRead(
 
 export const seeds = liveRead(
   () => getJson<{ seeds: Seed[] }>("/api/knowledge/seeds").then((b) => b.seeds), [knowledgeChanged]);
+
+/** Moves while an install runs, so its progress is read again each second. */
+const embedderTick = createStore(0);
+export const embedder = liveRead(() => getJson<Embedder>("/api/knowledge/embedder"), [knowledgeChanged, embedderTick]);
+let ticking: ReturnType<typeof setInterval> | null = null;
+embedder.subscribe(() => {
+  const state = embedder.get().value?.install?.state;
+  const running = state === "downloading" || state === "verifying" || state === "installing"
+    || (embedder.get().value?.engine.waiting ?? 0) > 0;
+  if (running && ticking === null) {
+    ticking = setInterval(() => embedderTick.set(embedderTick.get() + 1), 1000);
+  } else if (!running && ticking !== null) {
+    clearInterval(ticking);
+    ticking = null;
+  }
+});
 
 export const extraIndexes = liveRead(
   () => getJson<{ indexes: ExtraIndex[] }>("/api/knowledge/indexes").then((b) => b.indexes), [knowledgeChanged]);
@@ -195,6 +231,24 @@ registerCommand("knowledge.seed.answer", {
   async execute({ seedId, answer }) {
     try {
       await postJson(`/api/knowledge/seeds/${encodeURIComponent(seedId)}`, { action: answer });
+      answerError.set(null);
+      knowledgeChanged.set(knowledgeChanged.get() + 1);
+      return { status: "completed", effects: [] };
+    } catch (e) {
+      answerError.set((e as Error).message);
+      return { status: "unavailable", effects: [], reason: (e as Error).message };
+    }
+  },
+});
+
+registerCommand("knowledge.embedder.install", {
+  availability: () => {
+    const now = embedder.get().value;
+    return now && !now.installed ? { available: true } : { available: false, reason: "no-entity" };
+  },
+  async execute() {
+    try {
+      await postJson("/api/knowledge/embedder/install", {});
       answerError.set(null);
       knowledgeChanged.set(knowledgeChanged.get() + 1);
       return { status: "completed", effects: [] };

@@ -23,6 +23,8 @@ When a user clones this repo and starts Claude Code, help them:
 5a. Install the current local Kroko speech model:
    `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
    adds the Spanish model, `--language all` both)
+5b. Install the knowledge engine's embedding model (vector search, about
+   135 MB): `.venv/bin/python scripts/setup_embedding_model.py`
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
@@ -1235,8 +1237,33 @@ is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it reads the brain's notes, the
 conversation log, finished runs, workflow events and registered folders'
 Markdown (through `folder_service`, FILES reader only) and keeps each source's
-watermark in the engine. No embedder is wired until one is chosen
-(`knowledge/embedder.py`'s `RUNNER`). Diagnostics shows its row (`knowledge`).
+watermark in the engine (stamped with `knowledge_ingest.SCHEMA`; a source
+written under another schema is read again from the start). Every chunk
+holds `at` (when it was said or written) and an agent's words their speaker
+(`agent`, a `said_by` edge to an `agent:<name>` node). Diagnostics shows its
+row (`knowledge`).
+
+Vector search: `knowledge/embedder.py`'s `RUNNER` (`installed`) gives the
+embedding model installed under the data folder, run by the runtime its
+record names (`RUNTIMES`; `onnx-e5` is multilingual-e5-small, int8, through
+onnxruntime, `knowledge/e5_onnx.py`, with the model's own SentencePiece
+tokenizer read by `knowledge/unigram.py`, no tokenizer library), or None,
+and then vectors are off. The engine attaches one that appears while it
+runs (`VectorIndex.attach`, from `maintain`) and embeds what waits under the
+pace, queries first. `embedding_models.py` installs it the speech models'
+way (`model_files.py`: download at a pinned revision, SHA-256 and size,
+one rename into `<data>/models/embedding/<name>`), through
+`scripts/setup_embedding_model.py`, `POST /api/knowledge/embedder/install`
+(the Knowledge view's Install) and the acting `install_embedding_model`;
+`embedding_model` and `GET /api/knowledge/embedder` read it. While it is
+installed the engine's memory budget grows by its measured share. Search
+is hybrid (`query.run`): `match` (the keyword index), `near` (the vectors)
+and `about` (the graph: the agents, people, projects and topics the words
+name, `knowledge/entities.py`, and what the records say they said, newest
+first, then what mentions them), fused by weighted reciprocal rank
+(`query.DEFAULT_WEIGHTS`, chosen on the phase 5 measurements,
+`docs/planning/work-package-bundles/phase5/results.md`); every hit says
+which found it.
 Topics are `brain_home()/topics/<slug>.md` and his index pins and forbids
 `brain_home()/knowledge.md`, both written only by `knowledge_links`; the
 engine's linker proposes links and the Denice seed (`knowledge_seeds.py`)
@@ -2071,7 +2098,7 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
 `test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
-`test_voice_page_capture_cues.py`) are marked `page` and deselected too: they build
+`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

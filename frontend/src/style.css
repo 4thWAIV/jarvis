@@ -4262,3 +4262,6 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   background: rgba(var(--ui-accent-rgb), 0.1); }
 .project-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
   background: #34d399; vertical-align: middle; }
+.knowledge-why { font-size: 11px; padding: 0 6px; border-radius: 8px; color: var(--ui-secondary);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3); }
+.knowledge-why[data-why="near"] { color: var(--ui-accent); }

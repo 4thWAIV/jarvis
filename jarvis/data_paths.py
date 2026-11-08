@@ -229,6 +229,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "b93d49ee134b87051313ca380dd9c1a56cc01909be7beb87998f4c52d237eac8",  # as shipped in f9786a0 (takeover mode)
     "eb1d240a52fed28de7f3fcaf01df1257102a059f8e8968db5177a8369d851b02",  # review_work: done is his alone
     "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
+    "d7a681178ec7ad2c7d150f6309c64541469c6f79fef776ea0d23b2ff074ca54e",  # vector search in the Knowledge section
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -415,6 +416,12 @@ def models_dir() -> Path:
     """Where downloaded models live, one folder each (see transcriber.py).
     Not created here: a missing folder is how "not installed" reads."""
     return data_dir() / "models"
+
+
+def embedding_models_dir() -> Path:
+    """Where the knowledge engine's embedding models are installed, one
+    folder per model (embedding_models.py): `<data>/models/embedding`."""
+    return models_dir() / "embedding"
 
 
 def needs_dir() -> Path:
