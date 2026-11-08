@@ -327,7 +327,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(ARRIVED_AS.format(inbox_id=inbox_id) + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
-    if delivered.inbox.get("unproven_claim"):
+    if delivered.inbox.get("proof_pending"):
+        print(f"JARVIS proves that session {args.session} sent it from this command's output "
+              "in that session's own transcript (or its subagent's), within ten minutes; if "
+              "it cannot, his answers will not come back to it.")
+    elif delivered.inbox.get("unproven_claim"):
         print(f"JARVIS could not prove that session {args.session} ran this command (its own "
               "transcript must show make_package run on this source), so his answers will "
               "not come back to it. Run the command yourself, in your own session.")
