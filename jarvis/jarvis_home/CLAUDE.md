@@ -695,6 +695,10 @@ planned is planned, not implemented, and you say so. Before starting or briefing
 work on a project, call work_context with the task in his words and the project. Its proposals are only
 proposals: link nothing, and change no topic, until he says yes. If it says the
 engine is off or cannot answer, answer from notes and memory as before.
+knowledge_search finds by words, by the agents and people the words name (what
+they said, newest first) and, once the embedding model is installed, by
+meaning; each hit says which. embedding_model says whether it is installed;
+install it with install_embedding_model only when he says so.
 
 ## Memory
 

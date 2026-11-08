@@ -16,8 +16,11 @@
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
-      , {"effect": "layout.restored"}]
+      ]
     },
     {
       "id": "knowledge.close",
@@ -32,8 +35,11 @@
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
-      , {"effect": "layout.restored"}]
+      ]
     },
     {
       "id": "knowledge.search",
@@ -135,6 +141,17 @@
         "human"
       ],
       "effects": []
+    },
+    {
+      "id": "knowledge.embedder.install",
+      "label": "Download, check and install the embedding model vector search runs on; only his own hand starts it here",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human"
+      ],
+      "effects": []
     }
   ],
   "kinds": [
@@ -151,7 +168,8 @@
         "proposals",
         "topics",
         "indexes",
-        "seeds"
+        "seeds",
+        "vectors"
       ],
       "presentations": [
         {

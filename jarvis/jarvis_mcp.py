@@ -2214,6 +2214,24 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "embedding_model",
+        "description": (
+            "The embedding model vector search runs on (multilingual-e5-small): whether it "
+            "is installed and runnable, its download size, how an install is going, and how "
+            "much of what JARVIS has read is embedded and how much waits. The Knowledge "
+            "view's Vector search section."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "install_embedding_model",
+        "description": (
+            "Only when he says so: download the embedding model (about 135 MB, checked "
+            "against its published SHA-256) and install it, in the background, as the "
+            "Knowledge view's Install does. Vector search starts once it is in place; "
+            "embedding_model reports the progress."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "knowledge_search",
         "description": (
             "Search everything JARVIS has read across projects (notes, the conversation, runs, "

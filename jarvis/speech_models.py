@@ -29,7 +29,6 @@ sherpa-onnx engine is Apache-2.0. See https://huggingface.co/Banafo/Kroko-ASR
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import tarfile
 import tempfile
@@ -49,38 +48,11 @@ from jarvis.transcriber import SpeechModel, TranscriptionError
 
 log = logging.getLogger("jarvis.speech_models")
 
-# (state, bytes done, bytes in all): "downloading", "verifying", "installing".
-Progress = Callable[[str, int, int], None]
-# How long one read of the download may wait. Without it a connection that
-# goes dead hangs the install for good, and while it shows as downloading a
-# new install of that model is not started.
-DOWNLOAD_TIMEOUT_SEC = 60
+from jarvis.model_files import (DOWNLOAD_TIMEOUT_SEC, InstallRefused, Progress,  # noqa: F401
+                                download, sha256_of)
 
 
 # ── installing one model ─────────────────────────────────────────────────
-
-class InstallRefused(Exception):
-    """An archive that is not the release's, or not safe to extract."""
-
-
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def download(url: str, dest: Path, progress: Progress) -> None:
-    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SEC) as response, \
-            dest.open("wb") as out:
-        total = int(response.headers.get("Content-Length") or 0)
-        done = 0
-        for block in iter(lambda: response.read(1 << 20), b""):
-            out.write(block)
-            done += len(block)
-            progress("downloading", done, total)
-
 
 def extract(archive: Path, model: SpeechModel, into: Path) -> Path:
     """Extract only regular files and folders under the model's own folder;

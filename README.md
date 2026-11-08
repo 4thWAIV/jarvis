@@ -71,6 +71,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m playwright install chromium
 .venv/bin/python scripts/setup_speech_input.py
+.venv/bin/python scripts/setup_embedding_model.py
 npm --prefix frontend install
 ```
 

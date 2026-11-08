@@ -10,8 +10,13 @@
  * markup) and marked as theirs. A proposal is never acted on but by his own
  * Accept or Reject here, or his word to the brain.
  *
+ * Vector search: the embedding model it runs on, its download size, Install
+ * (his own click; the brain's install_embedding_model on his word), the
+ * install's progress and how much is embedded. Each hit says which of the
+ * keyword index, the vectors and the graph found it.
+ *
  * Registered for pointing at: the view (header, close, status, search,
- * results, proposals, topics, indexes), each proposal (row, accept,
+ * results, proposals, topics, indexes, vectors), each proposal (row, accept,
  * reject), each suggested set of topics (row, accept, decline) and each
  * extra index (row, pin, forbid, clear). His pins and
  * forbids are kept in his settings note (knowledge.md).
@@ -20,7 +25,8 @@
 import { useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import {
-  answerError, extraIndexes, knowledgeStatus, seeds, type Seed, proposals, search, topics, type ExtraIndex, type Hit, type Proposal,
+  answerError, embedder, extraIndexes, knowledgeStatus, seeds, type Seed, proposals, search, topics, type ExtraIndex,
+  type Hit, type Proposal,
 } from "./knowledge";
 import { useT } from "./locale";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
@@ -49,6 +55,7 @@ export function KnowledgeView() {
                 ref={ui.part("close")} {...bindingProps(bind("knowledge.close", {}))}>×</button>
       </section>
       <SearchBox partRef={ui.part("search")} resultsRef={ui.part("results")} />
+      <Vectors partRef={ui.part("vectors")} />
       <Seeds partRef={ui.part("seeds")} />
       <Proposals partRef={ui.part("proposals")} />
       <Topics partRef={ui.part("topics")} />
@@ -105,6 +112,9 @@ function HitRow({ h }: { h: Hit }) {
           {t(theirs ? "main.knowledge.theirWords" : "main.knowledge.ownWords")}
         </span>
         {h.status && <span className="knowledge-status">{h.status}</span>}
+        {h.why?.match && <span className="knowledge-why" data-why="match">{t("main.knowledge.why.match", { rank: h.why.match.rank })}</span>}
+        {h.why?.near && <span className="knowledge-why" data-why="near">{t("main.knowledge.why.near", { rank: h.why.near.rank })}</span>}
+        {h.why?.about && <span className="knowledge-why" data-why="about">{t("main.knowledge.why.about", { rank: h.why.about.rank })}</span>}
       </div>
       {h.text && <p className="knowledge-text" data-original-detail={theirs ? "" : undefined}>{h.text}</p>}
     </li>
@@ -277,5 +287,45 @@ function SeedRow({ seed }: { seed: Seed }) {
         {t("main.knowledge.seedDecline")}
       </button>
     </li>
+  );
+}
+
+const MB = 1 << 20;
+
+function Vectors({ partRef }: { partRef: PartRef }) {
+  const t = useT();
+  const live = useSyncExternalStore(embedder.subscribe, embedder.get);
+  const e = live.value;
+  const install = e?.install;
+  const running = install && ["downloading", "verifying", "installing"].includes(install.state);
+  return (
+    <section aria-label={t("main.knowledge.vectorsTitle")} ref={partRef}>
+      <h3>{t("main.knowledge.vectorsTitle")}</h3>
+      {live.error && <p className="read-failure">{t("main.knowledge.unreadable", { error: live.error })}</p>}
+      {e && (
+        <p className="knowledge-note" data-embedder={e.installed ? "installed" : "missing"}>
+          {e.installed
+            ? (e.runtime_problem ? t("main.knowledge.vectorsNoRuntime", { model: e.label })
+              : e.engine.running
+                ? t("main.knowledge.vectorsReady", { model: e.label, rows: e.engine.rows, waiting: e.engine.waiting ?? 0 })
+                : t("main.knowledge.vectorsInstalled", { model: e.label }))
+            : t("main.knowledge.vectorsMissing", { model: e.label, size: Math.round(e.download_bytes / MB) })}
+        </p>
+      )}
+      {running && install && (
+        <p className="knowledge-note" role="status">
+          {t(`main.knowledge.vectorsInstall.${install.state as "downloading" | "verifying" | "installing"}`,
+             { done: Math.round(install.done_bytes / MB), total: Math.round(install.total_bytes / MB) })}
+        </p>
+      )}
+      {install?.state === "failed" && (
+        <p className="read-failure">{t("main.knowledge.vectorsFailed", { error: install.error ?? "" })}</p>
+      )}
+      {e && !e.installed && (
+        <button type="button" disabled={!!running} {...bindingProps(bind("knowledge.embedder.install", {}))}>
+          {t("main.knowledge.vectorsInstallButton", { size: Math.round(e.download_bytes / MB) })}
+        </button>
+      )}
+    </section>
   );
 }

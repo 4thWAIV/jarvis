@@ -32,7 +32,7 @@ from typing import Any, Callable, Optional
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
-RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path"]
+RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path", "at"]
 SEARCH_DEADLINE_SEC = 0.5
 
 
@@ -100,6 +100,28 @@ def status(ctx: Context) -> dict:
             "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards)}
 
 
+def embedding_model(ctx: Context) -> dict:
+    """The embedding model vector search runs on (embedding_models.py):
+    whether it is installed and runnable, how an install is going, and,
+    while the engine runs, how much it has embedded and how much waits."""
+    from jarvis import embedding_models
+    out = embedding_models.status()
+    rt = ctx.runtime
+    vectors = ((rt.health().get("engine") or {}).get("vectors") or {}) if rt is not None else {}
+    out["engine"] = {"running": rt is not None, "space": vectors.get("embedder"),
+                     "embedded": vectors.get("embedded"), "waiting": vectors.get("waiting"),
+                     "rows": sum(int(s.get("rows") or 0) for s in (vectors.get("spaces") or {}).values())}
+    return out
+
+
+def install_embedding_model(ctx: Context) -> dict:
+    """Start installing the embedding model (on the event loop: the download
+    runs in the background); the engine picks it up when it is in place."""
+    from jarvis import embedding_models
+    embedding_models.start_install()
+    return embedding_model(ctx)
+
+
 def _hits(answer: dict) -> list[dict]:
     out = []
     for h in answer.get("hits") or []:
@@ -112,14 +134,17 @@ def _hits(answer: dict) -> list[dict]:
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
            kinds: Optional[list[str]] = None, limit: int = 10) -> dict:
-    """Words found in what JARVIS has read: hybrid where vectors exist,
-    keywords and the graph otherwise. `query_en` searches again in English
-    (the brain fills it when he speaks Spanish) and the two are merged."""
+    """Hybrid search over what JARVIS has read: the keyword index, the graph
+    (the agents, people, projects and topics the words name, and what the
+    records say they said) and, while an embedding model is installed, the
+    vector index, fused by the engine (query.DEFAULT_WEIGHTS). `query_en`
+    searches again in English (the brain fills it when he speaks Spanish)
+    and the two are merged."""
     text = (text or "").strip()
     if not text:
         raise Refused("search needs words")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
-    body: dict = {"match": text, "near": {"text": text, "k": 50},
+    body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
                   "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
     if kinds:
         body["from"] = {"kinds": list(kinds)}
@@ -128,7 +153,8 @@ def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_u
     answers = [ctx.call("POST", "/v1/query", body)]
     if query_en and query_en.strip() and query_en.strip() != text:
         answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
-                                                     "near": {"text": query_en.strip(), "k": 50}}))
+                                                     "near": {"text": query_en.strip(), "k": 50},
+                                                     "about": {"text": query_en.strip()}}))
     merged: dict[str, dict] = {}
     for answer in answers:
         for h in _hits(answer):

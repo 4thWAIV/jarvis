@@ -1,3 +1,5 @@
 # The dependencies are declared once, in pyproject.toml. This installs the
-# checkout in editable mode with the test tools.
+# checkout in editable mode with the test tools. (onnxruntime, for the
+# knowledge engine's vector search, joined them; run this again after an
+# update that changes them.)
 -e .[test]

@@ -1,10 +1,13 @@
 """The embedder interface (design section 7.11).
 
-Which model turns text into vectors is still open with the owner, so no
-real embedder is wired and no dependency is added. The engine reaches one
-only through `RUNNER`, a factory that returns an `Embedder` or None; it is
-None by default, and then the vector part has nothing to search and every
-query says vectors were not used. Tests replace `RUNNER` with
+The engine reaches an embedder only through `RUNNER`, a factory that
+returns an `Embedder` or None. The default, `installed`, gives the model
+installed under the data folder (embedding_models.py), run by the runtime
+its record names (`RUNTIMES`: `onnx-e5` is multilingual-e5-small through
+onnxruntime, e5_onnx.py), loaded once; with no model installed, or a
+runtime that cannot load, it is None, and then the vector part has nothing
+to search and every query says vectors were not used. Another runtime slots
+in as one more entry of `RUNTIMES`. Tests replace `RUNNER` with
 `FakeEmbedder`, which hashes words into deterministic vectors.
 
 An embedder's `id` names its space: vectors of two spaces are never
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import logging
 import math
 import queue
 import re
@@ -44,7 +48,42 @@ class Embedder(Protocol):
         `query` or `passage`."""
 
 
-RUNNER: Optional[Callable[[], Optional[Embedder]]] = None
+def _onnx_e5(folder, model) -> "Embedder":
+    from jarvis.knowledge.e5_onnx import E5Onnx
+    return E5Onnx(folder, model.space, model.dim)
+
+
+# Which class runs a model, by the `runtime` its record names.
+RUNTIMES: dict[str, Callable] = {"onnx-e5": _onnx_e5}
+
+_loaded: dict[str, Optional["Embedder"]] = {}
+_load_lock = threading.Lock()
+log = logging.getLogger("jarvis.knowledge.embedder")
+
+
+def installed() -> Optional["Embedder"]:
+    """The installed model's embedder, loaded once per folder; None while
+    none is installed or its runtime cannot load (said once in the log)."""
+    from jarvis import embedding_models
+    model = embedding_models.DEFAULT
+    folder = embedding_models.model_dir(model)
+    key = str(folder)
+    with _load_lock:
+        if key in _loaded and _loaded[key] is not None:
+            return _loaded[key]
+        if embedding_models.model_problem(folder, model) is not None:
+            return None
+        if key in _loaded:          # it failed to load before; not again this run
+            return None
+        try:
+            _loaded[key] = RUNTIMES[model.runtime](folder, model)
+        except Exception:  # noqa: BLE001 - vectors off, the rest of the engine runs
+            log.warning("the embedding model could not be loaded", exc_info=True)
+            _loaded[key] = None
+        return _loaded[key]
+
+
+RUNNER: Optional[Callable[[], Optional[Embedder]]] = installed
 
 
 def current() -> Optional[Embedder]:
