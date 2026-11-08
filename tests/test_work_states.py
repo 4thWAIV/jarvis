@@ -310,8 +310,11 @@ def test_not_done_yet_sends_it_back_with_his_note_for_its_agents(wired, item):
         "activity_unknown", "The logo is still blurry.", None)
     assert got["pieces"][0]["state"] == "activity_unknown"
     folder = data_paths.answers_dir() / "speech"
-    [written] = list(folder.glob(f"{item.id}-review-*.md"))
-    assert "The logo is still blurry." in written.read_text()
+    written = sorted(folder.glob(f"{item.id}-review-*.md"))
+    assert len(written) == 2, "one file for each review, his approval kept beside his note"
+    [noted] = [p for p in written if "The logo is still blurry." in p.read_text()]
+    [approved] = [p for p in written if "approved" in p.read_text()]
+    assert noted != approved
     assert "Not done yet, he said: The logo is still blurry." in _call(
         wired, "work_status", item=item.id)["text"]
     assert "Say it in his words" in _review(wired, item.id, "not_done", ok=False)["error"]

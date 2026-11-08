@@ -463,7 +463,10 @@ def review(item_id: str, action: str, words: str, where: str,
                    [f"His words: {words}", f"It is the new piece {_added_key(item_id)}: report "
                                            f"it as you work on it."]),
     }[action]
-    _write_for_asker(item, f"review-{int(time.time())}", head, lines, time.time(), where)
+    # One file per review, named by the item's revision after it (one per
+    # event): named by the second, two reviews in one second (Approve, then
+    # Not done yet) wrote one file and the first was lost.
+    _write_for_asker(item, f"review-{item.revision}", head, lines, time.time(), where)
     return item
 
 
