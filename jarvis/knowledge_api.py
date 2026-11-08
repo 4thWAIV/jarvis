@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds
+from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
 RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path"]
@@ -268,8 +268,10 @@ def maintain(ctx: Context, *, action: str, source: Optional[str] = None) -> dict
         ctx.wake_ingest()
         return {"done": "refresh"}
     if action == "forget":
-        if not source or not source.startswith("jref:1:"):
-            raise Refused("forget takes a source reference (jref:1:...)")
+        try:
+            workspace_ref.parse(source or "")
+        except workspace_ref.RefError:
+            raise Refused("forget takes a source reference (jref:1:...)") from None
         report = ctx.call("POST", "/v1/forget", {"refs": [source]}, deadline=30.0)
         rt = ctx.runtime
         if rt is not None:
@@ -371,6 +373,14 @@ def _open_decisions(project: str) -> list[str]:
         if (w.project or "").lower() == project.lower():
             out += list(w.open_decisions)
     return out
+
+
+def run_pack(ctx: Context, *, purpose: str, project: Optional[str] = None,
+             scope: Optional[dict] = None) -> dict:
+    """The pack a run is given, exactly: his own words only, at the run's
+    budget and deadline."""
+    return context_service.pack(purpose=purpose, project=project or None, scope=scope, trust="own",
+                                search=context_search(ctx)).json()
 
 
 def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,

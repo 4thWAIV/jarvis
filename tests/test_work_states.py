@@ -124,7 +124,9 @@ def test_paused_with_nothing_else_reads_working_but_quiet(wired, item, monkeypat
 
 @pytest.mark.parametrize("states,decision,approvable", [
     ({"a": "verifying"}, False, True),
-    ({"a": "verifying", "b": "ready"}, False, True),
+    ({"a": "verifying", "b": "ready"}, False, False),
+    ({"a": "ready"}, False, False),
+    ({"a": "planned"}, False, False),
     ({"a": "verifying"}, True, False),
     ({"a": "verifying", "b": "working"}, False, False),
     ({"a": "verifying", "b": "blocked"}, False, False),
@@ -178,7 +180,7 @@ def test_ready_for_review_always_means_approve_is_offered(wired, item, monkeypat
     if got["state"] == "verifying":
         assert got["approvable"], (states, paused, got["state"])
     if got["approvable"]:
-        assert got["state"] in ("verifying", "ready", "planned"), (states, paused, got["state"])
+        assert got["state"] == "verifying", (states, paused, got["state"])
 
 
 def test_a_planned_piece_behind_a_waiting_one_cannot_go_on(wired, item):
@@ -407,3 +409,74 @@ def test_records_from_before_are_brought_in_line(wired, tmp_path):
     assert done.state == "verifying" and done.approved_at is None
     assert done.pieces[0].state == "verifying" and done.pieces[0].note.startswith("Not approved")
     assert work_store.get("work-closed").reported_state == "done"
+
+
+# -- where he is needed, and work nobody moves --------------------------------------
+
+def _later(monkeypatch, seconds):
+    later = time.time() + seconds
+    monkeypatch.setattr(work_store.time, "time", lambda: later)
+
+
+def test_each_act_he_is_needed_for_is_named_with_its_place_first_first(wired, item):
+    key = _key()
+    _report(wired, item.id, "decision_needed", "Switch the engine on?", auth=key, key="switch-on")
+    _piece(wired, item.id, "build", auth=key, state="waiting_on_tim", until="decision:switch-on")
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert got["needs_you"] == [{"kind": "decision", "key": "switch-on",
+                                 "text": "Switch the engine on?"}]
+    said = _call(wired, "work_status", item=item.id)["text"]
+    assert 'Needs him: 1) Answer "Switch the engine on?" on the Decisions tab.' in said
+    assert got["stalled"] is False
+
+
+def test_ready_for_review_needs_his_review_in_the_header(wired, item):
+    _piece(wired, item.id, "build", auth=_key(), state="verifying")
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert got["needs_you"] == [{"kind": "review"}]
+    assert "Approve, Not done yet or Add work in this item's header" in _call(
+        wired, "work_status")["text"]
+
+
+def test_a_claim_gone_silent_with_nothing_waiting_on_him_is_stalled(wired, item, monkeypatch):
+    _piece(wired, item.id, "build", auth=_key(), state="working")
+    assert wired.client.get(f"/api/work/{item.id}").json()["item"]["stalled"] is False
+    _later(monkeypatch, work_store.QUIET_AFTER_SEC + 60)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert (got["state"], got["stalled"], got["needs_you"]) == ("activity_unknown", True, [])
+    assert "Stalled: nobody is working on this." in _call(wired, "work_status", item=item.id)["text"]
+
+
+def test_waiting_on_him_or_blocked_is_never_stalled(wired, item, monkeypatch):
+    key = _key()
+    _report(wired, item.id, "decision_needed", "Which?", auth=key, key="which")
+    _piece(wired, item.id, "a", auth=key, state="working")
+    _piece(wired, item.id, "b", auth=key, state="blocked", until="the licence")
+    _later(monkeypatch, work_store.QUIET_AFTER_SEC + 60)
+    assert wired.client.get(f"/api/work/{item.id}").json()["item"]["stalled"] is False
+
+
+def test_a_stalled_item_is_a_silent_update_resolved_once_it_moves(wired, item, monkeypatch):
+    from jarvis import attention_store
+    record = attention_store.AttentionStore()
+    wired.server.attention_record = record
+    try:
+        _piece(wired, item.id, "build", auth=_key(), state="working")
+        with pytest.MonkeyPatch.context() as m:
+            _later(m, work_store.QUIET_AFTER_SEC + 60)
+            listed = work_store.listing()
+            wired.server._attend_stalled(listed, wired.server._stalled(listed))
+        news = record.get("work_stalled", item.id)
+        assert news.event == "stalled" and not news.audible
+        listed = work_store.listing()
+        wired.server._attend_stalled(listed, wired.server._stalled(listed))
+        assert record.get("work_stalled", item.id).state == attention_store.RESOLVED
+    finally:
+        wired.server.attention_record = None
+
+
+def test_a_piece_claimed_working_for_a_day_with_no_report_shows_stalled(wired, item, monkeypatch):
+    _piece(wired, item.id, "build", auth=_key(), state="working")
+    _later(monkeypatch, work_store.STALLED_PIECE_AFTER_SEC + 60)
+    [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
+    assert (piece["state"], piece["stalled"]) == ("activity_unknown", True)

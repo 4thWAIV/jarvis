@@ -51,7 +51,7 @@ import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
-import { answerWorkDecision, blockerWords, followUpWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { answerWorkDecision, blockerWords, followUpWords, needWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -100,8 +100,8 @@ export function WorkDetail({ id }: { id: string }) {
     <div id="work-detail" ref={ui.whole}>
       <div className="work-detail-head" ref={ui.part("header")}>
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
-        {item && <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
-          {STATE_WORDS[item.state]}</span>}
+        {item && <span className={`work-state state-${item.stalled ? "stalled" : item.state}`} ref={ui.part("state")}>
+          {item.stalled ? t("right.work.state.stalled") : STATE_WORDS[item.state]}</span>}
           {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
         <TakeoverButton partRef={ui.part("takeover")} />
@@ -109,6 +109,7 @@ export function WorkDetail({ id }: { id: string }) {
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("work.close", {}))}>×</button>
       </div>
+      {item && <NeedsYou item={item} target={ui.part("needs")} />}
       {item && !item.closed_at && <Review item={item} target={ui.part("review")} />}
       {live.error && <p className="read-failure">{t("main.work.unreadable", { error: live.error })}</p>}
       {item && deciding > 0 && (
@@ -185,6 +186,42 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
                 onClick={() => { setAsking(null); setWords(""); setProblem(null); }}>{t("main.common.cancel")}</button>
       </form>}
       {problem && <span className="file-state">{problem}</span>}
+    </div>
+  );
+}
+
+/** Every act he is needed for, the first first, each with the way to do
+ *  it: a decision opens Decisions, a package opens it (his click), his
+ *  review is the header's own buttons. Or that nobody is working on it. */
+function NeedsYou({ item, target }: { item: WorkItem; target: (el: Element | null) => void }) {
+  const t = useT();
+  const [problem, setProblem] = useState<Said | null>(null);
+  const needs = item.needs_you ?? [];
+  if (item.stalled) {
+    return <p className="work-needs work-stalled" ref={target}>{t("right.work.stalled")}</p>;
+  }
+  if (needs.length === 0) return null;
+  return (
+    <div className="work-needs" ref={target}>
+      <strong>{t("main.work.needsYouTitle")}</strong>
+      <ol>
+        {needs.map((need, n) => (
+          <li key={`${need.kind}:${need.key ?? need.inbox ?? n}`} data-need={need.kind}>
+            {needWords(need)}{" "}
+            {need.kind === "decision" && (
+              <button type="button" className="file-action"
+                      {...bindingProps(bind("work.tab.select", { itemId: item.id, tab: "decisions" }))}>
+                {t("main.work.need.go")}</button>
+            )}
+            {(need.kind === "package" || need.kind === "review_package") && need.inbox && (
+              <button type="button" className="file-action" data-ui-action="domain"
+                      onClick={() => void openInbox(need.inbox!).then(setProblem)}>
+                {t("main.work.openPackage")}</button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {problem && <SaidText said={problem} className="file-state" />}
     </div>
   );
 }
@@ -378,7 +415,8 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
         </span>
-        <span className={`work-state state-${piece.state}`} ref={ui.part("state")}>{STATE_WORDS[piece.state]}</span>
+        <span className={`work-state state-${piece.stalled ? "stalled" : piece.state}`} ref={ui.part("state")}>
+          {piece.stalled ? t("right.work.state.stalled") : STATE_WORDS[piece.state]}</span>
         {piece.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
       </div>
       {piece.note && (

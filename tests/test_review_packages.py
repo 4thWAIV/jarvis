@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import data_paths, decision_stamp, make_package, work_store
+from jarvis import data_paths, decision_stamp, make_package, run_store, work_store
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_inbox import BROWSER, EXAMPLES, INBOX, send
 from tests.test_work_packages import marks  # noqa: F401
@@ -120,10 +120,11 @@ def test_his_review_is_recorded_once_per_answer(wired, marks, tmp_path, item):
 def test_an_answer_that_cannot_be_applied_says_why_on_the_item(wired, marks, tmp_path, item):
     inbox_id = _sent(wired, tmp_path, item)
     said = _answer_by_page(wired, inbox_id, "not-done")["said"]
-    assert "was not applied" in said and "his words" in said, said
+    assert "was not applied" in said and "you gave no words with it" in said, said
     got = work_store.get(item.id)
     assert got.state == "verifying"
-    assert got.package_review.outcome == "not_applied" and "his words" in got.package_review.why
+    assert (got.package_review.outcome, got.package_review.why) == (
+        "not_applied", "you gave no words with it"), "in his own terms, never the agent's"
     # Noted once: counted again, nothing more is written.
     wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
     assert len([e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]) == 1
@@ -135,7 +136,7 @@ def test_approve_while_a_piece_still_works_is_noted_not_lost(wired, marks, tmp_p
     _answer_by_page(wired, inbox_id, "approve")
     got = work_store.get(item.id)
     assert got.state == "activity_unknown" and got.package_review.outcome == "not_applied"
-    assert "still working" in got.package_review.why
+    assert got.package_review.why == "a piece of it is still being worked on"
 
 
 def test_a_package_for_no_item_reviews_nothing(wired, marks, tmp_path, item):
@@ -253,3 +254,45 @@ def test_signing_off_unanswered_after_he_reviewed_it_another_way_says_nothing(
     got = work_store.get(item.id)
     assert got.state == "done" and got.package_review is None
     assert not [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]
+
+
+def test_an_open_package_names_itself_as_where_he_is_needed(wired, marks, tmp_path, item):
+    inbox_id = _sent(wired, tmp_path, item)
+    needs = wired.client.get(f"/api/work/{item.id}").json()["item"]["needs_you"]
+    assert [(n["kind"], n.get("inbox")) for n in needs] == [("review_package", inbox_id),
+                                                            ("review", None)]
+    other = _sent(wired, tmp_path, item, also_ask=True)
+    needs = wired.client.get(f"/api/work/{item.id}").json()["item"]["needs_you"]
+    assert ("package", other) in [(n["kind"], n.get("inbox")) for n in needs]
+    said = _call(wired, "work_status", item=item.id)["text"]
+    assert "package and answer its questions" in said
+
+
+def test_a_done_item_never_shows_review_closed_without_a_verdict(wired, marks, tmp_path, item):
+    """Takeover mode: a no-verdict line written before the fix, then Done."""
+    from jarvis import work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    work_api._note_review(item.id, work_store.NO_VERDICT, {"package": inbox_id, "answered_at": ""},
+                          "Review closed without a verdict.")
+    assert work_store.get(item.id).package_review.outcome == "no_verdict"
+    _review(wired, item.id, "approve")
+    with run_store._connect() as conn:
+        conn.execute("DELETE FROM work_events WHERE item_id=? AND kind=?", (item.id, "approved"))
+        conn.commit()
+    got = work_store.get(item.id)
+    assert got.state == "done" and got.package_review is None
+
+
+def test_not_done_yet_shows_his_note_once(wired, marks, tmp_path, item):
+    got = _review(wired, item.id, "not_done", "The empty state is missing.")["item"]
+    assert got["review_note"] == "The empty state is missing."
+    assert "The empty state is missing." not in got["latest_update"], "said once, as his note"
+
+
+def test_approve_is_only_for_an_item_ready_for_his_review(wired, tmp_path):
+    folder = tmp_path / "planned"
+    folder.mkdir()
+    planned = work_store.create("Denice page", "folder", str(folder))
+    got = wired.client.get(f"/api/work/{planned.id}").json()["item"]
+    assert (got["state"], got["approvable"]) == ("planned", False)
+    assert "not ready for review" in _review(wired, planned.id, "approve", ok=False)["error"]

@@ -803,6 +803,19 @@ async def _digest_played(utterance) -> bool:
     return speech is not None and await speech.wait_for(utterance, DIGEST_PLAY_WAIT_SEC)
 
 
+def _attend_node_id_minted() -> None:
+    """A node ID made although one had been kept (data_paths.node_id) is an
+    attention item, once per new ID, while Diagnostics still shows it;
+    never spoken."""
+    minted = data_paths.node_id_minted()
+    if not minted or not isinstance(minted.get("at"), (int, float)):
+        return
+    if time.time() - minted["at"] > subsystem_diagnostics.NODE_ID_NOTICE_SEC:
+        return
+    _attend("node_id", minted.get("node_id") or "", "minted",
+            facts={"previous_kept": bool(minted.get("previous"))}, audible=False)
+
+
 def _start_attention() -> None:
     """The attention record, its admission policy and the digest loop. A
     failure leaves routine events unrecorded and everything else running."""
@@ -813,6 +826,7 @@ def _start_attention() -> None:
         log.warning("attention: the record could not be opened", exc_info=True)
         return
     attention_store.use(attention_record)
+    _attend_node_id_minted()
     attention_admission = attention.Admission(
         attention_record, conversation_floor, human_activity.recorder.current)
     digest = attention.Digest(
@@ -9355,6 +9369,35 @@ def _last_run_to_resume(project_name: str, project_path: str) -> dict | None:
     return None
 
 
+async def _spawn_placed(prompt: str, name: str, path: str, folder_id: Optional[str],
+                        binding: Optional[dict], origin: str, *, model: Optional[str] = None,
+                        resume_from: Optional[str] = None, with_context: bool = True) -> str:
+    """Start a run already placed (where, and for which project and work):
+    the brain's spawn_run and the Work view's Start an agent here alike.
+    The user's own words, framed for a process nobody can answer (see
+    UNATTENDED_PREAMBLE); with JARVIS_RUN_CONTEXT on, the background JARVIS
+    holds about this work goes first, his own words only, since runs skip
+    permissions. Raises when the executor refuses."""
+    context = ""
+    if context_service.run_context_enabled() and with_context:
+        try:
+            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
+        except Exception:
+            log.warning("the run's context pack could not be made", exc_info=True)
+            context = ""
+    run_id = await run_executor_instance.spawn(
+        compose_run_prompt(prompt, context), name, path, origin, resume_from=resume_from,
+        model=model, folder_id=folder_id, **_bound(binding))
+    # "cancel that" and "how's it going" have to work: nobody can say a UUID
+    # out loud, so the run JARVIS just started is remembered as the referent
+    # for a back-reference. Same idea as `last_mentioned_session`.
+    global last_started_run
+    last_started_run = run_id
+    if context:
+        _keep_run_context(run_id, context)
+    return run_id
+
+
 async def tool_spawn_run(args: dict) -> str:
     """Start NEW work, rather than steering work already running.
 
@@ -9427,35 +9470,14 @@ async def tool_spawn_run(args: dict) -> str:
     if problem:
         return f"{problem} Nothing was started."
 
-    # The user's own words, framed for a process nobody can answer. See
-    # UNATTENDED_PREAMBLE. With JARVIS_RUN_CONTEXT on, the background JARVIS
-    # holds about this project goes first: his own words only, since runs
-    # skip permissions.
-    context = ""
-    if context_service.run_context_enabled() and args.get("context", True) is not False:
-        try:
-            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
-        except Exception:
-            log.warning("the run's context pack could not be made", exc_info=True)
-            context = ""
-    composed = compose_run_prompt(prompt + _handed_text(handed), context)
-
     try:
-        run_id = await run_executor_instance.spawn(
-            composed, name, path, "voice", resume_from=resume_from, model=model,
-            folder_id=folder_id, **_bound(binding))
+        run_id = await _spawn_placed(prompt + _handed_text(handed), name, path, folder_id, binding,
+                                     "voice", model=model, resume_from=resume_from,
+                                     with_context=args.get("context", True) is not False)
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
-
-    # "cancel that" and "how's it going" have to work: nobody can say a UUID
-    # out loud, so the run JARVIS just started is remembered as the referent
-    # for a back-reference. Same idea as `last_mentioned_session`.
-    global last_started_run
-    last_started_run = run_id
     _hold(handed, f"run:{run_id}")
-    if context:
-        _keep_run_context(run_id, context)
 
     run = run_store.get_run(run_id) or {}
     started_on = run.get("requested_model") or model
@@ -9622,7 +9644,9 @@ async def _watch_workflow_silence() -> None:
                 _attend("workflow", w.id, "gone_quiet",
                         untrusted={"workflow": str(w.name or "")})
         # And a Work answer of his nobody has acted on (work_store.FollowUp).
-        _attend_unfollowed(await asyncio.to_thread(work_store.listing))
+        listed = await asyncio.to_thread(work_store.listing)
+        _attend_unfollowed(listed)
+        _attend_stalled(listed, await asyncio.to_thread(_stalled, listed))
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
@@ -10958,6 +10982,32 @@ _FOLLOW_UP_KIND = "work_follow_up"
 _work_said_unfollowed: set[tuple[str, float]] = set()
 
 
+# The items said to be stalled, so each is an attention item once and is
+# resolved once someone moves it again.
+_STALLED_KIND = "work_stalled"
+_work_said_stalled: set[str] = set()
+
+
+def _stalled(items) -> set:
+    """The ids of the items that are stalled. Reads packages: off the loop."""
+    waiting = package_inbox.waiting_by_work()
+    return {i.id for i in items if work_api.is_stalled(i, work_api.needs_of(i, waiting))}
+
+
+def _attend_stalled(items, stalled_ids: set) -> None:
+    """An item that needs nothing of him and that nobody is moving: a
+    silent attention item, once; resolved once it moves again."""
+    for item in items:
+        stalled = item.id in stalled_ids
+        if stalled and item.id not in _work_said_stalled:
+            _work_said_stalled.add(item.id)
+            _attend(_STALLED_KIND, item.id, "stalled", untrusted={"work": item.title},
+                    audible=False)
+        elif not stalled and item.id in _work_said_stalled:
+            _work_said_stalled.discard(item.id)
+            _attention_resolved(_STALLED_KIND, item.id)
+
+
 def _attend_unfollowed(items) -> None:
     """A decision he answered that nobody has acted on for
     work_store.FOLLOW_UP_AFTER_SEC: a silent attention item naming its
@@ -11098,9 +11148,23 @@ def _work_line(item) -> str:
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
             + (f" {named}" if (named := _work_projects(item)) else "")
             + _work_follow_up(item)
+            + _work_needs(item)
             + (f" {item.activity_reason}" if item.activity_reason else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
+
+
+def _work_needs(item) -> str:
+    """What he is needed for on the item, every act and where, the first
+    first, in the page's words (work_api.need_words); or that it is stalled,
+    nobody working on it; else ""."""
+    needs = work_api.needs_of(item)
+    if needs:
+        return " Needs him: " + "; ".join(f"{n}) {work_api.need_words(need)}"
+                                          for n, need in enumerate(needs, 1)) + "."
+    if work_api.is_stalled(item, needs):
+        return " Stalled: nobody is working on this."
+    return ""
 
 
 def _work_detail(item) -> str:
@@ -11116,7 +11180,7 @@ def _work_detail(item) -> str:
              + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
-             f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+             f"Latest update: {item.latest_update}" + _work_follow_up(item) + _work_needs(item)]
     if item.activity_reason:
         lines.append(item.activity_reason)
     if named := _work_projects(item):
@@ -14092,8 +14156,7 @@ def _run_pack(prompt: str, name: str, binding: Optional[dict]) -> str:
     legacy project name. It goes into the run's prompt, never to the brain."""
     scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
         if binding and projects is not None else None
-    return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
-                                search=knowledge_api.context_search(knowledge_calls)).text
+    return knowledge_api.run_pack(knowledge_calls, purpose=prompt, project=name, scope=scope)["text"]
 
 
 def _bound(binding: Optional[dict]) -> dict:
@@ -14243,7 +14306,7 @@ def _project_views() -> list[projects_view.ProjectView]:
     conversations here any more than anywhere else that lists them."""
     sessions = _snapshot_or_empty().sessions
     runs = run_store.list_runs(limit=_PROJECTS_VIEW_RUN_LOOKBACK)
-    return projects_view.build_project_views(sessions, runs)
+    return projects_view.build_project_views(sessions, runs, projects=projects)
 
 
 @app.get("/api/projects/view")
@@ -14269,7 +14332,8 @@ async def api_project_view_detail(name: str):
     bounded repo walk and a plan-file read, both off the event loop — and so
     is the `_project_views()` read that picks which project to walk."""
     views = await asyncio.to_thread(_project_views)
-    match = next((v for v in views if v.name == name), None)
+    match = next((v for v in views if v.project_id == name), None) \
+        or next((v for v in views if v.name == name), None)
     if match is None:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     repo, build = await asyncio.to_thread(

@@ -376,6 +376,11 @@ EXEMPT = {
         "the events go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
     "server.tool_works": (
         "the pieces of work go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "workspace_ref.parse": (
+        "it turns a reference's text into its fields; its refusals are fixed "
+        "words, and the only values they name are the version and the kind it "
+        "read, digits and lowercase letters by the grammar. Driven by "
+        "tests/test_workspace_ref.py"),
     "context_service._project_lines": (
         "it lines up one project for the pack from his own project records "
         "(name, summary, folder names, confirmed accomplishments) and his "
@@ -818,6 +823,10 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
+    "work_api.needs_of": (
+        "it gathers what he is needed for on an item as data (an open decision's "
+        "question, a package's title, a piece's title and links); every reader shows it "
+        "inside the item's untrusted block (`work_status` through `_work_needs`) or on the page"),
     "work_api._write_for_asker": (
         "it writes his answer or review, with the item's title and question, to a file for "
         "the item's own agents in the answers folder; nothing in it reaches the brain"),

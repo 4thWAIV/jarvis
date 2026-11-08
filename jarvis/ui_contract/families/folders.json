@@ -51,8 +51,8 @@
   ],
   "kinds": [
     {"kind": "foldersList", "entity": null, "label": "Folder catalog",
-     "parts": ["search", "open", "role", "availability", "registered", "discovered", "ignored", "removed", "add", "list"],
-     "presentations": [{"view": "right.folders", "parts": ["search", "open"], "reveal": {"command": "right.tab.select", "args": {"tab": "folders"}}},
+     "parts": ["search", "open", "switch", "role", "availability", "registered", "discovered", "ignored", "removed", "add", "list"],
+     "presentations": [{"view": "right.folders", "parts": ["search", "open", "switch"], "reveal": {"command": "right.tab.select", "args": {"tab": "folders"}}},
                        {"view": "main.folders", "parts": ["search", "role", "availability", "registered", "discovered",
                                                          "ignored", "removed", "add", "list"],
                         "reveal": {"command": "main.tab.select", "args": {"tab": "folders"}}}]},

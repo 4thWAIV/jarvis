@@ -236,3 +236,4 @@ def test_a_work_items_source_names_the_projects_holding_it(stores, tmp_path, mon
     monkeypatch.setattr(work_api, "projects_for_path", service.projects_for_path)
     item = work_store.create("Ship it", "folder", str(inside))
     assert work_api.item_json(item, package_questions={})["projects"] == [{"id": p.id, "name": "Repo work"}]
+

@@ -62,16 +62,26 @@ class ProjectService:
                 "availability": f.location.availability, "path": f.location.canonical_path,
                 "local": f.location.node_id == svc.node_id()}
 
-    def _summary_row(self, p) -> dict:
+    def _summary_row(self, p, live: Optional[list] = None) -> dict:
+        """A project as a list shows it: its folders, home, open work, how
+        many agents work in its folders now and how many accomplishments
+        wait for his Confirm."""
         folders = self.store.folders_of(p.id)
         home = next((f for f in folders if f.is_home), None)
+        paths = [self._folder_facts(f.folder_id).get("path") for f in folders]
         return {**p.json(), "folders": len(folders),
                 "home": self._folder_facts(home.folder_id) if home else None,
-                "open_works": len(self.store.works(self.owners(), state="open", project_id=p.id))}
+                "open_works": len(self.store.works(self.owners(), state="open", project_id=p.id)),
+                "agents_now": len(self.agents_in(paths, live)),
+                "to_confirm": len(self.store.accomplishments(p.id, states=("proposed",)))}
 
     def list_projects(self, include_archived: bool = False) -> dict:
-        return {"projects": [self._summary_row(p) for p in
+        """His projects, and which registered folders are in one, so a list
+        can show the rest as independent."""
+        live = list(self.live_sessions() or ())
+        return {"projects": [self._summary_row(p, live) for p in
                              self.store.projects(self.owners(), include_archived=include_archived)],
+                "linked_folders": sorted(self.store.linked_folder_ids()),
                 "owner": self.owner()}
 
     def find(self, name: str) -> list[dict]:
@@ -99,9 +109,9 @@ class ProjectService:
             raise ProjectError("not_found", "no project goes by that name")
         raise ProjectError("invalid_request", "more than one project goes by that name; give its ID")
 
-    def agents_in(self, folder_paths: list[str]) -> list[dict]:
+    def agents_in(self, folder_paths: list[str], live: Optional[list] = None) -> list[dict]:
         out = []
-        for s in self.live_sessions() or ():
+        for s in (self.live_sessions() or ()) if live is None else live:
             cwd = getattr(s, "cwd", None) if not isinstance(s, dict) else s.get("cwd")
             name = getattr(s, "name", None) if not isinstance(s, dict) else s.get("name")
             sid = getattr(s, "session_id", None) if not isinstance(s, dict) else s.get("session_id")
@@ -123,6 +133,11 @@ class ProjectService:
         owners = set(self.owners())
         return [{"id": p.id, "name": p.display_name} for p in self.store.projects_of_folder(folder.id)
                 if p.owner_id in owners]
+
+    def folder_paths(self, project_id: str) -> list[str]:
+        """Where its folders are on this Mac now, home first."""
+        return [p for p in (self._folder_facts(f.folder_id).get("path")
+                            for f in self.store.folders_of(project_id)) if p]
 
     def project_holding(self, path: str) -> Optional[str]:
         """The one project holding a path, for a run started there by

@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
-from jarvis import data_paths
+from jarvis import data_paths, workspace_ref
 
 log = logging.getLogger("jarvis.knowledge_ingest")
 
@@ -70,8 +70,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def jref(kind: str, ident: str, path: Optional[str] = None) -> str:
-    out = f"jref:1:{data_paths.node_id()}:{kind}:{ident}"
-    return out + ("/" + quote(path, safe="/") if path else "")
+    """A source's reference, printed by `workspace_ref` (the one printer)."""
+    return workspace_ref.format(workspace_ref.ref(kind, ident, path or None))
 
 
 def doc_key(source: str) -> str:
@@ -505,6 +505,10 @@ class Folders(Ledgered):
                     continue
                 for e in self._walk(service, f["id"]):
                     path = e["path"]
+                    try:
+                        workspace_ref.check_path(path)
+                    except workspace_ref.RefError:
+                        continue          # a name no reference can carry is not read
                     yield (f"{f['id']}:{path}",
                            lambda fid=f["id"], p=path: self._read(service, fid, p),
                            e.get("size"), e.get("modified"),

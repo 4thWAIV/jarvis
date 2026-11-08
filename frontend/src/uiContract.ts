@@ -2475,6 +2475,33 @@ export const UI_CONTRACT = {
       "family": "knowledge"
     },
     {
+      "id": "folders.panel.show",
+      "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
+      "view": "right.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "projects",
+            "folders"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "projects"
+    },
+    {
       "id": "project.open",
       "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
       "view": "main.project",
@@ -3692,6 +3719,7 @@ export const UI_CONTRACT = {
         "blocking",
         "reports",
         "review",
+        "needs",
         "tab.overview",
         "tab.decisions",
         "tab.blocking",
@@ -3737,6 +3765,7 @@ export const UI_CONTRACT = {
             "blocking",
             "reports",
             "review",
+            "needs",
             "tab.overview",
             "tab.decisions",
             "tab.blocking",
@@ -3971,6 +4000,7 @@ export const UI_CONTRACT = {
       "parts": [
         "search",
         "open",
+        "switch",
         "role",
         "availability",
         "registered",
@@ -3985,7 +4015,8 @@ export const UI_CONTRACT = {
           "view": "right.folders",
           "parts": [
             "search",
-            "open"
+            "open",
+            "switch"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -4478,6 +4509,7 @@ export const UI_CONTRACT = {
       "label": "Projects",
       "parts": [
         "list",
+        "independent",
         "candidates"
       ],
       "presentations": [
@@ -4792,6 +4824,7 @@ export interface CommandArgs {
   "folders.list": { view: "registered" | "discovered"; };
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
+  "folders.panel.show": { view: "projects" | "folders"; };
   "folders.search": { text?: string; };
   "knowledge.close": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };

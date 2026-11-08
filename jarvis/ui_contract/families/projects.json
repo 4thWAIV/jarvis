@@ -4,6 +4,32 @@
   "views": [],
   "commands": [
     {
+      "id": "folders.panel.show",
+      "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
+      "view": "right.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "projects",
+            "folders"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ]
+    },
+    {
       "id": "project.open",
       "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
       "view": "main.project",
@@ -105,6 +131,7 @@
       "label": "Projects",
       "parts": [
         "list",
+        "independent",
         "candidates"
       ],
       "presentations": [

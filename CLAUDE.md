@@ -319,7 +319,18 @@ claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
 ready or planned while a piece can be picked up, else waiting on him while
 a decision or piece waits on him, else activity_unknown (a claim gone
 silent: the stalled flag builds on exactly this), blocked, or ready for
-review (only once he can approve it), in that order; open decisions still show
+review (only once he can approve it), in that order. Every item that
+needs him names each act and its place, the first first (`needs_you`,
+`work_api.needs_of`: his decisions on the Decisions tab, a package sent for
+it opened from the item, his review in its header, a piece waiting on
+something else); the page shows them at the top of the item with a way to
+each and the first in its row ("You: …"), and `work_status` says the same
+words (`work_api.need_words`). One that needs nothing of him and that
+nobody moves (no claim heard from and no report within `QUIET_AFTER_SEC`;
+never done, ready for review or blocked) is `stalled` ("Stalled: nobody is
+working on this", its own colour, a silent `work_stalled` attention item
+from the quiet watch, resolved once it moves); a piece claimed working with
+no report for `STALLED_PIECE_AFTER_SEC` (a day) shows Stalled too. Open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
@@ -327,8 +338,9 @@ his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
 His review is `work_api.review`, from the item's header on the page (`POST
 /api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
 yet, Add work) and the brain's acting `review_work` alike: `approved`
-(refused while a decision is open or a piece is held or still working,
-and offered on the page only while `approvable` says the same: an open
+(only once the item is ready for review, as docs/work-states.md says;
+refused while a decision is open or a piece is held or still working, and
+offered on the page only while `approvable` says the same: an open
 question of a package sent for the item counts against it, except the
 item's own review question; the item and
 every piece done, `approved_at`; nothing a reporter sends moves it after),
@@ -346,7 +358,9 @@ called from `server._inbox_recount`, which records it through the same
 review package shows on the item at once (`package_review`: "Approved by
 you in the package, 16:33" on its Overview, Decisions tab and list row): an
 answer that cannot be applied (Approve while a piece still works) is noted
-with why (`review_noted`, `not_applied`), and signing the package off with
+with why, shown in his own terms, never the agent's refusal
+(`review_noted`, `not_applied`, `work_store.said_to_tim`), and an item he
+has approved done never shows "without a verdict" (`_shown_review`), and signing the package off with
 no answer notes "Review closed without a verdict" (`no_verdict`,
 `work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
 yet and Add work still beside it. Answers already on record are applied at
@@ -1172,6 +1186,38 @@ started by folder or name takes the one project holding its folder, never
 a guess between several; Retry places a work's run again the same way.
 The context pack (`context_service.pack`'s `scope`, from
 `ProjectService.brief`) and `work_context` are made from these records.
+The Folders tab (its label kept short so six tabs fit two rows) holds
+projects and folders: its switch
+(`folders.panel.show`) shows projects first (lifecycle, open work, a dot
+while an agent works in one of its folders, accomplishments to confirm),
+then the independent folders (in no project), then the proposals waiting
+for him, or the plain folder list. A run's pack is
+`knowledge_api.run_pack`, and spawn_run starts every run through
+`server._spawn_placed`. `/api/work` (`work_store`) is the one record of
+work; `/api/works` is being folded into it, so nothing new is built on it.
+`projects_view.py` (the dashboard's /api/projects/view) joins sessions and
+runs by the one project holding their folder, else by name.
+
+## Workspace references
+`workspace_ref.py` is the one place identity and references are defined,
+parsed, printed, hashed and resolved (design section 4): `Workspace`,
+`owner_of`, `is_self` (the node ID now or any in `node-id.previous`),
+`WorkspaceRef` and its text form `jref:1:<node>:<kind>:<id>[@<revision>]
+[/<path>][#sha256=|#tree=]` (`parse` and `format` only; one spelling each),
+`check_path` (bundle_archive's entry rule, NFC, canonical), `canonical_json`
+and `record_hash`, a file's hash through the descriptor the folder service
+checked (`FolderService.file_hash`), a tree's Merkle hash
+(`FolderService.tree_hash`: links, submodules, refused entries and tracked
+files gone listed as left out, git-ignored entries summarised, git only
+after `xcode-select -p`), and `resolve` (here, changed, moved, missing,
+refused, foreign_node; attachments, packages and knowledge nodes are
+`unsupported` until their phases). The project store's subjects and the
+knowledge ingest's sources are printed by it. `data_paths.node_id()` keeps
+`node-id.bak` and restores from it before ever making a new ID; one made
+anyway keeps the old ID in `node-id.previous`, writes
+`node-id.minted.json`, and is shown in Diagnostics (the team server row's
+`node_id` check, degraded for `NODE_ID_NOTICE_SEC`) and as an attention
+item.
 
 ## The knowledge engine
 A document store, a typed graph, a keyword index and a vector index in a
