@@ -750,7 +750,13 @@ owns or by the claimed session's own transcript (or its subagent's) showing
 make_package run on `source` within `MAKE_PACKAGE_WINDOW_SEC`; unproven, the
 answers go nowhere and the row says so (`unproven_claim`, the Queue's
 "Answers go nowhere", the sign-off's note). Rows from before migration 3
-are claims. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
+are claims; migration 4 marks each open one (`reprove`), and once, after
+the session watcher's first look, `server._reprove_inbox_senders` proves
+it again by the same `_package_sender`, the claimed session's own
+transcript holding make_package's line that JARVIS took it under that
+inbox id (`make_package.ARRIVED_AS`, the id JARVIS answered the poster
+alone), with no time window, and records `sender_proven` or
+`sender_not_proven` with why on the row. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
 package only with its stamp), and `package_inbox.arrive` records it. Nothing

@@ -115,6 +115,7 @@ from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import reporters
+from jarvis import make_package
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -2724,6 +2725,7 @@ async def start_session_watcher() -> None:
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
+    _spawn(_reprove_inbox_senders_once())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
         _usage_task = _spawn(_poll_usage())
@@ -8425,21 +8427,71 @@ PROVEN_BY_KEY = "access_key"
 
 
 def _package_sender(claimed: str, source: str,
-                    reporter: "Optional[reporters.Reporter]") -> "Optional[session_message_sender.Sender]":
+                    reporter: "Optional[reporters.Reporter]",
+                    inbox_id: str = "") -> "Optional[session_message_sender.Sender]":
     """The session a package claims it came from (`?session=`), proven, or
     None: a session the caller's access key owns (its label's agent), or one
-    whose own transcript (or its subagent's) shows make_package run on
-    `source` lately. Only the claimed session is looked in: a claim is
-    proven or refused, never moved to another."""
+    whose own transcript (or its subagent's) shows make_package delivering
+    it: run on `source` lately, as it arrives, or, for a row already in the
+    inbox (`inbox_id`), its line saying JARVIS took it under that id
+    (make_package.ARRIVED_AS), whenever that was. Only the claimed session
+    is looked in: a claim is proven or refused, never moved to another."""
     if not claimed:
         return None
     if reporter is not None and reporter.owns(claimed):
         return session_message_sender.Sender(claimed, reporter.name, PROVEN_BY_KEY)
-    if not source:
+    if inbox_id:
+        # Its line may be anywhere in a long transcript: read whole, once.
+        words, since = (make_package.ARRIVED_AS.format(inbox_id=inbox_id),), 0.0
+    elif source:
+        words, since = ("make_package", source), time.time() - MAKE_PACKAGE_WINDOW_SEC
+    else:
         return None
-    since = time.time() - MAKE_PACKAGE_WINDOW_SEC
     return _prove("package inbox", lambda t: session_message_sender.ran(
-        t, ("make_package", source), since), claimed, only_claimed=True, since=since)
+        t, words, since, whole=bool(inbox_id)), claimed, only_claimed=True, since=since)
+
+
+def _reprove_inbox_senders() -> list[tuple]:
+    """Once, for each open row whose claimed session is still unproven
+    (package_inbox migration 4): prove it again from the transcripts, by
+    `_package_sender`'s rule for a row already in the inbox, and record the
+    outcome with the row. Idempotent: a row is tried once, and a proven row
+    is never touched. Blocking. (the row, its sender or None) each."""
+    done = []
+    for entry in package_inbox.to_reprove():
+        sender = _package_sender(entry.claimed_session, "", None, inbox_id=entry.id)
+        why = "" if sender else ("its session is not a listed agent running now"
+                                 if entry.claimed_session not in agent_directory.names_by_session()
+                                 else "no transcript of its session shows it delivered")
+        recorded = package_inbox.reproved(
+            entry.id, package_inbox.Sender(entry.from_project, sender.session_id, sender.name,
+                                           entry.claimed_session, sender.evidence)
+            if sender else None, why)
+        if recorded is not None:
+            log.info("package inbox: %s's sender %s", entry.id,
+                     f"proven: {recorded.from_session}" if sender else f"not proven: {why}")
+            done.append((recorded, sender))
+    if done:
+        _hint_inbox([e for e, _ in done])
+    return done
+
+
+# How long the re-proof waits for the session watcher's first look and the
+# agents list to follow it: the proof reads the sessions running.
+REPROVE_AFTER_SEC = 10.0
+
+
+async def _reprove_inbox_senders_once() -> None:
+    """At startup, once the session watcher has looked: `_reprove_inbox_senders`."""
+    for _ in range(600):
+        if session_watcher is not None and session_watcher.polled:
+            break
+        await asyncio.sleep(1.0)
+    await asyncio.sleep(REPROVE_AFTER_SEC)
+    try:
+        await asyncio.to_thread(_reprove_inbox_senders)
+    except Exception:
+        log.warning("package inbox: the senders were not proven again", exc_info=True)
 
 
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,

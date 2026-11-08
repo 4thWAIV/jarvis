@@ -58,6 +58,11 @@ PRESENTATION_EXAMPLE = {
     ],
 }
 
+# What the command prints once JARVIS has taken the package. The inbox id is
+# JARVIS's own, answered to the poster alone, so a transcript holding this
+# line shows its session delivered that package (server._package_sender).
+ARRIVED_AS = "Arrived in Tim's package inbox as {inbox_id}"
+
 
 @dataclass(frozen=True)
 class Made:
@@ -320,7 +325,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
               "work": args.work, "zip": str(made.archive),
               "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(f"Arrived in Tim's package inbox as {inbox_id} (package {package_id})"
+    print(ARRIVED_AS.format(inbox_id=inbox_id) + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
     if delivered.inbox.get("unproven_claim"):
         print(f"JARVIS could not prove that session {args.session} ran this command (its own "

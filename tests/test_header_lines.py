@@ -834,6 +834,10 @@ EXEMPT = {
     "server._proven_boards": (
         "it logs only the projects whose boards were held, file stems JARVIS reads from its "
         "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "server._reprove_inbox_senders": (
+        "it logs only an inbox row's id and the session id it was proven to, JARVIS's own "
+        "ids; the words it records on the row are fixed reasons of its own, and nothing "
+        "it builds reaches the brain or the speaker"),
     "server._read_back_lead": (
         "it is spoken to him as a read-back, never given to the brain: the recipient through "
         "_plain_name and a subagent's name through _said_name, each refusing anything but a "

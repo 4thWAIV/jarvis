@@ -140,8 +140,19 @@ _PROVEN_SENDER = """
         WHERE from_session <> '';
 """
 
+# 4: the open rows whose claimed session is still unproven, each to be
+# proven again once from the transcripts (`reprove`: 1 until it has been
+# tried, server._reprove_inbox_senders), with no time window, since the
+# proof of a row delivered before 3 could only be looked for after it.
+_REPROVE = """
+    ALTER TABLE package_inbox ADD COLUMN reprove INTEGER NOT NULL DEFAULT 0;
+    UPDATE package_inbox SET reprove = 1
+        WHERE claimed_session <> '' AND from_session = '' AND sender_evidence = ''
+          AND state <> 'closed';
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF, 3: _PROVEN_SENDER}
+_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF, 3: _PROVEN_SENDER, 4: _REPROVE}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -200,6 +211,7 @@ class Entry:
     signed_off_at: Optional[float] = None
     claimed_session: str = ""        # the session it said it came from: only a claim
     sender_evidence: str = ""        # how `from_session` was proven; "" when it was not
+    reprove: int = 0                 # 1: its claim is still to be proven once again (migration 4)
 
     @property
     def unproven_claim(self) -> bool:
@@ -465,6 +477,38 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
         _event(conn, inbox_id, "arrived", 1, now, BY_THE_SENDER)
         entry = _one(conn, inbox_id)
     return Arrival(entry, True, superseded)
+
+
+# The events of the one-time re-proof of a row's claimed session.
+SENDER_PROVEN, SENDER_NOT_PROVEN = "sender_proven", "sender_not_proven"
+
+
+def to_reprove() -> list[Entry]:
+    """The rows whose claimed session is still to be proven once again,
+    oldest first (migration 4)."""
+    with closing(_connect()) as conn:
+        return [_entry(r) for r in conn.execute(
+            "SELECT * FROM package_inbox WHERE reprove = 1 ORDER BY arrived_at")]
+
+
+def reproved(inbox_id: str, sender: Optional[Sender], why: str,
+             now: Optional[float] = None) -> Optional[Entry]:
+    """Record the one re-proof of a row's claimed session: proven, its
+    sender (the session, its name, how); not, why. Once only: a row no
+    longer waiting for it is left as it is (None)."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        row = conn.execute("SELECT * FROM package_inbox WHERE id=? AND reprove=1",
+                           (str(inbox_id),)).fetchone()
+        if row is None:
+            return None
+        entry = _entry(row)
+        if sender is not None and sender.session == entry.claimed_session:
+            return _change(conn, entry, SENDER_PROVEN, sender.evidence, now, reprove=0,
+                           from_session=sender.session,
+                           from_agent=_ref(sender.agent, "The agent's name"),
+                           sender_evidence=sender.evidence)
+        return _change(conn, entry, SENDER_NOT_PROVEN, _ref(why, "Why"), now, reprove=0)
 
 
 def get(inbox_id: str) -> Optional[Entry]:
