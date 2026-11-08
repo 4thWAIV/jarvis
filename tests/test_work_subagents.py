@@ -42,12 +42,13 @@ def subagent(wired, monkeypatch):
                                      agent_type="general-purpose", background=True, depth=1,
                                      state=agent["state"], started=None,
                                      written=agent["written"])
-        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=[sub])
+        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=[sub],
+                                  cwd="/Users/someone/code/jarvis")
         return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
                                sessions=[session])
 
     provider = SimpleNamespace(subagent_transcript=lambda s, aid, before, limit:
-                               entries if aid == AGENT else None)
+                               entries if aid == AGENT else None, roots=[wired.tmp / "no-root"])
     monkeypatch.setattr(wired.server, "_snapshot_or_empty", snapshot)
     monkeypatch.setattr(wired.server, "_session_provider_named", lambda name: provider)
     work_store.look_up_live_with(wired.server._subagent_now)
@@ -123,3 +124,98 @@ def test_the_agent_id_is_the_one_that_names_its_transcript(tmp_path):
     agents, _ = session_watch.read_subagents(tmp_path, cwd, SESSION, time.time())
     assert [(a.agent_id, a.description, a.state) for a in agents] == [
         (AGENT, "Release agent", session_watch.AGENT_WORKING)]
+
+
+# -- found by id whatever the cap, and waiting on its own background work ------------
+
+CWD = "/Users/someone/code/jarvis"
+
+
+def _write_agent(root, agent_id, lines, meta=None):
+    folder = root / "projects" / session_watch.encode_cwd(CWD) / SESSION / "subagents"
+    folder.mkdir(parents=True, exist_ok=True)
+    import json
+    (folder / f"agent-{agent_id}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    (folder / f"agent-{agent_id}.meta.json").write_text(json.dumps(
+        {"description": f"Agent {agent_id}", **(meta or {})}))
+
+
+def _now_iso(offset=0.0):
+    import datetime
+    return datetime.datetime.fromtimestamp(time.time() + offset, datetime.timezone.utc).isoformat()
+
+
+FINISHED = {"type": "assistant", "message": {"role": "assistant", "stop_reason": "end_turn",
+                                             "content": [{"type": "text", "text": "Waiting for CI."}]}}
+
+
+def _started(task, monitor=True, offset=0.0):
+    words = (f"Monitor started (task {task}, expires in 30m)" if monitor
+             else f"Command running in background with ID: {task}. Output is being written")
+    return {"type": "user", "timestamp": _now_iso(offset),
+            "message": {"role": "user", "content": [{"type": "tool_result",
+                                                     "tool_use_id": "t", "content": words}]}}
+
+
+def _notice(task, status=True):
+    body = f"<task-notification>\n<task-id>{task}</task-id>\n" + (
+        "<status>completed</status>\n" if status else "<event>runner: SUCCESS</event>\n") + \
+        "</task-notification>"
+    return {"type": "user", "message": {"role": "user", "content": body}}
+
+
+@pytest.fixture
+def real_session(wired, monkeypatch, tmp_path):
+    """The coordinator's session in the snapshot as the watcher reads it,
+    its subagents in real files under a config root of its own: the
+    snapshot's list is read with the cap, as the live one is."""
+    root = tmp_path / "claude"
+
+    def snapshot():
+        agents, _capped = session_watch.read_subagents(root, CWD, SESSION, time.time())
+        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=agents,
+                                  cwd=CWD)
+        return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
+                               sessions=[session])
+
+    provider = SimpleNamespace(roots=[root], subagent_transcript=lambda *a: [])
+    monkeypatch.setattr(wired.server, "_snapshot_or_empty", snapshot)
+    monkeypatch.setattr(wired.server, "_session_provider_named", lambda name: provider)
+    work_store.look_up_live_with(wired.server._subagent_now)
+    return root
+
+
+def test_an_agent_named_by_id_is_found_whatever_the_cap(wired, real_session):
+    for n in range(session_watch.MAX_AGENT_FILES + 5):
+        _write_agent(real_session, f"a{n:04d}", [FINISHED])
+    _write_agent(real_session, "zlate0000000001", [{"type": "user", "message": {"content": "go"}}])
+    listed, capped = session_watch.read_subagents(real_session, CWD, SESSION, time.time())
+    assert capped and all(a.agent_id != "zlate0000000001" for a in listed)
+    live = wired.server._subagent_now(SESSION, "zlate0000000001")
+    assert (live.name, live.state) == ("Agent zlate0000000001", "working")
+
+
+def test_ended_its_turn_but_waiting_on_its_monitor_says_so(wired, real_session, item):
+    _write_agent(real_session, "arelease0000001", [_started("bmon1"), _notice("bmon1", False),
+                                                     FINISHED])
+    _piece(wired, item.id, "pr77", auth=_key(), state="working",
+           who={"kind": "agent", "ref": f"{SESSION}/sub:arelease0000001"})
+    [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
+    assert (piece["live"]["state"], piece["activity_reason"]) == (
+        "waiting", "Its subagent is waiting on its own background work.")
+
+
+@pytest.mark.parametrize("lines", [
+    [_started("bmon1"), _notice("bmon1", True), FINISHED],              # it ended
+    [_started("bcmd1", monitor=False),
+     {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t",
+                                                "content": "Successfully stopped task: bcmd1"}]}},
+     FINISHED],                                                          # it was stopped
+    [_started("bmon1", offset=-(session_watch.MONITOR_MAX_SEC + 60)), FINISHED],  # expired
+    [{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t",
+                                               "content": "grep: running in background with ID: bquoted"}]}},
+     FINISHED],                                                          # only quoted
+])
+def test_with_no_background_work_left_it_has_finished(wired, real_session, lines):
+    _write_agent(real_session, "arelease0000002", lines)
+    assert wired.server._subagent_now(SESSION, "arelease0000002").state == "finished"

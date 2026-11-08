@@ -474,6 +474,7 @@ export const mainEn = {
   "main.work.live.working": "{name} is working now",
   "main.work.live.finished": "{name} has finished",
   "main.work.live.stale": "{name} has not written anything for a while",
+  "main.work.live.waiting": "{name} is waiting on its own background work",
   "main.work.need.go": "Go there",
   "main.work.need.decision": "Answer “{text}” on the Decisions tab",
   "main.work.need.package": "Open the {text} package and answer its questions",

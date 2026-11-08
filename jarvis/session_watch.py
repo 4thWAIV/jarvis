@@ -1290,28 +1290,131 @@ def read_subagents(roots, cwd: str, session_id: str,
 
     transcripts = [by_name[name] for name in sorted(by_name)]
     capped = len(transcripts) > MAX_AGENT_FILES
-    agents: list[Subagent] = []
-    for f, run in transcripts[:MAX_AGENT_FILES]:
-        try:
-            st = f.lstat()
-        except OSError:
-            continue
-        if not stat.S_ISREG(st.st_mode):        # a symlink, a folder: not ours to follow
-            continue
-        facts = _agent_facts(f, st)
-        if facts["finished"]:
-            state = AGENT_FINISHED
-        elif now - st.st_mtime <= AGENT_ACTIVE_WITHIN_SEC:
-            state = AGENT_WORKING
-        else:
-            state = AGENT_STALE
-        agents.append(Subagent(
-            agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
-            description=facts["description"], agent_type=facts["agent_type"],
-            background=facts["background"], depth=facts["depth"], state=state,
-            started=facts["started"], written=st.st_mtime, workflow_run=run))
+    agents = [a for f, run in transcripts[:MAX_AGENT_FILES]
+              if (a := _subagent_at(f, run, now)) is not None]
     agents.sort(key=lambda a: (a.state != AGENT_WORKING, -a.written))
     return agents, capped
+
+
+def _subagent_at(f: Path, run: str | None, now: float) -> "Subagent | None":
+    """One subagent from its own transcript, or None when it is not a plain
+    file (a symlink, a folder: not ours to follow) or has gone."""
+    try:
+        st = f.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    facts = _agent_facts(f, st)
+    if facts["finished"]:
+        state = AGENT_FINISHED
+    elif now - st.st_mtime <= AGENT_ACTIVE_WITHIN_SEC:
+        state = AGENT_WORKING
+    else:
+        state = AGENT_STALE
+    return Subagent(
+        agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
+        description=facts["description"], agent_type=facts["agent_type"],
+        background=facts["background"], depth=facts["depth"], state=state,
+        started=facts["started"], written=st.st_mtime, workflow_run=run)
+
+
+def read_subagent(roots, cwd: str, session_id: str, agent_id: str,
+                  now: float) -> "Subagent | None":
+    """One subagent by its id, read from its own file whatever the listing's
+    cap (`read_subagents` reads at most MAX_AGENT_FILES, by file name, so a
+    busy conversation's later ids fall outside it), or None."""
+    path = subagent_transcript_path(roots, cwd, session_id, agent_id)
+    return _subagent_at(path, None, now) if path is not None else None
+
+
+# Background work a subagent started and has not seen end, from its own
+# transcript: a tool result that begins "Command running in background with
+# ID: <id>" or "Monitor started (task <id>", not followed by
+# a task notification for that id carrying a <status> (completed, failed,
+# killed, a monitor's stream ended) nor by "Successfully stopped task: <id>".
+# A monitor counts at most MONITOR_MAX_SEC from its start, its longest life.
+_BG_STARTED = re.compile(r"(?:running in background with ID: |Monitor started \(task )"
+                         r"([A-Za-z0-9]+)")
+_BG_NOTICE = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
+_BG_NOTICE_ID = re.compile(r"<task-id>([A-Za-z0-9]+)</task-id>")
+_BG_STOPPED = re.compile(r"Successfully stopped task: ([A-Za-z0-9]+)")
+MONITOR_MAX_SEC = 30 * 60
+_BG_CACHE: dict[str, tuple[tuple, dict]] = {}
+_BG_CACHE_MAX = 256
+
+
+def _started_here(line: str):
+    """(task id, is a monitor, when) for each background task this line's
+    own tool results started: a result that BEGINS with the start words, so
+    a result that merely quotes another transcript (a grep of it) is not one."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return
+    message = obj.get("message") if isinstance(obj, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return
+    at = iso_seconds(obj.get("timestamp"))
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        body = block.get("content")
+        if isinstance(body, list):
+            body = "".join(b.get("text", "") for b in body if isinstance(b, dict))
+        body = str(body or "").lstrip()
+        if body.startswith(("Command running in background with ID: ", "Monitor started (task ")):
+            m = _BG_STARTED.search(body[:120])
+            if m:
+                yield m.group(1), body.startswith("Monitor"), at
+
+
+def _background_tasks(path: Path, st: os.stat_result) -> dict:
+    """{task id: (started at, is a monitor) or None once ended}, read once
+    per write of the transcript."""
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    hit = _BG_CACHE.get(str(path))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    tasks: dict = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if "background" not in line and "Monitor started" not in line \
+                        and "task-notification" not in line and "stopped task" not in line:
+                    continue
+                if _BG_STARTED.search(line):
+                    for task, monitor, at in _started_here(line):
+                        tasks.setdefault(task, (at, monitor))
+                for block in _BG_NOTICE.findall(line):
+                    found = _BG_NOTICE_ID.search(block)
+                    if found and "<status>" in block:
+                        tasks[found.group(1)] = None
+                for m in _BG_STOPPED.finditer(line):
+                    tasks[m.group(1)] = None
+    except OSError:
+        return {}
+    _BG_CACHE.pop(str(path), None)
+    _BG_CACHE[str(path)] = (key, tasks)
+    while len(_BG_CACHE) > _BG_CACHE_MAX:
+        del _BG_CACHE[next(iter(_BG_CACHE))]
+    return tasks
+
+
+def background_waiting(roots, cwd: str, session_id: str, agent_id: str, now: float) -> int:
+    """How many background tasks a subagent started that its transcript has
+    not seen end (`_background_tasks`). Never raises."""
+    path = subagent_transcript_path(roots, cwd, session_id, agent_id)
+    if path is None:
+        return 0
+    try:
+        st = path.lstat()
+    except OSError:
+        return 0
+    return sum(1 for t in _background_tasks(path, st).values()
+               if t is not None and not (t[1] and t[0] is not None
+                                         and now - t[0] > MONITOR_MAX_SEC))
 
 
 def working_agents(agents: list[Subagent]) -> int:

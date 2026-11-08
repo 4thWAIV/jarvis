@@ -321,7 +321,14 @@ snapshot's `read_subagents` state and its last tool or line, through
 `work_store.look_up_live_with`) makes the piece, and so its item, read
 `working` (it glows) while it is written within `AGENT_ACTIVE_WITHIN_SEC`,
 with its name and what it is doing now (`live`); finished or stale, the
-piece reads activity_unknown and says so. Any other working report is a
+piece reads activity_unknown and says so. It is read from its own file by
+id (`session_watch.read_subagent`), never from the snapshot's capped list
+alone. Finished or quiet with background work it started still running
+(`session_watch.background_waiting`: a tool result that begins "Command
+running in background with ID:" or "Monitor started (task", with no task
+notification carrying a `<status>` for that id after it nor "Successfully
+stopped task:", a monitor counting at most `MONITOR_MAX_SEC`), it is
+"waiting on its own background work". Any other working report is a
 claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Activity unconfirmed",
 `work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
 piece and on an item alike. An item reads activity_unknown while a piece

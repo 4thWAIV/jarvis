@@ -447,6 +447,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.work.live.working": "{name} está trabajando ahora",
   "main.work.live.finished": "{name} terminó",
   "main.work.live.stale": "{name} no ha escrito nada desde hace un rato",
+  "main.work.live.waiting": "{name} está esperando su propio trabajo en segundo plano",
   "main.work.need.go": "Ir allí",
   "main.work.need.decision": "Responda “{text}” en la pestaña Decisiones",
   "main.work.need.package": "Abra el paquete {text} y responda sus preguntas",

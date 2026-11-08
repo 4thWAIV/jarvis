@@ -30,7 +30,7 @@ export type WorkState = "planned" | "ready" | "working" | "activity_unknown" | "
  *  show it now. `doing` is its last tool or line: its own words. */
 export interface WorkLiveAgent {
   name: string;
-  state: "working" | "finished" | "stale";
+  state: "working" | "finished" | "stale" | "waiting";
   written: number;
   doing: string;
   active_within: number;

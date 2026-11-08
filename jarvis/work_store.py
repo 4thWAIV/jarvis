@@ -614,7 +614,8 @@ class LiveAgent:
     """A subagent as its own files show it now: live evidence of work, read
     by the session watcher (session_watch.read_subagents), never reported."""
     name: str                 # its description: the dispatcher's words
-    state: str                # working (written within AGENT_ACTIVE_WITHIN_SEC), finished, stale
+    state: str                # working (written within AGENT_ACTIVE_WITHIN_SEC), finished, stale,
+                              # or waiting (on background work it started)
     written: float            # its transcript's last write
     doing: str                # its last tool, or its last line: its own words, walled
     active_within: float      # how long after a write it still counts as working
@@ -643,9 +644,13 @@ def live_agent(person: Who) -> Optional[LiveAgent]:
 
 
 LIVE_WORKING = "working"
+# Its turn is over, but background work it started (a command, a monitor)
+# has not ended: session_watch.background_waiting.
+LIVE_WAITING = "waiting"
 # Why a piece on a subagent is not shown working, in his terms.
 _LIVE_REASON = {"finished": "Its subagent has finished.",
-                "stale": "Its subagent has not written anything for a while."}
+                "stale": "Its subagent has not written anything for a while.",
+                LIVE_WAITING: "Its subagent is waiting on its own background work."}
 
 
 def parse_who(text: str) -> Who:

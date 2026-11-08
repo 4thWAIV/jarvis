@@ -10591,11 +10591,21 @@ def _subagent_now(session_id: str, agent_id: str):
     s = _snapshot_or_empty().by_id(session_id)
     if s is None:
         return None
-    a = next((a for a in s.subagents if a.agent_id == agent_id), None)
+    provider = _session_provider_named(s.provider)
+    roots = getattr(provider, "roots", None) or session_watch.config_roots()
+    now = time.time()
+    # Its own file, by id: the snapshot's list is capped and misses later ids.
+    a = next((a for a in s.subagents if a.agent_id == agent_id), None) or \
+        session_watch.read_subagent(roots, s.cwd, session_id, agent_id, now)
     if a is None:
         return None
+    state = a.state
+    if state != session_watch.AGENT_WORKING and session_watch.background_waiting(
+            roots, s.cwd, session_id, agent_id, now):
+        # Its turn is over (or quiet) but background work it started is still
+        # running: it is waiting on it, not finished.
+        state = work_store.LIVE_WAITING
     doing = ""
-    provider = _session_provider_named(s.provider)
     if provider is not None and hasattr(provider, "subagent_transcript"):
         try:
             entries = provider.subagent_transcript(s, agent_id, None, 3) or []
@@ -10608,7 +10618,7 @@ def _subagent_now(session_id: str, agent_id: str):
             if e.text and e.role in ("agent", "tool"):
                 doing = " ".join(e.text.split())[:SUBAGENT_DOING_CHARS]
                 break
-    return work_store.LiveAgent(name=a.description or "Subagent", state=a.state,
+    return work_store.LiveAgent(name=a.description or "Subagent", state=state,
                                 written=a.written, doing=doing,
                                 active_within=session_watch.AGENT_ACTIVE_WITHIN_SEC)
 
