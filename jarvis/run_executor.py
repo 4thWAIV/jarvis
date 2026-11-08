@@ -20,7 +20,7 @@ import shutil
 import time
 from typing import Callable
 
-from jarvis import claude_env
+from jarvis import claude_env, owned_process
 from jarvis import stream_parser
 
 log = logging.getLogger("jarvis.run_executor")
@@ -215,7 +215,7 @@ class RunExecutor:
         self._poll_sec = poll_sec if poll_sec and poll_sec > 0 \
             else _READ_POLL_SEC
         self._default_timeout = _resolve_default_timeout(default_timeout_sec)
-        self._procs: dict[str, asyncio.subprocess.Process] = {}
+        self._procs: dict[str, asyncio.subprocess.Process | owned_process.OwnedProcess] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._subscribers: list[Callable[[dict], None]] = []
         # Concurrency gate. A counting semaphore, not a poll over
@@ -304,7 +304,14 @@ class RunExecutor:
         # Drop the reference once finished: this dict would otherwise grow for
         # the life of the server.
         # wait_for() falls back to the store when the task is already gone.
-        task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
+        def driver_done(finished):
+            self._tasks.pop(run_id, None)
+            if not finished.cancelled():
+                # Containment failures are recorded/logged by _drive and
+                # remain available to waiters. A fire-and-forget caller must
+                # not also leave an unobserved Task exception behind.
+                finished.exception()
+        task.add_done_callback(driver_done)
         return run_id
 
     def _fail_undriven(self, run_id: str, exc: BaseException) -> None:
@@ -345,7 +352,9 @@ class RunExecutor:
         bug in the post-EOF window, where `_procs` had already been emptied
         and this method cheerfully reported a kill it had not performed.
 
-        The one exception is a child that SIGKILL did not visibly reap
+        On Windows the owned Job must be confirmed empty; failure raises
+        ContainmentError and records FAILED, never a successful cancellation.
+        The POSIX exception is a child that SIGKILL did not visibly reap
         within `_terminate`'s second grace period. That is logged at ERROR
         by `_terminate` and reported as cancelled anyway; see its docstring
         for why waiting for ever is the worse of the two.
@@ -361,8 +370,12 @@ class RunExecutor:
 
         proc = self._procs.get(run_id)
         if proc is not None:
-            if proc.returncode is None:
+            try:
                 await self._terminate(proc)
+            except owned_process.ContainmentError as error:
+                await self._finish(run_id, self._store.RunStatus.FAILED,
+                                   error=str(error))
+                raise
             # Either way the child is now reaped: `_terminate` does not return
             # until `proc.wait()` has (or has demonstrably stopped being able
             # to), and a non-None returncode already means it is gone.
@@ -370,19 +383,25 @@ class RunExecutor:
                                exit_code=proc.returncode)
             return True
 
-        # No process at all: still queued behind the concurrency gate, or the
-        # driver has already reaped and unregistered it. Mark it terminal now
-        # and make sure a pending task never spawns anything.
-        try:
-            await self._finish(run_id, self._store.RunStatus.CANCELLED)
-            task = self._tasks.get(run_id)
-            if (task is not None and not task.done()
-                    and run["status"] == self._store.RunStatus.QUEUED):
+        # No registered process can also mean create_subprocess_exec is
+        # still in flight. Cancel its driver, but retain and await ownership
+        # until the eventual child has been stopped. Never report a queued
+        # cancellation while a late spawn can still start doing work.
+        task = self._tasks.get(run_id)
+        if task is not None:
+            if not task.done():
                 task.cancel()
-        finally:
-            if self._tasks.get(run_id) is None:
-                # No driver left to consult the intent.
-                self._cancelling.discard(run_id)
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise
+        latest = await asyncio.to_thread(self._store.get_run, run_id)
+        if self._tasks.get(run_id) is None:
+            self._cancelling.discard(run_id)
+        if latest and latest["status"] in self._store.RunStatus.TERMINAL:
+            return latest["status"] == self._store.RunStatus.CANCELLED
+        await self._finish(run_id, self._store.RunStatus.CANCELLED)
         return True
 
     async def _terminate(self, proc) -> None:
@@ -403,6 +422,11 @@ class RunExecutor:
         is gone that is not; that is logged at ERROR, and it is strictly
         better than wedging the pipeline over it.
         """
+        if isinstance(proc, owned_process.OwnedProcess):
+            # A dead parent does not mean its descendants are gone. The Job
+            # must be empty, even when returncode is already available.
+            await proc.stop(timeout=self._grace_sec)
+            return
         if proc.returncode is not None:
             return
         try:
@@ -579,7 +603,7 @@ class RunExecutor:
                 return
 
             try:
-                proc = await asyncio.create_subprocess_exec(
+                proc = await owned_process.create_subprocess_exec(
                     *self._command(run_id, resume_from, model),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
@@ -679,6 +703,10 @@ class RunExecutor:
                             "within %ss; killing it", run_id, proc.pid,
                             self._eof_grace_sec)
                 await self._terminate(proc)
+            if isinstance(proc, owned_process.OwnedProcess):
+                # Normal parent exit also retires its owned descendants; do
+                # this before a terminal write, keeping its original code.
+                await proc.stop(timeout=self._grace_sec)
             stderr = await self._collect_stderr(stderr_task, stderr_sink)
 
             run = await asyncio.to_thread(self._store.get_run, run_id)
@@ -733,15 +761,15 @@ class RunExecutor:
                 log.info("run %s cancelled while queued", run_id)
             else:
                 log.exception("run %s driver failed", run_id)
-            status = (self._store.RunStatus.CANCELLED
-                      if cancelled
-                      else self._store.RunStatus.FAILED)
-            try:
-                self._finish_blocking(run_id, status,
-                                      error=repr(e)[:_STDERR_CHARS])
-            except Exception:
-                log.exception("run %s could not be marked terminal", run_id)
-            if proc is not None and proc.returncode is None:
+            cleanup_error = None
+            if isinstance(proc, owned_process.OwnedProcess):
+                try:
+                    await owned_process._settle(asyncio.create_task(
+                        proc.stop(timeout=self._grace_sec)))
+                except BaseException as error:
+                    cleanup_error = error
+                    log.exception("run %s owned tree cleanup failed", run_id)
+            elif proc is not None and proc.returncode is None:
                 try:
                     proc.kill()
                 except (ProcessLookupError, OSError):
@@ -752,6 +780,18 @@ class RunExecutor:
                 except BaseException:
                     log.debug("run %s could not be reaped", run_id,
                               exc_info=True)
+            containment_failed = (cleanup_error is not None
+                                  or isinstance(e, owned_process.ContainmentError))
+            status = (self._store.RunStatus.CANCELLED
+                      if cancelled and not containment_failed
+                      else self._store.RunStatus.FAILED)
+            try:
+                self._finish_blocking(run_id, status,
+                                      error=repr(cleanup_error or e)[:_STDERR_CHARS])
+            except Exception:
+                log.exception("run %s could not be marked terminal", run_id)
+            if containment_failed:
+                raise cleanup_error or e
             if isinstance(e, (asyncio.CancelledError, SystemExit,
                               KeyboardInterrupt)):
                 # The run is terminal and the child reaped; interpreter
