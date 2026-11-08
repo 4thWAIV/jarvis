@@ -441,3 +441,56 @@ async def test_a_stalled_row_says_so_and_a_needed_one_names_the_act_and_its_plac
         await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-needs.png"))
         assert errors == [], errors
         await browser.close()
+
+
+class _Live(_Review):
+    """One item whose piece is on a subagent writing now."""
+
+    def __init__(self):
+        super().__init__()
+        live = _review_item("work-l", "working", False, 9_999_999_999.0)
+        live["title"] = "Release"
+        live["pieces"] = [_piece("pr77", "Merge PR 77", "working",
+                                 {"kind": "agent", "ref": "s-1/sub:aeb4b37bbf9ed2571",
+                                  "name": "Release agent"},
+                                 quiet_at=9_999_999_999.0,
+                                 live={"name": "Release agent", "state": "working",
+                                       "written": 9_999_999_900.0, "doing": "Using Bash",
+                                       "active_within": 90.0})]
+        self.items = {"work-l": live}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_piece_on_a_subagent_writing_now_glows_and_says_what_it_does(
+        page_playwright, page_url):
+    work = _Live()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+        await page.click(".right-tabs [role=tab][title=Work]")
+        row = page.locator(".work-row[data-work-id=work-l]")
+        await row.wait_for(timeout=10000)
+        await async_api.expect(row.locator(".work-state")).to_have_text("Working")
+        assert await row.get_attribute("data-activity") == "working"
+        await row.click()
+        await page.click("#work-detail .work-tabs [role=tab]:text('Pieces')")
+        piece = page.locator("#work-detail .work-piece[data-key=pr77]")
+        await async_api.expect(piece.locator(".work-piece-live")).to_have_text(
+            "Release agent is working now · Using Bash", timeout=10000)
+        assert await piece.get_attribute("data-activity") == "working"
+        await async_api.expect(piece.locator(".work-activity-reason")).to_have_count(0)
+        await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-live.png"))
+        assert errors == [], errors
+        await browser.close()

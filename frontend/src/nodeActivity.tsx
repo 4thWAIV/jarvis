@@ -45,9 +45,11 @@ export function activityOf(standing: Standing, quietAt: number | null, nowSec: n
 /** A work item's or piece's standing (work.ts states). */
 export function workStanding(state: string): Standing {
   switch (state) {
-    // Work reports and verification are not generation telemetry. Even a
-    // stale server saying working must never produce a Working indicator.
-    case "working": case "verifying": case "activity_unknown": return null;
+    // Working is sent only on live evidence (a subagent on the piece writing
+    // now), so it glows. A report or verification is not generation
+    // telemetry: activity_unknown and verifying never do.
+    case "working": return "active";
+    case "verifying": case "activity_unknown": return null;
     case "blocked": return "blocked";
     case "waiting_on_tim": return "waiting";
     case "done": return "done";

@@ -12,7 +12,8 @@ the page is a word an agent typed into a state.
 |---|---|---|
 | Planned | Work is lined up; nobody has started it. | Grey "Planned" pill. |
 | Ready | Nothing holds it up any more (his answer is in); its agent has yet to pick it up. | Blue "Ready" pill. After his answer with no report since: "Answered — waiting for *agent* to start". |
-| Activity unconfirmed | An agent says it is working on it. JARVIS cannot see the work happening, so it does not claim it is. | "Activity unconfirmed" pill, no animation; hovering says why. |
+| Working | A subagent on the piece is writing right now: JARVIS sees its own files. | Blue "Working" pill that glows; under the piece, "*Release agent* is working now · Using Bash" (its last tool or line). |
+| Activity unconfirmed | An agent says it is working on it. JARVIS cannot see the work happening, so it does not claim it is. | "Activity unconfirmed" pill, no animation; hovering says why. On a subagent's piece: "*name* has finished" or "*name* has not written anything for a while". |
 | Waiting on you | Nothing can go on until you answer: a decision, a held piece, or a package question. | Amber pill and amber edge; the update line is the question; "Decision needed" banner. |
 | Blocked | Held by something that is not you (CI, a licence), named. | Red pill and red edge; Blocking names what holds it. |
 | Ready for review | The work is in and nothing stands in the way: yours to approve. | Purple "Ready for review" pill; **Approve** shows in the item's header. |
@@ -34,6 +35,7 @@ Beside the state, the item also says:
 | Action | Who and where | Before | After | What Tim sees change |
 |---|---|---|---|---|
 | Report a piece working | Agent (`work_report.py piece --state working`) | Planned or Ready | Activity unconfirmed | The pill reads "Activity unconfirmed"; nothing animates. |
+| Put a subagent on a piece | Coordinator (`piece --who agent:<session id>/sub:<agent id> --state working`) | Planned or Ready | Working while the subagent writes | The piece glows "Working" with the subagent's name and what it is doing now; once it finishes or goes quiet, the piece says so and reads Activity unconfirmed. |
 | Report a piece ready for review | Agent (`--state verifying --evidence …`) | Activity unconfirmed | Ready for review (once nothing else is open) | Pill turns purple, **Approve** appears in the header. |
 | Report a piece waiting on him | Agent (`--state waiting_on_tim --until decision:<key>`) | any but held | Waiting on you | Amber pill; Blocking names the decision it waits for. Refused if it names nothing. |
 | Report a piece blocked | Agent (`--state blocked --until "<what>"`) | any but held | Blocked | Red pill; Blocking names the blocker. |

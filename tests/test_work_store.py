@@ -391,4 +391,5 @@ def test_legacy_database_claim_is_projected_and_history_is_preserved(ws, folder)
     loaded = ws.get(item.id)
     assert loaded.state == "activity_unknown"
     assert loaded.reported_state == "working"
-    assert "working" not in ws.PUBLIC_STATES
+    # A report alone never reads working; only a subagent writing now does.
+    assert ws.public_state("working") == "activity_unknown"

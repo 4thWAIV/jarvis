@@ -1532,6 +1532,9 @@ html, body {
 .work-state.state-ready { background: rgba(96, 165, 250, 0.35); }
 .work-state.state-stalled { background: #f97316; color: var(--ui-on-signal); }
 .work-stalled { color: #fb923c; }
+.work-piece-live { color: var(--ui-secondary); font-size: 11px; }
+.work-piece-live[data-live="working"] { color: #7dd3fc; }
+.work-piece-doing { font-family: var(--ui-mono, monospace); overflow-wrap: anywhere; }
 .work-needs { border-left: 3px solid #fbbf24; padding: 4px 8px; margin: 4px 0; flex: none; }
 .work-needs ol { margin: 4px 0 0; padding-left: 18px; }
 .work-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; flex: none; }

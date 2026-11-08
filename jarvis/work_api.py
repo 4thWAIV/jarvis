@@ -92,6 +92,11 @@ class WhoNames:
     def __call__(self, person: work_store.Who) -> Optional[str]:
         """The name, or None when JARVIS has no such record (or for Tim,
         whom each side words itself)."""
+        live = work_store.live_agent(person)
+        if live is not None:
+            return live.name
+        if work_store.subagent_of(person) is not None:
+            return None               # a subagent JARVIS cannot find
         if person.kind == work_store.AGENT:
             if self._agents is None:
                 self._agents = agent_directory.names_by_session()

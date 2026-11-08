@@ -417,7 +417,13 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
         </span>
         <span className={`work-state state-${piece.stalled ? "stalled" : piece.state}`} ref={ui.part("state")}>
           {piece.stalled ? t("right.work.state.stalled") : STATE_WORDS[piece.state]}</span>
-        {piece.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {piece.state === "activity_unknown" && !piece.live && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {piece.live && (
+          <p className="work-piece-live" data-live={piece.live.state}>
+            {t(`main.work.live.${piece.live.state}`, { name: piece.live.name })}
+            {piece.live.doing && <> · <span className="work-piece-doing">{piece.live.doing}</span></>}
+          </p>
+        )}
       </div>
       {piece.note && (
         <p className="work-piece-note" ref={ui.part("note")}>

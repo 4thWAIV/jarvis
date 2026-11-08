@@ -1,0 +1,125 @@
+"""A coordinator's subagents on the Work board (work_store `agent:<session>/sub:<agent id>`).
+
+A piece may name one of a session's subagents by the agent id the Agent
+tool gave its dispatcher, which is the id that names its transcript
+(`subagents/agent-<id>.jsonl`). Its own files are live evidence: while the
+session watcher sees it written within AGENT_ACTIVE_WITHIN_SEC the piece
+reads Working (it glows, no activity_unknown); finished or gone quiet, the
+piece says so. The piece shows the subagent's name (its description) and
+what it is doing now (its last tool or line, walled for the brain)."""
+from __future__ import annotations
+
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from jarvis import session_watch, work_store
+from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
+from tests.test_work_states import _key, _piece, _report
+
+SESSION, AGENT = "a5b4be76-7b3d-4a0c-9220-817d38b9e5f3", "aeb4b37bbf9ed2571"
+WHO = {"kind": "agent", "ref": f"{SESSION}/sub:{AGENT}"}
+
+
+@pytest.fixture
+def item(wired, tmp_path):
+    folder = tmp_path / "release"
+    folder.mkdir()
+    return work_store.create("Release", "folder", str(folder))
+
+
+@pytest.fixture
+def subagent(wired, monkeypatch):
+    """The coordinator's session in the snapshot, with one subagent whose
+    state and last line each test sets."""
+    agent = {"state": session_watch.AGENT_WORKING, "written": time.time()}
+    entries = [session_watch.TranscriptEntry(0, None, "agent", "Merging PR 77 into main."),
+               session_watch.TranscriptEntry(1, None, "tool", "gh pr merge 77", tool="Bash")]
+
+    def snapshot():
+        sub = session_watch.Subagent(agent_id=AGENT, description="Release agent",
+                                     agent_type="general-purpose", background=True, depth=1,
+                                     state=agent["state"], started=None,
+                                     written=agent["written"])
+        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=[sub])
+        return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
+                               sessions=[session])
+
+    provider = SimpleNamespace(subagent_transcript=lambda s, aid, before, limit:
+                               entries if aid == AGENT else None)
+    monkeypatch.setattr(wired.server, "_snapshot_or_empty", snapshot)
+    monkeypatch.setattr(wired.server, "_session_provider_named", lambda name: provider)
+    work_store.look_up_live_with(wired.server._subagent_now)
+    return agent
+
+
+@pytest.mark.parametrize("ref,ok", [
+    (f"{SESSION}/sub:{AGENT}", True),
+    (f"{SESSION}/sub:bad id", False),
+    (f"{SESSION}/sub:", False),
+    (f"/sub:{AGENT}", False),
+])
+def test_a_subagent_is_named_by_its_session_and_agent_id(ref, ok):
+    if ok:
+        assert work_store.subagent_of(work_store.who("agent", ref)) == (SESSION, AGENT)
+    else:
+        with pytest.raises(work_store.WorkRefused, match="sub:<agent id>|names its id"):
+            work_store.who("agent", ref)
+    with pytest.raises(work_store.WorkRefused):
+        work_store.who("run", f"run-1/sub:{AGENT}")
+
+
+def test_a_subagent_jarvis_cannot_find_is_refused(wired, item, subagent):
+    r = _piece(wired, item.id, "pr77", auth=_key(), ok=False, state="working",
+               who={"kind": "agent", "ref": f"{SESSION}/sub:aunknown0000000"})
+    assert "JARVIS has no agent" in r["error"]
+
+
+def test_a_subagent_writing_now_makes_its_piece_and_item_working(wired, item, subagent):
+    _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    [piece] = got["pieces"]
+    assert (piece["state"], piece["activity_reason"]) == ("working", "")
+    assert piece["who"]["name"] == "Release agent"
+    assert piece["live"]["state"] == "working" and piece["live"]["doing"] == "Using Bash"
+    assert piece["quiet_at"] > time.time(), "it glows while the subagent writes"
+    assert (got["state"], got["activity_reason"], got["stalled"]) == ("working", "", False)
+    said = _call(wired, "work_status", item=item.id)["text"]
+    assert "its subagent is working, now: Using Bash" in said and "Release agent" in said
+
+
+@pytest.mark.parametrize("state,reason", [
+    (session_watch.AGENT_FINISHED, "Its subagent has finished."),
+    (session_watch.AGENT_STALE, "Its subagent has not written anything for a while."),
+])
+def test_finished_or_gone_quiet_the_piece_says_so(wired, item, subagent, state, reason):
+    subagent["state"] = state
+    _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
+    [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
+    assert (piece["state"], piece["activity_reason"], piece["live"]["state"]) == (
+        "activity_unknown", reason, state)
+
+
+def test_a_session_s_own_working_claim_is_still_unconfirmed(wired, item, subagent, monkeypatch):
+    """The session itself (between turns) is no evidence; only a subagent is."""
+    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
+                        lambda: {SESSION: "coordinator"})
+    _piece(wired, item.id, "plan", auth=_key(), state="working",
+           who={"kind": "agent", "ref": SESSION})
+    [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
+    assert piece["state"] == "activity_unknown" and piece["live"] is None
+
+
+def test_the_agent_id_is_the_one_that_names_its_transcript(tmp_path):
+    """read_subagents takes each id from `agent-<id>.jsonl`, the name Claude
+    Code gives the transcript of the agent the Agent tool returned that id for."""
+    cwd = "/Users/someone/code/jarvis"
+    folder = tmp_path / "projects" / session_watch.encode_cwd(cwd) / SESSION / "subagents"
+    folder.mkdir(parents=True)
+    (folder / f"agent-{AGENT}.jsonl").write_text(
+        '{"type":"user","agentId":"%s","sessionId":"%s","isSidechain":true}\n' % (AGENT, SESSION))
+    (folder / f"agent-{AGENT}.meta.json").write_text('{"description":"Release agent"}')
+    agents, _ = session_watch.read_subagents(tmp_path, cwd, SESSION, time.time())
+    assert [(a.agent_id, a.description, a.state) for a in agents] == [
+        (AGENT, "Release agent", session_watch.AGENT_WORKING)]

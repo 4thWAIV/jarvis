@@ -10579,6 +10579,43 @@ def _workflow_subagents(w) -> list[dict]:
             and (w.finished_at is None or (a.started or a.written) <= w.finished_at)]
 
 
+# A subagent on a Work piece (agent:<session>/sub:<agent id>), as its own
+# files show it now: the live evidence that lets the piece read Working.
+SUBAGENT_DOING_CHARS = 200
+
+
+def _subagent_now(session_id: str, agent_id: str):
+    """One subagent of a session, now: its description, its state from the
+    session watcher (working while written within AGENT_ACTIVE_WITHIN_SEC),
+    and its last tool or line. None when JARVIS has no such subagent."""
+    s = _snapshot_or_empty().by_id(session_id)
+    if s is None:
+        return None
+    a = next((a for a in s.subagents if a.agent_id == agent_id), None)
+    if a is None:
+        return None
+    doing = ""
+    provider = _session_provider_named(s.provider)
+    if provider is not None and hasattr(provider, "subagent_transcript"):
+        try:
+            entries = provider.subagent_transcript(s, agent_id, None, 3) or []
+        except Exception:
+            entries = []
+        for e in reversed(entries):
+            if e.role == "tool" and e.tool:
+                doing = f"Using {e.tool}"
+                break
+            if e.text and e.role in ("agent", "tool"):
+                doing = " ".join(e.text.split())[:SUBAGENT_DOING_CHARS]
+                break
+    return work_store.LiveAgent(name=a.description or "Subagent", state=a.state,
+                                written=a.written, doing=doing,
+                                active_within=session_watch.AGENT_ACTIVE_WITHIN_SEC)
+
+
+work_store.look_up_live_with(_subagent_now)
+
+
 # --- Subsystem diagnostics (subsystem_diagnostics.py) -----------------------
 
 # When this server started: a subsystem not yet up this soon after is
@@ -11088,6 +11125,9 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
     """One piece, in dependency order: who is on it, its latest note, the
     pieces it comes after (those not done yet named), and its evidence."""
     line = f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}"
+    if p.live is not None:
+        line += (f"; its subagent is {p.live.state}"
+                 + (f", now: {p.live.doing}" if p.live.doing else ""))
     if p.activity_reason:
         line += f"; {p.activity_reason}"
     if p.note:

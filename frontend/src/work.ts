@@ -23,7 +23,18 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "ready" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+/** "working" only ever on live evidence: a subagent on the piece writing now. */
+export type WorkState = "planned" | "ready" | "working" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+
+/** A subagent on a piece (agent:<session>/sub:<agent id>), as its own files
+ *  show it now. `doing` is its last tool or line: its own words. */
+export interface WorkLiveAgent {
+  name: string;
+  state: "working" | "finished" | "stale";
+  written: number;
+  doing: string;
+  active_within: number;
+}
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -47,6 +58,8 @@ export interface WorkPiece {
   activity_reason?: string;
   /** Claimed working with no report for a day: shown stalled. */
   stalled?: boolean;
+  /** The subagent on it, as its own files show it now. */
+  live?: WorkLiveAgent | null;
   /** The summary of the latest report about it. */
   note: string;
   note_at: number | null;
@@ -222,19 +235,24 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "ready", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "ready", "working", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
  *  the groups the Work tab heads them with. */
 /** Fail closed while an older server is still serving legacy declared states. */
-export function safeWorkState(state: string): WorkState {
+export function safeWorkState(state: string, evidenced = false): WorkState {
+  // "working" is shown only with its live evidence beside it (a subagent on
+  // the piece writing now); any other "working", from an older server or a
+  // report, reads activity_unknown.
+  if (state === "working") return evidenced ? "working" : "activity_unknown";
   const allowed = ["planned", "ready", "verifying", "waiting_on_tim", "blocked", "done"];
   return allowed.includes(state) ? state as WorkState : "activity_unknown";
 }
+const liveNow = (p: WorkPiece) => p.live?.state === "working";
 export function safeWorkItem(item: WorkItem): WorkItem {
-  return {...item, state: safeWorkState(item.state),
-    pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state)}))};
+  return {...item, state: safeWorkState(item.state, item.pieces.some(liveNow)),
+    pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state, liveNow(p))}))};
 }
 export const workList = liveRead(async () => {
   const result = await getJson<WorkList>("/api/work");
