@@ -834,6 +834,14 @@ EXEMPT = {
     "server.api_reply_session_message": (
         "its note to the brain names the capture by number and its recipient through "
         "_plain_name, which refuses anything but a plain name; no word of the message"),
+    "server._read_back_lead": (
+        "it is spoken to him as a read-back, never given to the brain: the recipient through "
+        "_plain_name and a subagent's name through _said_name, each refusing anything but a "
+        "plain name"),
+    "session_message_sender.sender_of": (
+        "it reads a subagent's description or Codex nickname (its dispatcher's words) only "
+        "as the sender's name, which the page shows as text and the brain reads only inside "
+        "the session messages' untrusted wall"),
     "server.tool_reply_to_session_message": (
         "it answers with the capture's number and its recipient through _plain_name; his "
         "own reply text goes into the capture, never into the answer"),

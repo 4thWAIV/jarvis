@@ -199,12 +199,20 @@ symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
 session's sign it was picked up), then records an attention item naming the
 agent and nothing of its text. The agent is its real sender
-(`session_message_sender.sender_of`, stored as `sender_session` and
-`sender_evidence`): the session whose own transcript shows it writing that
-file, else the session its `From: <session id>` line names (the skill's
-second line; only a session the agent directory knows, in that same
-project), and a message from no sender he could reply to is never shown as a
-message: it is held where it was dropped (`<name>.held`,
+(`session_message_sender.sender_of`, stored as `sender_session`,
+`sender_evidence` and `sender_subagent`), proven only by a transcript
+showing the write (the file's path in it, written since the file): a
+listed agent's own Claude Code transcript (`transcript`), one of its Claude
+subagents' files (`subagent_transcript`, named by its meta description),
+its Codex rollout (`codex_rollout`), or the rollout of a Codex subagent
+whose `session_meta.source.subagent.thread_spawn.parent_thread_id` is it
+(`codex_subagent_rollout`, named by `agent_nickname`). Its `From: <session
+id>` line (the skill's second line) only says whose to look in first. A
+subagent shows as "<its name> (<listed parent>)", and a reply to it goes to
+the parent's session, read back "To Planning, for Feynman." (the capture's
+`for`, dropped once it is addressed elsewhere). The writer must be, or be a
+subagent of, an agent the directory lists. A message with no such proof is
+never shown as a message: it is held where it was dropped (`<name>.held`,
 `server._hold_session_message`; its session sees it was not taken) and only
 counted in Diagnostics (`incomingHeld`), since a message he cannot answer
 must not reach him as one. Its Updates entry has Seen, Read and Reply:

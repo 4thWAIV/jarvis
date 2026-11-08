@@ -2018,21 +2018,20 @@ SESSION_MESSAGES_POLL_SEC = 5.0
 _session_messages_task: Optional[asyncio.Task] = None
 
 
-def _message_sender(dropped) -> "session_message_sender.Sender":
-    """Who sent a dropped message: the session whose transcript wrote it,
-    else the session its From: line names (only a known agent of that same
-    project), else "an agent in <project>" (session_message_sender.py).
-    Never every agent of the project listed together. Never raises."""
+def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
+    """Who sent a dropped message, proven by a transcript showing it write
+    the file: a listed agent, or a subagent of one (session_message_sender.py;
+    the From: line only says which to check first). None when nothing proves
+    it: the message is then held. Never raises."""
     try:
-        sessions = [s for s in _snapshot_or_empty().sessions
-                    if getattr(s, "provider", "") == session_watch.PROVIDER]
         return session_message_sender.sender_of(
-            dropped.project, dropped.path, dropped.claimed, sessions,
-            session_watch.config_roots(), agent_directory.names_by_session())
+            dropped.path, dropped.claimed, _snapshot_or_empty().sessions,
+            session_watch.config_roots(), agent_directory.names_by_session(),
+            codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()))
     except Exception:
         log.warning("session messages: the sender of %s was not worked out",
                     dropped.path.name, exc_info=True)
-        return session_message_sender.unknown(dropped.project)
+        return None
 
 
 def _take_session_messages() -> list[run_store.SessionMessage]:
@@ -2044,7 +2043,7 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     for dropped in session_messages.collect(data_paths.session_messages_dir(),
                                             time.time()):
         sender = _message_sender(dropped)
-        if sender.session_id is None:
+        if sender is None:
             # No sender he could reply to: it never reaches him as a message.
             # Held where it was dropped (`.held`), so its session sees it was
             # not taken, and counted in Diagnostics (session_messages.held).
@@ -2052,7 +2051,7 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
             continue
         message_id = run_store.create_session_message(
             dropped.project, sender.name, dropped.subject, dropped.body,
-            sender.session_id, sender.evidence)
+            sender.session_id, sender.evidence, sender.subagent)
         try:
             dropped.path.unlink()
         except OSError as e:
@@ -5270,6 +5269,11 @@ def _reply_capture(number: int):
                       f"no one to reply to.")
     capture = _new_capture()
     _set_capture(capture, "", names[m.sender_session], m.sender_session)
+    if m.sender_subagent:
+        # A subagent has no inbox: the reply goes to its listed parent's
+        # session, and its read-back says whom it is for ("To Planning, for
+        # Feynman.").
+        capture["for"] = m.sender_subagent
     return capture, None
 
 
@@ -5658,6 +5662,8 @@ def _set_capture(capture: dict, text: str, to: str, to_session: Optional[str]) -
     capture["text"] = text
     if to_session:
         capture["to"], capture["to_session"] = to, to_session
+    if readdressed:
+        capture.pop("for", None)        # whom it was for was the old recipient's
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
         capture["heard"].append(_turn_heard)
     if changed or readdressed:
@@ -5741,7 +5747,10 @@ def _read_back_lead(capture: dict) -> str:
     (`messaging_ports.human_readback`)."""
     if capture.get("human"):
         return ""
-    return f"To {_plain_name(capture['to'], 'that session')}."
+    lead = f"To {_plain_name(capture['to'], 'that session')}"
+    if capture.get("for"):
+        lead += f", for {_said_name({'voice_name': capture['for']}, 'its subagent')}"
+    return lead + "."
 
 
 def _unaddressed(number: int) -> str:
