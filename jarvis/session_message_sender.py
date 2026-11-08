@@ -122,9 +122,11 @@ def _codex_candidates(s, threads: dict):
             yield Path(t["rollout_path"]), CODEX_SUBAGENT_ROLLOUT, s.session_id
 
 
-def ran(transcript: Path, words: Iterable[str], since: float) -> bool:
-    """Whether one line of this transcript's end holds every one of `words`
-    (a command and what it was run on), and it was written since `since`."""
+def ran(transcript: Path, words: Iterable[str], since: float, whole: bool = False) -> bool:
+    """Whether one line of this transcript's end (with `whole`, of all of
+    it, read a line at a time: a one-time look back past the end) holds
+    every one of `words` (a command and what it was run on), and it was
+    written since `since`."""
     words = [w for w in words if w]
     try:
         st = transcript.lstat()
@@ -132,8 +134,20 @@ def ran(transcript: Path, words: Iterable[str], since: float) -> bool:
         return False
     if not words or not transcript.is_file() or transcript.is_symlink() or st.st_mtime < since:
         return False
-    return any(all(w in line for w in words)
-               for line in _tail(transcript, TRANSCRIPT_TAIL_BYTES).splitlines())
+    if not whole:
+        return any(all(w in line for w in words)
+                   for line in _tail(transcript, TRANSCRIPT_TAIL_BYTES).splitlines())
+    first = words[0].encode("utf-8")
+    try:
+        with open(transcript, "rb") as fh:
+            for raw in fh:
+                if first in raw:
+                    line = raw.decode("utf-8", errors="replace")
+                    if all(w in line for w in words):
+                        return True
+    except OSError:
+        return False
+    return False
 
 
 # The most transcripts one proof reads, newest first: a listed agent with

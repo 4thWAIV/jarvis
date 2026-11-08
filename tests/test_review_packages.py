@@ -119,7 +119,7 @@ def test_his_review_is_recorded_once_per_answer(wired, marks, tmp_path, item):
 
 def test_an_answer_that_cannot_be_applied_says_why_on_the_item(wired, marks, tmp_path, item):
     inbox_id = _sent(wired, tmp_path, item)
-    said = _answer_by_page(wired, inbox_id, "not-done")["said"]
+    said = _answer_by_page(wired, inbox_id, "add-work")["said"]
     assert "was not applied" in said and "you gave no words with it" in said, said
     got = work_store.get(item.id)
     assert got.state == "verifying"
@@ -296,3 +296,52 @@ def test_approve_is_only_for_an_item_ready_for_his_review(wired, tmp_path):
     got = wired.client.get(f"/api/work/{planned.id}").json()["item"]
     assert (got["state"], got["approvable"]) == ("planned", False)
     assert "not ready for review" in _review(wired, planned.id, "approve", ok=False)["error"]
+
+
+# --- answered after Done, and not done yet with no words -------------------------------
+
+def test_not_done_yet_with_no_words_goes_back_to_working(wired, marks, tmp_path, item):
+    """His words are optional: it goes back all the same, saying so."""
+    inbox_id = _sent(wired, tmp_path, item)
+    _answer_by_page(wired, inbox_id, "not-done")
+    got = work_store.get(item.id)
+    assert (got.state, got.review_note) == ("activity_unknown", work_store.NO_NOTE)
+    assert [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_RETURNED]
+    folder = data_paths.answers_dir() / "inbox"
+    assert any("His note: no note given" in p.read_text() for p in folder.glob("*.md"))
+
+
+def test_answered_after_done_counts_for_the_item_it_was_sent_for(wired, marks, tmp_path, item):
+    """He pressed Done first, then answered not done yet in the package and
+    pressed Done again: the answer is his review of that item, never lost on
+    a new row with no link (pkg-f8c3b2f1d38e)."""
+    from jarvis import package_inbox
+    inbox_id = _sent(wired, tmp_path, item)
+    package_id = package_inbox.get(inbox_id).package_id
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert work_store.get(item.id).package_review.outcome == "no_verdict"
+    _decide(inbox_id, "not-done")                 # in the package, after Done
+    wired.server._inbox_recount(wired.server.work_packages.find(package_id), "on the page")
+    got = work_store.get(item.id)
+    assert (got.state, got.review_note) == ("activity_unknown", work_store.NO_NOTE)
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert r.status_code == 200, r.text
+    again = package_inbox.latest_for_package(package_id)
+    assert again.id != inbox_id and again.work_id == item.id, "the new row keeps the link"
+    assert len([e for e in work_store.events(item.id)
+                if e.kind == work_store.REVIEW_RETURNED]) == 1, "once"
+
+
+def test_the_start_pass_applies_a_not_done_given_after_done(wired, marks, tmp_path, item):
+    """The live case: signed off unanswered, answered after, never applied.
+    The start pass applies it once."""
+    from jarvis import package_inbox, work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    package_id = package_inbox.get(inbox_id).package_id
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    _decide(inbox_id, "not-done")                 # recorded, and nothing applied it
+    assert work_store.get(item.id).state == "verifying"
+    assert work_api.apply_package_reviews() == 1
+    got = work_store.get(item.id)
+    assert (got.state, got.review_note) == ("activity_unknown", work_store.NO_NOTE)
+    assert work_api.apply_package_reviews() == 0
