@@ -443,7 +443,12 @@ async def test_replay_via_user_final_barges_in_current_speech(h):
     new = s.begin_turn()
     s.feed(new, "Alpha one. Beta two. Gamma three.")
     await s.end_turn(new)
-    await asyncio.sleep(0.1)
+    # Speaking starts once the scheduler has picked it: on a busy machine
+    # that can take longer than a tenth of a second.
+    for _ in range(250):
+        if s.is_speaking:
+            break
+        await asyncio.sleep(0.02)
     assert s.is_speaking
 
     verdict = await s.user_final("say that again")

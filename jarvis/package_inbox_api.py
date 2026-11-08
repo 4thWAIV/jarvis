@@ -72,7 +72,7 @@ def entry_json(entry: Entry) -> dict:
     whether his answers go nowhere (`unproven_claim`: the session it named
     was not proven to have sent it)."""
     return {**entry.public(), "sender": entry.sender_name(), "waiting": entry.waiting,
-            "unproven_claim": entry.unproven_claim}
+            "unproven_claim": entry.unproven_claim, "proof_pending": entry.proof_pending}
 
 
 def detail(entry: Entry) -> dict:
