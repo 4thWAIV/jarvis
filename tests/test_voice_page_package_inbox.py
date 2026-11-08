@@ -100,6 +100,13 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         for pattern in ("**/api/packages**", "**/api/attention**", "**/api/work**"):
             await page.route(pattern, _through(client))
 
+        # The session it names counts as proven, by its listed name: this
+        # test is about the page, and the proof has its own tests
+        # (test_package_inbox.py, "who sent it").
+        from jarvis import session_message_sender
+        monkeypatch.setattr(server, "_package_sender", lambda claimed, source, reporter: (
+            session_message_sender.Sender(claimed, "chitauri", "test") if claimed else None))
+
         # It arrives before the page loads, as make_package sends it.
         r = client.post("/api/packages/inbox", content=data,
                         params={"project": "tea", "session": "sess-1", "work": item.id},
