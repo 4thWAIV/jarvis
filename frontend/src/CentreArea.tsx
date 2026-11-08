@@ -239,8 +239,8 @@ export function CentreArea() {
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
   const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
   const projectOpen = useSyncExternalStore(openProject.subscribe, openProject.get);
-  const projectName = useSyncExternalStore(projectList.subscribe, projectList.get).value
-    ?.projects.find((p) => p.id === projectOpen)?.display_name;
+  const projectName = (useSyncExternalStore(projectList.subscribe, projectList.get).value?.projects ?? [])
+    .find((p) => p.id === projectOpen)?.display_name;
   const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
   const workflowList = useSyncExternalStore(workflows.subscribe, workflows.get).value;
   const t = useT();

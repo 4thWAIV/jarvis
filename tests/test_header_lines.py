@@ -1775,8 +1775,13 @@ def _drive_workflow_silence(server, session, monkeypatch):
     monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)
 
     async def once():
+        # One pass reads the workflows, then the Work record, each on a
+        # thread: wait for its first item, not a fixed slice of a slow box.
         task = asyncio.create_task(server._watch_workflow_silence())
-        await asyncio.sleep(0.05)
+        for _ in range(500):
+            await asyncio.sleep(0.01)
+            if view():
+                break
         task.cancel()
 
     asyncio.run(once())

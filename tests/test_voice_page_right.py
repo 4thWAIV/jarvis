@@ -77,6 +77,11 @@ async def _open(p, url, queue_world=None, *, language=None, team=None, subsystem
             status=200, content_type="application/json", body=json.dumps({"language": language})))
     await page.route("**/api/workflows**", _Workflows())
     await page.route("**/api/folders**", _Folders())
+    # No projects and no proposals: the Folders tab opens on Projects and
+    # lists every folder as independent.
+    await page.route("**/api/project-records**", lambda route: route.fulfill(json=(
+        {"candidates": []} if "/candidates" in route.request.url
+        else {"projects": [], "linked_folders": []})))
     await page.route("**/api/diagnostics/subsystems", subsystems or _Subsystems())
     routes = None
     if queue_world is not None:
@@ -205,7 +210,9 @@ async def test_folder_rows_open_by_their_command_and_are_revealed_without_cleari
             result = await ui.indicate(_folder(last["id"], "availability"), reveal="navigate")
             assert result["status"] == "completed", json.dumps(result)
 
-            # His filter hides a row: said so, and his filter stays.
+            # His filter, in the plain folder list, hides a row: said so, and
+            # his filter stays.
+            await page.click(".folders-panel-switch [role=radio][aria-checked=false]")
             await page.fill(".folders-panel input[type=search]", "aurora")
             result = await ui.indicate(_folder(FOLDERS[1]["id"]), reveal="navigate")
             assert (result["status"], result["reason"]) == ("unavailable", "hidden"), result
@@ -403,7 +410,7 @@ async def test_the_right_tabs_in_spanish_reflow_without_spilling_or_losing_a_bra
         assert set(spanish[tab]["cut"]) <= set(english[tab]["cut"]), (tab, spanish[tab]["cut"])
         left = [w for w in ENGLISH_LEFT if w in spanish[tab]["text"]]
         assert not left, (tab, left, spanish[tab]["text"])
-    assert "registradas" in spanish["folders"]["text"] and "HUMANO" in spanish["network"]["text"]
+    assert "Carpetas independientes" in spanish["folders"]["text"] and "HUMANO" in spanish["network"]["text"]
     for language in (english, spanish):
         assert not [c for c in language["diagnostics"]["cut"] if "subsystem-name" in c], language["diagnostics"]["cut"]
     assert "Entrada de voz" in spanish["diagnostics"]["text"]
