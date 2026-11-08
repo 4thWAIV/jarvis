@@ -12,6 +12,7 @@ the session's sign it was picked up) and says it came in. Nothing here speaks.
 from __future__ import annotations
 
 import logging
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,12 @@ class Dropped:
     project: str        # the folder it was dropped in
     subject: str
     body: str
+    claimed: str | None = None      # its `From: <session id>` line: a claim, checked by the server
+
+
+# The line a session puts under its subject to say who it is (the talk-to-jarvis
+# skill; make_package from its --session): `From: <session id>`.
+FROM_LINE = re.compile(r"From:\s*([A-Za-z0-9][A-Za-z0-9-]{7,63})\s*")
 
 
 def parse(text: str) -> tuple[str, str]:
@@ -47,6 +54,14 @@ def parse(text: str) -> tuple[str, str]:
     if first.startswith("#"):
         return first.lstrip("#").strip(), rest.strip()
     return "", text
+
+
+def claimed_sender(body: str) -> tuple[str | None, str]:
+    """(the session id its first `From:` line names, the body without that
+    line). Only the body's first non-empty line counts."""
+    head, _, rest = body.lstrip().partition("\n")
+    m = FROM_LINE.fullmatch(head.strip())
+    return (m.group(1), rest.strip()) if m else (None, body)
 
 
 def _settled(folder: Path, now: float, older_than: float) -> list[tuple[float, Path, str]]:
@@ -99,5 +114,7 @@ def collect(folder: Path, now: float) -> list[Dropped]:
         if len(text) > MAX_FILE_CHARS:
             text = text[:MAX_FILE_CHARS].rstrip() + "\n… (the rest of this message was cut)"
         subject, body = parse(text)
-        out.append(Dropped(path=path, project=project, subject=subject, body=body))
+        claimed, body = claimed_sender(body)
+        out.append(Dropped(path=path, project=project, subject=subject, body=body,
+                           claimed=claimed))
     return out

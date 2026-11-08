@@ -236,6 +236,12 @@ def init_db() -> None:
             if column not in cols:
                 conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
                 conn.commit()
+        message_cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_messages)")}
+        for column in ("sender_session", "sender_evidence"):
+            # Who sent it, and on what evidence (session_message_sender.py).
+            if column not in message_cols:
+                conn.execute(f"ALTER TABLE session_messages ADD COLUMN {column} TEXT")
+                conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:
             conn.execute(
@@ -641,16 +647,21 @@ class SessionMessage:
     body: str
     received_at: float
     read_at: Optional[float] = None
+    sender_session: Optional[str] = None    # the session that sent it, when known
+    sender_evidence: Optional[str] = None   # transcript, from_line or project
 
 
 def create_session_message(project: str, agent_name: str, subject: str,
-                           body: str) -> int:
-    """Record a message a session sent. Its id."""
+                           body: str, sender_session: Optional[str] = None,
+                           sender_evidence: Optional[str] = None) -> int:
+    """Record a message a session sent, with who sent it and on what
+    evidence (session_message_sender.py). Its id."""
     with closing(_connect()) as conn:
         cur = conn.execute(
             "INSERT INTO session_messages (project, agent_name, subject, body, "
-            "received_at) VALUES (?, ?, ?, ?, ?)",
-            (project, agent_name, subject, body, time.time()))
+            "received_at, sender_session, sender_evidence) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (project, agent_name, subject, body, time.time(), sender_session,
+             sender_evidence))
         conn.commit()
         message_id = int(cur.lastrowid)
     # Its arrival on the brain activity feed: who sent it, never what.

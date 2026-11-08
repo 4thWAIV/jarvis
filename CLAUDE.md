@@ -198,8 +198,16 @@ takes each file once it has not changed for `SETTLE_SEC`, never through a
 symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
 session's sign it was picked up), then records an attention item naming the
-agent and nothing of its text. The agent is every listed agent in that project
-(`_project_owner`, shared with the needs board). The brain reads the record
+agent and nothing of its text. The agent is its real sender
+(`session_message_sender.sender_of`, stored as `sender_session` and
+`sender_evidence`): the session whose own transcript shows it writing that
+file, else the session its `From: <session id>` line names (the skill's
+second line; only a session the agent directory knows, in that same
+project), else "an agent in <project>"; never every agent of the project
+listed together. The Updates entry's Read (`POST
+/api/session-messages/{id}/read`) opens it through `_read_session_message`,
+the brain's `read_session_message`'s own call, marks it read and the update
+seen. The brain reads the record
 with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
 talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside

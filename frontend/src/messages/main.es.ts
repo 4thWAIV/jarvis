@@ -1035,6 +1035,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.agent_message.answered": "{name} respondió a su mensaje",
   "main.updates.event.agent_message.answered_empty": "{name} terminó su turno sobre su mensaje sin decir nada",
   "main.updates.event.session_message.arrived": "{name} le envió un mensaje",
+  "main.updates.read": "Leer",
+  "main.updates.readFailed": "No se pudo leer ese mensaje.",
   "main.updates.event.work_stalled.stalled": "{name} está detenido: nadie trabaja en ello",
   "main.updates.event.work_follow_up.no_follow_up": "{name} no ha empezado con su respuesta",
   "main.updates.event.needs_board.changed": "{name} anotó lo que necesita de usted",

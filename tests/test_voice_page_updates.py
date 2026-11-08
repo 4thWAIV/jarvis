@@ -211,3 +211,29 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         assert ("seen", None) in record.posts
         await async_api.expect(chip).to_have_count(0)
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_session_message_s_read_opens_it_in_the_list_as_text(page_playwright, page_url):
+    record = _Attention([_item(147, "session_message", "arrived", agent="Designer")])
+    opened = []
+
+    async def read(route):
+        opened.append(route.request.url)
+        await route.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"id": 147, "agent_name": "Designer", "project": "denice", "received_at": 1.0,
+             "subject": "Spheres are ready", "body": f"Look at them. {HOSTILE}"}))
+
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, _Team(_envelope),
+                                    routes=record.routes() + [("**/api/session-messages/*/read", read)])
+        notice = page.locator("#updates-notice")
+        await notice.get_by_role("button", name="Review updates").click()
+        row = notice.locator(".updates-list li[data-message-id='147']")
+        await async_api.expect(row).to_contain_text("Designer sent you a message")
+        await row.get_by_role("button", name="Read").click()
+        await async_api.expect(row.locator(".updates-message")).to_contain_text("Spheres are ready")
+        await async_api.expect(row.locator(".updates-message-body")).to_contain_text(HOSTILE)
+        assert await row.locator(".updates-message b").count() == 0, "its words are text, never markup"
+        assert opened and opened[0].endswith("/api/session-messages/147/read")
+        await browser.close()

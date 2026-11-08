@@ -113,6 +113,7 @@ from jarvis import attachment_locations, draft_files, packages_api, work_package
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
+from jarvis import session_message_sender
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -2017,6 +2018,23 @@ SESSION_MESSAGES_POLL_SEC = 5.0
 _session_messages_task: Optional[asyncio.Task] = None
 
 
+def _message_sender(dropped) -> "session_message_sender.Sender":
+    """Who sent a dropped message: the session whose transcript wrote it,
+    else the session its From: line names (only a known agent of that same
+    project), else "an agent in <project>" (session_message_sender.py).
+    Never every agent of the project listed together. Never raises."""
+    try:
+        sessions = [s for s in _snapshot_or_empty().sessions
+                    if getattr(s, "provider", "") == session_watch.PROVIDER]
+        return session_message_sender.sender_of(
+            dropped.project, dropped.path, dropped.claimed, sessions,
+            session_watch.config_roots(), agent_directory.names_by_session())
+    except Exception:
+        log.warning("session messages: the sender of %s was not worked out",
+                    dropped.path.name, exc_info=True)
+        return session_message_sender.unknown(dropped.project)
+
+
 def _take_session_messages() -> list[run_store.SessionMessage]:
     """Record every settled message file, then delete it. The record is
     written first: a file whose record failed stays and is taken next time,
@@ -2025,9 +2043,10 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     taken = []
     for dropped in session_messages.collect(data_paths.session_messages_dir(),
                                             time.time()):
+        sender = _message_sender(dropped)
         message_id = run_store.create_session_message(
-            dropped.project, _project_owner(dropped.project),
-            dropped.subject, dropped.body)
+            dropped.project, sender.name, dropped.subject, dropped.body,
+            sender.session_id, sender.evidence)
         try:
             dropped.path.unlink()
         except OSError as e:
@@ -2039,13 +2058,10 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                           f"aside and will be recorded again")
         received = run_store.get_session_message(message_id)
         if received is not None:
-            # The thread it joins: the project's agent, found the way its
-            # owner's name was (`_project_owner`).
-            owner = next((x for x in _snapshot_or_empty().sessions
-                          if x.project.lower() == dropped.project.lower()), None)
+            # The thread it joins: its sender's, when it is known.
             _record(conversation_log.ItemKind.FROM_AGENT,
                     f"{received.subject}\n\n{received.body}".strip(),
-                    agent_session_id=getattr(owner, "session_id", None),
+                    agent_session_id=sender.session_id,
                     agent_name=received.agent_name, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
@@ -5174,16 +5190,45 @@ def tool_session_messages(args: dict) -> str:
             f"in full.\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(lines)))
 
 
+def _read_session_message(number: int):
+    """One message a session sent, marked read: the brain's
+    read_session_message and the Updates entry's Read alike. None when
+    there is no such message."""
+    m = run_store.get_session_message(number)
+    if m is not None:
+        run_store.mark_session_message_read(number)
+    return m
+
+
+@app.post("/api/session-messages/{number}/read")
+async def api_read_session_message(number: int):
+    """His Read on a session message's Updates entry: the message, marked
+    read (the same call as read_session_message), and its update seen, since
+    he has it in front of him. Its subject and body are the session's words,
+    shown on the page as text."""
+    m = await asyncio.to_thread(_read_session_message, number)
+    if m is None:
+        raise HTTPException(status_code=404, detail="No such message")
+    if attention_record is not None:
+        try:
+            await asyncio.to_thread(attention_api.mark_seen_source, attention_record,
+                                    "session_message", str(number))
+        except Exception:
+            log.warning("attention: session message %s not marked seen", number, exc_info=True)
+        _hint_attention()
+    return {"id": m.id, "agent_name": m.agent_name, "project": m.project,
+            "subject": m.subject, "body": m.body, "received_at": m.received_at}
+
+
 def tool_read_session_message(args: dict) -> str:
     """One message a session sent, one page at a time. Marks it read."""
     try:
         number = int(args.get("message"))
     except (TypeError, ValueError):
         return "Give the message's number; session_messages has them."
-    m = run_store.get_session_message(number)
+    m = _read_session_message(number)
     if m is None:
         return f"There is no message {number} from a session; session_messages has them."
-    run_store.mark_session_message_read(number)
     _read_to_him("session_message", number)
     name = _said_name({"voice_name": m.agent_name}, "A session")
     text = (f"Subject: {m.subject or '(none)'}\n\n{m.body or '(no text)'}")

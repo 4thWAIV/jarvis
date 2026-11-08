@@ -1533,6 +1533,8 @@ html, body {
 .work-state.state-stalled { background: #f97316; color: var(--ui-on-signal); }
 .work-state.state-background { background: rgba(125, 211, 252, 0.18); }
 .work-live-reason { color: #7dd3fc; }
+.updates-message { flex-basis: 100%; margin-top: 4px; }
+.updates-message-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 0; }
 .work-stalled { color: #fb923c; }
 .work-piece-live { color: var(--ui-secondary); font-size: 11px; }
 .work-piece-live[data-live="working"] { color: #7dd3fc; }

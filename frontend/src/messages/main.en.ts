@@ -1082,6 +1082,8 @@ export const mainEn = {
   "main.updates.event.agent_message.answered": "{name} answered your message",
   "main.updates.event.agent_message.answered_empty": "{name} ended its turn on your message without a word",
   "main.updates.event.session_message.arrived": "{name} sent you a message",
+  "main.updates.read": "Read",
+  "main.updates.readFailed": "That message could not be read.",
   "main.updates.event.work_stalled.stalled": "{name} is stalled: nobody is working on it",
   "main.updates.event.work_follow_up.no_follow_up": "{name} has not started on your answer",
   "main.updates.event.needs_board.changed": "{name} has written down what it needs from you",

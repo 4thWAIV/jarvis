@@ -118,7 +118,8 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   );
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
-      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} /> : (
+      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} />
+        : item.kind === "session_message" ? <SessionMessageLine key={item.id} item={item} /> : (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -172,6 +173,35 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
 /** A package's reduced line: who sent it, its title and how many decisions
  *  wait, with Open and Seen. The words are the sender's, drawn as text. */
+/** A session's message, with Read: it opens the message here (the same
+ *  call as the brain's read_session_message, which marks it read) and the
+ *  update is seen. The subject and body are the session's words, as text. */
+function SessionMessageLine({ item }: { item: AttentionItem }) {
+  const t = useT();
+  const [opened, setOpened] = useState<{ subject: string; body: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const read = async () => {
+    const res = await fetch(`/api/session-messages/${encodeURIComponent(item.source_id)}/read`,
+                            { method: "POST" }).catch(() => null);
+    if (!res?.ok) { setFailed(true); return; }
+    setOpened(await res.json());
+  };
+  return (
+    <li className="updates-session-message" data-message-id={item.source_id}>
+      <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
+      {!opened && <button type="button" className="settings-btn" data-ui-action="domain"
+                          onClick={() => void read()}>{t("main.updates.read")}</button>}
+      {failed && <span className="file-state">{t("main.updates.readFailed")}</span>}
+      {opened && (
+        <div className="updates-message">
+          {opened.subject && <strong>{opened.subject}</strong>}
+          <p className="updates-message-body">{opened.body}</p>
+        </div>
+      )}
+    </li>
+  );
+}
+
 function PackageLine({ item }: { item: AttentionItem }) {
   const t = useT();
   const [said, setSaid] = useState<Said | null>(null);
