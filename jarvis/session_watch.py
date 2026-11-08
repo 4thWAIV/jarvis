@@ -424,31 +424,44 @@ def lines_before(path: Path, before: int | None, limit: int,
         return []
     end = size if before is None else max(0, min(before, size))
     entries: list[TranscriptEntry] = []
-    while end > 0 and len(entries) < limit:
-        start = max(0, end - window)
-        with open(path, "rb") as fh:
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return []
+    with fh:
+        while end > 0 and len(entries) < limit:
+            start = max(0, end - window)
             fh.seek(start)
             raw = fh.read(end - start)
-        cut = 0
-        if start > 0:
-            cut = raw.find(b"\n") + 1           # the first line is partial
-            if cut == 0:                        # one line longer than the window
-                window *= 4
-                continue
-        page: list[TranscriptEntry] = []
-        offset = start + cut
-        for line in raw[cut:].split(b"\n"):
-            here, offset = offset, offset + len(line) + 1
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                page.extend(parse(here, obj))
-        entries = page + entries
-        end = start + cut
+            if not raw:                         # cut short underneath us
+                break
+            cut = 0
+            if start > 0:
+                cut = raw.find(b"\n") + 1       # the first line is partial
+                # No whole line begins inside the window: no newline at all,
+                # or only the one that ends it, because the line ending at
+                # `end` is longer than the window. Taking that newline as the
+                # cut moved `end` nowhere, and the loop read the same window
+                # forever (measured 2026-11-08: a 1.5 MB tool-result line in
+                # a subagent's transcript held five server threads at 36% CPU
+                # each, and /api/work took 3 s).
+                if cut == 0 or cut >= len(raw):
+                    window *= 4
+                    continue
+            page: list[TranscriptEntry] = []
+            offset = start + cut
+            for line in raw[cut:].split(b"\n"):
+                here, offset = offset, offset + len(line) + 1
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict):
+                    page.extend(parse(here, obj))
+            entries = page + entries
+            end = start + cut
     if len(entries) <= limit:
         return entries
     # A page starts on a whole line: one line can make several entries (a

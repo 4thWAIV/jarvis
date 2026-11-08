@@ -109,3 +109,65 @@ def test_the_route_serves_a_session_s_page_and_its_cursor(monkeypatch, tmp_path)
     assert body["name"] == "guard" and body["earlier"] is None
     assert "Hello." in [e["text"] for e in body["entries"]]
     assert client.get("/api/sessions/nope/transcript").status_code == 404
+
+
+def _bounded(fn, seconds=5.0):
+    """fn's result, or a failure when it has not returned within `seconds`
+    (the reader once looped forever on a line longer than its window)."""
+    import threading
+    out = []
+    worker = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert out, f"lines_before did not return within {seconds}s"
+    return out[0]
+
+
+@pytest.mark.parametrize("long_at", ["last", "middle", "first"])
+def test_a_line_longer_than_the_window_is_read_whole_and_the_read_ends(tmp_path, monkeypatch,
+                                                                        long_at):
+    path = tmp_path / "t.jsonl"
+    short = [{"type": "assistant", "n": i} for i in range(4)]
+    huge = {"type": "user", "n": "huge", "blob": "x" * 5000}
+    objs = {"last": short + [huge], "middle": short[:2] + [huge] + short[2:],
+            "first": [huge] + short}[long_at]
+    _write(path, objs)
+    reads = []
+    real_open = open
+
+    def counting_open(*args, **kwargs):
+        fh = real_open(*args, **kwargs)
+        real_read = fh.read
+
+        def read(*a):
+            data = real_read(*a)
+            reads.append(len(data))
+            return data
+        fh.read = read
+        return fh
+    monkeypatch.setattr("builtins.open", counting_open)
+    entries = _bounded(lambda: sw.lines_before(path, None, 50, lambda o, b: [b["n"]], window=500))
+    assert [e for e in entries] == [o["n"] for o in objs]
+    # Every line read once, give or take the windows widened to hold the
+    # long one: never the same window again and again.
+    assert sum(reads) < 4 * path.stat().st_size
+
+
+def test_paging_back_across_a_line_longer_than_the_window_loses_nothing(tmp_path):
+    path = tmp_path / "t.jsonl"
+    objs = ([{"type": "assistant", "n": i} for i in range(10)]
+            + [{"type": "user", "n": "huge", "blob": "y" * 3000}]
+            + [{"type": "assistant", "n": i} for i in range(10, 20)])
+    _write(path, objs)
+    seen, before = [], None
+    while True:
+        page = _bounded(lambda: sw.lines_before(
+            path, before, 3, lambda o, b: [sw.TranscriptEntry(o, None, "agent", str(b["n"]))],
+            window=200))
+        if not page:
+            break
+        seen = [e.text for e in page] + seen
+        before = page[0].offset
+        if before == 0:
+            break
+    assert seen == [str(o["n"]) for o in objs]
