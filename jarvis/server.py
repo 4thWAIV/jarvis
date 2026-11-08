@@ -5305,13 +5305,33 @@ async def _read_message_aloud(number: int):
     m = await asyncio.to_thread(_read_session_message, number)
     if m is None or speech is None:
         return m
-    text = f"{_said_name({'voice_name': m.agent_name}, 'A session')} writes: " + (
-        f"{m.subject}. " if m.subject else "") + (m.body or "")
-    item = attention_record.get("session_message", str(number)) if attention_record else None
-    utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
-    reads = [("session_message", str(number), item.revision)] if item is not None else []
-    _spawn(_seen_when_heard(reads, utt))
+    await _speak_message("session_message", number,
+                         f"{_said_name({'voice_name': m.agent_name}, 'A session')} writes: "
+                         + (f"{m.subject}. " if m.subject else "") + (m.body or ""))
     return m
+
+
+async def _read_answer_aloud(number: int):
+    """JARVIS reads an agent's answer to one of his messages aloud, that
+    answer only, as he asked: the Updates entry's Read and the brain's
+    read_message_reply_aloud alike; seen once heard in full. The message
+    (answered, with its reply), or None."""
+    m = await asyncio.to_thread(run_store.get_message, number)
+    if m is None or not m.reply or speech is None:
+        return m if m is not None and m.reply else None
+    name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "The agent")
+    await _speak_message("agent_message", number, f"{name} answers: {m.reply}")
+    return m
+
+
+async def _speak_message(kind: str, number: int, text: str) -> None:
+    """Speak one message to him that he asked to hear, and mark its update
+    (`kind`, `number`) seen only once it has been heard in full
+    (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
+    item = attention_record.get(kind, str(number)) if attention_record else None
+    utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
+    reads = [(kind, str(number), item.revision)] if item is not None else []
+    _spawn(_seen_when_heard(reads, utt))
 
 
 async def _seen_when_heard(reads: list, utt) -> None:
@@ -5339,17 +5359,31 @@ def _reply_capture(number: int):
     m = run_store.get_session_message(number)
     if m is None:
         return None, f"There is no message {number} from a session."
+    return _capture_to_sender(m.sender_session, f"Message {number}", m.sender_subagent)
+
+
+def _answer_reply_capture(number: int):
+    """A capture addressed to the session that answered his message
+    `number`, for his reply to its answer. (the capture, None) or (None, why
+    not)."""
+    m = run_store.get_message(number)
+    if m is None or not m.reply:
+        return None, f"Message {number} has no answer to reply to; list_messages has them."
+    return _capture_to_sender(m.session_id, f"The answer to message {number}")
+
+
+def _capture_to_sender(session_id: Optional[str], what: str, subagent: Optional[str] = None):
+    """A new capture addressed to `session_id`, a listed agent's session,
+    for his reply. A subagent has no inbox: the reply goes to its listed
+    parent's session, and its read-back says whom it is for ("To Planning,
+    for Feynman."). (the capture, None) or (None, why not)."""
     names = agent_directory.names_by_session()
-    if not m.sender_session or m.sender_session not in names:
-        return None, (f"Message {number} came from no session JARVIS can name, so there is "
-                      f"no one to reply to.")
+    if not session_id or session_id not in names:
+        return None, f"{what} came from no session JARVIS can name, so there is no one to reply to."
     capture = _new_capture()
-    _set_capture(capture, "", names[m.sender_session], m.sender_session)
-    if m.sender_subagent:
-        # A subagent has no inbox: the reply goes to its listed parent's
-        # session, and its read-back says whom it is for ("To Planning, for
-        # Feynman.").
-        capture["for"] = m.sender_subagent
+    _set_capture(capture, "", names[session_id], session_id)
+    if subagent:
+        capture["for"] = subagent
     return capture, None
 
 
@@ -5357,11 +5391,35 @@ def _reply_capture(number: int):
 async def api_reply_session_message(number: int):
     """His Reply on a session message's Updates entry: a capture addressed
     to its sender, for what he says or types next."""
-    capture, why = _reply_capture(number)
+    return _replying(*_reply_capture(number), f"message {number}")
+
+
+@app.post("/api/agent-messages/{number}/read")
+async def api_read_answer(number: int):
+    """His Read on an agent's answer's Updates entry: JARVIS reads the
+    answer aloud (`_read_answer_aloud`); the entry stays until heard."""
+    if speech is None:
+        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    m = await _read_answer_aloud(number)
+    if m is None:
+        raise HTTPException(status_code=404, detail="No answer to that message")
+    return {"id": m.id, "reading": True}
+
+
+@app.post("/api/agent-messages/{number}/reply")
+async def api_reply_answer(number: int):
+    """His Reply on an agent's answer's Updates entry: a capture addressed
+    to the session that answered, for what he says or types next."""
+    return _replying(*_answer_reply_capture(number), f"the answer to message {number}")
+
+
+def _replying(capture, why, what: str) -> dict:
+    """A page's Reply: the capture opened, and the brain told what goes in
+    it; refused (409) with why when there is no one to reply to."""
     if capture is None:
         raise HTTPException(status_code=409, detail=why)
     _notes_for_brain.append(
-        f"He pressed Reply on message {number}: capture {capture['id']} is addressed to "
+        f"He pressed Reply on {what}: capture {capture['id']} is addressed to "
         f"{_recipient_name(capture, 'its session')}. Put what he says or types next into "
         f"it (capture with capture={capture['id']}), read it back, and it goes on his yes.")
     return {"capture": capture["id"], "to": capture["to"]}
@@ -5373,7 +5431,22 @@ def tool_reply_to_session_message(args: dict) -> str:
         number = int(args.get("message"))
     except (TypeError, ValueError):
         return "Give the message's number; session_messages has them."
-    capture, why = _reply_capture(number)
+    return _reply_said(*_reply_capture(number), args)
+
+
+def tool_reply_to_message(args: dict) -> str:
+    """His reply to an agent's answer: a capture addressed to the session
+    that answered."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; list_messages has them."
+    return _reply_said(*_answer_reply_capture(number), args)
+
+
+def _reply_said(capture, why, args: dict) -> str:
+    """The brain's reply tools: the capture opened, holding his words when
+    given, or why not."""
     if capture is None:
         return why + " Nothing was captured."
     text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
@@ -5398,6 +5471,20 @@ async def tool_read_session_message_aloud(args: dict) -> str:
     if m is None:
         return f"There is no message {number} from a session; session_messages has them."
     return f"Reading message {number} aloud now, sir; say nothing more of it."
+
+
+async def tool_read_message_reply_aloud(args: dict) -> str:
+    """Read an agent's answer to his message aloud, as the Updates entry's Read does."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; list_messages has them."
+    if speech is None:
+        return "I have no voice to read it with."
+    m = await _read_answer_aloud(number)
+    if m is None:
+        return f"Message {number} has no answer to read; list_messages has them."
+    return f"Reading the answer to message {number} aloud now, sir; say nothing more of it."
 
 
 def tool_read_session_message(args: dict) -> str:
@@ -9771,6 +9858,8 @@ TOOL_HANDLERS.update({
     "read_session_message": tool_read_session_message,
     "read_session_message_aloud": tool_read_session_message_aloud,
     "reply_to_session_message": tool_reply_to_session_message,
+    "read_message_reply_aloud": tool_read_message_reply_aloud,
+    "reply_to_message": tool_reply_to_message,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -10371,10 +10460,13 @@ TOOL_HANDLERS.update({
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
                      "mute_speech", "turn_audio_off", "set_motion",
-                     "read_session_message_aloud", "reply_to_session_message"})
+                     "read_session_message_aloud", "reply_to_session_message",
+                     "read_message_reply_aloud", "reply_to_message"})
 TAINT_EXEMPT_TOOLS.update({
     "read_session_message_aloud": "it reads one message aloud and says so in JARVIS's words",
     "reply_to_session_message": "it opens a capture addressed to the message's sender",
+    "read_message_reply_aloud": "it reads one answer aloud and says so in JARVIS's words",
+    "reply_to_message": "it opens a capture addressed to the session that answered",
 })
 TAINT_EXEMPT_TOOLS.update({
     "set_motion": "it turns the page's motion steady or back; it reads nothing",

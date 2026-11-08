@@ -59,9 +59,10 @@ APPROVED = {
     ("story_teller.py", "StoryTeller._tell", "narrate"): NARRATION,
     ("server.py", "_perform_command", "say"): READBACK,
     ("server.py", "_perform_dialog", "say"): READBACK,
-    # His Read on a session message's Updates entry, or his asking the brain
-    # to read it aloud: that one message, never a digest of others.
-    ("server.py", "_read_message_aloud", "say"): REQUESTED,
+    # His Read on a session message's or an agent's answer's Updates entry,
+    # or his asking the brain to read it aloud: that one message, never a
+    # digest of others.
+    ("server.py", "_speak_message", "say"): REQUESTED,
 }
 
 

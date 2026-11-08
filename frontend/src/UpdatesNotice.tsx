@@ -119,7 +119,10 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
       {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} />
-        : item.kind === "session_message" ? <SessionMessageLine key={item.id} item={item} /> : (
+        : item.kind === "session_message"
+          ? <MessageLine key={item.id} item={item} route="session-messages" />
+        : item.kind === "agent_message" && item.event === "answered"
+          ? <MessageLine key={item.id} item={item} route="agent-messages" /> : (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -173,16 +176,18 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
 /** A package's reduced line: who sent it, its title and how many decisions
  *  wait, with Open and Seen. The words are the sender's, drawn as text. */
-/** A session's message: Seen (as every entry), Read (JARVIS reads that one
- *  message aloud, the brain's read_session_message_aloud's call; the entry
- *  stays until it has been heard in full) and Reply (a capture addressed to
- *  its sender for what he says or types next, read back and sent on his yes,
- *  the brain's reply_to_session_message's call). */
-function SessionMessageLine({ item }: { item: AttentionItem }) {
+/** A message to him: a session's message (`session-messages`) or an agent's
+ *  answer to his message (`agent-messages`). Seen (as every entry), Read
+ *  (JARVIS reads that one message aloud, the brain's read_session_message_aloud
+ *  or read_message_reply_aloud; the entry stays until it has been heard in
+ *  full) and Reply (a capture addressed to the session that sent it for what
+ *  he says or types next, read back and sent on his yes, the brain's
+ *  reply_to_session_message or reply_to_message). */
+function MessageLine({ item, route }: { item: AttentionItem; route: "session-messages" | "agent-messages" }) {
   const t = useT();
   const [said, setSaid] = useState<string | null>(null);
   const post = async (action: "read" | "reply") => {
-    const res = await fetch(`/api/session-messages/${encodeURIComponent(item.source_id)}/${action}`,
+    const res = await fetch(`/api/${route}/${encodeURIComponent(item.source_id)}/${action}`,
                             { method: "POST" }).catch(() => null);
     if (!res?.ok) {
       const body = res ? ((await res.json().catch(() => ({}))) as { detail?: string }) : {};
