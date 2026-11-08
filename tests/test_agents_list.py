@@ -406,22 +406,35 @@ def test_a_claude_code_brain_is_anthropic_s():
 
 # --- the needs-board count ------------------------------------------------------
 
-def test_each_agent_carries_its_project_s_needs_board_count(wired, monkeypatch):
+def _wrote(tmp_path, monkeypatch, server, session, path):
+    """`session`'s own transcript shows it writing `path`: what proves a board's writer."""
+    monkeypatch.setattr(server.session_watch, "config_roots", lambda: [tmp_path / "claude"])
+    t = sw.transcript_path(tmp_path / "claude", session.cwd, session.session_id)
+    t.parent.mkdir(parents=True, exist_ok=True)
+    with open(t, "a") as fh:
+        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
+                 f'"input":{{"file_path":"{path}"}}}}]}}}}\n')
+
+
+def test_each_agent_carries_the_needs_of_the_board_it_wrote(wired, monkeypatch, tmp_path):
+    """Only the agent a transcript proves wrote a board counts it: never every
+    agent in its project."""
     server, store = wired
     from jarvis import data_paths
     folder = data_paths.needs_dir()
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "Hammer.md").write_text(
         "# hammer\n\n## Decisions\n- one: a\n- two: b\n\n## Questions\n- three: c\n")
-    (folder / "anvil.md").write_text("# anvil\n\n## Decisions\n\n## Questions\n")
-    monkeypatch.setattr(server, "session_watcher", _Watcher([
-        _session("s1", "hammer"), _session("s2", "hammer"), _session("s3", "anvil"),
-        _session("s4", "tongs")]))
+    (folder / "anvil.md").write_text("# anvil\n\n## Decisions\n- x: unproven\n")
+    sessions = [_session("s1", "hammer"), _session("s2", "hammer"), _session("s3", "anvil"),
+                _session("s4", "tongs")]
+    monkeypatch.setattr(server, "session_watcher", _Watcher(sessions))
     store.sync_agents({sid: (sid, "idle") for sid in ("s1", "s2", "s3", "s4")})
+    _wrote(tmp_path, monkeypatch, server, sessions[0], folder / "Hammer.md")
 
     got = {a["session_id"]: a["needs"]
            for a in TestClient(server.app).get("/api/agents").json()["agents"]}
-    assert got == {"s1": 3, "s2": 3, "s3": 0, "s4": 0}
+    assert got == {"s1": 3, "s2": 0, "s3": 0, "s4": 0}
 
 
 def test_each_agent_carries_the_provider_of_the_session_it_is(wired, monkeypatch):
@@ -440,7 +453,8 @@ def test_each_agent_carries_the_provider_of_the_session_it_is(wired, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, monkeypatch):
+async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, monkeypatch,
+                                                                       tmp_path):
     import asyncio
     server, _store = wired
     from jarvis import data_paths
@@ -448,6 +462,10 @@ async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, mo
     folder.mkdir(parents=True, exist_ok=True)
     board = folder / "hammer.md"
     board.write_text("## Decisions\n- one: a\n")
+    hammer = _session("s1", "hammer")
+    monkeypatch.setattr(server, "session_watcher", _Watcher([hammer]))
+    _store.sync_agents({"s1": ("hammer", "idle")})
+    _wrote(tmp_path, monkeypatch, server, hammer, board)
     hints = []
     monkeypatch.setattr(server, "_hint_agents_changed", lambda: hints.append(1))
     monkeypatch.setattr(server, "NEEDS_POLL_SEC", 0.01)

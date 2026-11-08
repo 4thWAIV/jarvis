@@ -47,6 +47,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.packages.heading": "Paquetes",
   "right.packages.unreadable": "No se pudo leer la bandeja de paquetes ({error}).",
   "right.packages.unknownSender": "Un agente",
+  "right.packages.unprovenClaim": "Las respuestas no van a ninguna parte: nada probó que la sesión que nombra lo enviara",
   "right.packages.answered": "{answered} de {total} respondidas",
   "right.packages.state.arrived": "Sin abrir",
   "right.packages.state.opened": "Abierto",
@@ -124,6 +125,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.state.done": "Hecho",
   "right.work.state.ready": "Listo",
   "right.work.state.stalled": "Detenido",
+  "right.work.state.background": "Esperando el trabajo en segundo plano de {name}",
   "right.work.stalled": "Detenido: nadie está trabajando en esto",
   "right.work.needsYou": "Usted: {act}",
   "right.work.alsoWaiting": "{count} decisión(es) también esperan su respuesta",
@@ -303,6 +305,12 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.said.incomingWaiting": {
     one: "{count} mensaje lleva más de {age} sin recogerse",
     other: "{count} mensajes llevan más de {age} sin recogerse" },
+  "right.subsystem.said.needsHeld": {
+    one: "{count} tablero de necesidades retenido: ninguna transcripción muestra quién lo escribió",
+    other: "{count} tableros de necesidades retenidos: ninguna transcripción muestra quién los escribió" },
+  "right.subsystem.said.incomingHeld": {
+    one: "{count} mensaje retenido: no nombra un remitente al que se pueda responder",
+    other: "{count} mensajes retenidos: no nombran un remitente al que se pueda responder" },
   "right.subsystem.said.voiceIdle": "Sin escuchar",
   "right.subsystem.said.voiceDropping": "Perdiendo voz",
   "right.subsystem.said.voiceDroppingCause": "Perdiendo voz: {cause}",

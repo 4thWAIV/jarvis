@@ -66,7 +66,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from jarvis import run_store, wait_links
 
@@ -84,7 +84,8 @@ ACTIVE = (VERIFYING,)
 # WORKING is retained only as a legacy reporter claim. No provider currently
 # supplies exact assignment-bound, current token-generation evidence. Fail closed.
 ACTIVITY_UNKNOWN = "activity_unknown"
-PUBLIC_STATES = (PLANNED, READY, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE)
+# WORKING is shown only on live evidence (a subagent on the piece writing now).
+PUBLIC_STATES = (PLANNED, READY, WORKING, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE)
 ACTIVITY_REASON = ("The agent says it is working on this; JARVIS cannot see that work "
                    "happening, so it does not say it is.")
 
@@ -314,7 +315,18 @@ _WAIT_LINKS = """
         || latest_update WHERE state = 'done' AND closed_at IS NULL;
 """ + _link_held("work_pieces", "item_id") + _link_held("work_items", "id")
 
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS}
+# 6: who reported each event, and each piece's latest report, as the route
+# proved it (reporters.recorded: an access key's `key:<label>`), never the
+# report's own word. A decision's asker was already kept so.
+_REPORTERS = """
+    ALTER TABLE work_events ADD COLUMN reporter TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN reporter TEXT NOT NULL DEFAULT '';
+    UPDATE work_events SET reporter = json_extract(detail, '$.asked_by')
+        WHERE kind = 'decision_needed' AND json_extract(detail, '$.asked_by') LIKE 'key:%';
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS,
+               6: _REPORTERS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -345,6 +357,7 @@ class Piece:
     note: str = ""            # the summary of the latest report about it
     note_at: Optional[float] = None
     worker: str = ""          # the reporter's own words for who did it; untrusted
+    reporter: str = ""        # who sent its latest report, as the route proved it
     after: list[str] = field(default_factory=list)       # keys of the pieces it comes after
     waits_for: list[str] = field(default_factory=list)   # of those, the ones not done yet
     evidence: list[Evidence] = field(default_factory=list)
@@ -362,6 +375,8 @@ class Piece:
     activity_reason: str = ""
     # Read time only: claimed working with no report for STALLED_PIECE_AFTER_SEC.
     stalled: bool = False
+    # Read time only: the subagent on it, as its own files show it now.
+    live: Optional["LiveAgent"] = None
 
 
 @dataclass(frozen=True)
@@ -430,6 +445,9 @@ class WorkEvent:
     detail: dict
     at: float = 0.0
     seq: int = 0
+    # Who reported it, as the route proved it (reporters.recorded); his own
+    # acts and JARVIS's leave it empty. Never the report's own word.
+    reporter: str = ""
 
 
 @dataclass(frozen=True)
@@ -478,6 +496,9 @@ class WorkItem:
     # no report from its agents, within QUIET_AFTER_SEC (work_api decides
     # whether that is "Stalled", once nothing waits on him).
     unmoved: bool = False
+    # Read time only: the subagent it shows as what it is doing (a piece's
+    # working one, else one waiting on its own background work).
+    live: Optional["LiveAgent"] = None
 
 
 @dataclass(frozen=True)
@@ -575,7 +596,9 @@ def evidence(value) -> Evidence:
 
 def who(kind, ref=None) -> Who:
     """Who is on a piece, checked for shape (the caller checks the record
-    exists). Tim has no ref; everyone else does."""
+    exists). Tim has no ref; everyone else does. An agent may be one of a
+    session's subagents: `<session id>/sub:<agent id>`, the agent id the
+    Agent tool gave its dispatcher, which names its transcript."""
     if kind not in WHO_KINDS:
         raise WorkRefused(f"Who is one of: {', '.join(WHO_KINDS)}.")
     if kind == TIM:
@@ -583,7 +606,69 @@ def who(kind, ref=None) -> Who:
     text = str(ref or "").strip()
     if not text or len(text) > REF_MAX or any(c.isspace() for c in text):
         raise WorkRefused(f"A piece on a {kind} names its id.")
+    if SUB in text:
+        session, _, agent = text.partition(SUB)
+        if kind != AGENT or not session or "/" in session or not _AGENT_ID.fullmatch(agent):
+            raise WorkRefused("A subagent is agent:<session id>/sub:<agent id>, the agent id "
+                              "its dispatcher's Agent tool gave.")
     return Who(kind, text)
+
+
+# A session's subagent, as a piece names it: agent:<session id>/sub:<agent id>.
+SUB = "/sub:"
+_AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def subagent_of(person: Who) -> Optional[tuple[str, str]]:
+    """(session id, agent id) when `person` is a session's subagent."""
+    if person.kind != AGENT or not person.ref or SUB not in person.ref:
+        return None
+    session, _, agent = person.ref.partition(SUB)
+    return session, agent
+
+
+@dataclass(frozen=True)
+class LiveAgent:
+    """A subagent as its own files show it now: live evidence of work, read
+    by the session watcher (session_watch.read_subagents), never reported."""
+    name: str                 # its description: the dispatcher's words
+    state: str                # working (written within AGENT_ACTIVE_WITHIN_SEC), finished, stale,
+                              # or waiting (on background work it started)
+    written: float            # its transcript's last write
+    doing: str                # its last tool, or its last line: its own words, walled
+    active_within: float      # how long after a write it still counts as working
+
+
+# How a subagent is looked up: (session id, agent id) -> LiveAgent or None.
+# Set by the server, which holds the sessions snapshot.
+_live_lookup: Optional[Callable[[str, str], Optional[LiveAgent]]] = None
+
+
+def look_up_live_with(lookup) -> None:
+    global _live_lookup
+    _live_lookup = lookup
+
+
+def live_agent(person: Who) -> Optional[LiveAgent]:
+    """The subagent `person` names, as it is now, or None (not a subagent,
+    not found, or nothing to look it up with). Never raises."""
+    found = subagent_of(person)
+    if found is None or _live_lookup is None:
+        return None
+    try:
+        return _live_lookup(*found)
+    except Exception:
+        return None
+
+
+LIVE_WORKING = "working"
+# Its turn is over, but background work it started (a command, a monitor)
+# has not ended: session_watch.background_waiting.
+LIVE_WAITING = "waiting"
+# Why a piece on a subagent is not shown working, in his terms.
+_LIVE_REASON = {"finished": "Its subagent has finished.",
+                "stale": "Its subagent has not written anything for a while.",
+                LIVE_WAITING: "Its subagent is waiting on its own background work."}
 
 
 def parse_who(text: str) -> Who:
@@ -594,15 +679,18 @@ def parse_who(text: str) -> Who:
 
 # ── writing ─────────────────────────────────────────────────────────────
 
-def _insert_event(conn, item_id: str, kind: str, summary: str, detail: dict, now: float) -> None:
-    conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at) VALUES (?, ?, ?, ?, ?)",
-                 (item_id, kind, summary, json.dumps(detail), now))
+def _insert_event(conn, item_id: str, kind: str, summary: str, detail: dict, now: float,
+                  reporter: str = "") -> None:
+    conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at, reporter) "
+                 "VALUES (?, ?, ?, ?, ?, ?)",
+                 (item_id, kind, summary, json.dumps(detail), now, reporter))
 
 
 def create(title: str, source_kind: str, path: str, state: str = PLANNED,
-           area: str = "") -> WorkItem:
+           area: str = "", reporter: str = "") -> WorkItem:
     """Begin tracking a piece of work on a zip or folder that is on this Mac
-    now, under an area if it is given one. Returns it."""
+    now, under an area if it is given one; `reporter` who asked, as the
+    route proved it. Returns it."""
     title = _one_line(title, TITLE_MAX)
     if not title:
         raise WorkRefused("A work item needs a title.")
@@ -622,7 +710,7 @@ def create(title: str, source_kind: str, path: str, state: str = PLANNED,
             (item_id, title, source_kind, kept, state, f"{title} is tracked.", now, now, area))
         _insert_event(conn, item_id, CREATED, f"{title} is tracked.",
                       {"source_kind": source_kind, "source_path": kept, "state": state,
-                       "area": area}, now)
+                       "area": area}, now, reporter)
         conn.commit()
     return get(item_id)
 
@@ -655,7 +743,10 @@ def record(event: WorkEvent) -> WorkItem:
         moved = wait_links.Settled()
         if event.kind in (DECISION_MADE, DECISION_SIGNED_OFF, DECISION_WITHDRAWN):
             moved = _answered(conn, event.item_id, kept, event.kind, now)
-        _insert_event(conn, event.item_id, event.kind, summary, kept, now)
+        if event.kind == PIECE:
+            conn.execute("UPDATE work_pieces SET reporter=? WHERE item_id=? AND key=?",
+                         (event.reporter, event.item_id, kept["key"]))
+        _insert_event(conn, event.item_id, event.kind, summary, kept, now, event.reporter)
         conn.commit()
     wait_links.tell(moved)
     return get(event.item_id)
@@ -1148,17 +1239,30 @@ def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
     pieces = []
     for r in rows:
         after = json.loads(r["after_keys"])
+        person = Who(r["who_kind"], r["who_ref"])
+        live = live_agent(person)
+        # Working is shown only on live evidence: a subagent on the piece
+        # writing now. Any other working report reads activity_unknown.
+        evidenced = r["state"] == WORKING and live is not None and live.state == LIVE_WORKING
+        shown = WORKING if evidenced else public_state(r["state"])
+        reason = ""
+        if shown == ACTIVITY_UNKNOWN:
+            reason = _LIVE_REASON.get(live.state, ACTIVITY_REASON) if live else ACTIVITY_REASON
         pieces.append(Piece(
-            r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), public_state(r["state"]),
-            note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
+            r["key"], r["title"], person, shown,
+            note=r["note"], note_at=r["note_at"], worker=r["worker"], reporter=r["reporter"],
+            after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
             evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
-            quiet_at=quiet_at(public_state(r["state"]), r["note_at"]), until=holds_of(r["until"]),
+            quiet_at=(live.written + live.active_within if evidenced
+                      else quiet_at(shown, r["note_at"])),
+            until=holds_of(r["until"]),
             then=r["then_state"], waiting_since=r["waiting_since"],
             unlinked=_unlinked(r, now),
-            activity_reason=ACTIVITY_REASON if r["state"] == WORKING else "",
-            stalled=(r["state"] == WORKING and r["note_at"] is not None
-                     and now - r["note_at"] > STALLED_PIECE_AFTER_SEC)))
+            activity_reason=reason,
+            stalled=(r["state"] == WORKING and not evidenced and r["note_at"] is not None
+                     and now - r["note_at"] > STALLED_PIECE_AFTER_SEC),
+            live=live))
     return _in_order(pieces)
 
 
@@ -1219,14 +1323,18 @@ def _item(conn, row, now: float) -> WorkItem:
         closed_at=row["closed_at"], history=_in_history(row, now),
         pieces=pieces, decisions=decisions, answered=answered,
         blockers=_blockers(row, pieces, decisions, follow_up, now),
-        quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]),
+        quiet_at=(None if row["closed_at"] is not None
+                  else max((p.quiet_at for p in pieces if p.state == WORKING and p.quiet_at),
+                           default=None) if state == WORKING
+                  else quiet_at(state, row["updated_at"])),
         follow_up=follow_up, package_review=_shown_review(row, _package_review(conn, item_id)),
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
         approvable=approvable(row, state, pieces, decisions),
         review_note_at=row["review_note_at"],
-        activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "",
+        activity_reason=_item_reason(state, _item_live(pieces)),
+        live=_item_live(pieces),
         unmoved=(not any(_moving(p, now) for p in pieces)
                  and now - (row["reported_at"] or row["created_at"]) > QUIET_AFTER_SEC))
 
@@ -1239,10 +1347,32 @@ def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
 
 
 def _moving(piece: Piece, now: float) -> bool:
-    """A piece whose agent claims it is working and has reported within
-    QUIET_AFTER_SEC. Still a claim (activity_unknown), never telemetry."""
-    return (piece.state == ACTIVITY_UNKNOWN and piece.note_at is not None
-            and now - piece.note_at <= QUIET_AFTER_SEC)
+    """A piece being moved now: shown working (its subagent writing now),
+    its subagent waiting on background work it started, or claimed working
+    and reported within QUIET_AFTER_SEC (still a claim, activity_unknown)."""
+    return piece.state == WORKING or (
+        piece.live is not None and piece.live.state == LIVE_WAITING) or (
+        piece.state == ACTIVITY_UNKNOWN and piece.note_at is not None
+        and now - piece.note_at <= QUIET_AFTER_SEC)
+
+
+def _item_live(pieces: list[Piece]) -> Optional[LiveAgent]:
+    """The subagent the item shows as what it is doing: one working now
+    first, else one waiting on its own background work."""
+    for wanted in (LIVE_WORKING, LIVE_WAITING):
+        found = next((p.live for p in pieces if p.live is not None and p.live.state == wanted
+                      and p.state != DONE), None)
+        if found is not None:
+            return found
+    return None
+
+
+def _item_reason(state: str, live: Optional[LiveAgent]) -> str:
+    """Why the item is not shown working, in his terms: a subagent on it
+    waiting on its background work, or a claim JARVIS cannot see."""
+    if live is not None and live.state == LIVE_WAITING:
+        return f"Waiting on {live.name}'s background work."
+    return ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else ""
 
 
 def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -> str:
@@ -1261,6 +1391,8 @@ def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -
     if not pieces:
         return WAITING if decisions else public_state(row["state"])
     live = {p.state for p in pieces if p.state != DONE}
+    if any(p.state == WORKING for p in pieces):
+        return WORKING            # live evidence: a subagent on a piece writing now
     if any(_moving(p, now) for p in pieces):
         return ACTIVITY_UNKNOWN
     if READY in live:
@@ -1281,7 +1413,7 @@ def approvable(row, state: str, pieces: list[Piece], decisions: list[Decision]) 
     waiting on him, blocked or still claimed working (docs/work-states.md)."""
     return (state == VERIFYING and row["closed_at"] is None and not decisions
             and row["state"] not in HELD
-            and not any(p.state in HELD + (ACTIVITY_UNKNOWN,) for p in pieces))
+            and not any(p.state in HELD + (ACTIVITY_UNKNOWN, WORKING) for p in pieces))
 
 
 def asker_label(asked_by: str) -> str:
@@ -1294,7 +1426,7 @@ def _follow_up(conn, row, pieces: list[Piece], decisions: list[Decision],
     """His latest answer, when nothing has been reported since and no piece
     is working: the item waits for the decision's asker to start."""
     if (decisions or row["closed_at"] is not None or row["state"] == DONE
-            or any(p.state in (ACTIVITY_UNKNOWN, VERIFYING) for p in pieces)):
+            or any(p.state in (WORKING, ACTIVITY_UNKNOWN, VERIFYING) for p in pieces)):
         return None
     last = conn.execute("SELECT key, question, asked_by, answered_at FROM work_decisions WHERE "
                         "item_id=? AND answer IS NOT NULL ORDER BY answered_at DESC LIMIT 1",
@@ -1380,7 +1512,7 @@ def grouped(items: list[WorkItem]) -> list[WorkGroup]:
 
 def _event(row) -> WorkEvent:
     return WorkEvent(row["item_id"], row["kind"], row["summary"], json.loads(row["detail"]),
-                     row["at"], row["seq"])
+                     row["at"], row["seq"], row["reporter"])
 
 
 def events(item_id: str, after: int = 0, kinds: Optional[set[str]] = None,

@@ -475,9 +475,11 @@ TELEMETRY = {"type": "telemetry", "framesCaptured": 10, "framesSent": 10, "heldS
                                            "at": time.time() * 1000}]}
 
 
-def _recorded(*kinds, timeout=2.0):
+def _recorded(*kinds, timeout=10.0):
     """The record once an event of every one of `kinds` is in it: each event
-    is written on its own, off the event loop, so one can land before another."""
+    is written on its own, off the event loop, so one can land before another.
+    It returns as soon as they are there; the limit is for a busy machine,
+    where a write off the loop has taken over two seconds."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         samples, events = voice_diagnostics.history(0, 2e9)

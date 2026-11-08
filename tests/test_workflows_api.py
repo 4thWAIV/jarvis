@@ -119,7 +119,12 @@ def test_quiet_is_recorded_once_and_again_only_after_it_reported(wired, monkeypa
     monkeypatch.setattr(ws.time, "time", lambda: real() + ws.SILENT_AFTER_SEC + 1)
 
     async def twice():
+        # Several looks, however long the first takes on a busy machine.
         task = asyncio.create_task(server._watch_workflow_silence())
+        for _ in range(500):
+            await asyncio.sleep(0.01)
+            if _events(store):
+                break
         await asyncio.sleep(0.05)
         task.cancel()
 
@@ -255,3 +260,57 @@ def test_only_the_page_dismisses_and_the_reporter_cannot(wired):
     r = client.post(f"/api/workflows/{wid}/dismiss", headers=ORIGIN)
     assert r.status_code == 200 and r.json()["workflow"]["dismissed"] is True
 
+
+
+# --- who reported it ------------------------------------------------------------
+
+def _named_key(label):
+    from jarvis import access_keys
+    return {"Authorization": f"Bearer {access_keys.create(label, ['workflows'])}"}
+
+
+def test_every_event_carries_its_key_s_label_as_its_reporter(wired):
+    """A label that names no listed agent is shown as itself, proven by the key."""
+    server, _hints, _ = wired
+    client = TestClient(server.app)
+    key = _named_key("claude-workflows")
+    wid = _start(client, key)
+    client.post(f"/api/workflows/{wid}/events", headers=key,
+                json={"kind": "task_added", "item": "spec", "summary": "Spec added.",
+                      "detail": {"phase": "plan", "title": "Write the spec"}})
+    events = client.get(f"/api/workflows/{wid}/events").json()["events"]
+    assert {(e["reporter"], e["reporter_name"]) for e in events} == {
+        ("key:claude-workflows", "claude-workflows")}
+    w = client.get(f"/api/workflows/{wid}").json()["workflow"]
+    assert (w["reporter"], w["reporter_name"]) == ("key:claude-workflows", "claude-workflows")
+
+
+def test_a_key_named_for_an_agent_reports_as_that_agent(wired):
+    server, _hints, _ = wired
+    server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle")})
+    client = TestClient(server.app)
+    key = _named_key("planning")
+    wid = _start(client, key)
+    w = client.get(f"/api/workflows/{wid}").json()["workflow"]
+    assert w["reporter_name"] == "Planning"
+
+
+def test_agent_attached_must_name_a_session_its_key_owns(wired):
+    server, _hints, _ = wired
+    server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle"),
+                                  "sess-other-001": ("Designer", "idle")})
+    client = TestClient(server.app)
+    key = _named_key("planning")
+    wid = _start(client, key)
+
+    def attach(session, headers):
+        return client.post(f"/api/workflows/{wid}/events", headers=headers,
+                           json={"kind": "agent_attached", "summary": "Attached.",
+                                 "detail": {"session_id": session}})
+    refused = attach("sess-other-001", key)
+    assert refused.status_code == 409 and "does not own" in refused.json()["error"]
+    assert attach("sess-plan-0001", key).status_code == 200
+    stranger = _named_key("claude-workflows")
+    assert attach("sess-plan-0001", stranger).status_code == 409, "a label naming no agent owns none"
+    assert attach("sess-plan-0001", ORIGIN).status_code in (403, 409)
+    assert client.get(f"/api/workflows/{wid}").json()["workflow"]["agents"] == ["sess-plan-0001"]

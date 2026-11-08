@@ -23,7 +23,18 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "ready" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+/** "working" only ever on live evidence: a subagent on the piece writing now. */
+export type WorkState = "planned" | "ready" | "working" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+
+/** A subagent on a piece (agent:<session>/sub:<agent id>), as its own files
+ *  show it now. `doing` is its last tool or line: its own words. */
+export interface WorkLiveAgent {
+  name: string;
+  state: "working" | "finished" | "stale" | "waiting";
+  written: number;
+  doing: string;
+  active_within: number;
+}
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -47,11 +58,15 @@ export interface WorkPiece {
   activity_reason?: string;
   /** Claimed working with no report for a day: shown stalled. */
   stalled?: boolean;
+  /** The subagent on it, as its own files show it now. */
+  live?: WorkLiveAgent | null;
   /** The summary of the latest report about it. */
   note: string;
   note_at: number | null;
   /** The reporting agent's own words for who did it: untrusted, shown beside the owner. */
   worker: string;
+  /** Who sent its latest report, as its access key proves it: the key's agent, else its label. */
+  reporter_name?: string;
   /** The keys of the pieces it comes after, and those of them not done yet. */
   after: string[];
   waits_for: string[];
@@ -161,6 +176,9 @@ export interface WorkItem {
   needs_you?: WorkNeed[];
   /** Needs nothing of him and nobody is moving it. */
   stalled?: boolean;
+  /** The subagent it shows as what it is doing: working now, else waiting
+   *  on its own background work. */
+  live?: WorkLiveAgent | null;
   /** What his latest act in a review package did, when that was his latest review. */
   package_review: WorkPackageReview | null;
   /** Open decisions waiting on him while the item itself goes on. */
@@ -216,25 +234,32 @@ export interface WorkEvent {
   detail: Record<string, unknown>;
   at: number;
   seq: number;
+  /** Who reported it, as its access key proves it; "" for his acts and JARVIS's own. */
+  reporter_name?: string;
 }
 
 /** Moves on every "work" hint, and on every (re)connect of /ws/sessions. */
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "ready", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "ready", "working", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
  *  the groups the Work tab heads them with. */
 /** Fail closed while an older server is still serving legacy declared states. */
-export function safeWorkState(state: string): WorkState {
+export function safeWorkState(state: string, evidenced = false): WorkState {
+  // "working" is shown only with its live evidence beside it (a subagent on
+  // the piece writing now); any other "working", from an older server or a
+  // report, reads activity_unknown.
+  if (state === "working") return evidenced ? "working" : "activity_unknown";
   const allowed = ["planned", "ready", "verifying", "waiting_on_tim", "blocked", "done"];
   return allowed.includes(state) ? state as WorkState : "activity_unknown";
 }
+const liveNow = (p: WorkPiece) => p.live?.state === "working";
 export function safeWorkItem(item: WorkItem): WorkItem {
-  return {...item, state: safeWorkState(item.state),
-    pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state)}))};
+  return {...item, state: safeWorkState(item.state, item.pieces.some(liveNow)),
+    pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state, liveNow(p))}))};
 }
 export const workList = liveRead(async () => {
   const result = await getJson<WorkList>("/api/work");
@@ -278,6 +303,28 @@ export interface WorkNeed {
   /** The question, the package's title or the piece's title (the agent's words). */
   text?: string;
   links?: string[];
+}
+
+/** The state an item's pill shows: Stalled, Waiting on a subagent's
+ *  background work, or its state. */
+export function rowState(item: WorkItem): string {
+  if (item.stalled) return "stalled";
+  if (item.state === "activity_unknown" && item.live?.state === "waiting") return "background";
+  return item.state;
+}
+
+export function rowStateWords(item: WorkItem, say: typeof t): string {
+  const shown = rowState(item);
+  if (shown === "stalled") return say("right.work.state.stalled");
+  if (shown === "background") return say("right.work.state.background", { name: item.live!.name });
+  return STATE_WORDS[item.state];
+}
+
+/** A subagent's line: "Release agent is working now · Using Bash", or
+ *  "… is waiting on its own background work". */
+export function liveWords(live: WorkLiveAgent): string {
+  const said = t(`main.work.live.${live.state}`, { name: live.name });
+  return live.state === "working" && live.doing ? `${said} · ${live.doing}` : said;
 }
 
 /** A need in words: the act and the place, as the brain's work_status says it. */

@@ -51,7 +51,8 @@ import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
-import { answerWorkDecision, blockerWords, followUpWords, needWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { answerWorkDecision, blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
+         rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -100,9 +101,11 @@ export function WorkDetail({ id }: { id: string }) {
     <div id="work-detail" ref={ui.whole}>
       <div className="work-detail-head" ref={ui.part("header")}>
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
-        {item && <span className={`work-state state-${item.stalled ? "stalled" : item.state}`} ref={ui.part("state")}>
-          {item.stalled ? t("right.work.state.stalled") : STATE_WORDS[item.state]}</span>}
-          {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {item && <span className={`work-state state-${rowState(item)}`} ref={ui.part("state")}>
+          {rowStateWords(item, t)}</span>}
+          {item?.live
+            ? <small className="work-activity-reason work-live-reason">{liveWords(item.live)}</small>
+            : item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
         <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
@@ -379,6 +382,8 @@ function Reports({ events, part }: { events: WorkEvent[]; part: Part }) {
             <span className="work-event-at">
               {formatDateTime(e.at * 1000, { hour: "2-digit", minute: "2-digit" })}</span>{" "}
             {e.summary}
+            {e.reporter_name && <small className="work-event-reporter" title={t("main.work.reporterTitle")}>
+              {" "}{t("main.work.reportedBy", { name: e.reporter_name })}</small>}
           </li>
         ))}
       </ol>
@@ -414,10 +419,19 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           {piece.worker && " "}
           {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
+          {piece.reporter_name && " "}
+          {piece.reporter_name && <span className="work-piece-reporter" title={t("main.work.reporterTitle")}
+                                        ref={ui.part("reporter")}>{t("main.work.reportedBy", { name: piece.reporter_name })}</span>}
         </span>
         <span className={`work-state state-${piece.stalled ? "stalled" : piece.state}`} ref={ui.part("state")}>
           {piece.stalled ? t("right.work.state.stalled") : STATE_WORDS[piece.state]}</span>
-        {piece.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {piece.state === "activity_unknown" && !piece.live && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {piece.live && (
+          <p className="work-piece-live" data-live={piece.live.state}>
+            {t(`main.work.live.${piece.live.state}`, { name: piece.live.name })}
+            {piece.live.doing && <> · <span className="work-piece-doing">{piece.live.doing}</span></>}
+          </p>
+        )}
       </div>
       {piece.note && (
         <p className="work-piece-note" ref={ui.part("note")}>

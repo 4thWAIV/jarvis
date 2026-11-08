@@ -27,7 +27,7 @@ def directory():
     rows = [{"session_id": "h", "name": "hammer", "active": True, "state": sw.WORKING},
             {"session_id": "t", "name": "tokens-for-cash", "active": False, "state": sw.IDLE}]
     agent_directory.connect(lambda: sw.Snapshot(sessions=SESSIONS),
-                            rows=lambda: rows, needs=lambda: {"hammer": 2})
+                            rows=lambda: rows, needs=lambda: {"h": 2})
     yield
     importlib.reload(agent_directory)
 

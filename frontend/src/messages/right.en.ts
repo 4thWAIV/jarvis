@@ -56,6 +56,7 @@ export const rightEn = {
   "right.packages.heading": "Packages",
   "right.packages.unreadable": "Could not read the package inbox ({error}).",
   "right.packages.unknownSender": "An agent",
+  "right.packages.unprovenClaim": "Answers go nowhere: nothing proved the session it named sent it",
   "right.packages.answered": "{answered} of {total} answered",
   "right.packages.state.arrived": "Not opened",
   "right.packages.state.opened": "Opened",
@@ -132,6 +133,7 @@ export const rightEn = {
   "right.work.state.done": "Done",
   "right.work.state.ready": "Ready",
   "right.work.state.stalled": "Stalled",
+  "right.work.state.background": "Waiting on {name}'s background work",
   "right.work.stalled": "Stalled: nobody is working on this",
   "right.work.needsYou": "You: {act}",
   "right.work.alsoWaiting": "{count} decision(s) also wait on you",
@@ -316,6 +318,12 @@ export const rightEn = {
   "right.subsystem.said.incomingWaiting": {
     one: "{count} message waiting over {age} to be picked up",
     other: "{count} messages waiting over {age} to be picked up" },
+  "right.subsystem.said.needsHeld": {
+    one: "{count} needs board held: no transcript shows who wrote it",
+    other: "{count} needs boards held: no transcript shows who wrote them" },
+  "right.subsystem.said.incomingHeld": {
+    one: "{count} message held: it named no sender he could reply to",
+    other: "{count} messages held: they named no sender he could reply to" },
   "right.subsystem.said.voiceIdle": "Not listening",
   "right.subsystem.said.voiceDropping": "Dropping speech",
   "right.subsystem.said.voiceDroppingCause": "Dropping speech: {cause}",

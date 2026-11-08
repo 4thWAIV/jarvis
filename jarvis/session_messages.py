@@ -12,6 +12,7 @@ the session's sign it was picked up) and says it came in. Nothing here speaks.
 from __future__ import annotations
 
 import logging
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,27 @@ MAX_FILE_CHARS = 20000
 # How many files one look takes. The rest wait for the next.
 MAX_PER_LOOK = 20
 
+# A message whose sender cannot be told is not taken: renamed `<name>.held`
+# where it was dropped, so its session sees it was refused, and counted.
+HELD_SUFFIX = ".held"
+
+
+def held(folder: Path) -> int:
+    """How many messages are held for naming no sender (Diagnostics' count).
+    Regular files only, never through a symlink. Never raises."""
+    count = 0
+    try:
+        projects = [d for d in folder.iterdir() if d.is_dir() and not d.is_symlink()]
+    except OSError:
+        return 0
+    for project in projects:
+        try:
+            count += sum(1 for p in project.glob(f"*{HELD_SUFFIX}")
+                         if stat.S_ISREG(p.lstat().st_mode))
+        except OSError:
+            continue
+    return count
+
 
 @dataclass(frozen=True)
 class Dropped:
@@ -37,6 +59,12 @@ class Dropped:
     project: str        # the folder it was dropped in
     subject: str
     body: str
+    claimed: str | None = None      # its `From: <session id>` line: a claim, checked by the server
+
+
+# The line a session puts under its subject to say who it is (the talk-to-jarvis
+# skill; make_package from its --session): `From: <session id>`.
+FROM_LINE = re.compile(r"From:[ \t]*([A-Za-z0-9][A-Za-z0-9-]{7,63})")
 
 
 def parse(text: str) -> tuple[str, str]:
@@ -47,6 +75,14 @@ def parse(text: str) -> tuple[str, str]:
     if first.startswith("#"):
         return first.lstrip("#").strip(), rest.strip()
     return "", text
+
+
+def claimed_sender(body: str) -> tuple[str | None, str]:
+    """(the session id its first `From:` line names, the body without that
+    line). Only the body's first non-empty line counts."""
+    head, _, rest = body.lstrip().partition("\n")
+    m = FROM_LINE.fullmatch(head.strip())
+    return (m.group(1), rest.strip()) if m else (None, body)
 
 
 def _settled(folder: Path, now: float, older_than: float) -> list[tuple[float, Path, str]]:
@@ -99,5 +135,7 @@ def collect(folder: Path, now: float) -> list[Dropped]:
         if len(text) > MAX_FILE_CHARS:
             text = text[:MAX_FILE_CHARS].rstrip() + "\n… (the rest of this message was cut)"
         subject, body = parse(text)
-        out.append(Dropped(path=path, project=project, subject=subject, body=body))
+        claimed, body = claimed_sender(body)
+        out.append(Dropped(path=path, project=project, subject=subject, body=body,
+                           claimed=claimed))
     return out

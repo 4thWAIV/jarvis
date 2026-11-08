@@ -16,7 +16,7 @@ hyphens, underscores, dots and commas into spaces, so "Tokens for Cash",
 resolved by guessing: `find` returns every candidate and the caller asks.
 
 The server connects the directory to its live sources once, at import
-(`connect`); the defaults read the agents table and the needs boards.
+(`connect`); the defaults read the agents table, and count no needs.
 """
 
 from __future__ import annotations
@@ -26,9 +26,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Callable
 
-from jarvis import data_paths
 from jarvis import run_store
-from jarvis import session_needs
 from jarvis import session_watch
 from jarvis import spoken_words
 
@@ -75,12 +73,11 @@ def _words(text: str) -> set[str]:
     return set(spoken_words.words(spoken_key(text)))
 
 
-def _needs_by_project() -> dict[str, int]:
-    """Each project's needs-board item count, by lowercased project name,
-    its running workflows' open decisions included."""
-    from jarvis import workflow_store
-    return {b.project.lower(): b.items for b in
-            workflow_store.with_decisions(session_needs.read_boards(data_paths.needs_dir()))}
+def _no_needs() -> dict[str, int]:
+    """No needs-board counts until the server connects its own: a board
+    counts only for the agent a transcript proves wrote it
+    (server._needs_by_session)."""
+    return {}
 
 
 def _agent_rows() -> list[dict]:
@@ -95,27 +92,30 @@ def _agent_rows() -> list[dict]:
 
 _snapshot: Callable[[], session_watch.Snapshot] = session_watch.Snapshot
 _rows: Callable[[], list[dict]] = _agent_rows
-_needs: Callable[[], dict[str, int]] = _needs_by_project
+_needs: Callable[[], dict[str, int]] = _no_needs
 
 
 def connect(snapshot: Callable[[], session_watch.Snapshot],
             rows: Callable[[], list[dict]] = _agent_rows,
-            needs: Callable[[], dict[str, int]] = _needs_by_project) -> None:
+            needs: Callable[[], dict[str, int]] = _no_needs) -> None:
     """Where the directory reads from: the sessions running now (going by
     the agents table's names), the agents table (activation and order), and
-    the needs boards."""
+    each agent's needs-board items by session id."""
     global _snapshot, _rows, _needs
     _snapshot, _rows, _needs = snapshot, rows, needs
 
 
-def _entries() -> list[tuple[Agent, session_watch.SessionState | None]]:
+def _entries(with_needs: bool = True
+             ) -> list[tuple[Agent, session_watch.SessionState | None]]:
     """Every agent with the conversation it is. The agents table first, in
     its order (busy first, then most recently messaged), filled in from the
     running conversation; then any running conversation the table has not
-    caught up with yet (it syncs about once a second)."""
+    caught up with yet (it syncs about once a second). Without
+    `with_needs` every count is 0: proving who wrote a board reads the
+    directory itself (server._needs_by_session)."""
     sessions = {s.session_id: s for s in _snapshot().sessions
                 if s.state != session_watch.GONE}
-    needs = _needs()
+    needs = _needs() if with_needs else {}
     out = []
     for row in _rows():
         s = sessions.pop(row["session_id"], None)
@@ -123,12 +123,12 @@ def _entries() -> list[tuple[Agent, session_watch.SessionState | None]]:
         out.append((Agent(session_id=row["session_id"], name=row["name"], project=project,
                           provider=s.provider if s else None,
                           state=s.state if s else row["state"], active=bool(row["active"]),
-                          needs=needs.get(project.lower(), 0) if project else 0,
+                          needs=needs.get(row["session_id"], 0),
                           **_subagent_counts(s)), s))
     for s in sessions.values():
         out.append((Agent(session_id=s.session_id, name=session_watch.agent_name(s),
                           project=s.project, provider=s.provider, state=s.state,
-                          active=False, needs=needs.get(s.project.lower(), 0),
+                          active=False, needs=needs.get(s.session_id, 0),
                           **_subagent_counts(s)), s))
     return out
 
@@ -147,7 +147,13 @@ def agents() -> list[Agent]:
 def names_by_session() -> dict[str, str]:
     """Each running agent's one name by its session id, the directory read
     once: for a caller naming many agents by id in one go."""
-    return {a.session_id: a.name for a in agents()}
+    return {a.session_id: a.name for a, _ in _entries(with_needs=False)}
+
+
+def named(name: str) -> list[Agent]:
+    """Every running agent whose one name is `name`, said the same way
+    (`same_name`; two may share one). Their needs are not counted."""
+    return [a for a, _ in _entries(with_needs=False) if name and same_name(a.name, name)]
 
 
 def _prefer_real(matches: list[tuple[Agent, session_watch.SessionState]]):

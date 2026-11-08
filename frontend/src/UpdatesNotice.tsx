@@ -118,7 +118,8 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   );
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
-      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} /> : (
+      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} />
+        : item.kind === "session_message" ? <SessionMessageLine key={item.id} item={item} /> : (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -172,6 +173,40 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
 /** A package's reduced line: who sent it, its title and how many decisions
  *  wait, with Open and Seen. The words are the sender's, drawn as text. */
+/** A session's message: Seen (as every entry), Read (JARVIS reads that one
+ *  message aloud, the brain's read_session_message_aloud's call; the entry
+ *  stays until it has been heard in full) and Reply (a capture addressed to
+ *  its sender for what he says or types next, read back and sent on his yes,
+ *  the brain's reply_to_session_message's call). */
+function SessionMessageLine({ item }: { item: AttentionItem }) {
+  const t = useT();
+  const [said, setSaid] = useState<string | null>(null);
+  const post = async (action: "read" | "reply") => {
+    const res = await fetch(`/api/session-messages/${encodeURIComponent(item.source_id)}/${action}`,
+                            { method: "POST" }).catch(() => null);
+    if (!res?.ok) {
+      const body = res ? ((await res.json().catch(() => ({}))) as { detail?: string }) : {};
+      setSaid(body.detail || t("main.updates.readFailed"));
+      return;
+    }
+    const body = (await res.json()) as { to?: string };
+    setSaid(action === "read" ? t("main.updates.reading")
+                              : t("main.updates.replyTo", { name: body.to ?? "" }));
+  };
+  return (
+    <li className="updates-session-message" data-message-id={item.source_id}>
+      <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void post("read")}>{t("main.updates.read")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void post("reply")}>{t("main.updates.reply")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void markSeen([item.id])}>{t("main.updates.markSeen")}</button>
+      {said && <span className="file-state">{said}</span>}
+    </li>
+  );
+}
+
 function PackageLine({ item }: { item: AttentionItem }) {
   const t = useT();
   const [said, setSaid] = useState<Said | null>(null);

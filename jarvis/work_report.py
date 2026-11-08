@@ -24,8 +24,10 @@ A reported state is planned, ready, working, verifying, waiting_on_tim or
 blocked (done is his approval). A working report is intent only: the public
 view reads activity_unknown until current token generation for the exact
 assignment can be confirmed.
-Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
-`tim`; a new piece needs one. A piece's summary is its latest note. An area
+Who is `agent:<session id>`, `agent:<session id>/sub:<agent id>` (a
+subagent you dispatched, by the agentId the Agent tool gave you; its own
+files show the piece Working while it writes), `run:<run id>`,
+`workflow:<workflow id>` or `tim`; a new piece needs one. A piece's summary is its latest note. An area
 groups items on the Work tab (an empty one goes back to the source's
 folder); `--worker` is your own words for who did a piece, shown beside its
 owner; `--after` names the pieces it waits on (an empty value clears them);

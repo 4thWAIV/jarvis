@@ -33,7 +33,7 @@
     {"kind": "queuePanel", "entity": null, "label": "Queue", "parts": ["packages", "closedPackages", "waiting", "active", "history", "more", "new"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
     {"kind": "inboxPackage", "entity": "inboxPackage", "label": "Package in the inbox: who sent it, its title and how many decisions wait",
-     "parts": ["row", "sender", "title", "progress", "open", "done", "close"],
+     "parts": ["row", "sender", "title", "progress", "unproven", "open", "done", "close"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
     {"kind": "queueThread", "entity": "thread", "label": "Queue item",
      "parts": ["row", "sender", "subject", "receipt", "turn", "header", "back", "next", "close", "composer", "request"],

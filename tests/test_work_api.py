@@ -411,3 +411,31 @@ def test_the_reporter_withdraws_closes_and_links_a_package(wired, monkeypatch, c
     assert work_store.get(wid).answered[0].answer == "Asked too early."
     assert work_report.main(["work_report.py", "close", wid]) == 0
     assert work_store.get(wid).history
+
+
+# --- who reported it ------------------------------------------------------------
+
+def test_every_report_records_its_key_s_reporter_on_pieces_and_events(wired):
+    """The reporter is the key's, never the report's word: a label naming a
+    listed agent is that agent, any other is shown as itself."""
+    server, _hints, _store, folder = wired
+    from jarvis import access_keys
+    server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle")})
+    client = TestClient(server.app)
+    planning = {"Authorization": f"Bearer {access_keys.create('planning', ['work'])}"}
+    other = {"Authorization": f"Bearer {access_keys.create('diagnostics-work', ['work'])}"}
+    wid = _start(client, planning, folder)
+    r = client.post(f"/api/work/{wid}/events", headers=planning,
+                    json={"kind": "piece", "summary": "Tim reviews it.",
+                          "detail": {"key": "review", "who": {"kind": "tim"},
+                                     "reporter": "key:someone-else"}})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/work/{wid}/events", headers=other,
+                    json={"kind": "update", "summary": "Halfway."})
+    assert r.status_code == 200, r.text
+
+    found = client.get(f"/api/work/{wid}").json()
+    [piece] = found["item"]["pieces"]
+    assert (piece["reporter"], piece["reporter_name"]) == ("key:planning", "Planning")
+    by_kind = {e["kind"]: e["reporter_name"] for e in found["events"]}
+    assert by_kind == {"created": "Planning", "piece": "Planning", "update": "diagnostics-work"}

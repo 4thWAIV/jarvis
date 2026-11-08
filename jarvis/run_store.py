@@ -187,6 +187,18 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_session_messages_received
                 ON session_messages(received_at DESC);
 
+            -- Who wrote each project's needs board, proven by a transcript
+            -- showing the write (server._board_writer), for the file as it
+            -- was at `mtime`: a board rewritten is proven again.
+            CREATE TABLE IF NOT EXISTS needs_board_writers (
+                project      TEXT PRIMARY KEY,  -- the board's file stem
+                mtime        REAL NOT NULL,
+                session_id   TEXT NOT NULL,     -- the listed agent's session
+                name         TEXT NOT NULL,     -- as shown: "Feynman (Planning)" for a subagent
+                evidence     TEXT NOT NULL,
+                subagent     TEXT NOT NULL DEFAULT ''
+            );
+
             -- Every Claude Code session running now or stopped lately, by
             -- name, its state as the session watcher derives it, and whether
             -- the user has activated it. `active` is his choice alone: a
@@ -235,6 +247,12 @@ def init_db() -> None:
         for column in ("project_id", "work_id"):
             if column not in cols:
                 conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+                conn.commit()
+        message_cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_messages)")}
+        for column in ("sender_session", "sender_evidence", "sender_subagent"):
+            # Who sent it, and on what evidence (session_message_sender.py).
+            if column not in message_cols:
+                conn.execute(f"ALTER TABLE session_messages ADD COLUMN {column} TEXT")
                 conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:
@@ -641,16 +659,42 @@ class SessionMessage:
     body: str
     received_at: float
     read_at: Optional[float] = None
+    sender_session: Optional[str] = None    # the session that sent it, when known
+    sender_evidence: Optional[str] = None   # which transcript proved it (session_message_sender)
+    sender_subagent: Optional[str] = None   # the subagent that wrote it, under its listed parent
+
+
+def board_writer(project: str, mtime: float) -> Optional[dict]:
+    """The proven writer of `project`'s needs board as it was at `mtime`,
+    or None (never proven, or rewritten since)."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM needs_board_writers WHERE project=? AND mtime=?",
+                           (project, mtime)).fetchone()
+    return dict(row) if row else None
+
+
+def set_board_writer(project: str, mtime: float, session_id: str, name: str,
+                     evidence: str, subagent: str = "") -> None:
+    with closing(_connect()) as conn:
+        conn.execute("INSERT OR REPLACE INTO needs_board_writers (project, mtime, session_id, "
+                     "name, evidence, subagent) VALUES (?, ?, ?, ?, ?, ?)",
+                     (project, mtime, session_id, name, evidence, subagent or ""))
+        conn.commit()
 
 
 def create_session_message(project: str, agent_name: str, subject: str,
-                           body: str) -> int:
-    """Record a message a session sent. Its id."""
+                           body: str, sender_session: Optional[str] = None,
+                           sender_evidence: Optional[str] = None,
+                           sender_subagent: Optional[str] = None) -> int:
+    """Record a message a session sent, with who sent it and on what
+    evidence (session_message_sender.py). Its id."""
     with closing(_connect()) as conn:
         cur = conn.execute(
             "INSERT INTO session_messages (project, agent_name, subject, body, "
-            "received_at) VALUES (?, ?, ?, ?, ?)",
-            (project, agent_name, subject, body, time.time()))
+            "received_at, sender_session, sender_evidence, sender_subagent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (project, agent_name, subject, body, time.time(), sender_session,
+             sender_evidence, sender_subagent or None))
         conn.commit()
         message_id = int(cur.lastrowid)
     # Its arrival on the brain activity feed: who sent it, never what.

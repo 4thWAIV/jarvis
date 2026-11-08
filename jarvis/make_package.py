@@ -307,7 +307,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             # decision package only with its own stamp (decision_stamp.py).
             decision_stamp.stamp(made.archive, made.archive, token)
         delivered = dp.deliver(made.archive, args.deliver_to, token, project=args.project,
-                               session=args.session, workflow=args.workflow, work=args.work)
+                               session=args.session, workflow=args.workflow, work=args.work,
+                               source=str(args.source))
     except OSError as e:
         print(f"Not delivered: {e}")
         return 1
@@ -321,6 +322,10 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"Arrived in Tim's package inbox as {inbox_id} (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
+    if delivered.inbox.get("unproven_claim"):
+        print(f"JARVIS could not prove that session {args.session} ran this command (its own "
+              "transcript must show make_package run on this source), so his answers will "
+              "not come back to it. Run the command yourself, in your own session.")
     print("Nothing is shown until he asks for it. "
           + ("His answers come back to your session as a message"
              + (" and to the workflow as its decisions" if args.workflow else "") + "."

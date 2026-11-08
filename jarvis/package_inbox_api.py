@@ -1,11 +1,14 @@
 """The package inbox's routes (package_inbox.py). Thin: each calls the
 server's one function for it, which the brain's tool calls too.
 
-  POST /api/packages/inbox?project=&session=&workflow=&work=
+  POST /api/packages/inbox?project=&session=&source=&workflow=&work=
                                      the zip's bytes: a package for Tim's
                                      inbox, checked, unpacked and recorded,
                                      never shown. The `packages` access
-                                     key's only route (make_package sends it)
+                                     key's only route (make_package sends it).
+                                     `session` is only a claim: his answers
+                                     go to it once it is proven
+                                     (server._package_sender), else nowhere
   GET  /api/packages/inbox           the open packages, newest first, and how
                                      many are closed (?closed=1 lists those)
   GET  /api/packages/inbox/{id}      one, with its questions and answers
@@ -39,7 +42,7 @@ from typing import Awaitable, Callable, Optional
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from jarvis import messaging_wire, package_inbox, packages_api, work_packages
+from jarvis import messaging_wire, package_inbox, packages_api, reporters, work_packages
 from jarvis.package_inbox import Entry, Sender
 from jarvis.work_packages import Package, PackageError
 
@@ -55,7 +58,8 @@ Outcome = tuple[Optional[Entry], str]
 @dataclass(frozen=True)
 class Calls:
     """The server's functions, shared with the brain's tools."""
-    receive: Callable[[bytes, Sender, str, str], Awaitable[tuple[Optional[
+    receive: Callable[[bytes, Sender, str, str, str, Optional[reporters.Reporter]],
+                      Awaitable[tuple[Optional[
         package_inbox.Arrival], Optional[Package], str]]]
     open: Callable[[str, str], Awaitable[tuple[Optional[Entry], Optional[Package], str]]]
     answer: Callable[[str, str, str, str, str], Awaitable[Outcome]]
@@ -64,8 +68,11 @@ class Calls:
 
 
 def entry_json(entry: Entry) -> dict:
-    """A row as the page shows it: every field, and who sent it in words."""
-    return {**entry.public(), "sender": entry.sender_name(), "waiting": entry.waiting}
+    """A row as the page shows it: every field, who sent it in words, and
+    whether his answers go nowhere (`unproven_claim`: the session it named
+    was not proven to have sent it)."""
+    return {**entry.public(), "sender": entry.sender_name(), "waiting": entry.waiting,
+            "unproven_claim": entry.unproven_claim}
 
 
 def detail(entry: Entry) -> dict:
@@ -96,7 +103,7 @@ def _refused(problem: str, status: int = 409) -> JSONResponse:
 def mount(app: FastAPI, calls: Calls) -> None:
 
     async def receive(request: Request, project: str = "", session: str = "",
-                      workflow: str = "", work: str = ""):
+                      source: str = "", workflow: str = "", work: str = ""):
         try:
             data = await _body(request)
         except ValueError as e:
@@ -104,7 +111,8 @@ def mount(app: FastAPI, calls: Calls) -> None:
         if not data:
             return _refused("There is no zip in the request.", 400)
         arrival, package, problem = await calls.receive(
-            data, Sender(project=project, session=session), workflow, work)
+            data, Sender(project=project, claimed=session), workflow, work, source,
+            reporters.of_scope(request.scope))
         if arrival is None:
             return _refused(problem)
         return {"inbox": entry_json(arrival.entry), "arrived": arrival.fresh,

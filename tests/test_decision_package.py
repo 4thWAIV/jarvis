@@ -166,7 +166,8 @@ def test_a_passed_check_delivers_once_with_the_token(tmp_path, monkeypatch, caps
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, token, body)] = delivery.calls
-    assert url == "http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc"
+    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc"
+                          "&source="), "the source it was run on: what proves the session ran it"
     assert token == data_paths.ensure_tool_token()
     assert body == (tmp_path / "out" / "lunch-decisions-1.0.0.zip").read_bytes()
     said = capsys.readouterr().out

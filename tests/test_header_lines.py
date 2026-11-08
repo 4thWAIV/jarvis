@@ -716,12 +716,6 @@ EXEMPT = {
         "_announce_board, passes the whole result through `_said_name` "
         "(driven below), and `_board_under_owner` puts it in board text that "
         "only ever reaches the brain inside `_one_page`'s untrusted block"),
-    "server._project_owner": (
-        "it returns the listed names of the agents in a project, joined, or "
-        "the project's folder name, and says nothing itself: its speaking "
-        "callers pass the result through `_said_name` (_announce_board and "
-        "_announce_session_messages, both driven below), and everywhere else "
-        "it reaches the brain inside an untrusted block"),
     "server._take_session_messages": (
         "it records each dropped message and deletes its file; the only text "
         "it builds is log lines naming the file, which never reach the brain "
@@ -828,6 +822,37 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
+    "server._read_message_aloud": (
+        "it speaks one session's message aloud to him, as he asked (Read), through the "
+        "voice; its words never reach the brain, whose tool gets only a fixed sentence"),
+    "server.api_reply_session_message": (
+        "its note to the brain names the capture by number and its recipient through "
+        "_plain_name, which refuses anything but a plain name; no word of the message"),
+    "server._recipient_name": (
+        "it names a capture's recipient by the agent directory's one name through "
+        "_said_name, which refuses anything but a plain name with spaces"),
+    "server._proven_boards": (
+        "it logs only the projects whose boards were held, file stems JARVIS reads from its "
+        "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "server._read_back_lead": (
+        "it is spoken to him as a read-back, never given to the brain: the recipient through "
+        "_plain_name and a subagent's name through _said_name, each refusing anything but a "
+        "plain name"),
+    "session_message_sender.proven_by": (
+        "it reads a subagent's description or Codex nickname (its dispatcher's words) only "
+        "as the sender's name, which the page shows as text and the brain reads only inside "
+        "the session messages' untrusted wall"),
+    "server.tool_reply_to_session_message": (
+        "it answers with the capture's number and its recipient through _plain_name; his "
+        "own reply text goes into the capture, never into the answer"),
+    "work_store._item_reason": (
+        "it words the item's reason with the subagent's description (its dispatcher's "
+        "words), data the page shows as text and the brain reads only inside "
+        "work_status's wall; it prints nothing itself"),
+    "server._subagent_now": (
+        "it reads a subagent's description and its last tool or line into a LiveAgent, data "
+        "the Work page shows as text and the brain reads only inside work_status's wall "
+        "(`_work_piece`); it prints nothing itself"),
     "work_api.needs_of": (
         "it gathers what he is needed for on an item as data (an open decision's "
         "question, a package's title, a piece's title and links); every reader shows it "
