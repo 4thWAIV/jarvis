@@ -45,6 +45,14 @@ def _make_package() -> str:
             f"{shlex.quote(sys.executable)} -P -m jarvis.make_package")
 
 
+def _agent_key() -> str:
+    """The agent key command, run the way the package command is, with this
+    install's certificate."""
+    return (f"PYTHONPATH={shlex.quote(str(data_paths.PACKAGE_DIR.parent))} "
+            f"{shlex.quote(sys.executable)} -P -m jarvis.agent_key --cert "
+            f"{shlex.quote(str(data_paths.CONFIG_DIR / 'cert.pem'))}")
+
+
 def render() -> str:
     """The skill with this install's folders filled in."""
     return (TEMPLATE.read_text(encoding="utf-8")
@@ -54,6 +62,7 @@ def render() -> str:
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
             .replace("{{make_package}}", _make_package())
+            .replace("{{agent_key}}", _agent_key())
             .replace("{{making_a_package}}",
                      str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md")))
 

@@ -230,6 +230,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "eb1d240a52fed28de7f3fcaf01df1257102a059f8e8968db5177a8369d851b02",  # review_work: done is his alone
     "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
     "d7a681178ec7ad2c7d150f6309c64541469c6f79fef776ea0d23b2ff074ca54e",  # vector search in the Knowledge section
+    "240b1c6a02c8a862914353f7d053b8abae90d1b23f193a99b5dd7f4821c9c2e1",  # agent keys: switching an agent on onboards its key
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

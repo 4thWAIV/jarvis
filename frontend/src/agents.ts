@@ -55,6 +55,40 @@ export interface AgentRow {
    *  `subagents_capped`. Absent from a server that does not count them. */
   subagents_working?: number;
   subagents_capped?: boolean;
+  /** Where its own key stands (server: agent_key_store.py): "waiting" for
+   *  him to switch it on, which onboards it; "onboarded"; "pending" (not
+   *  yet proven); null when it has submitted none. */
+  key?: "waiting" | "onboarded" | "pending" | null;
+  key_fingerprint?: string | null;
+}
+
+/** One right an agent's key holds, and over what. */
+export interface AgentKeyGrant { principal: string; right: string; scope: string;
+  granted_at: number; granted_by: string }
+
+/** An agent's key as the server records it (agent_key_store.AgentKey). */
+export interface AgentKey {
+  fingerprint: string; state: string; session_id: string; submitted_at: number;
+  onboarded_at: number | null; onboarded_by: string; revoked_at: number | null;
+  rights: AgentKeyGrant[];
+}
+
+/** Whether the row's switch shows on: an active agent with a key waiting
+ *  shows off, since switching it on is what onboards the key. */
+export function switchedOn(agent: AgentRow): boolean {
+  return agent.active && agent.key !== "waiting";
+}
+
+export async function getAgentKey(sessionId: string): Promise<AgentKey | null> {
+  const res = await fetch(`/api/agent-keys?session=${encodeURIComponent(sessionId)}`);
+  if (!res.ok) throw new Error(`GET /api/agent-keys: ${res.status}`);
+  return ((await res.json()) as { key: AgentKey | null }).key;
+}
+
+export async function revokeAgentKey(fingerprint: string): Promise<void> {
+  const res = await fetch(`/api/agent-keys/${encodeURIComponent(fingerprint)}/revoke`,
+                          { method: "POST" });
+  if (!res.ok) throw new Error(`POST revoke: ${res.status}`);
 }
 
 export async function listAgents(): Promise<AgentRow[]> {

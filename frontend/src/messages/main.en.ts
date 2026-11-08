@@ -149,6 +149,15 @@ export const mainEn = {
   "main.thread.agent": "Agent",
   "main.thread.unreadable": "Couldn't read the thread ({error}); trying again.",
   "main.thread.empty": "Nothing to or from this agent yet",
+  "main.thread.key": "Key {fingerprint}",
+  "main.thread.keyWaiting": "Key {fingerprint} waits for you: switching the agent on accepts it",
+  "main.thread.keyPending": "Key {fingerprint} is submitted and not yet proven",
+  "main.thread.keyOnboarded": "Onboarded {when} ({by})",
+  "main.thread.keyRights": "Rights: {rights}",
+  "main.thread.keyRevoke": "Revoke",
+  "main.thread.keyBy.page": "on the page",
+  "main.thread.keyBy.voice": "by voice",
+  "main.thread.keyFailed": "The key could not be changed ({error})",
 
   // The capture boxes and their items in the conversation (CaptureBox.tsx,
   // CaptureChip.tsx, capture.ts).
@@ -1089,6 +1098,7 @@ export const mainEn = {
   "main.updates.reply": "Reply",
   "main.updates.replyTo": "Your reply to {name}: say or type it now; it is read back and goes on your yes",
   "main.updates.readFailed": "That message could not be read.",
+  "main.updates.event.agent_key.waiting": "{name} has a new key waiting: switch it on to accept it",
   "main.updates.event.work_stalled.stalled": "{name} is stalled: nobody is working on it",
   "main.updates.event.work_follow_up.no_follow_up": "{name} has not started on your answer",
   "main.updates.event.needs_board.changed": "{name} has written down what it needs from you",

@@ -150,6 +150,59 @@ def ran(transcript: Path, words: Iterable[str], since: float, whole: bool = Fals
     return False
 
 
+def _tool_inputs(obj: dict):
+    """The inputs of the tool calls one transcript line is the assistant
+    making: a Claude Code `tool_use` block's input, or a Codex
+    `function_call` / `custom_tool_call` / `local_shell_call`'s arguments.
+    Nothing else: a user line, a tool's result or a message read is not a
+    call this session made."""
+    if obj.get("type") == "assistant":
+        content = (obj.get("message") or {}).get("content")
+        for block in content if isinstance(content, list) else ():
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                yield block.get("input")
+    elif obj.get("type") == "response_item":
+        payload = obj.get("payload") or {}
+        if isinstance(payload, dict) and payload.get("type") in (
+                "function_call", "custom_tool_call", "local_shell_call"):
+            raw = payload.get("arguments", payload.get("input", payload.get("action")))
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except ValueError:
+                    pass
+            yield raw
+
+
+def called(transcript: Path, words: Iterable[str], since: float) -> bool:
+    """Whether this transcript's end holds a tool call the assistant made
+    (never a user line, a tool result or text it read) whose input holds
+    every one of `words`, and the file was written since `since`. Stricter
+    than `ran`: text another agent gets into this transcript is not a call
+    this session made."""
+    words = [w for w in words if w]
+    try:
+        st = transcript.lstat()
+    except OSError:
+        return False
+    if not words or not transcript.is_file() or transcript.is_symlink() or st.st_mtime < since:
+        return False
+    for line in _tail(transcript, TRANSCRIPT_TAIL_BYTES).splitlines():
+        if words[0] not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        for given in _tool_inputs(obj):
+            text = given if isinstance(given, str) else json.dumps(given, ensure_ascii=False)
+            if all(w in text for w in words):
+                return True
+    return False
+
+
 # The most transcripts one proof reads, newest first: a listed agent with
 # hundreds of subagent files is looked through only where it wrote lately.
 PROOF_FILES_MAX = 64
@@ -170,7 +223,8 @@ def _showed(key, path: Path, st, shows: Callable[[Path], bool]) -> bool:
 
 def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: Iterable,
               roots: Iterable[Path], names: dict, codex_threads: Callable[[], dict] = dict,
-              only_claimed: bool = False, since: float = 0.0, key=None) -> Optional[Sender]:
+              only_claimed: bool = False, since: float = 0.0, key=None,
+              own_only: bool = False) -> Optional[Sender]:
     """The listed agent (or its subagent) whose own transcript `shows`
     proves the act, or None. With `only_claimed`, the claimed session alone
     is looked in: a claim is proven or refused, never moved to another.
@@ -178,7 +232,8 @@ def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: I
     Bounded: only transcripts written at or after `since` (the act cannot be
     in an older one) are read, the claimed session's first and then the
     newest, at most PROOF_FILES_MAX; with a `key` naming what is asked, each
-    file's answer is kept until the file changes."""
+    file's answer is kept until the file changes. With `own_only`, a
+    subagent's file never proves it: only the session's own transcript."""
     roots = list(roots)
     listed = [s for s in sessions if s.session_id in names]
     if only_claimed:
@@ -192,6 +247,8 @@ def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: I
         else:
             candidates = _claude_candidates(s, roots)
         for path, evidence, extra in candidates:
+            if own_only and evidence not in (TRANSCRIPT, CODEX_ROLLOUT):
+                continue
             try:
                 st = path.lstat()
             except OSError:

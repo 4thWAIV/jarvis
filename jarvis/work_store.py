@@ -1080,7 +1080,8 @@ def _withdraw(conn, item_id: str, reason: str, detail: dict, now: float) -> dict
                        (item_id, key)).fetchone()
     if row is None:
         raise WorkRefused(f"No decision {key} is open.")
-    if row["asked_by"] and row["asked_by"] != str(detail.get("by") or ""):
+    by_any = {str(detail.get("by") or ""), *(str(b) for b in detail.get("by_any") or ())}
+    if row["asked_by"] and row["asked_by"] not in by_any:
         raise WorkRefused(f"Only the agent that asked decision {key} can withdraw it.")
     conn.execute("UPDATE work_decisions SET withdrawn_at=?, withdrawn_reason=? WHERE item_id=? "
                  "AND key=?", (now, reason, item_id, key))
@@ -1422,8 +1423,15 @@ def approvable(row, state: str, pieces: list[Piece], decisions: list[Decision]) 
 
 
 def asker_label(asked_by: str) -> str:
-    """Who asked a decision, as shown: its access key's label, else ""."""
-    return asked_by[4:] if str(asked_by or "").startswith("key:") else ""
+    """Who asked a decision, as shown: its agent's one name, its access
+    key's label, else ""."""
+    asked_by = str(asked_by or "")
+    if asked_by.startswith("key:"):
+        return asked_by[4:]
+    if asked_by.startswith(("agent:", "workkey:")):
+        from jarvis import reporters
+        return reporters.shown(asked_by)
+    return ""
 
 
 def _follow_up(conn, row, pieces: list[Piece], decisions: list[Decision],

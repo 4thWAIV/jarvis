@@ -140,7 +140,8 @@ def test_the_page_reads_and_activates(wired):
     assert client.get("/api/agents").json() == {
         "agents": [{"session_id": "s1", "name": "hammer", "project": "", "provider": None,
                     "state": "idle", "active": False, "needs": 0,
-                    "subagents_working": 0, "subagents_capped": False}]}
+                    "subagents_working": 0, "subagents_capped": False,
+                    "key": None, "key_fingerprint": None}]}
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["active"] is True
     assert client.post("/api/agents/nope/active", json={"active": True},

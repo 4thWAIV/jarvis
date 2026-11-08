@@ -779,8 +779,7 @@ def with_decisions(boards: list) -> list:
                     f"- {w.name} needs a decision ({o.key}): {o.summary}")
     out = list(boards)
     for (project, reporter), extra in lines.items():
-        who = reporters.of_label(reporter[len(reporters.KEY_PREFIX):]) \
-            if reporter.startswith(reporters.KEY_PREFIX) else None
+        who = reporters.of_kept(reporter)
         out.append(session_needs.Board(project, "## Workflow decisions\n" + "\n".join(extra),
                                        time.time(), session=who.sessions[0] if who and
                                        who.sessions else "",
