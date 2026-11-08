@@ -319,9 +319,24 @@ class VectorIndex:
         docs.forget_hooks.append(self._forget_keys)
         self._worker = None
         if self.queue is not None:
-            self._worker = threading.Thread(target=self._embed_loop, name="knowledge-vectors", daemon=True)
-            self._worker.start()
-            self._queue_missing()
+            self._start()
+
+    def _start(self) -> None:
+        self._worker = threading.Thread(target=self._embed_loop, name="knowledge-vectors", daemon=True)
+        self._worker.start()
+        self._queue_missing()
+
+    def attach(self, embedder: Optional[emb.Embedder]) -> bool:
+        """Start embedding with `embedder` once one exists (a model installed
+        while the engine runs): every document waiting is queued and taken
+        under the pace, as at start. True when it was attached now."""
+        if embedder is None or self.embedder is not None or self._stop:
+            return False
+        with self._lock:
+            self.embedder = embedder
+            self.queue = emb.EmbeddingQueue(embedder)
+        self._start()
+        return True
 
     @property
     def space_id(self) -> Optional[str]:

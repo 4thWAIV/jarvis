@@ -1,0 +1,235 @@
+{
+  "family": "projects",
+  "owner": "coverage-right",
+  "views": [],
+  "commands": [
+    {
+      "id": "folders.panel.show",
+      "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
+      "view": "right.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "projects",
+            "folders"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ]
+    },
+    {
+      "id": "project.open",
+      "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
+      "view": "main.project",
+      "args": {
+        "projectId": {
+          "type": "key",
+          "entity": "project"
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ]
+    },
+    {
+      "id": "project.close",
+      "label": "Close the project's detail",
+      "view": "main.project",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ]
+    },
+    {
+      "id": "project.candidate.answer",
+      "label": "Accept a proposed project with the folders it lists, or ignore it; only his own hand answers it here",
+      "view": "right.folders",
+      "args": {
+        "candidateId": {
+          "type": "key",
+          "entity": "projectCandidate"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "ignore"
+          ]
+        }
+      },
+      "required": [
+        "candidateId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
+    },
+    {
+      "id": "project.accomplishment.answer",
+      "label": "Confirm or withdraw a proposed accomplishment; only his own hand answers it here",
+      "view": "main.project",
+      "args": {
+        "accomplishmentId": {
+          "type": "key",
+          "entity": "accomplishment"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "confirm",
+            "withdraw"
+          ]
+        }
+      },
+      "required": [
+        "accomplishmentId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "projectsList",
+      "entity": null,
+      "label": "Projects",
+      "parts": [
+        "list",
+        "independent",
+        "candidates"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "project",
+      "entity": "project",
+      "label": "Project",
+      "parts": [
+        "row",
+        "header",
+        "close",
+        "summary",
+        "folders",
+        "works",
+        "accomplishments",
+        "topics",
+        "agents"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "parts": [
+            "row"
+          ],
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        },
+        {
+          "view": "main.project",
+          "parts": [
+            "header",
+            "close",
+            "summary",
+            "folders",
+            "works",
+            "accomplishments",
+            "topics",
+            "agents"
+          ],
+          "reveal": {
+            "command": "project.open",
+            "args": {
+              "projectId": "$key"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "projectCandidate",
+      "entity": "projectCandidate",
+      "label": "Proposed project",
+      "parts": [
+        "row",
+        "accept",
+        "ignore"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "accomplishment",
+      "entity": "accomplishment",
+      "label": "Accomplishment",
+      "parts": [
+        "row",
+        "confirm",
+        "withdraw"
+      ],
+      "presentations": [
+        {
+          "view": "main.project"
+        }
+      ]
+    }
+  ]
+}

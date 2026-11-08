@@ -48,6 +48,18 @@ def test_a_package_without_runs_is_a_conversation_as_before(tmp_path, marks):
     assert json.loads(m.as_json())["runs"] == "conversation"
 
 
+def test_a_page_says_the_room_it_is_made_for_and_the_page_is_told(tmp_path, marks):
+    from jarvis import packages_api
+    plain = unpacked(tmp_path, PAGE, {"web/index.html": "x"})
+    assert plain.manifest.layout == "centre"
+    assert "layout" not in json.loads(plain.manifest.as_json())
+    assert packages_api.describe(plain)["layout"] == "centre"
+    wide = unpacked(tmp_path, {**PAGE, "name": "wide-page", "layout": "wide"}, {"web/index.html": "x"}, name="wide.zip")
+    assert wide.manifest.layout == "wide"
+    assert json.loads(wide.manifest.as_json())["layout"] == "wide"
+    assert packages_api.describe(wide)["layout"] == "wide"
+
+
 @pytest.mark.parametrize("manifest,files,said", [
     (AGENT, {}, "brief file 'BRIEF.md' is not in the zip"),
     ({**AGENT, "brief": ""}, {"BRIEF.md": "x"}, "has no brief"),
@@ -55,6 +67,8 @@ def test_a_package_without_runs_is_a_conversation_as_before(tmp_path, marks):
     ({**PAGE, "skill": "SKILL.md"}, {"web/index.html": "x"}, "skill file 'SKILL.md'"),
     ({**PAGE, "runs": "daemon"}, {"web/index.html": "x"}, "runs is not one of"),
     ({**MANIFEST, "runs": "agent"}, {"SKILL.md": "x"}, "has no brief"),
+    ({**PAGE, "layout": "huge"}, {"web/index.html": "x"}, "layout is not one of centre, wide"),
+    ({**MANIFEST, "layout": "wide"}, {"SKILL.md": "x"}, "only a page package has a page"),
 ])
 def test_each_way_needs_its_own_file(tmp_path, marks, manifest, files, said):
     with pytest.raises(work_packages.PackageError, match=said):
@@ -274,7 +288,7 @@ def test_the_page_s_files_are_framed_only_by_jarvis_and_sandboxed(wired, page):
     (described,) = listed.json()["packages"]
     assert described == {"id": page.id, "name": "check", "version": "1.0.0",
                          "purpose": MANIFEST["purpose"], "runs": "page",
-                         "entry": "web/index.html", "source": "ab12cd34",
+                         "entry": "web/index.html", "layout": "centre", "source": "ab12cd34",
                          "sources": ["ab12cd34"], "story": None}
 
 

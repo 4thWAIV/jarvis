@@ -9,8 +9,15 @@
   POST /api/work/{id}/events              one report: update, piece, decision_needed,
                                           decision_withdrawn (its asker only), closed
   POST /api/work/{id}/decisions/{key}     his answer, from the page
+  POST /api/work/{id}/review              his review: approve, not_done or add_work
+  GET  /api/work/answers                  his answers to the calling access key's
+                                          decisions (?since=<epoch seconds>)
 
-Reporters reach the two POSTs with an access key in the `work` category
+Every answer of his is also written for the agent that asked it, as one
+Markdown file in `data_paths.answers_dir()/<project>/<item>-<key>.md`
+(`write_answer`), so it is told without asking again.
+
+Reporters reach the two POSTs (and the answers read) with an access key in the `work` category
 (access_keys.py) through `work_report.py`; his answer needs the page's own
 origin or the tool token, as every other change does (web_auth.py). Every
 committed change is told to `recorded`, which the server turns into the
@@ -24,15 +31,20 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import os
+import re
+import time
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jarvis import (agent_directory, package_inbox, package_inbox_api, run_store, web_auth,
-                    workflow_store, work_store)
+from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
+                    web_auth, work_packages, workflow_store, work_store)
+
+log = logging.getLogger(__name__)
 
 # (the item as it is now, the kind of change, what the report said)
 Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
@@ -40,6 +52,10 @@ Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
 
 # The newest reports one item's detail shows.
 EVENTS_SHOWN = 50
+
+# The projects holding a path (`ProjectService.projects_for_path`), set by
+# the server once project records start; none until then.
+projects_for_path: Callable[[str], list[dict]] = lambda path: []
 
 
 class StartRequest(BaseModel):
@@ -57,6 +73,11 @@ class EventRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+class ReviewRequest(BaseModel):
+    action: str
+    words: str = ""
 
 
 # ── who, by name ────────────────────────────────────────────────────────
@@ -105,14 +126,219 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
               package_questions: Optional[dict[str, int]] = None) -> dict:
     """An item as the page shows it, with `package_questions`: how many
     questions the packages sent for it still wait on him for (package_inbox
-    rows' counts, `package_inbox.waiting_by_work`, read once per listing)."""
+    rows' counts, `package_inbox.waiting_by_work`, read once per listing),
+    and `projects`: the projects holding its source (`projects_for_path`)."""
     names = names or WhoNames()
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
         raw["who"]["name"] = names(piece.who)
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
     out["package_questions"] = waiting.get(item.id, 0)
+    out["approvable"] = can_approve(item, waiting)
+    out["projects"] = projects_for_path(item.source_path)
+    if out["state"] == work_store.VERIFYING and not out["approvable"]:
+        # Ready for review only when he can approve it: what keeps Approve
+        # back here is a package's question, which waits on him.
+        out["state"] = work_store.WAITING
+    out["needs_you"] = needs_of(item, waiting, out["approvable"])
+    out["stalled"] = is_stalled(item, out["needs_you"])
     return out
+
+
+# ── what he is needed for, and work nobody moves ────────────────────────
+#
+# Every item that needs him names each act and where to do it, the first
+# first: the page shows them at the top of the item and the first in its
+# row, and the brain's work_status says the same words (`need_words`). An
+# item that needs nothing of him and that nobody is moving is Stalled.
+
+DECISION_NEED, PACKAGE_NEED, REVIEW_PACKAGE_NEED, REVIEW_NEED, PIECE_NEED = (
+    "decision", "package", "review_package", "review", "piece")
+
+
+def needs_of(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None,
+             approvable: Optional[bool] = None) -> list[dict]:
+    """Each act he is needed for on this item, in the order to do them:
+    its open decisions (on the Decisions tab), the packages sent for it that
+    still ask him something (opened from the item), its review (in its
+    header) and a piece waiting on him for something else (what it names)."""
+    if item.closed_at is not None or item.state == work_store.DONE:
+        return []
+    needs = [{"kind": DECISION_NEED, "key": d.key, "text": d.question} for d in item.decisions]
+    waiting = package_inbox.waiting_by_work() if waiting is None else waiting
+    packaged = set()
+    if waiting.get(item.id):
+        for entry in package_inbox.for_work(item.id):
+            try:
+                asked = [q for q in package_inbox.questions(work_packages.find(entry.package_id))
+                         if q.applies and not q.answer]
+            except work_packages.PackageError:
+                continue
+            if asked:
+                review = all(q.id == REVIEW_QUESTION for q in asked)
+                needs.append({"kind": REVIEW_PACKAGE_NEED if review else PACKAGE_NEED,
+                              "inbox": entry.id, "text": entry.title})
+                packaged |= {entry.id, entry.package_id, entry.name}
+    if (can_approve(item, waiting) if approvable is None else approvable) and \
+            item.state == work_store.VERIFYING:
+        needs.append({"kind": REVIEW_NEED})
+    for p in item.pieces:
+        if p.state != work_store.WAITING:
+            continue
+        others = [h for h in p.until if not h.startswith("decision:")
+                  and not any(h == f"package:{ref}" or h.startswith(f"package:{ref}:")
+                              for ref in packaged)]
+        if others:
+            needs.append({"kind": PIECE_NEED, "key": p.key, "text": p.title, "links": others})
+    return needs
+
+
+def need_words(need: dict) -> str:
+    """A need in English, as the brain says it (the page words the same
+    need in its language, main.work.need.*)."""
+    kind = need["kind"]
+    if kind == DECISION_NEED:
+        return f'Answer "{need["text"]}" on the Decisions tab'
+    if kind == PACKAGE_NEED:
+        return f"Open the {need['text']} package and answer its questions"
+    if kind == REVIEW_PACKAGE_NEED:
+        return f"Open the {need['text']} review package"
+    if kind == REVIEW_NEED:
+        return "Approve, Not done yet or Add work in this item's header"
+    return f"Answer what {need['text']} waits for ({', '.join(need['links'])})"
+
+
+def is_stalled(item: work_store.WorkItem, needs: list[dict]) -> bool:
+    """Needs nothing of him and nobody is moving it: no piece's claim heard
+    from and no report within the quiet window. Never done, closed or ready
+    for his review."""
+    return (not needs and item.unmoved and item.closed_at is None and not item.history
+            and item.state not in (work_store.DONE, work_store.VERIFYING, work_store.BLOCKED))
+
+
+# ── his review in a package ─────────────────────────────────────────────
+#
+# A review package (`make_package --work <item>`) asks one well-known
+# question, `approve-item`, whose options are his review: his answer to it,
+# by decide.py or the item's Decisions tab, IS his review of the item it was
+# sent for, through the same `review` as the page and `review_work`. It is
+# the approval, so it never stands in the way of Approve; any other question
+# a package sent for the item still asks does, here and on the page alike.
+
+REVIEW_QUESTION = "approve-item"
+
+
+def other_package_questions(item_id: str) -> int:
+    """How many questions the open packages sent for this item still ask
+    him, its review question excepted."""
+    count = 0
+    for entry in package_inbox.for_work(item_id):
+        try:
+            package = work_packages.find(entry.package_id)
+        except work_packages.PackageError:
+            continue
+        count += sum(1 for q in package_inbox.questions(package)
+                     if q.applies and not q.answer and q.id != REVIEW_QUESTION)
+    return count
+
+
+def can_approve(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None) -> bool:
+    """Whether he can approve the item now: its record allows it
+    (`work_store.approvable`) and no package sent for it asks anything but
+    its review question. `waiting` (package_inbox.waiting_by_work) spares
+    reading a package when none waits."""
+    if not item.approvable:
+        return False
+    if waiting is not None and not waiting.get(item.id):
+        return True
+    return other_package_questions(item.id) == 0
+
+
+# Where a review given in a package is recorded as given.
+IN_A_PACKAGE = "package"
+
+
+def _review_asked(package):
+    """A review package's `approve-item`, or None when it asks none."""
+    return next((q for q in package_inbox.questions(package)
+                 if q.id == REVIEW_QUESTION and q.applies), None)
+
+
+def review_from_package(entry, package) -> Optional[work_store.WorkItem]:
+    """His answer to a review package's `approve-item`, as his review of
+    the item it was sent for (`where` IN_A_PACKAGE), at once and once per
+    answer. When it cannot be applied (Approve while a piece still works,
+    say), that is recorded on the item with why, so his act always shows.
+    None when there is no answer to give, or it is already on the record."""
+    asked = _review_asked(package) if entry.work_id else None
+    action = REVIEW_OPTIONS.get(asked.answer.get("answer")) if asked and asked.answer else None
+    if action is None:
+        return None
+    source = {"package": entry.id, "answered_at": str(asked.answer.get("at") or "")}
+    if work_store.reviewed(entry.work_id, source):
+        return None
+    try:
+        return review(entry.work_id, action, asked.answer.get("note") or "", IN_A_PACKAGE,
+                      source)
+    except work_store.WorkRefused as e:
+        return _note_review(entry.work_id, work_store.NOT_APPLIED, source,
+                            f"His {asked.answer.get('answer')} in the package was not applied: {e}",
+                            str(e))
+
+
+def _note_review(item_id: str, outcome: str, source: dict, summary: str,
+                 why: str = "") -> Optional[work_store.WorkItem]:
+    """What his act in a review package came to when it changed nothing
+    itself, on the item's record. None for a closed item."""
+    try:
+        return work_store.record(work_store.WorkEvent(
+            item_id, work_store.REVIEW_NOTED, summary,
+            {"outcome": outcome, "why": why, "source": source}))
+    except work_store.WorkRefused:
+        return None
+
+
+def signed_off_review(entry, package) -> Optional[work_store.WorkItem]:
+    """He signed off a review package: an answer on record is his review
+    (`review_from_package`); with none (or Decide later, None of these), the
+    item says the review closed without a verdict. Once per package."""
+    if not entry.work_id or _review_asked(package) is None:
+        return None
+    done = review_from_package(entry, package)
+    if done is not None:
+        return done
+    asked = _review_asked(package)
+    if asked.answer and asked.answer.get("answer") in REVIEW_OPTIONS:
+        return None            # already applied, or noted, when he gave it
+    source = {"package": entry.id, "answered_at": ""}
+    if (work_store.reviewed(entry.work_id, source)
+            or work_store.reviewed_since(entry.work_id, entry.arrived_at)):
+        # Noted already, or he has reviewed the item another way since the
+        # package came: an unanswered sign-off then says nothing.
+        return None
+    return _note_review(entry.work_id, work_store.NO_VERDICT, source,
+                        "Review closed without a verdict: he signed the package off unanswered.")
+
+
+def apply_package_reviews() -> int:
+    """Every review he has already given in a package sent for an item,
+    open or signed off (never one he set aside or that was replaced), on
+    the record once (at server start: answers given before the link went
+    live, or while JARVIS was down). How many items it moved."""
+    moved = 0
+    for entry in package_inbox.listing() + package_inbox.listing(closed=True):
+        set_aside = (entry.state == package_inbox.CLOSED
+                     and entry.closed_why != package_inbox.SIGNED_OFF)
+        if not entry.work_id or set_aside:
+            continue
+        try:
+            package = work_packages.find(entry.package_id)
+        except work_packages.PackageError:
+            continue
+        signed = entry.closed_why == package_inbox.SIGNED_OFF
+        if (signed_off_review if signed else review_from_package)(entry, package) is not None:
+            moved += 1
+    return moved
 
 
 def packages_json(item_id: str) -> list[dict]:
@@ -142,9 +368,125 @@ def answer_decision(item_id: str, key: str, answer: str, where: str) -> work_sto
     decision_made, so its reporter reads it (`work_report.py answer`).
     The page's route and the brain's tool both call this."""
     words = " ".join(str(answer or "").split())
-    return work_store.record(work_store.WorkEvent(
+    item = work_store.record(work_store.WorkEvent(
         item_id, work_store.DECISION_MADE, f"He answered {key}: {words}",
         {"key": key, "answer": words, "where": where}))
+    write_answer(item, key)
+    return item
+
+
+# A project folder's name as an answers folder may be named.
+_PROJECT = re.compile(r"[^/\x00-\x1f\x7f-\x9f\u2028\u2029]{1,255}")
+
+
+def answer_path(item: work_store.WorkItem, name: str):
+    """Where his word `name` (a decision's key, or a review's) is written
+    for the item's agents, or None when the item's project has no name a
+    folder can take."""
+    project = work_store.project_of(item)
+    if not _PROJECT.fullmatch(project) or project in (".", ".."):
+        return None
+    return data_paths.answers_dir() / project / f"{item.id}-{name}.md"
+
+
+def _write_for_asker(item: work_store.WorkItem, name: str, head: str, lines: list[str],
+                     at: float, where: str) -> None:
+    """One file for the item's agents, replaced whole through a rename.
+    Never raises: the record already has it."""
+    path = answer_path(item, name)
+    if path is None:
+        return
+    when = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(at))
+    text = (f"# {head}\n\n- Item: {item.id} ({item.title})\n"
+            + "".join(f"- {line}\n" for line in lines) + f"- When: {when} ({where})\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(f".{path.name}.part")
+        part.write_text(text, encoding="utf-8")
+        os.replace(part, path)
+    except OSError:
+        log.warning("work: %s/%s was not written for its asker", item.id, name, exc_info=True)
+
+
+def write_answer(item: work_store.WorkItem, key: str) -> None:
+    """His answer to `key`, written for the agent that asked it, which
+    `work_report.py answer` also reads from the record."""
+    done = next((a for a in item.answered if a.key == key and a.where in ("page", "voice")), None)
+    if done is not None:
+        _write_for_asker(item, key, f"Tim answered {key} on {item.id}",
+                         [f"Decision: {key}", f"Question: {done.question}",
+                          f"His answer: {done.answer}"], done.answered_at, done.where)
+
+
+# His review, as the page, his voice and the record name it.
+APPROVE, NOT_DONE, ADD_WORK = "approve", "not_done", "add_work"
+REVIEW_ACTIONS = {APPROVE: work_store.APPROVED, NOT_DONE: work_store.REVIEW_RETURNED,
+                  ADD_WORK: work_store.WORK_ADDED}
+# A review package's options, as his review.
+REVIEW_OPTIONS = {"approve": APPROVE, "not-done": NOT_DONE, "add-work": ADD_WORK}
+
+
+def review(item_id: str, action: str, words: str, where: str,
+           source: Optional[dict] = None) -> work_store.WorkItem:
+    """His review of an item, from the page and the brain's acting
+    `review_work` alike: approve it (done, his alone to give), say it is not
+    done yet (back to working, with his note), or add work (a new piece in
+    his words). A note or new work is written for the item's agents in
+    `answers_dir()/<project>/<item>-review-<when>.md`."""
+    kind = REVIEW_ACTIONS.get(action)
+    if kind is None:
+        raise work_store.WorkRefused("A review is approve, not_done or add_work.")
+    words = " ".join(str(words or "").split())
+    in_package = where == IN_A_PACKAGE
+    if action == APPROVE and (waiting := other_package_questions(item_id)):
+        raise work_store.WorkRefused(
+            f"A package sent for it still asks him {waiting} question(s): answer them before "
+            f"approving it.")
+    # His note is kept as the item's review note and shown once, beside
+    # this summary, never twice.
+    summary = {APPROVE: "He approved it: done.", NOT_DONE: "Sent back: not done yet.",
+               ADD_WORK: f"He added work: {words}"}[action]
+    if in_package:
+        summary = {APPROVE: "Approved by him in the package: done.",
+                   NOT_DONE: "Sent back in the package: not done yet.",
+                   ADD_WORK: f"Work added by him in the package: {words}"}[action]
+    detail = {"words": words, "where": where}
+    if source:
+        detail["source"] = source
+    item = work_store.record(work_store.WorkEvent(item_id, kind, summary, detail))
+    head, lines = {
+        APPROVE: (f"Tim approved {item.id}: it is done", []),
+        NOT_DONE: (f"Tim says {item.id} is not done yet",
+                   [f"His note: {words}", "It is back to working: address his note, then "
+                                         "report it verifying again."]),
+        ADD_WORK: (f"Tim added work to {item.id}",
+                   [f"His words: {words}", f"It is the new piece {_added_key(item_id)}: report "
+                                           f"it as you work on it."]),
+    }[action]
+    _write_for_asker(item, f"review-{int(time.time())}", head, lines, time.time(), where)
+    return item
+
+
+def _added_key(item_id: str) -> str:
+    """The key of the piece he added last."""
+    for e in reversed(work_store.latest(item_id, 10)):
+        if e.kind == work_store.WORK_ADDED:
+            return e.detail.get("key", "")
+    return ""
+
+
+def answers_json(asked_by: str, since: float) -> list[dict]:
+    """His answers to the decisions `asked_by` asked, since `since`."""
+    return [dataclasses.asdict(a) for a in work_store.answers_for(asked_by, since)]
+
+
+def signed_off_without_answer(item_id: str, key: str) -> work_store.WorkItem:
+    """He signed off the package this decision names without answering its
+    matching question: the decision is closed, and on record as closed that
+    way, never as an answer of his (`work_report.py answer` says so)."""
+    return work_store.record(work_store.WorkEvent(
+        item_id, work_store.DECISION_SIGNED_OFF,
+        f"Closed {key}: he signed off its package without an answer", {"key": key}))
 
 
 def mount(app: FastAPI, recorded: Recorded) -> None:
@@ -161,6 +503,18 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
                     "history": [item_json(i, names, waiting)
                                 for i in work_store.listing(history=True)]}
         return await asyncio.to_thread(read)
+
+    @app.get("/api/work/answers")
+    async def given_answers(request: Request, since: float = 0.0):
+        """His answers to the decisions the calling access key asked, oldest
+        first: what `work_report.py answers --since` lists."""
+        web_auth.scope_authorized(request.scope)
+        label = web_auth.access_key_label(request.scope)
+        if label is None:
+            return JSONResponse({"error": "Answers are listed for the access key that asked "
+                                          "the decisions."}, status_code=403)
+        found = await asyncio.to_thread(answers_json, f"key:{label}", since)
+        return {"answers": found}
 
     @app.get("/api/work/{item_id}")
     async def one_item(item_id: str):
@@ -196,8 +550,9 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
         one is its asker's alone, never his."""
-        if req.kind == work_store.DECISION_MADE:
-            return refused(ValueError("Only he answers a decision."))
+        if req.kind in work_store.HIS_KINDS:
+            return refused(ValueError("Only he answers a decision or reviews an item: done is "
+                                      "his to give. Report it verifying, with what to check."))
         by = asker(request.scope)
         if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:
             return refused(ValueError("Only the agent that asked a decision withdraws it; "
@@ -228,4 +583,14 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.DECISION_MADE, None)
+        return {"item": item_json(item)}
+
+    @app.post("/api/work/{item_id}/review")
+    async def review_item(item_id: str, req: ReviewRequest):
+        """His review of an item on the page: Approve, Not done yet, Add work."""
+        try:
+            item = await asyncio.to_thread(review, item_id, req.action, req.words, "page")
+        except work_store.WorkRefused as e:
+            return refused(e)
+        recorded(item, REVIEW_ACTIONS[req.action], None)
         return {"item": item_json(item)}

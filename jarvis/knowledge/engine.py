@@ -60,6 +60,7 @@ class Engine:
         self.linker = None   # mentions and proposals
         self.cards = None    # entity cards and the resident tier
         self.advisor = None  # query shapes and the extra indexes
+        self.entities = None  # the names a question may name, for the graph
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -103,6 +104,8 @@ class Engine:
         self._cards_refreshed = 0.0
         from jarvis.knowledge.advisor import Advisor
         self.advisor = Advisor(self.docs)
+        from jarvis.knowledge.entities import Entities
+        self.entities = Entities(self.docs)
 
     compact_in_child = True
 
@@ -198,6 +201,9 @@ class Engine:
         if self.pace == "free" and self.store.pick_tier():
             self.store.compact()
         if self.pace == "free" and self.vectors is not None:
+            if self.vectors.embedder is None:
+                from jarvis.knowledge import embedder
+                self.vectors.attach(embedder.current())
             self.vectors.warm()
         if self.pace == "free" and self.cards is not None and \
                 time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:

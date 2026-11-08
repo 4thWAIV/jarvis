@@ -38,6 +38,14 @@ EXPECTED = {
     "reveal: a person's navigation cancels it", "reveal: nothing declared, nothing guessed",
     "no declared command without a handler",
     "package and received file: opened by their commands, closed back to Conversation",
+    "project: opened by its command, a missing one refused, closed back to Conversation",
+    "takeover: nothing to take over on Conversation",
+    "takeover: the workflow shown takes over, and again changes nothing", "takeover: taking over twice",
+    "takeover: restore", "takeover: another centre view restores it",
+    "takeover: another item in its slot restores it", "takeover: closing the item restores it",
+    "takeover: a right tab opens over it, and closes", "takeover: the flyout closes, the takeover stays",
+    "takeover: a package, and another package restores it", "takeover key: toggles, never while typing",
+    "takeover: the read-back sheet opens in the flyout's place", "takeover: no sheet without a takeover", "takeover: a work item takes over by its id",
 }
 
 
@@ -63,7 +71,7 @@ SLOT_WRITES = re.compile(r"\b(\w+Slot)\.(?:show|close|adjust)\(")
 SLOT_OWNERS = {"workflowSlot": "workflows.ts", "threadSlot": "conversation.ts",
                "diagnosticsSlot": {"voiceHealth.ts", "subsystems.ts"}, "subsystemSlot": "subsystems.ts",
                "networkSlot": "network.ts", "queueSlot": "queue.ts", "packageSlot": "packages.ts",
-               "memberSlot": "bundles.ts", "settingsSlot": "Settings.tsx", "knowledgeSlot": "knowledge.ts"}
+               "memberSlot": "bundles.ts", "settingsSlot": "Settings.tsx", "knowledgeSlot": "knowledge.ts", "projectSlot": "projects.ts"}
 
 
 def _sources():

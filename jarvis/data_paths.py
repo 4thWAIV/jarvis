@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -222,6 +223,13 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "5b8ad413d1332d4272e2557bb1b3dcda5304c18dac1987d24c9eddc65ada3c4e",  # as shipped in 453b4ae8 (the Work tracker)
     "c03992b7460ed11182fcc60f28bed34130af9d6b5ea8ee151dd96163a16cc147",  # as shipped in d2f6c50 (the package inbox)
     "8c45e249c1257825d490bfda155f182e3f01af3c15c509fb5e3e132e1686d90a",  # the knowledge tools
+    "46dc64cf8fa4935662462dbc78a2743ba4355b2c6e3767eb2945cd4999a6fa26",  # work_context before starting work
+    "360ce430dd09dd4502b68c87674dceb1e705b7ea1d173e63c8639ef65980a5a9",  # as shipped in f637d6b (package sign-off)
+    "5a696e511ab8a0d915b569a22ec764e5ffe6ff6653d92d69c29957a799708f88",  # project records, merged with it
+    "b93d49ee134b87051313ca380dd9c1a56cc01909be7beb87998f4c52d237eac8",  # as shipped in f9786a0 (takeover mode)
+    "eb1d240a52fed28de7f3fcaf01df1257102a059f8e8968db5177a8369d851b02",  # review_work: done is his alone
+    "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
+    "d7a681178ec7ad2c7d150f6309c64541469c6f79fef776ea0d23b2ff074ca54e",  # vector search in the Knowledge section
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -410,6 +418,12 @@ def models_dir() -> Path:
     return data_dir() / "models"
 
 
+def embedding_models_dir() -> Path:
+    """Where the knowledge engine's embedding models are installed, one
+    folder per model (embedding_models.py): `<data>/models/embedding`."""
+    return models_dir() / "embedding"
+
+
 def needs_dir() -> Path:
     """Where sessions write what they need from the user, one file per
     project (see session_needs.py). Created so a session can always write."""
@@ -423,6 +437,16 @@ def session_messages_dir() -> Path:
     and one file per message (see session_messages.py). Created so a session
     can always write."""
     path = data_dir() / "messages"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def answers_dir() -> Path:
+    """Where JARVIS writes his answers for the agents that asked, one folder
+    per project and one file per answered decision (work_api.write_answer).
+    Outbound only: nothing JARVIS watches reads it. Created so an agent can
+    always look."""
+    path = data_dir() / "answers"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -524,6 +548,15 @@ def bundle_cache_dir() -> Path:
     return data_dir() / "bundle-cache"
 
 
+def run_context_dir() -> Path:
+    """The context pack each run was given (context_service.py), one
+    `<run id>.md` each, so the page can show exactly what it received;
+    nothing is written into the run's own folder."""
+    path = data_dir() / "run-context"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def packages_dir() -> Path:
     """Work packages received from teammates and unpacked to be run here
     (work_packages.py), one folder each."""
@@ -563,17 +596,122 @@ def node_id() -> str:
     return _node_id[1]
 
 
-def _read_or_make_node_id(path: Path) -> str:
+def node_id_backup_path() -> Path:
+    """The node ID's copy, written once beside it: `node_id()` restores
+    from it before it ever makes a new ID (design 4.1)."""
+    return data_dir() / "node-id.bak"
+
+
+def node_id_previous_path() -> Path:
+    """Every node ID this data directory had before a new one was made
+    anyway, one per line, so references made under them still resolve here
+    (`workspace_ref.is_self`)."""
+    return data_dir() / "node-id.previous"
+
+
+def node_id_minted_path() -> Path:
+    """The record that a node ID was made although one had been kept: when,
+    why and the one before it, if it could be read. Diagnostics and an
+    attention item read it; nothing removes it."""
+    return data_dir() / "node-id.minted.json"
+
+
+def _uuid_in(path: Path) -> Optional[str]:
+    """The UUID a file holds, None when there is no file, and raises
+    ValueError or OSError when it holds something else or cannot be read."""
     try:
         return str(uuid.UUID(path.read_text().strip()))
     except FileNotFoundError:
-        pass
+        return None
+
+
+def _read_or_make_node_id(path: Path) -> str:
+    backup = path.with_name(node_id_backup_path().name)
+    problem = None
+    try:
+        found = _uuid_in(path)
     except (OSError, ValueError) as e:
-        log.warning(f"data_paths: unusable node ID replaced ({type(e).__name__})")
+        found, problem = None, f"node-id unusable ({type(e).__name__})"
+        log.warning(f"data_paths: unusable node ID ({type(e).__name__})")
+    if found is not None:
+        try:
+            if _uuid_in(backup) is None:
+                _write_atomically(backup, found + "\n")
+        except (OSError, ValueError):
+            _write_atomically(backup, found + "\n")
+        return found
+    try:
+        kept = _uuid_in(backup)
+    except (OSError, ValueError) as e:
+        kept, problem = None, (problem or "node-id missing") + f"; its copy unusable ({type(e).__name__})"
+    if kept is not None:
+        log.warning("data_paths: the node ID was restored from its copy")
+        if not _write_atomically(path, kept + "\n"):
+            log.warning("data_paths: the restored node ID could not be written; it lasts this run only")
+        return kept
+    if backup.exists() and problem is None:
+        problem = "node-id missing; its copy unusable"
+    # One had been kept and could not be used: the old one is kept when it
+    # can still be read, so its references resolve here, and it is said.
+    previous = (_salvaged(path) or _salvaged(backup)) if problem is not None else None
     made = str(uuid.uuid4())
     if not _write_atomically(path, made + "\n"):
         log.warning("data_paths: the node ID could not be kept; it lasts this run only")
+    else:
+        _write_atomically(backup, made + "\n")
+    if problem is not None:
+        _note_minted(path, made, problem, previous)
     return made
+
+
+_UUID_SHAPE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _salvaged(path: Path) -> Optional[str]:
+    """A UUID still legible in a file that is no longer a clean node ID
+    (trailing bytes, a half write), or None."""
+    try:
+        found = _UUID_SHAPE.search(path.read_bytes().decode("utf-8", "replace"))
+    except OSError:
+        return None
+    return str(uuid.UUID(found.group(0))) if found else None
+
+
+def _note_minted(path: Path, made: str, why: str, previous: Optional[str]) -> None:
+    log.warning(f"data_paths: a new node ID was made although one had been kept ({why})")
+    if previous:
+        try:
+            with open(path.with_name(node_id_previous_path().name), "a") as fh:
+                fh.write(previous + "\n")
+        except OSError:
+            log.warning("data_paths: the previous node ID could not be kept")
+    _write_atomically(path.with_name(node_id_minted_path().name),
+                      json.dumps({"at": time.time(), "node_id": made, "why": why,
+                                  "previous": previous}) + "\n")
+
+
+def node_id_minted() -> Optional[dict]:
+    """When this data directory's node ID was made although one had been
+    kept, or None."""
+    try:
+        return json.loads(node_id_minted_path().read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def previous_node_ids() -> list[str]:
+    """The node IDs this data directory had before, oldest first."""
+    try:
+        lines = node_id_previous_path().read_text().split()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(str(uuid.UUID(line)))
+        except ValueError:
+            continue
+    return out
 
 
 def human_activity_path() -> Path:

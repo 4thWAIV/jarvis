@@ -38,7 +38,7 @@ _UPDATABLE = frozenset({
     "status", "result_text", "summary", "error", "exit_code", "pid",
     "cost_usd", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_creation_tokens", "num_turns", "model", "requested_model",
-    "started_at", "ended_at", "project_path", "project_name", "is_error",
+    "started_at", "ended_at", "project_path", "project_name", "is_error", "context_sha256",
 })
 
 
@@ -110,6 +110,13 @@ def init_db() -> None:
                 -- The work package it carries out (work_packages), when the
                 -- brain started a package that runs as an agent.
                 package_id    TEXT,
+                -- The SHA-256 of the context pack it was given
+                -- (context_service.py), kept beside it in run_context_dir().
+                context_sha256 TEXT,
+                -- The project record and the piece of work it was started
+                -- for (project_store.py), when the brain named them.
+                project_id    TEXT,
+                work_id       TEXT,
                 created_at    REAL NOT NULL,
                 started_at    REAL,
                 ended_at      REAL
@@ -222,6 +229,13 @@ def init_db() -> None:
         if "package_id" not in cols:
             conn.execute("ALTER TABLE runs ADD COLUMN package_id TEXT")
             conn.commit()
+        if "context_sha256" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN context_sha256 TEXT")
+            conn.commit()
+        for column in ("project_id", "work_id"):
+            if column not in cols:
+                conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+                conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:
             conn.execute(
@@ -241,15 +255,17 @@ def init_db() -> None:
 
 def create_run(prompt: str, project_name: str, project_path: str,
                origin: str, resume_from: str | None = None,
-               folder_id: str | None = None, package_id: str | None = None) -> str:
+               folder_id: str | None = None, package_id: str | None = None,
+               project_id: str | None = None, work_id: str | None = None) -> str:
     run_id = str(uuid.uuid4())
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-            "status, resume_from, folder_id, package_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "status, resume_from, folder_id, package_id, project_id, work_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (run_id, project_name, project_path, prompt, origin,
-             RunStatus.QUEUED, resume_from, folder_id, package_id, time.time()),
+             RunStatus.QUEUED, resume_from, folder_id, package_id, project_id, work_id,
+             time.time()),
         )
         conn.commit()
     log.info("run %s created (%s, origin=%s)", run_id, project_name, origin)

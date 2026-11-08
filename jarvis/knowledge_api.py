@@ -14,6 +14,7 @@ section 13), so page and voice do exactly the same thing.
 | `indexes`       | GET  /api/knowledge/indexes            | knowledge_indexes   | read            |
 | `choose_index`  | POST /api/knowledge/indexes            | change_knowledge_index | acting       |
 | `seeds`         | GET  /api/knowledge/seeds              | knowledge_seeds     | read            |
+| `work_context`  | POST /api/knowledge/context            | work_context        | read, walled    |
 | `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
@@ -28,10 +29,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from jarvis import knowledge_client, knowledge_links, knowledge_seeds
+from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
-RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path"]
+RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path", "at"]
 SEARCH_DEADLINE_SEC = 0.5
 
 
@@ -99,6 +100,28 @@ def status(ctx: Context) -> dict:
             "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards)}
 
 
+def embedding_model(ctx: Context) -> dict:
+    """The embedding model vector search runs on (embedding_models.py):
+    whether it is installed and runnable, how an install is going, and,
+    while the engine runs, how much it has embedded and how much waits."""
+    from jarvis import embedding_models
+    out = embedding_models.status()
+    rt = ctx.runtime
+    vectors = ((rt.health().get("engine") or {}).get("vectors") or {}) if rt is not None else {}
+    out["engine"] = {"running": rt is not None, "space": vectors.get("embedder"),
+                     "embedded": vectors.get("embedded"), "waiting": vectors.get("waiting"),
+                     "rows": sum(int(s.get("rows") or 0) for s in (vectors.get("spaces") or {}).values())}
+    return out
+
+
+def install_embedding_model(ctx: Context) -> dict:
+    """Start installing the embedding model (on the event loop: the download
+    runs in the background); the engine picks it up when it is in place."""
+    from jarvis import embedding_models
+    embedding_models.start_install()
+    return embedding_model(ctx)
+
+
 def _hits(answer: dict) -> list[dict]:
     out = []
     for h in answer.get("hits") or []:
@@ -111,14 +134,17 @@ def _hits(answer: dict) -> list[dict]:
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
            kinds: Optional[list[str]] = None, limit: int = 10) -> dict:
-    """Words found in what JARVIS has read: hybrid where vectors exist,
-    keywords and the graph otherwise. `query_en` searches again in English
-    (the brain fills it when he speaks Spanish) and the two are merged."""
+    """Hybrid search over what JARVIS has read: the keyword index, the graph
+    (the agents, people, projects and topics the words name, and what the
+    records say they said) and, while an embedding model is installed, the
+    vector index, fused by the engine (query.DEFAULT_WEIGHTS). `query_en`
+    searches again in English (the brain fills it when he speaks Spanish)
+    and the two are merged."""
     text = (text or "").strip()
     if not text:
         raise Refused("search needs words")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
-    body: dict = {"match": text, "near": {"text": text, "k": 50},
+    body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
                   "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
     if kinds:
         body["from"] = {"kinds": list(kinds)}
@@ -127,7 +153,8 @@ def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_u
     answers = [ctx.call("POST", "/v1/query", body)]
     if query_en and query_en.strip() and query_en.strip() != text:
         answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
-                                                     "near": {"text": query_en.strip(), "k": 50}}))
+                                                     "near": {"text": query_en.strip(), "k": 50},
+                                                     "about": {"text": query_en.strip()}}))
     merged: dict[str, dict] = {}
     for answer in answers:
         for h in _hits(answer):
@@ -267,8 +294,10 @@ def maintain(ctx: Context, *, action: str, source: Optional[str] = None) -> dict
         ctx.wake_ingest()
         return {"done": "refresh"}
     if action == "forget":
-        if not source or not source.startswith("jref:1:"):
-            raise Refused("forget takes a source reference (jref:1:...)")
+        try:
+            workspace_ref.parse(source or "")
+        except workspace_ref.RefError:
+            raise Refused("forget takes a source reference (jref:1:...)") from None
         report = ctx.call("POST", "/v1/forget", {"refs": [source]}, deadline=30.0)
         rt = ctx.runtime
         if rt is not None:
@@ -339,3 +368,58 @@ def answer_seed(ctx: Context, *, seed: str, action: str) -> dict:
     ctx.seed_resolved(seed)
     ctx.wake_ingest()
     return result
+
+
+# --- the context pack ---------------------------------------------------------------
+
+def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Optional[list[dict]]]]:
+    """The engine's search as context_service wants it: None when the engine
+    is off, and a search that answers None when late or down."""
+    if ctx.runtime is None:
+        return None
+
+    def run(text: str, own_only: bool, deadline: float) -> Optional[list[dict]]:
+        if deadline <= 0:
+            return None
+        body: dict = {"match": text, "near": {"text": text, "k": 50},
+                      "return": {"properties": RETURN, "limit": 30}, "budget_ms": max(1, int(deadline * 1000))}
+        if own_only:
+            body["visible"] = {"trust": ["own"]}
+        try:
+            return _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
+        except (Unavailable, Refused):
+            return None
+    return run
+
+
+def _open_decisions(project: str) -> list[str]:
+    from jarvis import workflow_store
+    out = []
+    for w in workflow_store.active():
+        if (w.project or "").lower() == project.lower():
+            out += list(w.open_decisions)
+    return out
+
+
+def run_pack(ctx: Context, *, purpose: str, project: Optional[str] = None,
+             scope: Optional[dict] = None) -> dict:
+    """The pack a run is given, exactly: his own words only, at the run's
+    budget and deadline."""
+    return context_service.pack(purpose=purpose, project=project or None, scope=scope, trust="own",
+                                search=context_search(ctx)).json()
+
+
+def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
+                 include_received: bool = False, scope: Optional[dict] = None,
+                 budget: int = context_service.BRAIN_BUDGET) -> dict:
+    """The pack the brain reads before starting or briefing work: the same
+    one a run gets, at the brain's budget; with `include_received`, other
+    people's words too (walled by the caller). `scope` is the project
+    records (`ProjectService.brief`); `project` a legacy name without one."""
+    if not (purpose or "").strip():
+        raise Refused("say what the work is")
+    found = context_service.pack(purpose=purpose, project=project or None, scope=scope, budget_chars=budget,
+                                 trust="all" if include_received else "own",
+                                 search=context_search(ctx), deadline_s=context_service.BRAIN_DEADLINE_SEC,
+                                 decisions=_open_decisions)
+    return found.json()

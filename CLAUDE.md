@@ -23,6 +23,8 @@ When a user clones this repo and starts Claude Code, help them:
 5a. Install the current local Kroko speech model:
    `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
    adds the Spanish model, `--language all` both)
+5b. Install the knowledge engine's embedding model (vector search, about
+   135 MB): `.venv/bin/python scripts/setup_embedding_model.py`
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
@@ -231,12 +233,30 @@ and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
+Nothing waits on him once he has answered (`wait_links.py`). A
+`wait_started` names what will answer it with `--until` (`detail.until`,
+kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
+first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
+signs it off) or `package:<id>:<decision>`; anything else stays words. His
+answer by any route (the workflow's or a Work item's decision, page or
+voice; a package decision through its decide.py, `_inbox_recount`; his
+finishing with a package) ends every wait linked to it in the same
+transaction as the answer (`wait_links.settle`, called by the store's own
+writer; a package's, recorded by its own script, in a transaction of its
+own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
+`answered_at`), the workflow's state settled again. Only the server's answer
+routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
+answer already given ends at once, and `wait_links.sweep` ends any left open
+at server start and on every read of either record. A wait with no link
+open over `wait_links.UNLINKED_AFTER_SEC` (a day) reads as `unlinked`, shown
+"waiting, no link to an answer" on its card. The package inbox's own wait is
+linked to its package.
 
 ## The Work tracker
 The right panel's Work tab (the tab that was Workflows, id still
 `workflows`) lists each piece of work in progress: its title, its state
-(`planned`, `working`, `verifying`, `waiting_on_tim`, `blocked`, `done`;
-`verifying` is between working and done) and one useful update, an open
+(`planned`, `ready`, `working`, `verifying`, `waiting_on_tim`, `blocked`,
+`done`; `verifying` is between working and done, "Ready for review") and one useful update, an open
 decision's question first (Planning's Work view at 52a1837, bare minimum).
 Items are listed under their group (`work_store.grouped`, the API's
 `groups`): the optional `area` an item is given (`start --area`, `update
@@ -277,7 +297,97 @@ answered ones (`answered`, `where` = `withdrawn`). An item closed
 reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
 minutes) moves to History: `GET /api/work`'s `history`, newest first, under
 the list's History toggle (`work.showHistory`), each still opening in full;
-`work_status` with `history` lists them and finds one by id or title. The Workflows view stays below the list, under its
+`work_status` with `history` lists them and finds one by id or title.
+The record is authoritative: a state is never taken from a report's
+words. A piece that waits on him or is blocked is held (`work_store.HELD`)
+and is reported so only naming what holds it, `--until` (repeatable; kept
+as a JSON list): wait_links links (its own `decision:<key>` must be one of
+the item's open decisions; `work:`, `workflow:`, `package:` as a workflow
+wait's) or, for a blocker only, words. No report moves a held piece on
+(`work_store._move`, refused naming what holds it, "report work that can
+go on meanwhile as a piece of its own"): only his answer to every link, by
+any route, in the same transaction (`work_store.end_waits`, also on a
+decision's sign-off or its asker withdrawing it), which moves it to its
+`--then` (`ready` by default: nothing holds it, its agent has yet to pick
+it up), recorded as `wait_ended` with by, how and when; a blocker in words
+is cleared by its reporter's `--cleared`. The sweep releases holds already
+answered. An item with pieces is never reported held (it is the piece that
+waits), and its state is worked out from them (`work_store._computed`):
+a working report is a claim, never telemetry, so it is never shown as
+Working: it reads `activity_unknown` ("Activity unconfirmed",
+`work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
+piece and on an item alike. An item reads activity_unknown while a piece
+claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
+ready or planned while a piece can be picked up, else waiting on him while
+a decision or piece waits on him, else activity_unknown (a claim gone
+silent: the stalled flag builds on exactly this), blocked, or ready for
+review (only once he can approve it), in that order. Every item that
+needs him names each act and its place, the first first (`needs_you`,
+`work_api.needs_of`: his decisions on the Decisions tab, a package sent for
+it opened from the item, his review in its header, a piece waiting on
+something else); the page shows them at the top of the item with a way to
+each and the first in its row ("You: …"), and `work_status` says the same
+words (`work_api.need_words`). One that needs nothing of him and that
+nobody moves (no claim heard from and no report within `QUIET_AFTER_SEC`;
+never done, ready for review or blocked) is `stalled` ("Stalled: nobody is
+working on this", its own colour, a silent `work_stalled` attention item
+from the quiet watch, resolved once it moves); a piece claimed working with
+no report for `STALLED_PIECE_AFTER_SEC` (a day) shows Stalled too. Open decisions still show
+(banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
+on you"). An item with no pieces follows the piece rules itself. Done is
+his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
+his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
+His review is `work_api.review`, from the item's header on the page (`POST
+/api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
+yet, Add work) and the brain's acting `review_work` alike: `approved`
+(only once the item is ready for review, as docs/work-states.md says;
+refused while a decision is open or a piece is held or still working, and
+offered on the page only while `approvable` says the same: an open
+question of a package sent for the item counts against it, except the
+item's own review question; the item and
+every piece done, `approved_at`; nothing a reporter sends moves it after),
+`review_returned` (his note kept as `review_note` and shown, the item and
+every verifying or done piece back to working) and `work_added` (a new
+`ready` piece in his words, on whoever last worked the item); the note and
+the added work are written for the item's agents to
+`answers_dir()/<project>/<item>-review-<time>.md`. A review package (a package sent
+with `--work <item>` asking the well-known question `approve-item`, options
+`approve`, `not-done`, `add-work`) is his review: his answer to it, through
+its decide.py by voice or the Work tab, is `work_api.review_from_package`,
+called from `server._inbox_recount`, which records it through the same
+`work_api.review` (once per answer: `source` on the event,
+`work_store.reviewed`), with `where` "package". Every act of his in a
+review package shows on the item at once (`package_review`: "Approved by
+you in the package, 16:33" on its Overview, Decisions tab and list row): an
+answer that cannot be applied (Approve while a piece still works) is noted
+with why, shown in his own terms, never the agent's refusal
+(`review_noted`, `not_applied`, `work_store.said_to_tim`), and an item he
+has approved done never shows "without a verdict" (`_shown_review`), and signing the package off with
+no answer notes "Review closed without a verdict" (`no_verdict`,
+`work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
+yet and Add work still beside it. Answers already on record are applied at
+server start (`work_api.apply_package_reviews`, once each; never from a
+package he set aside or that was replaced). Migration 5 links each
+held piece or item that named nothing to its item's one open decision, or,
+with none open, to the one he answered since it was held (released by the
+sweep), leaves any other unlinked (flagged), and moves every open item and
+piece reported done without his approval to verifying, "Not approved by
+Tim". After his latest answer with no report since (`reported_at`, set by
+reporter kinds only) and no piece working, `follow_up` says "Answered —
+waiting for <asker> to start" (the asker's access-key label), and after
+`FOLLOW_UP_AFTER_SEC` (30 minutes) Blocking lists `no_follow_up`
+("answered, no follow-up") and the server's quiet watch records a silent
+`work_follow_up` attention item naming the asker (`_attend_unfollowed`),
+resolved by the next report. Blocking also lists `item_waiting` (an item
+with no pieces reported waiting on something other than its own
+decisions), what holds each held piece, and a held piece or item that
+names nothing (only from before) over a day as `unlinked`, "waiting, no
+link to an answer". Every answer of his is written for its asker to
+`data_paths.answers_dir()/<project>/<item>-<key>.md`
+(`work_api.write_answer`; the project is the source folder's last name;
+outbound only, nothing watches it), and `work_report.py answers --since
+<time>` (`GET /api/work/answers`, in the `work` key category) lists every
+answer to the calling key's own decisions. The Workflows view stays below the list, under its
 own heading. The record is `work_store.py` (schema `work_schema`, through
 `run_store.migrate`): `work_events` is append-only and the truth;
 `work_items`, `work_pieces` and `work_decisions` are updated in the same
@@ -286,7 +396,8 @@ ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
 `workflow:<id>` or `tim`), and a reported who must be a record JARVIS has.
-An open decision reads as waiting on Tim and a working or verifying item
+An open decision reads as waiting on Tim only while nothing else can go on
+(see above), and a working or verifying item
 silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
 with `work_report.py` and an access key in the `work` category (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
@@ -305,8 +416,8 @@ centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
 the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
-their evidence. The page changes nothing but his answers, so there is no
-other acting tool.
+their evidence. The page changes nothing but his answers and his review,
+so the only other acting tool is `review_work`.
 Each Work row and piece, and each phase and task of a workflow's detail,
 shows its live activity from the record (`nodeActivity.tsx`): working (a
 working or verifying piece or item, a running workflow item, whose
@@ -572,8 +683,8 @@ writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema
 `package_inbox_schema` (`run_store.migrate`), each change one transaction
 with its revision, before any hint (`packages`, and `work` when it names a
-work item). States `arrived -> opened -> answering -> answered -> returned
--> closed` (`done`, `dismissed`, `superseded`). The same bytes while open
+work item). States `arrived -> opened -> answering -> answered ->
+closed` (`signed_off`, `dismissed`, `superseded`). The same bytes while open
 are the same row; an open package of the same name from the same sender
 (its session, else its project) is closed `superseded` in the same
 transaction. A decision package's questions are read from `deck-data.js`
@@ -595,21 +706,32 @@ is shown in the centre, any other is in the brain's hands. His answers go
 through the package's own `scripts/decide.py`, run with a fixed argument
 list and no shell (`_answer_inbox_decision`: the acting
 `answer_package_decision` and `POST .../answer`, which the Work tab uses).
-`_return_package_answers` (the acting `return_package_answers`, `POST
-.../return`, the row's Send answers) needs every decision that applies
-answered (`package_inbox.check_return`); it records each answer as the
-workflow's own `decision_needed` then `decision_made` under the decision's
-id and ends the workflow's wait (`wait_started` at arrival, key the inbox
-id), then opens a capture addressed to the sending session (`_new_capture`
-and `_set_capture`, shared with `capture`) holding each answer and the
-record's path, which is read back and sent only on his yes or Send, as
-every message to a session. A sender no longer running gets no message and
-the row is returned at once. `package_inbox.follow_messages`, run on every
-message event (`_attend_message`) and every direct send, moves a row to
-`returned` once a message from its capture has gone to its session since
-he asked, and to `closed` `done` once that message is answered.
+Signing a package off is one function, `_sign_off_package`, for every kind
+of package: the Done in the head of its view (`PackageView.tsx`, outside
+the frame), Done on its Queue row (`POST /api/packages/{package_id}/signoff`)
+and the acting `sign_off_package`. A package with no inbox row (unpacked
+some other way, an older local one) is given one there and then
+(`package_inbox.adopt`). Whatever he answered goes back: each answered
+question as the workflow's own `decision_needed` then `decision_made`
+under its id, and the workflow's wait ended (`wait_started` at arrival, key
+the inbox id); then a capture addressed to the sending session
+(`_new_capture` and `_set_capture`, shared with `capture`) holding, by slug
+id (`package_inbox.ID`), each answer or "not answered" and the record's
+path, or for a package that asks nothing that he has reviewed it
+(`_sign_off_text`: no title, question or option name), read back and sent
+only on his yes or Send. A Work-item decision that names the package
+(`work_store` `package`) gets the answer he gave in the package to the
+question of its key (or its only question) as his own answer; with none it
+is closed by `decision_signed_off` (`work_store.SIGNED_OFF`: his act,
+never a reporter's, never an answer; `work_report.py answer` exits 4), and
+the item it was sent for (`--work`) gets an update. The row is closed
+`signed_off` with `signed_off_at`, its update line resolved, and every
+page showing it closes it (`package_closed` on the voice socket).
+`package_inbox.follow_messages`, run on every message event
+(`_attend_message`) and every direct send, gives a signed-off row the id
+of the message that carried it back once that has gone.
 `_close_inbox_package` (the acting `close_inbox_package`, `POST
-.../close`) dismisses one, or closes one already returned. `package_inbox`
+.../close`, the row's Dismiss) sets one aside with nothing sent back. `package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
 shows its questions on that work item's Decisions tab (`work_api.packages_json`
 on `GET /api/work/{id}`, `package_questions` on every item; the
@@ -1038,6 +1160,67 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## Project records
+His projects are records of truth in JARVIS's database under their own
+schema (`project_schema`), with `project_store.py` the only writer, one
+transaction per change and a `project_events` line for each: projects
+(name, spoken key, notes slug, summary, lifecycle), the legacy names that
+resolve to one (`project_aliases`, `project_for_legacy`), the registered
+folders each is made of (`project_folders`: part, at most one home, what
+the knowledge engine may read), pieces of work spanning projects (`works`,
+one primary project), accomplishments (`proposed`, then `confirmed` or
+`withdrawn`; only confirmed ones count) and bindings. `project_seed.py`
+makes candidates, never projects: one per registered source folder, with
+the legacy project strings (runs, workflows, messages, session messages,
+memory slugs) as evidence; each is an attention item and becomes a project
+only on his Accept (the Folders tab's Projects, `ProjectsSection.tsx`) or
+his word (`change_project_candidate`). `project_service.py` is the one
+service the page's `/api/project-records*` and `/api/works*`
+(`projects_api.py`; the older `/api/projects` is unchanged) and the
+brain's project tools call; a change is a `projects` hint on
+`/ws/sessions`. The centre's Project view is `ProjectView.tsx`
+(`project.open`), and each Work tab item names the projects holding its
+source (`work_api.projects_for_path`, through `folder_for_cwd`).
+A run records `project_id` and `work_id`: `spawn_run` with `work_id` runs
+only in a folder of the work's projects or its own, with `project_id` alone
+in that project's home folder (`ProjectService.run_location`), and a run
+started by folder or name takes the one project holding its folder, never
+a guess between several; Retry places a work's run again the same way.
+The context pack (`context_service.pack`'s `scope`, from
+`ProjectService.brief`) and `work_context` are made from these records.
+The Folders tab (its label kept short so six tabs fit two rows) holds
+projects and folders: its switch
+(`folders.panel.show`) shows projects first (lifecycle, open work, a dot
+while an agent works in one of its folders, accomplishments to confirm),
+then the independent folders (in no project), then the proposals waiting
+for him, or the plain folder list. A run's pack is
+`knowledge_api.run_pack`, and spawn_run starts every run through
+`server._spawn_placed`. `/api/work` (`work_store`) is the one record of
+work; `/api/works` is being folded into it, so nothing new is built on it.
+`projects_view.py` (the dashboard's /api/projects/view) joins sessions and
+runs by the one project holding their folder, else by name.
+
+## Workspace references
+`workspace_ref.py` is the one place identity and references are defined,
+parsed, printed, hashed and resolved (design section 4): `Workspace`,
+`owner_of`, `is_self` (the node ID now or any in `node-id.previous`),
+`WorkspaceRef` and its text form `jref:1:<node>:<kind>:<id>[@<revision>]
+[/<path>][#sha256=|#tree=]` (`parse` and `format` only; one spelling each),
+`check_path` (bundle_archive's entry rule, NFC, canonical), `canonical_json`
+and `record_hash`, a file's hash through the descriptor the folder service
+checked (`FolderService.file_hash`), a tree's Merkle hash
+(`FolderService.tree_hash`: links, submodules, refused entries and tracked
+files gone listed as left out, git-ignored entries summarised, git only
+after `xcode-select -p`), and `resolve` (here, changed, moved, missing,
+refused, foreign_node; attachments, packages and knowledge nodes are
+`unsupported` until their phases). The project store's subjects and the
+knowledge ingest's sources are printed by it. `data_paths.node_id()` keeps
+`node-id.bak` and restores from it before ever making a new ID; one made
+anyway keeps the old ID in `node-id.previous`, writes
+`node-id.minted.json`, and is shown in Diagnostics (the team server row's
+`node_id` check, degraded for `NODE_ID_NOTICE_SEC`) and as an attention
+item.
+
 ## The knowledge engine
 A document store, a typed graph, a keyword index and a vector index in a
 process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
@@ -1054,8 +1237,44 @@ is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it reads the brain's notes, the
 conversation log, finished runs, workflow events and registered folders'
 Markdown (through `folder_service`, FILES reader only) and keeps each source's
-watermark in the engine. No embedder is wired until one is chosen
-(`knowledge/embedder.py`'s `RUNNER`). Diagnostics shows its row (`knowledge`).
+watermark in the engine (stamped with `knowledge_ingest.SCHEMA`; a source
+written under another schema is read again from the start). Every chunk
+holds `at` (when it was said or written) and an agent's words their speaker
+(`agent`, a `said_by` edge to an `agent:<name>` node). Diagnostics shows its
+row (`knowledge`).
+
+Vector search: `knowledge/embedder.py`'s `RUNNER` (`installed`) gives the
+embedding model installed under the data folder, run by the runtime its
+record names (`RUNTIMES`; `onnx-e5` is multilingual-e5-small, int8, through
+onnxruntime, `knowledge/e5_onnx.py`, with the model's own SentencePiece
+tokenizer read by `knowledge/unigram.py`, no tokenizer library), or None,
+and then vectors are off. The engine attaches one that appears while it
+runs (`VectorIndex.attach`, from `maintain`) and embeds what waits under the
+pace, queries first. `embedding_models.py` installs it the speech models'
+way (`model_files.py`: download at a pinned revision, SHA-256 and size,
+one rename into `<data>/models/embedding/<name>`), through
+`scripts/setup_embedding_model.py`, `POST /api/knowledge/embedder/install`
+(the Knowledge view's Install) and the acting `install_embedding_model`;
+`embedding_model` and `GET /api/knowledge/embedder` read it. While it is
+installed the engine's memory budget grows by its measured share. Search
+is hybrid (`query.run`): `match` (the keyword index), `near` (the vectors)
+and `about` (the graph: the agents, people, projects and topics the words
+name, `knowledge/entities.py`, and what the records say they said, newest
+first, then what mentions them), fused by weighted reciprocal rank
+(`query.DEFAULT_WEIGHTS`, chosen on the phase 5 measurements,
+`docs/planning/work-package-bundles/phase5/results.md`); every hit says
+which found it.
+Topics are `brain_home()/topics/<slug>.md` and his index pins and forbids
+`brain_home()/knowledge.md`, both written only by `knowledge_links`; the
+engine's linker proposes links and the Denice seed (`knowledge_seeds.py`)
+proposes topics, each a silent attention item acted on only on his yes. The
+page's /api/knowledge routes (`knowledge_routes.py`, the Knowledge view) and
+the brain's knowledge tools call the same `knowledge_api` functions.
+`context_service.pack` is the context pack: tier 0 from notes and topics,
+tier 1 with the engine's search; `work_context` gives it to the brain
+(walled), and a run gets it, his own words only, ahead of the prompt when
+`JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
+`runs.context_sha256`.
 Its process, crash and budget tests carry the `knowledge_engine` marker.
 
 ## Self-update
@@ -1408,6 +1627,40 @@ the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
 
+## Takeover mode
+A workflow (or subagent) or a page package shown in the centre can take
+over the page. It is route state, `uiNavigation.ts` `layout`: normal, or
+`{mode: "takeover", view, key, flyout, sheet}`, read-only outside the
+module, never stored (a reload starts normal). It holds only while
+`mainView` is that view and its slot holds that key (`detailSlot`'s third
+argument names a takeover slot's item): every command that changes either
+restores it in its own handler (`settleLayout`) and returns
+`layout.restored`, declared on every command that moves the centre view or
+a slot. The UI contract's layout family (`ui_contract/families/layout.json`)
+has `layout.takeover` (only the workflow or package shown), `layout.restore`,
+`layout.sheet` and `layout.flyout.close`, the views `main.takeover` (the
+bar) and `right.rail`, and the `takeoverBar` kind; the brain reaches them
+through `ui_navigate`, and Take over (`TakeoverBar.tsx` `TakeoverButton`,
+beside × in `WorkflowDetail.tsx` and `PackageView.tsx`) and Option+Shift+T
+(`takeoverKey.ts`, by `e.code`, never in an input, text area, select or
+editable text) run the same handlers. Taken over, `App.tsx` sets
+`data-layout="takeover"` on the root and every centre view's right edge,
+`--centre-right` in `style.css`, moves in to the rail; `RightPanel.tsx`
+draws `RightRail` (the six icons with their marks, keeping
+`#right-column`, so the rays and the pipeline's right rail follow it; an
+icon runs `right.tab.select`, which while taken over opens that tab over
+the takeover as the flyout); `CentreArea.tsx` draws `TakeoverBar` in place
+of the tabs and the notices: the name, the conversation's state from
+`controlState.ts` (`ControlSummary`), the notices (`CentreNotices inBar`),
+the read-back chip that opens the open captures as a sheet
+(`TakeoverSheet`, `CaptureList` in `main.takeover`), the microphone, its
+health dot and Stop (`MicPortal`'s `bar` place: moved, never copied) and
+Restore layout. A package's `layout` (`centre` or `wide`,
+`work_packages.LAYOUTS`) lights Take over; its frame is told `layout`
+{mode, width, height} and may send `layout.request` (offer only) or
+`layout.restore` (restore only, what `package_story.js` sends for the key
+pressed inside the frame).
+
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 
@@ -1547,6 +1800,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `data/messages/<project>/` (see "Messages from sessions")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `wait_links.py` — What a wait on him waits for (its link), which answer
+  ends it, settling in the answer's transaction, and the sweep (see "The
+  workflow monitor" and "The Work tracker")
 - `work_store.py` / `work_api.py` / `work_report.py` — The Work tracker's
   record, its routes and shared calls, and the command agents report with
   (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and
@@ -1805,6 +2061,8 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the folder catalog's routes and tools off; its records are kept
 - `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
   engine and its ingest (see "The knowledge engine")
+- `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
+  the context pack for its project (see "The knowledge engine")
 - `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
   — the engine's memory budget; it is restarted past 1.5 times it
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
@@ -1840,7 +2098,7 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
 `test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
-`test_voice_page_capture_cues.py`) are marked `page` and deselected too: they build
+`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

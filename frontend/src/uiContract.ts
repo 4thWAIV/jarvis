@@ -151,11 +151,14 @@ export const UI_CONTRACT = {
     "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
-    "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
+    "workBlocker": "^(decision|no_follow_up|blocked|item_waiting|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "project": "^[0-9a-f-]{36}$",
+    "projectCandidate": "^[0-9a-f-]{36}$",
+    "accomplishment": "^[0-9a-f-]{36}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
@@ -176,7 +179,9 @@ export const UI_CONTRACT = {
     "settings.opened": "The Settings view opened.",
     "menu.opened": "The menu opened.",
     "list.paged": "A list loaded or showed another page.",
-    "list.filtered": "A list's filter changed."
+    "list.filtered": "A list's filter changed.",
+    "layout.taken-over": "The centre widened over the right panel, which folded to a rail; the takeover bar replaced the centre tabs.",
+    "layout.restored": "The normal layout came back: the centre tabs, the notices and the right panel."
   },
   "pipeline": {
     "source": "orb.source",
@@ -437,6 +442,14 @@ export const UI_CONTRACT = {
       "entity": "member"
     },
     {
+      "id": "main.project",
+      "region": "main",
+      "kind": "detail",
+      "label": "Project",
+      "tab": "project",
+      "entity": "project"
+    },
+    {
       "id": "main.knowledge",
       "region": "main",
       "kind": "detail",
@@ -467,6 +480,18 @@ export const UI_CONTRACT = {
       "region": "footer",
       "kind": "fixed",
       "label": "Footer"
+    },
+    {
+      "id": "main.takeover",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Takeover bar (the item's name, the conversation's state, the notices, the microphone and Restore layout, in place of the centre tabs while a workflow, a work item or a page package has taken over)"
+    },
+    {
+      "id": "right.rail",
+      "region": "right",
+      "kind": "fixed",
+      "label": "Right rail (the right panel folded to its six tab icons while taken over)"
     }
   ],
   "commands": [
@@ -525,7 +550,8 @@ export const UI_CONTRACT = {
             "package",
             "file",
             "settings",
-            "knowledge"
+            "knowledge",
+            "project"
           ]
         }
       },
@@ -539,6 +565,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "shell"
@@ -573,6 +602,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "network"
@@ -590,6 +622,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "network"
@@ -627,6 +662,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -644,6 +682,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -685,6 +726,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -717,6 +761,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -734,6 +781,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -761,6 +811,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -778,6 +831,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -795,6 +851,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -812,6 +871,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -842,6 +904,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -859,6 +924,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -895,6 +963,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -928,6 +999,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -954,6 +1028,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -983,6 +1060,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1003,6 +1083,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1027,6 +1110,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1101,6 +1187,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "settings"
@@ -1145,6 +1234,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "settings"
@@ -1321,6 +1413,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "queue"
@@ -1391,6 +1486,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "queue"
@@ -2003,6 +2101,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2020,6 +2121,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2057,6 +2161,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2074,6 +2181,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2232,6 +2342,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "knowledge"
@@ -2249,6 +2362,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "knowledge"
@@ -2357,6 +2473,209 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "knowledge"
+    },
+    {
+      "id": "knowledge.embedder.install",
+      "label": "Download, check and install the embedding model vector search runs on; only his own hand starts it here",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
+    },
+    {
+      "id": "folders.panel.show",
+      "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
+      "view": "right.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "projects",
+            "folders"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "id": "project.open",
+      "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
+      "view": "main.project",
+      "args": {
+        "projectId": {
+          "type": "key",
+          "entity": "project"
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "id": "project.close",
+      "label": "Close the project's detail",
+      "view": "main.project",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "id": "project.candidate.answer",
+      "label": "Accept a proposed project with the folders it lists, or ignore it; only his own hand answers it here",
+      "view": "right.folders",
+      "args": {
+        "candidateId": {
+          "type": "key",
+          "entity": "projectCandidate"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "ignore"
+          ]
+        }
+      },
+      "required": [
+        "candidateId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "projects"
+    },
+    {
+      "id": "project.accomplishment.answer",
+      "label": "Confirm or withdraw a proposed accomplishment; only his own hand answers it here",
+      "view": "main.project",
+      "args": {
+        "accomplishmentId": {
+          "type": "key",
+          "entity": "accomplishment"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "confirm",
+            "withdraw"
+          ]
+        }
+      },
+      "required": [
+        "accomplishmentId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "projects"
+    },
+    {
+      "id": "layout.takeover",
+      "label": "Let the workflow, work item or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
+      "view": "main.takeover",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "layout.taken-over"
+        }
+      ],
+      "family": "layout"
+    },
+    {
+      "id": "layout.restore",
+      "label": "Restore the normal layout after a takeover",
+      "view": "main.takeover",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "layout"
+    },
+    {
+      "id": "layout.sheet",
+      "label": "Show or hide the read-back's message boxes as a sheet over the takeover (the bar's read-back chip)",
+      "view": "main.takeover",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "layout"
+    },
+    {
+      "id": "layout.flyout.close",
+      "label": "Close the right panel's tab opened over the takeover from the rail",
+      "view": "right.rail",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "layout"
     }
   ],
   "kinds": [
@@ -2662,6 +2981,7 @@ export const UI_CONTRACT = {
         "name",
         "honorific",
         "saveYou",
+        "steady",
         "language",
         "spanishModel",
         "voiceInputStop",
@@ -2938,7 +3258,7 @@ export const UI_CONTRACT = {
         "title",
         "progress",
         "open",
-        "return",
+        "done",
         "close"
       ],
       "presentations": [
@@ -3093,6 +3413,7 @@ export const UI_CONTRACT = {
         "state",
         "tasks",
         "header",
+        "takeover",
         "close",
         "dismiss",
         "tab.overview",
@@ -3126,6 +3447,7 @@ export const UI_CONTRACT = {
           "parts": [
             "header",
             "state",
+            "takeover",
             "close",
             "dismiss",
             "tab.overview",
@@ -3307,6 +3629,7 @@ export const UI_CONTRACT = {
         "row",
         "state",
         "header",
+        "takeover",
         "close",
         "transcript",
         "earlier"
@@ -3331,6 +3654,7 @@ export const UI_CONTRACT = {
             "row",
             "state",
             "header",
+            "takeover",
             "close",
             "transcript",
             "earlier"
@@ -3393,7 +3717,9 @@ export const UI_CONTRACT = {
         "decisionCount",
         "blocker",
         "activity",
+        "project",
         "header",
+        "takeover",
         "close",
         "banner",
         "source",
@@ -3404,6 +3730,8 @@ export const UI_CONTRACT = {
         "answered",
         "blocking",
         "reports",
+        "review",
+        "needs",
         "tab.overview",
         "tab.decisions",
         "tab.blocking",
@@ -3420,7 +3748,8 @@ export const UI_CONTRACT = {
             "mark",
             "decisionCount",
             "blocker",
-            "activity"
+            "activity",
+            "project"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -3435,9 +3764,11 @@ export const UI_CONTRACT = {
             "header",
             "state",
             "update",
+            "takeover",
             "close",
             "banner",
             "source",
+            "project",
             "who",
             "pieces",
             "decisions",
@@ -3445,6 +3776,8 @@ export const UI_CONTRACT = {
             "answered",
             "blocking",
             "reports",
+            "review",
+            "needs",
             "tab.overview",
             "tab.decisions",
             "tab.blocking",
@@ -3679,6 +4012,7 @@ export const UI_CONTRACT = {
       "parts": [
         "search",
         "open",
+        "switch",
         "role",
         "availability",
         "registered",
@@ -3693,7 +4027,8 @@ export const UI_CONTRACT = {
           "view": "right.folders",
           "parts": [
             "search",
-            "open"
+            "open",
+            "switch"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -3874,6 +4209,9 @@ export const UI_CONTRACT = {
               "tab": "conversation"
             }
           }
+        },
+        {
+          "view": "main.takeover"
         }
       ],
       "family": "conversation"
@@ -3902,6 +4240,9 @@ export const UI_CONTRACT = {
         },
         {
           "view": "main.corner"
+        },
+        {
+          "view": "main.takeover"
         }
       ],
       "family": "conversation"
@@ -3957,6 +4298,15 @@ export const UI_CONTRACT = {
             "command": "main.tab.select",
             "args": {
               "tab": "main"
+            }
+          }
+        },
+        {
+          "view": "main.takeover",
+          "reveal": {
+            "command": "layout.sheet",
+            "args": {
+              "shown": true
             }
           }
         }
@@ -4037,6 +4387,8 @@ export const UI_CONTRACT = {
       "parts": [
         "header",
         "frame",
+        "done",
+        "takeover",
         "close",
         "story",
         "tell",
@@ -4089,7 +4441,8 @@ export const UI_CONTRACT = {
         "proposals",
         "topics",
         "indexes",
-        "seeds"
+        "seeds",
+        "vectors"
       ],
       "presentations": [
         {
@@ -4162,6 +4515,133 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "knowledge"
+    },
+    {
+      "kind": "projectsList",
+      "entity": null,
+      "label": "Projects",
+      "parts": [
+        "list",
+        "independent",
+        "candidates"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "project",
+      "entity": "project",
+      "label": "Project",
+      "parts": [
+        "row",
+        "header",
+        "close",
+        "summary",
+        "folders",
+        "works",
+        "accomplishments",
+        "topics",
+        "agents"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "parts": [
+            "row"
+          ],
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        },
+        {
+          "view": "main.project",
+          "parts": [
+            "header",
+            "close",
+            "summary",
+            "folders",
+            "works",
+            "accomplishments",
+            "topics",
+            "agents"
+          ],
+          "reveal": {
+            "command": "project.open",
+            "args": {
+              "projectId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "projectCandidate",
+      "entity": "projectCandidate",
+      "label": "Proposed project",
+      "parts": [
+        "row",
+        "accept",
+        "ignore"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "accomplishment",
+      "entity": "accomplishment",
+      "label": "Accomplishment",
+      "parts": [
+        "row",
+        "confirm",
+        "withdraw"
+      ],
+      "presentations": [
+        {
+          "view": "main.project"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "takeoverBar",
+      "entity": null,
+      "label": "Takeover bar",
+      "parts": [
+        "name",
+        "state",
+        "readback",
+        "restore"
+      ],
+      "presentations": [
+        {
+          "view": "main.takeover"
+        }
+      ],
+      "family": "layout"
     }
   ],
   "families": [
@@ -4220,6 +4700,14 @@ export const UI_CONTRACT = {
     {
       "family": "knowledge",
       "owner": "coverage-main"
+    },
+    {
+      "family": "projects",
+      "owner": "coverage-right"
+    },
+    {
+      "family": "layout",
+      "owner": "integrator"
     }
   ]
 } as const;
@@ -4349,19 +4837,29 @@ export interface CommandArgs {
   "folders.list": { view: "registered" | "discovered"; };
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
+  "folders.panel.show": { view: "projects" | "folders"; };
   "folders.search": { text?: string; };
   "knowledge.close": { };
+  "knowledge.embedder.install": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
   "knowledge.open": { };
   "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
   "knowledge.search": { query: string; };
   "knowledge.seed.answer": { seedId: string; answer: "accept" | "decline"; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
+  "layout.flyout.close": { };
+  "layout.restore": { };
+  "layout.sheet": { shown: boolean; };
+  "layout.takeover": { };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
   "package.close": { };
   "package.open": { packageId: string; };
+  "project.accomplishment.answer": { accomplishmentId: string; answer: "confirm" | "withdraw"; };
+  "project.candidate.answer": { candidateId: string; answer: "accept" | "ignore"; };
+  "project.close": { };
+  "project.open": { projectId: string; };
   "queue.back": { };
   "queue.close": { };
   "queue.discard.ask": { open: boolean; };

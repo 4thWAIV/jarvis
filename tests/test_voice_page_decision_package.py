@@ -71,7 +71,8 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert code == 0, said
 
     for size in ("809x589", "662x489"):
-        for check in ("the package frame is", "slides fit", "every vote control is visible"):
+        for check in ("the package frame is", "the deck's own styles are in force", "slides fit",
+                      "every vote control is visible"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
@@ -114,7 +115,8 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
     assert code == 0, said
     lines = said.splitlines()
     for size in ("809x589", "662x489"):
-        for check in ("opened it by its title", "the package frame is", "slides fit"):
+        for check in ("opened it by its title", "the package frame is",
+                      "the deck's own styles are in force", "slides fit"):
             assert any(f"ok: {size}: " in line and check in line for line in lines), \
                 (size, check, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
@@ -127,3 +129,30 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
     [(path, _, body)] = stand_in.posts
     assert path.partition("?")[0] == "/api/packages/inbox"
     assert body == (out / "team-lunch-moved-1.0.0.zip").read_bytes()
+
+
+def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
+    """A deck whose deck.css never reaches the frame is the browser's default
+    black text, every slide stacked: the check fails it before any slide is
+    measured, so it is never delivered."""
+    import zipfile
+    from jarvis import decision_check, make_package as mp
+    reason = dashboard_page.why_unavailable()
+    if reason:
+        pytest.skip(reason)
+    made = mp.make_deck(write(tmp_path / "in", small_deck()), tmp_path / "out")
+    bare = tmp_path / "bare.zip"
+    with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(bare, "w") as dst:
+        for item in src.infolist():
+            if item.filename.rsplit("/", 1)[-1] != "deck.css":
+                dst.writestr(item, src.read(item))
+    result = decision_check.check(bare, made.deck, tmp_path / "check")
+    if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
+        pytest.skip("no Playwright Chromium")
+    assert not result.ok
+    assert any("809x589: the deck is not styled: deck.css " in f
+               for f in result.failures), result.failures
+    assert any("its canvas is not styled" in f for f in result.failures), result.failures
+    assert not any("slides fit" in line or "styles are in force" in line
+                   for line in result.passed), result.passed
+    assert (tmp_path / "check" / "809x589" / "unstyled.png").is_file()

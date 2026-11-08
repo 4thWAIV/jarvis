@@ -29,12 +29,16 @@
  *     settings changed; voice input reads them again (voiceSettings.ts).
  *   - "attention" (and every (re)connect): the attention record changed;
  *     updates waiting read again (attention.ts).
+ *   - "projects" (and every (re)connect): a project record changed; the
+ *     Projects list and the open project read again (projects.ts), and the
+ *     Work tab, whose rows name their projects.
  */
 
 import { agentMessage, agentsChanged } from "./agents";
 import { attentionChanged } from "./attention";
 import { foldersChanged } from "./folders";
 import { knowledgeChanged } from "./knowledge";
+import { projectsChanged } from "./projects";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { reported as languageReported } from "./locale";
 import { networkChanged } from "./network";
@@ -72,6 +76,9 @@ export function startSessionsSocket(): void {
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === "knowledge" || snapshot) bump(knowledgeChanged);
+    if (msg.type === "projects" || snapshot) bump(projectsChanged);
+    // A work item's project chip is worked out from the project records.
+    if (msg.type === "projects") bump(workChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "packages" || snapshot) bump(packagesChanged);
     if (msg.type === "attention" || snapshot) bump(attentionChanged);

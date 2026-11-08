@@ -45,6 +45,7 @@ A zip with `package.json` at its root, or inside one folder that holds everythin
 | `brief` | Path inside the zip to a Markdown file: the task the agent carries out. Required when `runs` is `agent`. |
 | `entry` | Path inside the zip to the HTML page that opens. Required when `runs` is `page`. |
 | `story` | Path inside the zip to a story file: what JARVIS says over the page, and what it points at as it says it (see "Telling a page's story"). Only for `runs` `page`; optional. |
+| `layout` | `centre` (the default) or `wide`: the room the page is made for. A `wide` page opens in the centre as any page does, with Take over lit and a line saying it is made for the wider layout; he chooses, and Take over gives it the centre and the right side (takeover mode). Only for `runs` `page`; optional. |
 | `returns` | File globs, relative to the package's folder, for the files that go back to the sender. `**` matches any depth. |
 
 `name`, `version`, `purpose` and `returns` are always required, and so is
@@ -202,6 +203,20 @@ Besides `save` and `listen`, the bridge carries the story:
 |---|---|
 | `{jarvis: "package", type: "story.ready"}` | posts the beat playing now again (the helper says this once loaded) |
 | `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
+
+### The room a page has (page)
+
+The page's frame grows with the centre when he lets it take over the page,
+so the page gets an ordinary `resize` event; the bridge also says so:
+
+| from JARVIS | when |
+|---|---|
+| `{jarvis: "package", type: "layout", mode, width, height}` | once the frame has loaded, and whenever the layout or the frame's size changes; `mode` is `takeover` while this package has taken over the page, else `normal` |
+
+| from the page | what JARVIS does |
+|---|---|
+| `{jarvis: "package", type: "layout.request"}` | offers Take over (lit, with its line), as for a `wide` package; changes nothing itself |
+| `{jarvis: "package", type: "layout.restore"}` | restores the normal layout while this package has taken over; nothing else. The story helper sends it for Option+Shift+T pressed inside the frame, since keys pressed there never reach JARVIS's page. No message lets a page take over by itself. |
 
 ## On the receiver's JARVIS
 

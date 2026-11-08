@@ -32,6 +32,23 @@ def _ev(ws, item, kind, summary, **detail):
     return ws.record(ws.WorkEvent(item.id, kind, summary, detail))
 
 
+def _approve(ws, item):
+    """His approval, the only way anything is done, of an item ready for
+    his review (one with no pieces is reported so first)."""
+    if not ws.get(item.id).pieces:
+        ws.record(ws.WorkEvent(item.id, "update", "In for review.", {"state": "verifying"}))
+    return ws.record(ws.WorkEvent(item.id, ws.APPROVED, "He approved it.", {"where": "page"}))
+
+
+def _piece_done(ws, item, key):
+    """A piece done, as only his approval makes one."""
+    from jarvis import run_store
+    with run_store._connect() as conn:
+        conn.execute("UPDATE work_pieces SET state='done' WHERE item_id=? AND key=?", (item.id, key))
+        conn.commit()
+    return ws.get(item.id)
+
+
 def test_an_item_starts_on_a_folder_or_zip_that_is_there(ws, folder, tmp_path):
     item = ws.create("Speech migration", "folder", folder)
     assert (item.state, item.source, item.source_path) == ("planned", "present", folder)
@@ -66,7 +83,7 @@ def test_pieces_say_exactly_who_is_on_them(ws, folder):
         who={"kind": "agent", "ref": "s-1"}, state="working")
     item = _ev(ws, item, "piece", "Tim reviews it.", key="review", who={"kind": "tim"})
     assert [(p.key, p.who.kind, p.who.ref, p.state) for p in item.pieces] == [
-        ("engine", "agent", "s-1", "working"), ("review", "tim", None, "planned")]
+        ("engine", "agent", "s-1", "activity_unknown"), ("review", "tim", None, "planned")]
     item = _ev(ws, item, "piece", "Handed to a run.", key="engine", who={"kind": "run", "ref": "r-9"})
     assert item.pieces[0].who == ws.Who("run", "r-9") and item.pieces[0].title == "Wire the engine"
     with pytest.raises(ws.WorkRefused, match="says who"):
@@ -78,7 +95,7 @@ def test_pieces_say_exactly_who_is_on_them(ws, folder):
 def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
     item = ws.create("Speech migration", "folder", folder)
     item = _ev(ws, item, "update", "Engine wired.", state="working")
-    assert (item.state, item.headline) == ("working", "Engine wired.")
+    assert (item.state, item.headline) == ("activity_unknown", "Engine wired.")
     item = _ev(ws, item, "decision_needed", "Which engine is the default?", key="engine",
                options=["Kroko", "Apple"], recommendation="Kroko")
     assert item.state == "waiting_on_tim" and item.reported_state == "working"
@@ -86,12 +103,12 @@ def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
     item = _ev(ws, item, "update", "Tests running.")
     assert item.headline == "Which engine is the default?", "the decision keeps priority"
     item = _ev(ws, item, "decision_made", "He chose.", key="engine", answer="Kroko", where="voice")
-    assert (item.state, item.decisions, item.headline) == ("working", [], "He chose.")
+    assert (item.state, item.decisions, item.headline) == ("activity_unknown", [], "He chose.")
     with pytest.raises(ws.WorkRefused, match="No decision engine is open"):
         _ev(ws, item, "decision_made", "Again.", key="engine", answer="Apple")
     answered = ws.events(item.id, kinds={"decision_made"})
     assert answered[-1].detail == {"key": "engine", "answer": "Kroko", "where": "voice"}
-    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn; ask with a new key"):
+    with pytest.raises(ws.WorkRefused, match="already answered or closed; ask with a new key"):
         _ev(ws, item, "decision_needed", "Which voice?", key="engine", options=["Fish"])
     assert ws.get(item.id).decisions == [], "an answered key is never re-opened"
 
@@ -105,18 +122,19 @@ def test_the_latest_events_are_the_newest_however_long_the_log(ws, folder):
     assert newest[0].seq < newest[-1].seq
 
 
-def test_a_working_item_with_nothing_reported_reads_quiet(ws, folder, monkeypatch):
+def test_a_claimed_working_item_never_reads_as_live_activity(ws, folder, monkeypatch):
     item = _ev(ws, ws.create("Speech", "folder", folder), "update", "Go.", state="working")
     assert not item.quiet
     real = time.time
     monkeypatch.setattr(ws.time, "time", lambda: real() + ws.QUIET_AFTER_SEC + 1)
-    assert ws.get(item.id).quiet
+    assert ws.get(item.id).state == "activity_unknown"
+    assert not ws.get(item.id).quiet
 
 
 def test_the_list_puts_done_last_and_finds_by_title(ws, folder):
     a = ws.create("Speech migration", "folder", folder)
     b = ws.create("Rebrand", "folder", folder)
-    _ev(ws, b, "update", "Shipped.", state="done")
+    _approve(ws, b)
     assert [i.title for i in ws.listing()] == ["Speech migration", "Rebrand"]
     assert [i.id for i in ws.find("speech-migration")] == [a.id]
     assert [i.id for i in ws.find(b.id)] == [b.id]
@@ -177,7 +195,7 @@ def test_a_piece_waits_on_pieces_it_names_and_the_order_follows(ws, folder):
     assert [p.key for p in item.pieces] == ["design", "build", "ship"]
     assert {p.key: p.waits_for for p in item.pieces} == {
         "design": [], "build": ["design"], "ship": ["build", "design"]}
-    item = _ev(ws, item, "piece", "Designed.", key="design", state="done")
+    item = _piece_done(ws, item, "design")
     assert {p.key: p.waits_for for p in item.pieces}["ship"] == ["build"]
     for after, why in ((["design", "ship"], "come after itself"),
                        (["nothing"], "no piece nothing"), (["Bad Key"], "lowercase")):
@@ -222,8 +240,10 @@ def test_items_group_by_area_else_by_source_folder(ws, folder, tmp_path):
 def test_blocked_and_waiting_pieces_are_counted_on_the_item(ws, folder):
     item = ws.create("Rebrand", "folder", folder)
     tim = {"kind": "tim"}
-    _ev(ws, item, "piece", "Stuck.", key="a", who=tim, state="blocked")
-    _ev(ws, item, "piece", "Asks him.", key="b", who=tim, state="waiting_on_tim")
+    _ev(ws, item, "decision_needed", "Which?", key="which")
+    _ev(ws, item, "piece", "Stuck.", key="a", who=tim, state="blocked", until="CI is down")
+    _ev(ws, item, "piece", "Asks him.", key="b", who=tim, state="waiting_on_tim",
+        until="decision:which")
     item = _ev(ws, item, "piece", "Fine.", key="c", who=tim, state="working")
     assert (item.blocked_pieces, item.waiting_pieces) == (1, 1)
 
@@ -248,21 +268,28 @@ def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, t
 def test_blockers_list_decisions_then_the_item_then_pieces(ws, folder):
     item = ws.create("Rebrand", "folder", folder)
     tim = {"kind": "tim"}
-    _ev(ws, item, "piece", "Design.", key="design", who=tim, state="working")
-    _ev(ws, item, "piece", "Asks him.", key="copy", who=tim, state="waiting_on_tim")
-    _ev(ws, item, "piece", "Stuck on fonts.", key="fonts", who=tim, state="blocked")
-    _ev(ws, item, "piece", "After design.", key="build", who=tim, after=["design"])
     _ev(ws, item, "decision_needed", "Which logo?", key="logo", options=["A", "B"], package="logo-deck")
-    item = _ev(ws, item, "update", "CI is red.", state="blocked")
+    _ev(ws, item, "piece", "Design.", key="design", who=tim, state="working")
+    _ev(ws, item, "piece", "Asks him.", key="copy", who=tim, state="waiting_on_tim",
+        until="decision:logo")
+    _ev(ws, item, "piece", "Stuck on fonts.", key="fonts", who=tim, state="blocked",
+        until="the font licence")
+    item = _ev(ws, item, "piece", "After design.", key="build", who=tim, after=["design"])
+    with pytest.raises(ws.WorkRefused, match="worked out from its pieces"):
+        _ev(ws, item, "update", "CI is red.", state="blocked")
     assert [(b.kind, b.key) for b in item.blockers] == [
-        ("decision", "logo"), ("blocked", ""), ("piece_blocked", "fonts"),
+        ("decision", "logo"), ("piece_blocked", "fonts"),
         ("piece_waiting", "copy"), ("piece_after", "build")]
-    assert item.blockers[2].text == "Stuck on fonts." and item.blockers[4].waits_for == ["design"]
+    assert item.blockers[1].text == "Stuck on fonts." and item.blockers[3].waits_for == ["design"]
+    assert item.blockers[1].waits_for == ["the font licence"]
+    assert item.blockers[2].waits_for == ["decision:logo"]
     assert item.decisions[0].package == "logo-deck"
     with pytest.raises(ws.WorkRefused, match="package is named"):
         _ev(ws, item, "decision_needed", "Bad?", key="bad", package="no spaces allowed")
-    item = _ev(ws, item, "update", "Done.", state="done")
-    assert item.blockers == []
+    with pytest.raises(ws.WorkRefused, match="Done is Tim's to give"):
+        _ev(ws, item, "update", "Done.", state="done")
+    with pytest.raises(ws.WorkRefused, match="still open"):
+        _approve(ws, item)
 
 
 def test_answered_and_withdrawn_decisions_are_kept_newest_first(ws, folder):
@@ -279,7 +306,7 @@ def test_answered_and_withdrawn_decisions_are_kept_newest_first(ws, folder):
         ("colour", "withdrawn", "Asked before he saw the designs."), ("tone", "page", "dry")]
     with pytest.raises(ws.WorkRefused, match="No decision colour is open"):
         _ev(ws, item, "decision_made", "Late.", key="colour", answer="blue")
-    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn"):
+    with pytest.raises(ws.WorkRefused, match="already answered or closed"):
         _ev(ws, item, "decision_needed", "Colour again?", key="colour")
 
 
@@ -287,7 +314,7 @@ def test_done_items_linger_then_move_to_history_and_closed_ones_at_once(ws, fold
     a = ws.create("Shipped", "folder", folder)
     b = ws.create("Dropped", "folder", folder)
     c = ws.create("Going", "folder", folder)
-    _ev(ws, a, "update", "Shipped.", state="done")
+    _approve(ws, a)
     b = _ev(ws, b, "closed", "No longer wanted.")
     assert b.history and b.closed_at and b.blockers == []
     assert [i.id for i in ws.listing()] == [c.id, a.id]
@@ -306,11 +333,62 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     _ev(ws, item, "piece", "Started.", key="engine", who={"kind": "tim"}, state="working")
     item = _ev(ws, item, "piece", "Planned.", key="docs", who={"kind": "tim"})
     engine, docs = (next(p for p in ws.get(item.id).pieces if p.key == k) for k in ("engine", "docs"))
-    assert engine.quiet_at == engine.note_at + ws.QUIET_AFTER_SEC
+    assert engine.quiet_at is None
+    assert engine.state == "activity_unknown"
     assert docs.quiet_at is None
     item = ws.get(item.id)
-    assert item.quiet_at is None   # the item itself is planned
+    assert item.state == "activity_unknown", "a piece claims work: a claim, never telemetry"
     item = _ev(ws, item, "update", "Going.", state="working")
-    assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
-    item = _ev(ws, item, "piece", "In.", key="engine", state="done")
+    assert item.quiet_at is None
+    assert item.state == "activity_unknown"
+    _ev(ws, item, "piece", "In.", key="engine", state="verifying")
+    _ev(ws, item, "piece", "In.", key="docs", state="verifying")
+    item = _approve(ws, item)
     assert next(p for p in item.pieces if p.key == "engine").quiet_at is None
+
+
+@pytest.mark.parametrize("owner", ["agent", "run", "workflow", "tim"])
+def test_reporters_cannot_assert_generation_for_any_owner(ws, folder, monkeypatch, owner):
+    now = [1000.0]
+    monkeypatch.setattr(ws.time, "time", lambda: now[0])
+    item = ws.create("Claim", "folder", folder, state="working")
+    on = {"kind": owner, **({"ref": "shared-session"} if owner != "tim" else {})}
+    item = _ev(ws, item, "piece", "Claim", key="claimed", who=on, state="working")
+    for when in (1000.0, 1000.1, 1100.0, 2000.0):
+        now[0] = when
+        item = _ev(ws, item, "update", "Another heartbeat; still working", state="working")
+        assert item.state == "activity_unknown"
+        assert item.pieces[0].state == "activity_unknown"
+        assert item.activity_reason and item.pieces[0].activity_reason
+        assert item.quiet_at is None and item.pieces[0].quiet_at is None
+        assert ws.listing()[0].state != "working"
+        assert ws.find(item.id)[0].state != "working"
+    # A restart cannot turn a persisted claim into evidence.
+    importlib.reload(ws)
+    assert ws.get(item.id).state == "activity_unknown"
+
+
+def test_unrelated_session_activity_and_tools_cannot_promote_work(ws, folder):
+    from jarvis import brain_activity
+    one = ws.create("One", "folder", folder, state="working")
+    two = ws.create("Two", "folder", folder, state="working")
+    for item in (one, two):
+        _ev(ws, item, "piece", "Assigned", key="task",
+            who={"kind": "agent", "ref": "same-session"}, state="working")
+    # Even fresh streaming is not assignment bound; tools do not imply tokens.
+    for stage in ("started", "first_output", "streaming", "completed"):
+        brain_activity.note("turn", stage, session_id="same-session", id="other-turn")
+        for item in (one, two):
+            assert ws.get(item.id).state == "activity_unknown"
+    brain_activity.note("tool", "started", session_id="same-session", id="tool")
+    assert all(i.state != "working" for i in ws.listing())
+
+
+def test_legacy_database_claim_is_projected_and_history_is_preserved(ws, folder):
+    item = ws.create("Legacy", "folder", folder)
+    with ws._connect() as conn:
+        conn.execute("UPDATE work_items SET state='working' WHERE id=?", (item.id,))
+    loaded = ws.get(item.id)
+    assert loaded.state == "activity_unknown"
+    assert loaded.reported_state == "working"
+    assert "working" not in ws.PUBLIC_STATES

@@ -50,6 +50,7 @@ def render() -> str:
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("{{needs_dir}}", str(data_paths.needs_dir()))
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
+            .replace("{{answers_dir}}", str(data_paths.answers_dir()))
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
             .replace("{{make_package}}", _make_package())

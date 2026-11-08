@@ -72,14 +72,15 @@ _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg
 
 def describe(package: Package) -> dict:
     """A package as the page shows it; `story` is its story's outline, or
-    None (no story, or one that can no longer be told)."""
+    None (no story, or one that can no longer be told); `layout` the room
+    its page is made for."""
     m = package.manifest
     try:
         story = package.story()
     except PackageError:
         story = None
     return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
-            "runs": m.runs, "entry": m.entry, "source": package.source,
+            "runs": m.runs, "entry": m.entry, "layout": m.layout, "source": package.source,
             "sources": list(package.sources),
             "story": story.outline() if story is not None else None}
 

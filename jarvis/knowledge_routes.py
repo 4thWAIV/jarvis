@@ -17,6 +17,9 @@ is followed by a `knowledge` hint on /ws/sessions (`on_change`).
   POST /api/knowledge/indexes        {key, choice: pin|forbid|clear}
   GET  /api/knowledge/seeds          topics JARVIS offers to create, and what each holds
   POST /api/knowledge/seeds/{id}     {action: accept|decline}
+  POST /api/knowledge/context        {purpose, project, include_received}: the pack
+  GET  /api/knowledge/embedder       the embedding model: installed, runnable, embedded so far
+  POST /api/knowledge/embedder/install   download, check and install it (in the background)
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_al
 _MAINTAIN = {"action", "source"}
 _INDEX = {"key", "choice"}
 _SEED = {"action"}
+_CONTEXT = {"purpose", "project", "include_received"}
 
 
 def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
@@ -121,6 +125,26 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         return await run(lambda: ka.answer_seed(ctx, seed=seed_id, action=str(b.get("action") or "")),
                          changes=True)
 
+    async def context(request: Request):
+        b = await fields(request, _CONTEXT)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.work_context(ctx, purpose=str(b.get("purpose") or ""),
+                                                 project=b.get("project"),
+                                                 include_received=b.get("include_received") is True))
+
+    async def embedder():
+        return await run(lambda: ka.embedding_model(ctx))
+
+    async def install_embedder():
+        try:
+            return JSONResponse(ka.install_embedding_model(ctx))
+        except ka.Unavailable as e:
+            return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
+
+    app.add_api_route(f"{PREFIX}/embedder", embedder, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/embedder/install", install_embedder, methods=["POST"])
+    app.add_api_route(f"{PREFIX}/context", context, methods=["POST"])
     app.add_api_route(f"{PREFIX}/seeds", seeds, methods=["GET"])
     app.add_api_route(f"{PREFIX}/seeds/{{seed_id}}", answer_seed, methods=["POST"])
     app.add_api_route(f"{PREFIX}/indexes", indexes, methods=["GET"])

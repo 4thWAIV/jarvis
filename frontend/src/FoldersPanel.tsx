@@ -1,6 +1,9 @@
 /**
- * The right panel's Folders tab: the registered folders as a compact list
- * to choose from, from the same store as the centre's Folders view
+ * The right panel's Projects and folders tab (design section 14). Its
+ * switch (`folders.panel.show`) shows it either as projects first, then the
+ * independent folders (in no project), then what waits for his yes
+ * (ProjectsSection.tsx), or as the plain folder list below: the registered
+ * folders as a compact list to choose from, from the same store as the centre's Folders view
  * (folders.ts). A row is the role's mark, the name, the node and the
  * availability in words; the selected folder is marked as it is in the
  * centre. Choosing a row opens it in the centre's Folders view, where its
@@ -16,6 +19,8 @@
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
+import { ProjectsSection } from "./ProjectsSection";
+import { panelView } from "./projects";
 import { candidates, catalog, matches, nodeWords, selectedFolder, type Folder } from "./folders";
 import { useT } from "./locale";
 import { createStore } from "./store";
@@ -56,10 +61,15 @@ export function FoldersPanel() {
   const folders = (live.value?.folders ?? []).filter((f) => shownBy(text, f));
   const unavailable = (live.value?.folders ?? []).filter((f) => f.location.availability !== "available").length;
   const discovered = found.value?.discovered.length ?? 0;
+  const view = useSyncExternalStore(panelView.subscribe, panelView.get);
   return (
     <div className="right-view folders-panel" ref={ui.whole}>
+      <PanelSwitch view={view} partRef={ui.part("switch")} />
+      {view === "projects" ? <ProjectsSection row={(f) => <FolderRow key={f.id} folder={f}
+                                                                selected={f.id === selected} />} />
+        : <>
       <div className="folders-panel-heading">
-        <span>{t("tabs.right.folders")}</span>
+        <span>{t("right.projects.show.folders")}</span>
         {live.value && (
           <span className="folders-panel-count">
             {t("right.folders.count", { count: live.value.folders.length })}
@@ -92,12 +102,29 @@ export function FoldersPanel() {
                                                  : bind("main.tab.select", { tab: "folders" }))}>
         {discovered ? t("right.folders.openDiscovered", { count: discovered }) : t("right.folders.open")}
       </button>
+      </>}
+    </div>
+  );
+}
+
+/** Projects or folders: the tab's switch, the same command as the brain's. */
+function PanelSwitch({ view, partRef }: { view: "projects" | "folders";
+                                           partRef: (el: Element | null) => void }) {
+  const t = useT();
+  return (
+    <div className="folders-panel-switch" role="radiogroup" aria-label={t("tabs.right.folders")} ref={partRef}>
+      {(["projects", "folders"] as const).map((v) => (
+        <button key={v} type="button" role="radio" aria-checked={view === v}
+                className={`folders-panel-switch-option${view === v ? " selected" : ""}`}
+                {...bindingProps(bind("folders.panel.show", { view: v }))}>
+          {t(`right.projects.show.${v}`)}</button>
+      ))}
     </div>
   );
 }
 
 /** One registered folder's row, and its presentation for the brain. */
-function FolderRow({ folder: f, selected }: { folder: Folder; selected: boolean }) {
+export function FolderRow({ folder: f, selected }: { folder: Folder; selected: boolean }) {
   const ui = useUiTarget({ ref: { region: "right", view: "right.folders", kind: "folder", key: f.id },
                            label: f.display_name, socket: RIGHT_SOCKET });
   return (

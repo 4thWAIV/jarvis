@@ -69,7 +69,8 @@ CATEGORIES: dict[str, Category] = {
         (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
     "work": Category(
         "Track work items and report who is on each piece to the Work tab.",
-        (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"))),
+        (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"),
+         ("GET", r"/api/work/answers"))),
     "packages": Category(
         "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
         (("POST", r"/api/packages/inbox"),)),

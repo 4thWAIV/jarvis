@@ -82,11 +82,14 @@
     "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
-    "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
+    "workBlocker": "^(decision|no_follow_up|blocked|item_waiting|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "project": "^[0-9a-f-]{36}$",
+    "projectCandidate": "^[0-9a-f-]{36}$",
+    "accomplishment": "^[0-9a-f-]{36}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": ["enum", "string", "integer", "boolean", "key"],
@@ -101,7 +104,9 @@
     "settings.opened": "The Settings view opened.",
     "menu.opened": "The menu opened.",
     "list.paged": "A list loaded or showed another page.",
-    "list.filtered": "A list's filter changed."
+    "list.filtered": "A list's filter changed.",
+    "layout.taken-over": "The centre widened over the right panel, which folded to a rail; the takeover bar replaced the centre tabs.",
+    "layout.restored": "The normal layout came back: the centre tabs, the notices and the right panel."
   },
   "pipeline": {
     "source": "orb.source",
@@ -140,6 +145,7 @@
     "families/diagnostics.json",
     "families/folders.json",
     "families/conversation.json",
-    "families/packages.json", "families/knowledge.json"
+    "families/packages.json", "families/knowledge.json", "families/projects.json",
+    "families/layout.json"
   ]
 }

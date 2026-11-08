@@ -38,6 +38,8 @@ export interface OpenItem {
   summary: string;
   detail: { options?: string[]; recommendation?: string; until?: string; [k: string]: unknown };
   opened_at: number;
+  /** A wait with no link to an answer, open for over a day. */
+  unlinked: boolean;
 }
 
 export interface Workflow {
@@ -173,7 +175,7 @@ export const workflowsChanged = createStore(0);
 
 // ── The workflow (or subagent) open in the centre ────────────────────────
 
-const workflowSlot = detailSlot<string>("workflow");
+const workflowSlot = detailSlot<string>("workflow", Object.is, (key) => key);
 
 /** The workflow whose detail the centre area shows (or a subagent's key,
  *  `subagentOf`), or null. Writing it runs `workflow.open`,

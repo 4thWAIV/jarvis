@@ -105,6 +105,7 @@ ERRORS: dict[str, tuple[int, str]] = {
     "stale_cursor": (409, "The folder's location changed since that page; start again."),
     "idempotency_conflict": (409, "That request key was already used for a different request."),
     "reader_changed": (409, "That location would now be read differently; check it again."),
+    "too_large": (413, "That folder is too large to take as one reference."),
 }
 
 

@@ -512,7 +512,22 @@ TOOL_SPECS = [
                               "description": ("A registered folder's ID, from "
                                               "list_folders or find_folder, to run "
                                               "in instead of a project. Never "
-                                              "together with project.")},
+                                              "together with project. With "
+                                              "project_id or work_id, one of "
+                                              "their folders.")},
+                "project_id": {"type": "string",
+                               "description": ("One of his project records' IDs, "
+                                               "from projects: it "
+                                               "runs in that project's home "
+                                               "folder, or the folder_id given if "
+                                               "it is one of the project's. Never "
+                                               "together with project.")},
+                "work_id": {"type": "string",
+                            "description": ("A piece of work's ID, from works: it "
+                                            "runs in folder_id when that is a "
+                                            "folder of the work's projects or its "
+                                            "own, else its primary project's home. "
+                                            "Never together with project.")},
                 "prompt": {"type": "string",
                            "description": ("The complete instruction for the run, "
                                            "already written out.")},
@@ -2141,6 +2156,18 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "set_motion",
+        "description": (
+            "Settings, You's Steady on every open JARVIS page, only when he asks: `steady` "
+            "holds everything still (no travelling glow, flow or flash; every look kept), "
+            "`full` brings the motion back."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"motion": {"type": "string", "enum": ["steady", "full"]}},
+            "required": ["motion"],
+        },
+    },
+    {
         "name": "mute_speech",
         "description": (
             "Mute JARVIS's speech (the page's speaker), only when he asks: from now on JARVIS "
@@ -2184,6 +2211,24 @@ TOOL_SPECS = [
             "The knowledge engine's state (Diagnostics' Knowledge row): whether it is on, "
             "running, paused for the conversation, how much it has read, its last ingest "
             "pass and how many link proposals wait."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "embedding_model",
+        "description": (
+            "The embedding model vector search runs on (multilingual-e5-small): whether it "
+            "is installed and runnable, its download size, how an install is going, and how "
+            "much of what JARVIS has read is embedded and how much waits. The Knowledge "
+            "view's Vector search section."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "install_embedding_model",
+        "description": (
+            "Only when he says so: download the embedding model (about 135 MB, checked "
+            "against its published SHA-256) and install it, in the background, as the "
+            "Knowledge view's Install does. Vector search starts once it is in place; "
+            "embedding_model reports the progress."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -2261,6 +2306,34 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["refresh", "forget"]},
             "source": {"type": "string"}}, "required": ["action"]},
+    },
+    {"name": "projects", "description": "His projects (areas of work with accomplishments): each with its lifecycle, folder count, home folder and open pieces of work. Not list_projects, which lists folders under the projects root. The JSON comes a page at a time.", "inputSchema": {"type": "object", "properties": {"archived": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}}}},
+    {"name": "project_detail", "description": "One project in full, by its name or ID: summary, folders with their part and availability, open pieces of work, accomplishments (confirmed and proposed), recent runs, the topics it touches, its old names, and agents working in its folders now.", "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}, "page": {"type": "integer", "minimum": 1}}, "required": ["project"]}},
+    {"name": "project_candidates", "description": "Projects JARVIS proposes from his registered source folders and the project names older records use, each with its evidence, waiting for his yes. refresh true looks again first.", "inputSchema": {"type": "object", "properties": {"state": {"type": "string", "enum": ["proposed", "ignored", "accepted"]}, "refresh": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}}}},
+    {"name": "project_history", "description": "A project's history, newest first: every change to it, a page at a time (before: the last seq seen).", "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}, "before": {"type": "integer"}, "page": {"type": "integer", "minimum": 1}}, "required": ["project"]}},
+    {"name": "works", "description": "Pieces of work (one intent spanning one or several projects), open by default, optionally of one project.", "inputSchema": {"type": "object", "properties": {"state": {"type": "string", "enum": ["open", "done", "dropped"]}, "project": {"type": "string"}, "page": {"type": "integer", "minimum": 1}}}},
+    {"name": "work_detail", "description": "One piece of work: its title, outcome, projects (one primary) and the folders it uses.", "inputSchema": {"type": "object", "properties": {"work": {"type": "string"}, "page": {"type": "integer", "minimum": 1}}, "required": ["work"]}},
+    {"name": "change_project", "description": "Only when he says so: add a project (name, summary), rename it, set its summary or lifecycle (active, paused, done, archived), or archive it.", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["add", "rename", "summary", "lifecycle", "archive"]}, "project": {"type": "string"}, "name": {"type": "string"}, "summary": {"type": "string"}, "lifecycle": {"type": "string", "enum": ["active", "paused", "done", "archived"]}}, "required": ["action"]}},
+    {"name": "change_project_folder", "description": "Only when he says so: link a registered folder to a project (part source, docs, data, output or reference), unlink it, make it the project's home (where agents start), change its part, or set what the knowledge engine may read there (scope docs, text or off).", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["link", "unlink", "home", "part", "scope"]}, "project": {"type": "string"}, "folder_id": {"type": "string"}, "part": {"type": "string", "enum": ["source", "docs", "data", "output", "reference"]}, "index_scope": {"type": "string", "enum": ["docs", "text", "off"]}}, "required": ["action", "project", "folder_id"]}},
+    {"name": "change_project_candidate", "description": "Only when he says so: accept a proposed project (optionally renamed, with the folders he chose and its home), merge it into one of his projects (into), ignore it, or restore an ignored one.", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["accept", "merge", "ignore", "restore"]}, "candidate": {"type": "string"}, "name": {"type": "string"}, "folders": {"type": "array", "items": {"type": "string"}}, "home": {"type": "string"}, "into": {"type": "string"}}, "required": ["action", "candidate"]}},
+    {"name": "change_work", "description": "Only when he says so: start a piece of work (title, outcome, projects with the primary first, an optional independent folder), rename it, set its outcome, add or remove a project or folder, close it, drop it or reopen it.", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "rename", "outcome", "add_project", "remove_project", "add_folder", "remove_folder", "close", "drop", "reopen"]}, "work": {"type": "string"}, "title": {"type": "string"}, "outcome": {"type": "string"}, "projects": {"type": "array", "items": {"type": "string"}}, "project": {"type": "string"}, "folder_id": {"type": "string"}}, "required": ["action"]}},
+    {"name": "change_accomplishment", "description": "Only when he says so: record an accomplishment on a project (confirmed at once), propose one, or confirm or withdraw a proposed one. Only confirmed ones count.", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["record", "propose", "confirm", "withdraw"]}, "project": {"type": "string"}, "accomplishment": {"type": "string"}, "title": {"type": "string"}, "detail": {"type": "string"}, "work": {"type": "string"}, "evidence": {"type": "array", "items": {"type": "string"}}}, "required": ["action"]}},
+    {
+        "name": "work_context",
+        "description": (
+            "What JARVIS already holds about a piece of work, before starting or briefing it: "
+            "the project's notes, the topics it touches with their status (planned is planned, "
+            "not implemented), and the passages that match, with their sources. purpose is the "
+            "task in his words; project its project. include_received adds other people's "
+            "words, walled. The same pack a run gets when run context is on. With "
+            "work_id or project_id (or a project name one record goes by), the pack is "
+            "made from the records: the work, its projects' summaries, folders and "
+            "confirmed accomplishments."),
+        "inputSchema": {"type": "object", "properties": {
+            "purpose": {"type": "string"}, "project": {"type": "string"},
+            "project_id": {"type": "string"}, "work_id": {"type": "string"},
+            "include_received": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}},
+            "required": ["purpose"]},
     },
     {
         "name": "knowledge_seeds",
@@ -2412,6 +2485,26 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "review_work",
+        "description": (
+            "His review of a work item, only when he gives it, the Work view's Approve, Not "
+            "done yet and Add work: `approve` makes it done (done is his alone to give; "
+            "refused while a decision of his is open or a piece waits); `not_done` sends it "
+            "back to working with his note in `words`; `add_work` adds a new piece in his "
+            "`words`. Its agents are told."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Its title as he said it, or its id."},
+                "action": {"type": "string", "enum": ["approve", "not_done", "add_work"]},
+                "words": {"type": "string",
+                          "description": "His note (not_done) or the work to add (add_work), "
+                                         "in his words."},
+            },
+            "required": ["item", "action"],
+        },
+    },
+    {
         "name": "package_inbox",
         "description": (
             "The packages agents have sent him, waiting in his package inbox (the Queue tab's "
@@ -2465,24 +2558,32 @@ TOOL_SPECS = [
         },
     },
     {
-        "name": "return_package_answers",
+        "name": "sign_off_package",
         "description": (
-            "Send his answers to a package back, once every decision is answered (or, for a "
-            "package that asks nothing, once he has finished with it), and only when he says "
-            "so: the package's workflow gets them as its decisions, and a capture addressed to "
-            "the session that sent it holds them, to read back with read_capture and send "
-            "with steer_session only on his yes, as every message to a session."),
+            "Sign a package off, only when he says he is done with it (\"I'm done with the "
+            "tea one\", \"sign it off\"): any package, from his inbox or one unpacked here "
+            "some other way, by its id or his words for it; the page's Done does the same. "
+            "Whatever he answered goes back as its workflow's decisions and in a capture "
+            "addressed to the session that sent it (unanswered questions said to be "
+            "unanswered; for a package that asks nothing, that he has reviewed it): read that "
+            "capture back with read_capture and send it with steer_session only on his yes. "
+            "A Work item decision that names the package gets the answer he gave in the "
+            "package, or is closed as signed off without one. The package is closed and its "
+            "view on his screen closes. Ask about unanswered questions first only if he "
+            "seems to have missed them."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string"}},
+            "properties": {"package": {"type": "string",
+                                       "description": "Its id, or its title or sender as he said it."}},
             "required": ["package"],
         },
     },
     {
         "name": "close_inbox_package",
         "description": (
-            "Close a package in his inbox, only when he asks: after its answers went back it "
-            "is done; before, it is dismissed (set aside, whatever was answered kept)."),
+            "Dismiss a package from his inbox, only when he asks to set it aside without "
+            "signing it off: nothing goes back to its sender, and whatever was answered is "
+            "kept. When he is done with it, sign_off_package instead."),
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string"}},

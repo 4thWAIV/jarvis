@@ -168,6 +168,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__voice_turn",
     # Mute and Mic off, never their opposites: the brain only makes input quieter.
     "mcp__jarvis__quiet_microphone",
+    "mcp__jarvis__set_motion",
     # Mute speech and all audio off, never their opposites: only ever quieter.
     "mcp__jarvis__mute_speech",
     "mcp__jarvis__turn_audio_off",
@@ -184,6 +185,21 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__change_knowledge_index",
     "mcp__jarvis__knowledge_seeds",
     "mcp__jarvis__change_knowledge_seed",
+    "mcp__jarvis__work_context",
+    "mcp__jarvis__embedding_model",
+    "mcp__jarvis__install_embedding_model",
+    # Project records (project_service.py): reads walled, changes acting.
+    "mcp__jarvis__projects",
+    "mcp__jarvis__project_detail",
+    "mcp__jarvis__project_candidates",
+    "mcp__jarvis__project_history",
+    "mcp__jarvis__works",
+    "mcp__jarvis__work_detail",
+    "mcp__jarvis__change_project",
+    "mcp__jarvis__change_project_folder",
+    "mcp__jarvis__change_project_candidate",
+    "mcp__jarvis__change_work",
+    "mcp__jarvis__change_accomplishment",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",
@@ -193,12 +209,13 @@ ALLOWED_TOOLS = [
     # to a decision as an ACTING_TOOL.
     "mcp__jarvis__work_status",
     "mcp__jarvis__answer_work_decision",
+    "mcp__jarvis__review_work",
     # The package inbox (package_inbox.py): the backlog read, walled; opening,
     # answering, sending back and closing as ACTING_TOOLS.
     "mcp__jarvis__package_inbox",
     "mcp__jarvis__open_inbox_package",
     "mcp__jarvis__answer_package_decision",
-    "mcp__jarvis__return_package_answers",
+    "mcp__jarvis__sign_off_package",
     "mcp__jarvis__close_inbox_package",
     "mcp__jarvis__retry_run",
     # Self-update (self_update.py): the Updates section's check, and its

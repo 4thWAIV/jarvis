@@ -131,22 +131,24 @@ def _walled(text: str) -> None:
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
              "update_status", "attachment_location", "attention_updates", "work_status",
-             "knowledge_search", "knowledge_entity", "knowledge_proposals")
+             "knowledge_search", "knowledge_entity", "knowledge_proposals", "work_context",
+             "projects", "project_detail", "project_candidates", "project_history", "works", "work_detail")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
-            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
+            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone", "set_motion",
             "mute_speech", "turn_audio_off", "mark_updates_seen",
-            "set_attention_settings", "answer_work_decision",
+            "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
-            "change_knowledge_seed")
+            "change_knowledge_seed", "install_embedding_model", "change_project", "change_project_folder",
+            "change_project_candidate", "change_work", "change_accomplishment")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
-                 "knowledge_indexes", "knowledge_seeds")
+                 "knowledge_indexes", "knowledge_seeds", "embedding_model")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
@@ -183,6 +185,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("stop_speaking", {}),
     ("voice_turn", {"action": "send_now"}),
     ("quiet_microphone", {"state": "muted"}),
+    ("set_motion", {"motion": "steady"}),
     ("mute_speech", {}),
     ("turn_audio_off", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
@@ -192,11 +195,17 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("mark_updates_seen", {}),
     ("set_attention_settings", {"changes": {"away": True}}),
     ("answer_work_decision", {"item": "x", "answer": "yes"}),
+    ("review_work", {"item": "x", "action": "approve"}),
     ("link_knowledge", {"action": "reject", "proposal": "x"}),
     ("change_topic", {"action": "create", "name": "X"}),
     ("reindex_knowledge", {"action": "refresh"}),
     ("change_knowledge_index", {"key": "document|language,media_type", "choice": "pin"}),
     ("change_knowledge_seed", {"seed": "denice", "action": "decline"}),
+    ("change_project", {"action": "add", "name": "X"}),
+    ("change_project_folder", {"action": "link", "project": "x", "folder_id": "y"}),
+    ("change_project_candidate", {"action": "ignore", "candidate": "x"}),
+    ("change_work", {"action": "start", "title": "x", "projects": ["x"]}),
+    ("change_accomplishment", {"action": "record", "project": "x", "title": "x"}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -854,6 +863,25 @@ def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wi
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "quiet_microphone" in names
     assert not names & {"unmute", "start_listening", "microphone_on", "listen"}
+
+
+def test_set_motion_sends_every_page_steady_or_full_as_he_asks(wired, monkeypatch):
+    """Settings, You's Steady is this browser's (motion.ts); the brain asks
+    every open page to hold still or move again, and nothing else."""
+    sent = []
+
+    async def emit(frame):
+        sent.append(frame)
+
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", set())
+    assert "No JARVIS page is open" in _call(wired, "set_motion", motion="steady")["text"]
+    wired.server.voice_clients.add(object())
+    assert "Steady" in _call(wired, "set_motion", motion="steady")["text"]
+    assert "back" in _call(wired, "set_motion", motion="full")["text"]
+    assert "Nothing was changed" in _call(wired, "set_motion", motion="wobbly")["text"]
+    assert sent == [{"type": "motion", "motion": "steady"}, {"type": "motion", "motion": "full"}]
+    assert not _call(wired, "set_motion", origin="event", motion="steady")["ok"]
 
 
 # ── the speaker and the headset: speech mute and all audio off ─────────────

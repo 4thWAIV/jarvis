@@ -61,7 +61,7 @@ def _item(deciding=True, quiet=False):
         blockers.insert(0, {"kind": "decision", "key": "engine", "title": DECISION["question"],
                             "text": "", "waits_for": []})
     return {
-        "id": "work-1", "title": "Speech migration", "source_kind": "folder",
+        "id": "work-1", "title": "Speech migration", "source_kind": "folder", "projects": [],
         "source_path": "/Users/someone/code/speech", "source": "present",
         "state": "waiting_on_tim" if deciding else "working", "reported_state": "working",
         "quiet": quiet, "latest_update": "Engine wired.",
@@ -240,7 +240,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         # Pieces: in order, each with its note, worker, what it waits for and evidence.
         await page.click("#work-detail .work-tabs [role=tab]:text('Pieces')")
         await async_api.expect(page.locator("#work-detail .work-piece .work-state")).to_have_text(
-            ["Verifying", "Blocked"])
+            ["Ready for review", "Blocked"])
         worker = page.locator("#work-detail .work-piece-worker")
         assert "own words" in await worker.get_attribute("title")
         notes = await page.locator("#work-detail .work-piece-note").all_text_contents()
@@ -262,7 +262,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         before = work.lists
         sessions.ws.send(json.dumps({"type": "work"}))
         await page.wait_for_function(
-            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'working'",
+            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'activity_unknown'",
             timeout=10000)
         assert work.lists > before
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
@@ -274,7 +274,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         sessions.ws.send(json.dumps({"type": "work"}))
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "No recent update", timeout=10000)
-        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Working")
+        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Activity unconfirmed")
 
         # History: opened, its item still opens in full.
         await page.click(".work-panel .work-history .workflows-done-toggle")
@@ -294,5 +294,150 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         await page.click(".work-panel .workflow-row[data-workflow-id=wf-1]")
         await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text(
             "Speech migration", timeout=10000)
+        assert errors == [], errors
+        await browser.close()
+
+
+LONG = "Design Work ownership and packaged communications"
+
+
+def _review_item(item_id, state, approvable, quiet_at):
+    """An item as the review flow and the list draw it."""
+    return {**_item(deciding=False), "id": item_id, "title": LONG, "state": state,
+            "quiet_at": quiet_at, "blockers": [], "blocked_pieces": 0, "approvable": approvable,
+            "pieces": [_piece("design", "Design it", state, {"kind": "tim", "ref": None, "name": None},
+                              quiet_at=quiet_at)]}
+
+
+class _Review:
+    """Two items: one paused and ready for review (approvable), one still
+    working (not)."""
+
+    def __init__(self):
+        self.posted = []
+        self.items = {"work-r": _review_item("work-r", "verifying", True, 1_000_000.0),
+                      "work-w": _review_item("work-w", "working", False, 1_000_000.0)}
+
+    async def __call__(self, route):
+        request = route.request
+        path = request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+        if request.method == "POST":
+            self.posted.append((path, json.loads(request.post_data or "{}")))
+            await route.fulfill(json={"item": self.items["work-r"]})
+        elif path == "api/work":
+            await route.fulfill(json={"items": list(self.items.values()), "history": [],
+                                      "groups": [{"grouped_by": "area", "name": "Voice",
+                                                  "label": "Voice", "ids": list(self.items)}]})
+        else:
+            item = self.items[path.rsplit("/", 1)[1]]
+            await route.fulfill(json={"item": item, "events": [], "packages": []})
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_can_be(
+        page_playwright, page_url):
+    work = _Review()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+
+        await page.click(".right-tabs [role=tab][title=Work]")
+        for item_id in ("work-r", "work-w"):
+            row = page.locator(f".work-row[data-work-id={item_id}]")
+            await row.wait_for(timeout=10000)
+            # A long state beside it ("Ready for review", "Activity unconfirmed"):
+            # the title still has its room, and a claim draws no activity.
+            await async_api.expect(row.locator(".activity-mark")).to_have_count(0)
+            sizes = await row.evaluate("""(r) => ({
+              title: r.querySelector('.work-row-title').getBoundingClientRect().width,
+              row: r.getBoundingClientRect().width,
+              pausedInTitle: !!r.querySelector('.work-row-title .activity-mark')})""")
+            assert not sizes["pausedInTitle"], sizes
+            assert sizes["title"] >= 0.8 * sizes["row"], sizes
+        await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-paused.png"))
+
+        # Still working: no Approve. Ready for review and nothing in the way: Approve.
+        await page.click(".work-row[data-work-id=work-w]")
+        await async_api.expect(page.locator("#work-detail .work-detail-name")).to_have_text(LONG, timeout=10000)
+        await page.locator("#work-detail .work-review").wait_for(timeout=5000)
+        await async_api.expect(page.locator("#work-detail .work-approve")).to_have_count(0)
+        await page.click(".work-row[data-work-id=work-r]")
+        approve = page.locator("#work-detail .work-approve")
+        await approve.wait_for(timeout=10000)
+        # A long title in the centre's tab gives way inside the tab row.
+        tabs = await page.evaluate("""() => {
+          const row = document.querySelector('.centre-tabs').getBoundingClientRect();
+          return [...document.querySelectorAll('.centre-tabs .word-tab')].map(
+            t => t.getBoundingClientRect().right <= row.right + 1)}""")
+        assert all(tabs), tabs
+        await approve.click()
+        await _posted(work, 1)
+        assert work.posted == [("api/work/work-r/review", {"action": "approve", "words": ""})]
+        assert errors == [], errors
+        await browser.close()
+
+
+class _Needs(_Review):
+    """One item stalled, one that needs his decision."""
+
+    def __init__(self):
+        super().__init__()
+        stalled = _review_item("work-s", "activity_unknown", False, None)
+        needing = _review_item("work-n", "waiting_on_tim", False, None)
+        stalled.update(stalled=True, needs_you=[], title="Stalled one")
+        needing.update(stalled=False, title="Needs him", decisions=[DECISION], headline=DECISION["question"],
+                       needs_you=[{"kind": "decision", "key": "engine",
+                                   "text": DECISION["question"]}])
+        self.items = {"work-s": stalled, "work-n": needing}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_stalled_row_says_so_and_a_needed_one_names_the_act_and_its_place(
+        page_playwright, page_url):
+    work = _Needs()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+        await page.click(".right-tabs [role=tab][title=Work]")
+        stalled = page.locator(".work-row[data-work-id=work-s]")
+        await stalled.wait_for(timeout=10000)
+        await async_api.expect(stalled.locator(".work-state")).to_have_text("Stalled")
+        await async_api.expect(stalled.locator(".work-update")).to_have_text(
+            "Stalled: nobody is working on this")
+        needed = page.locator(".work-row[data-work-id=work-n]")
+        await async_api.expect(needed.locator(".work-update")).to_contain_text(
+            "Which engine is the default?")
+        await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-needs.png"))
+        await needed.click()
+        need = page.locator("#work-detail .work-needs li[data-need=decision]")
+        await async_api.expect(need).to_contain_text("on the Decisions tab", timeout=10000)
+        await need.locator("button").click()
+        await async_api.expect(page.locator("#work-detail .work-tabs [aria-selected=true]")).to_contain_text(
+            "Decisions")
+        await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-needs.png"))
         assert errors == [], errors
         await browser.close()

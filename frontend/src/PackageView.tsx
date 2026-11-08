@@ -15,29 +15,37 @@
  * A package with a story has Tell the story, a slide to start from, and
  * Stop: the same `_package_story` the brain's `tell_package_story` calls.
  *
- * Registered for pointing at as `packageView` (its head, its frame, Close,
- * and the story's controls); Close runs `package.close`, as the brain does.
+ * Done in its head signs it off (DoneButton), for every package.
+ *
+ * Registered for pointing at as `packageView` (its head, its frame, Done,
+ * Close, and the story's controls); Close runs `package.close`, as the
+ * brain does.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge } from "./packageBridge";
+import { signOff } from "./packageInbox";
 import { entryUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
+import { TakeoverButton } from "./TakeoverBar";
 
 export function PackageView({ info }: { info: PackageInfo }) {
   const t = useT();
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [listening, setListening] = useState(false);
+  // Made for the wider layout, or its page asked for room: Take over is lit.
+  const [asked, setAsked] = useState(false);
+  const offered = info.layout === "wide" || asked;
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   useEffect(() => {
     if (!frame.current) return undefined;
     return connectBridge(frame.current, info.id, {
-      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid,
+      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true),
     });
   }, [info.id]);
   return (
@@ -46,7 +54,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
         <div className="package-head-words">
           <h2>{info.name}</h2>
           <p>{info.purpose}</p>
+          {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
         </div>
+        <DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />
+        <TakeoverButton partRef={ui.part("takeover")} lit={offered} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>
@@ -59,6 +70,25 @@ export function PackageView({ info }: { info: PackageInfo }) {
         {said && <SaidText said={said} className="package-said" />}
       </p>
     </div>
+  );
+}
+
+/** Done: he signs the package off, whatever kind it is (packageInbox.ts
+ *  `signOff`, the Queue row's Done and the brain's sign_off_package too).
+ *  It sits in the head, outside the package's frame, so no package can hide
+ *  or press it. Once signed off the server closes this view on every page. */
+function DoneButton({ id, onSaid, target }: {
+  id: string; onSaid: (s: Said | null) => void; target: (el: Element | null) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button type="button" className="settings-btn primary package-done" data-ui-action="domain"
+            disabled={busy} ref={target} title={t("main.package.doneTitle")}
+            onClick={() => {
+              setBusy(true);
+              void signOff(id).then((why) => { setBusy(false); onSaid(why); });
+            }}>
+      {t("main.package.done")}</button>
   );
 }
 

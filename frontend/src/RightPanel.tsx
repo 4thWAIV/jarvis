@@ -4,9 +4,17 @@
  * Agents, Queue; Work, Network, Diagnostics; Work is the tab that was
  * Workflows, and keeps the Workflows view under its list), and the view for the
  * selected one below. Agents is selected to begin with.
+ *
+ * While a workflow or a page package has taken over the page
+ * (uiNavigation.ts `layout`), it folds to a rail of the same six icons,
+ * each keeping its mark. An icon opens its tab as a panel over the
+ * takeover's right side (`right.tab.select`, as the brain's request and a
+ * pointer's reveal do); the shown tab's icon, Escape or a click outside it
+ * closes it (`layout.flyout.close`). The rail keeps the column's id, so the
+ * rays and the pipeline's right rail follow it.
  */
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { FoldersPanel } from "./FoldersPanel";
 import { NetworkPanel } from "./NetworkPanel";
@@ -15,7 +23,8 @@ import { QueueIcon } from "./QueueIcons";
 import { QueuePanel } from "./QueuePanel";
 import { attention } from "./queueStore";
 import { agentsTabLit } from "./agents";
-import { bind, rightTab, type RightTab } from "./uiNavigation";
+import { bind, layout, rightTab, type RightTab } from "./uiNavigation";
+import { byHand } from "./uiRegistry";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
@@ -126,6 +135,13 @@ export function RightPanel() {
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
   const tab = laidOut.find((v) => v.id === selected)!;
+  const arranged = useSyncExternalStore(layout.subscribe, layout.get);
+  if (arranged.mode === "takeover") {
+    return <RightRail tabs={laidOut} selected={selected} flyout={arranged.flyout}
+                      lit={(v) => (!arranged.flyout || v.id !== selected)
+                        && ((v.id === "agents" && lit) || (v.id === "queue" && unread))}
+                      alert={(v) => v.id === "diagnostics" && down} />;
+  }
   return (
     <div id="right-column">
       <TabRow tabs={laidOut} selected={selected} className="right-tabs" labelled box="right.tabs"
@@ -137,6 +153,46 @@ export function RightPanel() {
       <div className="right-panel" role="tabpanel" aria-label={tab.title} ref={panel}>
         {tab.view()}
       </div>
+    </div>
+  );
+}
+
+/** The right panel folded to a rail of its tab icons while something has
+ *  taken over the page, with the selected tab opened over the takeover
+ *  while `flyout` holds. */
+function RightRail({ tabs, selected, flyout, lit, alert }: {
+  tabs: Tab[]; selected: RightTab; flyout: boolean; lit: (tab: Tab) => boolean; alert: (tab: Tab) => boolean;
+}) {
+  const t = useT();
+  const panel = useUiBox("right.panel");
+  const column = useRef<HTMLDivElement>(null);
+  const tab = tabs.find((v) => v.id === selected)!;
+  // Escape, or a press anywhere outside the rail and its panel, closes it.
+  useEffect(() => {
+    if (!flyout) return undefined;
+    // Escape skips a reading first (jarvis.ts), and only then closes this.
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) byHand("layout.flyout.close", {}); };
+    const press = (e: PointerEvent) => {
+      if (!column.current?.contains(e.target as Node)) byHand("layout.flyout.close", {});
+    };
+    document.addEventListener("keydown", key);
+    document.addEventListener("pointerdown", press);
+    return () => {
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("pointerdown", press);
+    };
+  }, [flyout]);
+  return (
+    <div id="right-column" className="rail" ref={column} aria-label={t("main.takeover.rail")}>
+      <TabRow tabs={tabs} selected={flyout ? selected : ""} className="right-tabs rail-tabs" box="right.tabs"
+              binding={(v) => flyout && v.id === selected ? bind("layout.flyout.close", {})
+                : bind("right.tab.select", { tab: v.id as RightTab })}
+              lit={lit} alert={alert} />
+      {flyout && (
+        <div className="right-panel rail-flyout" role="tabpanel" aria-label={tab.title} ref={panel}>
+          {tab.view()}
+        </div>
+      )}
     </div>
   );
 }

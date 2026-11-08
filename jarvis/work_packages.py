@@ -77,6 +77,10 @@ MODES = {CONVERSATION: "skill", AGENT: "brief", PAGE: "entry"}
 _JARVIS_FIELDS = ("purpose", "returns", "runs", *MODES.values())
 # The optional story a page package tells (package_story.py).
 STORY = "story"
+# The room a page package's page is made for (package.json `layout`): the
+# centre as it is, or "wide", made for the takeover (the page offers to let
+# it take over the page; he chooses). Only a page package has one.
+LAYOUTS = ("centre", "wide")
 # What a page package's frame may save: a name of at most RESULT_MAX_PARTS
 # plain parts under results/, and at most RESULT_MAX_BYTES each.
 RESULTS = "results"
@@ -95,7 +99,8 @@ class PackageError(ValueError):
 class Manifest:
     """A package's package.json. `runs` is one of MODES; the file it needs
     (`skill`, `brief` or `entry`) is required, the other two optional. A
-    page package may name a `story` file too."""
+    page package may name a `story` file too, and the `layout` its page is
+    made for (LAYOUTS; "centre" when it says none)."""
     name: str
     version: str
     purpose: str
@@ -105,6 +110,7 @@ class Manifest:
     brief: Optional[str] = None
     entry: Optional[str] = None
     story: Optional[str] = None
+    layout: str = LAYOUTS[0]
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -140,6 +146,14 @@ class Manifest:
                 raise PackageError("Its package.json names a story, but only a page package "
                                    "tells one.")
             fields[STORY] = story.strip()
+        layout = body.get("layout")
+        if layout is not None:
+            if layout not in LAYOUTS:
+                raise PackageError(f"Its package.json's layout is not one of {', '.join(LAYOUTS)}.")
+            if runs != PAGE:
+                raise PackageError("Its package.json names a layout, but only a page package "
+                                   "has a page to lay out.")
+            fields["layout"] = layout
         return cls(returns=tuple(returns), runs=runs, **fields)
 
     def named_files(self) -> dict[str, str]:
@@ -150,6 +164,7 @@ class Manifest:
     def as_json(self) -> str:
         return json.dumps({"name": self.name, "version": self.version, "purpose": self.purpose,
                            "runs": self.runs, **self.named_files(),
+                           **({"layout": self.layout} if self.layout != LAYOUTS[0] else {}),
                            "returns": list(self.returns)}, indent=2)
 
 
@@ -334,6 +349,13 @@ def _write_record(folder_name: str, sha256: str, attachment: str) -> None:
     temp.write_text(json.dumps({"sha256": sha256, "attachments": attachments}),
                     encoding="utf-8")
     os.replace(temp, path)
+
+
+def sha256_of(package: "Package") -> str:
+    """The SHA-256 of the zip a package was unpacked from, as its record
+    keeps it; "" for a folder from before records were kept."""
+    recorded = (_record(package.folder.name) or {}).get("sha256")
+    return recorded if isinstance(recorded, str) else ""
 
 
 def _unpacked_from(sha256: str) -> Optional[Path]:

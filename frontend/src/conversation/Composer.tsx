@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../locale";
 import { MicHost } from "../MicControl";
-import { StopControl } from "../StopControl";
 import { createStore } from "../store";
 import { sendTyped } from "../voiceStatus";
 import { clearTypedRefusal, refuseTyped } from "./controlState";
@@ -69,7 +68,7 @@ export function Composer({ partRef, heading }: { partRef: (el: Element | null) =
     <div className="composer-footer">
       <span id="composer-help">{t("main.conversation.composerHelp")}</span>
       <MicHost which="health" />
-      <StopControl />
+      <MicHost which="stop" />
       <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
         <span className="composer-send-word">{t("main.conversation.send")}</span> <span aria-hidden="true">↑</span>
       </button>

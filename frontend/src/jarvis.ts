@@ -7,6 +7,7 @@
  * screen, with the orb the page created.
  */
 
+import { setMotion } from "./motion";
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
@@ -31,7 +32,7 @@ import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale, t } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
 import { startUiClient } from "./uiClient";
-import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
+import { packageClosed, showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
          type StoryState } from "./packages";
 import { showMember } from "./bundles";
 import { BUNDLE_VIEW_FRAME } from "./bundleContract";
@@ -427,6 +428,9 @@ export function startJarvis(orb: Orb): void {
       // Only ever quieter: Muted never undoes Mic off.
       if (msg.state === "off") chooseQuiet("off");
       else if (msg.state === "muted" && quiet.get() === "none") chooseQuiet("muted");
+    } else if (type === "motion") {
+      // The brain's set_motion: Steady, or motion back, as he asked.
+      setMotion(msg.motion === "steady" ? "steady" : "full");
     } else if (type === "reading_skipped") {
       // Skipped here, or by the brain's skip_reading: the same either way.
       skipLocally(Number(msg.utt));
@@ -468,6 +472,10 @@ export function startJarvis(orb: Orb): void {
       // A page package to show in the centre area (PackageView.tsx), on the
       // page's Open page or the brain's open_package_page.
       if (msg.package) showPackage(msg.package as unknown as PackageInfo);
+    } else if (type === "package_closed") {
+      // He signed the package off (the server's `_sign_off_package`): its
+      // view closes here too.
+      if (typeof msg.package === "string") packageClosed(msg.package);
     } else if (type === BUNDLE_VIEW_FRAME) {
       // A file a teammate sent, to show in the centre area
       // (BundleMemberView.tsx), on the page's Open or the brain's

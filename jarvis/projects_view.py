@@ -5,7 +5,14 @@ into them to see more info about each project, the repo location, etc." Every
 fact this module surfaces is already recorded somewhere else —
 `session_watch.py` knows the conversations, `run_store.py` knows the runs,
 `builds.py` knows the plan, `repo_read.py` knows the repository. This module
-only joins them by project name and orders the result.
+only joins them and orders the result.
+
+There is one meaning of "project": his project records
+(`project_service.py`). Given the service, a conversation or run belongs to
+the one project holding its folder (a run first by its own `project_id`),
+and is shown under that project's name with its folders' locations; one
+that no project holds (or that several do, which is never guessed) keeps
+the old grouping by the name its folder goes by, with `project_id` None.
 
 Two passes, deliberately split by cost:
 
@@ -72,6 +79,7 @@ class ProjectView:
     needs_you: list[session_watch.SessionState] = field(default_factory=list)
     active: bool = False
     last_activity: float | None = None
+    project_id: str | None = None
 
     @property
     def latest_run(self) -> dict | None:
@@ -120,10 +128,34 @@ def _pick_primary_path(paths: list[str],
     return min(paths, key=lambda p: (-scores.get(p, 0.0), p))
 
 
+def _records(projects):
+    """(where: path -> (key, name, project ID) or None, the record's folder
+    paths) over the project service, each path worked out once per join."""
+    seen: dict[str, object] = {}
+    folders: dict[str, list[str]] = {}
+
+    def where(path: str | None, run_project: str | None = None):
+        pid = run_project
+        if pid is None and path:
+            if path not in seen:
+                seen[path] = projects.project_holding(path)
+            pid = seen[path]
+        if not pid:
+            return None
+        record = projects.store.get(pid)
+        if record is None:
+            return None
+        if pid not in folders:
+            folders[pid] = projects.folder_paths(pid)
+        return f"project:{pid}", record.display_name, pid
+
+    return where, folders
+
+
 def build_project_views(
     sessions: list[session_watch.SessionState],
     runs: list[dict],
-    *, exists=os.path.isdir,
+    *, exists=os.path.isdir, projects=None,
 ) -> list[ProjectView]:
     """The JOIN: every project name known to either a conversation or a run,
     folded into one summary each, ordered by what deserves attention first.
@@ -133,30 +165,37 @@ def build_project_views(
     `exists()` check per project, which callers can stub out in tests.
     """
     buckets: dict[str, dict] = {}
+    where, record_folders = _records(projects) if projects is not None else (lambda *_: None, {})
 
-    def bucket(name: str) -> dict:
-        return buckets.setdefault(name, {"sessions": [], "runs": [], "paths": set()})
+    def bucket(key: str, name: str, pid: str | None = None) -> dict:
+        return buckets.setdefault(key, {"name": name, "project_id": pid, "sessions": [], "runs": [],
+                                        "paths": set()})
 
     for s in sessions:
-        if not s.project:
+        record = where(s.cwd)
+        if not s.project and record is None:
             continue
-        b = bucket(s.project)
+        b = bucket(*record) if record else bucket(s.project, s.project)
         b["sessions"].append(s)
         if s.cwd:
             b["paths"].add(s.cwd)
 
     for r in runs:
         name = r.get("project_name")
-        if not name:
+        record = where(r.get("project_path"), r.get("project_id"))
+        if not name and record is None:
             continue
-        b = bucket(name)
+        b = bucket(*record) if record else bucket(name, name)
         b["runs"].append(r)
         path = r.get("project_path")
         if path:
             b["paths"].add(path)
 
     views: list[ProjectView] = []
-    for name, b in buckets.items():
+    for b in buckets.values():
+        name = b["name"]
+        if b["project_id"]:
+            b["paths"].update(record_folders.get(b["project_id"], []))
         paths = sorted(b["paths"])
         runs_sorted = sorted(
             b["runs"], key=lambda r: r.get("created_at") or 0, reverse=True)
@@ -183,6 +222,7 @@ def build_project_views(
             needs_you=needs_you,
             active=active_session or active_run,
             last_activity=last_activity,
+            project_id=b["project_id"],
         ))
 
     return order_projects(views)
@@ -258,6 +298,7 @@ def list_item(v: ProjectView) -> dict:
     nothing that required a filesystem walk."""
     return {
         "name": v.name,
+        "project_id": v.project_id,
         "primary_path": v.primary_path,
         "paths": v.paths,
         "directory_exists": v.directory_exists,

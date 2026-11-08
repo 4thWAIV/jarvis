@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
-from jarvis import data_paths
+from jarvis import data_paths, spoken_words, workspace_ref
 
 log = logging.getLogger("jarvis.knowledge_ingest")
 
@@ -70,8 +70,17 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def jref(kind: str, ident: str, path: Optional[str] = None) -> str:
-    out = f"jref:1:{data_paths.node_id()}:{kind}:{ident}"
-    return out + ("/" + quote(path, safe="/") if path else "")
+    """A source's reference, printed by `workspace_ref` (the one printer)."""
+    return workspace_ref.format(workspace_ref.ref(kind, ident, path or None))
+
+
+def agent_node(name: str) -> dict:
+    """An agent as the graph knows it, by its one name (agent_directory):
+    `agent:<its words>`, which the question scan finds by that name. A name
+    can carry words from a session's title, so it is marked untrusted."""
+    words = spoken_words.folded_words(name)
+    return {"_key": "agent:" + ("-".join(words) or "unnamed"), "_kind": "agent", "_label": name,
+            "_trust": "untrusted", "name": name}
 
 
 def doc_key(source: str) -> str:
@@ -166,8 +175,9 @@ class Appended:
     """Chunks added to a document that keeps the ones it has."""
     source: str                       # the document's
     label: str
-    chunks: list[tuple[str, str, str]]   # (chunk source, trust, text)
+    chunks: list[tuple]               # (chunk source, trust, text[, its own properties])
     replace: bool = False             # the chunks given are all it has now
+    nodes: list = field(default_factory=list)   # documents the chunks name (agents), put first
 
 
 @dataclass
@@ -181,9 +191,21 @@ class Stats:
     errors: list[str] = field(default_factory=list)
 
 
+# What the chunks an adapter writes hold. A source whose watermark was
+# written under another is read again from the start (its chunks keep their
+# keys, so they are written over, not doubled): schema 2 gave every chunk
+# its `at` and an agent's words their `agent`.
+SCHEMA = 2
+
+
 class Writer:
     def __init__(self, call: Callable[[str, str, Optional[dict]], dict], stats: Stats) -> None:
-        self.call = call
+        def stamped(method: str, path: str, body: Optional[dict]) -> dict:
+            if body and body.get("watermarks"):
+                body = {**body, "watermarks": {k: {**v, "schema": SCHEMA}
+                                               for k, v in body["watermarks"].items()}}
+            return call(method, path, body)
+        self.call = stamped
         self.stats = stats
 
     def watermarks(self) -> dict:
@@ -227,7 +249,8 @@ class Writer:
             keys.add(ck)
             puts.append({"_key": ck, "_kind": "chunk", "_label": item.label, "_source": item.source,
                          "_trust": item.trust, "text": c.text, "span": list(c.span),
-                         "heading_path": c.heading_path, "document": key})
+                         "heading_path": c.heading_path, "document": key,
+                         **({"at": float(item.modified)} if item.modified else {})})
         stale = sorted(self._existing_chunks(key) - keys)
         self.call("POST", "/v1/txn", {"puts": puts, "deletes": stale, "watermarks": marks})
         self.stats.documents += 1
@@ -235,17 +258,19 @@ class Writer:
 
     def append(self, item: Appended, marks: dict) -> None:
         key = doc_key(item.source)
-        puts = [{"_key": key, "_kind": "document", "_label": item.label, "_source": item.source,
-                 "_trust": "own"}]
-        for source, trust, text in item.chunks:
+        nodes = list(item.nodes)
+        puts = nodes + [{"_key": key, "_kind": "document", "_label": item.label, "_source": item.source,
+                         "_trust": "own"}]
+        for source, trust, text, *own in item.chunks:
+            extra = own[0] if own else {}
             for c in chunk_text(text, markdown=False):
                 puts.append({"_key": chunk_key(source, c.span, c.text), "_kind": "chunk",
                              "_label": item.label, "_source": source, "_trust": trust,
-                             "text": c.text, "span": list(c.span), "document": key})
-        stale = (sorted(self._existing_chunks(key) - {p["_key"] for p in puts[1:]})
+                             "text": c.text, "span": list(c.span), "document": key, **extra})
+        stale = (sorted(self._existing_chunks(key) - {p["_key"] for p in puts[len(nodes) + 1:]})
                  if item.replace else [])
         self.call("POST", "/v1/txn", {"puts": puts, "deletes": stale, "watermarks": marks})
-        self.stats.chunks += len(puts) - 1
+        self.stats.chunks += len(puts) - 1 - len(nodes)
 
     def topic_keys(self) -> list[str]:
         found = self.call("POST", "/v1/find", {"kinds": ["topic"], "limit": 200})["documents"]
@@ -505,6 +530,10 @@ class Folders(Ledgered):
                     continue
                 for e in self._walk(service, f["id"]):
                     path = e["path"]
+                    try:
+                        workspace_ref.check_path(path)
+                    except workspace_ref.RefError:
+                        continue          # a name no reference can carry is not read
                     yield (f"{f['id']}:{path}",
                            lambda fid=f["id"], p=path: self._read(service, fid, p),
                            e.get("size"), e.get("modified"),
@@ -519,6 +548,8 @@ class Conversation(Adapter):
     document."""
     name = "conversation"
     OWN = {"heard", "typed", "capture", "to_agent"}
+    # What an agent said to him: chunks the graph says it said (`said_by`).
+    SAID = {"answer", "from_agent"}
 
     @classmethod
     def trust(cls, item) -> str:
@@ -542,9 +573,17 @@ class Conversation(Adapter):
                 days.setdefault(day, []).append(item)
             for day, group in days.items():
                 after = group[-1].id
-                chunks = [(jref("conversation", str(i.id)), self.trust(i), i.text) for i in group]
-                budget.spend(sum(len(t) for _, _, t in chunks))
-                writer.append(Appended(jref("conversation_day", day), f"conversation {day}", chunks),
+                chunks, nodes = [], {}
+                for i in group:
+                    own = {"at": float(i.at)}
+                    if i.agent_name and str(i.kind) in self.SAID:
+                        node = agent_node(i.agent_name)
+                        nodes[node["_key"]] = node
+                        own["agent"] = node["_key"]
+                    chunks.append((jref("conversation", str(i.id)), self.trust(i), i.text, own))
+                budget.spend(sum(len(c[2]) for c in chunks))
+                writer.append(Appended(jref("conversation_day", day), f"conversation {day}", chunks,
+                                       nodes=list(nodes.values())),
                               {self.name: {"after": after}})
         return True
 
@@ -567,8 +606,9 @@ class Runs(Adapter):
             if budget.spent:
                 return True
             source = jref("run", r["id"])
-            chunks = [(f"{source}#{name}", trust, text) for name, trust, text in fields if text.strip()]
-            budget.spend(sum(len(t) for _, _, t in chunks))
+            at = {"at": float(r.get("ended_at") or r.get("created_at") or 0.0)}
+            chunks = [(f"{source}#{name}", trust, text, at) for name, trust, text in fields if text.strip()]
+            budget.spend(sum(len(c[2]) for c in chunks))
             ledger[r["id"]] = digest
             writer.append(Appended(source, f"run {r['id']}", chunks, replace=True),
                           {self.name: {"runs": ledger}})
@@ -588,9 +628,9 @@ class Workflows(Adapter):
                     break
                 seqs[snap.id] = events[-1].seq
                 chunks = [(jref("workflow_event", f"{snap.id}:{e.seq}"), "untrusted",
-                           e.summary)
+                           e.summary, {"at": float(e.at)})
                           for e in events if (e.summary or "").strip()]
-                budget.spend(sum(len(t) for _, _, t in chunks))
+                budget.spend(sum(len(c[2]) for c in chunks))
                 writer.append(Appended(jref("workflow", snap.id), f"workflow {snap.id}", chunks),
                               {self.name: {"seq": seqs}})
             if budget.spent:
@@ -609,7 +649,10 @@ def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Option
     marks = writer.watermarks()
     for adapter in adapters if adapters is not None else [a() for a in ADAPTERS]:
         try:
-            if adapter.run(writer, marks.get(adapter.name) or {}, budget):
+            mark = marks.get(adapter.name) or {}
+            if mark.get("schema") != SCHEMA:
+                mark = {}
+            if adapter.run(writer, mark, budget):
                 stats.more = True
         except Exception as e:  # noqa: BLE001 - one source failing leaves the rest
             log.exception("ingest of %s failed", adapter.name)

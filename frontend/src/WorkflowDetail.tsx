@@ -69,6 +69,7 @@ import type { CommandArgs, TargetRef } from "./uiContract";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiBox, useUiTarget, type Availability } from "./uiRegistry";
+import { TakeoverButton } from "./TakeoverBar";
 import { kindDecl, splitKey } from "./uiValidate";
 import { TaskBar, useTick } from "./WorkflowsView";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -266,6 +267,7 @@ function OneWorkflow({ id }: { id: string }) {
           <button data-ui-action="domain" type="button" className="workflow-detail-dismiss" ref={ui.part("dismiss")}
                   onClick={() => void dismissWorkflow(w.id)}>{t("main.workflow.dismiss")}</button>
         )}
+        <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")} aria-label={t("main.common.close")}
                 ref={ui.part("close")} {...bindingProps(bind("workflow.close", {}))}>×</button>
       </div>
@@ -388,6 +390,7 @@ function SubagentDetail({ sessionId, agentId }: { sessionId: string; agentId: st
               {t("main.workflow.subagentOf", { name: page.session_name })}</span>}
           </span>}
         </span>
+        <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")} aria-label={t("main.common.close")}
                 ref={ui.part("close")} {...bindingProps(bind("workflow.close", {}))}>×</button>
       </div>
@@ -535,7 +538,8 @@ function OpenCard({ workflowId, kind, o }: { workflowId: string; kind: "wait" | 
       <OpenIcon kind={kind} />
       <span className="open-card-text">{o.summary}</span>
       <AgeBar since={o.opened_at} />
-      <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? <> · {t("main.workflow.until", { until: String(o.detail.until) })}</> : null}</span>
+      <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? <> · {t("main.workflow.until", { until: String(o.detail.until) })}</> : null}
+        {o.unlinked ? <> · <span className="open-card-unlinked">{t("main.workflow.unlinked")}</span></> : null}</span>
     </div>
   );
 }

@@ -17,12 +17,14 @@ run_store.migrate).
 
 States, in order:
 
-    arrived -> opened -> answering -> answered -> returned -> closed
+    arrived -> opened -> answering -> answered -> closed
 
-closed with why: `done` (the sender's session answered the message that
-carried the answers back, or he closed it after that), `dismissed` (he set
-it aside) or `superseded` (a newer one of the same name came from the same
-sender while it was open).
+closed with why: `signed_off` (he is done with it: whatever he answered, or
+that he has reviewed it, goes back to its sender, `signed_off_at` its
+time), `dismissed` (he set it aside, nothing sent back) or `superseded` (a
+newer one of the same name came from the same sender while it was open).
+A package unpacked here outside the inbox gets a row when he signs it off
+(`adopt`), so every package is signed off the same way.
 
 A decision package (the shared deck's: `deck-data.js` and
 `scripts/decide.py`) has its questions in `deck-data.js`, read as JSON after
@@ -46,16 +48,16 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import decision_stamp, run_store, work_packages
+from jarvis import decision_stamp, run_store, wait_links, work_packages
 from jarvis.work_packages import Package, PackageError
 
-ARRIVED, OPENED, ANSWERING, ANSWERED, RETURNED, CLOSED = (
-    "arrived", "opened", "answering", "answered", "returned", "closed")
-STATES = (ARRIVED, OPENED, ANSWERING, ANSWERED, RETURNED, CLOSED)
+ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
+    "arrived", "opened", "answering", "answered", "closed")
+STATES = (ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED)
 # Not closed: in the backlog.
 OPEN_STATES = STATES[:-1]
-DONE, DISMISSED, SUPERSEDED = "done", "dismissed", "superseded"
-CLOSED_WHY = (DONE, DISMISSED, SUPERSEDED)
+SIGNED_OFF, DISMISSED, SUPERSEDED = "signed_off", "dismissed", "superseded"
+CLOSED_WHY = (SIGNED_OFF, DISMISSED, SUPERSEDED)
 
 # How a change came about, as each event records it.
 BY_VOICE, ON_THE_PAGE, BY_THE_SENDER, BY_JARVIS = (
@@ -123,8 +125,13 @@ _SCHEMA = """
         ON package_inbox_events (inbox_id, seq);
 """
 
+# 2: when he signed it off (`signed_off`).
+_SIGNED_OFF = """
+    ALTER TABLE package_inbox ADD COLUMN signed_off_at REAL;
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA}
+_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -176,6 +183,7 @@ class Entry:
     returned_at: Optional[float]
     closed_at: Optional[float]
     closed_why: Optional[str]
+    signed_off_at: Optional[float] = None
 
     @property
     def is_open(self) -> bool:
@@ -554,25 +562,50 @@ def counted(inbox_id: str, answered: int, total: int, how: str,
                        how, now, **fields)
 
 
-def return_asked(inbox_id: str, capture_id: Optional[int], how: str,
-                 now: Optional[float] = None) -> Entry:
-    """His answers are on their way back. With a capture (a message to the
-    sending session, which goes only on his yes), it is returned once that
-    message is sent (`follow_messages`); without one (no session to answer),
-    it is returned now. A package that asks nothing is answered by this:
-    he has finished with it."""
+def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
+               now: Optional[float] = None) -> Entry:
+    """He has signed it off: done with it, whatever is answered so far. Its
+    sign-off and its time are recorded and it is closed, `signed_off`. With
+    a capture (the message to its sender, which goes only on his yes), that
+    message is followed (`follow_messages`)."""
     now = time.time() if now is None else now
     with closing(_connect()) as conn, conn:
         entry = _one(conn, inbox_id)
-        check_return(entry)
-        fields: dict = {"capture_id": capture_id, "return_asked_at": now,
-                        "answered_at": entry.answered_at or now}
-        if capture_id is None:
-            fields.update(state=RETURNED, returned_at=now)
-        else:
-            fields["state"] = ANSWERED
-        return _change(conn, entry, "returned" if capture_id is None else "return_asked",
-                       how, now, **fields)
+        if not entry.is_open:
+            raise InboxRefused(f"{entry.id} is already closed ({entry.closed_why}).")
+        entry = _change(conn, entry, "signed_off", how, now, state=CLOSED, closed_at=now,
+                        closed_why=SIGNED_OFF, signed_off_at=now, capture_id=capture_id,
+                        return_asked_at=now)
+        # Everything waiting on the package ends with his sign-off, in this
+        # transaction (wait_links).
+        moved = wait_links.settle(conn, wait_links.answer(
+            wait_links.PACKAGE, _refs(conn, entry.package_id), None, SIGNED_OFF, now), now)
+    wait_links.tell(moved)
+    return entry
+
+
+def _refs(conn, package_id: str) -> set:
+    """Every name a wait may give the package by: its id, and each of its
+    rows' inbox id, name and name-version."""
+    found = {package_id}
+    for r in conn.execute("SELECT id, name, version FROM package_inbox WHERE package_id=?",
+                          (package_id,)):
+        found |= {r["id"], r["name"], f"{r['name']}-{r['version']}"}
+    return found
+
+
+def refs(package_id: str) -> set:
+    """The names a wait may give a package by (`_refs`)."""
+    with closing(_connect()) as conn:
+        return _refs(conn, package_id)
+
+
+def adopt(package: Package, sha256: str, how: str) -> Entry:
+    """A record for a package unpacked here before the inbox, or outside it
+    (an older local one), so it is signed off the same way: arrived from no
+    one known, and opened, since he has it in front of him."""
+    entry = arrive(package, sha256, Sender()).entry
+    return opened(entry.id, how)
 
 
 # A message's statuses once it has gone to its session (run_store.MessageStatus).
@@ -580,69 +613,40 @@ _GONE = ("sent", "undelivered", "delivered", "working", "answered")
 
 
 def follow_messages(now: Optional[float] = None) -> list[Entry]:
-    """Bring the rows up to date with the messages that carry their answers,
-    from the `messages` record: a row whose capture has gone to its sender
-    since he asked is returned, with that message's id; a returned row
-    whose message the session has answered is closed, done. The rows that
-    moved."""
+    """Bring the signed-off rows up to date with the messages that carry
+    their answers back, from the `messages` record: a row whose capture has
+    gone to its sender since he signed it off is given that message's id.
+    The rows that moved."""
     now = time.time() if now is None else now
     moved = []
     with closing(_connect()) as conn, conn:
         try:
             for e in [_entry(r) for r in conn.execute(
-                    "SELECT * FROM package_inbox WHERE state=? AND capture_id IS NOT NULL "
-                    "AND message_id IS NULL", (ANSWERED,))]:
+                    "SELECT * FROM package_inbox WHERE closed_why=? AND capture_id IS NOT NULL "
+                    "AND message_id IS NULL", (SIGNED_OFF,))]:
                 m = conn.execute(
                     f"SELECT id FROM messages WHERE capture_id=? AND session_id=? AND "
                     f"staged_at>=? AND status IN ({','.join('?' * len(_GONE))}) "
                     f"ORDER BY id DESC LIMIT 1",
                     (e.capture_id, e.from_session, e.return_asked_at or 0, *_GONE)).fetchone()
                 if m is not None:
-                    moved.append(_change(conn, e, "returned", BY_JARVIS, now, state=RETURNED,
-                                         returned_at=now, message_id=m["id"]))
-            for e in [_entry(r) for r in conn.execute(
-                    "SELECT * FROM package_inbox WHERE state=? AND message_id IS NOT NULL",
-                    (RETURNED,))]:
-                m = conn.execute("SELECT status FROM messages WHERE id=?",
-                                 (e.message_id,)).fetchone()
-                if m is not None and m["status"] == "answered":
-                    moved.append(_change(conn, e, "closed", BY_THE_SENDER, now, state=CLOSED,
-                                         closed_at=now, closed_why=DONE))
+                    moved.append(_change(conn, e, "returned", BY_JARVIS, now, returned_at=now,
+                                         message_id=m["id"]))
         except sqlite3.OperationalError:      # no messages table yet: nothing has gone
             return []
     return moved
 
 
 def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
-    """He closes it: done once its answers have gone back, else dismissed
-    (set aside, whatever is answered so far kept in its record)."""
+    """He sets it aside without signing it off: dismissed, whatever is
+    answered so far kept in its record and nothing sent back."""
     now = time.time() if now is None else now
     with closing(_connect()) as conn, conn:
         entry = _one(conn, inbox_id)
         if not entry.is_open:
             raise InboxRefused(f"{entry.id} is already closed ({entry.closed_why}).")
-        why = DONE if entry.state == RETURNED else DISMISSED
         return _change(conn, entry, "closed", how, now, state=CLOSED, closed_at=now,
-                       closed_why=why)
-
-
-def check_return(entry: Entry) -> None:
-    """InboxRefused, with why, unless its answers can go back now: opened,
-    and every decision that applies answered."""
-    if entry.state not in (OPENED, ANSWERING, ANSWERED):
-        raise InboxRefused(_not_now(entry, "sent back"))
-    if entry.is_decisions and entry.state != ANSWERED:
-        raise InboxRefused(f"{entry.waiting} of its decisions still wait on him; it goes "
-                           f"back once every one that applies has an answer (Decide "
-                           f"later counts).")
-
-
-def _not_now(entry: Entry, what: str) -> str:
-    if entry.state == ARRIVED:
-        return f"{entry.id} has not been opened yet, so it cannot be {what}."
-    if entry.state == RETURNED:
-        return f"{entry.id}'s answers have already gone back."
-    return f"{entry.id} is closed ({entry.closed_why})."
+                       closed_why=DISMISSED)
 
 
 def events(inbox_id: str) -> list[dict]:

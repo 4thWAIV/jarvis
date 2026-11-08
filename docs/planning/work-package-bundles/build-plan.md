@@ -372,6 +372,13 @@ and its deadline work the same whatever produces the rows.
 - The owner's pin and forbid for extra indexes are not built yet. Reason:
   they need a control on the Knowledge view; the guardrails bound the
   advisor meanwhile.
+- Until projects are records (phase 1), the context pack's scope is the
+  project name a run already carries, read through its project notes, and
+  topics are found by name or exact alias in it, its notes and the purpose.
+  Reason: the pack works today and takes project records in when they come.
+- The Denice seed reads JARVIS's own README and roadmap at the moment it is
+  offered and quotes them; a copy of JARVIS without them is offered no seed.
+  Reason: never paraphrase, and nothing personal in the seed.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -395,5 +402,72 @@ Steps 1 to 7 are built on this branch, each in its own commit, with the
 tests named in each step (`tests/test_knowledge_*.py`; the process, crash,
 child-process and budget tests carry `knowledge_engine`). Phase 4's rest is built: topics and the linker with its proposals, cards
 and HotCards, the brain's knowledge tools with their routes and the
-Knowledge view, and the index advisor. What remains of phase 4 is the
-owner's pin and forbid for extra indexes; phase 5 waits on the embedder.
+Knowledge view, and the index advisor. Phase 4 is complete with
+his pin and forbid for extra indexes; phase 2's context pack (tier 0 and
+tier 1, `work_context`, run context behind `JARVIS_RUN_CONTEXT`) and the
+Denice seed are built too, ahead of phase 1's project records. Phase 5 waits
+on the embedder.
+
+Phase 1's project records are built: `project_schema` and
+`project_store.py`, `project_seed.py` candidates (as attention items, made
+projects only on his yes), `project_service.py` with its routes and the
+brain's project tools, the Project view, Projects in the Folders tab, each
+Work tab item's projects, the run columns `project_id` and `work_id`, and
+`spawn_run` and Retry placed by `run_location`. The context pack and
+`work_context` are made from the records (`ProjectService.brief`). The
+rest of phase 1 followed: `workspace_ref.py` and the node ID backup, the
+Projects and folders switch, and `projects_view.py` over the service. The
+Work view is not built: `/api/work` (`work_store`) is the one record of
+work, and Planning folds `/api/works` into it. Routine choices made for it:
+
+- References also name `conversation`, `conversation_day`,
+  `workflow_event` and `candidate`, which the engine and the project events
+  already use; the design's list leaves them out.
+- `attachment`, `package`, `knowledge`, `agent` and those four resolve as
+  `unsupported` until the phases that read them (6 to 8).
+- A record's hash leaves out `revision`, `created_at`, `updated_at`,
+  `node_id` and `owner_id`: bookkeeping, or this workspace's own.
+- A tree is refused as `too_large` past 20,000 entries or 30 s (a new
+  folder error code): a reference is to something he picked.
+- A node ID counts as made anyway only when one had been kept (an unusable
+  `node-id` or `node-id.bak`); a first start records nothing. The old ID is
+  kept when a UUID can still be read from either file.
+- Diagnostics shows it on the team server row (the network is who knows a
+  node), degraded for seven days and then idle; the attention item is
+  silent.
+- The tab opens on Projects; the folder search and Open Folders are on the
+  Folders side of the switch.
+- The tab keeps its short label, Folders: six labelled tabs fit in two rows
+  only with short words, and the switch inside says Projects and Folders.
+- spawn_run's start (context pack, compose, spawn, keep the pack) is one
+  function, `server._spawn_placed`, and a run's pack is
+  `knowledge_api.run_pack`.
+
+Phase 5 is built: vector search, measured in the engine itself
+(`phase5/results.md`): keyword + graph missed 30 percent of the question
+set, keyword + vector + graph misses 20 percent, vectors lifting the
+knowledge questions from 14 to 18 of 25. Routine choices made for it:
+
+- Runtime and model: onnxruntime 1.23.2 running multilingual-e5-small
+  (int8, Xenova's export at 761b726d): the only candidate in the D4 trial
+  that made vectors find anything, 10 ms a question, 13 minutes for the
+  corpus, one space for both languages, MIT.
+- No tokenizer library: `knowledge/unigram.py` reads the model's
+  SentencePiece file and gives `tokenizers`' ids on every chunk, so
+  onnxruntime is the one new dependency.
+- The install writes a compact tokenizer file (`tokenizer.bin`) in a child
+  process, since parsing the JSON in a long-lived process keeps some
+  200 MB.
+- Fusion weights 1, 1, 2 (match, near, about): the smallest graph weight
+  on the 80 percent plateau; equal weights let vectors push out the
+  status questions' answers, as in the trial.
+- Agents become graph nodes from the conversation's agent messages
+  (`said_by`), marked untrusted since a name can come from a session's
+  title.
+- The ingest's watermarks carry a schema; schema 2 (each chunk's `at` and
+  speaker) reads every source again once.
+- The engine's memory budget grows by 600 MB while the model is installed
+  (about 560 measured).
+- 4 intra-op threads, no memory arena, no weight prepacking; ingest
+  batches of 4, a question ahead of any batch.
+- `JARVIS_KNOWLEDGE` stays off by default.

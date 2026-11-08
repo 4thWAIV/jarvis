@@ -280,6 +280,8 @@ SAMPLES = {
     "_COMMIT": "39f2527",
     "_URL": "https://github.com/owner/name/pull/1",
     "ANSWERS": "results/answers.json",
+    "_HEX": "0" * 64,
+    "_TEXT": "jref:1:node-1:folder:01a0ca40@3/docs/a.md#sha256=" + "0" * 64,
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

@@ -1,12 +1,14 @@
 """The cross-engine query (design section 7.17.5).
 
-One bounded JSON request with up to four clauses, answered with ranked
+One bounded JSON request with up to five clauses, answered with ranked
 documents. It is a small pattern, not a query language:
 
     {"from":   {"kinds": [...], "where": [[path, op, value], ...]},
      "walk":   {"start": key, "steps": [...]},
      "near":   {"text": "...", "k": 50},
      "match":  "words",
+     "about":  {"text": "...", "k": 200},
+     "weights": {"match": 1, "near": 1, "about": 1},
      "visible": {"trust": ["own"], "namespaces": ["local"]},
      "return": {"properties": [...], "limit": 20},
      "at": null, "budget_ms": 200}
@@ -21,8 +23,15 @@ keyword and vector searches (the vector mask of section 7.10), a large
 see (`visible`) is applied before planning, so nothing it may not see is
 ever ranked.
 
-Ranking is reciprocal rank fusion of `near` and `match` (k 60), each hit
-reached through the walk raised by the same share at the rank of its step;
+`about` is the graph's ranking: the agents, people, projects and topics
+the text names (entities.py), and the chunks the records say they said
+(`said_by`, newest first), then the chunks that mention them (`mentions`,
+by keyword rank, then newest first).
+
+Ranking is weighted reciprocal rank fusion of `match`, `near` and `about`
+(k 60, each list's share times its weight, `DEFAULT_WEIGHTS` unless the
+request gives its own), each hit reached through the walk raised by the
+same share at the rank of its step;
 with neither, results come in the requested order, newest first by
 default. Every hit carries its key, source, trust, namespace and `why`.
 
@@ -41,6 +50,8 @@ from jarvis.knowledge import kinds
 from jarvis.knowledge.documents import WHERE_MAX, DocumentError, Predicate
 
 RRF_K = 60
+# The fusion's weights, chosen on the trial's questions (phase5/results.md).
+DEFAULT_WEIGHTS = {"match": 1.0, "near": 1.0, "about": 2.0}
 K_MAX = 200
 LIMIT_MAX = 200
 BUDGET_MS_MAX = 500
@@ -59,11 +70,12 @@ def _list(value, name) -> list:
 def run(engine, body: dict) -> dict:
     if not isinstance(body, dict):
         raise DocumentError("a query is an object")
-    unknown = set(body) - {"from", "walk", "near", "match", "visible", "return", "at", "budget_ms"}
+    unknown = set(body) - {"from", "walk", "near", "match", "about", "weights", "visible", "return", "at",
+                           "budget_ms"}
     if unknown:
         raise DocumentError(f"unknown clauses: {', '.join(sorted(unknown))}")
-    if not any(body.get(c) for c in ("from", "walk", "near", "match")):
-        raise DocumentError("a query has at least one of from, walk, near and match")
+    if not any(body.get(c) for c in ("from", "walk", "near", "match", "about")):
+        raise DocumentError("a query has at least one of from, walk, near, match and about")
     start = time.monotonic()
     budget = min(int(body.get("budget_ms") or 200), BUDGET_MS_MAX) / 1000.0
     deadline = start + budget
@@ -87,9 +99,19 @@ def run(engine, body: dict) -> dict:
         raise DocumentError("match is words")
     if near is not None and (not isinstance(near, dict) or not isinstance(near.get("text"), str)):
         raise DocumentError("near has text")
+    about = body.get("about")
+    if about is not None and (not isinstance(about, dict) or not isinstance(about.get("text"), str)):
+        raise DocumentError("about has text")
+    weights = dict(DEFAULT_WEIGHTS)
+    given = body.get("weights")
+    if given is not None:
+        if not isinstance(given, dict) or set(given) - set(DEFAULT_WEIGHTS) or \
+                not all(isinstance(v, (int, float)) and 0 <= v <= 10 for v in given.values()):
+            raise DocumentError("weights are match, near and about, each 0 to 10")
+        weights.update({k: float(v) for k, v in given.items()})
     at = body.get("at")
-    if at is not None and (near or match):
-        raise DocumentError("match and near read the newest state; at goes with from and walk only")
+    if at is not None and (near or match or about):
+        raise DocumentError("match, near and about read the newest state; at goes with from and walk only")
     ret = body.get("return") or {}
     limit = int(ret.get("limit") or 20)
     if not 0 < limit <= LIMIT_MAX:
@@ -130,7 +152,7 @@ def run(engine, body: dict) -> dict:
         if preds:
             older = at is not None and at < engine.store.lsn
             small = older or docs.estimate(preds, kind_names) <= SMALL_WHERE
-            if small or not (near or match):
+            if small or not (near or match or about):
                 found = docs.find(kinds_=None, where=[[p.path, p.op, p.value] for p in preds],
                                   at=lsn, limit=1 << 30, within=walk_set)
                 where_set = {d["_ord"] for d in found}
@@ -163,14 +185,31 @@ def run(engine, body: dict) -> dict:
                     partial = partial or found["partial"]
                     rankings.append(("near", [(o, s, None) for o, s in found["hits"]]))
 
+        if about:
+            if time.monotonic() > deadline:
+                partial = True
+            else:
+                lexical_rank = {o: r for r, (o, _s, _w) in enumerate(next(
+                    (h for n, h in rankings if n == "match"), []))}
+                found = _about(engine, about["text"], allowed, lexical_rank,
+                               min(int(about.get("k") or K_MAX), K_MAX), lsn)
+                if found:
+                    rankings.append(("about", found))
+
+        # Asked to rank: only what a ranking found is returned, nothing when
+        # none found anything.
+        ranked = bool(match or near or about)
         scored: dict[int, float] = {}
         why: dict[int, dict] = {}
-        if rankings:
+        if ranked:
             for name, hits in rankings:
+                share = weights.get(name, 1.0)
                 for rank, (o, score, detail) in enumerate(hits, start=1):
-                    scored[o] = scored.get(o, 0.0) + 1.0 / (RRF_K + rank)
+                    scored[o] = scored.get(o, 0.0) + share / (RRF_K + rank)
                     entry = {"rank": rank, "score": round(score, 6)}
-                    if detail:
+                    if isinstance(detail, dict):
+                        entry.update(detail)
+                    elif detail:
                         entry["terms"] = detail
                     why.setdefault(o, {})[name] = entry
             for o, info in walk_why.items():
@@ -183,7 +222,7 @@ def run(engine, body: dict) -> dict:
 
         out = []
         for o in order:
-            if len(out) >= (limit if rankings else 1 << 30):
+            if len(out) >= (limit if ranked else 1 << 30):
                 break
             if time.monotonic() > deadline and out:
                 partial = True
@@ -199,10 +238,10 @@ def run(engine, body: dict) -> dict:
                    "why": dict(why.get(o, {}))}
             if o in walk_why:
                 hit["why"]["walk"] = walk_why[o]
-            if rankings:
+            if ranked:
                 hit["score"] = round(scored[o], 6)
             out.append((doc, hit))
-        if not rankings:
+        if not ranked:
             order_by = ret.get("order")
             if order_by:
                 from jarvis.knowledge.documents import _sort_key
@@ -214,15 +253,47 @@ def run(engine, body: dict) -> dict:
                 "took_ms": round((time.monotonic() - start) * 1000, 2)}
 
 
+def _about(engine, text: str, allowed: Optional[set[int]], lexical_rank: dict[int, int],
+           k: int, lsn: int) -> list[tuple[int, float, Any]]:
+    """The graph's ranking for `about` (see the module's docstring)."""
+    keys = engine.entities.named_in(text)
+    if not keys:
+        return []
+    docs, graph = engine.docs, engine.graph
+    strong: dict[int, tuple[float, str]] = {}
+    weak: dict[int, tuple[float, str]] = {}
+    for key in keys:
+        for edge_kind, into in (("said_by", strong), ("mentions", weak)):
+            for e in graph.edges(key, "in", edge_kind, lsn):
+                doc = docs.get(e["from"], lsn)
+                if doc is None:
+                    continue
+                o = doc["_ord"]
+                if (allowed is not None and o not in allowed) or o in strong:
+                    continue
+                into[o] = (float(doc.get("at") or 0.0), key)
+    ranked = sorted(strong, key=lambda o: -strong[o][0])
+    ranked += sorted((o for o in weak if o not in strong),
+                     key=lambda o: (lexical_rank.get(o, 1 << 30), -weak[o][0]))
+    out = []
+    for o in ranked[:k]:
+        edge, key = ("said_by", strong[o][1]) if o in strong else ("mentions", weak[o][1])
+        out.append((o, 0.0, {"edge": edge, "entity": key}))
+    return out
+
+
 def search(engine, body: dict) -> dict:
-    """`/v1/search`: words matched and, when an embedder exists, near, over
-    the documents `kinds` and `where` allow."""
+    """`/v1/search`: hybrid search: words matched, the entities they name
+    through the graph, and, when an embedder exists, near, over the
+    documents `kinds` and `where` allow."""
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise DocumentError("search has text")
     query: dict = {"match": text, "near": {"text": text, "k": int(body.get("k") or 50)},
-                   "return": {"limit": int(body.get("limit") or 20)},
+                   "about": {"text": text}, "return": {"limit": int(body.get("limit") or 20)},
                    "budget_ms": body.get("budget_ms") or 200}
+    if body.get("weights") is not None:
+        query["weights"] = body["weights"]
     if body.get("kinds") or body.get("where"):
         query["from"] = {"kinds": body.get("kinds"), "where": body.get("where")}
     if body.get("visible"):
