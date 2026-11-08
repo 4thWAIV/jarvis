@@ -64,7 +64,7 @@ class Dropped:
 
 # The line a session puts under its subject to say who it is (the talk-to-jarvis
 # skill; make_package from its --session): `From: <session id>`.
-FROM_LINE = re.compile(r"From:\s*([A-Za-z0-9][A-Za-z0-9-]{7,63})\s*")
+FROM_LINE = re.compile(r"From:[ \t]*([A-Za-z0-9][A-Za-z0-9-]{7,63})")
 
 
 def parse(text: str) -> tuple[str, str]:
