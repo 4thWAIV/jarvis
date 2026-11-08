@@ -51,7 +51,8 @@ RIGHTS: dict[str, Right] = {
     "work": Right(
         "Track work items and report who is on each piece to the Work tab.",
         (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"),
-         ("GET", r"/api/work/answers"))),
+         ("GET", r"/api/work/answers"), ("POST", r"/api/agent-keys/work-keys"),
+         ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
         "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
         (("POST", r"/api/packages/inbox"),)),

@@ -155,6 +155,8 @@ export const mainEn = {
   "main.thread.keyOnboarded": "Onboarded {when} ({by})",
   "main.thread.keyRights": "Rights: {rights}",
   "main.thread.keyRevoke": "Revoke",
+  "main.work.itemKey": "Item key from {name}, ends {when}",
+  "main.work.itemKeyNobody": "an agent no longer listed",
   "main.thread.keyBy.page": "on the page",
   "main.thread.keyBy.voice": "by voice",
   "main.thread.keyFailed": "The key could not be changed ({error})",

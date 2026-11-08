@@ -541,3 +541,70 @@ def set_error_package(subject: str, package_id: str, inbox_id: str,
 def error_packages() -> list[dict]:
     with closing(_connect()) as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM agent_key_errors")]
+
+
+# -- work-item keys ----------------------------------------------------------------------
+
+# How long a work-item key lives unless its issuer renews it.
+WORK_KEY_LIFE_SEC = 30 * 86400.0
+
+
+def work_principal(fingerprint: str) -> str:
+    return WORK_KEY + fingerprint
+
+
+def add_work_key(public_key: str, work_id: str, issued_by: str,
+                 now: Optional[float] = None) -> AgentKey:
+    """A key limited to one Work item, issued by an onboarded agent (its
+    principal): onboarded at once, since the agent that holds `work` vouches
+    for it, with agent_rights.WORK_KEY_RIGHTS scoped to `work:<id>` and an
+    expiry WORK_KEY_LIFE_SEC on. The same key again is that row."""
+    now = time.time() if now is None else now
+    try:
+        public = agent_keys.normalise(public_key)
+    except agent_keys.AgentKeyError as e:
+        raise KeyRefused(str(e))
+    fp = agent_keys.fingerprint(public)
+    with closing(_connect()) as conn, conn:
+        found = conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?", (fp,)).fetchone()
+        if found is not None:
+            if found["work_id"] != work_id or found["state"] == REVOKED:
+                raise KeyRefused("That key is already another's, or revoked.")
+            return _row(found)
+        principal = work_principal(fp)
+        conn.execute("INSERT INTO agent_keys (fingerprint, public_key, principal, state, "
+                     "submitted_at, onboarded_at, onboarded_by, work_id, issued_by, expires_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (fp, public, principal, ONBOARDED, now, now, issued_by, work_id, issued_by,
+                      now + WORK_KEY_LIFE_SEC))
+        _grant(conn, principal, agent_rights.WORK_KEY_RIGHTS,
+               agent_rights.WORK_SCOPE + work_id, issued_by, now)
+        _event(conn, fp, "issued", now, work=work_id, by=issued_by)
+        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
+                                 (fp,)).fetchone())
+
+
+def renew_work_key(fingerprint: str, by: str, now: Optional[float] = None
+                   ) -> Optional[AgentKey]:
+    """Another WORK_KEY_LIFE_SEC for a live work-item key, by its issuer
+    alone. None when it is not one, not live, or `by` did not issue it."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        moved = conn.execute("UPDATE agent_keys SET expires_at=? WHERE fingerprint=? AND "
+                             "state=? AND issued_by=? AND principal LIKE 'workkey:%'",
+                             (now + WORK_KEY_LIFE_SEC, fingerprint, ONBOARDED, by)).rowcount
+        if not moved:
+            return None
+        _event(conn, fingerprint, "renewed", now, by=by)
+        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
+                                 (fingerprint,)).fetchone())
+
+
+def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
+    """The live work-item keys, of one item or all."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_keys WHERE principal LIKE 'workkey:%' AND "
+                            "state=?" + (" AND work_id=?" if work_id else "") +
+                            " ORDER BY submitted_at",
+                            (ONBOARDED, work_id) if work_id else (ONBOARDED,)).fetchall()
+    return [_row(r) for r in rows]

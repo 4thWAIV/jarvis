@@ -101,6 +101,22 @@ def sign(source: Path, target: Path, private: Path, public_key: str, session: st
     partial.replace(target)
 
 
+def add_files(archive_path: Path, files: dict[str, bytes]) -> None:
+    """Add `files` (paths relative to the package's root) to the zip in
+    place, replacing any of the same name."""
+    with bundle_archive.open_archive(archive_path) as archive:
+        root, _ = _files(archive)
+        partial = archive_path.with_name(archive_path.name + ".part")
+        with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as out:
+            for info in archive.infolist():
+                if info.filename[len(root):] in files:
+                    continue
+                out.writestr(info, archive.read(info))
+            for name, data in files.items():
+                out.writestr(root + name, data)
+    partial.replace(archive_path)
+
+
 def read(zip_path: Path) -> Optional[Signed]:
     """The package's signature, or None when it has none. SignatureError
     for one that cannot be read."""

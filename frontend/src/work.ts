@@ -190,6 +190,9 @@ export interface WorkItem {
   /** Whether he can approve it now: no decision open, no piece waiting,
    *  blocked or still working (work_store.approvable). */
   approvable: boolean;
+  /** Its live work-item keys (agent_key_store.work_keys), on the detail
+   *  only: who issued each and when it ends. */
+  work_keys?: { fingerprint: string; issued_by: string; expires_at: number; issued_at: number }[];
   /** His words when he said it is not done yet. */
   review_note: string;
   review_note_at: number | null;

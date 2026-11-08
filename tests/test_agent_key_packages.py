@@ -229,3 +229,92 @@ def test_a_message_changed_after_it_was_signed_is_unsigned_not_forged(wired, mon
     path.write_text("# One\n\nThree.\n")
     signer, key, status, _ = server._file_signer(path)
     assert (signer, status) == (None, "unsigned")
+
+
+# -- phase 5: work-item keys --------------------------------------------------------------
+
+AGENT_PKG = {"name": "build-agent", "version": "1.0.0", "purpose": "Build it.", "runs": "agent",
+             "brief": "BRIEF.md", "returns": ["results/**"]}
+
+
+class WorkKeyAgent(Agent):
+    """A work-item key as the package carries it, signing as an agent does."""
+
+    def __init__(self, private, public):
+        self.private, self.public = private, public
+        self.fingerprint = agent_keys.fingerprint(public)
+        self.session_id = ""
+
+
+def test_a_work_key_in_an_agent_package_reports_on_its_item_alone_and_ends_with_it(
+        wired, marks, tmp_path):
+    from jarvis import agent_key_store, make_package, work_packages, work_store
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    wid = _start_work(client, agent, folder)
+    other = _start_work(client, agent, folder)
+    raw = tmp_path / "agent.zip"
+    raw.write_bytes(make_zip({"BRIEF.md": "Build it."}, AGENT_PKG))
+    grant = make_package.add_work_key(raw, wid)
+    make_package.sign(raw, (agent.private, agent.public), PLAN, "", (), grant)
+    r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
+    assert r.status_code == 200, r.text
+    package = work_packages.find(r.json()["package"]["id"])
+    private = package.folder / ".jarvis" / "work-key"
+    assert private.is_file() and (private.stat().st_mode & 0o777) == 0o600
+    found = agent_keys.work_key(package.folder)
+    assert found is not None and found[1] == grant["public_key"]
+    [key] = agent_key_store.work_keys(wid)
+    assert key.issued_by == f"agent:{PLAN}" and key.expires_at > time.time() + 29 * 86400
+    worker = WorkKeyAgent(*found)
+
+    r = worker.post(client, f"/api/work/{wid}/events", {"kind": "update", "summary": "Built."})
+    assert r.status_code == 200, r.text
+    events = client.get(f"/api/work/{wid}").json()
+    assert events["events"][-1]["reporter_name"] == "Planning", "it reports for its issuer"
+    assert events["item"]["work_keys"][0]["issued_by"] == "Planning"
+    assert worker.post(client, f"/api/work/{other}/events",
+                       {"kind": "update", "summary": "x"}).status_code == 403
+    assert worker.post(client, "/api/work", {"title": "x"}).status_code == 403
+    assert worker.post(client, "/api/agent-keys/work-keys",
+                       {"work": wid, "public_key": agent.public}).status_code == 403
+
+    r = agent.post(client, f"/api/agent-keys/work-keys/{key.fingerprint}/renew")
+    assert r.status_code == 200
+    assert worker.post(client, f"/api/agent-keys/work-keys/{key.fingerprint}/renew",
+                       ).status_code == 403
+    work_store.record(work_store.WorkEvent(wid, work_store.CLOSED, "Done with it.", {}))
+    server._work_recorded(work_store.get(wid), work_store.CLOSED, None)
+    assert agent_key_store.get(key.fingerprint).state == "revoked"
+    assert worker.post(client, f"/api/work/{wid}/events",
+                       {"kind": "update", "summary": "x"}).status_code == 403
+
+
+def test_an_agent_grants_a_work_key_into_a_folder(wired, monkeypatch, capsys, tmp_path):
+    from jarvis import agent_key, agent_key_store, workflow_report
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    wid = _start_work(client, agent, folder)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+
+    def send_bytes(self, method, url, data, content_type):
+        headers = {"Content-Type": content_type}
+        if self.signer:
+            headers["Authorization"] = agent_keys.request_header(
+                self.signer[0], self.signer[1], method, url, data or b"")
+        r = client.request(method, url, content=data, headers=headers)
+        return workflow_report._Response(r.status_code, r.content,
+                                         r.headers.get("content-type", ""))
+    monkeypatch.setattr(workflow_report._Client, "send_bytes", send_bytes)
+    monkeypatch.setattr(agent_key, "base_url", lambda: "http://testserver")
+    place = tmp_path / "place"
+    place.mkdir()
+    assert agent_key.main(["grant", "--work", wid, "--into", str(place),
+                           "--session", PLAN]) == 0
+    assert (place / ".jarvis" / "work-key").is_file()
+    assert [k.work_id for k in agent_key_store.work_keys()] == [wid]
+    with pytest.raises(SystemExit, match="no open work item"):
+        agent_key.main(["grant", "--work", "work-none", "--into", str(tmp_path / "p2"),
+                        "--session", PLAN])

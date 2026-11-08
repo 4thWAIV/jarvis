@@ -223,6 +223,21 @@ def sign(archive: Path, signer: tuple[Path, str], session: str, worker: str = ""
                            work_key)
 
 
+def add_work_key(archive: Path, work_id: str) -> dict:
+    """Make a key pair for one Work item and put its private half in the
+    package at .jarvis/work-key, for whoever works in it: the grant the
+    signature carries. Only an agent package gets one: a package Tim
+    answers needs none."""
+    from jarvis import agent_keys
+    with tempfile.TemporaryDirectory(prefix="jarvis-work-key-") as folder:
+        private, public = agent_keys.make_pair(Path(folder) / "key", f"jarvis-work {work_id}",
+                                               name=agent_keys.WORK_KEY[1])
+        package_signature.add_files(archive, {
+            "/".join(agent_keys.WORK_KEY): private.read_bytes(),
+            "/".join(agent_keys.WORK_KEY) + ".pub": (public + "\n").encode()})
+    return {"public_key": public, "work": work_id}
+
+
 # -- checking ------------------------------------------------------------------------
 
 def _check(made: Made, out: Path) -> bool:
@@ -316,15 +331,20 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         return 1
 
     from jarvis import agent_keys
-    signer = agent_keys.session_key(args.session) if args.session else None
+    # The session's own key, else (an agent package's run, working in it) the
+    # work-item key in this folder or above.
+    signer = agent_keys.signer_for(args.session)
     try:
         decision = made.deck is not None and bool(made.deck.get("decisions"))
         token = ""
         if signer is not None:
             # Signed with the session's own key (package_signature.py): who
-            # sent it, and, for a deck, that the files checked are these.
+            # sent it, and, for a deck, that the files checked are these. An
+            # agent package for a Work item carries a key for that item alone.
+            grant = (add_work_key(made.archive, args.work) if args.work and
+                     made.kind == "agent package" and args.session else None)
             sign(made.archive, signer, args.session, args.worker,
-                 (package_signature.DECISION_CHECKED,) if decision else ())
+                 (package_signature.DECISION_CHECKED,) if decision else (), grant)
         else:
             # Until the cut-over: the tool token, and the stamp it makes.
             token = data_paths.ensure_tool_token()

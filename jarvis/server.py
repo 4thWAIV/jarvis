@@ -4180,7 +4180,13 @@ def _look_after_agent_keys(now: Optional[float] = None) -> None:
             if k.state == agent_key_store.ONBOARDED and k.session_id not in listed]
     if gone:
         agent_key_store.revoke_where("jarvis", "its agent was dropped from the list", gone)
-        _hint_agents_changed()
+        _hint_from_any_thread({"type": "agents"})
+    for key in agent_key_store.work_keys():
+        item = work_store.get(key.work_id)
+        if item is None or item.closed_at is not None or item.history:
+            agent_key_store.revoke(key.fingerprint, "jarvis", "its work item ended")
+        elif not key.admitted(now):
+            agent_key_store.revoke(key.fingerprint, "jarvis", "its 30 days ran out")
 
 
 AGENT_KEYS_POLL_SEC = 5.0
@@ -4257,6 +4263,39 @@ async def api_agent_keys(session: str = ""):
         return {"keys": [_key_json(k) for k in agent_key_store.listing()],
                 "access_key_admissions_7d": agent_key_store.legacy_counts()}
     return await asyncio.to_thread(read)
+
+
+class WorkKeyGrant(BaseModel):
+    work: str
+    public_key: str
+
+
+def _signed_key(request: Request):
+    principal = web_auth.principal(request.scope) or ""
+    return agent_key_store.for_session(principal[len(agent_key_store.AGENT):]) \
+        if principal.startswith(agent_key_store.AGENT) else None
+
+
+@app.post(web_auth.SUBMIT_PATH + "/work-keys")
+async def api_issue_work_key(req: WorkKeyGrant, request: Request):
+    """An onboarded agent issuing a key for one Work item
+    (`python -m jarvis.agent_key grant`)."""
+    issuer = await asyncio.to_thread(_signed_key, request)
+    key, why = await asyncio.to_thread(_issue_work_key, issuer, req.public_key, req.work)
+    if key is None:
+        return JSONResponse(status_code=409, content={"error": why})
+    return {"fingerprint": key.fingerprint, "work": key.work_id, "expires_at": key.expires_at}
+
+
+@app.post(web_auth.SUBMIT_PATH + "/work-keys/{fingerprint:path}/renew")
+async def api_renew_work_key(fingerprint: str, request: Request):
+    """The issuing agent giving its work-item key another 30 days."""
+    principal = web_auth.principal(request.scope) or ""
+    key = await asyncio.to_thread(agent_key_store.renew_work_key, fingerprint, principal)
+    if key is None:
+        return JSONResponse(status_code=409, content={
+            "error": "Only the agent that issued a live work-item key renews it."})
+    return {"fingerprint": key.fingerprint, "expires_at": key.expires_at}
 
 
 @app.post(web_auth.SUBMIT_PATH + "/{fingerprint:path}/revoke")
@@ -8950,6 +8989,8 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         return None, None, str(e)
     if fresh:
         _hint_from_any_thread({"type": "packages"})
+    if status == _GOOD_SIGNER and signed.work_key:
+        _work_key_from_package(package, signed, key, work_id)
     proven = signer if signer is not None else _package_sender(sender.claimed, source, reporter)
     sender = _inbox_sender(sender.project, signer.session_id if signer else sender.claimed,
                            proven)
@@ -8966,6 +9007,48 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     log.info("package inbox: %s arrived as %s%s", package.id, arrival.entry.id,
              "" if arrival.fresh else " (already open)")
     return arrival, package, ""
+
+
+def _issue_work_key(issuer, public_key: str, work_id: str):
+    """A key limited to one Work item, for whoever works in it, vouched for
+    by an onboarded agent that holds `work` there: `make_package --work`
+    (inside the package) and `python -m jarvis.agent_key grant` alike. (the
+    key, "") or (None, why not). Blocking."""
+    from jarvis import agent_rights
+    if issuer is None or not issuer.admitted() or \
+            not issuer.principal.startswith(agent_key_store.AGENT):
+        return None, "Only an onboarded agent issues a work-item key."
+    item = work_store.get(work_id) if work_id else None
+    if item is None or item.closed_at is not None or item.history:
+        return None, f"There is no open work item {work_id}."
+    if not agent_rights.allows(issuer.principal, "POST", f"/api/work/{work_id}/events"):
+        return None, "Your rights do not cover that work item."
+    try:
+        key = agent_key_store.add_work_key(public_key, work_id, issuer.principal)
+    except agent_key_store.KeyRefused as e:
+        return None, str(e)
+    _hint_from_any_thread({"type": "work"})
+    return key, ""
+
+
+def _work_key_from_package(package, signed, key, work_id: str) -> None:
+    """The work-item key a package carries (its grant in the signature, its
+    private half at .jarvis/work-key), recorded for the item it was sent
+    for, and its file made 0600 in the unpacked package. Never raises."""
+    grant = signed.work_key or {}
+    try:
+        if str(grant.get("work") or "") != work_id:
+            log.info("package %s: its work key names another item; not issued", package.id)
+            return
+        issued, why = _issue_work_key(key, str(grant.get("public_key") or ""), work_id)
+        if issued is None:
+            log.info("package %s: its work key was not issued: %s", package.id, why)
+            return
+        private = package.folder.joinpath(*agent_keys.WORK_KEY)
+        if private.is_file() and not private.is_symlink():
+            os.chmod(private, 0o600)
+    except Exception:
+        log.warning("package %s: its work key was not issued", package.id, exc_info=True)
 
 
 def _file_sha256(path: Path) -> str:
@@ -9007,6 +9090,12 @@ def _package_signer(signed):
     if key is not None and key.admitted() and key.principal.startswith(agent_key_store.AGENT):
         if signed.checks(key.public_key):
             return _signer_sender(key, signed.worker), key, _GOOD_SIGNER
+        return None, key, _HELD_SIGNER
+    if key is not None and key.admitted() and key.principal.startswith(agent_key_store.WORK_KEY):
+        # A work-item key sends for the agent that issued it, on its item.
+        issuer = agent_key_store.for_session(key.issued_by[len(agent_key_store.AGENT):])
+        if signed.checks(key.public_key) and issuer is not None and issuer.admitted():
+            return _signer_sender(issuer, signed.worker or "item key"), key, _GOOD_SIGNER
         return None, key, _HELD_SIGNER
     genuine = bool(signed.public_key) and \
         agent_keys.fingerprint(signed.public_key) == signed.fingerprint and \
@@ -9234,8 +9323,8 @@ def _request_from_unrecognised(checked, method: str, path: str, query: str,
     `_unrecognised_key`. A request signed by a fingerprint JARVIS holds no
     key for proves nothing about anyone, so it is only refused."""
     key = checked.key
-    if key is None:
-        return
+    if key is None or key.principal.startswith(agent_key_store.WORK_KEY):
+        return                          # a work key ends with its item: nothing to hold
     said = ""
     try:
         sent = json.loads(body.decode("utf-8")) if body else {}
@@ -12209,8 +12298,10 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
     _send_to_session_clients({"type": "work"})
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
     if kind == work_store.CLOSED:
-        # Closed for good: nothing it said is news any longer.
+        # Closed for good: nothing it said is news any longer, and its
+        # work-item keys end with it.
         _attention_resolved("work", item.id)
+        agent_key_store.revoke_where("jarvis", "its work item was closed", work_ids=[item.id])
     elif kind == work_store.DECISION_NEEDED:
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
     elif said_state in _WORK_NEWS_STATES:
