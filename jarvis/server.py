@@ -2044,6 +2044,12 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     for dropped in session_messages.collect(data_paths.session_messages_dir(),
                                             time.time()):
         sender = _message_sender(dropped)
+        if sender.session_id is None:
+            # No sender he could reply to: it never reaches him as a message.
+            # Held where it was dropped (`.held`), so its session sees it was
+            # not taken, and counted in Diagnostics (session_messages.held).
+            _hold_session_message(dropped)
+            continue
         message_id = run_store.create_session_message(
             dropped.project, sender.name, dropped.subject, dropped.body,
             sender.session_id, sender.evidence)
@@ -2065,6 +2071,17 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                     agent_name=received.agent_name, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
+
+
+def _hold_session_message(dropped) -> None:
+    """A message whose sender cannot be told is renamed `<name>.held` in its
+    folder: not recorded, not shown, never taken again. Never raises."""
+    try:
+        dropped.path.rename(dropped.path.with_suffix(session_messages.HELD_SUFFIX))
+        log.info("session messages: %s held: it names no sender he could reply to",
+                 dropped.path.name)
+    except OSError as e:
+        log.warning(f"session messages: {dropped.path.name} not held ({e})")
 
 
 def _attend_session_messages(messages: list) -> None:
@@ -5200,24 +5217,107 @@ def _read_session_message(number: int):
     return m
 
 
+# How long a message read aloud may take to be heard before it is given up.
+READ_ALOUD_TIMEOUT = 300.0
+
+
+async def _read_message_aloud(number: int):
+    """JARVIS reads one message a session sent aloud, that message only (its
+    sender, subject and body), as he asked: the Updates entry's Read and the
+    brain's read_session_message_aloud alike. It is marked read; its update
+    is seen only once it has been heard in full (`_seen_once_heard`'s rule),
+    so cut off or skipped it stays. The message, or None."""
+    m = await asyncio.to_thread(_read_session_message, number)
+    if m is None or speech is None:
+        return m
+    text = f"{_said_name({'voice_name': m.agent_name}, 'A session')} writes: " + (
+        f"{m.subject}. " if m.subject else "") + (m.body or "")
+    item = attention_record.get("session_message", str(number)) if attention_record else None
+    utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
+    reads = [("session_message", str(number), item.revision)] if item is not None else []
+    _spawn(_seen_when_heard(reads, utt))
+    return m
+
+
+async def _seen_when_heard(reads: list, utt) -> None:
+    heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
+    _seen_once_heard(reads, utt, heard)
+    _hint_attention()
+
+
 @app.post("/api/session-messages/{number}/read")
 async def api_read_session_message(number: int):
-    """His Read on a session message's Updates entry: the message, marked
-    read (the same call as read_session_message), and its update seen, since
-    he has it in front of him. Its subject and body are the session's words,
-    shown on the page as text."""
-    m = await asyncio.to_thread(_read_session_message, number)
+    """His Read on a session message's Updates entry: JARVIS reads it aloud
+    (`_read_message_aloud`); the entry stays until it has been heard."""
+    if speech is None:
+        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    m = await _read_message_aloud(number)
     if m is None:
         raise HTTPException(status_code=404, detail="No such message")
-    if attention_record is not None:
-        try:
-            await asyncio.to_thread(attention_api.mark_seen_source, attention_record,
-                                    "session_message", str(number))
-        except Exception:
-            log.warning("attention: session message %s not marked seen", number, exc_info=True)
-        _hint_attention()
-    return {"id": m.id, "agent_name": m.agent_name, "project": m.project,
-            "subject": m.subject, "body": m.body, "received_at": m.received_at}
+    return {"id": m.id, "reading": True}
+
+
+def _reply_capture(number: int):
+    """A capture addressed to the session that sent message `number`, for
+    his reply: read back naming it and sent only on his yes, as every
+    message to a session is. (the capture, None) or (None, why not)."""
+    m = run_store.get_session_message(number)
+    if m is None:
+        return None, f"There is no message {number} from a session."
+    names = agent_directory.names_by_session()
+    if not m.sender_session or m.sender_session not in names:
+        return None, (f"Message {number} came from no session JARVIS can name, so there is "
+                      f"no one to reply to.")
+    capture = _new_capture()
+    _set_capture(capture, "", names[m.sender_session], m.sender_session)
+    return capture, None
+
+
+@app.post("/api/session-messages/{number}/reply")
+async def api_reply_session_message(number: int):
+    """His Reply on a session message's Updates entry: a capture addressed
+    to its sender, for what he says or types next."""
+    capture, why = _reply_capture(number)
+    if capture is None:
+        raise HTTPException(status_code=409, detail=why)
+    _notes_for_brain.append(
+        f"He pressed Reply on message {number}: capture {capture['id']} is addressed to "
+        f"{_plain_name(capture['to'], 'its session')}. Put what he says or types next into "
+        f"it (capture with capture={capture['id']}), read it back, and it goes on his yes.")
+    return {"capture": capture["id"], "to": capture["to"]}
+
+
+def tool_reply_to_session_message(args: dict) -> str:
+    """His reply to a session's message: a capture addressed to its sender."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; session_messages has them."
+    capture, why = _reply_capture(number)
+    if capture is None:
+        return why + " Nothing was captured."
+    text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
+    if text:
+        _set_capture(capture, text, capture["to"], capture["to_session"])
+        return (f"Capture {capture['id']} holds his reply to "
+                f"{_plain_name(capture['to'], 'its session')}. Read it back now with "
+                f"read_capture; it goes only on his yes.")
+    return (f"Capture {capture['id']} is addressed to {_plain_name(capture['to'], 'its session')}"
+            f" for his reply: put his words in it with capture, then read it back.")
+
+
+async def tool_read_session_message_aloud(args: dict) -> str:
+    """Read one session message aloud, as the Updates entry's Read does."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; session_messages has them."
+    if speech is None:
+        return "I have no voice to read it with."
+    m = await _read_message_aloud(number)
+    if m is None:
+        return f"There is no message {number} from a session; session_messages has them."
+    return f"Reading message {number} aloud now, sir; say nothing more of it."
 
 
 def tool_read_session_message(args: dict) -> str:
@@ -9544,6 +9644,8 @@ TOOL_HANDLERS.update({
     "session_needs": tool_session_needs,
     "session_messages": tool_session_messages,
     "read_session_message": tool_read_session_message,
+    "read_session_message_aloud": tool_read_session_message_aloud,
+    "reply_to_session_message": tool_reply_to_session_message,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -10112,7 +10214,12 @@ TOOL_HANDLERS.update({
     "turn_audio_off": tool_turn_audio_off,
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-                     "mute_speech", "turn_audio_off", "set_motion"})
+                     "mute_speech", "turn_audio_off", "set_motion",
+                     "read_session_message_aloud", "reply_to_session_message"})
+TAINT_EXEMPT_TOOLS.update({
+    "read_session_message_aloud": "it reads one message aloud and says so in JARVIS's words",
+    "reply_to_session_message": "it opens a capture addressed to the message's sender",
+})
 TAINT_EXEMPT_TOOLS.update({
     "set_motion": "it turns the page's motion steady or back; it reads nothing",
     "mute_speech": "it mutes JARVIS's speech; it reads nothing",

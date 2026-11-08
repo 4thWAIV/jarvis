@@ -30,6 +30,27 @@ MAX_FILE_CHARS = 20000
 # How many files one look takes. The rest wait for the next.
 MAX_PER_LOOK = 20
 
+# A message whose sender cannot be told is not taken: renamed `<name>.held`
+# where it was dropped, so its session sees it was refused, and counted.
+HELD_SUFFIX = ".held"
+
+
+def held(folder: Path) -> int:
+    """How many messages are held for naming no sender (Diagnostics' count).
+    Regular files only, never through a symlink. Never raises."""
+    count = 0
+    try:
+        projects = [d for d in folder.iterdir() if d.is_dir() and not d.is_symlink()]
+    except OSError:
+        return 0
+    for project in projects:
+        try:
+            count += sum(1 for p in project.glob(f"*{HELD_SUFFIX}")
+                         if stat.S_ISREG(p.lstat().st_mode))
+        except OSError:
+            continue
+    return count
+
 
 @dataclass(frozen=True)
 class Dropped:

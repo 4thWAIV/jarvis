@@ -80,11 +80,18 @@ def test_a_runaway_file_is_cut_and_a_missing_folder_holds_nothing(tmp_path):
 # --- the server ----------------------------------------------------------------
 
 class _Speech:
+    """Records what is said; `heard` is whether each utterance is heard in full."""
+
     def __init__(self):
         self.said = []
+        self.heard = True
 
     async def say(self, text, priority=None, immediate=None, label=None):
         self.said.append(text)
+        return SimpleNamespace(chunks=[text], text=text)
+
+    async def wait_for(self, utt, timeout=60.0):
+        return self.heard
 
 
 @pytest.fixture
@@ -138,7 +145,7 @@ def test_a_message_is_recorded_then_its_file_deleted(server):
 
 def test_a_file_whose_record_fails_stays_for_the_next_look(server, monkeypatch):
     from jarvis import data_paths
-    p = _drop(data_paths.session_messages_dir(), "guard", "done", "# x\ny")
+    p = _drop(data_paths.session_messages_dir(), "guard", "done", f"# x\nFrom: {GUARD}\ny")
 
     def broken(*a, **k):
         raise RuntimeError("disk full")
@@ -149,16 +156,25 @@ def test_a_file_whose_record_fails_stays_for_the_next_look(server, monkeypatch):
     assert p.exists()
 
 
-def test_a_sender_that_cannot_be_told_is_an_agent_in_its_project(server, monkeypatch):
-    from jarvis import data_paths
-    _drop(data_paths.session_messages_dir(), "proteus", "m", "# x\ny")
-    _drop(data_paths.session_messages_dir(), "guard", "n", "# y\nz")
+def test_a_sender_that_cannot_be_told_is_held_never_shown_as_a_message(server, monkeypatch,
+                                                                        attention):
+    """He could not reply to it: it is held where it was dropped (its session
+    sees it was not taken), never recorded or listed, and counted in
+    Diagnostics. Never "Agent Guard and Designer"."""
+    from jarvis import data_paths, session_messages, subsystem_diagnostics
+    monkeypatch.setattr(server, "attention_record", attention)
+    folder = data_paths.session_messages_dir()
+    p = _drop(folder, "proteus", "m", "# x\ny")
+    q = _drop(folder, "guard", "n", "# y\nz")
 
-    first, second = server._take_session_messages()
-
-    assert (first.agent_name, first.sender_session, first.sender_evidence) == (
-        "an agent in proteus", None, "project")
-    assert second.agent_name == "an agent in guard", "never 'Agent Guard and Designer'"
+    assert server._take_session_messages() == []
+    assert server.run_store.list_session_messages() == []
+    assert attention.items(("pending", "seen", "resolved")) == []
+    assert not p.exists() and p.with_suffix(".held").exists() and q.with_suffix(".held").exists()
+    assert server._take_session_messages() == [], "held once, never taken again"
+    assert session_messages.held(folder) == 2
+    check = subsystem_diagnostics.incoming_check(None, 0, time.time(), held=2)
+    assert check.said is not None and check.said.code == "incomingHeld"
 
 
 def test_one_message_is_an_update_by_name_without_its_text(server, monkeypatch, attention):
@@ -197,7 +213,7 @@ async def test_the_watch_takes_and_records_a_dropped_message(server, monkeypatch
     from jarvis import data_paths
     monkeypatch.setattr(server, "attention_record", attention)
     monkeypatch.setattr(server, "SESSION_MESSAGES_POLL_SEC", 0.01)
-    p = _drop(data_paths.session_messages_dir(), "guard", "m", "# x\ny")
+    p = _drop(data_paths.session_messages_dir(), "guard", "m", f"# x\nFrom: {GUARD}\ny")
 
     task = asyncio.ensure_future(server._watch_session_messages())
     try:
@@ -289,34 +305,77 @@ def test_a_from_line_counts_only_for_a_known_agent_of_that_project(server, monke
     _drop(folder, "guard", "a", f"# A\nFrom: {GUARD}\nx", age=90)
     _drop(folder, "proteus", "b", f"# B\nFrom: {GUARD}\ny", age=60)        # not its project
     _drop(folder, "guard", "c", "# C\nFrom: sess-nobody-0001\nz", age=30)  # unknown
-    a, b, c = server._take_session_messages()
+    [a] = server._take_session_messages()
     assert (a.agent_name, a.sender_session, a.sender_evidence) == ("Agent Guard", GUARD, "from_line")
-    assert (b.agent_name, b.sender_session) == ("an agent in proteus", None)
-    assert (c.agent_name, c.sender_session) == ("an agent in guard", None)
+    assert len(list(folder.glob("*/*.held"))) == 2, "another project's, and an unknown id"
 
 
-def test_read_on_the_updates_entry_opens_it_marks_it_read_and_seen(server, monkeypatch, attention):
-    from fastapi.testclient import TestClient
+def _taken(server, monkeypatch, attention):
     from jarvis import data_paths
     monkeypatch.setattr(server, "attention_record", attention)
     monkeypatch.setattr(server, "_send_to_session_clients", lambda m: None)
     _drop(data_paths.session_messages_dir(), "guard", "m", f"# Status\nFrom: {GUARD}\nAll good.")
     [m] = server._take_session_messages()
     server._attend_session_messages([m])
+    return m
+
+
+ORIGIN = {"Origin": "http://localhost:5173"}
+
+
+def test_read_speaks_that_one_message_and_it_is_seen_once_heard(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    m = _taken(server, monkeypatch, attention)
     client = TestClient(server.app)
-    r = client.post(f"/api/session-messages/{m.id}/read", headers={"Origin": "http://localhost:5173"})
-    assert r.status_code == 200, r.text
-    assert (r.json()["subject"], r.json()["body"], r.json()["agent_name"]) == (
-        "Status", "All good.", "Agent Guard")
+    r = client.post(f"/api/session-messages/{m.id}/read", headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["reading"], r.text
+    assert server.said == ["Agent Guard writes: Status. All good."], "that message only"
     assert server.run_store.get_session_message(m.id).read_at is not None
     (item,) = attention.items(("pending", "seen", "resolved"))
     assert item.state == "seen"
-    assert client.post("/api/session-messages/999/read",
-                       headers={"Origin": "http://localhost:5173"}).status_code == 404
+    assert client.post("/api/session-messages/999/read", headers=ORIGIN).status_code == 404
     assert client.post(f"/api/session-messages/{m.id}/read").status_code == 403, "his click only"
 
 
-def test_the_page_s_read_and_the_brain_s_are_one_call(server):
+def test_read_cut_off_leaves_the_entry_pending(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    m = _taken(server, monkeypatch, attention)
+    server.speech.heard = False
+    TestClient(server.app).post(f"/api/session-messages/{m.id}/read", headers=ORIGIN)
+    (item,) = attention.items(("pending", "seen", "resolved"))
+    assert item.state == "pending"
+
+
+def test_the_brain_reads_it_aloud_through_the_same_call(server, monkeypatch, attention):
     import inspect
-    assert "_read_session_message(" in inspect.getsource(server.tool_read_session_message)
-    assert "_read_session_message" in inspect.getsource(server.api_read_session_message)
+    m = _taken(server, monkeypatch, attention)
+    said = asyncio.run(server.tool_read_session_message_aloud({"message": m.id}))
+    assert said.startswith("Reading message") and server.said == ["Agent Guard writes: Status. All good."]
+    assert "_read_message_aloud(" in inspect.getsource(server.api_read_session_message)
+    assert "_read_message_aloud(" in inspect.getsource(server.tool_read_session_message_aloud)
+
+
+def test_reply_is_a_capture_to_its_sender_read_back_and_sent_on_his_yes(server, monkeypatch,
+                                                                       attention):
+    from fastapi.testclient import TestClient
+    m = _taken(server, monkeypatch, attention)
+    r = TestClient(server.app).post(f"/api/session-messages/{m.id}/reply", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    capture = server._captures[r.json()["capture"]]
+    assert (capture["to"], capture["to_session"], capture["text"]) == ("Agent Guard", GUARD, "")
+    async def reply():
+        return server.tool_reply_to_session_message({"message": m.id, "text": "Thanks, ship it."})
+    said = asyncio.run(reply())
+    newest = max(server._captures.values(), key=lambda c: c["id"])
+    assert (newest["to_session"], newest["text"]) == (GUARD, "Thanks, ship it.")
+    assert "read_capture" in said and "his yes" in said
+    from jarvis import transmission
+    assert not transmission.accepted(newest), "nothing goes until it is read back and he says yes"
+
+
+def test_a_message_with_no_known_sender_cannot_be_replied_to(server, monkeypatch):
+    from fastapi.testclient import TestClient
+    mid = server.run_store.create_session_message("guard", "Denice and Designer", "Old", "x")
+    r = TestClient(server.app).post(f"/api/session-messages/{mid}/reply", headers=ORIGIN)
+    assert r.status_code == 409 and "no one to reply to" in r.json()["detail"]
+    assert "no one to reply to" in server.tool_reply_to_session_message({"message": mid})

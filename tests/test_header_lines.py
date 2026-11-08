@@ -828,6 +828,15 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
+    "server._read_message_aloud": (
+        "it speaks one session's message aloud to him, as he asked (Read), through the "
+        "voice; its words never reach the brain, whose tool gets only a fixed sentence"),
+    "server.api_reply_session_message": (
+        "its note to the brain names the capture by number and its recipient through "
+        "_plain_name, which refuses anything but a plain name; no word of the message"),
+    "server.tool_reply_to_session_message": (
+        "it answers with the capture's number and its recipient through _plain_name; his "
+        "own reply text goes into the capture, never into the answer"),
     "work_store._item_reason": (
         "it words the item's reason with the subagent's description (its dispatcher's "
         "words), data the page shows as text and the brain reads only inside "

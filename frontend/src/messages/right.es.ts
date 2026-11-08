@@ -304,6 +304,9 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.said.incomingWaiting": {
     one: "{count} mensaje lleva más de {age} sin recogerse",
     other: "{count} mensajes llevan más de {age} sin recogerse" },
+  "right.subsystem.said.incomingHeld": {
+    one: "{count} mensaje retenido: no nombra un remitente al que se pueda responder",
+    other: "{count} mensajes retenidos: no nombran un remitente al que se pueda responder" },
   "right.subsystem.said.voiceIdle": "Sin escuchar",
   "right.subsystem.said.voiceDropping": "Perdiendo voz",
   "right.subsystem.said.voiceDroppingCause": "Perdiendo voz: {cause}",

@@ -203,11 +203,25 @@ agent and nothing of its text. The agent is its real sender
 `sender_evidence`): the session whose own transcript shows it writing that
 file, else the session its `From: <session id>` line names (the skill's
 second line; only a session the agent directory knows, in that same
-project), else "an agent in <project>"; never every agent of the project
-listed together. The Updates entry's Read (`POST
-/api/session-messages/{id}/read`) opens it through `_read_session_message`,
-the brain's `read_session_message`'s own call, marks it read and the update
-seen. The brain reads the record
+project), and a message from no sender he could reply to is never shown as a
+message: it is held where it was dropped (`<name>.held`,
+`server._hold_session_message`; its session sees it was not taken) and only
+counted in Diagnostics (`incomingHeld`), since a message he cannot answer
+must not reach him as one. Its Updates entry has Seen, Read and Reply:
+Read (`POST /api/session-messages/{id}/read`) has JARVIS read that one
+message aloud (`_read_message_aloud`, an approved speech entry point; the
+brain's `read_session_message_aloud` too), seen only once heard in full
+(`_seen_once_heard`'s rule); Reply (`POST .../reply`, the brain's
+`reply_to_session_message`, `_reply_capture`) opens a capture addressed to
+its sender, read back and sent on his yes through `steer_session`.
+Every message to Tim can be replied to: a session's message (Reply); an
+agent's answer to a message and a session needing him (a capture to that
+agent, `capture` with `to`, then `steer_session`); a person's message (the
+Queue's reply, `draft_message`); a package (its answers go back on sign-off,
+`sign_off_package`); a Work item's or workflow's decision (answered there,
+`answer_work_decision`, `answer_workflow_decision`). The rest of Updates
+(runs, workflow news, follow-ups, stalled work, the digest) is JARVIS's own
+facts, not anyone's words to answer. The brain reads the record
 with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
 talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside

@@ -147,6 +147,8 @@ SAID: dict[str, str | dict[str, str]] = {
     "queuedHeldSeen": "A message to {agent} has waited {age} for its turn; JARVIS sees it as {state}",
     "incomingWaiting": {"one": "{count} message waiting over {age} to be picked up",
                         "other": "{count} messages waiting over {age} to be picked up"},
+    "incomingHeld": {"one": "{count} message held: it named no sender he could reply to",
+                     "other": "{count} messages held: they named no sender he could reply to"},
     "voiceIdle": "Not listening",
     "voiceDropping": "Dropping speech",
     "voiceDroppingCause": "Dropping speech: {cause}",
@@ -508,22 +510,24 @@ def queued_check(queued: list, watcher, now: float) -> Check:
     return one(DEGRADED, say("queuedHeld", agent=oldest.agent_name, age=age(waited)))
 
 
-def incoming_check(b: Optional[Beat], waiting: int, now: float) -> Check:
-    """Messages sessions drop for Tim: the loop that takes them, and any file
-    left waiting."""
+def incoming_check(b: Optional[Beat], waiting: int, now: float, held: int = 0) -> Check:
+    """Messages sessions drop for Tim: the loop that takes them, any file
+    left waiting, and any held for naming no sender (only a count here)."""
     state, line = judge(b, now)
     if state in (OK, UNKNOWN) and waiting:
         state, line = DEGRADED, say("incomingWaiting", count=waiting, age=age(FILE_WAITING_SEC))
+    elif state in (OK, UNKNOWN) and held:
+        state, line = DEGRADED, say("incomingHeld", count=held)
     return check("incoming", "incoming", state, line)
 
 
 def communications(watcher, messages: list, beats_now: dict, waiting: int,
-                   now: float, started_at: float, queued: list = ()) -> Subsystem:
+                   now: float, started_at: float, queued: list = (), held: int = 0) -> Subsystem:
     checks = [
         watcher_check(watcher, now, started_at),
         outgoing_check(messages, now),
         queued_check(list(queued), watcher, now),
-        incoming_check(beats_now.get(SESSION_MESSAGES_LOOP), waiting, now),
+        incoming_check(beats_now.get(SESSION_MESSAGES_LOOP), waiting, now, held),
         check("needs", "needs", *judge(beats_now.get(NEEDS_LOOP), now)),
     ]
     first = checks[0]
@@ -844,7 +848,8 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
     beats_now = dict(beats)
     return [
         communications(watcher, messages, beats_now, waiting, now, started_at,
-                       run_store.queued_messages()),
+                       run_store.queued_messages(),
+                       session_messages.held(data_paths.session_messages_dir())),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now, local_voice),

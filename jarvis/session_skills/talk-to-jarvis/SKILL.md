@@ -33,7 +33,7 @@ Any choice you put to the user, beyond a line on the needs board, goes to them a
 
 To tell the user something that is not a decision, question or blocker, such as a finished piece of work or a report, send it as a message. Write one file per message to `{{messages_dir}}/<project>/<short-name>.md`, where `<project>` is the name of your project's folder.
 
-The first line is `# ` followed by the subject in one sentence. The second line is `From: <your session id>`, so the user is told who sent it: JARVIS checks it against its own record of your session and your project's folder, and a file with no `From:` line (or one that does not check out) reaches the user as from "an agent in <project>". Everything after that is the message.
+The first line is `# ` followed by the subject in one sentence. The second line is `From: <your session id>`, so the user is told who sent it: JARVIS checks it against its own record of your session and your project's folder, and a file with no `From:` line (or one that does not check out) is not delivered, since the user could not reply to it: JARVIS renames it `<short-name>.held` where you wrote it. If you find your file renamed so, add the `From:` line and write it again. The user can reply to every message you send; the reply comes to your session as an ordinary message. Everything after that is the message.
 
 Write the file once and do not edit it afterwards. JARVIS picks it up within seconds, deletes the file and tells the user a message came in. A file that is still there after a minute has not been picked up, usually because JARVIS is not running.
 

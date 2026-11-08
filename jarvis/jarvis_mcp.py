@@ -182,6 +182,28 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "read_session_message_aloud",
+        "description": (
+            "Read one message a session sent him aloud, that message only (its sender, "
+            "subject and body), as the Updates entry's Read does, only when he asks. Its "
+            "update counts as seen only once he has heard it in full."),
+        "inputSchema": {"type": "object",
+                        "properties": {"message": {"type": "integer"}},
+                        "required": ["message"]},
+    },
+    {
+        "name": "reply_to_session_message",
+        "description": (
+            "His reply to a message a session sent: a capture addressed to the session that "
+            "sent it, holding his words when given. Read it back with read_capture; it goes "
+            "only on his yes, as every message to a session does."),
+        "inputSchema": {"type": "object",
+                        "properties": {"message": {"type": "integer"},
+                                       "text": {"type": "string",
+                                                "description": "His reply, in his words."}},
+                        "required": ["message"]},
+    },
+    {
         "name": "session_needs",
         "description": (
             "What every Claude Code session has written down as needing the user: "

@@ -173,31 +173,36 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
 /** A package's reduced line: who sent it, its title and how many decisions
  *  wait, with Open and Seen. The words are the sender's, drawn as text. */
-/** A session's message, with Read: it opens the message here (the same
- *  call as the brain's read_session_message, which marks it read) and the
- *  update is seen. The subject and body are the session's words, as text. */
+/** A session's message: Seen (as every entry), Read (JARVIS reads that one
+ *  message aloud, the brain's read_session_message_aloud's call; the entry
+ *  stays until it has been heard in full) and Reply (a capture addressed to
+ *  its sender for what he says or types next, read back and sent on his yes,
+ *  the brain's reply_to_session_message's call). */
 function SessionMessageLine({ item }: { item: AttentionItem }) {
   const t = useT();
-  const [opened, setOpened] = useState<{ subject: string; body: string } | null>(null);
-  const [failed, setFailed] = useState(false);
-  const read = async () => {
-    const res = await fetch(`/api/session-messages/${encodeURIComponent(item.source_id)}/read`,
+  const [said, setSaid] = useState<string | null>(null);
+  const post = async (action: "read" | "reply") => {
+    const res = await fetch(`/api/session-messages/${encodeURIComponent(item.source_id)}/${action}`,
                             { method: "POST" }).catch(() => null);
-    if (!res?.ok) { setFailed(true); return; }
-    setOpened(await res.json());
+    if (!res?.ok) {
+      const body = res ? ((await res.json().catch(() => ({}))) as { detail?: string }) : {};
+      setSaid(body.detail || t("main.updates.readFailed"));
+      return;
+    }
+    const body = (await res.json()) as { to?: string };
+    setSaid(action === "read" ? t("main.updates.reading")
+                              : t("main.updates.replyTo", { name: body.to ?? "" }));
   };
   return (
     <li className="updates-session-message" data-message-id={item.source_id}>
       <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
-      {!opened && <button type="button" className="settings-btn" data-ui-action="domain"
-                          onClick={() => void read()}>{t("main.updates.read")}</button>}
-      {failed && <span className="file-state">{t("main.updates.readFailed")}</span>}
-      {opened && (
-        <div className="updates-message">
-          {opened.subject && <strong>{opened.subject}</strong>}
-          <p className="updates-message-body">{opened.body}</p>
-        </div>
-      )}
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void post("read")}>{t("main.updates.read")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void post("reply")}>{t("main.updates.reply")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain"
+              onClick={() => void markSeen([item.id])}>{t("main.updates.markSeen")}</button>
+      {said && <span className="file-state">{said}</span>}
     </li>
   );
 }

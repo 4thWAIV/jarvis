@@ -317,6 +317,9 @@ export const rightEn = {
   "right.subsystem.said.incomingWaiting": {
     one: "{count} message waiting over {age} to be picked up",
     other: "{count} messages waiting over {age} to be picked up" },
+  "right.subsystem.said.incomingHeld": {
+    one: "{count} message held: it named no sender he could reply to",
+    other: "{count} messages held: they named no sender he could reply to" },
   "right.subsystem.said.voiceIdle": "Not listening",
   "right.subsystem.said.voiceDropping": "Dropping speech",
   "right.subsystem.said.voiceDroppingCause": "Dropping speech: {cause}",
