@@ -204,11 +204,16 @@ class OwnedProcess:
             try:
                 self.job.terminate()
                 deadline = time.monotonic() + timeout
-                while self.job.active():
+                # An asyncio wait() registered before process_exited can
+                # remain pending until every pipe disconnects. A full,
+                # paused stdout buffer can therefore hold it after death.
+                # The Job proves the tree is empty; returncode proves the
+                # existing asyncio watcher observed our root's exit. Leave
+                # its buffered output intact for the caller to consume.
+                while self.job.active() or self.process.returncode is None:
                     if time.monotonic() >= deadline:
-                        raise ContainmentError("Windows owned process tree did not stop within its grace period")
+                        raise ContainmentError("Windows owned process tree did not stop with an observed root exit within its grace period")
                     await asyncio.sleep(min(0.02, max(0, deadline - time.monotonic())))
-                await asyncio.wait_for(self.process.wait(), timeout=max(0.01, deadline - time.monotonic()))
                 self.job.close()
                 self._stopped = True
             except BaseException as error:

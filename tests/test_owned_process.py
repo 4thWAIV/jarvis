@@ -146,15 +146,67 @@ async def test_job_waits_for_descendants_after_parent_exit_and_is_idempotent():
 
 
 @pytest.mark.asyncio
-async def test_tree_that_cannot_be_confirmed_dead_is_not_success():
+@pytest.mark.parametrize("active", [0, 1])
+async def test_tree_that_cannot_be_confirmed_dead_is_not_success(active):
     job = FakeJob()
-    job.remaining = [1]
+    # Neither an empty Job without an observed root exit, nor a Job with
+    # surviving descendants, is sufficient evidence to report success.
+    job.remaining = [active]
     child = owned.OwnedProcess(FakeProcess(), job)
     with pytest.raises(owned.ContainmentError, match="did not stop"):
         await child.stop(timeout=0.01)
     with pytest.raises(owned.ContainmentError):
         await child.stop()
     assert job.events == ["terminate", "close"]
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_wait_for_buffered_pipes_after_exit_is_observed():
+    class PipeHeldProcess(FakeProcess):
+        async def wait(self):
+            # asyncio waiters registered before _process_exited are released
+            # only after the pipes disconnect, even when returncode is known.
+            await asyncio.Event().wait()
+
+    proc, job = PipeHeldProcess(), FakeJob()
+    job.terminate = lambda: asyncio.get_running_loop().call_soon(
+        setattr, proc, "returncode", 1)
+    child = owned.OwnedProcess(proc, job)
+    await child.stop(timeout=0.1)
+    assert child.returncode == 1
+    assert job.events == ["close"]
+
+
+@pytest.mark.asyncio
+async def test_stop_retains_real_buffered_stdout_without_waiting_for_a_reader():
+    args = (sys.executable, "-c", "import os, time; os.write(1, b'x' * 262144); time.sleep(30)")
+    if os.name == "nt":
+        child = await owned.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, limit=1024)
+    else:
+        # Exercise the real asyncio pipe lifecycle locally. This substitute
+        # models the Job API only; it is not native Windows evidence.
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, limit=1024)
+        job = FakeJob()
+        job.terminate = proc.kill
+        child = owned.OwnedProcess(proc, job)
+    try:
+        for _ in range(200):
+            if child.stdout._paused:
+                break
+            await asyncio.sleep(0.01)
+        assert child.stdout._paused, "fixture did not fill its stdout buffer"
+        await child.stop(timeout=2)
+        assert child.returncode is not None
+        buffered = await asyncio.wait_for(child.stdout.read(), 3)
+        assert buffered and set(buffered) == {ord('x')}
+    finally:
+        if child.returncode is None:
+            child.process.kill()
+        await asyncio.wait_for(child.stdout.read(), 3)
+        await asyncio.wait_for(child.process.wait(), 3)
+        child.job.close()
 
 
 @pytest.mark.asyncio
