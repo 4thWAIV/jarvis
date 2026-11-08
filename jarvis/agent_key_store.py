@@ -89,7 +89,37 @@ _SCHEMA = """
     );
 """
 
-_MIGRATIONS = {1: _SCHEMA}
+# 2: what is held because the key that signed it (or the session that
+# claimed it, unsigned) is not an onboarded agent's: the subject (`key:<fp>`
+# or `session:<id>`), what it was and where it is kept, the Work item it
+# was for, and how it was settled (released once the agent is onboarded,
+# refused once its key is refused). The error package that tells Tim is
+# kept per subject.
+_HELD = """
+    CREATE TABLE agent_key_held (
+        id             TEXT PRIMARY KEY,
+        subject        TEXT NOT NULL,
+        fingerprint    TEXT NOT NULL DEFAULT '',
+        session_id     TEXT NOT NULL DEFAULT '',
+        kind           TEXT NOT NULL,
+        what           TEXT NOT NULL,
+        path           TEXT NOT NULL DEFAULT '',
+        detail         TEXT NOT NULL DEFAULT '{}',
+        work_id        TEXT NOT NULL DEFAULT '',
+        held_at        REAL NOT NULL,
+        state          TEXT NOT NULL,
+        settled_at     REAL
+    );
+    CREATE INDEX agent_key_held_subject ON agent_key_held(subject, state);
+    CREATE TABLE agent_key_errors (
+        subject        TEXT PRIMARY KEY,
+        package_id     TEXT NOT NULL DEFAULT '',
+        inbox_id       TEXT NOT NULL DEFAULT '',
+        made_at        REAL NOT NULL
+    );
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _HELD}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -404,3 +434,110 @@ def legacy_counts(days: int = 7, now: Optional[float] = None) -> dict[str, int]:
         rows = conn.execute("SELECT label, SUM(count) AS n FROM legacy_admissions WHERE day>=? "
                             "GROUP BY label ORDER BY label", (since,)).fetchall()
     return {r["label"]: r["n"] for r in rows}
+
+
+# -- what is held for a key not onboarded ------------------------------------------------
+
+HELD, RELEASED, REFUSED = "held", "released", "refused"
+
+
+@dataclass(frozen=True)
+class Held:
+    id: str
+    subject: str
+    fingerprint: str
+    session_id: str
+    kind: str              # package, message, board, request
+    what: str              # what it tried to send, in JARVIS's words with its title
+    path: str              # where the held thing is kept ("" for a request)
+    detail: dict
+    work_id: str
+    held_at: float
+    state: str
+    settled_at: Optional[float]
+
+
+def subject_of(fingerprint: str = "", session_id: str = "") -> str:
+    """Who tried: the key that signed it, else the session that claimed it."""
+    return f"key:{fingerprint}" if fingerprint else f"session:{session_id}"
+
+
+def _held(r) -> Held:
+    return Held(r["id"], r["subject"], r["fingerprint"], r["session_id"], r["kind"], r["what"],
+                r["path"], json.loads(r["detail"] or "{}"), r["work_id"], r["held_at"],
+                r["state"], r["settled_at"])
+
+
+def hold(kind: str, what: str, fingerprint: str = "", session_id: str = "", path: str = "",
+         detail: Optional[dict] = None, work_id: str = "",
+         now: Optional[float] = None) -> tuple[Held, bool]:
+    """Record one thing held. (the row, whether it is new): the same kind
+    and words from the same subject while one is still held is that row."""
+    import secrets as _secrets
+    now = time.time() if now is None else now
+    subject = subject_of(fingerprint, session_id)
+    with closing(_connect()) as conn, conn:
+        found = conn.execute("SELECT * FROM agent_key_held WHERE subject=? AND kind=? AND "
+                             "what=? AND state=?", (subject, kind, what, HELD)).fetchone()
+        if found is not None:
+            return _held(found), False
+        hid = "held-" + _secrets.token_hex(6)
+        conn.execute("INSERT INTO agent_key_held (id, subject, fingerprint, session_id, kind, "
+                     "what, path, detail, work_id, held_at, state) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     (hid, subject, fingerprint, session_id, kind, what[:300], path,
+                      json.dumps(detail or {}, sort_keys=True), work_id, now, HELD))
+        return _held(conn.execute("SELECT * FROM agent_key_held WHERE id=?",
+                                  (hid,)).fetchone()), True
+
+
+def held(subject: Optional[str] = None, state: str = HELD) -> list[Held]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=?" +
+                            (" AND subject=?" if subject else "") + " ORDER BY held_at",
+                            (state, subject) if subject else (state,)).fetchall()
+    return [_held(r) for r in rows]
+
+
+def held_for(fingerprint: str = "", session_id: str = "") -> list[Held]:
+    """Everything still held that this key signed or this session claimed."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=? AND ((fingerprint!='' "
+                            "AND fingerprint=?) OR (session_id!='' AND session_id=?)) ORDER BY "
+                            "held_at", (HELD, fingerprint, session_id)).fetchall()
+    return [_held(r) for r in rows]
+
+
+def settle(held_id: str, state: str, now: Optional[float] = None) -> bool:
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        return bool(conn.execute("UPDATE agent_key_held SET state=?, settled_at=? WHERE id=? AND "
+                                 "state=?", (state, now, held_id, HELD)).rowcount)
+
+
+def error_package(subject: str) -> Optional[dict]:
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT * FROM agent_key_errors WHERE subject=?", (subject,)).fetchone()
+    return dict(r) if r else None
+
+
+def error_subject(package_id: str) -> Optional[str]:
+    """The subject an error package JARVIS made is about, or None."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT subject FROM agent_key_errors WHERE package_id=?",
+                         (package_id,)).fetchone()
+    return r["subject"] if r else None
+
+
+def set_error_package(subject: str, package_id: str, inbox_id: str,
+                      now: Optional[float] = None) -> None:
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO agent_key_errors (subject, package_id, inbox_id, made_at) "
+                     "VALUES (?,?,?,?) ON CONFLICT(subject) DO UPDATE SET package_id=excluded."
+                     "package_id, inbox_id=excluded.inbox_id, made_at=excluded.made_at",
+                     (subject, package_id, inbox_id, now))
+
+
+def error_packages() -> list[dict]:
+    with closing(_connect()) as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM agent_key_errors")]

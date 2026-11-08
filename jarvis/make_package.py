@@ -35,7 +35,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import data_paths, decision_package as dp, decision_stamp
+from jarvis import data_paths, decision_package as dp, decision_stamp, package_signature
 
 # The file each way of running needs, by its usual name: a folder holding
 # exactly one of them runs that way.
@@ -214,6 +214,15 @@ def make_folder(folder: Path, out: Path) -> Made:
     return Made(archive, title, f"{manifest['runs']} package", None)
 
 
+# -- signing --------------------------------------------------------------------------
+
+def sign(archive: Path, signer: tuple[Path, str], session: str, worker: str = "",
+         statements: tuple[str, ...] = (), work_key: dict | None = None) -> None:
+    """Sign the zip in place with the session's own key (package_signature)."""
+    package_signature.sign(archive, archive, signer[0], signer[1], session, worker, statements,
+                           work_key)
+
+
 # -- checking ------------------------------------------------------------------------
 
 def _check(made: Made, out: Path) -> bool:
@@ -260,6 +269,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--workflow", default="",
                         help="the workflow it is for: it waits on his answers, which come "
                              "back as its decisions")
+    parser.add_argument("--worker", default="",
+                        help="a subagent's own words for itself, shown beside your agent's "
+                             "name (signed with the package)")
     parser.add_argument("--work", default="",
                         help="the work item it is for: its questions show on that item's "
                              "Decisions tab")
@@ -303,18 +315,25 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     if made.deck is not None and not _check(made, out):
         return 1
 
+    from jarvis import agent_keys
+    signer = agent_keys.session_key(args.session) if args.session else None
     try:
-        # The tool token, which the stamp needs anyway: the inbox route also
-        # takes a `packages` access key, for a sender that has no stamp to make.
-        token = data_paths.ensure_tool_token()
-        if made.deck is not None and made.deck.get("decisions"):
-            # The files checked, stamped for the live JARVIS, which unpacks a
-            # decision package only with its own stamp (decision_stamp.py).
-            decision_stamp.stamp(made.archive, made.archive, token)
+        decision = made.deck is not None and bool(made.deck.get("decisions"))
+        token = ""
+        if signer is not None:
+            # Signed with the session's own key (package_signature.py): who
+            # sent it, and, for a deck, that the files checked are these.
+            sign(made.archive, signer, args.session, args.worker,
+                 (package_signature.DECISION_CHECKED,) if decision else ())
+        else:
+            # Until the cut-over: the tool token, and the stamp it makes.
+            token = data_paths.ensure_tool_token()
+            if decision:
+                decision_stamp.stamp(made.archive, made.archive, token)
         delivered = dp.deliver(made.archive, args.deliver_to, token, project=args.project,
                                session=args.session, workflow=args.workflow, work=args.work,
-                               source=str(args.source))
-    except OSError as e:
+                               source=str(args.source), signer=signer)
+    except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
         print(f"Not delivered: {e}")
         return 1
     package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]

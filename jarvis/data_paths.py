@@ -566,6 +566,12 @@ def packages_dir() -> Path:
     return path
 
 
+
+def held_dir() -> Path:
+    """What is held until Tim onboards the agent that sent it (a package's
+    zip, by its held id): server._unrecognised_key."""
+    return data_dir() / "held"
+
 def team_connection_path() -> Path:
     """The saved team-server connection (team_client.py): server URL, pinned
     server ID and the last non-secret status. The session credential is in

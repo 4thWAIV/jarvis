@@ -571,6 +571,8 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
         one is its asker's alone, never his."""
+        if req.kind in work_store.JARVIS_KINDS:
+            return refused(ValueError("Only JARVIS raises or clears an item's Error."))
         if req.kind in work_store.HIS_KINDS:
             return refused(ValueError("Only he answers a decision or reviews an item: done is "
                                       "his to give. Report it verifying, with what to check."))

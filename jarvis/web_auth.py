@@ -552,11 +552,15 @@ PRINCIPAL = "jarvis.principal"
 SIGNED_KEY = "jarvis.signed_key"
 # The one route open with no credential: a new agent submitting its key.
 SUBMIT_PATH = "/api/agent-keys"
+# The one state-changing route a key JARVIS holds but has not onboarded may
+# reach: the package inbox, which holds what it sends (server._unrecognised_key).
+HOLDING_PATH = "/api/packages/inbox"
 # The most of a signed request's body the gate reads to check its digest.
 SIGNED_BODY_MAX = 32 * 1024 * 1024
 # Told of a state-changing request refused because its key is not an
-# onboarded agent's (agent_auth.Checked, method, path, query), so the
-# server can hold it and tell Tim. Never allowed to fail the refusal.
+# onboarded agent's (agent_auth.Checked, method, path, query, body), off
+# the event loop, so the server can hold it and tell Tim. Never allowed to
+# fail the refusal.
 on_unrecognised = None
 
 
@@ -683,9 +687,13 @@ async def _signed(scope: dict, receive):
         return receive, (403, "Refused: this agent's rights do not cover that request.")
     if not changes and checked.key is not None:
         return receive, None            # a read, by a key JARVIS holds: the route judges it
+    if checked.key is not None and method == "POST" and path == HOLDING_PATH:
+        # A package from a key JARVIS holds but has not onboarded goes on to
+        # the inbox, which holds it by its own signature and tells Tim.
+        return receive, None
     if changes and on_unrecognised is not None:
         try:
-            on_unrecognised(checked, method, path, query)
+            await asyncio.to_thread(on_unrecognised, checked, method, path, query, body)
         except Exception:
             log.warning("an unrecognised key's request was not recorded", exc_info=True)
     return receive, (403, f"Refused: {checked.refused}")

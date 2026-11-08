@@ -42,7 +42,7 @@ from typing import Awaitable, Callable, Optional
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from jarvis import messaging_wire, package_inbox, packages_api, reporters, work_packages
+from jarvis import messaging_wire, package_inbox, packages_api, reporters, web_auth, work_packages
 from jarvis.package_inbox import Entry, Sender
 from jarvis.work_packages import Package, PackageError
 
@@ -110,9 +110,13 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused(str(e), 413)
         if not data:
             return _refused("There is no zip in the request.", 400)
+        # A request signed by a key JARVIS holds but has not onboarded: what
+        # it sends is held (server._unrecognised_key).
+        held_key = "" if web_auth.principal(request.scope) else \
+            (request.scope.get(web_auth.SIGNED_KEY) or "")
         arrival, package, problem = await calls.receive(
             data, Sender(project=project, claimed=session), workflow, work, source,
-            reporters.of_scope(request.scope))
+            reporters.of_scope(request.scope), held_key)
         if arrival is None:
             return _refused(problem)
         return {"inbox": entry_json(arrival.entry), "arrived": arrival.fresh,
