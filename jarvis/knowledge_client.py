@@ -55,7 +55,8 @@ def enabled() -> bool:
 
 def memory_budget_mb() -> int:
     """`JARVIS_KNOWLEDGE_MEMORY_MB`, else 384, or 256 on a Mac with less than
-    16 GB."""
+    16 GB, and, unless it was set, more by the embedding model's measured
+    share while one is installed (embedding_models.extra_memory_mb)."""
     raw = os.getenv("JARVIS_KNOWLEDGE_MEMORY_MB", "").strip()
     if raw.isdigit() and int(raw) > 0:
         return int(raw)
@@ -63,7 +64,8 @@ def memory_budget_mb() -> int:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (ValueError, OSError):
         total = 0
-    return 256 if 0 < total < 16 * (1 << 30) else 384
+    from jarvis import embedding_models
+    return (256 if 0 < total < 16 * (1 << 30) else 384) + embedding_models.extra_memory_mb()
 
 
 class EngineUnavailable(RuntimeError):

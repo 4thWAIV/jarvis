@@ -19,6 +19,9 @@ dependencies = [
     # Local speech recognition (transcriber.py). Pinned: the engine's model
     # configuration was measured against this version.
     "sherpa-onnx==2.0.0",
+    # The knowledge engine's vector search (knowledge/e5_onnx.py): runs the
+    # multilingual-e5-small model. Pinned: measured with this version.
+    "onnxruntime==1.23.2",
 ]
 
 [project.optional-dependencies]

@@ -10183,6 +10183,18 @@ async def tool_knowledge_status(args: dict) -> str:
                                  "", "knowledge_status", walled=False)
 
 
+async def tool_embedding_model(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.embedding_model(knowledge_calls),
+                                 "", "embedding_model", walled=False)
+
+
+async def tool_install_embedding_model(args: dict) -> str:
+    """The Knowledge view's Install: the same call, on the event loop, since
+    the download is started there and runs in the background."""
+    answer = knowledge_api.install_embedding_model(knowledge_calls)
+    return json.dumps(answer, ensure_ascii=False)
+
+
 async def tool_knowledge_search(args: dict) -> str:
     said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
@@ -10484,9 +10496,11 @@ TOOL_HANDLERS.update({
     "knowledge_seeds": tool_knowledge_seeds,
     "work_context": tool_work_context,
     "change_knowledge_seed": tool_change_knowledge_seed,
+    "embedding_model": tool_embedding_model,
+    "install_embedding_model": tool_install_embedding_model,
 })
 ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
-                     "change_knowledge_seed"})
+                     "change_knowledge_seed", "install_embedding_model"})
 TAINTING_TOOLS.update({
     "knowledge_search": "passages from agents, runs, workflows and other people",
     "knowledge_entity": "labels and passages from what JARVIS read",
@@ -10503,6 +10517,8 @@ TAINT_EXEMPT_TOOLS.update({
     "change_knowledge_index": "it writes his own settings note on his word, it does not read",
     "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
     "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
+    "embedding_model": "it reports the model's own facts and the engine's counts",
+    "install_embedding_model": "it downloads and installs the model on his word, it does not read",
 })
 
 

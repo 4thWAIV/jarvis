@@ -142,13 +142,13 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "mute_speech", "turn_audio_off", "mark_updates_seen",
             "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
-            "change_knowledge_seed", "change_project", "change_project_folder",
+            "change_knowledge_seed", "install_embedding_model", "change_project", "change_project_folder",
             "change_project_candidate", "change_work", "change_accomplishment")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
-                 "knowledge_indexes", "knowledge_seeds")
+                 "knowledge_indexes", "knowledge_seeds", "embedding_model")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):

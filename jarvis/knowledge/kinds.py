@@ -38,7 +38,7 @@ def _kind(name, props=(), refs=None, dates=(), embedded=(), indexed=None) -> Kin
 
 KINDS: dict[str, Kind] = {k.name: k for k in (
     _kind("workspace", ("node_id",)),
-    _kind("person", ("github_id", "login")),
+    _kind("person", ("github_id", "login", "aliases")),
     _kind("project", ("aliases", "spoken_key", "summary"), {"folders": "has_folder"}),
     _kind("folder", ("role", "label", "available")),
     _kind("work", ("outcome",), {"projects": "involves"}),
@@ -48,10 +48,12 @@ KINDS: dict[str, Kind] = {k.name: k for k in (
     _kind("document", ("path", "media_type", "language", "bytes", "modified", "headings",
                        "format", "pages", "blocked_resources"),
           {"folder": "in_folder"}, dates=("modified",)),
-    _kind("chunk", ("text", "span", "heading_path", "language"),
-          {"document": "in_document"}, embedded=("text",),
-          indexed=("language", "heading_path[]")),
-    _kind("agent", ("name",), {"folder": "ran_in", "work": "for_work"}),
+    # `at`: when what it holds was said or written (epoch seconds), for
+    # "newest first" and "before then"; `agent`: who said it.
+    _kind("chunk", ("text", "span", "heading_path", "language", "at"),
+          {"document": "in_document", "agent": "said_by"}, embedded=("text",),
+          indexed=("language", "heading_path[]", "at")),
+    _kind("agent", ("name", "aliases"), {"folder": "ran_in", "work": "for_work"}),
     _kind("run", ("state",), {"folder": "ran_in", "work": "for_work"}),
     _kind("workflow", ("state",), {"work": "for_work"}),
     _kind("package", ("name", "version", "runs", "references")),

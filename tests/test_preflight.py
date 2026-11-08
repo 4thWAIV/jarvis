@@ -528,7 +528,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",
         "fish_api_key", "anthropic_key_leftover", "cross_session_inbound",
-        "session_skill", "speech_input",
+        "session_skill", "speech_input", "vector_search",
     }
 
 
@@ -560,3 +560,9 @@ def test_speech_input_without_sherpa_onnx_says_how_to_install_it(monkeypatch):
                         lambda name, *a: None if name == "sherpa_onnx" else real(name, *a))
     check = preflight._check_speech_input_sync()
     assert "sherpa-onnx" in check.message and "requirements.txt" in check.remedy
+
+
+def test_vector_search_names_the_setup_command_when_the_model_is_missing():
+    check = preflight._check_vector_search_sync()
+    assert check.status == STATUS_WARN
+    assert "setup_embedding_model.py" in check.remedy or "pip install" in check.remedy

@@ -376,6 +376,11 @@ EXEMPT = {
         "the events go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
     "server.tool_works": (
         "the pieces of work go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "embedding_models._run_install": (
+        "it records how the install went in fixed words, with the refusal's "
+        "own text (a file's name, its digest and size, all JARVIS's) or a "
+        "failed download's exception type; nothing anyone else wrote. "
+        "Driven by tests/test_knowledge_embedder.py"),
     "workspace_ref.parse": (
         "it turns a reference's text into its fields; its refusals are fixed "
         "words, and the only values they name are the version and the kind it "
@@ -1766,8 +1771,13 @@ def _drive_workflow_silence(server, session, monkeypatch):
     monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)
 
     async def once():
+        # One pass reads the workflows, then the Work record, each on a
+        # thread: wait for its first item, not a fixed slice of a slow box.
         task = asyncio.create_task(server._watch_workflow_silence())
-        await asyncio.sleep(0.05)
+        for _ in range(500):
+            await asyncio.sleep(0.01)
+            if view():
+                break
         task.cancel()
 
     asyncio.run(once())
