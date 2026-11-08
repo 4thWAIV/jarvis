@@ -43,7 +43,10 @@ def subagent(wired, monkeypatch):
                                      state=agent["state"], started=None,
                                      written=agent["written"])
         session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=[sub],
-                                  cwd="/Users/someone/code/jarvis")
+                                  cwd="/Users/someone/code/jarvis",
+                                  # Only the watcher's view of it: the agent directory
+                                  # (who reported, by key) passes it over.
+                                  state=session_watch.GONE)
         return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
                                sessions=[session])
 
@@ -174,7 +177,10 @@ def real_session(wired, monkeypatch, tmp_path):
     def snapshot():
         agents, _capped = session_watch.read_subagents(root, CWD, SESSION, time.time())
         session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=agents,
-                                  cwd=CWD)
+                                  cwd=CWD,
+                                  # Only the watcher's view of it: the agent directory
+                                  # (who reported, by key) passes it over.
+                                  state=session_watch.GONE)
         return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
                                sessions=[session])
 

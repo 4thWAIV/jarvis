@@ -17,7 +17,7 @@ Start the file with `# <project>` and an `Updated:` line with the date and time,
 - <slug>: <one sentence saying what the user is deciding>. Recommended: <your pick>.
 ```
 
-Keep it to ten items at most. Rewrite the whole file whenever your list changes, remove an item once the user has answered it, and delete the file when nothing is left. JARVIS tells the user when your file changes and reads each item with its recommendation.
+Keep it to ten items at most. Rewrite the whole file whenever your list changes, remove an item once the user has answered it, and delete the file when nothing is left. JARVIS tells the user when your file changes and reads each item with its recommendation. The board is shown as yours only when your own transcript shows you writing it: write it yourself, with your own file tool, by its full path. A board no listed agent's transcript (or its subagent's) shows being written is held, never shown.
 
 ## Packages: choices, presentations and anything else for the user
 
@@ -27,7 +27,7 @@ Any choice you put to the user, beyond a line on the needs board, goes to them a
 {{make_package}} <content.json or folder> --session <your session id> [--workflow <id>] [--work <id>]
 ```
 
-`{{making_a_package}}` is the only description of what to write and what the command does; read it before your first package. In short: write only the substance (titles, questions, options, your recommendation and its reason, pictures beside the file), and the command works out the rest, checks it end to end in an isolated JARVIS, and only then sends it to the user's package inbox: listed in their backlog and counted in their updates, never shown and never spoken until they ask for it. The command prints its inbox id. Always give `--session`: the user's answers come back to your session as a message, once they have answered and said to send them. Give `--workflow <id>` when the package belongs to a workflow you report (it waits on the answers, which come back as its decisions, read with `workflow_report.py answer <id> <decision id>`), and `--work <id>` when it belongs to a work item (its questions show on that item's Decisions tab). A newer version of a package you sent replaces the older one while it is open. When the user is done with a package they sign it off: whatever they answered comes back to you (unanswered questions marked unanswered), or, for a package that asks nothing, a message that they have reviewed it; either message is read back to them and sent on their yes. Never open, show or answer a package in JARVIS yourself, and never write to the user that one is waiting: the inbox tells them. If anything fails, nothing is delivered: fix what it says and run it again. Never build, zip, attach or deliver a package by hand, and never send a presentation with choices in it but nothing to vote with.
+`{{making_a_package}}` is the only description of what to write and what the command does; read it before your first package. In short: write only the substance (titles, questions, options, your recommendation and its reason, pictures beside the file), and the command works out the rest, checks it end to end in an isolated JARVIS, and only then sends it to the user's package inbox: listed in their backlog and counted in their updates, never shown and never spoken until they ask for it. The command prints its inbox id. Always give `--session`, and run the command yourself, in your own session: the user's answers come back to your session as a message once JARVIS has proven you sent it (your own transcript shows the command run on that content), once they have answered and said to send them. A session JARVIS cannot prove gets no answers, and the package says so. Give `--workflow <id>` when the package belongs to a workflow you report (it waits on the answers, which come back as its decisions, read with `workflow_report.py answer <id> <decision id>`), and `--work <id>` when it belongs to a work item (its questions show on that item's Decisions tab). A newer version of a package you sent replaces the older one while it is open. When the user is done with a package they sign it off: whatever they answered comes back to you (unanswered questions marked unanswered), or, for a package that asks nothing, a message that they have reviewed it; either message is read back to them and sent on their yes. Never open, show or answer a package in JARVIS yourself, and never write to the user that one is waiting: the inbox tells them. If anything fails, nothing is delivered: fix what it says and run it again. Never build, zip, attach or deliver a package by hand, and never send a presentation with choices in it but nothing to vote with.
 
 ## Messages: what you have to tell them
 
@@ -39,7 +39,7 @@ Write the file once and do not edit it afterwards. JARVIS picks it up within sec
 
 ## Workflows: reporting long work as it goes
 
-When you run a long piece of work in phases, such as a multi-step build or a workflow of several agents, report each step to JARVIS's workflow monitor so the user can see it and JARVIS can always tell them where it stands. This needs an access key in the `workflows` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> workflows`.
+When you run a long piece of work in phases, such as a multi-step build or a workflow of several agents, report each step to JARVIS's workflow monitor so the user can see it and JARVIS can always tell them where it stands. This needs an access key in the `workflows` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> workflows`. The key's label is who reports: label it with your agent's name, and every event shows as yours. `agent_attached` may name only a session of the agent the key's label names; any other is refused.
 
 ```
 python3 {{workflow_report}} start "<name>" --project <project> --phase <phase> --phase <phase>
@@ -59,7 +59,7 @@ Whenever you wait on the user, link the wait to what will answer it with `--unti
 
 ## Work items: who is doing each piece
 
-When you take on a piece of work that lives in a ZIP work package or a folder on this Mac, track it on JARVIS's Work tab, so the user sees its state and exactly who is on each part of it. This needs an access key in the `work` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> work`.
+When you take on a piece of work that lives in a ZIP work package or a folder on this Mac, track it on JARVIS's Work tab, so the user sees its state and exactly who is on each part of it. This needs an access key in the `work` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> work`. Every report, its pieces and its events show the key's label as who reported them (your agent's name when the label is it), never anything the report says.
 
 ```
 python3 {{work_report}} start "<title>" --folder <path> --area "<area>"        (or --zip <path>; --area is optional)

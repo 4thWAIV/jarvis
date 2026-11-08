@@ -83,6 +83,8 @@ function PackageRow({ entry }: { entry: InboxEntry }) {
               ref={ui.part("progress")}>{inboxProgress(entry)}</span>
       </div>
       <p className="package-title" ref={ui.part("title")}>{entry.title}</p>
+      {entry.unproven_claim && <p className="file-state package-unproven" ref={ui.part("unproven")}>
+        {t("right.packages.unprovenClaim")}</p>}
       <div className="package-actions">
         <button type="button" className="file-action" data-ui-action="domain" disabled={busy}
                 ref={ui.part("open")} onClick={() => act(() => openInbox(entry.id))}>

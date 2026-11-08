@@ -45,6 +45,8 @@ export interface InboxEntry {
   waiting: number;
   /** Who sent it: the agent's one name, else its project. */
   sender: string;
+  /** It named a session nothing proved sent it: his answers go nowhere. */
+  unproven_claim?: boolean;
   workflow_id: string | null;
   work_id: string | null;
   state: InboxState;

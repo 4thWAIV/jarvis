@@ -716,12 +716,6 @@ EXEMPT = {
         "_announce_board, passes the whole result through `_said_name` "
         "(driven below), and `_board_under_owner` puts it in board text that "
         "only ever reaches the brain inside `_one_page`'s untrusted block"),
-    "server._project_owner": (
-        "it returns the listed names of the agents in a project, joined, or "
-        "the project's folder name, and says nothing itself: its speaking "
-        "callers pass the result through `_said_name` (_announce_board and "
-        "_announce_session_messages, both driven below), and everywhere else "
-        "it reaches the brain inside an untrusted block"),
     "server._take_session_messages": (
         "it records each dropped message and deletes its file; the only text "
         "it builds is log lines naming the file, which never reach the brain "
@@ -834,11 +828,17 @@ EXEMPT = {
     "server.api_reply_session_message": (
         "its note to the brain names the capture by number and its recipient through "
         "_plain_name, which refuses anything but a plain name; no word of the message"),
+    "server._recipient_name": (
+        "it names a capture's recipient by the agent directory's one name through "
+        "_said_name, which refuses anything but a plain name with spaces"),
+    "server._proven_boards": (
+        "it logs only the projects whose boards were held, file stems JARVIS reads from its "
+        "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
     "server._read_back_lead": (
         "it is spoken to him as a read-back, never given to the brain: the recipient through "
         "_plain_name and a subagent's name through _said_name, each refusing anything but a "
         "plain name"),
-    "session_message_sender.sender_of": (
+    "session_message_sender.proven_by": (
         "it reads a subagent's description or Codex nickname (its dispatcher's words) only "
         "as the sender's name, which the page shows as text and the brain reads only inside "
         "the session messages' untrusted wall"),

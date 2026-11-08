@@ -432,6 +432,8 @@ export const mainEn = {
   "main.work.who.run": "Run in {name}",
   "main.work.who.workflow": "Workflow {name}",
   "main.work.who.tim": "You",
+  "main.work.reportedBy": "reported by {name}",
+  "main.work.reporterTitle": "Who sent this report, as its access key proves it",
   "main.work.worker": "via “{label}”",
   "main.work.workerTitle": "The agent's own words for who did it; JARVIS has not checked them",
   "main.work.waitsFor": "Waits for: {pieces}",

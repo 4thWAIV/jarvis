@@ -114,6 +114,7 @@ from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
+from jarvis import reporters
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -1938,20 +1939,77 @@ NEEDS_POLL_SEC = 5.0
 _needs_task: Optional[asyncio.Task] = None
 
 
-def _project_owner(project: str) -> str:
-    """Who a project's needs board or message belongs to, as the agents list
-    names them: every agent working in the project, by its listed name. Both
-    are kept per project (the sessions name them after their folder), but he
-    knows the agents by name, not by folder. The project name only when no
-    agent is working in it."""
-    names = sorted({s.voice_name for s in _snapshot_or_empty().sessions
-                    if s.project.lower() == project.lower() and s.voice_name})
-    return _join_natural(names) if names else project
+# The projects whose needs board no transcript proves the writer of: held,
+# never shown, counted in Diagnostics (`_proven_boards`).
+_boards_held: set[str] = set()
+# Each board's last failed proof by (project, mtime): looked for again only
+# while the file is young enough for its writer's record to be catching up.
+_board_unproven: dict[tuple[str, float], float] = {}
+BOARD_PROOF_RETRY_SEC = 60.0
+
+
+def _board_writer(board: session_needs.Board):
+    """Who wrote `board`, as it is now, proven by a transcript showing the
+    write (`_writer_of`), kept per (project, mtime) in run_store's
+    needs_board_writers so it is proven once per rewrite. None: unproven."""
+    kept = run_store.board_writer(board.project, board.mtime)
+    if kept is not None:
+        return session_message_sender.Sender(kept["session_id"], kept["name"], kept["evidence"],
+                                             kept["subagent"])
+    tried = (board.project, board.mtime)
+    if tried in _board_unproven and time.time() - board.mtime > BOARD_PROOF_RETRY_SEC:
+        return None
+    writer = _writer_of(board.path) if board.path is not None else None
+    if writer is None:
+        _board_unproven[tried] = time.time()
+        return None
+    run_store.set_board_writer(board.project, board.mtime, writer.session_id, writer.name,
+                               writer.evidence, writer.subagent)
+    return writer
+
+
+def _proven_boards(boards: list) -> list:
+    """The boards whose writer a transcript proves, each with its writer:
+    the one listed agent (or its subagent, "Feynman (Planning)") that wrote
+    it, never every agent in its project. A board nothing proves is held:
+    never shown, listed or counted, only counted in Diagnostics. Blocking."""
+    global _boards_held
+    out, held = [], set()
+    for b in boards:
+        writer = _board_writer(b)
+        if writer is None:
+            held.add(b.project.lower())
+            continue
+        out.append(dataclasses.replace(b, session=writer.session_id, owner=writer.name))
+    if held - _boards_held:
+        log.info("needs board: held, no transcript proves who wrote it: %s",
+                 ", ".join(sorted(held - _boards_held)))
+    _boards_held = held
+    return out
+
+
+def _needs_boards() -> list:
+    """Every needs board he may be shown: the proven ones, and the running
+    workflows' open decisions, each its reporter's (workflow_store.with_decisions)."""
+    return workflow_store.with_decisions(
+        _proven_boards(session_needs.read_boards(data_paths.needs_dir())))
+
+
+def _needs_by_session() -> dict[str, int]:
+    """Each listed agent's needs-board items by its session id: the boards
+    it is proven to have written, and its workflows' open decisions
+    (agent_directory's needs)."""
+    out: dict[str, int] = {}
+    for b in _needs_boards():
+        if b.session:
+            out[b.session] = out.get(b.session, 0) + b.items
+    return out
 
 
 def _board_owner(board: session_needs.Board) -> str:
-    """Who a needs board belongs to: its project's owner."""
-    return _project_owner(board.project)
+    """Who a needs board is shown as from: its proven writer, else (a
+    workflow's decisions with no key to name) the project's workflows."""
+    return board.owner or f"workflows in {board.project}"
 
 
 def _board_under_owner(board: session_needs.Board) -> str:
@@ -1964,8 +2022,8 @@ def _board_under_owner(board: session_needs.Board) -> str:
 
 def _attend_board(board: session_needs.Board) -> None:
     """A session has written down something it needs from the user: one
-    item per board, its count as a fact, its owner as other people's
-    words."""
+    item per board, its count as a fact, its proven writer as other
+    people's words."""
     _attend("needs_board", board.project.lower(), "changed", facts={"items": board.items},
             untrusted={"agent": _board_owner(board)})
 
@@ -1996,7 +2054,7 @@ async def _watch_needs_board() -> None:
     async def look() -> None:
         nonlocal counts
         boards = await asyncio.to_thread(
-            session_needs.read_boards, data_paths.needs_dir())
+            lambda: _proven_boards(session_needs.read_boards(data_paths.needs_dir())))
         # The agents list shows each board's count: a changed count,
         # down as well as up, tells the pages to fetch it again.
         now = {b.project.lower(): b.items for b in boards}
@@ -2018,20 +2076,39 @@ SESSION_MESSAGES_POLL_SEC = 5.0
 _session_messages_task: Optional[asyncio.Task] = None
 
 
-def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
-    """Who sent a dropped message, proven by a transcript showing it write
-    the file: a listed agent, or a subagent of one (session_message_sender.py;
-    the From: line only says which to check first). None when nothing proves
-    it: the message is then held. Never raises."""
+def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool = False,
+           since: float = 0.0, key=None) -> "Optional[session_message_sender.Sender]":
+    """The listed agent, or a subagent of one, whose own transcript `shows`
+    proves the act (session_message_sender.proven_by), from the sessions
+    running now. None when nothing proves it. Never raises."""
     try:
-        return session_message_sender.sender_of(
-            dropped.path, dropped.claimed, _snapshot_or_empty().sessions,
-            session_watch.config_roots(), agent_directory.names_by_session(),
-            codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()))
+        return session_message_sender.proven_by(
+            shows, claimed, _snapshot_or_empty().sessions, session_watch.config_roots(),
+            agent_directory.names_by_session(),
+            codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()),
+            only_claimed=only_claimed, since=since, key=key)
     except Exception:
-        log.warning("session messages: the sender of %s was not worked out",
-                    dropped.path.name, exc_info=True)
+        log.warning("%s: its sender was not worked out", what, exc_info=True)
         return None
+
+
+def _writer_of(path: Path, claimed: Optional[str] = None
+               ) -> "Optional[session_message_sender.Sender]":
+    """Who wrote the file at `path` (a session's message, a needs board),
+    proven by a transcript showing the write; a claim (a From: line) only
+    says whose to look in first."""
+    try:
+        written_at = path.lstat().st_mtime
+    except OSError:
+        return None
+    return _prove(path.name, lambda t: session_message_sender.wrote(t, path, written_at),
+                  claimed, since=written_at - session_message_sender.WROTE_SLACK_SEC,
+                  key=("wrote", str(path), written_at))
+
+
+def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
+    """Who sent a dropped message (`_writer_of`). None: it is held."""
+    return _writer_of(dropped.path, dropped.claimed)
 
 
 def _take_session_messages() -> list[run_store.SessionMessage]:
@@ -4718,7 +4795,7 @@ def _snapshot_or_empty():
 
 
 # Every agent JARVIS lists or finds comes out of this same snapshot.
-agent_directory.connect(lambda: _snapshot_or_empty())
+agent_directory.connect(lambda: _snapshot_or_empty(), needs=_needs_by_session)
 
 
 # Every agent's one name (run_store.agent_names: set once when first seen,
@@ -5153,8 +5230,7 @@ def tool_read_message_reply(args: dict) -> str:
 
 def tool_session_needs(args: dict) -> str:
     """Everything every session has written down as needing the user."""
-    boards = [b for b in workflow_store.with_decisions(
-        session_needs.read_boards(data_paths.needs_dir())) if b.items]
+    boards = [b for b in _needs_boards() if b.items]
     if not boards:
         return "No session has anything waiting for you, sir."
     text = "\n\n".join(_board_under_owner(b) for b in boards)
@@ -5286,7 +5362,7 @@ async def api_reply_session_message(number: int):
         raise HTTPException(status_code=409, detail=why)
     _notes_for_brain.append(
         f"He pressed Reply on message {number}: capture {capture['id']} is addressed to "
-        f"{_plain_name(capture['to'], 'its session')}. Put what he says or types next into "
+        f"{_recipient_name(capture, 'its session')}. Put what he says or types next into "
         f"it (capture with capture={capture['id']}), read it back, and it goes on his yes.")
     return {"capture": capture["id"], "to": capture["to"]}
 
@@ -5304,9 +5380,9 @@ def tool_reply_to_session_message(args: dict) -> str:
     if text:
         _set_capture(capture, text, capture["to"], capture["to_session"])
         return (f"Capture {capture['id']} holds his reply to "
-                f"{_plain_name(capture['to'], 'its session')}. Read it back now with "
+                f"{_recipient_name(capture, 'its session')}. Read it back now with "
                 f"read_capture; it goes only on his yes.")
-    return (f"Capture {capture['id']} is addressed to {_plain_name(capture['to'], 'its session')}"
+    return (f"Capture {capture['id']} is addressed to {_recipient_name(capture, 'its session')}"
             f" for his reply: put his words in it with capture, then read it back.")
 
 
@@ -5637,7 +5713,7 @@ def tool_capture(args: dict) -> str:
                 f"once he says who it is for, capture it again with that `to`. It is "
                 f"read back naming who it is for, so it cannot be read back until then.")
     return (f"Capture {number} holds it. Read it back now with read_capture, without "
-            f"asking first: the read-back names {_plain_name(capture['to'], 'its session')} "
+            f"asking first: the read-back names {_recipient_name(capture, 'its session')} "
             f"as who it is for. steer_session sends only a capture read back in full "
             f"since it or its recipient last changed and then approved by his own yes.")
 
@@ -5741,13 +5817,22 @@ async def tool_read_capture(args: dict) -> str:
             f"in full and cannot be sent until it is read back again.")
 
 
+def _recipient_name(capture: dict, fallback: str) -> str:
+    """Who a capture to a session is for, as the agent directory names that
+    session now (its one name, spaces and all: "Agent Guard"), else the name
+    it was addressed by; `_said_name`'s wall either way."""
+    name = agent_directory.names_by_session().get(capture.get("to_session") or "") \
+        if capture.get("to_session") else None
+    return _said_name({"voice_name": name or capture.get("to") or ""}, fallback)
+
+
 def _read_back_lead(capture: dict) -> str:
     """What a read-back opens with to name who the capture is for. A review
     of a message to a person needs none: its text opens with "To <name>."
     (`messaging_ports.human_readback`)."""
     if capture.get("human"):
         return ""
-    lead = f"To {_plain_name(capture['to'], 'that session')}"
+    lead = f"To {_recipient_name(capture, 'that session')}"
     if capture.get("for"):
         lead += f", for {_said_name({'voice_name': capture['for']}, 'its subagent')}"
     return lead + "."
@@ -5821,7 +5906,7 @@ def _other_recipient(number: int, capture: dict, said: str) -> str:
     """Why a capture is not sent to a recipient other than its own."""
     if transmission.recipient(capture) is None:
         return _unaddressed(number)
-    return (f"Capture {number} is for {_plain_name(capture['to'], 'someone else')}, not "
+    return (f"Capture {number} is for {_recipient_name(capture, 'someone else')}, not "
             f"{said}: his yes covers only the recipient its read-back names. If he wants "
             f"it to go to {said}, capture it again with `to` naming {said}, read it back "
             f"(the read-back names {said}) and wait for his yes. Nothing was sent.")
@@ -5883,7 +5968,7 @@ def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
                  capture["id"], capture["to"], said)
         _notes_for_brain.append(
             f"He said to send it to {named}, but capture {capture['id']} was read back "
-            f"to him as going to {_plain_name(capture['to'], 'someone else')}, so nothing "
+            f"to him as going to {_recipient_name(capture, 'someone else')}, so nothing "
             f"was approved and nothing may be sent. If he wants it to go to {named}, "
             f"address it there (capture with `to`, or draft_message for a person), read "
             f"it back naming {named} and wait for his yes.")
@@ -8333,13 +8418,39 @@ def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
     return None
 
 
+# How long before a package arrives its make_package command may have been
+# run: the claimed session's transcript must have been written since.
+MAKE_PACKAGE_WINDOW_SEC = 2 * 3600.0
+PROVEN_BY_KEY = "access_key"
+
+
+def _package_sender(claimed: str, source: str,
+                    reporter: "Optional[reporters.Reporter]") -> "Optional[session_message_sender.Sender]":
+    """The session a package claims it came from (`?session=`), proven, or
+    None: a session the caller's access key owns (its label's agent), or one
+    whose own transcript (or its subagent's) shows make_package run on
+    `source` lately. Only the claimed session is looked in: a claim is
+    proven or refused, never moved to another."""
+    if not claimed:
+        return None
+    if reporter is not None and reporter.owns(claimed):
+        return session_message_sender.Sender(claimed, reporter.name, PROVEN_BY_KEY)
+    if not source:
+        return None
+    since = time.time() - MAKE_PACKAGE_WINDOW_SEC
+    return _prove("package inbox", lambda t: session_message_sender.ran(
+        t, ("make_package", source), since), claimed, only_claimed=True, since=since)
+
+
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
-                                 work_id: str):
+                                 work_id: str, source: str = "",
+                                 reporter: "Optional[reporters.Reporter]" = None):
     """A package for his inbox, from its zip's bytes: checked and unpacked
     exactly as a zip on this Mac is (a decision package only with its
-    check's stamp, decision_stamp.py), recorded, then its attention item
-    and hints. Nothing is shown. (the arrival, the package, "") or (None,
-    None, why not)."""
+    check's stamp, decision_stamp.py), recorded with its sender as proven
+    (`_package_sender`; an unproven claim is kept as a claim and his answers
+    go nowhere), then its attention item and hints. Nothing is shown. (the
+    arrival, the package, "") or (None, None, why not)."""
     problem = await asyncio.to_thread(_check_inbox_links, workflow_id, work_id)
     if problem:
         return None, None, problem
@@ -8352,8 +8463,10 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
             chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
-    agent = agent_directory.names_by_session().get(sender.session, "") if sender.session else ""
-    sender = package_inbox.Sender(sender.project, sender.session, agent)
+    proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
+    sender = package_inbox.Sender(
+        sender.project, proven.session_id if proven else "", proven.name if proven else "",
+        sender.claimed, proven.evidence if proven else "")
     try:
         arrival = await asyncio.to_thread(
             package_inbox.arrive, package, hashlib.sha256(data).hexdigest(), sender,
@@ -8762,9 +8875,10 @@ async def _sign_off_package(reference: str, how: str):
     await _close_package_view(package.id)
     if capture is not None:
         return entry, (f"Signed off. Capture {capture['id']} tells "
-                       f"{_plain_name(to, 'its session')} so, with his answers. Read it back now "
+                       f"{_said_name({'voice_name': to}, 'its session')} so, with his answers. Read it back now "
                        f"with read_capture; it goes only on his yes or Send.")
     who = ("the session that sent it is not running" if entry.from_session
+           else "the session it named was not proven to have sent it" if entry.unproven_claim
            else "no sender is on record for it")
     return entry, (f"Signed off" + (", and its workflow has his answers" if entry.workflow_id
                                     else "") + f". No message went back: {who}.")
@@ -8821,8 +8935,10 @@ def _inbox_line(entry) -> str:
     why = f" ({entry.closed_why})" if entry.closed_why else ""
     links = (f", for workflow {entry.workflow_id}" if entry.workflow_id else "") + \
         (f", for work item {entry.work_id}" if entry.work_id else "")
+    nowhere = (" His answers go nowhere: nothing proved the session it named sent it."
+               if entry.unproven_claim else "")
     return (f"{entry.id}: {entry.title}, from {entry.sender_name() or 'an unknown sender'}"
-            f"{counts}{links}. {_INBOX_STATE_SAID[entry.state]}{why}.")
+            f"{counts}{links}. {_INBOX_STATE_SAID[entry.state]}{why}.{nowhere}")
 
 
 def _inbox_questions(asked) -> str:
@@ -9825,7 +9941,28 @@ class WorkflowAnswerRequest(BaseModel):
 
 
 def _workflow_json(w) -> dict:
-    return dataclasses.asdict(w)
+    """A workflow as the page shows it, with who reported it by name
+    (`reporter_name`: its key's agent, else the key's label)."""
+    return {**dataclasses.asdict(w), "reporter_name": reporters.shown(w.reporter)}
+
+
+def _workflow_event_json(e) -> dict:
+    return {**dataclasses.asdict(e), "reporter_name": reporters.shown(e.reporter)}
+
+
+def _attach_refused(scope: dict, session_id) -> str:
+    """Why a report may not attach `session_id` to its workflow, or "": the
+    session must be the reporting key's own agent's (reporters.Reporter.owns),
+    never one a report merely names."""
+    session_id = str(session_id or "").strip()
+    reporter = reporters.of_scope(scope)
+    if reporter is None:
+        return ("Only an access key attaches a session to a workflow: the session it names "
+                "must be its own agent's.")
+    if not reporter.owns(session_id):
+        return (f"The access key {reporter.label!r} does not own that session: a key's label "
+                f"names its agent, and only that agent's own sessions may be attached.")
+    return ""
 
 
 def _workflow_refused(e: Exception) -> JSONResponse:
@@ -9833,11 +9970,13 @@ def _workflow_refused(e: Exception) -> JSONResponse:
 
 
 @app.post("/api/workflows")
-async def api_start_workflow(req: WorkflowStartRequest):
+async def api_start_workflow(req: WorkflowStartRequest, request: Request):
     """Begin recording a workflow. Its reporter (an access key in the
-    `workflows` category) then sends each step to /events."""
+    `workflows` category) then sends each step to /events; who it is is the
+    route's to record, from how the request came in (reporters.py)."""
     try:
-        wid = await asyncio.to_thread(workflow_store.start, req.name, req.project, req.phases)
+        wid = await asyncio.to_thread(workflow_store.start, req.name, req.project, req.phases,
+                                      reporters.recorded(request.scope))
     except workflow_store.WorkflowRefused as e:
         return _workflow_refused(e)
     _send_to_session_clients({"type": "workflows"})
@@ -9845,15 +9984,23 @@ async def api_start_workflow(req: WorkflowStartRequest):
 
 
 @app.post("/api/workflows/{workflow_id}/events")
-async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest):
+async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest,
+                                    request: Request):
     """Record one step. Written before anything is said or shown. Dismissing
-    is his alone (the page's dismiss route), never the reporter's."""
+    is his alone (the page's dismiss route), never the reporter's. Every
+    event carries its reporter as the route proved it; a session attached
+    must be one the reporting key owns (`_attach_refused`)."""
     if req.kind == "workflow_dismissed":
         return _workflow_refused(ValueError("Only he dismisses a workflow, from the page."))
     # His answer, and a wait ended by it, are the server's to record
     # (`by: user`), never a reporter's.
     detail = {k: v for k, v in req.detail.items() if k not in ("by", "link")}
-    event = workflow_store.WorkflowEvent(workflow_id, req.kind, req.item, req.summary, detail)
+    if req.kind == "agent_attached":
+        why = await asyncio.to_thread(_attach_refused, request.scope, detail.get("session_id"))
+        if why:
+            return _workflow_refused(ValueError(why))
+    event = workflow_store.WorkflowEvent(workflow_id, req.kind, req.item, req.summary, detail,
+                                         reporter=reporters.recorded(request.scope))
     try:
         w = await asyncio.to_thread(workflow_store.record, event)
     except workflow_store.WorkflowRefused as e:
@@ -10805,7 +10952,8 @@ def _subsystems() -> list:
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
                  if folder_catalog is not None else None),
-        knowledge_health=knowledge.health() if knowledge is not None else None)
+        knowledge_health=knowledge.health() if knowledge is not None else None,
+        boards_held=len(_boards_held))
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -10926,7 +11074,7 @@ async def api_workflow(workflow_id: str):
 async def api_workflow_events(workflow_id: str, after: int = 0, kinds: str = ""):
     wanted = {k for k in kinds.split(",") if k} or None
     found = await asyncio.to_thread(workflow_store.events, workflow_id, after, wanted)
-    return {"events": [dataclasses.asdict(e) for e in found]}
+    return {"events": [_workflow_event_json(e) for e in found]}
 
 
 # --- The conversation bus (conversation_log.py) -----------------------------
@@ -11288,8 +11436,11 @@ def _work_who(piece, names: work_api.WhoNames) -> str:
     else:
         name = names(piece.who)
         owner = f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
-    # The worker label is the reporter's own words, never a record JARVIS checked.
-    return owner + (f", worker as the agent calls it: {piece.worker}" if piece.worker else "")
+    # The worker label is the reporter's own words, never a record JARVIS checked;
+    # who reported it is its access key's (reporters.shown).
+    reporter = reporters.shown(piece.reporter)
+    return (owner + (f", worker as the agent calls it: {piece.worker}" if piece.worker else "")
+            + (f", last reported by {reporter}" if reporter else ""))
 
 
 def _work_piece(p, names: work_api.WhoNames) -> str:

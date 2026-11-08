@@ -1624,6 +1624,7 @@ html, body {
 .work-piece-who { color: var(--ui-secondary); }
 /* The agent's own words, never JARVIS's: quoted, italic, apart from the owner. */
 .work-piece-worker { font-style: italic; color: var(--ui-muted); overflow-wrap: anywhere; }
+.work-piece-reporter, .work-event-reporter { color: var(--ui-muted); overflow-wrap: anywhere; }
 .work-piece-note, .work-piece-after { margin: 0 0 0 22px; color: var(--ui-secondary); overflow-wrap: anywhere; }
 .work-piece-after.waiting { color: #fbbf24; }
 .work-evidence { list-style: none; display: flex; flex-direction: column; gap: 3px; padding: 0; margin: 0 0 0 22px; }

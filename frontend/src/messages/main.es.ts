@@ -405,6 +405,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.work.who.run": "Ejecución en {name}",
   "main.work.who.workflow": "Flujo {name}",
   "main.work.who.tim": "Usted",
+  "main.work.reportedBy": "informado por {name}",
+  "main.work.reporterTitle": "Quién envió este informe, según lo prueba su clave de acceso",
   "main.work.worker": "vía «{label}»",
   "main.work.workerTitle": "Las palabras del propio agente sobre quién lo hizo; JARVIS no las ha comprobado",
   "main.work.waitsFor": "Espera a: {pieces}",

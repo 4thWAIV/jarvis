@@ -122,7 +122,8 @@ spoken name (`transmission.recipient`): the agent's session id, settled when
 `capture` is given `to` (`capture["to_session"]`), or the person's GitHub id
 from the reviewed revision (`capture["human"]`). A capture addressed to no
 one is neither read back nor accepted (`server._unaddressed`). Every
-read-back names who it is for: a session's opens with "To chitauri." (a
+read-back names who it is for, as the agent directory names it now
+(`server._recipient_name`, spaces and all): a session's opens with "To chitauri." (a
 `lead` chunk, heard as part of the reading, which the page does not light on
 the box; `captureLead` on its frame), and a person's text already opens "To
 <name>." (`messaging_ports.human_readback`). The brain reads a capture back
@@ -199,7 +200,7 @@ symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
 session's sign it was picked up), then records an attention item naming the
 agent and nothing of its text. The agent is its real sender
-(`session_message_sender.sender_of`, stored as `sender_session`,
+(`server._writer_of`, `session_message_sender.proven_by`, stored as `sender_session`,
 `sender_evidence` and `sender_subagent`), proven only by a transcript
 showing the write (the file's path in it, written since the file): a
 listed agent's own Claude Code transcript (`transcript`), one of its Claude
@@ -239,6 +240,14 @@ goes on that work item (`work_report.py decision`, a blocked piece or
 update), never on the needs board; the board is only for needs tied to no
 item. The skill says so, and the brain, asked what needs him, reads the
 work items' open decisions and blockers first, then the needs board.
+A needs board is shown as its writer's, proven the same way
+(`server._proven_boards`, `_board_writer`): the listed agent, or its
+subagent, whose own transcript shows writing that file as it is now, kept
+per file version in run_store's `needs_board_writers`, never every agent in
+its project. A board no transcript proves is held: not shown, listed,
+counted on any agent or announced, only counted in Diagnostics
+(`needsHeld`). An agent's needs count is the boards it is proven to have
+written (`server._needs_by_session`, by session id).
 `python -m jarvis.session_skill install` renders it with this install's data paths
 into every Claude Code config root and the user's Codex home; preflight's
 `session_skill` check only reports whether it is there and current.
@@ -255,10 +264,19 @@ stored. Sessions report with `workflow_report.py` and an access key in the
 `workflows` category (the talk-to-jarvis skill teaches them);
 `POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the
 page reads `GET /api/workflows*`, and a `workflows` hint on `/ws/sessions`
-says when to read again. A new phase, a decision needed, a blocker, a finish
+says when to read again. Who reports is the route's to record, never the
+report's (`reporters.py`): an access key's label means an agent, the listed
+agent the directory names by it (`agent_directory.named`), else the label
+itself, proven by the key; `reporters.recorded` keeps it as `key:<label>`
+on the workflow and every event (`reporter`), and the page and brain show
+it by name (`reporter_name`, `reporters.shown`). An `agent_attached`
+session must be one of the key's own agent's sessions
+(`server._attach_refused`); any other is refused. A new phase, a decision needed, a blocker, a finish
 and going quiet are each an attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; open decisions are added to the
-needs board (`with_decisions`) without writing the sessions' board files,
+needs board (`with_decisions`) as a board of their own per project and
+reporter, owned by that reporter, never added to a session's board, and
+without writing the sessions' board files,
 and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
@@ -318,8 +336,10 @@ package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
 as the brain's `open_package_page`, on his click. A decision is answered by
 Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
 <key> "<reason>"`, kind `decision_withdrawn`): the route records the asker
-as its access key's label (`work_api.asker`, `web_auth.access_key_label`),
-never what the report says, refuses a page's withdrawal, and a decision
+as its access key's label (`work_api.asker`, `reporters.recorded`),
+never what the report says (every report keeps its reporter the same way:
+`work_events.reporter` and each piece's latest, `work_pieces.reporter`,
+migration 6, shown as "reported by <name>" on pieces and events), refuses a page's withdrawal, and a decision
 asked before askers were recorded may be withdrawn by any reporter. A
 withdrawn decision is no longer open or counted, and is kept beside the
 answered ones (`answered`, `where` = `withdrawn`). An item closed
@@ -720,10 +740,17 @@ own tool token (`decision_stamp.py`), so no other way delivers one.
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
 jarvis.make_package` checks and builds it, then posts the zip's bytes to
-`POST /api/packages/inbox?project=&session=&workflow=&work=`
+`POST /api/packages/inbox?project=&session=&source=&workflow=&work=`
 (`decision_package.deliver`, the tool token, which the decision stamp needs
 anyway; the `packages` access-key category opens that one route and
-nothing else). `package_inbox_api.py` hands it to `server._receive_inbox_package`:
+nothing else). `session` is only a claim (`claimed_session`): his answers
+go to it (`from_session`, with `sender_evidence`) only once
+`server._package_sender` proves it, by a session the caller's access key
+owns or by the claimed session's own transcript (or its subagent's) showing
+make_package run on `source` within `MAKE_PACKAGE_WINDOW_SEC`; unproven, the
+answers go nowhere and the row says so (`unproven_claim`, the Queue's
+"Answers go nowhere", the sign-off's note). Rows from before migration 3
+are claims. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
 package only with its stamp), and `package_inbox.arrive` records it. Nothing

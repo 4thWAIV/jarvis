@@ -479,13 +479,16 @@ def post(url: str, token: str, body: dict | bytes, timeout: float = 60) -> dict:
 
 
 def deliver(archive: Path, base: str, token: str, project: str = "", session: str = "",
-            workflow: str = "", work: str = "") -> Delivered:
+            workflow: str = "", work: str = "", source: str = "") -> Delivered:
     """Send the zip to the package inbox of the JARVIS at `base`: checked,
     unpacked and recorded there, never shown (package_inbox.py). `session`
-    is who the answers go back to; `workflow` and `work` link it to the
-    workflow or work item it is for."""
+    is who the answers go back to, once JARVIS has proven it ran the
+    command (its transcript shows make_package run on `source`, as it was
+    given); `workflow` and `work` link it to the workflow or work item it
+    is for."""
     query = urllib.parse.urlencode({k: v for k, v in (
-        ("project", project), ("session", session), ("workflow", workflow), ("work", work)) if v})
+        ("project", project), ("session", session), ("source", source),
+        ("workflow", workflow), ("work", work)) if v})
     url = base.rstrip("/") + INBOX_ROUTE + (f"?{query}" if query else "")
     answer = post(url, token, archive.read_bytes())
     if "package" not in answer or "inbox" not in answer:

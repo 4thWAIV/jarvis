@@ -382,6 +382,8 @@ function Reports({ events, part }: { events: WorkEvent[]; part: Part }) {
             <span className="work-event-at">
               {formatDateTime(e.at * 1000, { hour: "2-digit", minute: "2-digit" })}</span>{" "}
             {e.summary}
+            {e.reporter_name && <small className="work-event-reporter" title={t("main.work.reporterTitle")}>
+              {" "}{t("main.work.reportedBy", { name: e.reporter_name })}</small>}
           </li>
         ))}
       </ol>
@@ -417,6 +419,9 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           {piece.worker && " "}
           {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
+          {piece.reporter_name && " "}
+          {piece.reporter_name && <span className="work-piece-reporter" title={t("main.work.reporterTitle")}
+                                        ref={ui.part("reporter")}>{t("main.work.reportedBy", { name: piece.reporter_name })}</span>}
         </span>
         <span className={`work-state state-${piece.stalled ? "stalled" : piece.state}`} ref={ui.part("state")}>
           {piece.stalled ? t("right.work.state.stalled") : STATE_WORDS[piece.state]}</span>

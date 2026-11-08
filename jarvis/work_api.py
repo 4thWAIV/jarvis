@@ -41,6 +41,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from jarvis import reporters
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
                     web_auth, work_packages, workflow_store, work_store)
 
@@ -121,10 +122,10 @@ def _check_who(detail: dict) -> None:
 
 
 def asker(scope: dict) -> str:
-    """Who is reporting, as a decision's asker is kept: an access key by its
-    label, else how the request was admitted (the tool token, or a page)."""
-    label = web_auth.access_key_label(scope)
-    return f"key:{label}" if label is not None else str(scope.get(web_auth.ADMITTED) or "")
+    """Who is reporting, as every report's reporter and a decision's asker
+    are kept (reporters.recorded): an access key by its label, else how the
+    request was admitted (the tool token, or a page)."""
+    return reporters.recorded(scope)
 
 
 def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
@@ -137,6 +138,7 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
         raw["who"]["name"] = names(piece.who)
+        raw["reporter_name"] = reporters.shown(piece.reporter)
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
     out["package_questions"] = waiting.get(item.id, 0)
     out["approvable"] = can_approve(item, waiting)
@@ -363,7 +365,10 @@ def group_json(group: work_store.WorkGroup) -> dict:
 
 
 def event_json(event: work_store.WorkEvent) -> dict:
-    return dataclasses.asdict(event)
+    """An event as the page shows it, with who reported it by name
+    (`reporter_name`: its key's agent, else the key's label; "" for his acts
+    and JARVIS's own)."""
+    return {**dataclasses.asdict(event), "reporter_name": reporters.shown(event.reporter)}
 
 
 # ── the shared calls ────────────────────────────────────────────────────
@@ -544,10 +549,11 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         return {"events": [event_json(e) for e in found]}
 
     @app.post("/api/work")
-    async def start_work(req: StartRequest):
+    async def start_work(req: StartRequest, request: Request):
         try:
             item = await asyncio.to_thread(work_store.create, req.title, req.source.get("kind"),
-                                           req.source.get("path"), req.state, req.area)
+                                           req.source.get("path"), req.state, req.area,
+                                           asker(request.scope))
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.CREATED, None)
@@ -575,7 +581,8 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         def write():
             if req.kind == work_store.PIECE:
                 _check_who(detail)
-            return work_store.record(work_store.WorkEvent(item_id, req.kind, req.summary, detail))
+            return work_store.record(work_store.WorkEvent(item_id, req.kind, req.summary, detail,
+                                                          reporter=by))
         try:
             item = await asyncio.to_thread(write)
         except work_store.WorkRefused as e:

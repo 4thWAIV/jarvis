@@ -315,7 +315,18 @@ _WAIT_LINKS = """
         || latest_update WHERE state = 'done' AND closed_at IS NULL;
 """ + _link_held("work_pieces", "item_id") + _link_held("work_items", "id")
 
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS}
+# 6: who reported each event, and each piece's latest report, as the route
+# proved it (reporters.recorded: an access key's `key:<label>`), never the
+# report's own word. A decision's asker was already kept so.
+_REPORTERS = """
+    ALTER TABLE work_events ADD COLUMN reporter TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN reporter TEXT NOT NULL DEFAULT '';
+    UPDATE work_events SET reporter = json_extract(detail, '$.asked_by')
+        WHERE kind = 'decision_needed' AND json_extract(detail, '$.asked_by') LIKE 'key:%';
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS,
+               6: _REPORTERS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -346,6 +357,7 @@ class Piece:
     note: str = ""            # the summary of the latest report about it
     note_at: Optional[float] = None
     worker: str = ""          # the reporter's own words for who did it; untrusted
+    reporter: str = ""        # who sent its latest report, as the route proved it
     after: list[str] = field(default_factory=list)       # keys of the pieces it comes after
     waits_for: list[str] = field(default_factory=list)   # of those, the ones not done yet
     evidence: list[Evidence] = field(default_factory=list)
@@ -433,6 +445,9 @@ class WorkEvent:
     detail: dict
     at: float = 0.0
     seq: int = 0
+    # Who reported it, as the route proved it (reporters.recorded); his own
+    # acts and JARVIS's leave it empty. Never the report's own word.
+    reporter: str = ""
 
 
 @dataclass(frozen=True)
@@ -664,15 +679,18 @@ def parse_who(text: str) -> Who:
 
 # ── writing ─────────────────────────────────────────────────────────────
 
-def _insert_event(conn, item_id: str, kind: str, summary: str, detail: dict, now: float) -> None:
-    conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at) VALUES (?, ?, ?, ?, ?)",
-                 (item_id, kind, summary, json.dumps(detail), now))
+def _insert_event(conn, item_id: str, kind: str, summary: str, detail: dict, now: float,
+                  reporter: str = "") -> None:
+    conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at, reporter) "
+                 "VALUES (?, ?, ?, ?, ?, ?)",
+                 (item_id, kind, summary, json.dumps(detail), now, reporter))
 
 
 def create(title: str, source_kind: str, path: str, state: str = PLANNED,
-           area: str = "") -> WorkItem:
+           area: str = "", reporter: str = "") -> WorkItem:
     """Begin tracking a piece of work on a zip or folder that is on this Mac
-    now, under an area if it is given one. Returns it."""
+    now, under an area if it is given one; `reporter` who asked, as the
+    route proved it. Returns it."""
     title = _one_line(title, TITLE_MAX)
     if not title:
         raise WorkRefused("A work item needs a title.")
@@ -692,7 +710,7 @@ def create(title: str, source_kind: str, path: str, state: str = PLANNED,
             (item_id, title, source_kind, kept, state, f"{title} is tracked.", now, now, area))
         _insert_event(conn, item_id, CREATED, f"{title} is tracked.",
                       {"source_kind": source_kind, "source_path": kept, "state": state,
-                       "area": area}, now)
+                       "area": area}, now, reporter)
         conn.commit()
     return get(item_id)
 
@@ -725,7 +743,10 @@ def record(event: WorkEvent) -> WorkItem:
         moved = wait_links.Settled()
         if event.kind in (DECISION_MADE, DECISION_SIGNED_OFF, DECISION_WITHDRAWN):
             moved = _answered(conn, event.item_id, kept, event.kind, now)
-        _insert_event(conn, event.item_id, event.kind, summary, kept, now)
+        if event.kind == PIECE:
+            conn.execute("UPDATE work_pieces SET reporter=? WHERE item_id=? AND key=?",
+                         (event.reporter, event.item_id, kept["key"]))
+        _insert_event(conn, event.item_id, event.kind, summary, kept, now, event.reporter)
         conn.commit()
     wait_links.tell(moved)
     return get(event.item_id)
@@ -1229,7 +1250,8 @@ def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
             reason = _LIVE_REASON.get(live.state, ACTIVITY_REASON) if live else ACTIVITY_REASON
         pieces.append(Piece(
             r["key"], r["title"], person, shown,
-            note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
+            note=r["note"], note_at=r["note_at"], worker=r["worker"], reporter=r["reporter"],
+            after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
             evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
             quiet_at=(live.written + live.active_within if evidenced
@@ -1490,7 +1512,7 @@ def grouped(items: list[WorkItem]) -> list[WorkGroup]:
 
 def _event(row) -> WorkEvent:
     return WorkEvent(row["item_id"], row["kind"], row["summary"], json.loads(row["detail"]),
-                     row["at"], row["seq"])
+                     row["at"], row["seq"], row["reporter"])
 
 
 def events(item_id: str, after: int = 0, kinds: Optional[set[str]] = None,

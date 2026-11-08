@@ -3257,6 +3257,7 @@ export const UI_CONTRACT = {
         "sender",
         "title",
         "progress",
+        "unproven",
         "open",
         "done",
         "close"
@@ -3806,6 +3807,7 @@ export const UI_CONTRACT = {
         "row",
         "who",
         "worker",
+        "reporter",
         "state",
         "mark",
         "activity",

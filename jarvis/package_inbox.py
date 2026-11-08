@@ -130,8 +130,18 @@ _SIGNED_OFF = """
     ALTER TABLE package_inbox ADD COLUMN signed_off_at REAL;
 """
 
+# 3: the session it claimed it came from, apart from the one proven
+# (`from_session`, where his answers go), and how it was proven. A row from
+# before had only the claim: it is a claim still, so its answers go nowhere.
+_PROVEN_SENDER = """
+    ALTER TABLE package_inbox ADD COLUMN claimed_session TEXT NOT NULL DEFAULT '';
+    ALTER TABLE package_inbox ADD COLUMN sender_evidence TEXT NOT NULL DEFAULT '';
+    UPDATE package_inbox SET claimed_session = from_session, from_session = '', from_agent = ''
+        WHERE from_session <> '';
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF}
+_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF, 3: _PROVEN_SENDER}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -143,11 +153,15 @@ class InboxRefused(ValueError):
 
 @dataclass(frozen=True)
 class Sender:
-    """Who sent it: the project the command was run for, the session that
-    ran it (what the answers go back to) and that agent's one name."""
+    """Who sent it: the project the command was run for, the session proven
+    to have run it (what the answers go back to; server._package_sender),
+    that agent's one name, the session it claimed (`?session=`, only a
+    claim) and how the claim was proven ("" when it was not)."""
     project: str = ""
     session: str = ""
     agent: str = ""
+    claimed: str = ""
+    evidence: str = ""
 
     def key(self) -> tuple[str, str]:
         """Who counts as the same sender: the session, else the project."""
@@ -184,6 +198,13 @@ class Entry:
     closed_at: Optional[float]
     closed_why: Optional[str]
     signed_off_at: Optional[float] = None
+    claimed_session: str = ""        # the session it said it came from: only a claim
+    sender_evidence: str = ""        # how `from_session` was proven; "" when it was not
+
+    @property
+    def unproven_claim(self) -> bool:
+        """It named a session nothing proved sent it: his answers go nowhere."""
+        return bool(self.claimed_session) and not self.from_session
 
     @property
     def is_open(self) -> bool:
@@ -412,7 +433,8 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
     superseded, in the same transaction."""
     now = time.time() if now is None else now
     sender = Sender(_ref(sender.project, "The project"), _ref(sender.session, "The session"),
-                    _ref(sender.agent, "The agent's name"))
+                    _ref(sender.agent, "The agent's name"), _ref(sender.claimed, "The session"),
+                    _ref(sender.evidence, "The evidence"))
     answered, total = counts(questions(package))
     m = package.manifest
     with closing(_connect()) as conn, conn:
@@ -434,11 +456,12 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
         conn.execute(
             "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, purpose, "
             "runs, decisions_total, decisions_answered, from_project, from_session, "
-            "from_agent, workflow_id, work_id, state, revision, arrived_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            "from_agent, workflow_id, work_id, state, revision, arrived_at, claimed_session, "
+            "sender_evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
             (inbox_id, package.id, sha256, m.name, m.version, title_of(package), m.purpose,
              m.runs, total, answered, sender.project, sender.session, sender.agent,
-             workflow_id or None, work_id or None, ARRIVED, now))
+             workflow_id or None, work_id or None, ARRIVED, now, sender.claimed,
+             sender.evidence))
         _event(conn, inbox_id, "arrived", 1, now, BY_THE_SENDER)
         entry = _one(conn, inbox_id)
     return Arrival(entry, True, superseded)

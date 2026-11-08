@@ -61,6 +61,27 @@ def send(w, data: bytes, headers=None, **query) -> "object":
                          headers={**(headers or token()), "Content-Type": "application/zip"})
 
 
+@pytest.fixture(autouse=True)
+def claims_proven(request, monkeypatch):
+    """Most tests here are about the inbox, not the proof: each session a
+    package claims counts as proven, by its listed name. The proof's own
+    tests (below, "who sent it") take the real `_package_sender` back."""
+    if "wired" not in request.fixturenames:
+        yield None
+        return
+    w = request.getfixturevalue("wired")
+    real = w.server._package_sender
+    from jarvis import session_message_sender
+
+    def proven(claimed, source, reporter):
+        if not claimed:
+            return None
+        return session_message_sender.Sender(
+            claimed, w.server.agent_directory.names_by_session().get(claimed, ""), "test")
+    monkeypatch.setattr(w.server, "_package_sender", proven)
+    yield real
+
+
 @pytest.fixture
 def shown(wired, monkeypatch):
     """Every frame a page would be sent, with one page open."""
@@ -432,3 +453,70 @@ def test_every_inbox_tool_is_defined_granted_and_gated(wired):
 def test_every_inbox_act_acts_only_on_his_own_turn(wired, tool):
     refused = _call(wired, tool, origin="event", package="x", option="a")
     assert not refused["ok"] and "not_allowed_from_event" in refused["text"]
+
+
+# -- who sent it -----------------------------------------------------------------------
+
+@pytest.fixture
+def proof(wired, claims_proven, monkeypatch, tmp_path):
+    """The real proof, with chitauri (sess-1) and designer (sess-2) running
+    in /tmp/tea and their transcripts under tmp/claude."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(wired.server, "_package_sender", claims_proven)
+    sessions = [SimpleNamespace(session_id=sid, cwd=str(tmp_path / "tea"), project="tea",
+                                provider="anthropic", voice_name=name, state="idle",
+                                agents_active=0, agents_capped=False)
+                for sid, name in (("sess-1", "chitauri"), ("sess-2", "designer"))]
+    monkeypatch.setattr(wired.server, "_snapshot_or_empty",
+                        lambda: SimpleNamespace(sessions=sessions))
+    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
+                        lambda: {"sess-1": "chitauri", "sess-2": "designer"})
+    monkeypatch.setattr(wired.server.session_watch, "config_roots", lambda: [tmp_path / "claude"])
+
+    def ran(session, command):
+        from jarvis import session_watch
+        t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / "tea"), session)
+        t.parent.mkdir(parents=True, exist_ok=True)
+        with open(t, "a") as fh:
+            fh.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}) + "\n")
+    return ran
+
+
+def test_a_claimed_session_nothing_proves_gets_no_answers_and_the_row_says_so(
+        wired, shown, marks, proof):
+    got = send(wired, page_zip(), session="sess-1", source="notes/").json()
+    entry = package_inbox.get(got["inbox"]["id"])
+    assert (entry.from_session, entry.claimed_session, entry.sender_evidence) == ("", "sess-1", "")
+    assert got["inbox"]["unproven_claim"] is True
+    assert "go nowhere" in _call(wired, "package_inbox")["text"]
+    r = signoff(wired, got["package"]["id"])
+    assert "not proven to have sent it" in r.json()["said"]
+    assert not any(c.get("to_session") == "sess-1" for c in wired.server._captures.values())
+
+
+def test_the_claimed_session_s_transcript_running_make_package_proves_it(
+        wired, shown, marks, proof):
+    proof("sess-1", "python -m jarvis.make_package notes/ --session sess-1")
+    got = send(wired, page_zip(), session="sess-1", source="notes").json()
+    entry = package_inbox.get(got["inbox"]["id"])
+    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
+        "sess-1", "chitauri", "transcript")
+    assert got["inbox"]["unproven_claim"] is False
+
+
+def test_another_session_s_transcript_proves_no_claim(wired, shown, marks, proof):
+    """designer ran it: a package claiming chitauri is not chitauri's."""
+    proof("sess-2", "python -m jarvis.make_package notes/ --session sess-1")
+    got = send(wired, page_zip(), session="sess-1", source="notes").json()
+    assert package_inbox.get(got["inbox"]["id"]).from_session == ""
+
+
+def test_a_key_proves_the_sessions_of_the_agent_its_label_names(wired, shown, marks, proof):
+    run_store.sync_agents({"sess-1": ("chitauri", "idle")})
+    auth = {"Authorization": f"Bearer {access_keys.create('chitauri', ['packages'])}"}
+    got = send(wired, page_zip(), headers=auth, session="sess-1").json()
+    entry = package_inbox.get(got["inbox"]["id"])
+    assert (entry.from_session, entry.sender_evidence) == ("sess-1", "access_key")
+    other = send(wired, page_zip("1.0.1"), headers=auth, session="sess-2").json()
+    assert package_inbox.get(other["inbox"]["id"]).from_session == "", "not its agent's session"

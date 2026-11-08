@@ -186,11 +186,12 @@ def test_a_workflow_is_found_by_its_name_as_said():
 def test_open_decisions_appear_on_the_needs_board_without_writing_it(tmp_path):
     wid = ws.start("Speech migration", "jarvis", [])
     ws.record(_ev(wid, "decision_needed", "Which engine?", key="engine"))
-    own = session_needs.Board("jarvis", "# jarvis\n\n## Decisions\n- one: x", 0.0)
+    own = session_needs.Board("jarvis", "# jarvis\n\n## Decisions\n- one: x", 0.0,
+                              session="s1", owner="Diagnostics")
     boards = ws.with_decisions([own])
-    assert boards[0].items == 2
-    assert "Speech migration needs a decision (engine): Which engine?" in boards[0].text
-    assert own.text.endswith("- one: x"), "the session's own board is never changed"
+    assert boards[0] is own, "the session's own board is never changed or added to"
+    assert boards[1].items == 1 and boards[1].owner == "", "a workflow no key reported"
+    assert "Speech migration needs a decision (engine): Which engine?" in boards[1].text
     assert ws.with_decisions([])[0].project == "jarvis"
 
 

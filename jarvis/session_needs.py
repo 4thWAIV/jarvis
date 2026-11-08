@@ -25,6 +25,12 @@ class Board:
     project: str        # the file's stem: the project the session works in
     text: str
     mtime: float
+    # Who wrote it, proven by a transcript (server._proven_boards): its
+    # listed agent's session and the name it is shown by. Empty until
+    # proven; a board no transcript proves is never shown.
+    session: str = ""
+    owner: str = ""
+    path: Path | None = None
 
     @property
     def items(self) -> int:
@@ -50,7 +56,7 @@ def read_boards(folder: Path) -> list[Board]:
             continue
         if len(text) > MAX_FILE_CHARS:
             text = text[:MAX_FILE_CHARS].rstrip() + "\n… (the rest of this file was cut)"
-        boards.append(Board(project=path.stem, text=text.strip(), mtime=mtime))
+        boards.append(Board(project=path.stem, text=text.strip(), mtime=mtime, path=path))
     return boards
 
 

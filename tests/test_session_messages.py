@@ -399,9 +399,8 @@ async def test_a_reply_to_a_subagent_goes_to_its_parent_naming_it(server, monkey
     [m] = server._take_session_messages()
     r = TestClient(server.app).post(f"/api/session-messages/{m.id}/reply", headers=ORIGIN)
     capture = server._captures[r.json()["capture"]]
-    capture["to"] = "Guard"              # a lead names a one-word agent (`_plain_name`)
     assert (capture["to_session"], server._read_back_lead(capture)) == (
-        GUARD, "To Guard, for Feynman.")
+        GUARD, "To Agent Guard, for Feynman."), "named as the directory names it, spaces and all"
     server._set_capture(capture, "Thanks.", "Designer", DESIGNER)
     assert server._read_back_lead(capture) == "To Designer.", "readdressed: no longer for Feynman"
 
@@ -477,3 +476,13 @@ def test_a_message_with_no_known_sender_cannot_be_replied_to(server, monkeypatch
     r = TestClient(server.app).post(f"/api/session-messages/{mid}/reply", headers=ORIGIN)
     assert r.status_code == 409 and "no one to reply to" in r.json()["detail"]
     assert "no one to reply to" in server.tool_reply_to_session_message({"message": mid})
+
+
+def test_a_read_back_names_its_recipient_as_the_directory_names_it(server, monkeypatch):
+    """Never "To that session." for a name with a space in it, and the
+    agent's one name now, whatever it was addressed by."""
+    capture = {"to": "agent guard", "to_session": GUARD}
+    assert server._read_back_lead(capture) == "To Agent Guard."
+    monkeypatch.setattr(server.agent_directory, "names_by_session", lambda: {})
+    assert server._read_back_lead({"to": "Landorphan Taxes", "to_session": "x"}) == \
+        "To Landorphan Taxes."

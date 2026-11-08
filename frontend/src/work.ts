@@ -65,6 +65,8 @@ export interface WorkPiece {
   note_at: number | null;
   /** The reporting agent's own words for who did it: untrusted, shown beside the owner. */
   worker: string;
+  /** Who sent its latest report, as its access key proves it: the key's agent, else its label. */
+  reporter_name?: string;
   /** The keys of the pieces it comes after, and those of them not done yet. */
   after: string[];
   waits_for: string[];
@@ -232,6 +234,8 @@ export interface WorkEvent {
   detail: Record<string, unknown>;
   at: number;
   seq: number;
+  /** Who reported it, as its access key proves it; "" for his acts and JARVIS's own. */
+  reporter_name?: string;
 }
 
 /** Moves on every "work" hint, and on every (re)connect of /ws/sessions. */

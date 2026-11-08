@@ -95,26 +95,55 @@ def test_an_emptied_board_is_not_announced(tmp_path):
 
 # --- the tool and the announcement -------------------------------------------
 
+GUARD, APPROVAL, DIAG = "sess-guard-0001", "sess-approval-01", "sess-diag-00001"
+NAMES = {GUARD: "Agent Guard", APPROVAL: "Approval Authority", DIAG: "Diagnostics"}
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
+    from types import SimpleNamespace
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import server as server_module
     importlib.reload(server_module)
+    server_module.run_store.init_db()
+    sessions = [SimpleNamespace(project=p, voice_name=NAMES[sid], session_id=sid,
+                                cwd=str(tmp_path / p), provider="anthropic", state="idle",
+                                agents_active=0, agents_capped=False)
+                for p, sid in (("agent-guard", GUARD), ("agent-guard", APPROVAL),
+                               ("jarvis", DIAG))]
+    monkeypatch.setattr(server_module, "_snapshot_or_empty",
+                        lambda: SimpleNamespace(sessions=sessions))
+    monkeypatch.setattr(server_module.agent_directory, "names_by_session", lambda: dict(NAMES))
+    monkeypatch.setattr(server_module.session_watch, "config_roots",
+                        lambda: [tmp_path / "claude"])
     return server_module, data_paths.needs_dir()
 
 
-def test_the_folder_is_in_the_data_dir(wired, tmp_path):
-    _server, folder = wired
-    assert folder == tmp_path / "data" / "needs" and folder.is_dir()
+def _wrote(tmp_path, session, path, project):
+    """`session`'s own transcript shows it writing `path`: the only proof of
+    who wrote a board."""
+    from jarvis import session_watch
+    t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / project), session)
+    t.parent.mkdir(parents=True, exist_ok=True)
+    with open(t, "a") as fh:
+        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
+                 f'"input":{{"file_path":"{path}"}}}}]}}}}\n')
 
 
-def test_the_tool_reads_every_board_wrapped_as_untrusted(wired):
+def _board(tmp_path, folder, name, text, session):
+    p = _write(folder, name, text)
+    _wrote(tmp_path, session, p, "jarvis" if session == DIAG else "agent-guard")
+    return p
+
+
+def test_the_tool_reads_every_board_wrapped_as_untrusted(wired, tmp_path):
     server, folder = wired
-    _write(folder, "agent-guard", BOARD)
-    _write(folder, "jarvis", "# jarvis\n\n## Decisions\n- restart: Restart JARVIS. Recommended: yes.")
+    _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    _board(tmp_path, folder, "jarvis",
+           "# jarvis\n\n## Decisions\n- restart: Restart JARVIS. Recommended: yes.", DIAG)
 
     out = server.tool_session_needs({})
 
@@ -124,18 +153,19 @@ def test_the_tool_reads_every_board_wrapped_as_untrusted(wired):
     assert server.TAINTING_TOOLS["session_needs"]
 
 
-def test_the_tool_pages_a_long_board(wired):
+def test_the_tool_pages_a_long_board(wired, tmp_path):
     server, folder = wired
-    _write(folder, "big", "\n".join(f"- item-{i}: something to decide" for i in range(60)))
+    _board(tmp_path, folder, "big", "\n".join(f"- item-{i}: something to decide"
+                                              for i in range(60)), GUARD)
 
     first = server.tool_session_needs({})
     assert "page 1 of" in first and "Call session_needs again with page 2" in first
     assert len(first) <= server.TOOL_RESULT_CAP
 
 
-def test_an_empty_board_says_nothing_is_waiting(wired):
+def test_an_empty_board_says_nothing_is_waiting(wired, tmp_path):
     server, folder = wired
-    _write(folder, "done", "# done\n")
+    _board(tmp_path, folder, "done", "# done\n", GUARD)
 
     assert "No session has anything waiting" in server.tool_session_needs({})
 
@@ -150,58 +180,60 @@ class _Speech:
 
 @pytest.mark.asyncio
 async def test_a_board_is_an_update_with_its_count(wired, monkeypatch, tmp_path):
-    server, _folder = wired
+    server, folder = wired
     from jarvis.attention_store import AttentionStore
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
     monkeypatch.setattr(server, "attention_record", AttentionStore())
-    _write(tmp_path / "b", "agent-guard", BOARD)
-    [board] = sn.read_boards(tmp_path / "b")
+    _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    [board] = server._proven_boards(sn.read_boards(folder))
 
     server._attend_board(board)
 
     assert sp.said == []
     (item,) = server.attention_record.items()
     assert (item.kind, item.source_id, item.event) == ("needs_board", "agent-guard", "changed")
-    assert item.facts == {"items": 3} and item.untrusted == {"agent": "agent-guard"}
+    assert item.facts == {"items": 3} and item.untrusted == {"agent": "Agent Guard"}
 
 
-def _agents(server, monkeypatch, *pairs):
-    """The running sessions, as (project, listed name) pairs."""
-    from types import SimpleNamespace
-    sessions = [SimpleNamespace(project=p, voice_name=n) for p, n in pairs]
-    monkeypatch.setattr(server, "_snapshot_or_empty",
-                        lambda: SimpleNamespace(sessions=sessions))
-
-
-@pytest.mark.asyncio
-async def test_a_board_goes_by_the_listed_names_of_its_project_s_agents(
-        wired, monkeypatch, tmp_path):
-    """He knows agents by name, not by folder: the jarvis board is
-    Diagnostics', and a project with two agents shows both names."""
+def test_a_board_goes_by_its_proven_writer_never_its_project_s_agents(wired, tmp_path):
+    """Two agents work in agent-guard: the board is the one whose transcript
+    wrote it, never "Agent Guard and Approval Authority"."""
     server, folder = wired
-    _agents(server, monkeypatch, ("jarvis", "Diagnostics"),
-            ("agent-guard", "Agent Guard"), ("agent-guard", "Approval Authority"))
-    _write(folder, "jarvis", "# jarvis\n\n## Decisions\n- restart: Restart. Recommended: yes.")
-    _write(folder, "agent-guard", BOARD)
-
+    _board(tmp_path, folder, "agent-guard", BOARD, APPROVAL)
     out = server.tool_session_needs({})
-    assert "# Diagnostics\n" in out and "# jarvis" not in out
-    assert "# Agent Guard and Approval Authority\n" in out and "# agent-guard" not in out
-
-    from jarvis.attention_store import AttentionStore
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
-    [board] = [b for b in sn.read_boards(folder) if b.project == "jarvis"]
-    server._attend_board(board)
-    (item,) = server.attention_record.items()
-    assert item.untrusted == {"agent": "Diagnostics"} and item.facts == {"items": 1}
+    assert "# Approval Authority\n" in out
+    assert "Agent Guard" not in out and "# agent-guard" not in out
 
 
-def test_a_board_with_no_agent_running_keeps_its_project_name(wired, monkeypatch):
+def test_a_board_no_transcript_proves_is_held_never_shown(wired, tmp_path):
+    from jarvis import subsystem_diagnostics
     server, folder = wired
-    _agents(server, monkeypatch)
-    _write(folder, "jarvis", "# jarvis\n\n## Decisions\n- restart: Restart. Recommended: yes.")
-    assert "# jarvis\n" in server.tool_session_needs({})
+    _write(folder, "agent-guard", BOARD)                     # nobody's transcript wrote it
+    _wrote(tmp_path, GUARD, folder / "other.md", "agent-guard")
+
+    assert "No session has anything waiting" in server.tool_session_needs({})
+    assert server._needs_by_session() == {}
+    assert server._boards_held == {"agent-guard"}
+    check = subsystem_diagnostics.needs_check(None, time.time(), held=1)
+    assert check.said is not None and check.said.code == "needsHeld"
+
+
+def test_a_board_rewritten_is_proven_again(wired, tmp_path):
+    """The proof is kept for the file as it was: a rewrite by someone whose
+    transcript does not show it is held, whoever wrote it before."""
+    server, folder = wired
+    p = _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    assert "# Agent Guard\n" in server.tool_session_needs({})
+    p.write_text(BOARD + "\n- another: x")
+    os.utime(p, (time.time() + 30, time.time() + 30))         # rewritten after GUARD's record
+    assert "No session has anything waiting" in server.tool_session_needs({})
+
+
+def test_each_agent_counts_only_the_board_it_wrote(wired, tmp_path):
+    server, folder = wired
+    _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    assert server._needs_by_session() == {GUARD: 3}, "never Approval Authority's too"
 
 
 def test_the_brain_is_offered_the_tool():

@@ -27,7 +27,7 @@
                                                   "decisions", "packages", "answered", "blocking", "reports", "review", "needs", "tab.overview", "tab.decisions", "tab.blocking", "tab.pieces", "tab.reports"],
                         "reveal": {"command": "work.open", "args": {"itemId": "$key"}}}]},
     {"kind": "workPiece", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work piece",
-     "parts": ["row", "who", "worker", "state", "mark", "activity", "note", "after", "evidence"],
+     "parts": ["row", "who", "worker", "reporter", "state", "mark", "activity", "note", "after", "evidence"],
      "presentations": [{"view": "main.work"}]},
     {"kind": "workDecision", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work decision",
      "parts": ["row", "options", "answer", "package"], "presentations": [{"view": "main.work"}]},

@@ -32,6 +32,7 @@ is shown and spoken only through the same walls as any other.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import secrets
@@ -116,6 +117,10 @@ class WorkflowEvent:
     detail: dict              # kind-specific: progress (done, total), options, until, session_id ...
     at: float = 0.0           # server clock, set on insert
     seq: int = 0              # its place in the log, set on insert
+    # Who reported it, as the route proved it (reporters.recorded: an access
+    # key's `key:<label>`; JARVIS's own records leave it empty). Never the
+    # report's own word.
+    reporter: str = ""
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,7 @@ class WorkflowSnapshot:
     finished_at: float | None = None
     dismissed: bool = False           # he dismissed it, or it lingered its LINGER_SEC
     dismiss_at: float | None = None   # when a finished one still in view dismisses itself
+    reporter: str = ""                # who started it, as the route proved it (reporters.recorded)
 
 
 _SCHEMA = """
@@ -217,7 +223,9 @@ _SCHEMA = """
 """
 
 
-_LATER_COLUMNS = (("finished_at", "REAL"), ("dismissed_at", "REAL"))
+_LATER_COLUMNS = (("workflows", "finished_at", "REAL"), ("workflows", "dismissed_at", "REAL"),
+                  ("workflows", "reporter", "TEXT NOT NULL DEFAULT ''"),
+                  ("workflow_events", "reporter", "TEXT NOT NULL DEFAULT ''"))
 
 
 def _connect() -> sqlite3.Connection:
@@ -225,11 +233,12 @@ def _connect() -> sqlite3.Connection:
     and the columns added after the first of them shipped."""
     conn = run_store._connect()
     conn.executescript(_SCHEMA)
-    have = {r["name"] for r in conn.execute("PRAGMA table_info(workflows)")}
-    for name, kind in _LATER_COLUMNS:
-        if name not in have:
+    have = {(t, r["name"]) for t in ("workflows", "workflow_events")
+            for r in conn.execute(f"PRAGMA table_info({t})")}
+    for table, name, kind in _LATER_COLUMNS:
+        if (table, name) not in have:
             try:
-                conn.execute(f"ALTER TABLE workflows ADD COLUMN {name} {kind}")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
             except sqlite3.OperationalError as e:
                 # Another connection opening the same new database added it
                 # between the PRAGMA and here, and did the rest.
@@ -267,9 +276,9 @@ def _check_slug(value, what: str) -> str:
     return slug
 
 
-def start(name: str, project: str, phases: list[str]) -> str:
-    """Begin recording a workflow; its phases, in order, as slugs or titles.
-    Returns its id."""
+def start(name: str, project: str, phases: list[str], reporter: str = "") -> str:
+    """Begin recording a workflow; its phases, in order, as slugs or titles;
+    `reporter` who started it, as the route proved it. Returns its id."""
     name = _one_line(name, NAME_MAX)
     project = _one_line(project, NAME_MAX)
     if not name or not project:
@@ -284,9 +293,9 @@ def start(name: str, project: str, phases: list[str]) -> str:
     now = time.time()
     with closing(_connect()) as conn:
         conn.execute(
-            "INSERT INTO workflows (id, name, project, state, started_at, last_event_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (workflow_id, name, project, WorkflowState.running.value, now, now))
+            "INSERT INTO workflows (id, name, project, state, started_at, last_event_at, "
+            "reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (workflow_id, name, project, WorkflowState.running.value, now, now, reporter))
         conn.executemany(
             "INSERT INTO workflow_items (workflow_id, slug, kind, title, state, position) "
             "VALUES (?, ?, 'phase', ?, ?, ?)",
@@ -294,17 +303,17 @@ def start(name: str, project: str, phases: list[str]) -> str:
              for i, (slug, title) in enumerate(zip(slugs, titles))])
         _insert_event(conn, WorkflowEvent(workflow_id, "workflow_started", None,
                                           f"{name} started.",
-                                          {"phases": slugs}), now)
+                                          {"phases": slugs}, reporter=reporter), now)
         conn.commit()
     return workflow_id
 
 
 def _insert_event(conn, event: WorkflowEvent, now: float) -> int:
     cur = conn.execute(
-        "INSERT INTO workflow_events (workflow_id, kind, item, summary, detail, at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO workflow_events (workflow_id, kind, item, summary, detail, at, reporter) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (event.workflow_id, event.kind, event.item, event.summary,
-         json.dumps(event.detail), now))
+         json.dumps(event.detail), now, event.reporter))
     return cur.lastrowid
 
 
@@ -320,7 +329,8 @@ def _clean(event: WorkflowEvent) -> WorkflowEvent:
     item = _check_slug(event.item, "The item") if event.item not in (None, "") else None
     if event.kind.startswith(("phase_", "task_")) and item is None:
         raise WorkflowRefused(f"A {event.kind} event names its phase or task.")
-    return WorkflowEvent(event.workflow_id, event.kind, item, summary, detail)
+    return WorkflowEvent(event.workflow_id, event.kind, item, summary, detail,
+                         reporter=event.reporter)
 
 
 def _int(value) -> int | None:
@@ -500,8 +510,7 @@ def _linked(conn, event: WorkflowEvent, key: str) -> WorkflowEvent:
                 (event.workflow_id, link.key)).fetchone()):
         raise WorkflowRefused(f"This workflow has asked no decision {link.key}; ask it with "
                               f"decision_needed first, then wait on it.")
-    return WorkflowEvent(event.workflow_id, event.kind, event.item, event.summary,
-                         {**event.detail, "link": str(link)})
+    return dataclasses.replace(event, detail={**event.detail, "link": str(link)})
 
 
 def decision_answer(conn, wid: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
@@ -677,7 +686,7 @@ def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
         dismissed=_dismissed(row, now),
         dismiss_at=(row["finished_at"] + LINGER_SEC
                     if row["finished_at"] is not None and not _dismissed(row, now) else None),
-        items=items, open=open_items)
+        items=items, open=open_items, reporter=row["reporter"])
 
 
 def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
@@ -711,7 +720,7 @@ def recent(limit: int = 20) -> list[WorkflowSnapshot]:
 
 def _event(row) -> WorkflowEvent:
     return WorkflowEvent(row["workflow_id"], row["kind"], row["item"], row["summary"],
-                         json.loads(row["detail"]), row["at"], row["seq"])
+                         json.loads(row["detail"]), row["at"], row["seq"], row["reporter"])
 
 
 def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
@@ -755,25 +764,25 @@ def find(reference: str) -> list[WorkflowSnapshot]:
 
 
 def with_decisions(boards: list) -> list:
-    """The needs boards (session_needs.Board), each project's with the open
-    decisions of its running workflows added under Decisions, and a board
-    for a project that has none of its own. The board files are the
-    sessions' own; this never writes them."""
-    from jarvis import session_needs
-    lines: dict[str, list[str]] = {}
+    """The needs boards (session_needs.Board) and, beside them, one board
+    of the open decisions of the running workflows per project and
+    reporter, owned by that reporter (its key's agent, else the key's
+    label; reporters.shown), never added to a session's own board, whose
+    writer is someone else. The board files are the sessions' own; this
+    never writes them."""
+    from jarvis import reporters, session_needs
+    lines: dict[tuple[str, str], list[str]] = {}
     for w in active():
         for o in w.open:
             if o.kind == "decision":
-                lines.setdefault(w.project.lower(), []).append(
+                lines.setdefault((w.project, w.reporter), []).append(
                     f"- {w.name} needs a decision ({o.key}): {o.summary}")
-    if not lines:
-        return boards
-    out = []
-    for b in boards:
-        extra = lines.pop(b.project.lower(), None)
-        out.append(session_needs.Board(b.project, b.text + "\n\n## Workflow decisions\n"
-                                       + "\n".join(extra), b.mtime) if extra else b)
-    for project, extra in lines.items():
+    out = list(boards)
+    for (project, reporter), extra in lines.items():
+        who = reporters.of_label(reporter[len(reporters.KEY_PREFIX):]) \
+            if reporter.startswith(reporters.KEY_PREFIX) else None
         out.append(session_needs.Board(project, "## Workflow decisions\n" + "\n".join(extra),
-                                       time.time()))
+                                       time.time(), session=who.sessions[0] if who and
+                                       who.sessions else "",
+                                       owner=who.name if who else ""))
     return out
