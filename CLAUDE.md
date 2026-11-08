@@ -328,7 +328,11 @@ alone. Finished or quiet with background work it started still running
 running in background with ID:" or "Monitor started (task", with no task
 notification carrying a `<status>` for that id after it nor "Successfully
 stopped task:", a monitor counting at most `MONITOR_MAX_SEC`), it is
-"waiting on its own background work". Any other working report is a
+"waiting on its own background work". The item rolls this up
+(`work_store._item_live`): a subagent working on a piece makes the item
+Working, one waiting on its background work keeps the item moving (never
+Stalled) and reads "Waiting on <name>'s background work"; either way the
+item's `live` line is that subagent's, on its row and in its header. Any other working report is a
 claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Activity unconfirmed",
 `work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
 piece and on an item alike. An item reads activity_unknown while a piece

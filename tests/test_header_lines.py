@@ -828,6 +828,10 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
+    "work_store._item_reason": (
+        "it words the item's reason with the subagent's description (its dispatcher's "
+        "words), data the page shows as text and the brain reads only inside "
+        "work_status's wall; it prints nothing itself"),
     "server._subagent_now": (
         "it reads a subagent's description and its last tool or line into a LiveAgent, data "
         "the Work page shows as text and the brain reads only inside work_status's wall "

@@ -11216,6 +11216,9 @@ def _work_line(item) -> str:
             + _work_follow_up(item)
             + _work_needs(item)
             + (f" {item.activity_reason}" if item.activity_reason else "")
+            + (f" {item.live.name} is working now"
+               + (f": {item.live.doing}" if item.live.doing else "") + "."
+               if item.live is not None and item.live.state == work_store.LIVE_WORKING else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
 

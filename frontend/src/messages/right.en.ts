@@ -132,6 +132,7 @@ export const rightEn = {
   "right.work.state.done": "Done",
   "right.work.state.ready": "Ready",
   "right.work.state.stalled": "Stalled",
+  "right.work.state.background": "Waiting on {name}'s background work",
   "right.work.stalled": "Stalled: nobody is working on this",
   "right.work.needsYou": "You: {act}",
   "right.work.alsoWaiting": "{count} decision(s) also wait on you",

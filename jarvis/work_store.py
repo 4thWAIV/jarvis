@@ -481,6 +481,9 @@ class WorkItem:
     # no report from its agents, within QUIET_AFTER_SEC (work_api decides
     # whether that is "Stalled", once nothing waits on him).
     unmoved: bool = False
+    # Read time only: the subagent it shows as what it is doing (a piece's
+    # working one, else one waiting on its own background work).
+    live: Optional["LiveAgent"] = None
 
 
 @dataclass(frozen=True)
@@ -1308,7 +1311,8 @@ def _item(conn, row, now: float) -> WorkItem:
         approved_at=row["approved_at"], review_note=row["review_note"],
         approvable=approvable(row, state, pieces, decisions),
         review_note_at=row["review_note_at"],
-        activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "",
+        activity_reason=_item_reason(state, _item_live(pieces)),
+        live=_item_live(pieces),
         unmoved=(not any(_moving(p, now) for p in pieces)
                  and now - (row["reported_at"] or row["created_at"]) > QUIET_AFTER_SEC))
 
@@ -1321,12 +1325,32 @@ def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
 
 
 def _moving(piece: Piece, now: float) -> bool:
-    """A piece being moved now: shown working (its subagent writing now), or
-    claimed working and reported within QUIET_AFTER_SEC (still a claim,
-    activity_unknown)."""
+    """A piece being moved now: shown working (its subagent writing now),
+    its subagent waiting on background work it started, or claimed working
+    and reported within QUIET_AFTER_SEC (still a claim, activity_unknown)."""
     return piece.state == WORKING or (
+        piece.live is not None and piece.live.state == LIVE_WAITING) or (
         piece.state == ACTIVITY_UNKNOWN and piece.note_at is not None
         and now - piece.note_at <= QUIET_AFTER_SEC)
+
+
+def _item_live(pieces: list[Piece]) -> Optional[LiveAgent]:
+    """The subagent the item shows as what it is doing: one working now
+    first, else one waiting on its own background work."""
+    for wanted in (LIVE_WORKING, LIVE_WAITING):
+        found = next((p.live for p in pieces if p.live is not None and p.live.state == wanted
+                      and p.state != DONE), None)
+        if found is not None:
+            return found
+    return None
+
+
+def _item_reason(state: str, live: Optional[LiveAgent]) -> str:
+    """Why the item is not shown working, in his terms: a subagent on it
+    waiting on its background work, or a claim JARVIS cannot see."""
+    if live is not None and live.state == LIVE_WAITING:
+        return f"Waiting on {live.name}'s background work."
+    return ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else ""
 
 
 def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -> str:

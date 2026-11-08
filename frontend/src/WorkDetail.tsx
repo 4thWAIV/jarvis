@@ -51,7 +51,8 @@ import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
-import { answerWorkDecision, blockerWords, followUpWords, needWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { answerWorkDecision, blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
+         rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -100,9 +101,11 @@ export function WorkDetail({ id }: { id: string }) {
     <div id="work-detail" ref={ui.whole}>
       <div className="work-detail-head" ref={ui.part("header")}>
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
-        {item && <span className={`work-state state-${item.stalled ? "stalled" : item.state}`} ref={ui.part("state")}>
-          {item.stalled ? t("right.work.state.stalled") : STATE_WORDS[item.state]}</span>}
-          {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
+        {item && <span className={`work-state state-${rowState(item)}`} ref={ui.part("state")}>
+          {rowStateWords(item, t)}</span>}
+          {item?.live
+            ? <small className="work-activity-reason work-live-reason">{liveWords(item.live)}</small>
+            : item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
         <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")}

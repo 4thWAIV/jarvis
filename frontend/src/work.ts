@@ -174,6 +174,9 @@ export interface WorkItem {
   needs_you?: WorkNeed[];
   /** Needs nothing of him and nobody is moving it. */
   stalled?: boolean;
+  /** The subagent it shows as what it is doing: working now, else waiting
+   *  on its own background work. */
+  live?: WorkLiveAgent | null;
   /** What his latest act in a review package did, when that was his latest review. */
   package_review: WorkPackageReview | null;
   /** Open decisions waiting on him while the item itself goes on. */
@@ -296,6 +299,28 @@ export interface WorkNeed {
   /** The question, the package's title or the piece's title (the agent's words). */
   text?: string;
   links?: string[];
+}
+
+/** The state an item's pill shows: Stalled, Waiting on a subagent's
+ *  background work, or its state. */
+export function rowState(item: WorkItem): string {
+  if (item.stalled) return "stalled";
+  if (item.state === "activity_unknown" && item.live?.state === "waiting") return "background";
+  return item.state;
+}
+
+export function rowStateWords(item: WorkItem, say: typeof t): string {
+  const shown = rowState(item);
+  if (shown === "stalled") return say("right.work.state.stalled");
+  if (shown === "background") return say("right.work.state.background", { name: item.live!.name });
+  return STATE_WORDS[item.state];
+}
+
+/** A subagent's line: "Release agent is working now · Using Bash", or
+ *  "… is waiting on its own background work". */
+export function liveWords(live: WorkLiveAgent): string {
+  const said = t(`main.work.live.${live.state}`, { name: live.name });
+  return live.state === "working" && live.doing ? `${said} · ${live.doing}` : said;
 }
 
 /** A need in words: the act and the place, as the brain's work_status says it. */

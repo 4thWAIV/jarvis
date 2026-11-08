@@ -13,6 +13,7 @@ the page is a word an agent typed into a state.
 | Planned | Work is lined up; nobody has started it. | Grey "Planned" pill. |
 | Ready | Nothing holds it up any more (his answer is in); its agent has yet to pick it up. | Blue "Ready" pill. After his answer with no report since: "Answered — waiting for *agent* to start". |
 | Working | A subagent on the piece is writing right now: JARVIS sees its own files. | Blue "Working" pill that glows; under the piece, "*Release agent* is working now · Using Bash" (its last tool or line). |
+| Waiting on *name*'s background work | The subagent on a piece has ended its turn but a command or monitor it started (CI, say) is still running. Never Stalled. | Pale blue pill "Waiting on Release agent's background work"; the row and header say "Release agent is waiting on its own background work". |
 | Activity unconfirmed | An agent says it is working on it. JARVIS cannot see the work happening, so it does not claim it is. | "Activity unconfirmed" pill, no animation; hovering says why. On a subagent's piece: "*name* has finished", "*name* has not written anything for a while", or "*name* is waiting on its own background work" (its turn is over but a command or monitor it started is still running). |
 | Waiting on you | Nothing can go on until you answer: a decision, a held piece, or a package question. | Amber pill and amber edge; the update line is the question; "Decision needed" banner. |
 | Blocked | Held by something that is not you (CI, a licence), named. | Red pill and red edge; Blocking names what holds it. |

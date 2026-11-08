@@ -124,6 +124,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.state.done": "Hecho",
   "right.work.state.ready": "Listo",
   "right.work.state.stalled": "Detenido",
+  "right.work.state.background": "Esperando el trabajo en segundo plano de {name}",
   "right.work.stalled": "Detenido: nadie está trabajando en esto",
   "right.work.needsYou": "Usted: {act}",
   "right.work.alsoWaiting": "{count} decisión(es) también esperan su respuesta",

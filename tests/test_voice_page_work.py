@@ -457,7 +457,12 @@ class _Live(_Review):
                                  live={"name": "Release agent", "state": "working",
                                        "written": 9_999_999_900.0, "doing": "Using Bash",
                                        "active_within": 90.0})]
-        self.items = {"work-l": live}
+        live["live"] = live["pieces"][0]["live"]
+        waiting = _review_item("work-b", "activity_unknown", False, None)
+        waiting.update(title="Waits on CI", stalled=False, live={
+            "name": "Release agent", "state": "waiting", "written": 9_999_999_000.0,
+            "doing": "", "active_within": 90.0})
+        self.items = {"work-l": live, "work-b": waiting}
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -484,6 +489,13 @@ async def test_a_piece_on_a_subagent_writing_now_glows_and_says_what_it_does(
         await row.wait_for(timeout=10000)
         await async_api.expect(row.locator(".work-state")).to_have_text("Working")
         assert await row.get_attribute("data-activity") == "working"
+        await async_api.expect(row.locator(".work-update")).to_have_text(
+            "Release agent is working now · Using Bash")
+        waits = page.locator(".work-row[data-work-id=work-b]")
+        await async_api.expect(waits.locator(".work-state")).to_have_text(
+            "Waiting on Release agent's background work")
+        await async_api.expect(waits.locator(".work-update")).to_have_text(
+            "Release agent is waiting on its own background work")
         await row.click()
         await page.click("#work-detail .work-tabs [role=tab]:text('Pieces')")
         piece = page.locator("#work-detail .work-piece[data-key=pr77]")

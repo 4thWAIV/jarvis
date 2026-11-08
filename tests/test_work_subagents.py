@@ -219,3 +219,36 @@ def test_ended_its_turn_but_waiting_on_its_monitor_says_so(wired, real_session, 
 def test_with_no_background_work_left_it_has_finished(wired, real_session, lines):
     _write_agent(real_session, "arelease0000002", lines)
     assert wired.server._subagent_now(SESSION, "arelease0000002").state == "finished"
+
+
+# -- the item says what the subagent on it is doing ---------------------------------
+
+def test_a_subagent_waiting_on_background_work_is_the_item_s_line_never_stalled(
+        wired, real_session, item, monkeypatch):
+    """work-06181b8c5de3: pr77's agent waiting on its CI monitor."""
+    _write_agent(real_session, "arelease0000003", [_started("bmon1"), FINISHED],
+                 meta={"description": "Release agent"})
+    import json
+    folder = real_session / "projects" / session_watch.encode_cwd(CWD) / SESSION / "subagents"
+    (folder / "agent-arelease0000003.meta.json").write_text(json.dumps({"description":
+                                                                        "Release agent"}))
+    _piece(wired, item.id, "pr77", auth=_key(), state="working",
+           who={"kind": "agent", "ref": f"{SESSION}/sub:arelease0000003"})
+    later = time.time() + work_store.QUIET_AFTER_SEC + 60
+    monkeypatch.setattr(work_store.time, "time", lambda: later)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert (got["stalled"], got["live"]["state"], got["live"]["name"]) == (
+        False, "waiting", "Release agent")
+    assert got["activity_reason"] == "Waiting on Release agent's background work."
+    listed = wired.client.get("/api/work").json()["items"][0]
+    assert (listed["stalled"], listed["activity_reason"]) == (
+        False, "Waiting on Release agent's background work.")
+    assert "Waiting on Release agent's background work." in _call(wired, "work_status")["text"]
+
+
+def test_a_subagent_working_now_makes_the_item_working_with_its_line(wired, item, subagent):
+    _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert (got["state"], got["live"]["state"], got["live"]["doing"]) == (
+        "working", "working", "Using Bash")
+    assert "Release agent is working now: Using Bash." in _call(wired, "work_status")["text"]
