@@ -14,6 +14,7 @@ import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_network import _envelope, _open, _Sessions, _Team
+from tests.fixtures.waiting import settled, until_async
 
 pytestmark = pytest.mark.page
 
@@ -50,6 +51,16 @@ class _Status:
         return [("**/api/team", status), ("**/api/team/connect", connect)]
 
 
+SHAPE = """() => { const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect();
+                                         return {y: r.top, height: r.height}; };
+  return {reminder: box('#team-reminder'), typed: box('#conversation .hearing-input'),
+          conversation: document.querySelector('#conversation').getBoundingClientRect().top}; }"""
+
+
+async def _above(page, selector: str, top: float) -> bool:
+    return await _top(page, selector) < top
+
+
 async def _top(page, selector: str) -> float:
     return await page.locator(selector).evaluate("e => e.getBoundingClientRect().top")
 
@@ -63,16 +74,16 @@ async def test_shown_while_signed_out_covers_nothing_and_later_hides_it(page_pla
         await async_api.expect(reminder.get_by_role("button", name="Sign in")).to_be_visible()
         await async_api.expect(page.locator("#team-server-tile .readiness-word")).to_have_text("Sign in")
         # The conversation, its input included, starts below the reminder.
-        box = await reminder.bounding_box()
-        conversation = await _top(page, "#conversation")
+        shape = await settled(page, SHAPE)
+        box, conversation, typed = shape["reminder"], shape["conversation"], shape["typed"]
         assert conversation >= box["y"] + box["height"], (box, conversation)
-        typed = await page.locator("#conversation .hearing-input").bounding_box()
         assert typed["y"] >= box["y"] + box["height"]
 
         await reminder.get_by_role("button", name="Later").click()
         await async_api.expect(reminder).to_have_count(0)
         # The room it took is given back.
-        assert await _top(page, "#conversation") < conversation
+        assert await until_async(lambda: _above(page, "#conversation", conversation)), \
+            (await _top(page, "#conversation"), conversation)
         # Still signed out: the tile keeps saying so.
         await async_api.expect(page.locator("#team-server-tile .readiness-word")).to_have_text("Sign in")
         await browser.close()
