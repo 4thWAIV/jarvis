@@ -19,7 +19,7 @@ pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_quiet_input import _browser, _listening, _page, _sent
-from tests.test_voice_page_speech_input import _until
+from tests.fixtures.waiting import until_async
 
 DRAFT = "document.querySelector('#conversation-draft')?.value ?? null"
 
@@ -37,11 +37,11 @@ async def test_words_not_committed_when_the_voice_socket_drops_become_an_unsent_
         page = await _page(context, page_url, view="")
         await _listening(page)
         await page.evaluate("window.__hear('remind me to call', true)")
-        assert await _until(page.voice.finals)
+        assert await until_async(page.voice.finals)
         _turn(page, "gathering", 1, "remind me to call")
-        await page.wait_for_selector("#voice-turn-send", timeout=5000)
+        await page.wait_for_selector("#voice-turn-send", timeout=15000)
         await page.voice.socket.close()
-        await page.wait_for_function(f"{DRAFT} === 'remind me to call'", timeout=5000)
+        await page.wait_for_function(f"{DRAFT} === 'remind me to call'", timeout=15000)
         assert page.voice.finals() == ["remind me to call"]
         await context.close()
 
@@ -53,7 +53,7 @@ async def test_words_the_server_took_for_echo_never_reach_the_draft(page_playwri
         page = await _page(context, page_url, view="")
         await _listening(page)
         await page.evaluate("window.__hear('as I was saying sir', true)")
-        assert await _until(page.voice.finals)
+        assert await until_async(page.voice.finals)
         await page.wait_for_timeout(300)        # no gathering frame: the server judged it echo
         await page.voice.socket.close()
         await page.wait_for_timeout(500)
@@ -68,20 +68,20 @@ async def test_a_committed_turn_leaves_no_draft_and_a_stalled_one_comes_back(pag
         page = await _page(context, page_url, view="")
         await _listening(page)
         await page.evaluate("window.__hear('what time is it', true)")
-        assert await _until(page.voice.finals)
+        assert await until_async(page.voice.finals)
         page.voice.socket.send(json.dumps({"type": "turn", "state": "committed", "turnId": 1}))
         await page.wait_for_timeout(300)
-        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=5000)
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=15000)
         _turn(page, "stalled", 2, "transfer the")
-        await page.wait_for_selector("#voice-turn-retry", timeout=5000)
+        await page.wait_for_selector("#voice-turn-retry", timeout=15000)
         assert await page.evaluate(DRAFT) == "", "it waits for his choice"
         for button, frame in (("#voice-turn-retry", "turn_retry"), ("#voice-turn-send", "turn_send_now"),
                               ("#voice-turn-draft", "turn_keep_draft")):
             await page.click(button)
-            assert await _until(lambda: _sent(page.voice, frame)), frame
+            assert await until_async(lambda: _sent(page.voice, frame)), frame
         _turn(page, "draft", 2, "transfer the")
-        await page.wait_for_function(f"{DRAFT} === 'transfer the'", timeout=5000)
-        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=5000)
+        await page.wait_for_function(f"{DRAFT} === 'transfer the'", timeout=15000)
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=15000)
         await page.voice.socket.close()
         await page.wait_for_timeout(500)
         assert await page.evaluate(DRAFT) == "transfer the"
@@ -95,10 +95,10 @@ async def test_a_discard_names_the_page_and_the_epoch_it_moved_to(page_playwrigh
         page = await _page(context, page_url, stop="discard")
         await _listening(page)
         await page.evaluate("window.__hear('drop it', true)")
-        assert await _until(page.voice.finals)
+        assert await until_async(page.voice.finals)
         heard = [m for m in page.voice.sent if m.get("type") == "transcript"][0]
         await page.click("#btn-mic-off")
-        assert await _until(lambda: _sent(page.voice, "turn_discard"))
+        assert await until_async(lambda: _sent(page.voice, "turn_discard"))
         discard = _sent(page.voice, "turn_discard")[0]
         assert discard["clientId"] == heard["clientId"]
         assert discard["captureEpoch"] > heard["captureEpoch"]

@@ -20,7 +20,8 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _record_item, _Voice
-from tests.voice_page_input import his_scroll
+from tests.fixtures.waiting import settled, until_async
+from tests.voice_page_input import HISTORY_SCROLL, his_scroll
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -487,6 +488,10 @@ def _conversation(n=60):
             "earlier": None}
 
 
+async def _scrolled_to(page, where) -> bool:
+    return await page.evaluate(HISTORY_SCROLL) == where
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_was(page_playwright, page_url):
     team = _Team()
@@ -502,7 +507,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
         await his_scroll(page, lambda: page.mouse.wheel(0, -400))
         await page.wait_for_selector(".conversation-jump")
-        scrolled = await page.evaluate("document.querySelector('.conversation-history').scrollTop")
+        scrolled = await settled(page, HISTORY_SCROLL)
 
         # The Team Server tile, by keyboard.
         await page.focus("#team-server-tile")
@@ -524,7 +529,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.keyboard.press("Enter")
         await page.wait_for_selector("#network-detail", state="detached")
         assert await page.text_content(".centre-tabs [aria-selected=true]") == "Conversation"
-        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == scrolled
+        assert await until_async(lambda: _scrolled_to(page, scrolled)), (await page.evaluate(HISTORY_SCROLL), scrolled)
 
         # An instance's tile, by keyboard, and back by the Conversation tab.
         await _network_tab(page)
@@ -543,7 +548,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.keyboard.press("Enter")
         await page.wait_for_function(
             "!document.querySelector('.centre-kept').classList.contains('hidden')")
-        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == scrolled
+        assert await until_async(lambda: _scrolled_to(page, scrolled)), (await page.evaluate(HISTORY_SCROLL), scrolled)
         await browser.close()
 
 
@@ -648,12 +653,9 @@ async def test_the_subsystem_row_and_the_tile_agree(page_playwright, page_url):
 async def _reported(page, team, count: int, why: str) -> None:
     """Wait for the report sent "at once" to arrive. Its round trip to the
     stand-in team server is real time, and a busy CI runner has taken longer
-    than a fixed 200 ms over it."""
-    for _ in range(50):
-        if len(team.activity) >= count:
-            break
-        await page.wait_for_timeout(100)
-    assert len(team.activity) == count, why
+    than a fixed 200 ms (and than 5 s) over it."""
+    await until_async(lambda: len(team.activity) >= count)
+    assert len(team.activity) == count, (why, team.activity)
 
 
 @pytest.mark.asyncio(loop_scope="session")

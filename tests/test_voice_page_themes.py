@@ -7,6 +7,7 @@ from tests.test_voice_page_conversation import _Voice
 from tests.test_voice_page_settings import _Server
 from tests.test_voice_page_queue import _open as queue_open, _queue_tab
 from tests.dashboard_page import dashboard, quiet_machine
+from tests.fixtures.waiting import settled
 
 pytestmark = pytest.mark.page
 
@@ -63,15 +64,14 @@ async def test_switching_themes_keeps_geometry_draft_panel_and_connections(page_
         await editor.fill('Unsent draft stays here')
         await page.evaluate('window.originalCanvas = document.querySelector("#orb-canvas")')
         await open_settings(page)
-        await page.wait_for_timeout(300)
-        before=await page.evaluate(METRICS)
+        before=await settled(page, METRICS)
         connected=len(sockets)
         for value, rgb in [('graphite','16, 17, 20'), ('classic','8, 13, 20')]:
             await page.get_by_label('Appearance').select_option(value)
             assert await page.evaluate('document.documentElement.dataset.theme')==value
             assert await page.evaluate('getComputedStyle(document.body).backgroundColor')==f'rgb({rgb})'
             assert await page.get_by_label('Appearance').evaluate('(e)=>getComputedStyle(e).backgroundColor') == ({'graphite': 'rgb(24, 26, 31)', 'classic': 'rgb(14, 22, 34)'}[value])
-            assert await page.evaluate(METRICS)==before
+            assert await settled(page, METRICS)==before
             assert await page.evaluate('window.originalCanvas === document.querySelector("#orb-canvas")')
             assert await page.locator('#settings-view').is_visible()
             assert len(sockets)==connected

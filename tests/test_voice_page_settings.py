@@ -17,6 +17,7 @@ import json
 import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import settled, until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -238,7 +239,7 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
         # A centre view: its own tab, selected, and nothing over the orb or
         # either column.
         await async_api.expect(page.locator(".centre-tabs [aria-selected=true]")).to_have_text("Settings")
-        assert await page.evaluate(CENTRED) == {"orb": True, "inside": True}
+        assert await settled(page, CENTRED) == {"orb": True, "inside": True}
         # The sections in the order a person comes to them.
         assert await page.locator(".settings-nav button").all_text_contents() == [
             "You", "Voice and language", "Brains", "Team", "Updates", "Server"]
@@ -277,15 +278,13 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
         await key.get_by_role("button", name="Save", exact=True).click()
         await page.get_by_text("Restart the server").wait_for()
         await async_api.expect(key_input).to_have_value("")
-        assert ("test-fish", {"key_value": "good-key"}) in server.posts
-        assert ("keys", {"key_name": "FISH_API_KEY", "key_value": "good-key"}) in server.posts
+        assert await until_async(lambda: ("test-fish", {"key_value": "good-key"}) in server.posts), server.posts
+        assert await until_async(lambda: ("keys", {"key_name": "FISH_API_KEY", "key_value": "good-key"}) in server.posts), server.posts
 
         await page.get_by_placeholder("612b878b113047d9a770c069c8b4fdfe").fill("voice-42")
         voice = page.locator(".settings-row", has=page.locator("#settings-voice-id"))
         await voice.get_by_role("button", name="Save", exact=True).click()
-        await page.wait_for_function("1")
-        await page.wait_for_timeout(300)
-        assert ("keys", {"key_name": "FISH_VOICE_ID", "key_value": "voice-42"}) in server.posts
+        assert await until_async(lambda: ("keys", {"key_name": "FISH_VOICE_ID", "key_value": "voice-42"}) in server.posts), server.posts
         await page.reload()
         await _open_settings(page)
         await async_api.expect(page.get_by_text("API key saved. Enter a new key here to replace it.")).to_be_visible()
@@ -302,8 +301,7 @@ async def test_name_and_honorific_are_saved(page_playwright, page_url):
         await page.get_by_placeholder("Your name").fill("Timothy")
         await page.locator("select:has(option[value='none'])").select_option("none")
         await page.locator("#settings-you").get_by_role("button", name="Save", exact=True).click()
-        await page.wait_for_timeout(300)
-        assert ("preferences", {"user_name": "Timothy", "honorific": "none"}) in server.posts
+        assert await until_async(lambda: ("preferences", {"user_name": "Timothy", "honorific": "none"}) in server.posts), server.posts
         await browser.close()
 
 
@@ -322,8 +320,8 @@ async def test_espanol_waits_for_its_model_then_is_chosen(page_playwright, page_
         await async_api.expect(page.get_by_text("Spanish speech model")).to_have_count(0)
         await page.locator("#settings-language").select_option("es")
         await async_api.expect(page.locator("#settings-language")).to_have_value("es")
-        assert ("install", {}) in server.posts
-        assert ("language", {"language": "es"}) in server.posts
+        assert await until_async(lambda: ("install", {}) in server.posts), server.posts
+        assert await until_async(lambda: ("language", {"language": "es"}) in server.posts), server.posts
         assert await page.locator("select:has(option[value='none']) option[value='señor']").count() == 1
         await browser.close()
 
@@ -398,7 +396,7 @@ async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(p
         await _open_settings(page)
         await page.get_by_role("button", name="+ Add OpenAI (Codex)").click()
         await page.wait_for_selector(".brain-card[data-brain='openai']")
-        assert ("brains/openai", {"action": "add"}) in server.posts
+        assert await until_async(lambda: ("brains/openai", {"action": "add"}) in server.posts), server.posts
         claude = page.locator(".brain-card[data-brain='anthropic']")
         assert await claude.locator(".brain-card-state").text_content() == "in use"
 
@@ -412,10 +410,9 @@ async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(p
         await page.locator(".brain-card[data-brain='openai'] input[type=radio]").click()
         await page.wait_for_function(
             "document.querySelector(\".brain-card[data-brain='openai'] input[type=radio]\").checked")
-        assert ("brains/default", {"name": "openai"}) in server.posts
+        assert await until_async(lambda: ("brains/default", {"name": "openai"}) in server.posts), server.posts
         await page.locator(".brain-card[data-brain='openai'] select").select_option("other-model")
-        await page.wait_for_timeout(300)
-        assert ("brains/openai", {"model": "other-model"}) in server.posts
+        assert await until_async(lambda: ("brains/openai", {"model": "other-model"}) in server.posts), server.posts
         await browser.close()
 
 
@@ -437,8 +434,8 @@ async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_playwr
     server = _Server()
     async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
-        await page.wait_for_timeout(1500)
-        assert await page.locator(".weekly-usage").count() == 1
+        await page.wait_for_timeout(1500)                 # time for a second box to show, were there one
+        await async_api.expect(page.locator(".weekly-usage")).to_have_count(1)
         assert await page.locator(".weekly-role").count() == 0
         await browser.close()
 
@@ -487,7 +484,7 @@ async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(
         assert not [p for p in server.posts if p[0] == "update"], "nothing before the yes"
         await section.get_by_role("button", name="Yes, install PR 41").click()
         await async_api.expect(section).to_contain_text("Updated to PR 41; restarting.")
-        assert ("update", {"version": "e" * 40}) in server.posts
+        assert await until_async(lambda: ("update", {"version": "e" * 40}) in server.posts), server.posts
         await browser.close()
 
 
@@ -541,10 +538,7 @@ async def test_steady_holds_the_page_still_for_this_browser_and_the_brain_asks_t
         await page.reload()
         await page.wait_for_function("document.documentElement.dataset.motion === 'steady'")
         # The brain's set_motion: the page moves again, and Settings shows it.
-        for _ in range(100):
-            if voice.ws:
-                break
-            await page.wait_for_timeout(50)
+        assert await until_async(lambda: voice.ws), "the voice socket never connected"
         voice.send({"type": "motion", "motion": "full"})
         await page.wait_for_function("!document.documentElement.dataset.motion")
         assert await page.evaluate(STEADY) == [None, None]

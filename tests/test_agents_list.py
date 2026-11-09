@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import session_watch as sw
 from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -472,11 +473,17 @@ async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, mo
     monkeypatch.setattr(server, "_hint_agents_changed", lambda: hints.append(1))
     monkeypatch.setattr(server, "NEEDS_POLL_SEC", 0.01)
 
+    from jarvis import subsystem_diagnostics as sd
     monkeypatch.setattr(server, "_attend_board", lambda board: None)
+    earlier = sd.beats.get(sd.NEEDS_LOOP)
     task = asyncio.ensure_future(server._watch_needs_board())
-    await asyncio.sleep(0.05)
+
+    def first_look_done():                            # its heartbeat, this loop's own
+        beat = sd.beats.get(sd.NEEDS_LOOP)
+        return beat is not earlier and beat is not None and beat.last_ok_at is not None
+    assert await until_async(first_look_done), "the first look never finished"
     assert hints == [], "the first look only records"
     board.write_text("## Decisions\n")                # down to none
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: hints), hints
     task.cancel()
     assert hints == [1]

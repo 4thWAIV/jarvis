@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from jarvis import server
 from jarvis.voice_control import ReplyOutcome
+from tests.fixtures.waiting import until_async
 
 
 @pytest.mark.asyncio
@@ -13,7 +14,7 @@ async def test_snapshots_are_coalesced_and_canonical_final_is_last(monkeypatch):
     reply.feed("First ")
     reply.feed("words.")
     assert len(frames) == 1  # initial identity, no per-token task or frame
-    await asyncio.sleep(0.07)
+    assert await until_async(lambda: len(frames) == 2), frames   # the coalesced snapshot
     assert frames[-1]["text"] == "First words."
     assert not frames[-1]["done"]
     reply.feed(" Must not arrive after final.")

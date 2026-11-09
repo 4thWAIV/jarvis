@@ -12,6 +12,7 @@ import asyncio
 import pytest
 import pytest_asyncio
 
+from tests.fixtures.waiting import until_async
 from tests.test_speech import Harness
 
 
@@ -33,8 +34,7 @@ def _mp3(seconds: float) -> bytes:
 async def test_a_chunk_goes_queued_started_played(h):
     s = h.sched
     u = await s.say("One sentence. Another one.")
-    await asyncio.sleep(0.1)
-    assert u.outcomes() == ["queued", "queued"]
+    assert await until_async(lambda: u.outcomes() == ["queued", "queued"]), u.outcomes()
     s.playback_started(u.id, 0)
     assert u.outcomes() == ["started", "queued"]
     await h.ack(u.id, 0)
@@ -48,11 +48,10 @@ async def test_a_chunk_goes_queued_started_played(h):
 async def test_a_decode_failure_is_failed_not_played_and_the_next_chunk_still_goes(h):
     s = h.sched
     u = await s.say("First part. Second part. Third part.")
-    await asyncio.sleep(0.1)
-    assert [i for _, i, _ in h.audio()] == [0, 1]
+    assert await until_async(lambda: [i for _, i, _ in h.audio()] == [0, 1]), h.audio()
     s.playback_failed(u.id, 0)                    # the page could not decode it
-    await asyncio.sleep(0.1)
-    assert [i for _, i, _ in h.audio()] == [0, 1, 2], "the transport moved on"
+    assert await until_async(lambda: [i for _, i, _ in h.audio()] == [0, 1, 2]), \
+        ("the transport moved on", h.audio())
     await h.ack(u.id, 1)
     await h.ack(u.id, 2)
     assert not await s.wait_for(u, timeout=1)
@@ -64,7 +63,7 @@ async def test_a_decode_failure_is_failed_not_played_and_the_next_chunk_still_go
 async def test_a_failed_read_back_is_not_heard_so_it_cannot_approve(h):
     s = h.sched
     reading = s.read_aloud("Telling hammer: ship it.", capture=7)
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: reading.outcomes() == ["queued"]), reading.outcomes()
     s.playback_failed(reading.id, 0)
     assert not await s.wait_for(reading, timeout=1)
     assert reading.outcomes() == ["failed"]
@@ -79,7 +78,7 @@ async def test_a_reading_inside_a_turn_is_judged_by_its_own_chunks(h):
     s.feed(u, "Here it is. ")
     last = s.read_into(u, "Telling hammer: ship it.", 3)
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued", "queued"]), u.outcomes()
     s.playback_failed(u.id, 0)
     await asyncio.sleep(0.05)
     await h.ack(u.id, last)
@@ -89,7 +88,7 @@ async def test_a_reading_inside_a_turn_is_judged_by_its_own_chunks(h):
     s.feed(v, "Here it is. ")
     last = s.read_into(v, "Telling hammer: hold it.", 4)
     await s.end_turn(v)
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: v.outcomes() == ["queued", "queued"]), v.outcomes()
     await h.ack(v.id, 0)
     s.playback_failed(v.id, last)
     assert not await s.wait_played(v, last, timeout=1)
@@ -110,7 +109,7 @@ async def test_skipping_a_read_back_in_a_turn_leaves_it_unheard(h):
     s = h.sched
     u = s.begin_turn()
     last = s.read_into(u, "Telling hammer: ship it now.", 5)
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued"]), u.outcomes()
     waiting = asyncio.ensure_future(s.wait_played(u, last, timeout=2))
     assert await s.skip_reading()                 # the one sounding now
     assert not await waiting
@@ -121,7 +120,7 @@ async def test_skipping_a_read_back_in_a_turn_leaves_it_unheard(h):
 async def test_late_acks_never_turn_skipped_audio_into_played(h):
     s = h.sched
     u = await s.say("Skip me. And me.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued", "queued"]), u.outcomes()
     await s.skip_reading(u.id)
     await s.played(u.id, 1)                       # a stale ack in the air
     assert u.outcomes() == ["skipped", "skipped"]
@@ -132,7 +131,7 @@ async def test_late_acks_never_turn_skipped_audio_into_played(h):
 async def test_stop_speaking_interrupts_and_a_kept_ack_is_still_the_truth(h):
     s = h.sched
     u = await s.say("Alpha one. Beta two. Gamma three.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes()[:2] == ["queued", "queued"]), u.outcomes()
     s.playback_started(u.id, 0)
     await s.barge_in(reason="hush (key)")
     assert u.outcomes() == ["interrupted"] * 3
@@ -145,7 +144,7 @@ async def test_stop_speaking_interrupts_and_a_kept_ack_is_still_the_truth(h):
 async def test_withdrawing_a_reading_interrupts_its_chunks(h):
     s = h.sched
     u = s.narrate([("Slide one. Still slide one.", {"slide": 1})])
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued", "queued"]), u.outcomes()
     await s.withdraw(u, reason="story stopped")
     assert set(u.outcomes()) == {"interrupted"}
 
@@ -154,7 +153,7 @@ async def test_withdrawing_a_reading_interrupts_its_chunks(h):
 async def test_reports_for_chunks_never_sent_are_ignored(h):
     s = h.sched
     u = await s.say("One. Two. Three. Four.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes()[:2] == ["queued", "queued"]), u.outcomes()
     s.playback_failed(u.id, 3)                    # not sent yet: prefetch is two
     s.playback_started(u.id, 3)
     s.playback_failed(999, 0)
@@ -165,7 +164,7 @@ async def test_reports_for_chunks_never_sent_are_ignored(h):
 async def test_a_failure_report_after_playing_changes_nothing(h):
     s = h.sched
     u = await s.say("Only one.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued"]), u.outcomes()
     await h.ack(u.id, 0)
     s.playback_failed(u.id, 0)
     assert u.outcomes() == ["played"]
@@ -176,7 +175,7 @@ async def test_a_failure_report_after_playing_changes_nothing(h):
 async def test_words_of_a_chunk_that_never_sounded_are_not_echo(h):
     s = h.sched
     u = await s.say("Deploying the staging cluster.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued"]), u.outcomes()
     assert s.classify("deploying the staging cluster") == "echo"
     s.playback_failed(u.id, 0)
     assert s.classify("deploying the staging cluster") == "speech"

@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from jarvis import voice_diagnostics as vd
 from jarvis.transcriber import Window
 from jarvis.voice_diagnostics import Event, Sample
+from tests.fixtures.waiting import until_async
 
 
 def healthy(**changes) -> Sample:
@@ -310,8 +311,14 @@ def test_a_capture_s_second_combines_the_recogniser_the_server_and_the_page(monk
 
 
 async def _feed(monitor, t):
+    before = _messages()
     monitor.telemetry(t)
-    await asyncio.sleep(0.05)        # the message line is written in the background
+    # the message lines are written in the background
+    assert await until_async(lambda: _messages() >= before + len(t.messages)), _messages()
+
+
+def _messages() -> int:
+    return sum(1 for e in vd.history(0, 2e9)[1] if e.kind == "message")
 
 
 def test_page_text_in_telemetry_is_recorded_as_messages():

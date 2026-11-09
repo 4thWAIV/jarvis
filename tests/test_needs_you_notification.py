@@ -15,6 +15,7 @@ import asyncio
 import pytest
 
 from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 
 @pytest.fixture
@@ -134,12 +135,14 @@ async def test_a_notification_failure_never_reaches_the_watcher(wired, monkeypat
     monkeypatch.setattr(notifier, "available", lambda: True)
     monkeypatch.setattr(notifier, "notify", explode)
 
+    before = set(server._bg_tasks)
     server._on_session_event(_event())
-    await asyncio.sleep(0.05)
+    spawned = set(server._bg_tasks) - before     # a done task leaves the set
+    assert spawned
+    assert await until_async(lambda: all(t.done() for t in spawned)), spawned
 
-    for task in list(server._bg_tasks):
-        if task.done():
-            assert task.exception() is None
+    for task in spawned:
+        assert task.exception() is None
 
 
 @pytest.mark.asyncio
