@@ -8,11 +8,14 @@ docs/making-a-package.md is the whole of how to use it. In short:
 
 - CONTENT.json is a deck, drawn by the shared deck
   (examples/packages/decision-deck/). With `decisions` it is a decision
-  package; with only `slides` it is a presentation (an update), which has no
-  votes. Everything that can be worked out is (decision_package.expand).
+  package; with only `slides` it is a presentation (an update), which ends
+  with the standard vote (package_inbox.understood: Got it / I have
+  questions, in the deck's language or the one in force). Everything that can be worked out is (decision_package.expand).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
-  worked out from the files there.
+  worked out from the files there. A page whose story asks nothing (or that
+  has no story) gets the same vote as its story's last slide. An agent or
+  conversation package cannot carry a vote, so it may not name a Work item.
 
 Either way the command checks it, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the
@@ -93,8 +96,13 @@ def next_version(name: str) -> str:
 def deck_of(content: Path) -> dict:
     """The deck in full form, its version worked out when not given, or
     Refused with every problem."""
+    from jarvis import package_inbox
     raw = dp.read(content)
     deck = dp.expand(raw)
+    if isinstance(deck, dict) and not deck.get("decisions") and deck.get("slides"):
+        # Every package carries his vote: one that asks nothing ends with
+        # the standard one, drawn after its slides, in its language.
+        deck["decisions"] = [package_inbox.understood(raw.get("language") or built_language())]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     problems = dp.problems_of(deck, content.parent)
@@ -109,8 +117,18 @@ def deck_of(content: Path) -> dict:
     return deck
 
 
+def built_language() -> str:
+    """The language in force as it is built: JARVIS's saved choice
+    (language_setting.saved), for a deck or a new story that names none."""
+    from jarvis import language_setting
+    return language_setting.saved()
+
+
 def deck_kind(deck: dict) -> str:
-    return "decision package" if deck.get("decisions") else "presentation"
+    """A presentation asks only the standard vote; a decision package more."""
+    from jarvis import package_inbox
+    asked = [d.get("id") for d in deck.get("decisions") or [] if isinstance(d, dict)]
+    return "presentation" if asked in ([], [package_inbox.UNDERSTOOD_ID]) else "decision package"
 
 
 def make_deck(content: Path, out: Path) -> Made:
@@ -199,6 +217,41 @@ def manifest_of(folder: Path) -> dict:
     return manifest
 
 
+def _with_vote(built: Path, manifest: dict) -> None:
+    """A page whose story asks nothing (or that has none) gets the standard
+    vote as its story's last slide, waiting on its answers file."""
+    from jarvis import package_inbox, package_story
+    named = manifest.get("story")
+    path = built / (named or STORY_FILE)
+    try:
+        given = json.loads(path.read_text(encoding="utf-8")) if named else None
+        parsed = package_story.parse(path.read_bytes()) if named else None
+        if parsed is not None and package_inbox.asks_a_question(None, parsed):
+            return
+    except (OSError, ValueError, package_story.StoryError) as e:
+        raise dp.Refused([f"Its story cannot be read: {e}"])
+    # The vote in the story's language (English when it names none, as it is
+    # told), or for a new story the language in force.
+    language = parsed.language if parsed is not None else built_language()
+    told = package_inbox.with_understood_slide(given, language)
+    try:
+        package_story.parse(json.dumps(told).encode("utf-8"))
+    except package_story.StoryError as e:
+        raise dp.Refused([f"The vote could not be added to its story: {e}"])
+    path.write_text(json.dumps(told, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    manifest["story"] = path.name if not named else named
+    # A story made here is understood as the page it is told over is: the
+    # author's understanding names every member it holds.
+    understanding = manifest.get("understanding")
+    if isinstance(understanding, dict) and manifest["story"] not in understanding:
+        about = understanding.get(manifest.get("entry")) or manifest.get("brief")
+        if about:
+            manifest["understanding"] = {**understanding, manifest["story"]: about}
+    if DEFAULT_RETURNS[0] not in manifest.get("returns", []) and \
+            told["answers"] not in manifest.get("returns", []):
+        manifest["returns"] = [*manifest.get("returns", []), told["answers"]]
+
+
 def make_folder(folder: Path, out: Path) -> Made:
     """Copy the folder with its package.json in full, zip it, and read the
     zip back the way the receiver does: the zip's path."""
@@ -213,6 +266,8 @@ def make_folder(folder: Path, out: Path) -> Made:
     shutil.rmtree(built, ignore_errors=True)
     shutil.copytree(folder, built, symlinks=True,
                     ignore=shutil.ignore_patterns(*zipper.LEFT_OUT))
+    if manifest["runs"] == "page":
+        _with_vote(built, manifest)
     (built / "package.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False)
                                         + "\n", encoding="utf-8")
     from jarvis import package_understanding
@@ -232,6 +287,21 @@ def make_folder(folder: Path, out: Path) -> Made:
         raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
     title = manifest["name"].replace("-", " ")
     return Made(archive, title, f"{manifest['runs']} package", None)
+
+
+# -- his vote ---------------------------------------------------------------------------
+
+def check_vote(source: Path, work: str) -> None:
+    """Every package carries his vote: a deck or a page gets the standard
+    one when it asks nothing. An agent or conversation package cannot, so it
+    may not name a Work item (package_inbox.no_vote, which the inbox route
+    says too)."""
+    if not work or not source.is_dir():
+        return
+    from jarvis import package_inbox
+    runs = manifest_of(source)["runs"]
+    if runs not in package_inbox.VOTING_RUNS:
+        raise dp.Refused([package_inbox.no_vote(work, runs)])
 
 
 # -- checking ------------------------------------------------------------------------
@@ -300,6 +370,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"There is nothing at {source}.")
         return 1
     try:
+        check_vote(source, args.work)
         if args.check_only:
             if source.is_dir():
                 manifest = manifest_of(source)
@@ -307,8 +378,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                       f"{manifest['name']}-{manifest['version']}.")
             else:
                 deck = deck_of(source)
-                print(f"The content is right: a {deck_kind(deck)}, "
-                      f"{len(deck.get('decisions') or [])} decision(s), "
+                kind = deck_kind(deck)
+                asks = ("ending with the standard vote (Got it / I have questions)"
+                        if kind == "presentation"
+                        else f"{len(deck.get('decisions') or [])} decision(s)")
+                print(f"The content is right: a {kind}, {asks}, "
                       f"package {deck['name']}-{deck['version']}.")
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()

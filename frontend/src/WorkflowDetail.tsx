@@ -1,3 +1,4 @@
+import { WorkerPhase } from "./WorkerStatus";
 /**
  * One workflow, in full: the centre area's Workflow view, opened by clicking
  * its row in the right panel's Workflows view. Its own row of tabs:
@@ -59,7 +60,6 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CENTRE_SOCKET, earlierPages } from "./ConversationView";
-import { agentStateWords } from "./conversation";
 import { useLiveRead } from "./liveRead";
 import { codeWords, formatDateTime, t as tNow, useT } from "./locale";
 import { createStore } from "./store";
@@ -78,7 +78,7 @@ import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
 import { ago, answerDecision, dismissals, dismissWorkflow, FINISHED, getEvents,
          getSessionTranscript, getTranscript, getWorkflow, isGone,
-         openOnTab, openWorkflow, STATE_WORDS, SUBAGENT_LOOK, SUBAGENT_WORDS, subagentOf, workflowsChanged,
+         openOnTab, openWorkflow, STATE_WORDS, SUBAGENT_LOOK, subagentOf, workflowsChanged,
          type OpenItem, type SubagentRow, type SubagentState, type TranscriptEntry,
          type TranscriptPage, type Workflow, type WorkflowItem } from "./workflows";
 
@@ -255,7 +255,7 @@ function OneWorkflow({ id }: { id: string }) {
     <ShownSince.Provider value={since}>
     <div id="workflow-detail" ref={ui.whole}>
       <div className="workflow-detail-head" ref={ui.part("header")}>
-        <WorkflowOrb state={w?.state ?? "running"} size={88} particles={600} />
+        <WorkflowOrb workflowId={w?.id} state={w?.state ?? "running"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{w?.name ?? t("main.workflow.workflow")}</span>
           {w && <span className="workflow-detail-pills">
@@ -361,7 +361,7 @@ function SubagentLine({ a }: { a: SubagentRow }) {
         {a.workflow_run && <span className="workflow-subagent-of workflow-subagent-run">
           {t("main.workflow.workflowRun", { run: a.workflow_run })}</span>}
         <span className="workflow-subagent-age">{ago(a.written)}</span>
-        <span className={`workflow-subagent-state subagent-${a.state}`}>{SUBAGENT_WORDS[a.state]}</span>
+        <span className={`workflow-subagent-state subagent-${a.state}`}><WorkerPhase sessionId={a.id} /></span>
       </button>
     </li>
   );
@@ -379,13 +379,13 @@ function SubagentDetail({ sessionId, agentId }: { sessionId: string; agentId: st
     <div id="workflow-detail" className="subagent-detail" data-subagent-key={`agent:${sessionId}/${agentId}`}
          ref={ui.whole}>
       <div className="workflow-detail-head" ref={ui.part("header")}>
-        <WorkflowOrb state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
+        <WorkflowOrb workerId={agentId} state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{page?.name ?? t("main.workflow.subagent")}</span>
           {page && <span className="workflow-detail-pills">
             <span className={`workflow-detail-state state-${known ? SUBAGENT_LOOK[state] : "silent"}`}
                   ref={ui.part("state")}>
-              {known ? SUBAGENT_WORDS[state] : t("main.workflow.unknownState")}</span>
+              <WorkerPhase sessionId={agentId} /></span>
             {page.session_name && <span className="workflow-detail-dismissed">
               {t("main.workflow.subagentOf", { name: page.session_name })}</span>}
           </span>}
@@ -661,7 +661,7 @@ function AgentTranscript({ sessionId, workflowId, fallbackName, gone, subagent, 
   const entries = [...older.filter((e) => !seen.has(`${e.offset}:${e.role}:${e.text.length}`)), ...latest];
   return (
     <section className="workflow-agent" ref={subagent ? undefined : part("section")}>
-      {!bare && <h4>{name} <span className="workflow-item-slug">{gone ? t("main.workflow.ended") : agentStateWords(state)}</span>
+      {!bare && <h4>{name} <span className="workflow-item-slug">{gone ? t("main.workflow.ended") : <WorkerPhase sessionId={sessionId} />}</span>
         {subagent && parent && <span className="workflow-item-slug"> · {t("main.workflow.subagentOfLower", { name: parent })}</span>}</h4>}
       {gone && <p className="workflow-empty">{t("main.workflow.sessionEnded")}</p>}
       {error && <p className="read-failure">{t("main.workflow.itsTranscriptUnreadable", { error })}</p>}

@@ -146,6 +146,15 @@ async def _open_with(browser, url, agents):
     page = await browser.new_page(viewport={"width": 1280, "height": 1000})
     await page.route("**/api/agents", lambda route: route.fulfill(
         status=200, content_type="application/json", body=json.dumps(agents)))
+    import time
+    from jarvis import worker_inventory, session_watch
+    now = time.time()
+    sessions = [session_watch.SessionState(session_id=a["session_id"], provider="anthropic",
+        cwd="/fixture", project="Fixture", state=a["state"], worker_activity={
+            "state": "idle" if a["state"] == "idle" else "human_wait" if a["state"] == "needs_you" else "model_work",
+            "turn_open": a["state"] != "idle", "observed_at": now}) for a in agents["agents"]]
+    snapshot = worker_inventory.build(session_watch.Snapshot(sessions, now), now=now)
+    await page.route("**/api/workers", lambda route: route.fulfill(json=snapshot))
     return await _open_routed(page, url)
 
 
@@ -158,7 +167,7 @@ async def _open_routed(page, url):
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_inactive_is_gray_idle_is_idle_and_every_other_state_is_thinking(page_playwright, page_url):
+async def test_agent_orbs_use_observed_turns_and_keep_activation_colour(page_playwright, page_url):
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
@@ -202,6 +211,9 @@ async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
         orbs = page.locator(".agents-list li .agent-orb")
+        # The renderer is transparent; measure its pixels against neutral black,
+        # not the coloured row underneath the canvas.
+        await page.add_style_tag(content=".agent-orb { background: #000; }")
         gray = await orbs.nth(0).screenshot()
         active = await orbs.nth(2).screenshot()
         assert _colourfulness(gray) <= 12, "an inactive agent's orb has colour"

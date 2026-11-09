@@ -1,3 +1,4 @@
+import { WorkOwnerActivity } from "./WorkerStatus";
 /**
  * The right panel's Work tab (the tab that was Workflows, in its place):
  * the items under their groups, each group headed by its area or, for items
@@ -30,7 +31,7 @@ import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
-import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
          workStanding } from "./nodeActivity";
 import { blockerWords, followUpWords, itemMark, liveWords, needWords, packageReviewWords,
          rowState, rowStateWords, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
@@ -104,7 +105,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
                            label: item.title, socket: RIGHT_SOCKET });
   const deciding = item.decisions.length > 0 && item.state === "waiting_on_tim";
   const mark = itemMark(item);
-  const activity = activityOf(workStanding(item.state), item.quiet_at, useActivityClock([item.quiet_at]));
+  const activity = activityOf(workStanding(item.state), null, 0);
   const arrived = useArrivalFlash(item.updated_at);
   // The decisions are the update line already; the third line is the rest.
   const holding = item.blockers.filter((b) => b.kind !== "decision");
@@ -119,6 +120,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
           {item.title}</span>
         <span className="work-row-pills">
+          {[...new Map(item.pieces.filter(p => p.state !== "done" && p.who.ref).map(p => [p.who.kind + ":" + p.who.ref, p.who])).entries()].map(([key, owner]) => <WorkOwnerActivity key={key} owner={owner} />)}
           {/* Beside the state, never in the title's room: a Paused mark there
               once squeezed a long title down to its ellipsis. */}
           <ActivityMark activity={activity} target={ui.part("activity")} />

@@ -9,6 +9,7 @@
  */
 
 export const leftEn = {
+  "left.workers.active": "{count} active",
   "left.workers.modelWork": "{count} model work",
   "left.workers.unconfirmed": "{count} unconfirmed",
   "left.workers.tools": "{count} in tools",
@@ -22,7 +23,7 @@ export const leftEn = {
   "left.workers.children": "{count} child records",
   "left.workers.unavailable": "Activity unavailable",
   "left.workers.unknown": "Activity unknown",
-  "left.workers.label": "{account} agent model work: {activity}",
+  "left.workers.label": "{account} agent activity: {activity}",
   "left.workers.all": "All",
   "left.workers.allWorkers": "All workers",
   "left.workers.runtimeActive": "{count} runtime-active",
