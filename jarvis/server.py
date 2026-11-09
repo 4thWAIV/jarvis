@@ -115,6 +115,7 @@ from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import reporters
+from jarvis import make_package
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -608,6 +609,19 @@ def _record(kind: str, text: str, **links) -> None:
         conversation_log.append(conversation_log.ConversationItem.new(kind, text, **links))
     except Exception as e:
         log.warning(f"conversation: a {kind} item was not recorded: {e}")
+
+
+def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
+                    **links) -> None:
+    """One message to him from a counterpart, on record in its thread with
+    its proof (conversation_log.inbound, which refuses one without), then the
+    pages are told. Never raises: one that cannot be written is logged."""
+    if not str(text or "").strip() or not ref:
+        return
+    try:
+        conversation_log.inbound(kind, counterpart, str(ref), name, text, evidence, **links)
+    except Exception as e:
+        log.warning(f"conversation: a {kind} from {counterpart} was not recorded: {e}")
 
 
 def _agent_links(event: dict) -> dict:
@@ -1915,7 +1929,14 @@ async def _attend_message(event: dict) -> None:
         _attention_resolved("agent_message", _message_number(message))
         return
     if kind == "answered" and message.get("reply"):
-        _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
+        # Read from the transcript of the session it was sent to: the
+        # watcher's proof of who answered.
+        links = _agent_links(event)
+        _record_inbound(conversation_log.ItemKind.ANSWER, conversation_log.Counterpart.AGENT,
+                        links.get("agent_session_id"), links.get("agent_name") or "",
+                        message["reply"], "watcher", source_kind="message",
+                        source_id=_message_number(message),
+                        message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
     words = _agent_words(session)
     if kind == "send_failed" and message.get("failure"):
@@ -2140,11 +2161,13 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                           f"aside and will be recorded again")
         received = run_store.get_session_message(message_id)
         if received is not None:
-            # The thread it joins: its sender's, when it is known.
-            _record(conversation_log.ItemKind.FROM_AGENT,
-                    f"{received.subject}\n\n{received.body}".strip(),
-                    agent_session_id=sender.session_id,
-                    agent_name=received.agent_name, session_message_id=message_id)
+            # The thread it joins: its proven sender's.
+            _record_inbound(conversation_log.ItemKind.FROM_AGENT,
+                            conversation_log.Counterpart.AGENT, sender.session_id,
+                            received.agent_name,
+                            f"{received.subject}\n\n{received.body}".strip(), sender.evidence,
+                            source_kind="session_message", source_id=message_id,
+                            subagent=sender.subagent, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
 
@@ -2724,6 +2747,7 @@ async def start_session_watcher() -> None:
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
+    _spawn(_watch_inbox_proofs())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
         _usage_task = _spawn(_poll_usage())
@@ -8530,21 +8554,110 @@ PROVEN_BY_KEY = "access_key"
 
 
 def _package_sender(claimed: str, source: str,
-                    reporter: "Optional[reporters.Reporter]") -> "Optional[session_message_sender.Sender]":
+                    reporter: "Optional[reporters.Reporter]",
+                    inbox_id: str = "", arrived_at: float = 0.0
+                    ) -> "Optional[session_message_sender.Sender]":
     """The session a package claims it came from (`?session=`), proven, or
     None: a session the caller's access key owns (its label's agent), or one
-    whose own transcript (or its subagent's) shows make_package run on
-    `source` lately. Only the claimed session is looked in: a claim is
-    proven or refused, never moved to another."""
+    whose own transcript, or the file of one of its subagents (a Claude
+    subagent's, or a Codex subagent rollout naming it as parent), shows
+    make_package delivering it: run on `source` lately, as it arrives, or,
+    for a row already in the inbox (`inbox_id`, arrived at `arrived_at`),
+    make_package's line saying JARVIS took it under that id
+    (make_package.ARRIVED_AS), which the command prints once it has posted
+    and which no other package has. Only the claimed session and its
+    subagents are looked in: a claim is proven or refused, never moved to
+    another."""
     if not claimed:
         return None
     if reporter is not None and reporter.owns(claimed):
         return session_message_sender.Sender(claimed, reporter.name, PROVEN_BY_KEY)
-    if not source:
+    whole = False
+    if inbox_id:
+        # Written after it arrived. Read whole only for a row older than the
+        # window, whose line may be far back in a long transcript.
+        words, since = (make_package.ARRIVED_AS.format(inbox_id=inbox_id),), arrived_at
+        whole = time.time() - arrived_at > MAKE_PACKAGE_WINDOW_SEC
+    elif source:
+        words, since = ("make_package", source), time.time() - MAKE_PACKAGE_WINDOW_SEC
+    else:
         return None
-    since = time.time() - MAKE_PACKAGE_WINDOW_SEC
     return _prove("package inbox", lambda t: session_message_sender.ran(
-        t, ("make_package", source), since), claimed, only_claimed=True, since=since)
+        t, words, since, whole=whole), claimed, only_claimed=True, since=since)
+
+
+def _inbox_sender(project: str, claimed: str,
+                  proven: "Optional[session_message_sender.Sender]") -> "package_inbox.Sender":
+    """A package's sender as its row keeps it: the session proven and its
+    name ("Feynman (Planning)" for a subagent), and how: `subagent:<name>`
+    when a subagent of the claimed session ran it, else the proof's own
+    word."""
+    if proven is None:
+        return package_inbox.Sender(project, "", "", claimed, "")
+    how = f"subagent:{proven.subagent}" if proven.subagent else proven.evidence
+    clip = package_inbox.REF_MAX
+    return package_inbox.Sender(project, proven.session_id, proven.name[:clip], claimed,
+                                how[:clip])
+
+
+# How long after it arrives a package whose claim was not proven on arrival
+# is looked for again: its make_package prints the inbox id it was given as
+# soon as it has posted, so the line lands in the transcript within moments.
+REPROVE_FOR_SEC = 10 * 60.0
+
+
+def _reprove_inbox_senders(now: Optional[float] = None) -> list[tuple]:
+    """For each open row whose claimed session is still to be proven (one
+    from before migration 4, or one whose claim was not proven as it
+    arrived): prove it from the transcripts by `_package_sender`'s rule for
+    a row already in the inbox, and record a proof with the row. A row not
+    proven is tried again until REPROVE_FOR_SEC after it arrived (once, for
+    one older than that), then recorded as not proven, with why. A proven
+    row is never touched. Blocking. (the row, its sender or None) each one
+    recorded."""
+    now = time.time() if now is None else now
+    done = []
+    for entry in package_inbox.to_reprove():
+        sender = _package_sender(entry.claimed_session, "", None, inbox_id=entry.id,
+                                 arrived_at=entry.arrived_at)
+        if sender is None and now - entry.arrived_at < REPROVE_FOR_SEC:
+            continue                    # its line may not be written yet
+        why = "" if sender else ("its session is not a listed agent running now"
+                                 if entry.claimed_session not in agent_directory.names_by_session()
+                                 else "no transcript of its session shows it delivered")
+        recorded = package_inbox.reproved(
+            entry.id, _inbox_sender(entry.from_project, entry.claimed_session, sender)
+            if sender else None, why)
+        if recorded is not None:
+            log.info("package inbox: %s's sender %s", entry.id,
+                     f"proven: {recorded.from_session}" if sender else f"not proven: {why}")
+            done.append((recorded, sender))
+    if done:
+        _hint_inbox([e for e, _ in done])
+    return done
+
+
+# How long the re-proof waits for the session watcher's first look and the
+# agents list to follow it: the proof reads the sessions running.
+REPROVE_AFTER_SEC = 10.0
+# How often the rows waiting for their proof are looked at.
+REPROVE_POLL_SEC = 5.0
+
+
+async def _watch_inbox_proofs() -> None:
+    """Once the session watcher has looked, `_reprove_inbox_senders` every
+    REPROVE_POLL_SEC while any row waits for its proof. Never raises out."""
+    for _ in range(600):
+        if session_watcher is not None and session_watcher.polled:
+            break
+        await asyncio.sleep(1.0)
+    await asyncio.sleep(REPROVE_AFTER_SEC)
+
+    async def look() -> None:
+        if await asyncio.to_thread(package_inbox.to_reprove):
+            await asyncio.to_thread(_reprove_inbox_senders)
+
+    await _every(REPROVE_POLL_SEC, "package inbox proofs", look)
 
 
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
@@ -8569,9 +8682,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
     proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
-    sender = package_inbox.Sender(
-        sender.project, proven.session_id if proven else "", proven.name if proven else "",
-        sender.claimed, proven.evidence if proven else "")
+    sender = _inbox_sender(sender.project, sender.claimed, proven)
     try:
         arrival = await asyncio.to_thread(
             package_inbox.arrive, package, hashlib.sha256(data).hexdigest(), sender,
@@ -8622,7 +8733,7 @@ def _inbox_recount(package, how: str) -> list:
     for q in asked:
         if q.applies and q.answer:
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
-    for entry in package_inbox.for_package(package.id):
+    for entry in package_inbox.for_review(package.id):
         _review_from_package(entry, package)
     return moved
 

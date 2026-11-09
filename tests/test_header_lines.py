@@ -843,6 +843,12 @@ EXEMPT = {
     "server._proven_boards": (
         "it logs only the projects whose boards were held, file stems JARVIS reads from its "
         "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "conversation_log.threads": (
+        "it lists threads as records, the counterpart's name as its newest message named "
+        "it; it says nothing, and every reader that shows a name walls it"),
+    "server._inbox_sender": (
+        "it keeps a package's proven sender on its row, clipped to the row's limit; the "
+        "name reaches the page as text and the brain only inside package_inbox's wall"),
     "server._read_back_lead": (
         "it is spoken to him as a read-back, never given to the brain: the recipient through "
         "_plain_name and a subagent's name through _said_name, each refusing anything but a "

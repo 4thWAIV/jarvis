@@ -127,19 +127,30 @@ def test_with_no_embedder_nothing_is_embedded_and_search_says_so(tmp_path, monke
 
 def test_a_query_waits_behind_at_most_one_ingest_batch():
     started = []
+    # The first ingest batch is held until the query is in the queue, so
+    # the order is the queue's and not how fast a busy machine runs.
+    asked = threading.Event()
 
     class Slow(emb.FakeEmbedder):
         def embed(self, texts, purpose):
             started.append(purpose)
+            if purpose == "passage" and len(started) == 1:
+                asked.wait(5)
             time.sleep(0.05)
             return super().embed(texts, purpose)
     queue = emb.EmbeddingQueue(Slow(8))
+    submit = queue.submit
+
+    def noting_the_query(texts, priority, purpose, done):
+        submit(texts, priority, purpose, done)
+        if priority == emb.QUERY:
+            asked.set()
+    queue.submit = noting_the_query
     try:
         done = threading.Event()
         for i in range(10):
             queue.submit(["x"] * emb.INGEST_BATCH, emb.INGEST, "passage",
                          (lambda v, e: done.set()) if i == 9 else (lambda v, e: None))
-        time.sleep(0.01)
         assert queue.embed_now(["question"], timeout=5) is not None
         assert started.index("query") <= 1
         with pytest.raises(ValueError):
