@@ -46,6 +46,8 @@ import asyncio
 
 import pytest
 
+from tests.fixtures.waiting import until_async
+
 
 class _Speech:
     def __init__(self):
@@ -127,8 +129,8 @@ async def test_a_timeout_cancels_and_says_so(wired, monkeypatch):
     brain, speech = wired
     monkeypatch.setattr(server, "FRESH_START_CONFIRM_TIMEOUT", 0.01)
     await server._ask_to_clear("start fresh")
-    await asyncio.sleep(0.1)
-    assert speech.said[-1] == server.FRESH_START_CANCELLED_LINE
+    assert await until_async(lambda: speech.said[-1] == server.FRESH_START_CANCELLED_LINE), \
+        speech.said
     assert server._take_clear_answer("yes") is None
     assert brain.rotations == []
 

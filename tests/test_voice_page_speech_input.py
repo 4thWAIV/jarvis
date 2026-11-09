@@ -10,7 +10,6 @@ fake transcription socket from test_voice_page_captions.py; /ws/voice is a
 Playwright route that records what the page sends.
 """
 
-import asyncio
 import json
 
 import pytest
@@ -21,6 +20,7 @@ pytestmark = pytest.mark.page
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.voice_page_input import start_listening
+from tests.fixtures.waiting import until_async
 
 # Counts the page's getUserMedia calls and the tracks still live.
 COUNT_MICROPHONES = """
@@ -96,19 +96,6 @@ async def _open(p, url, script=None, listen=True, before=None):
     return browser, page, voice
 
 
-async def _until(predicate, timeout=10.0):
-    """Wait for `predicate` (sync or async) to be truthy."""
-    end = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < end:
-        value = predicate()
-        if asyncio.iscoroutine(value):
-            value = await value
-        if value:
-            return True
-        await asyncio.sleep(0.05)
-    return False
-
-
 async def _ready(page):
     await page.wait_for_function(
         "window.__transcribers.some((t) => t.readyState === 1) && window.__framesSent > 0",
@@ -137,7 +124,7 @@ async def test_what_is_heard_goes_to_jarvis_as_before(page_playwright, page_url)
         await _ready(page)
         await page.evaluate("window.__hear('open the', false)")
         await page.evaluate("window.__hear('open the pod bay doors', true)")
-        assert await _until(voice.finals)
+        assert await until_async(voice.finals)
         assert voice.finals() == ["open the pod bay doors"]
         final = [m for m in voice.sent if m.get("type") == "transcript"][0]
         assert final["isFinal"] is True and "typed" not in final
@@ -160,8 +147,8 @@ async def test_mute_commits_nothing_and_takes_nothing_with_the_microphone_kept(p
         await _ready(page)
         await page.evaluate("window.__hear('turn off the', false)")
         await page.click("#btn-mute")
-        assert await _until(lambda: [m for m in voice.sent if m.get("type") == "turn_discard"])
-        await page.wait_for_function("window.__transcribers[0].readyState === 3", timeout=5000)
+        assert await until_async(lambda: [m for m in voice.sent if m.get("type") == "turn_discard"])
+        await page.wait_for_function("window.__transcribers[0].readyState === 3", timeout=15000)
         assert voice.finals() == []
         assert await page.evaluate("window.__liveTracks()") == 1, "mute released the microphone"
         after = await page.evaluate("window.__framesSent")
@@ -172,7 +159,7 @@ async def test_mute_commits_nothing_and_takes_nothing_with_the_microphone_kept(p
 
         # Unmuted: the same microphone and a fresh session in a new epoch.
         await page.click("#btn-mute")
-        assert await _until(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
+        assert await until_async(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
         assert await page.evaluate("window.__micOpens") == 1
         starts = await page.evaluate("window.__starts")
         assert len(starts) == 2 and starts[1]["captureEpoch"] > starts[0]["captureEpoch"]
@@ -188,7 +175,7 @@ async def test_mic_off_sends_the_words_already_spoken_then_releases_the_micropho
         await _ready(page)
         await page.evaluate("window.__hear('turn off the', false)")
         await page.click("#btn-mic-off")
-        assert await _until(voice.finals)
+        assert await until_async(voice.finals)
         assert voice.finals() == ["turn off the lights"]
         await page.wait_for_function("window.__liveTracks() === 0")
         after = await page.evaluate("window.__framesSent")
@@ -196,7 +183,7 @@ async def test_mic_off_sends_the_words_already_spoken_then_releases_the_micropho
         # On again: a fresh microphone and a fresh session, streaming again.
         await page.click("#btn-mic-off")
         await page.wait_for_function("window.__micOpens === 2 && window.__liveTracks() === 1")
-        assert await _until(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
+        assert await until_async(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
         assert await page.evaluate("window.__transcribers.length") == 2
         await browser.close()
 
@@ -301,7 +288,7 @@ async def test_a_backed_up_connection_drop_is_reported_with_what_it_held(page_pl
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await page.evaluate("window.__transcribers.find((t) => t.readyState === 1).bufferedAmount = 1e9")
-        await page.wait_for_function("window.__aborts.length > 0", timeout=5000)
+        await page.wait_for_function("window.__aborts.length > 0", timeout=15000)
         drop = (await page.evaluate("window.__aborts"))[0]["dropped"]
         assert drop["reason"] == "backedUp" and 0 < drop["lostSec"] < 1, drop
         await browser.close()
@@ -335,7 +322,7 @@ async def test_listening_stops_while_jarvis_is_disconnected_and_says_so(page_pla
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await voice.socket.close()
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=5000)
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
         await page.wait_for_function(
             "document.querySelector('#health-dot')?.title.includes('not sent')")
         assert await page.evaluate("window.__transcribers.every((t) => t.readyState === 3)")

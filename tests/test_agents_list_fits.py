@@ -20,6 +20,8 @@ import json
 
 import pytest
 
+from tests.fixtures.waiting import settled
+
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
@@ -57,13 +59,13 @@ FITS = """() => {
 
 
 async def _settled(page):
-    """The layout once the list fits, or as it stands after five seconds."""
+    """The layout once the list fits and has stopped moving, or as it stands
+    after fifteen seconds."""
     try:
-        await page.wait_for_function(FITS, timeout=5000)
+        await page.wait_for_function(FITS, timeout=15000)
     except Exception:
         pass                    # the assertion that follows says what is wrong
-    await page.wait_for_timeout(100)
-    return await page.evaluate(LAYOUT)
+    return await settled(page, LAYOUT)
 
 
 def _assert_fits(layout):
@@ -78,7 +80,6 @@ async def _open(browser, url, height):
     await page.goto(url)
     await page.get_by_role("button", name="All", exact=True).click()
     await page.wait_for_function("document.querySelectorAll('.agents-list li').length > 0")
-    await page.wait_for_timeout(300)
     return page
 
 
@@ -102,7 +103,7 @@ async def test_a_resized_window_is_measured_again(page_playwright, page_url):
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open(browser, page_url, 1100)
-        tall = await page.evaluate(LAYOUT)
+        tall = await settled(page, LAYOUT)
         await page.set_viewport_size({"width": 1280, "height": 600})
         short = await _settled(page)
         _assert_fits(short)
@@ -117,7 +118,7 @@ async def test_a_new_row_size_on_the_open_page_is_measured_again(page_playwright
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open(browser, page_url, 900)
-        before = await page.evaluate(LAYOUT)
+        before = await settled(page, LAYOUT)
         await page.add_style_tag(content=f".agents-list {{ --agent-row: {row}; }}")
         after = await _settled(page)
         _assert_fits(after)
@@ -161,13 +162,21 @@ async def test_inactive_is_gray_idle_is_idle_and_every_other_state_is_thinking(p
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
-        assert await page.evaluate(ORB_LOOKS) == {
+        expected = {
             "off idle": ["true", "idle"],
             "off working": ["true", "thinking"],
             "on idle": ["false", "idle"],
             "on working": ["false", "thinking"],
             "on needs you": ["false", "thinking"],
         }
+        try:
+            await page.wait_for_function(f"""(e) => {{ const got = ({ORB_LOOKS})();
+              return Object.keys(got).length === Object.keys(e).length
+                && Object.entries(e).every(([k, v]) => JSON.stringify(got[k]) === JSON.stringify(v)); }}""",
+                                         arg=expected, timeout=15000)
+        except Exception:
+            pass                # the assertion that follows says what is wrong
+        assert await page.evaluate(ORB_LOOKS) == expected
         await browser.close()
 
 
@@ -211,8 +220,8 @@ async def test_the_switch_shows_only_in_all_and_active_entries_fill_the_row(page
         page = await _open_with(browser, page_url, LOOKS)          # opens on All
         assert all(row["switch"] for row in await page.evaluate(look))
         await page.get_by_role("button", name="Active", exact=True).click()
-        await page.wait_for_timeout(300)
-        active = await page.evaluate(look)
+        await page.wait_for_function("document.querySelectorAll('.agents-list li').length === 3", timeout=15000)
+        active = await settled(page, look)
         assert len(active) == 3
         assert all(not row["switch"] and row["fills"] for row in active), active
         await browser.close()
@@ -229,8 +238,7 @@ async def test_the_switch_stands_upright_with_on_at_the_top(page_playwright, pag
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)          # opens on All
-        await page.wait_for_timeout(300)                            # the knob's slide
-        rows = await page.evaluate(look)
+        rows = await settled(page, look)                            # once the knob has slid
         assert rows and all(upright for _on, upright, _top in rows), rows
         assert all((on == "true") == at_top for on, _upright, at_top in rows), rows
         await browser.close()
@@ -255,7 +263,7 @@ async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_left(page_pl
     async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, NEEDS)
-        got = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {
+        got = await settled(page, """() => [...document.querySelectorAll('.agents-list li')].map(li => {
           const box = li.querySelector('.agent-entry').getBoundingClientRect();
           const n = li.querySelector('.agent-needs');
           const name = li.querySelector('.agent-name').getBoundingClientRect();
@@ -276,7 +284,7 @@ async def test_the_provider_logo_sits_in_the_card_s_lower_left(page_playwright, 
         page = await _open_with(browser, page_url, NEEDS)
         await page.wait_for_function(
             "[...document.querySelectorAll('.agent-provider')].every(i => i.complete)")
-        got = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {
+        got = await settled(page, """() => [...document.querySelectorAll('.agents-list li')].map(li => {
           const box = li.querySelector('.agent-entry').getBoundingClientRect();
           const img = li.querySelector('.agent-provider');
           if (!img) return [li.querySelector('.agent-name').textContent, null];

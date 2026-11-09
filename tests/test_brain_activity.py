@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import brain_activity
 from jarvis.brain_activity import ActivityFeed
+from tests.fixtures.waiting import until_async
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_brain.py"
 SECRET = "words-that-must-never-leave"
@@ -164,7 +165,9 @@ async def test_a_turn_cancelled_by_its_caller_ends_cancelled(tmp_path):
     try:
         since = brain_activity.feed.since()["seq"]
         task = asyncio.create_task(b.turn("SLOW:2 wait"))
-        await asyncio.sleep(0.3)
+        assert await until_async(lambda: any(
+            e["stage"] == "started" and e["origin"] == "user" for e in _events(since, "turn"))), \
+            "the turn never started"
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -271,15 +274,12 @@ async def test_speech_starts_when_it_sounds_and_ends_with_its_outcome():
         u = h.sched.begin_turn()
         h.sched.feed(u, f"{SECRET} one. Two.")
         await h.sched.end_turn(u)
-        await asyncio.sleep(0.15)
-        assert _events(since, "speech") == [], "nothing has sounded yet"
+        assert await until_async(lambda: u.outcomes()[0] == "queued"), u.outcomes()
+        assert _events(since, "speech") == [], "sent, but nothing has sounded yet"
         h.sched.playback_started(u.id, 0)
         h.sched.playback_started(u.id, 0)
         await h.ack_all()
-        for _ in range(20):
-            if len(_events(since, "speech")) == 2:
-                break
-            await asyncio.sleep(0.05)
+        assert await until_async(lambda: len(_events(since, "speech")) == 2), _events(since, "speech")
         events = _events(since, "speech")
         assert [(e["stage"], e["label"]) for e in events] == [("started", "reply"),
                                                                ("ended", "reply")]
@@ -288,18 +288,15 @@ async def test_speech_starts_when_it_sounds_and_ends_with_its_outcome():
 
         since = brain_activity.feed.since()["seq"]
         v = await h.sched.say("Alpha one. Beta two. Gamma three.")
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: v.outcomes()[0] == "queued"), v.outcomes()
         h.sched.playback_started(v.id, 0)
         await h.sched.barge_in("test")
-        for _ in range(20):
-            if len(_events(since, "speech")) == 2:
-                break
-            await asyncio.sleep(0.05)
+        assert await until_async(lambda: len(_events(since, "speech")) == 2), _events(since, "speech")
         assert [e.get("outcome") for e in _events(since, "speech")] == [None, "interrupted"]
 
         since = brain_activity.feed.since()["seq"]
         w = await h.sched.say("Delta one. Echo two. Foxtrot three.")
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: w.outcomes()[0] == "queued"), w.outcomes()
         h.sched.playback_started(w.id, 0)
         assert await h.sched.skip_reading(w.id)
         assert [e.get("outcome") for e in _events(since, "speech")] == [None, "skipped"]

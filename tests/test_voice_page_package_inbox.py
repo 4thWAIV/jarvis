@@ -24,6 +24,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
+from tests.fixtures.waiting import until_async
 
 pytestmark = pytest.mark.page
 
@@ -146,7 +147,8 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await row.get_by_role("button", name="Open").click()
         await async_api.expect(page.locator("#package-view iframe")).to_be_visible()
         await async_api.expect(row.locator(".package-progress")).to_have_text("0 of 2 answered")
-        assert package_inbox.get(inbox_id).state == package_inbox.OPENED
+        assert await until_async(lambda: package_inbox.get(inbox_id).state == package_inbox.OPENED), \
+            package_inbox.get(inbox_id).state
         await page.wait_for_timeout(1500)
         await _shot(page, "2-opened-deck")
 
@@ -163,8 +165,10 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await kettle.locator(".workflow-option.recommended").click()
         await async_api.expect(package.locator(".work-answered-item[data-key='kettle-kind']")) \
             .to_be_visible()
+        assert await until_async(lambda: (package_inbox.get(inbox_id).decisions_answered,
+                                          package_inbox.get(inbox_id).state) == (1, package_inbox.ANSWERING)), \
+            package_inbox.get(inbox_id)
         entry = package_inbox.get(inbox_id)
-        assert entry.decisions_answered == 1 and entry.state == package_inbox.ANSWERING
         found = work_packages.find(entry.package_id)
         assert '"kettle-kind"' in (found.folder / "results" / "decisions.json").read_text()
         await _shot(page, "4-answered-on-the-work-item")
@@ -184,8 +188,9 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await async_api.expect(row).to_have_count(0)
         await async_api.expect(page.locator(".queue-packages .queue-history-toggle")) \
             .to_contain_text("Closed (1)")
-        entry = package_inbox.get(inbox_id)
-        assert (entry.closed_why, bool(entry.signed_off_at)) == (package_inbox.SIGNED_OFF, True)
+        assert await until_async(lambda: (package_inbox.get(inbox_id).closed_why,
+                                          bool(package_inbox.get(inbox_id).signed_off_at))
+                                 == (package_inbox.SIGNED_OFF, True)), package_inbox.get(inbox_id)
         capture = next(c for c in server._captures.values() if c.get("to_session") == "sess-1")
         assert "kettle-kind: electric" in capture["text"] and "tea-kinds: not answered" in capture["text"]
         assert not [d for d in work_store.get(item.id).decisions], "its work item is told"

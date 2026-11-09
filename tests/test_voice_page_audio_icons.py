@@ -16,7 +16,6 @@ Headless Chromium on the built page, with the voice socket replaced by
 Playwright (test_voice_page_conversation), silent WAV chunks for audio, and
 the voice input settings route answered here as voice_control answers it.
 """
-import asyncio
 import json
 import time
 
@@ -26,6 +25,7 @@ from tests.conftest import PAGE_VOICE_INPUT
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_captions import _silence_wav
 from tests.test_voice_page_conversation import _Voice, _open
+from tests.fixtures.waiting import until_async
 
 pytestmark = pytest.mark.page
 
@@ -71,14 +71,6 @@ def _hushes(voice):
     return [m for m in voice.got if m.get("type") == "hush"]
 
 
-async def _until(predicate, seconds=5.0):
-    for _ in range(int(seconds / 0.05)):
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return False
-
-
 async def _speak(page, voice, utt):
     voice.send({"type": "reply", "utt": utt, "at": time.time(), "text": "A long reply.",
                 "done": True, "outcome": "succeeded"},
@@ -122,7 +114,7 @@ async def test_the_speaker_mutes_and_unmutes_speech_and_stop_stays_its_own(page_
         await page.wait_for_selector("#hush")
         # Stop is Stop: it stops, and mutes nothing.
         await page.click("#hush")
-        assert await _until(lambda: _hushes(voice))
+        assert await until_async(lambda: _hushes(voice))
         await page.wait_for_function("document.querySelector('#btn-speaker').dataset.saying === 'stopped'")
         assert settings.posts == []
         # The speaker mutes speech: the setting, and the microphone untouched.

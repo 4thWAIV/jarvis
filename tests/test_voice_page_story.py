@@ -47,7 +47,11 @@ RECORD = """
     window.__audioStarts = [];
     const start = AudioBufferSourceNode.prototype.start;
     AudioBufferSourceNode.prototype.start = function (...args) {
-      window.__audioStarts.push({at: Date.now(), seconds: this.buffer ? this.buffer.duration : 0});
+      const entry = {at: Date.now(), seconds: this.buffer ? this.buffer.duration : 0, ended: null};
+      window.__audioStarts.push(entry);
+      // When the page heard it end: the ring is cleared from that event,
+      // which a busy main thread delivers late.
+      this.addEventListener("ended", () => { entry.ended = Date.now(); });
       return start.apply(this, args);
     };
   } else {
@@ -241,7 +245,8 @@ def _rings_follow_the_audio(voice, starts, rings) -> dict[str, list[dict]]:
     beats: dict[str, list[dict]] = {}
     for frame_msg, start in zip(voice.audio, starts):
         beats.setdefault(frame_msg["cue"]["beat"], []).append(
-            {"at": start["at"] / 1000, "end": (start["at"] / 1000) + start["seconds"]})
+            {"at": start["at"] / 1000, "end": (start["at"] / 1000) + start["seconds"],
+             "heard_end": (start["ended"] or 0) / 1000})
     for beat, played in beats.items():
         ringed = [r for r in rings if r["beat"] == beat]
         assert ringed, f"beat {beat} was never ringed"
@@ -251,8 +256,12 @@ def _rings_follow_the_audio(voice, starts, rings) -> dict[str, list[dict]]:
                 f"beat {beat}'s ring came {added - played[0]['at']:+.2f}s from its audio"
             assert removed >= played[-1]["end"] - SLACK, \
                 f"beat {beat}'s ring went {played[-1]['end'] - removed:.2f}s before its audio ended"
-            assert removed <= played[-1]["end"] + SLACK, \
-                f"beat {beat}'s ring stayed {removed - played[-1]['end']:.2f}s after its audio"
+            # Late is measured from the end the page heard (its `ended`
+            # event, which clears the ring), not the audio clock: on a busy
+            # runner the event itself comes late, and that is not the ring's.
+            ended = max(played[-1]["end"], played[-1]["heard_end"])
+            assert removed <= ended + SLACK, \
+                f"beat {beat}'s ring stayed {removed - ended:.2f}s after its audio ended"
     return beats
 
 
