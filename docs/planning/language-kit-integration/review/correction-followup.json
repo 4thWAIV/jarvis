@@ -2,15 +2,15 @@
   "kind": "isolated simulation using existing capture and provider test double",
   "question": "What does DocumentStore own?",
   "source": {
-    "document_id": "document-f4d52e63af0d496fbe8dcbbc56007eb1",
-    "revision": "7f8485f91ea62d3ff8a322e8f20e171d954b75f5feb7b5f05ee2b7813c3effe3",
+    "document_id": "document-692873635f6a479c9696453d12ffb427",
+    "revision": "c2a52e223c317961b47a86a79a1b4248f88a652e9f99edf535a599c651817ade",
     "source_revision": "e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010",
     "declaration": "DocumentStore",
     "check_ok": true,
     "package": {
-      "id": "a-proposed-document-store-56007eb1-1.0.0-62c1179f",
+      "id": "a-proposed-document-store-12ffb427-1.0.0-822b821a",
       "version": "1.0.0",
-      "delivered_archive_sha256": "62c1179f73c127f017e9a4f7378ef916441c1e2abf676f34c349ad2f97738444"
+      "delivered_archive_sha256": "822b821a6296046e8b6b6f9b63e6c9eed9cbad43c2f1f48951163976d7838ee4"
     },
     "source": {
       "member": "source.yaml",
@@ -22,21 +22,21 @@
       "text": "# A proposed document store\n\nThis proposed architecture has one declaration, DocumentStore. It is an internal record in the jarvis package. It owns an immutable document revision and uses loose exactness. No members, groups, assembly, namespace, implementation, answer or holding relationship are declared. This is a proposed language model, not a code correspondence or approval claim.\n\n## Package materials\nsource.yaml is the canonical architecture above. index.html is its unchanged upstream rendered view. check.json records language conformance and source/view hashes; it does not establish code correspondence or approval. canonical.json binds document identity, revision, Work and author provenance. UNDERSTANDING.md is this author-supplied explanation. package.json names the entry, this brief and the material-to-understanding associations. No package file establishes human approval.\n",
       "sha256": "9222ed4cea6721f405d5ff6ce0c318ff0a5765e2a6bd801131efc42f533a4862"
     },
-    "followup_reference": "Canonical document: document-f4d52e63af0d496fbe8dcbbc56007eb1.\nCanonical revision: 7f8485f91ea62d3ff8a322e8f20e171d954b75f5feb7b5f05ee2b7813c3effe3.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+    "followup_reference": "Canonical document: document-692873635f6a479c9696453d12ffb427.\nCanonical revision: c2a52e223c317961b47a86a79a1b4248f88a652e9f99edf535a599c651817ade.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
     "unresolved": [],
     "outside_language": [
       "No code correspondence claim is made."
     ],
     "observation": "Canonical source and author-supplied understanding only; no current DOM observation is claimed."
   },
-  "proposed_revision": "568ed5a22eced285b514c7d30d09970a5b7d536f0a8fbb4e78c66701097671c3",
+  "proposed_revision": "5a988f76e1c630cd87f7593cbdae362eea92bbdc6c54d567b4329e54edacf168",
   "proposed_source_revision": "abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782",
   "recipient": "11111111-2222-3333-4444-555555555555",
-  "read_back_text": "Please review the proposed correction to DocumentStore in canonical revision 568ed5a22eced285b514c7d30d09970a5b7d536f0a8fbb4e78c66701097671c3. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-f4d52e63af0d496fbe8dcbbc56007eb1.\nCanonical revision: 7f8485f91ea62d3ff8a322e8f20e171d954b75f5feb7b5f05ee2b7813c3effe3.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+  "read_back_text": "Please review the proposed correction to DocumentStore in canonical revision 5a988f76e1c630cd87f7593cbdae362eea92bbdc6c54d567b4329e54edacf168. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-692873635f6a479c9696453d12ffb427.\nCanonical revision: c2a52e223c317961b47a86a79a1b4248f88a652e9f99edf535a599c651817ade.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
   "provider_handoff": [
     [
       "11111111-2222-3333-4444-555555555555",
-      "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your turn with your full reply; JARVIS reads it from your transcript and tells Tim. Do not send your answer to another session.]\n\nPlease review the proposed correction to DocumentStore in canonical revision 568ed5a22eced285b514c7d30d09970a5b7d536f0a8fbb4e78c66701097671c3. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-f4d52e63af0d496fbe8dcbbc56007eb1.\nCanonical revision: 7f8485f91ea62d3ff8a322e8f20e171d954b75f5feb7b5f05ee2b7813c3effe3.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+      "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your turn with your full reply; JARVIS reads it from your transcript and tells Tim. Do not send your answer to another session.]\n\nPlease review the proposed correction to DocumentStore in canonical revision 5a988f76e1c630cd87f7593cbdae362eea92bbdc6c54d567b4329e54edacf168. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-692873635f6a479c9696453d12ffb427.\nCanonical revision: c2a52e223c317961b47a86a79a1b4248f88a652e9f99edf535a599c651817ade.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
       false
     ]
   ],

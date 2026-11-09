@@ -127,3 +127,21 @@ async def test_consumed_continuation_is_not_retained_for_replay(draft):
     await adapter.call({"operation": "continue", "continuation": first["next"]})
     replay = await collect(adapter, {"operation": "continue", "continuation": first["next"]})
     assert not replay["ok"] and "continuation is unavailable" in replay["error"]["cause"]
+
+
+def test_inbox_package_identity_is_sufficient_for_exact_canonical_grounding(wired, draft):
+    from jarvis import package_inbox, work_packages
+    checked = wired.server.language_documents.documents.validate(**draft)
+    reference = {key: checked[key] for key in ("document_id", "revision", "source_revision")}
+    published = language_projection.publish(wired.server.language_documents.documents, **reference)
+    package = work_packages.find(published["package_id"])
+    arrival = package_inbox.arrive(package, work_packages.sha256_of(package),
+        package_inbox.Sender(project="isolated-author", session="isolated-author-session", evidence="isolated sender fixture"))
+    opened = _call(wired, "package_inbox", package=arrival.entry.id, understanding_offset=0)["text"]
+    author_page = json.loads(opened.split('>\n', 1)[1].rsplit('\n</session-output>', 1)[0])
+    result = asyncio.run(collect(wired.server.language_documents, {"operation": "ground", "arguments": {
+        "package_id": author_page["package"], "inbox_id": arrival.entry.id, "declaration": "DocumentStore"}}))
+    assert result["ok"], result
+    assert all(result["result"][key] == checked[key] for key in ("document_id", "revision", "source_revision"))
+    assert result["result"]["source"]["text"] == draft["source"]
+    assert result["result"]["understanding"]["text"] == draft["readable_markdown"]

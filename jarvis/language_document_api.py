@@ -40,7 +40,7 @@ def tool_spec() -> dict:
             "Each response carries a JSON segment in data. Concatenate data while calling continue with next to recover the complete envelope. "
             "For validate, arguments are source, work_id, scope_revision, author, coverage (constructs, declarations, unresolved, outside_language), "
             "optional document_id, parent_revision and evidence. readable_markdown is the author-supplied view required for new publication; its Markdown is an immutable authored view, not a semantic proof. retrieve uses document_id/revision. render/publish also need source_revision. "
-            "ground also needs package_id and optional inbox_id and declaration. Revisions are proposals, not approvals. "
+            "ground needs package_id; document_id, revision and source_revision are optional expected-value checks, with optional inbox_id and declaration. Revisions are proposals, not approvals. "
             "For changes, validate a replacement with its parent_revision. For messages include ground.followup_reference in the existing capture text, then use read_capture and the existing approval/steer_session flow.",
             "inputSchema": RequestBody.model_json_schema()}
 
@@ -68,19 +68,25 @@ class Adapter:
     async def ground(self, **arguments):
         return await asyncio.to_thread(self._ground, **arguments)
 
-    def _ground(self, *, document_id, revision, source_revision, package_id, inbox_id=None, declaration=None):
-        envelope = self.documents.render(document_id=document_id, revision=revision, source_revision=source_revision)
-        if declaration is not None and declaration not in envelope["metadata"]["declarations"]:
-            raise docs.DocumentError("That declaration does not belong to the requested canonical revision.")
+    def _ground(self, *, package_id, document_id=None, revision=None, source_revision=None, inbox_id=None, declaration=None):
         package = work_packages.find(package_id, work_packages.PAGE)
+        if not package.manifest.communication or package.manifest.communication.get("kind") != "architecture":
+            raise docs.DocumentError("That package has no canonical architecture binding.")
         if inbox_id is not None:
             entry = package_inbox.get(inbox_id)
             if entry is None or entry.package_id != package.id:
                 raise docs.DocumentError("That exact inbox arrival does not name the requested package.")
         read = language_projection.package_reader(package, revision)
         canonical = json.loads(read("canonical.json"))
+        for key, expected in (("document_id", document_id), ("revision", revision), ("source_revision", source_revision)):
+            if expected is not None and canonical.get(key) != expected:
+                raise docs.DocumentError("The package canonical identity differs from this requested revision.")
+        document_id, revision, source_revision = (canonical[key] for key in ("document_id", "revision", "source_revision"))
+        envelope = self.documents.render(document_id=document_id, revision=revision, source_revision=source_revision)
         if any(canonical.get(key) != envelope[key] for key in language_projection.IDENTITY):
             raise docs.DocumentError("The package canonical identity differs from this requested revision.")
+        if declaration is not None and declaration not in envelope["metadata"]["declarations"]:
+            raise docs.DocumentError("That declaration does not belong to the requested canonical revision.")
         readable = envelope["metadata"].get("readable", {})
         member = readable.get("member", "readable.md")
         manifest = json.loads(package.manifest.as_json())

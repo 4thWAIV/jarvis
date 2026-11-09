@@ -25,7 +25,8 @@ async def exercise_followup(server, wire, draft, monkeypatch, *, original=None, 
     original = original or service.validate(**draft)
     reference = {key: original[key] for key in ("document_id", "revision", "source_revision")}
     published = published or language_projection.publish(service, **reference)
-    grounded = await server.language_documents.ground(**reference, package_id=published["package_id"], declaration="DocumentStore")
+    grounded = await server.language_documents.ground(package_id=published["package_id"], declaration="DocumentStore")
+    assert all(grounded[key] == value for key, value in reference.items())
     assert "Owns an immutable document revision." in grounded["source"]["text"]
     assert grounded["understanding"]["text"] == draft["readable_markdown"]
     correction = service.validate(**{**draft,
