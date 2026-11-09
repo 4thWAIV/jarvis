@@ -224,7 +224,7 @@ TOLD = {"title": "Notes", "slides": [{"title": "One", "beats": [{"say": "One."}]
 ASKS = {**TOLD, "answers": "results/decisions.json",
         "slides": [TOLD["slides"][0], {**TOLD["slides"][1], "waits": "go-ahead"}]}
 # A hand-made page as make_package sends it: its story ends with the vote.
-VOTES = package_inbox.with_understood_slide(TOLD)
+VOTES = package_inbox.with_understood_slide(TOLD, "en")
 
 
 @pytest.fixture
@@ -334,6 +334,59 @@ def test_got_it_goes_back_and_makes_no_work_decision(
     assert "- understood: got-it" in capture["text"] and "His questions" not in capture["text"]
     assert not [a for a in work_store.get(work_item.id).answered
                 if a.key.startswith("understood")]
+
+
+def test_the_page_s_answer_is_his_click_alone(wired, shown, marks, tmp_path):
+    inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
+    r = wired.client.post(f"{INBOX}/{inbox_id}/answer", headers=token(),
+                          json={"decision": "understood", "option": "got-it"})
+    assert r.status_code == 403, "a tool-token caller cannot answer for him"
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    assert package_inbox.questions(package)[0].answer is None
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_the_head_s_buttons_and_his_voice_record_the_same_answer(
+        wired, shown, marks, tmp_path, monkeypatch, how):
+    """Parity: the view head's Got it / I have questions (the inbox's answer
+    route) and the brain's answer_package_decision reach the one writer,
+    package_inbox.record_story_answer, with the same arguments."""
+    calls = []
+    real = package_inbox.record_story_answer
+    monkeypatch.setattr(package_inbox, "record_story_answer",
+                        lambda package, q, option, note: (calls.append((q.id, option, note)),
+                                                          real(package, q, option, note)))
+    inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
+    answer_by(wired, how, inbox_id, "questions", "Why two keys?")
+    assert calls == [("understood", "questions", "Why two keys?")]
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    assert package_inbox.page_vote(package) == {
+        "question": "understood", "answer": "questions", "note": "Why two keys?"}
+
+
+def test_the_view_shows_the_vote_and_a_reload_shows_his_answer(wired, shown, marks, tmp_path):
+    inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
+    assert wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER).status_code == 200
+    frame = shown[-1]["package"]
+    assert frame["vote"] == {"question": "understood", "answer": None, "note": ""}
+    answer_by(wired, "page", inbox_id, "got-it")
+    assert wired.server._package_shown["vote"]["answer"] == "got-it", \
+        "a page that connects now shows his answer"
+
+
+def test_a_deck_has_no_head_vote_its_slide_asks(wired, shown, marks, tmp_path):
+    inbox_id = send(wired, deck_zip(tmp_path)).json()["inbox"]["id"]
+    wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
+    assert shown[-1]["package"]["vote"] is None
+
+
+def test_a_spanish_story_s_vote_is_in_spanish(wired, shown, marks, tmp_path):
+    told = package_inbox.with_understood_slide({**TOLD, "language": "es"}, "es")
+    assert told["slides"][-1]["title"] == "¿Entendido?"
+    inbox_id = send(wired, story_zip(told)).json()["inbox"]["id"]
+    [q] = package_inbox.questions(work_packages.find(package_inbox.get(inbox_id).package_id))
+    assert [o["name"] for o in q.options] == ["Entendido", "Tengo preguntas"]
+    assert [o["id"] for o in q.options] == ["got-it", "questions"], "the ids never change"
 
 
 def test_a_page_s_vote_is_written_where_its_story_waits(wired, shown, marks, tmp_path):

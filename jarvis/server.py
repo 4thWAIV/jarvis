@@ -8893,6 +8893,10 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         if ran.returncode != 0:
             return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
+    global _package_shown
+    if _package_shown is not None and _package_shown.get("id") == package.id:
+        # A page that connects now shows his answer in the view's head.
+        _package_shown = await asyncio.to_thread(packages_api.describe, package)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
     said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
             if entry.decisions_total else "Recorded.")

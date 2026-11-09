@@ -9,8 +9,8 @@ docs/making-a-package.md is the whole of how to use it. In short:
 - CONTENT.json is a deck, drawn by the shared deck
   (examples/packages/decision-deck/). With `decisions` it is a decision
   package; with only `slides` it is a presentation (an update), which ends
-  with the standard vote (package_inbox.UNDERSTOOD: Got it / I have
-  questions). Everything that can be worked out is (decision_package.expand).
+  with the standard vote (package_inbox.understood: Got it / I have
+  questions, in the deck's language or the one in force). Everything that can be worked out is (decision_package.expand).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
   worked out from the files there. A page whose story asks nothing (or that
@@ -29,7 +29,6 @@ what to change. Nothing is delivered after any failure.
 from __future__ import annotations
 
 import argparse
-import copy
 import importlib.util
 import json
 import re
@@ -102,14 +101,21 @@ def deck_of(content: Path) -> dict:
     deck = dp.expand(raw)
     if isinstance(deck, dict) and not deck.get("decisions") and deck.get("slides"):
         # Every package carries his vote: one that asks nothing ends with
-        # the standard one, drawn after its slides.
-        deck["decisions"] = [copy.deepcopy(package_inbox.UNDERSTOOD)]
+        # the standard one, drawn after its slides, in its language.
+        deck["decisions"] = [package_inbox.understood(raw.get("language") or built_language())]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     problems = dp.problems_of(deck, content.parent)
     if problems:
         raise dp.Refused(problems)
     return deck
+
+
+def built_language() -> str:
+    """The language in force as it is built: JARVIS's saved choice
+    (language_setting.saved), for a deck or a new story that names none."""
+    from jarvis import language_setting
+    return language_setting.saved()
 
 
 def deck_kind(deck: dict) -> str:
@@ -204,12 +210,15 @@ def _with_vote(built: Path, manifest: dict) -> None:
     path = built / (named or STORY_FILE)
     try:
         given = json.loads(path.read_text(encoding="utf-8")) if named else None
-        if given is not None and package_inbox.asks_a_question(
-                None, package_story.parse(path.read_bytes())):
+        parsed = package_story.parse(path.read_bytes()) if named else None
+        if parsed is not None and package_inbox.asks_a_question(None, parsed):
             return
     except (OSError, ValueError, package_story.StoryError) as e:
         raise dp.Refused([f"Its story cannot be read: {e}"])
-    told = package_inbox.with_understood_slide(given)
+    # The vote in the story's language (English when it names none, as it is
+    # told), or for a new story the language in force.
+    language = parsed.language if parsed is not None else built_language()
+    told = package_inbox.with_understood_slide(given, language)
     try:
         package_story.parse(json.dumps(told).encode("utf-8"))
     except package_story.StoryError as e:

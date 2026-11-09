@@ -198,6 +198,42 @@ def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, 
     assert built_story(tmp_path / "b") == given
 
 
+def in_force(language: str) -> None:
+    data_paths.language_path().write_text(json.dumps({"language": language}))
+
+
+@pytest.mark.parametrize("given, saved, words", [
+    ("es", "en", ["Entendido", "Tengo preguntas"]),
+    ("en", "es", ["Got it", "I have questions"]),
+    (None, "es", ["Entendido", "Tengo preguntas"]),
+    (None, "en", ["Got it", "I have questions"]),
+])
+def test_a_deck_s_vote_is_in_its_language_else_the_one_in_force(
+        tmp_path, monkeypatch, given, saved, words):
+    in_force(saved)
+    content = presentation() | ({"language": given} if given else {})
+    deck = mp.deck_of(write(tmp_path, content))
+    assert [o["name"] for o in deck["decisions"][-1]["options"]] == words
+
+
+def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(dp, "post", _Delivery())
+    in_force("es")
+    folder = tmp_path / "in" / "Plain Page"
+    folder.mkdir(parents=True)
+    (folder / "index.html").write_text("<p>Hola</p>")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Saludar."}))
+    assert mp.main([str(folder), "--out", str(tmp_path / "a"),
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    story = built_story(tmp_path / "a")
+    assert story["language"] == "es" and story["slides"][-1]["title"] == "¿Entendido?"
+    # A page's own story names no language, so it is told in English: so is its vote.
+    assert mp.main([str(page_folder(tmp_path / "f")), "--out", str(tmp_path / "b"),
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    assert built_story(tmp_path / "b")["slides"][-1]["title"] == "Got it?"
+
+
 @pytest.mark.parametrize("check_only", [False, True])
 def test_an_agent_package_for_a_work_item_is_refused(tmp_path, monkeypatch, capsys, check_only):
     delivery = _Delivery()

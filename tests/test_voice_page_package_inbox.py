@@ -192,3 +192,68 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         await page.wait_for_timeout(500)
         await _shot(page, "6-signed-off")
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
+        page_playwright, page_url, jarvis_app, monkeypatch):
+    """A hand-made page as make_package sends it, its story ending with the
+    standard vote: Got it and I have questions sit in the view's head,
+    outside the frame, and each lands in the story's answers file through
+    the inbox's answer route, as his voice's answer does."""
+    server, client, _data, _item = jarvis_app
+    from jarvis import package_inbox, work_packages
+    from tests.test_package_inbox import VOTES, story_zip
+
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                          # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        voice = _Voice()
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route_web_socket("**/ws/sessions", lambda ws: None)
+        await page.route("**/api/conversation", lambda route: route.fulfill(
+            json={"items": [], "earlier": None}))
+        for pattern in ("**/api/packages**", "**/api/attention**", "**/api/work**"):
+            await page.route(pattern, _through(client))
+
+        r = client.post("/api/packages/inbox", content=story_zip(VOTES),
+                        headers={"Authorization": f"Bearer {server.data_paths.ensure_tool_token()}",
+                                 "Content-Type": "application/zip"})
+        assert r.status_code == 200, r.text
+        inbox_id = r.json()["inbox"]["id"]
+        package = work_packages.find(package_inbox.get(inbox_id).package_id)
+
+        async def emit(frame):
+            voice.send(frame)
+        monkeypatch.setattr(server, "_voice_emit", emit)
+        monkeypatch.setattr(server, "voice_clients", {object()})
+
+        await page.goto(page_url)
+        await page.click(".right-tabs [aria-label='Queue']")
+        row = page.locator(f".queue-packages [data-inbox-id='{inbox_id}']")
+        await row.get_by_role("button", name="Open").click()
+        vote = page.locator("#package-view .package-head .package-vote")
+        await async_api.expect(vote).to_be_visible()
+        assert await page.locator("#package-view iframe .package-vote").count() == 0
+        await _shot(page, "vote-1-in-the-head")
+
+        def recorded():
+            return package_inbox.questions(package)[0].answer
+
+        await vote.get_by_role("button", name="Got it").click()
+        await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text("Recorded: Got it.")
+        assert recorded()["answer"] == "got-it"
+
+        await vote.get_by_role("button", name="I have questions").click()
+        await vote.locator(".package-vote-words").fill("Why two keys?")
+        await _shot(page, "vote-2-his-words")
+        await vote.get_by_role("button", name="Send").click()
+        await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text(
+            "Recorded: your questions go back to the sender.")
+        assert (recorded()["answer"], recorded()["note"]) == ("questions", "Why two keys?")
+        assert package_inbox.get(inbox_id).decisions_answered == 1
+        await browser.close()

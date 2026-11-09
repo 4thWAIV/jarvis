@@ -774,10 +774,20 @@ the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
 package only with its stamp), and `package_inbox.arrive` records it. Every
 package carries his vote: `make_package` gives a deck or page that asks
-nothing the standard one, `package_inbox.UNDERSTOOD` (`understood`: `got-it`
-Got it, `questions` I have questions with his words), at its end: a deck as
-one more decision, a page as its story's last slide
-(`with_understood_slide`, `UNDERSTOOD_SLIDE`) waiting on its answers file.
+nothing the standard one, `package_inbox.understood` (`understood`:
+`got-it` Got it, `questions` I have questions with his words; Entendido and
+Tengo preguntas in Spanish, `_VOTE_WORDS`), at its end, in the deck's or
+story's language, else the language in force as it is built
+(`make_package.built_language`, `language_setting.saved`; a page's own
+story is in its own language, English when it names none): a deck as one
+more decision, a page as its story's last slide (`with_understood_slide`,
+`understood_slide`) waiting on its answers file. A page that carries it has
+Got it and I have questions (a field for his words, then Send) in the
+package view's head beside Done, outside the frame (`PackageView.tsx`
+`VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
+post to the inbox's answer route, which takes only his click
+(`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
+package shown so a reload shows his answer. A deck asks on its own slide.
 A page's `understood` is read from that file (`package_inbox.questions`,
 `_story_questions`) and his answer written there
 (`record_story_answer`, from `_answer_inbox_decision` when there is no
