@@ -1,0 +1,31 @@
+{
+  "diagnostic_model_override_only": "gpt-5.6-luna",
+  "outside_production_deadline": true,
+  "production_deadline_seconds": 2,
+  "results": [
+    {
+      "direct_synthetic_input": "Ask the sender why the budget increased.",
+      "seconds": 3.269,
+      "intent": {
+        "operation": "prepare_followup",
+        "target": null,
+        "recipient": "sender",
+        "decision": null,
+        "answer": null,
+        "ambiguous": false
+      }
+    },
+    {
+      "direct_synthetic_input": "Is the budget proposal sensible?",
+      "seconds": 3.067,
+      "intent": {
+        "operation": null,
+        "target": null,
+        "recipient": null,
+        "decision": null,
+        "answer": null,
+        "ambiguous": false
+      }
+    }
+  ]
+}

@@ -354,6 +354,42 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_authority._prepare": (
+        "it collects the isolated classifier's provider response for strict Intent validation; "
+        "it reads no session roster or package prose and emits no trusted brain header. "
+        "The direct-only payload and rejected fabricated action words are driven by test_package_authority.py"),
+    "package_followups.prepare": (
+        "package names and member paths go into the capture's reviewable message body, never a trusted "
+        "brain header; the adapter wraps preparation metadata as untrusted. Recipient and source binding "
+        "are driven by test_package_content.py and the existing capture/transmission tests"),
+    "package_inspection._sweep_index": (
+        "it builds cache identifiers and SQL queries while removing unavailable derived text; "
+        "it neither returns foreign prose to the brain nor emits a header. Restart and source eviction "
+        "are driven by test_package_content.py"),
+    "package_inspection.coverage": (
+        "member paths and reader limitations remain fields in typed Coverage output; the package tool "
+        "adapter serializes them within the escaped untrusted wrapper. Coverage and hostile delimiters "
+        "are driven by test_package_content.py"),
+    "package_inspection.structure": (
+        "HTML headings, references and deck titles remain source evidence inside ContentPage chunks; "
+        "PackageToolPager escapes and wraps their final serialized output. Source outlines and exact "
+        "wrapped continuations are driven by test_package_content.py"),
+    "package_inspection.units": (
+        "deck and story text become JSON source units consumed by the shared reader and ContentPage; "
+        "they never become trusted header text. Source/narration separation, malformed deck fallback "
+        "and exact wrapped text are driven by test_package_content.py"),
+    "package_views._observation": (
+        "reported DOM and conflicting source headings remain separately labeled evidence chunks; "
+        "the tool adapter wraps both as untrusted. Actual DOM observations and source text are driven "
+        "by test_voice_page_package_content.py and test_package_content.py"),
+    "server._handle_utterance": (
+        "the new classifier receives direct user words and host-owned view IDs; its validated result "
+        "can only supply a checked action scope. The added brain note contains an internal error code, "
+        "not provider text or roster fields. Classification isolation is driven by test_package_authority.py"),
+    "server.voice_handler": (
+        "the package additions transport schema-checked frame observations to PackageViews and return "
+        "structured protocol errors to the page; they do not interpolate DOM or roster text into a "
+        "trusted brain header. The actual socket path is driven by test_voice_page_package_content.py"),
     "project_store.answer_accomplishment": (
         "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (
