@@ -8,11 +8,14 @@ docs/making-a-package.md is the whole of how to use it. In short:
 
 - CONTENT.json is a deck, drawn by the shared deck
   (examples/packages/decision-deck/). With `decisions` it is a decision
-  package; with only `slides` it is a presentation (an update), which has no
-  votes. Everything that can be worked out is (decision_package.expand).
+  package; with only `slides` it is a presentation (an update), which ends
+  with the standard vote (package_inbox.UNDERSTOOD: Got it / I have
+  questions). Everything that can be worked out is (decision_package.expand).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
-  worked out from the files there.
+  worked out from the files there. A page whose story asks nothing (or that
+  has no story) gets the same vote as its story's last slide. An agent or
+  conversation package cannot carry a vote, so it may not name a Work item.
 
 Either way the command checks it, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the
@@ -26,6 +29,7 @@ what to change. Nothing is delivered after any failure.
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
 import re
@@ -93,8 +97,13 @@ def next_version(name: str) -> str:
 def deck_of(content: Path) -> dict:
     """The deck in full form, its version worked out when not given, or
     Refused with every problem."""
+    from jarvis import package_inbox
     raw = dp.read(content)
     deck = dp.expand(raw)
+    if isinstance(deck, dict) and not deck.get("decisions") and deck.get("slides"):
+        # Every package carries his vote: one that asks nothing ends with
+        # the standard one, drawn after its slides.
+        deck["decisions"] = [copy.deepcopy(package_inbox.UNDERSTOOD)]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     problems = dp.problems_of(deck, content.parent)
@@ -104,7 +113,10 @@ def deck_of(content: Path) -> dict:
 
 
 def deck_kind(deck: dict) -> str:
-    return "decision package" if deck.get("decisions") else "presentation"
+    """A presentation asks only the standard vote; a decision package more."""
+    from jarvis import package_inbox
+    asked = [d.get("id") for d in deck.get("decisions") or [] if isinstance(d, dict)]
+    return "presentation" if asked in ([], [package_inbox.UNDERSTOOD_ID]) else "decision package"
 
 
 def make_deck(content: Path, out: Path) -> Made:
@@ -184,6 +196,31 @@ def manifest_of(folder: Path) -> dict:
     return manifest
 
 
+def _with_vote(built: Path, manifest: dict) -> None:
+    """A page whose story asks nothing (or that has none) gets the standard
+    vote as its story's last slide, waiting on its answers file."""
+    from jarvis import package_inbox, package_story
+    named = manifest.get("story")
+    path = built / (named or STORY_FILE)
+    try:
+        given = json.loads(path.read_text(encoding="utf-8")) if named else None
+        if given is not None and package_inbox.asks_a_question(
+                None, package_story.parse(path.read_bytes())):
+            return
+    except (OSError, ValueError, package_story.StoryError) as e:
+        raise dp.Refused([f"Its story cannot be read: {e}"])
+    told = package_inbox.with_understood_slide(given)
+    try:
+        package_story.parse(json.dumps(told).encode("utf-8"))
+    except package_story.StoryError as e:
+        raise dp.Refused([f"The vote could not be added to its story: {e}"])
+    path.write_text(json.dumps(told, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    manifest["story"] = path.name if not named else named
+    if DEFAULT_RETURNS[0] not in manifest.get("returns", []) and \
+            told["answers"] not in manifest.get("returns", []):
+        manifest["returns"] = [*manifest.get("returns", []), told["answers"]]
+
+
 def make_folder(folder: Path, out: Path) -> Made:
     """Copy the folder with its package.json in full, zip it, and read the
     zip back the way the receiver does: the zip's path."""
@@ -194,6 +231,8 @@ def make_folder(folder: Path, out: Path) -> Made:
     shutil.rmtree(built, ignore_errors=True)
     shutil.copytree(folder, built, symlinks=True,
                     ignore=shutil.ignore_patterns(*zipper.LEFT_OUT))
+    if manifest["runs"] == "page":
+        _with_vote(built, manifest)
     (built / "package.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False)
                                         + "\n", encoding="utf-8")
     archive = out / f"{manifest['name']}-{manifest['version']}.zip"
@@ -217,23 +256,16 @@ def make_folder(folder: Path, out: Path) -> Made:
 # -- his vote ---------------------------------------------------------------------------
 
 def check_vote(source: Path, work: str) -> None:
-    """A package for a Work item asks him something (package_inbox's one
-    rule, which the inbox route applies too): Refused when it asks nothing."""
-    if not work:
+    """Every package carries his vote: a deck or a page gets the standard
+    one when it asks nothing. An agent or conversation package cannot, so it
+    may not name a Work item (package_inbox.no_vote, which the inbox route
+    says too)."""
+    if not work or not source.is_dir():
         return
-    from jarvis import package_inbox, package_story
-    if source.is_dir():
-        manifest, story = manifest_of(source), None
-        if manifest.get("story"):
-            try:
-                story = package_story.parse((source / manifest["story"]).read_bytes())
-            except (OSError, package_story.StoryError) as e:
-                raise dp.Refused([f"Its story cannot be read: {e}"])
-        asks = package_inbox.asks_a_question(None, story)
-    else:
-        asks = package_inbox.asks_a_question(deck_of(source), None)
-    if not asks:
-        raise dp.Refused([package_inbox.no_vote(work)])
+    from jarvis import package_inbox
+    runs = manifest_of(source)["runs"]
+    if runs not in package_inbox.VOTING_RUNS:
+        raise dp.Refused([package_inbox.no_vote(work, runs)])
 
 
 # -- checking ------------------------------------------------------------------------
@@ -310,8 +342,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                       f"{manifest['name']}-{manifest['version']}.")
             else:
                 deck = deck_of(source)
-                print(f"The content is right: a {deck_kind(deck)}, "
-                      f"{len(deck.get('decisions') or [])} decision(s), "
+                kind = deck_kind(deck)
+                asks = ("ending with the standard vote (Got it / I have questions)"
+                        if kind == "presentation"
+                        else f"{len(deck.get('decisions') or [])} decision(s)")
+                print(f"The content is right: a {kind}, {asks}, "
                       f"package {deck['name']}-{deck['version']}.")
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()

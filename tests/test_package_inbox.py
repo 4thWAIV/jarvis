@@ -208,7 +208,7 @@ def test_an_arrival_is_never_a_digest_candidate(record):
     assert record.candidates(0) == [] and record.pending_count() == 1
 
 
-# -- a package for a Work item carries his vote ----------------------------------------
+# -- every package carries his vote -------------------------------------------------------
 
 STORY_HELPER = '<script src="/api/packages/story.js"></script>'
 
@@ -223,6 +223,8 @@ TOLD = {"title": "Notes", "slides": [{"title": "One", "beats": [{"say": "One."}]
                                      {"title": "Two", "beats": [{"say": "Two."}]}]}
 ASKS = {**TOLD, "answers": "results/decisions.json",
         "slides": [TOLD["slides"][0], {**TOLD["slides"][1], "waits": "go-ahead"}]}
+# A hand-made page as make_package sends it: its story ends with the vote.
+VOTES = package_inbox.with_understood_slide(TOLD)
 
 
 @pytest.fixture
@@ -236,23 +238,32 @@ def work_item(tmp_path):
     pytest.param(lambda tmp: page_zip(), id="a page with no story"),
     pytest.param(lambda tmp: story_zip(TOLD), id="a story that waits for nothing"),
 ])
-def test_a_package_for_a_work_item_that_asks_nothing_is_refused(
+def test_a_page_for_a_work_item_that_asks_nothing_is_refused(
         wired, shown, marks, record, tmp_path, work_item, data):
     r = send(wired, data(tmp_path), work=work_item.id)
     assert r.status_code == 409, r.text
     said = r.json()["error"]
     assert f"names work item {work_item.id} but asks Tim nothing" in said
-    assert "Add the vote" in said and "`decisions`" in said and "`waits`" in said
+    assert "make_package, which adds the standard vote" in said
     assert package_inbox.listing() == [] and record.pending_count() == 0 and shown == []
+
+
+def test_an_agent_package_for_a_work_item_is_refused(wired, shown, marks, record, work_item):
+    agent = make_zip({"BRIEF.md": "Count the words."},
+                     {"name": "count", "version": "1.0.0", "purpose": "Count.", "runs": "agent",
+                      "brief": "BRIEF.md", "returns": ["results/**"]})
+    r = send(wired, agent, work=work_item.id)
+    assert r.status_code == 409 and "an agent package cannot carry Tim's vote" in r.json()["error"]
+    assert package_inbox.listing() == []
+    assert send(wired, agent).status_code == 200, "with no Work item it is taken"
 
 
 def test_a_package_for_a_work_item_that_asks_is_taken(
         wired, shown, marks, record, tmp_path, work_item):
-    r = send(wired, story_zip(ASKS), work=work_item.id)
-    assert r.status_code == 200, r.text
-    r = send(wired, deck_zip(tmp_path), work=work_item.id)
-    assert r.status_code == 200, r.text
-    assert len(package_inbox.listing()) == 2
+    assert send(wired, story_zip(ASKS), work=work_item.id).status_code == 200
+    assert send(wired, story_zip(VOTES, "voting-page"), work=work_item.id).status_code == 200
+    assert send(wired, deck_zip(tmp_path), work=work_item.id).status_code == 200
+    assert len(package_inbox.listing()) == 3
 
 
 def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
@@ -260,6 +271,79 @@ def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
     assert send(wired, page_zip()).status_code == 200
     assert send(wired, story_zip(TOLD, "told-page")).status_code == 200
     assert len(package_inbox.listing()) == 2
+
+
+def presentation_zip(tmp_path) -> bytes:
+    """A presentation as make_package builds it, with the vote added, stamped."""
+    content = tmp_path / "presentation" / "content.json"
+    content.parent.mkdir()
+    content.write_text(json.dumps(make_package.PRESENTATION_EXAMPLE))
+    out = tmp_path / "presentation" / "out"
+    out.mkdir()
+    made = make_package.make_deck(content, out)
+    decision_stamp.stamp(made.archive, made.archive, data_paths.ensure_tool_token())
+    return made.archive.read_bytes()
+
+
+def answer_by(w, how: str, inbox_id: str, option: str, words: str = "") -> None:
+    if how == "page":
+        r = w.client.post(f"{INBOX}/{inbox_id}/answer", headers=BROWSER,
+                          json={"decision": "understood", "option": option, "words": words})
+        assert r.status_code == 200, r.text
+    else:
+        said = _call(w, "answer_package_decision", package=inbox_id, decision="understood",
+                     option=option, words=words)["text"]
+        assert said.startswith("Recorded."), said
+
+
+SENT = {"page": lambda tmp: story_zip(VOTES), "deck": presentation_zip}
+
+
+@pytest.mark.parametrize("kind", ["page", "deck"])
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_his_questions_go_back_to_the_sender_and_onto_the_work_item(
+        wired, shown, marks, record, tmp_path, work_item, chitauri, kind, how):
+    got = send(wired, SENT[kind](tmp_path), session="sess-1", work=work_item.id)
+    assert got.status_code == 200, got.text
+    inbox_id = got.json()["inbox"]["id"]
+    [q] = package_inbox.questions(work_packages.find(package_inbox.get(inbox_id).package_id))
+    assert (q.id, [o["name"] for o in q.options]) == ("understood", ["Got it", "I have questions"])
+    assert package_inbox.get(inbox_id).waiting == 1, "counted in his updates as one waiting"
+    answer_by(wired, how, inbox_id, "questions", "Why two keys?")
+    entry = package_inbox.get(inbox_id)
+    assert (entry.decisions_answered, entry.decisions_total) == (1, 1)
+    said = _call(wired, "sign_off_package", package=inbox_id)["text"]
+    assert said.startswith("Signed off. Capture"), said
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    key = f"understood-{inbox_id}"
+    assert "- understood: questions (his words: Why two keys?)" in capture["text"]
+    assert f"His questions are on work item {work_item.id} as decision {key}." in capture["text"]
+    assert not capture.get("approved"), "it goes only on his yes"
+    [made] = [a for a in work_store.get(work_item.id).answered if a.key == key]
+    assert made.answer == "Why two keys?" and made.where in ("page", "voice")
+    assert not work_store.get(work_item.id).decisions, "asked and answered at once: none open"
+
+
+def test_got_it_goes_back_and_makes_no_work_decision(
+        wired, shown, marks, record, tmp_path, work_item, chitauri):
+    inbox_id = send(wired, story_zip(VOTES), session="sess-1",
+                    work=work_item.id).json()["inbox"]["id"]
+    answer_by(wired, "voice", inbox_id, "got-it")
+    _call(wired, "sign_off_package", package=inbox_id)
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    assert "- understood: got-it" in capture["text"] and "His questions" not in capture["text"]
+    assert not [a for a in work_store.get(work_item.id).answered
+                if a.key.startswith("understood")]
+
+
+def test_a_page_s_vote_is_written_where_its_story_waits(wired, shown, marks, tmp_path):
+    inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
+    answer_by(wired, "page", inbox_id, "questions", "One thing")
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    record = json.loads((package.folder / "results" / "decisions.json").read_text())
+    assert record["understood"]["answer"] == "questions"
+    assert record["understood"]["note"] == "One thing"
+    assert package.story().open_questions(record) == [], "the story waiting on it goes on"
 
 
 # -- open --------------------------------------------------------------------------------

@@ -8642,8 +8642,8 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
     if work_id and not await asyncio.to_thread(package_inbox.asks_him, package):
-        # Every package for a Work item carries his vote (package_inbox.no_vote).
-        return None, None, package_inbox.no_vote(work_id)
+        # A package for a Work item carries his vote (package_inbox.no_vote).
+        return None, None, package_inbox.no_vote(work_id, package.manifest.runs)
     proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
     sender = _inbox_sender(sender.project, sender.claimed, proven)
     try:
@@ -8870,17 +8870,28 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, (f"{question.id} takes one of {', '.join(o['id'] for o in question.options)}"
                       f", recommended, later or none. Nothing was recorded.")
     note = " ".join(str(words or "").split())[:500]
-    argv = [sys.executable, "-I", str(package.folder / package_inbox.DECIDE), question.id, chosen]
-    if note:
-        argv.append(note)
-    try:
-        ran = await asyncio.to_thread(
-            subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
-            timeout=DECIDE_TIMEOUT_SEC, env={**os.environ, **work_packages.command_env(package)})
-    except (OSError, subprocess.SubprocessError) as e:
-        return None, f"The package's decide.py could not run ({type(e).__name__}). Nothing was recorded."
-    if ran.returncode != 0:
-        return None, "The package's decide.py refused that answer. Nothing was recorded."
+    if not package_inbox.is_decision_package(package):
+        # A page's standard vote: written into its story's answers file.
+        try:
+            await asyncio.to_thread(package_inbox.record_story_answer, package, question,
+                                    chosen, note)
+        except work_packages.PackageError as e:
+            return None, f"{e} Nothing was recorded."
+    else:
+        argv = [sys.executable, "-I", str(package.folder / package_inbox.DECIDE), question.id,
+                chosen]
+        if note:
+            argv.append(note)
+        try:
+            ran = await asyncio.to_thread(
+                subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
+                timeout=DECIDE_TIMEOUT_SEC,
+                env={**os.environ, **work_packages.command_env(package)})
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, (f"The package's decide.py could not run ({type(e).__name__}). "
+                          f"Nothing was recorded.")
+        if ran.returncode != 0:
+            return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
     said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
@@ -8909,12 +8920,49 @@ def _sign_off_text(entry, package) -> str:
     if asked:
         lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
         lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
+        if entry.work_id and _has_questions(asked):
+            lines.append(f"His questions are on work item {entry.work_id} as decision "
+                         f"{_questions_key(entry)}.")
         lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
                      f" (and {package_inbox.SUMMARY} beside it).")
     else:
         lines = [f"Tim has reviewed your package {package.id} ({entry.id}) and signed it off. "
                  f"Anything it saved is in {package.folder / work_packages.RESULTS}."]
     return "\n".join(lines)[:CAPTURE_MAX_CHARS]
+
+
+def _has_questions(asked) -> Optional[object]:
+    """The standard vote answered "I have questions", or None."""
+    return next((q for q in asked if q.id == package_inbox.UNDERSTOOD_ID and q.applies
+                 and q.answer and q.answer["answer"] == package_inbox.HAS_QUESTIONS), None)
+
+
+def _questions_key(entry) -> str:
+    """The Work decision his questions on this package become."""
+    return f"{package_inbox.UNDERSTOOD_ID}-{entry.id}"
+
+
+def _inbox_questions_on_work(entry, package, where: str) -> None:
+    """He answered the standard vote "I have questions" on a package sent
+    for a Work item: they become that item's decision, asked and answered at
+    once in his words, so its agents read them (`work_report.py answer`). A
+    key already used is left as it is. On the loop."""
+    question = _has_questions(package_inbox.questions(package))
+    if not entry.work_id or question is None:
+        return
+    key = _questions_key(entry)
+    try:
+        work_store.record(work_store.WorkEvent(
+            entry.work_id, work_store.DECISION_NEEDED,
+            f"Tim has questions about the package {package.id}.",
+            {"key": key, "options": [o["name"] for o in question.options],
+             "package": entry.package_id}))
+        done = work_api.answer_decision(entry.work_id, key,
+                                        question.answer["note"] or question.answered_words(),
+                                        where)
+    except work_store.WorkRefused:
+        return
+    _work_recorded(done, work_store.DECISION_MADE)
 
 
 def _inbox_workflow_answers(entry, package) -> None:
@@ -9004,6 +9052,7 @@ def _inbox_sign_off_work(entry, package, how: str) -> None:
         except work_store.WorkRefused:
             continue
         _work_recorded(done, work_store.DECISION_MADE)
+    _inbox_questions_on_work(entry, package, where)
     if entry.work_id:
         try:
             done = work_store.record(work_store.WorkEvent(
