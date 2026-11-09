@@ -17,6 +17,8 @@ import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
+import { subscribeWorkers, workerSnapshot } from "./workers";
+import { brains, activeBrain } from "./brains";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
@@ -67,9 +69,21 @@ export function startJarvis(orb: Orb): void {
     if (newState === currentState) return;
     currentState = newState;
     voiceState.set(newState);
-    orb.setState(newState as OrbState);
+    renderOrb();
     micFollowsState();
   }
+
+  function renderOrb() {
+    const provider = activeBrain(brains.get().value);
+    const brain = workerSnapshot().value?.workers.find(w => w.kind === "brain" && w.provider === provider);
+    // Listening/speaking/compacting are conversation states. Model thinking
+    // comes only from the same computed worker result as the account counter.
+    const state = currentState === "thinking" || currentState === "idle"
+      ? brain?.activity.orb_state === "thinking" ? "thinking" : "idle" : currentState;
+    orb.setState(state as OrbState);
+  }
+  subscribeWorkers(renderOrb);
+  brains.subscribe(renderOrb);
 
   // Mute and mic off only stop the microphone; they have no say in the orb's
   // state.

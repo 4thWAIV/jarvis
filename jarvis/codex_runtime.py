@@ -17,37 +17,61 @@ from jarvis import worker_activity
 MODEL_DELTAS = frozenset({'item/agentMessage/delta', 'item/reasoning/textDelta',
                          'item/reasoning/summaryTextDelta', 'item/plan/delta'})
 TOOLS = frozenset({'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall',
-                   'collabAgentToolCall', 'webSearch'})
+                   'collabAgentToolCall', 'webSearch', 'sleep', 'subAgentActivity'})
 
 
-def event_evidence(event: dict, now: float) -> tuple[str, dict] | None:
+def event_evidence(event: dict, now: float, previous: dict | None = None) -> tuple[str, dict] | None:
     method = event.get('method')
     p = event.get('params') or {}
     sid = p.get('threadId')
     if not sid:
         return None
+    previous = previous or {}
+    tools = set(previous.get('outstanding_tools') or [])
     state = None
+    item_type = None
+    turn_open = previous.get('turn_open')
     if method in MODEL_DELTAS:
         state = 'generating'
     elif method in ('turn/completed', 'thread/closed'):
         state = 'idle'
+        tools.clear()
     elif method == 'turn/started':
         state = 'awaiting_model'
+        tools.clear()
     elif method in ('item/started', 'item/completed'):
         item = p.get('item') or {}
-        if method == 'item/started':
-            if item.get('type') in TOOLS: state = 'tool_wait'
-            elif item.get('type') in ('reasoning', 'agentMessage', 'plan'): state = 'model_active'
-        elif item.get('type') in TOOLS or item.get('type') in ('reasoning', 'agentMessage', 'plan'):
-            state = 'awaiting_model'
+        item_type = item.get('type')
+        item_id = item.get('id') or p.get('itemId') or item_type
+        if item_type in TOOLS:
+            if method == 'item/started':
+                tools.add(item_id)
+            else:
+                tools.discard(item_id)
+            state = 'tool_wait' if tools else 'awaiting_model'
+        elif item_type in ('reasoning', 'agentMessage', 'plan'):
+            # An item is not a turn. Reasoning/message boundaries can occur
+            # while the same model request is still running. A final answer
+            # and the turn terminal are distinct explicit stopping points.
+            if tools:
+                state = 'tool_wait'
+            elif method == 'item/completed' and item.get('phase') == 'final_answer':
+                state = 'finishing'
+            else:
+                state = 'model_active'
     elif method == 'thread/status/changed':
         status = p.get('status') or {}
         if status.get('type') in ('idle', 'notLoaded'): state = 'idle'
         elif status.get('type') == 'active' and status.get('activeFlags'): state = 'human_wait'
     if state is None:
         return None
-    return sid, {'state': state, 'observed_at': now, 'source': f'codex_runtime:{method}',
-                 'coverage': 'runtime_stream'}
+    if method in ('turn/completed', 'thread/closed') or state == 'idle':
+        turn_open = False
+    elif method != 'thread/status/changed':
+        turn_open = True
+    return sid, {'state': state, 'turn_open': turn_open, 'observed_at': now, 'source': f'codex_runtime:{method}',
+                 'coverage': 'runtime_stream', 'outstanding_tools': sorted(tools),
+                 'item_type': item_type, 'turn_id': p.get('turnId') or previous.get('turn_id')}
 
 
 class RuntimeObserver:
@@ -80,11 +104,13 @@ class RuntimeObserver:
             return {sid: dict(row) for sid, row in self._rows.items()}, self._read_at, self._error
 
     def _event(self, event):
-        found = event_evidence(event, time.time())
-        if found:
-            sid, evidence = found
-            worker_activity.record_runtime('openai', sid, evidence)
-            with self._lock:
+        sid = (event.get('params') or {}).get('threadId')
+        with self._lock:
+            previous = self._rows.get(sid, {}).get('activity')
+            found = event_evidence(event, time.time(), previous)
+            if found:
+                sid, evidence = found
+                worker_activity.record_runtime('openai', sid, evidence)
                 self._rows.setdefault(sid, {})['activity'] = evidence
 
     def _request(self, ws, method, params):
@@ -122,7 +148,9 @@ class RuntimeObserver:
                 if status.get('type') != 'active':
                     row['activity'] = {'state': 'idle', 'observed_at': time.time(),
                                        'source': 'codex_runtime:thread/read', 'coverage': 'runtime_status'}
-                elif previous_status != 'active':
+                elif (previous_status != 'active' and
+                      worker_activity.current(row.get('activity'), time.time())['state']
+                      not in ('model_active', 'model_work', 'generating', 'tool_wait', 'human_wait')):
                     row['activity'] = {'state': 'awaiting_model', 'observed_at': time.time(),
                                        'source': 'codex_runtime:thread/read', 'coverage': 'runtime_status'}
                 if status.get('type') == 'active' and status.get('activeFlags'):

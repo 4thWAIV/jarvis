@@ -90,7 +90,9 @@ def observations(root: Path, now: float):
             elif kind == 'SessionEnd': phase = 'offline'
             elif kind in ('Stop', 'SubagentStop', 'StopFailure'): phase = 'finishing'
             else: phase = 'awaiting_model'
-            row.update(state=phase, observed_at=event['at'], source=f'claude_hook:{kind}')
+            row.update(state=phase, observed_at=event['at'], source=f'claude_hook:{kind}',
+                       turn_open=False if kind in ('SessionEnd', 'Stop', 'SubagentStop', 'StopFailure')
+                       else None if kind == 'SessionStart' else True)
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return list(groups.values()), truncated
