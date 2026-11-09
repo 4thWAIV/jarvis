@@ -1,10 +1,10 @@
-"""The skill that teaches the user's own sessions to reach him through JARVIS.
+"""Shared skills for the user's Claude Code and Codex sessions.
 
 JARVIS reads two folders sessions write to: the needs board
 (`data_paths.needs_dir()`) and session messages
 (`data_paths.session_messages_dir()`). A session only knows they exist if
-something tells it, so the repo ships `session_skills/talk-to-jarvis/SKILL.md`
-and this installs it into every Claude Code config root and the user's Codex
+something tells it, so the repo ships the templates under `session_skills/`
+and this installs them into every Claude Code config root and the user's Codex
 home. The data folder is configurable, so the installed copy is the template
 rendered with this install's real paths, not a link to it.
 
@@ -45,33 +45,49 @@ def _make_package() -> str:
             f"{shlex.quote(sys.executable)} -P -m jarvis.make_package")
 
 
-def render() -> str:
+def _agent_key() -> str:
+    """The agent key command, run the way the package command is, with this
+    install's certificate."""
+    return (f"PYTHONPATH={shlex.quote(str(data_paths.PACKAGE_DIR.parent))} "
+            f"{shlex.quote(sys.executable)} -P -m jarvis.agent_key --cert "
+            f"{shlex.quote(str(data_paths.CONFIG_DIR / 'cert.pem'))}")
+
+
+def render(name: str = NAME, relative: str = "SKILL.md") -> str:
     """The skill with this install's folders filled in."""
-    return (TEMPLATE.read_text(encoding="utf-8")
+    from jarvis.language_documents import authoring_contract
+    return ((TEMPLATE.parent.parent / name / relative).read_text(encoding="utf-8")
             .replace("{{needs_dir}}", str(data_paths.needs_dir()))
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
             .replace("{{answers_dir}}", str(data_paths.answers_dir()))
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
             .replace("{{make_package}}", _make_package())
+            .replace("{{agent_key}}", _agent_key())
             .replace("{{making_a_package}}",
-                     str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md")))
+                     str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"))
+            + "\n\n" + authoring_contract() + "\n")
 
 
 def targets() -> list[Path]:
-    """Where the skill goes: `skills/talk-to-jarvis/SKILL.md` under every
+    """Where the shared skill files go: `skills/` under every
     Claude Code config root that exists, and under the user's Codex home if
     he has one. A tool he does not use gets nothing."""
     homes = [r for r in session_watch.config_roots() if r.is_dir()]
     codex = codex_sessions.codex_home()
     if codex.is_dir():
         homes.append(codex)
-    return [home / "skills" / NAME / "SKILL.md" for home in homes]
+    return [home / "skills" / path.relative_to(TEMPLATE.parent.parent)
+            for home in homes for path in sorted(TEMPLATE.parent.parent.rglob("*")) if path.is_file()]
+
+
+def _installed_text(path: Path) -> str:
+    relative = path.relative_to(next(p for p in path.parents if p.name == "skills"))
+    return render(relative.parts[0], str(Path(*relative.parts[1:])))
 
 
 def status() -> dict[Path, str]:
     """Each target, installed, missing, or out of date with this install."""
-    wanted = render()
     out = {}
     for path in targets():
         try:
@@ -79,17 +95,16 @@ def status() -> dict[Path, str]:
         except OSError:
             out[path] = MISSING
             continue
-        out[path] = INSTALLED if text == wanted else OUT_OF_DATE
+        out[path] = INSTALLED if text == _installed_text(path) else OUT_OF_DATE
     return out
 
 
 def install() -> list[Path]:
     """Write the rendered skill to every target. The paths written."""
-    text = render()
     written = []
     for path in targets():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(_installed_text(path), encoding="utf-8")
         written.append(path)
     return written
 

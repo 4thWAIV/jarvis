@@ -385,4 +385,11 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.team.roleMember": "Miembro",
   "left.team.roleAdmin": "Administrador",
   "left.team.add": "Agregar",
+  "left.updates.languageKit": "Kit del lenguaje de arquitectura",
+  "left.updates.kitActive": "Kit activo: {version}.",
+  "left.updates.kitNotAdopted": "El kit del lenguaje de arquitectura no se ha adoptado en esta instalación.",
+  "left.updates.kitLastCheck": "Última búsqueda de actualizaciones: {when}.",
+  "left.updates.kitCompatibility": "Un candidato espera revisión. El kit actual sigue activo.",
+  "left.updates.kitUnavailable": "No se pudo leer el estado del kit de lenguaje.",
+  "left.updates.kitReading": "Leyendo el estado del kit de lenguaje…",
 };

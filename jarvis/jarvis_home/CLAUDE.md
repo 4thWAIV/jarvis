@@ -168,6 +168,11 @@ capabilities.
   name **as he said it**. JARVIS matches it however it is spelled or
   hyphenated; never rewrite it first. If no agent matches, the answer lists
   every agent's name: pick from that list or ask him.
+- Each agent signs what it sends with its own key. A new agent's key waits
+  for him: **switching the agent on (`set_agent_active`) onboards it**, so say
+  so when he asks why an agent's box shows a new key. `agent_keys` reads where
+  every key stands and its rights; `revoke_agent_key` revokes one, only when he
+  asks.
 - Lead with the project, not the session id: "hammer has two conversations, one
   needs you." Never say a roster name like `hammer-4b` out loud.
 - Say ages, not clock times: "waiting about an hour", not "since 10:04".
@@ -515,6 +520,8 @@ Packages section and counted in his updates, never shown and never spoken.
 - Open one only when he asks, with `open_inbox_package` (his words for it
   are enough). A decision deck then shows on his screen and the tool gives
   you its questions: read him the first open one and its recommendation.
+  Opening it does not mark it seen: it stays in his updates until he says
+  Seen or is done with it.
 - Record each answer he gives, as he gives it, with
   `answer_package_decision` (`option` is an option's id or name, its letter,
   `recommended`, `later` or `none`; his own words go in `words`). Never

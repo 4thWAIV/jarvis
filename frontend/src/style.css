@@ -1085,6 +1085,19 @@ html, body {
 }
 .agent-needs.none { color: var(--ui-muted); }
 
+/* The agent's own key, in the box's upper edge beside the needs count: "New
+   key" while one waits for his switch, a key mark once onboarded. */
+.agent-key {
+  position: absolute;
+  left: 20px;
+  top: 2px;
+  font-size: 9px;
+  line-height: 10px;
+  pointer-events: auto;
+}
+.agent-key.waiting { color: #fbbf24; font-weight: 600; }
+.agent-key.onboarded { color: var(--ui-muted); }
+
 /* Who runs the agent, in the lower left, under the needs count: the brain's
    logo (18px) a little smaller. */
 .agent-provider {
@@ -2201,6 +2214,16 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   text-align: left;
 }
 .thread-header { flex: none; display: flex; align-items: center; gap: 12px; }
+/* The agent's own key, under the header: fingerprint, onboarding, rights, Revoke. */
+.thread-key {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  margin-top: 6px; font-size: 11px; color: var(--ui-muted);
+}
+.thread-key-id { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.thread-key-revoke {
+  padding: 1px 8px; font: inherit; color: var(--ui-text); background: transparent;
+  border: 1px solid var(--ui-divider); border-radius: 4px; cursor: pointer;
+}
 .thread-header h3 { margin: 0; font-size: 18px; color: var(--ui-accent); }
 .thread-state {
   padding: 1px 8px;
@@ -4045,7 +4068,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   border-radius: 8px;
   background: rgba(94, 234, 212, 0.05);
 }
-.package-row.state-arrived { border-color: rgba(94, 234, 212, 0.6); }
+.package-row.state-arrived,
+.package-row.state-opened { border-color: rgba(94, 234, 212, 0.6); }
 .package-row-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .package-row-head .row-person { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .package-progress { font-size: 10px; color: var(--ui-secondary); white-space: nowrap; }
@@ -4295,3 +4319,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .worker-counter > summary::-webkit-details-marker { display: none; }
 .worker-counter > summary small { font-size: 9px; color: #b9d6e9; }
 .worker-counter[open] { border-color: var(--ui-accent); }
+.package-canonical {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--ui-edge);
+}
+.package-canonical p { margin: 0 0 4px; }
+.package-canonical a { color: var(--ui-accent); text-decoration: underline; }

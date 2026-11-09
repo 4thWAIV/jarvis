@@ -168,8 +168,9 @@ class BrainConfig:
     # Who runs the brain (brain_provider.provider): also the provider whose
     # logo the voice page shows on the orb.
     provider: str = brain_provider.DEFAULT_PROVIDER
-    model: str = "sonnet"
-    effort: str = "low"
+    model: str | None = "sonnet"
+    effort: str | None = "low"
+    authoring: bool = False  # fresh package author; voice defaults stay restricted
     claude_path: Optional[str] = None       # the anthropic provider's `claude`
     codex_path: Optional[str] = None        # the openai provider's `codex`
     turn_timeout: float = 90.0
@@ -592,6 +593,8 @@ class Brain:
         # reason: an edited persona never receives it. English adds nothing,
         # and neither does plain "sir", the persona's own address.
         base += language_rule(spoken_words.active_language(), self.config.honorific)
+        from jarvis.language_documents import authoring_contract
+        base += "\n\n" + authoring_contract() + "\n"
         # `_handover` is what the OUTGOING brain wrote a moment ago in this
         # same process; it always wins over the journal on disk, which is the
         # cold-start fallback and may be days old.

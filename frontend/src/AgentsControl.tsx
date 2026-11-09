@@ -5,6 +5,9 @@
  * the Active view there is none and the agent's box takes the whole row. The name itself is
  * disabled for now. While any of an agent's subagents are working, its box
  * says how many ("2 working") in its lower edge, inside the row's size.
+ * An agent's own key shows in its box's lower right: "New key" while one
+ * waits for him (switching the agent on is what onboards it, so its switch
+ * shows off until then), a key mark once it is onboarded.
  *
  * The list shows as many whole rows as fit, with no scroll bar. The layout
  * gives the list the space left below everything above it (`.agents-space`,
@@ -35,7 +38,7 @@ import { agentName } from "./agentName";
 import { useT } from "./locale";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
-         type AgentRow } from "./agents";
+         switchedOn, type AgentRow } from "./agents";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import {
@@ -115,7 +118,9 @@ export function AgentsControl() {
   const toggle = (agent: AgentRow) => {
     // Refused or not, the list is read again, so the switch shows what is
     // true rather than what was asked for.
-    setAgentActive(agent.session_id, !agent.active).then(reconcile, (e: Error) => {
+    // Switching it on also onboards a waiting key, so an active agent whose
+    // key waits shows off and is switched on again (switchedOn).
+    setAgentActive(agent.session_id, !switchedOn(agent)).then(reconcile, (e: Error) => {
       console.warn("[agents] could not switch", agent.session_id, e.message);
       reconcile();
     });
@@ -226,14 +231,28 @@ function AgentItem({ agent, switchable, onToggle }: {
         {/* Its needs-board count, in the upper right, zero included. */}
         <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
         <AgentProvider provider={agent.provider} />
+        {agent.key === "waiting" && (
+          <span className="agent-key waiting" ref={ui.part("key")}
+                title={t("right.agents.keyWaitingHint")}>{t("right.agents.keyWaiting")}</span>
+        )}
+        {agent.key === "onboarded" && (
+          <span className="agent-key onboarded" ref={ui.part("key")}
+                title={t("right.agents.keyOnboarded")} aria-label={t("right.agents.keyOnboarded")}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                 strokeWidth="1.4" aria-hidden="true">
+              <circle cx="3.5" cy="6" r="2.3" /><path d="M5.8 6h5.2M9.5 6v2M11 6v1.5" />
+            </svg>
+          </span>
+        )}
         <WorkerFamily sessionId={agent.session_id} provider={agent.provider} />
       </button>
       {/* Only in the All view; in Active the agent's box takes the
           whole row. */}
       {switchable && (
-        <button data-ui-action="domain" type="button" role="switch" aria-checked={agent.active}
+        <button data-ui-action="domain" type="button" role="switch" aria-checked={switchedOn(agent)}
                 className="agent-switch"
-                title={agent.active ? t("right.agents.deactivate") : t("right.agents.activate")}
+                title={agent.key === "waiting" ? t("right.agents.activateOnboard")
+                       : agent.active ? t("right.agents.deactivate") : t("right.agents.activate")}
                 onClick={() => onToggle(agent)} />
       )}
     </li>

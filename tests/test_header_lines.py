@@ -355,6 +355,35 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_author.author": (
+        "it records provider model/session metadata and raw author text in local source/provenance "
+        "files for the originating factory command. It does not create a trusted JARVIS header or "
+        "speak session text. Its handoff prompt is the caller's explicit authoring input, and any "
+        "later inbox reading of packaged author content retains the existing untrusted wrapper."),
+    "language_documents.document_title": (
+        "the source title stays a data value in canonical metadata, is rendered as escaped text by React, "
+        "and is serialized inside the escaped language-document tool envelope; it is not a trusted brain header. "
+        "Hostile title and author delimiters are driven by test_language_document_api.py"),
+    "language_documents.validate": (
+        "author, title, scope and source findings are stored as revision data and returned through the shared "
+        "paged JSON envelope; the brain adapter escapes and wraps every segment. Hostile provenance and exact "
+        "continuations are driven by test_language_document_api.py"),
+    "language_documents.retrieve": (
+        "the stored source metadata is returned as JSON data, not interpolated into system or voice headers. "
+        "The language-document adapter escapes every segment before wrapping it as untrusted. Header boundaries "
+        "and complete hostile-field retrieval are driven by test_language_document_api.py"),
+    "language_kit_updates.check": (
+        "release names are validated identifiers before use, and remote failures remain fields in update status. "
+        "No release text becomes a trusted brain header; capability results use the language-document wrapper "
+        "and Settings draws diagnostics as text. Metadata failure paths are driven by test_language_kit_updates.py"),
+    "language_projection._publish": (
+        "document titles pass through the existing package slug function for filenames and remain metadata "
+        "for escaped UI or wrapped brain output; publication returns structured references, not a trusted title "
+        "line. Exact source/check/view publication is driven by test_language_projection.py"),
+    "language_projection.gate": (
+        "the gate compares source-bearing canonical fields and returns no foreign prose on success. Its "
+        "coverage rejection uses fixed diagnostic text rather than copying unresolved source statements into "
+        "package-opening errors. Mutation and hostile coverage cases are driven by test_language_projection.py"),
     "package_understanding.prepare_deck": (
         "it writes the author's structured slide/decision content and labeled narration into the "
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
@@ -551,6 +580,16 @@ EXEMPT = {
         "`codex`, `brain_provider.py`), passed to `brain_activity.feed."
         "turn_started`, whose `record` refuses any field outside `FIELDS`; no "
         "session's or person's words reach a string. Driven by "
+        "tests/test_brain_activity.py"),
+    "brain_activity.turn_started": (
+        "the `provider` it keeps is the brain provider's own name (`claude` or "
+        "`codex`), and the event it records is a turn id and its origin, through "
+        "`record`, which refuses any field outside `FIELDS`; no session's or "
+        "person's words reach a string. Driven by tests/test_brain_activity.py"),
+    "brain_activity.turn_ended": (
+        "it records the turn's id, the brain provider's own name, a character "
+        "count and a duration through `record`, which refuses any field outside "
+        "`FIELDS`; no session's or person's words reach a string. Driven by "
         "tests/test_brain_activity.py"),
     "server.tool_project_notes": (
         "the `text` and `stamp` it prints are a project note's, read from "
@@ -831,10 +870,6 @@ EXEMPT = {
     "work_store.answers_for": (
         "it returns his answers to an access key's own decisions as data for that agent "
         "(GET /api/work/answers, work_report.py answers); none of it reaches the brain"),
-    "work_api.mount": (
-        "the Work routes: they return the record as JSON to the page and the reporting "
-        "agents and print nothing for the brain, which reads the same record through "
-        "work_status's wall"),
     "server._sender_name": (
         "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
         "through _said_name, which refuses anything but a plain name; never to the brain"),
@@ -1274,6 +1309,28 @@ EXEMPT = {
         "counts and a failure code worded by Refused.shown, which returns its "
         "spec's fixed sentence even for a code it does not know; the file's "
         "name and paths go in the untrusted block `_location_reply` adds"),
+    # Agent keys (agent_keys.py and its record): fingerprints, states and
+    # JARVIS's own words; an agent's name only through the voice-name wall.
+    "agent_auth.not_onboarded": (
+        "it returns fixed sentences chosen by the key's state, a value JARVIS wrote itself; no field of the key is interpolated into them"),
+    "agent_key.status": (
+        "the agent's own command printing its own key's fingerprint and the state JARVIS answered, to the agent's terminal; never a header the brain reads"),
+    "agent_keys.work_key": (
+        "it reads a key file's path and public key off disk for the agent's own command and returns them; nothing is printed or said"),
+    "reporters.of_label": (
+        "it builds the `key:<label>` record a request is kept as; a name it returns is shown on the page as text and goes to the brain only through _said_name or a walled block"),
+    "reporters.of_principal": (
+        "it builds the `agent:<session>` record and looks up the agent's one name; the name reaches the brain only through _said_name or a walled block, never a header"),
+    "server._adopted_label": (
+        "it compares access-key labels with the agent directory and returns a label to store; nothing is printed, said or shown from it"),
+    "server._key_line": (
+        "the agent's name goes through _agent_said (the voice-name wall); the rest is the key's fingerprint, JARVIS's fixed state words and the rights' fixed names. Driven by tests/test_agent_keys.py"),
+    "server.api_my_agent_key": (
+        "a route answering the signing agent with its own key's fingerprint and state as JSON; no header the brain reads"),
+    "server.tool_agent_keys": (
+        "every line comes from _key_line (the agent's name through the voice-name wall) or fixed words with counts. Driven by tests/test_agent_keys.py"),
+    "server.tool_revoke_agent_key": (
+        "its answers are fixed sentences, and the agent's name only through _agent_said, the voice-name wall. Driven by tests/test_agent_keys.py"),
 }
 
 

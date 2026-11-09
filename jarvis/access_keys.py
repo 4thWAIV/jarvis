@@ -8,7 +8,9 @@ category instead, sent the same way as the token: `Authorization: Bearer
 <key>`. web_auth admits a request carrying a key only when one of the key's
 categories covers that request's method and path.
 
-Categories are defined here and nowhere else. The voice socket, settings,
+Categories are the agents' rights (agent_rights.py), defined there and
+nowhere else; access keys are what agents used before they had their own
+keys (agent_keys.py), still accepted until the cut-over. The voice socket, settings,
 brains, restart and /internal/tool are in none of them: those stay with the
 browser and the tool token.
 
@@ -31,53 +33,18 @@ import re
 import secrets
 import sys
 import time
-from dataclasses import dataclass
 
-from jarvis import data_paths
+from jarvis import agent_rights, data_paths
 
-# What a WebSocket handshake is called in a category's routes.
-WEBSOCKET = "WS"
+# The categories are the agents' rights, defined once (agent_rights.py).
+WEBSOCKET = agent_rights.WEBSOCKET
 
 # Every key starts with this, so one is recognisable in a config file and
 # never confused with the tool token.
 PREFIX = "jarvis_key_"
 
-
-@dataclass(frozen=True)
-class Category:
-    description: str
-    routes: tuple[tuple[str, str], ...]   # (method, full-match path pattern)
-
-    def covers(self, method: str, path: str) -> bool:
-        return any(m == method and re.fullmatch(p, path) for m, p in self.routes)
-
-
-CATEGORIES: dict[str, Category] = {
-    "captures": Category(
-        "Accept, delete, send, read aloud and restore the captures on the voice page.",
-        (("POST", r"/api/capture/\d+/(accept|delete|send|read|restore)"),)),
-    "agents": Category(
-        "Rename agents and switch them active or inactive.",
-        (("POST", r"/api/agents/[^/]+/(name|active)"),)),
-    "runs": Category(
-        "Start, cancel and retry runs, open projects, and watch the runs feed.",
-        (("POST", r"/api/runs"), ("DELETE", r"/api/runs/[^/]+"),
-         ("POST", r"/api/runs/[^/]+/retry"), ("POST", r"/api/projects/open"),
-         (WEBSOCKET, r"/ws/runs"))),
-    "workflows": Category(
-        "Start workflows and report their steps to the Workflows view.",
-        (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
-    "work": Category(
-        "Track work items and report who is on each piece to the Work tab.",
-        (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"),
-         ("GET", r"/api/work/answers"))),
-    "packages": Category(
-        "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
-        (("POST", r"/api/packages/inbox"),)),
-    "watch": Category(
-        "Watch the sessions and specs feeds.",
-        ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),
-}
+Category = agent_rights.Right
+CATEGORIES: dict[str, Category] = agent_rights.RIGHTS
 
 LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
 

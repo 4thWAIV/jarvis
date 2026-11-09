@@ -223,7 +223,7 @@ def test_the_reporter_starts_reports_and_reads_his_answer(wired, monkeypatch, ca
     server, _, _, folder = wired
     key = _key()
     from jarvis import work_report
-    monkeypatch.setattr(work_report, "_client", lambda cert: TestClient(server.app, headers=key))
+    monkeypatch.setattr(work_report, "_client", lambda cert, session="": TestClient(server.app, headers=key))
     assert work_report.main(["work_report.py", "start", "Rebrand", "--folder", folder]) == 0
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "piece", wid, "copy", "Copy pass.",
@@ -255,7 +255,8 @@ def test_the_skill_teaches_the_command_with_this_install_s_paths():
     text = session_skill.render()
     assert "{{" not in text
     assert str(data_paths.PACKAGE_DIR / "work_report.py") in text
-    assert "create <label> work`" in text
+    assert "--as <your session id>" in text
+    assert "-m jarvis.agent_key --cert" in text and "agent_key}}" not in text
 
 
 def test_the_list_gives_its_groups_and_each_piece_everything_the_detail_shows(wired):
@@ -315,7 +316,7 @@ def test_the_reporter_sends_area_worker_order_and_evidence(wired, monkeypatch, c
     server, _, _, folder = wired
     key = _key()
     from jarvis import work_report, work_store
-    monkeypatch.setattr(work_report, "_client", lambda cert: TestClient(server.app, headers=key))
+    monkeypatch.setattr(work_report, "_client", lambda cert, session="": TestClient(server.app, headers=key))
     assert work_report.main(["work_report.py", "start", "Rebrand", "--folder", folder,
                              "--area", "Brand"]) == 0
     wid = capsys.readouterr().out.strip()
@@ -401,7 +402,7 @@ def test_the_reporter_withdraws_closes_and_links_a_package(wired, monkeypatch, c
     server, _, _, folder = wired
     key = _key()
     from jarvis import work_report, work_store
-    monkeypatch.setattr(work_report, "_client", lambda cert: TestClient(server.app, headers=key))
+    monkeypatch.setattr(work_report, "_client", lambda cert, session="": TestClient(server.app, headers=key))
     assert work_report.main(["work_report.py", "start", "Rebrand", "--folder", folder]) == 0
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "decision", wid, "logo", "Which logo?",

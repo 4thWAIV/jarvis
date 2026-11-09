@@ -139,7 +139,8 @@ def test_the_handover_is_still_bounded(tmp_path):
     b = brain.Brain(_config(tmp_path))
     b._handover = "x" * 5000
     prompt = b.launch_prompt()
-    assert prompt.count("x") <= brain.HANDOVER_MAX_CHARS, prompt.count("x")
+    carried = _wrapped_part(prompt).partition(">\n")[2].partition("\n</session-output>")[0]
+    assert carried == "x" * brain.HANDOVER_MAX_CHARS
 
 
 # --- 2. a generation remembers that it read somebody else's words --------

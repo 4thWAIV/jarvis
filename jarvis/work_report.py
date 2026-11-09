@@ -3,9 +3,11 @@ Work tab.
 
 An agent tracking work on a ZIP work package or a folder calls this, so the
 one durable record (work_store.py) always says what state it is in and
-exactly who is on each piece. It needs an access key in the `work` category
-in JARVIS_ACCESS_KEY (`python -m jarvis.access_keys create <label> work`),
-and finds JARVIS and trusts its certificate the same way as
+exactly who is on each piece. Every request is signed with the agent's own
+onboarded key (`--as <session id>`, or JARVIS_AGENT_SESSION), else a
+work-item key found in this folder or above (`.jarvis/work-key`), else,
+while they are still accepted, carries an access key in the `work` category
+in JARVIS_ACCESS_KEY. It finds JARVIS and trusts its certificate the same way as
 workflow_report.py, whose standard-library client it uses.
 
     python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>] [--area <area>]
@@ -73,18 +75,15 @@ if not __package__:
     # Run as a script: put the package's parent on the path, as workflow_report does.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.workflow_report import NOT_ANSWERED, _Client, _post, base_url  # noqa: E402
+from jarvis.workflow_report import NOT_ANSWERED, _Client, _post, signed_client  # noqa: E402
 
 # `answer`'s exit when the decision was closed by his signing off its package
 # without answering it (work_store.DECISION_SIGNED_OFF).
 SIGNED_OFF = 4
 
 
-def _client(cert: Path | None) -> _Client:
-    key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
-    if not key:
-        raise SystemExit("Set JARVIS_ACCESS_KEY to an access key in the work category.")
-    return _Client(base_url(), key, cert)
+def _client(cert: Path | None, session_id: str = "") -> _Client:
+    return signed_client(cert, session_id, "work")
 
 
 def _who(text: str) -> dict:
@@ -123,6 +122,8 @@ def _line(item: dict) -> str:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="work_report.py")
     parser.add_argument("--cert", type=Path)
+    parser.add_argument("--as", dest="as_session", default="",
+                        help="your session id: every request is signed with its key")
     sub = parser.add_subparsers(dest="command", required=True)
     start = sub.add_parser("start")
     start.add_argument("title")
@@ -172,7 +173,7 @@ def main(argv: list[str]) -> int:
     answers.add_argument("--since")
     args = parser.parse_args(argv[1:])
 
-    with _client(args.cert) as client:
+    with _client(args.cert, args.as_session) as client:
         if args.command == "start":
             source = ({"kind": "zip", "path": os.path.abspath(args.zip)} if args.zip
                       else {"kind": "folder", "path": os.path.abspath(args.folder)})

@@ -49,6 +49,10 @@ export const rightEn = {
   "right.agents.deactivate": "Deactivate",
   "right.agents.previous": "Previous agents",
   "right.agents.more": "More agents",
+  "right.agents.keyWaiting": "New key",
+  "right.agents.keyWaitingHint": "This agent has a new key waiting: switching it on accepts it",
+  "right.agents.keyOnboarded": "Its key is onboarded",
+  "right.agents.activateOnboard": "Switch on, and accept its new key",
 
   // The Queue tab (QueuePanel.tsx) and the words queueStore.ts gives it.
   "right.queue.notOffered": "Messaging is not available on this JARVIS.",
@@ -59,7 +63,7 @@ export const rightEn = {
   "right.packages.unprovenClaim": "Answers go nowhere: nothing proved the session it named sent it",
   "right.packages.answered": "{answered} of {total} answered",
   "right.packages.state.arrived": "Not opened",
-  "right.packages.state.opened": "Opened",
+  "right.packages.state.opened": "Opened, not done",
   "right.packages.state.answering": "Being answered",
   "right.packages.state.answered": "Ready to send back",
   "right.packages.closed.signed_off": "Signed off",
