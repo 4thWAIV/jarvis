@@ -288,9 +288,17 @@ def deck(package: Package) -> Optional[dict]:
         return None
     try:
         text = work_packages.page_file(package, DECK_DATA).decode("utf-8")
+    except (PackageError, UnicodeDecodeError):
+        return None
+    return read_deck_data(text)
+
+
+def read_deck_data(text: str) -> Optional[dict]:
+    """Read the shared JSON assignment without evaluating JavaScript."""
+    try:
         start = text.index(DATA_PREFIX) + len(DATA_PREFIX)
         data = json.JSONDecoder().raw_decode(text, start)[0]
-    except (PackageError, UnicodeDecodeError, ValueError):
+    except (ValueError, TypeError):
         return None
     return data if isinstance(data, dict) else None
 

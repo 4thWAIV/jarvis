@@ -32,6 +32,35 @@ CACHE_MAX_BYTES = 512 * 1024 * 1024
 
 DerivedKind = Literal["describe", "listing", "text", "render", "preview", "digest"]
 
+
+@dataclass(frozen=True)
+class LocalOwner:
+    installation_id: str
+
+
+@dataclass(frozen=True)
+class TeamOwner:
+    server_id: str
+    owner_github_id: int
+
+
+OwnerScope = LocalOwner | TeamOwner
+
+
+@dataclass(frozen=True)
+class ScopedCacheKey:
+    owner: OwnerScope
+    attachment_sha256: str
+    member_id: str
+    reader: str
+    reader_version: int
+    kind: str
+    options: str = ""
+
+    def digest(self) -> str:
+        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True,
+                                        separators=(",", ":")).encode()).hexdigest()
+
 PARTIAL = ".partial-"
 SCRATCH = "scratch"
 # A scratch copy or partial file older than this was left by a crash.
@@ -70,6 +99,19 @@ class DerivedCache:
     def __init__(self, root: Optional[Path] = None, max_bytes: int = CACHE_MAX_BYTES):
         self._root, self.max_bytes = root, max_bytes
         self._used: Optional[int] = None    # bytes held, counted once, then kept up to date
+        self._leases: dict[str, tuple[float, set[Path]]] = {}
+
+    def lease(self, lease_id: str, keys, seconds: float = 300) -> None:
+        self._leases[lease_id] = (time.monotonic() + seconds,
+                                  {self.path_for(key) for key in keys})
+
+    def release(self, lease_id: str) -> None:
+        self._leases.pop(lease_id, None)
+
+    def _leased(self) -> set[Path]:
+        now = time.monotonic()
+        self._leases = {k: v for k, v in self._leases.items() if v[0] > now}
+        return set().union(*(v[1] for v in self._leases.values())) if self._leases else set()
 
     def root(self) -> Path:
         return self._root or data_paths.bundle_cache_dir()
@@ -77,10 +119,19 @@ class DerivedCache:
     def _owner_dir(self, server_id: str, owner_github_id: int) -> Path:
         return self.root() / _segment(server_id) / str(int(owner_github_id))
 
-    def path_for(self, key: CacheKey) -> Path:
+    def scope_dir(self, owner: OwnerScope) -> Path:
+        if isinstance(owner, LocalOwner):
+            return self.root() / "local" / _segment(owner.installation_id)
+        return self._owner_dir(owner.server_id, owner.owner_github_id)
+
+    def scratch_scope(self, owner: OwnerScope) -> Path:
+        return _private(self.scope_dir(owner) / SCRATCH)
+
+    def path_for(self, key: CacheKey | ScopedCacheKey) -> Path:
         sha = key.attachment_sha256.lower()
-        return (self._owner_dir(key.server_id, key.owner_github_id) / sha[:2]
-                / key.digest())
+        folder = (self.scope_dir(key.owner) if isinstance(key, ScopedCacheKey)
+                  else self._owner_dir(key.server_id, key.owner_github_id))
+        return folder / sha[:2] / key.digest()
 
     def get(self, key: CacheKey) -> Optional[bytes]:
         path = self.path_for(key)
@@ -98,6 +149,12 @@ class DerivedCache:
 
     def put(self, key: CacheKey, data: bytes) -> None:
         final = self.path_for(key)
+        leased = self._leased()
+        if final in leased:
+            pinned = sum(p.stat().st_size for p in leased if p != final and p.is_file())
+            if pinned + len(data) > self.max_bytes:
+                raise CacheBudgetError("The cache cannot admit these bytes while its active views are leased.")
+        previous = final.stat().st_size if final.is_file() else 0
         folder = _private(final.parent)
         partial = folder / f"{PARTIAL}{uuid.uuid4()}"
         fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -111,7 +168,7 @@ class DerivedCache:
         if self._used is None:
             self._used = sum(size for _, size, _ in self._files(self.root()))
         else:
-            self._used += len(data)
+            self._used += len(data) - previous
         if self._used > self.max_bytes:
             self.trim()
 
@@ -132,6 +189,7 @@ class DerivedCache:
         hour) and then the least recently used files until the cache is
         within max_bytes; the bytes removed."""
         removed, now = 0, time.time()
+        leased = self._leased()
         kept = []
         for path, size, used in self._files(self.root()):
             leftover = path.name.startswith(PARTIAL) or path.parent.name == SCRATCH
@@ -145,6 +203,8 @@ class DerivedCache:
         for used, size, path in sorted(kept):
             if total <= self.max_bytes:
                 break
+            if path in leased:
+                continue
             path.unlink(missing_ok=True)
             total -= size
             removed += size
@@ -154,7 +214,8 @@ class DerivedCache:
     @staticmethod
     def _files(folder: Path):
         """(path, size, last used) of every file under `folder`, links skipped."""
-        for dirpath, _, names in os.walk(folder):
+        for dirpath, directories, names in os.walk(folder):
+            directories[:] = [d for d in directories if not (Path(dirpath) / d).is_symlink()]
             for name in names:
                 path = Path(dirpath) / name
                 try:
@@ -164,3 +225,7 @@ class DerivedCache:
                 if path.is_symlink():
                     continue
                 yield path, st.st_size, st.st_mtime
+
+
+class CacheBudgetError(ValueError):
+    pass

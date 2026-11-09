@@ -51,7 +51,8 @@ from uuid import UUID
 
 from jarvis import bundle_archive, bundle_readers, work_packages
 from jarvis import messaging_wire as wire
-from jarvis.bundle_cache import CacheKey, DerivedCache
+from jarvis.bundle_cache import CacheKey, DerivedCache, TeamOwner
+from jarvis.inspection_core import InspectionCore
 from jarvis.bundle_contract import (ATTACHMENT_PREFIX, MEMBER_PAGE_DEFAULT, MEMBER_PAGE_MAX,
                                     PATH_MAX_CHARS, PREVIEW_REFS_MAX, TEXT_PAGE_DEFAULT_CHARS,
                                     TEXT_PAGE_MAX_CHARS, AttachmentInfo, Classification,
@@ -254,6 +255,7 @@ class BundleInspection:
                  budgets: bundle_archive.Budgets = bundle_archive.DEFAULT_BUDGETS):
         """`files` is messaging_files.FileSnapshots."""
         self.files, self.cache, self.observer, self.budgets = files, cache, observer, budgets
+        self.core = InspectionCore(cache)
 
     # -- reaching the file -------------------------------------------------------------
 
@@ -577,22 +579,8 @@ class BundleInspection:
 
     def _describe(self, owner: Owner, info: AttachmentInfo, source, detected: Detected,
                   reader: Reader) -> Description:
-        key = self._key(owner, info, source.member_id, reader.name, reader.version, "describe",
-                        detected.format)
-        cached = self.cache.get(key)
-        if cached is not None:
-            raw = json.loads(cached)
-            return Description(raw["support"], Extent.model_validate(raw["extent"]),
-                               raw["reason"], frozenset(raw["operations"]))
-        try:
-            found = reader.describe(source, detected)
-        except bundle_archive.ArchiveError as e:
-            found = Description("blocked", Extent(), archive_reason(e))
-        self.cache.put(key, json.dumps({"support": found.support,
-                                        "extent": found.extent.model_dump(mode="json"),
-                                        "reason": found.reason,
-                                        "operations": sorted(found.operations)}).encode())
-        return found
+        return self.core.describe(owner=TeamOwner(owner.server_id, owner.owner_github_id),
+                                  source=source, detected=detected, reader=reader)
 
     def _run(self, owner: Owner, key: AttachmentKey, info: AttachmentInfo, mid: str,
              operation: Operation, call):
@@ -633,8 +621,10 @@ class BundleInspection:
         else:
             try:
                 got = self._run(owner, key, info, member_id, "read_text",
-                                lambda: reader.read_text(source, entry.detected, cursor,
-                                                         max_chars))
+                                lambda: self.core.read_text(
+                                    owner=TeamOwner(owner.server_id, owner.owner_github_id),
+                                    source=source, detected=entry.detected, reader=reader,
+                                    cursor=cursor, max_chars=max_chars))
             except ValueError:
                 raise InspectionRefused("bad_continuation", "That continuation is past the "
                                                             "end.") from None
@@ -732,18 +722,11 @@ class BundleInspection:
         pages = description.extent.pages
         if page < 1 or (pages is not None and page > pages):
             raise InspectionRefused("page_out_of_range", f"It has {pages or 0} pages.")
-        cache_key = self._key(owner, info, member_id, reader.name, reader.version, "render",
-                              f"{options.digest()}:{page}")
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            size = int.from_bytes(cached[:4], "big")
-            rendered = RenderedPage(RenderedPageInfo.model_validate_json(cached[4:4 + size]),
-                                    cached[4 + size:])
-        else:
-            rendered = self._run(owner, key, info, member_id, "render",
-                                 lambda: reader.render(source, entry.detected, page, options))
-            head = rendered.info.model_dump_json().encode()
-            self.cache.put(cache_key, len(head).to_bytes(4, "big") + head + rendered.data)
+        rendered = self._run(owner, key, info, member_id, "render",
+                             lambda: self.core.render(
+                                 owner=TeamOwner(owner.server_id, owner.owner_github_id),
+                                 source=source, detected=entry.detected, reader=reader,
+                                 page=page, options=options))
         self._observe(owner, key, info.sha256, "render", member_id, "readable",
                       locations=(PageLocation(page=page),))
         return rendered
@@ -761,22 +744,13 @@ class BundleInspection:
                                     entry.info.reason)
         if entry.info.path == "":
             return info.sha256.lower()
-        cache_key = self._key(owner, info, member_id, "inspection", LISTING_VERSION, "digest")
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached.decode("ascii")
+        source = self._zip_source(owner, info, path, entry.info.path)
         try:
-            with bundle_archive.open_archive(path) as archive:
-                listing = bundle_archive.list_members(archive, self.budgets, per_entry=True)
-                member = listing.files().get(entry.info.path)
-                if member is None:
-                    raise InspectionRefused("member_not_found", "There is no such member.")
-                found = bundle_archive.digest(archive, member, self.budgets)
+            return self.core.digest(owner=TeamOwner(owner.server_id, owner.owner_github_id),
+                                    source=source)
         except bundle_archive.ArchiveError as e:
             raise _refusal_for(archive_reason(e), "It could not be read within the safe "
                                                   "limits.") from None
-        self.cache.put(cache_key, found.encode("ascii"))
-        return found
 
     def html_asset(self, owner: Owner, key: AttachmentKey, member_id: str,
                    relative: str) -> tuple[bytes, str]:
