@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import subsystem_diagnostics as sd
 from jarvis.run_store import Message
+from tests.fixtures.waiting import until_async
 
 NOW = 1_000_000.0
 ORIGIN = {"Origin": "http://localhost:5173"}
@@ -110,12 +111,11 @@ def test_the_real_watcher_notes_each_poll(monkeypatch):
         assert not w.running
         await w.start()
         assert w.running
-        for _ in range(200):
+        def settled():
             if w.poll_failures == 2:
                 assert w.last_poll_error == "RuntimeError: again" and w.last_poll_ok_at is None
-            if w.last_poll_ok_at is not None:
-                break
-            await asyncio.sleep(0.01)
+            return w.last_poll_ok_at is not None
+        await until_async(settled)
         await w.stop()
 
     asyncio.run(run())
@@ -523,10 +523,8 @@ def test_communications_down_and_back_are_one_update(server, monkeypatch):
 
     async def run():
         task = asyncio.create_task(server._watch_subsystems())
-        for _ in range(500):
-            if "subsystems" in sd.beats and sd.beats["subsystems"].failures:   # run out
-                break
-            await asyncio.sleep(0.005)
+        await until_async(lambda: "subsystems" in sd.beats
+                          and sd.beats["subsystems"].failures)            # run out
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 

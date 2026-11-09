@@ -19,6 +19,7 @@ import pytest
 pytestmark = [pytest.mark.page, pytest.mark.webgl]
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import settled, until_async
 
 AGENTS = {"agents": [{"session_id": f"s{i}", "name": f"agent {i}", "active": True,
                       "state": "idle"} for i in range(30)]}
@@ -48,7 +49,8 @@ async def _open(p, url, messages):
 async def test_the_column_leaves_the_ray_lane_clear(page_playwright, page_url):
     async with page_playwright as p:
         browser, page = await _open(p, page_url, [])
-        geo = await page.evaluate("""() => {
+        await page.wait_for_selector("#left-column")
+        geo = await settled(page, """() => {
           const c = document.getElementById('left-column').getBoundingClientRect();
           return {left: c.left, width: c.width, lane: innerWidth * 0.04};
         }""")
@@ -77,7 +79,7 @@ async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_
             {"type": "agent_message", "session_id": "s25"}])
         await page.get_by_role("button", name="All", exact=True).click()
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
-        info = await page.evaluate("""() => {
+        info = await settled(page, """() => {
           const orb = document.getElementById('orb-control').getBoundingClientRect();
           const target = document.querySelector('.agents-list li[data-session-id="s25"] .agent-orb');
           const t = target && target.getBoundingClientRect();
@@ -89,7 +91,7 @@ async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_
                   laneLeft: col.right, tabsTop: tabs.top};
         }""")
         assert info["shown"], "the messaged agent was not brought into view"
-        (ray,) = await page.evaluate(RAYS)
+        (ray,) = await settled(page, RAYS)
         sx, sy, top, cx, ey, ex = _segments(ray["d"])
         assert abs(sx - info["orbCentre"]) < 1 and abs(sy - info["orbMid"]) < 1, info
         assert 0 < top < info["tabsTop"], info                         # above the centre tabs
@@ -127,13 +129,6 @@ async def _open_scripted(p, url, script):
     await page.route_web_socket("**/ws/sessions", sessions)
     await page.goto(url)
     return browser, page
-
-
-async def _until(condition, timeout=10.0):
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not condition():
-        assert asyncio.get_running_loop().time() < deadline, "timed out"
-        await asyncio.sleep(0.05)
 
 
 def _to(sid):
@@ -271,8 +266,7 @@ async def test_a_ray_follows_its_agent_when_the_list_reorders(page_playwright, p
         await page.wait_for_function(
             "document.querySelector('.agents-list li')?.dataset.sessionId === 's3'"
             " && document.querySelector('#ray-lane .ray')", timeout=15000)
-        await page.wait_for_timeout(300)
-        end, target = await page.evaluate("""() => {
+        end, target = await settled(page, """() => {
           const d = document.querySelector('#ray-lane .ray-core').getAttribute('d');
           const t = document.querySelector('.agents-list li[data-session-id="s3"] .agent-orb')
             .getBoundingClientRect();
@@ -461,8 +455,9 @@ async def test_the_agent_s_orb_takes_the_ray_s_colour_when_the_first_pulse_arriv
 async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(page_playwright, page_url):
     async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(4.0, _to("s1"))])
-        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
-        rings, centre = await page.evaluate("""(sel) => {
+        await page.wait_for_function("document.querySelectorAll('#ray-lane .ray-receipt').length === 2",
+                                     timeout=20000)
+        rings, centre = await settled(page, """(sel) => {
           const t = document.querySelector(sel).getBoundingClientRect();
           return [[...document.querySelectorAll('#ray-lane .ray-receipt')].map(c => ({
                      x: +c.getAttribute('cx'), y: +c.getAttribute('cy'),
@@ -489,16 +484,16 @@ async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_pla
         await page.click(".right-tabs [aria-label='Diagnostics']")
         other_tab_open.set()
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
-        (ray,) = await page.evaluate(RAYS)
+        (ray,) = await settled(page, RAYS)
         sx, sy, top, cx, ey, ex = _segments(ray["d"])
-        icon = await page.evaluate("""() => { const b = document.querySelector(
+        icon = await settled(page, """() => { const b = document.querySelector(
           ".right-tabs [aria-label='Agents']").getBoundingClientRect();
           return [b.left + b.width / 2, b.top + b.height / 2]; }""")
         assert abs(ex - icon[0]) < 1 and abs(ey - icon[1]) < 1 and cx == ex, (ray, icon)
         tab = page.locator(".right-tabs [aria-label='Agents']")
         await page.wait_for_function(
             "document.querySelector(\".right-tabs [aria-label='Agents']\").classList.contains('lit')",
-            timeout=5000)
+            timeout=15000)
         await tab.click()
         assert "lit" not in (await tab.get_attribute("class")), "seen once opened"
         await browser.close()
@@ -523,11 +518,11 @@ async def test_hints_still_arrive_with_the_agents_tab_closed(page_playwright, pa
         await page.click(".right-tabs [aria-label='Work']")
         # The hint is sent only once the view has made its first read, so the
         # read it causes cannot be mistaken for that one on a slow machine.
-        await _until(lambda: calls["workflows"] > 0)
+        assert await until_async(lambda: calls["workflows"] > 0), calls
         await page.wait_for_timeout(500)
         before = calls["workflows"]
         hint.set()
-        await _until(lambda: calls["workflows"] > before)
+        assert await until_async(lambda: calls["workflows"] > before), calls
         assert await page.locator(".agents-list").count() == 0
         await page.click(".right-tabs [aria-label='Agents']")
         await page.wait_for_selector(".agents-list li")

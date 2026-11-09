@@ -64,6 +64,7 @@ import asyncio  # noqa: E402
 
 import pytest  # noqa: E402
 
+from tests.fixtures.waiting import until_async  # noqa: E402
 from tests.test_speech import Harness  # noqa: E402
 
 
@@ -72,7 +73,9 @@ async def test_speech_after_the_commit_stops_the_reply_s_reading_before_it_is_he
     """He goes on while the brain or synthesis is still working: the reply
     is not read (its text stays), and nothing is undone."""
     from jarvis import server
-    h = Harness(end_of_turn=0.5)
+    # His patience is fifteen times the look before he goes on, so the reply
+    # cannot have been sent before he does however slow the loop.
+    h = Harness(end_of_turn=1.5)
     await h.sched.start()
     try:
         monkeypatch.setattr(server, "speech", h.sched)
@@ -83,7 +86,7 @@ async def test_speech_after_the_commit_stops_the_reply_s_reading_before_it_is_he
         await asyncio.sleep(0.1)
         assert h.audio() == [], "the reply waits for his quiet"
         await server._take_back_the_floor(1)
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(1.8)                          # past his patience
         assert h.audio() == []
         assert {"type": "reading_skipped", "utt": reply.id} in h.msgs
     finally:
@@ -100,8 +103,7 @@ async def test_a_reply_already_being_heard_is_left_to_barge_in(monkeypatch):
         reply = h.sched.begin_turn()
         h.sched.feed(reply, "It is sunny, sir.")
         await h.sched.end_turn(reply)
-        await asyncio.sleep(0.2)
-        assert h.audio(), "playing"
+        assert await until_async(lambda: h.audio()), "playing"
         await server._take_back_the_floor(1)
         assert {"type": "reading_skipped", "utt": reply.id} not in h.msgs
     finally:

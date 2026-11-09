@@ -16,6 +16,7 @@ import asyncio
 import pytest
 import pytest_asyncio
 
+from tests.fixtures.waiting import until_async
 from tests.test_speech import Harness
 
 
@@ -30,7 +31,7 @@ async def h():
 async def _sounding(h, text, *, started=True):
     """JARVIS saying `text`, its first chunk sounding now (sent, unacked)."""
     u = await h.sched.say(text)
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes()[0] == "queued"), u.outcomes()
     assert h.sched.is_speaking
     if started:
         h.sched.playback_started(u.id, 0)
@@ -133,8 +134,8 @@ async def test_a_long_repeat_of_his_sentence_inside_the_echo_window_is_taken_for
 @pytest.mark.asyncio
 async def test_words_only_in_the_chunk_queued_behind_the_one_playing_are_the_user_s(h):
     u = await h.sched.say("The build is green. Deploy staging tonight.")
-    await asyncio.sleep(0.1)
-    assert [i for utt, i, _ in h.audio() if utt == u.id] == [0, 1], "both sent, prefetch"
+    assert await until_async(lambda: [i for utt, i, _ in h.audio() if utt == u.id] == [0, 1]), \
+        ("both sent, prefetch", h.audio())
     h.sched.playback_started(u.id, 0)
     assert h.sched.classify("deploy staging tonight") == "speech"
     assert h.sched.classify("the build is green") == "echo"
@@ -146,8 +147,8 @@ async def test_words_only_in_the_chunk_queued_behind_the_one_playing_are_the_use
 @pytest.mark.asyncio
 async def test_an_older_page_that_never_reports_starts_keeps_every_sent_chunk_as_echo(h):
     u = await h.sched.say("The build is green. Deploy staging tonight.")
-    await asyncio.sleep(0.1)
-    assert [i for utt, i, _ in h.audio() if utt == u.id] == [0, 1]
+    assert await until_async(lambda: [i for utt, i, _ in h.audio() if utt == u.id] == [0, 1]), \
+        h.audio()
     assert h.sched.classify("deploy staging tonight") == "echo"
 
 
@@ -156,15 +157,15 @@ async def test_a_new_page_has_to_report_starts_for_itself(h):
     await _sounding(h, "The build is green. Deploy staging tonight.")
     await h.sched.barge_in()      # the tab closes mid-sentence
     h.sched.transport_gone()
-    await h.sched.say("Release notes are ready. Publish them later.")
-    await asyncio.sleep(0.1)
+    v = await h.sched.say("Release notes are ready. Publish them later.")
+    assert await until_async(lambda: v.outcomes() == ["queued", "queued"]), v.outcomes()
     assert h.sched.classify("publish them later") == "echo"
 
 
 @pytest.mark.asyncio
 async def test_words_of_a_skipped_reading_that_never_sounded_are_the_user_s(h):
     u = await h.sched.say("The build is green. Deploy staging tonight.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: u.outcomes() == ["queued", "queued"]), u.outcomes()
     h.sched.playback_started(u.id, 0)
     await h.sched.skip_reading(u.id)
     assert h.sched.classify("deploy staging tonight") == "speech"

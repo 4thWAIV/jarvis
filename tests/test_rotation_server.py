@@ -16,6 +16,8 @@ import types
 
 import pytest
 
+from tests.fixtures.waiting import LIMIT_SEC
+
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
@@ -272,7 +274,7 @@ async def test_two_pauses_at_once_produce_one_rotation(agreed, monkeypatch):
     # Bounded: if the handover is never asked for at all, this test must fail
     # on its assertions rather than hang the suite.
     try:
-        await asyncio.wait_for(started.wait(), timeout=2.0)
+        await asyncio.wait_for(started.wait(), timeout=LIMIT_SEC)
     except asyncio.TimeoutError:
         pass
     second = asyncio.create_task(server._maybe_rotate())

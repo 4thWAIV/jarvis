@@ -9,12 +9,12 @@ entered, so no session watcher or discovery reads anything real.
 
 import asyncio
 import importlib
-import time
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.fixtures.waiting import until
 
 BROWSER = {"Origin": "http://localhost:5173"}
 
@@ -148,29 +148,28 @@ def test_a_slow_listing_never_holds_the_event_loop():
     half a second leaves the loop free to do everything else meanwhile."""
     from jarvis import folders_api
 
+    beats = [0]
+
     class Slow:
         def entries(self, folder_id, **kw):
-            time.sleep(0.5)
+            until(lambda: beats[0] >= 10)   # lasts until the loop has ticked
             return {"entries": []}
 
     app = FastAPI()
     folders_api.mount(app, lambda: Slow())
 
     async def scenario():
-        ticks = 0
-
         async def tick():
-            nonlocal ticks
             while True:
                 await asyncio.sleep(0.02)
-                ticks += 1
+                beats[0] += 1
 
         ticker = asyncio.create_task(tick())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             r = await client.get("/api/folders/x/entries")
         ticker.cancel()
-        return r.status_code, ticks
+        return r.status_code, beats[0]
 
     status, ticks = asyncio.run(scenario())
     assert status == 200 and ticks >= 10

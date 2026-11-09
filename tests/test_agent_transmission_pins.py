@@ -33,6 +33,7 @@ from starlette.requests import Request
 from jarvis import session_steer
 from jarvis import session_watch as sw
 from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 SID = "11111111-2222-3333-4444-555555555555"
 # A click on the page: admitted by its Origin, not an access key.
@@ -240,10 +241,10 @@ async def test_send_on_screen_accepts_stages_and_sends_now_outside_a_turn(server
     assert server._turn_utt is None
 
     r = await server.api_capture_send(n, PAGE)
-    for _ in range(100):
-        if wire.sent:
-            break
-        await asyncio.sleep(0.01)
+    def went():
+        ms = _messages(server)
+        return wire.sent and ms and server.run_store.get_message(ms[0].id).status == "sent"
+    assert await until_async(went), (wire.sent, _messages(server))
 
     (m,) = _messages(server)
     assert r == {"capture": n, "message": m.id}
