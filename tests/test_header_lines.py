@@ -360,6 +360,13 @@ EXEMPT = {
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
         "that Markdown as untrusted; complete access and hostile delimiters are driven by "
         "test_package_understanding.py"),
+    "codex_runtime._request": "Formats a fixed internal RPC method in a timeout/error, never a spoken header or brain instruction; runtime failures expose only the exception class in inventory JSON.",
+    "codex_runtime.event_evidence": "Formats a provider event-method name as evidence-source metadata; no text delta or tool argument is retained and the inventory tool output is taint-wrapped.",
+    "session_watch.build_snapshot": "Formats provider discovery failure metadata from a configured provider name and exception class; the inventory exposes it as JSON through the taint-wrapped list_workers tool, not a spoken line.",
+    "worker_activity.observation": "Formats provider and record type as a source identifier inside evidence JSON; the metadata is returned by list_workers under its registered untrusted-content wrapper.",
+    "worker_hooks.observations": "Formats a hook event kind as metadata in the native observer; the resulting inventory is JSON and list_workers is registered as tainting, with no spoken-header path.",
+    "worker_hooks.record": "Formats local event filenames only from clock and UUID values. Its JSON contains metadata, never prompts or tool arguments; it produces no hook stdout or human narration.",
+    "worker_inventory.build": "Formats stable provider/session IDs and coverage messages inside JSON. React renders these as text, and the identical list_workers tool output is registered as tainting rather than interpolated into a trusted header.",
     "project_store.answer_accomplishment": (
         "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (

@@ -985,6 +985,9 @@ class SessionState:
     subagents: list[Subagent] = field(default_factory=list)
     # From `session_status`: a message now starts a turn of its own.
     between_turns: bool = False
+    runtime_status: dict = field(default_factory=dict)
+    worker_activity: dict = field(default_factory=dict)
+    parent_session_id: str | None = None
 
     @property
     def announceable(self) -> bool:
@@ -1144,6 +1147,7 @@ def read_agent_meta(transcript: Path) -> dict:
     if not isinstance(body, dict):
         body = {}
     return {
+        "native_finished": body.get("finished") if isinstance(body.get("finished"), bool) else None,
         "agent_type": str(body.get("agentType") or ""),
         "description": " ".join(str(body.get("description") or "").split())[:MAX_DESCRIPTION],
         "parent_agent_id": str(body.get("parentAgentId") or ""),
@@ -1163,16 +1167,22 @@ class Subagent:
     state: str                    # AGENT_WORKING, AGENT_FINISHED or AGENT_STALE
     started: float | None         # its first timestamped line; None if none was found
     written: float                # its transcript's last write
+    parent_agent_id: str = ""
+    runtime_status: dict = field(default_factory=dict)
+    worker_activity: dict = field(default_factory=dict)
     workflow_run: str | None = None   # the Workflow tool's run that started it, if one did
 
 
 def _finished(path: Path) -> bool:
     """Its last message is the assistant's, and ended the turn."""
     for o in reversed(tail_objects(path, _AGENT_TAIL_BYTES)):
+        if o.get("type") == "api-request":
+            return False
         if o.get("type") in ("user", "assistant"):
             message = o.get("message")
             return (o.get("type") == "assistant" and isinstance(message, dict)
-                    and message.get("stop_reason") == "end_turn")
+                    and message.get("stop_reason") == "end_turn"
+                    and any(isinstance(b, dict) and b.get("type") == "text" for b in message.get("content", [])))
     return False
 
 
@@ -1201,12 +1211,29 @@ _agent_cache_lock = threading.Lock()
 
 
 def _agent_facts(path: Path, st: os.stat_result) -> dict:
-    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    side = path.with_name(path.stem + META_SUFFIX)
+    try:
+        meta_stat = side.lstat()
+        meta_key = (meta_stat.st_ino, meta_stat.st_size, meta_stat.st_mtime_ns)
+    except OSError:
+        meta_stat, meta_key = None, None
+    key = (st.st_ino, st.st_size, st.st_mtime_ns, meta_key)
     with _agent_cache_lock:
         hit = _AGENT_CACHE.get(str(path))
     if hit is not None and hit[0] == key:
         return hit[1]
-    facts = {**read_agent_meta(path), "finished": _finished(path),
+    from jarvis.worker_activity import file_observation
+    meta = read_agent_meta(path)
+    evidence = file_observation(path, PROVIDER)
+    finished = meta["native_finished"]
+    if finished is None:
+        finished = _finished(path)
+    elif finished and meta_stat and (evidence.get("request_started_at") or 0) > meta_stat.st_mtime:
+        finished = False  # A resumed request supersedes an older completion.
+    if finished:
+        evidence = {**evidence, "state": "idle", "observed_at": meta_stat.st_mtime if meta_stat else st.st_mtime,
+                    "source": "claude_native_finished" if meta["native_finished"] is not None else "claude_final_text"}
+    facts = {**meta, "worker_activity": evidence, "finished": finished,
              "started": _first_stamp(path) or getattr(st, "st_birthtime", None)}
     with _agent_cache_lock:
         _AGENT_CACHE.pop(str(path), None)
@@ -1268,7 +1295,7 @@ def _subagent_files(roots, cwd: str, session_id: str):
 
 
 def read_subagents(roots, cwd: str, session_id: str,
-                   now: float) -> tuple[list[Subagent], bool]:
+                   now: float, limit: int | None = MAX_AGENT_FILES) -> tuple[list[Subagent], bool]:
     """(the subagents this conversation dispatched, capped?), working ones
     first, then the most recently written.
 
@@ -1302,8 +1329,8 @@ def read_subagents(roots, cwd: str, session_id: str,
         by_name.setdefault(f.name, (f, run))
 
     transcripts = [by_name[name] for name in sorted(by_name)]
-    capped = len(transcripts) > MAX_AGENT_FILES
-    agents = [a for f, run in transcripts[:MAX_AGENT_FILES]
+    capped = limit is not None and len(transcripts) > limit
+    agents = [a for f, run in transcripts[:limit]
               if (a := _subagent_at(f, run, now)) is not None]
     agents.sort(key=lambda a: (a.state != AGENT_WORKING, -a.written))
     return agents, capped
@@ -1329,7 +1356,8 @@ def _subagent_at(f: Path, run: str | None, now: float) -> "Subagent | None":
         agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
         description=facts["description"], agent_type=facts["agent_type"],
         background=facts["background"], depth=facts["depth"], state=state,
-        started=facts["started"], written=st.st_mtime, workflow_run=run)
+        started=facts["started"], written=st.st_mtime, workflow_run=run,
+        parent_agent_id=facts["parent_agent_id"], worker_activity=facts["worker_activity"])
 
 
 def read_subagent(roots, cwd: str, session_id: str, agent_id: str,
@@ -1633,6 +1661,7 @@ class Snapshot:
     """Every conversation on this machine at one instant."""
     sessions: list[SessionState] = field(default_factory=list)
     taken_at: float = 0.0
+    provider_errors: list[str] = field(default_factory=list)
 
     def by_id(self, session_id: str) -> SessionState | None:
         return next((s for s in self.sessions if s.session_id == session_id), None)
@@ -1658,7 +1687,7 @@ class Snapshot:
         _assign_voice_names(kept)
         _mark_primary(kept)
         kept.sort(key=lambda s: (s.project, s.voice_name))
-        return Snapshot(sessions=kept, taken_at=self.taken_at)
+        return Snapshot(sessions=kept, taken_at=self.taken_at, provider_errors=self.provider_errors)
 
     def named(self, official: dict[str, str]) -> "Snapshot":
         """This snapshot with each session in `official` (session id -> name)
@@ -1674,7 +1703,7 @@ class Snapshot:
             return self
         sessions = [replace(s, voice_name=official[s.session_id])
                     if s.session_id in official else s for s in self.sessions]
-        return Snapshot(sessions=sessions, taken_at=self.taken_at)
+        return Snapshot(sessions=sessions, taken_at=self.taken_at, provider_errors=self.provider_errors)
 
     def by_project(self) -> dict[str, list[SessionState]]:
         out: dict[str, list[SessionState]] = {}
@@ -1721,14 +1750,20 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         # both roots with its file under the second one read as `fresh` —
         # "not started" — which is the one state JARVIS never announces.
         roots_here = _roots_of(group, primary)
+        from jarvis.worker_activity import file_observation
+        activity_evidence = next((file_observation(p, PROVIDER) for root in roots_here
+                                 if (p := transcript_path(root, primary.cwd, session_id)).exists()), {})
         recap = _first_recap(roots_here, primary.cwd, session_id)
-        subagents, agents_capped = read_subagents(roots_here, primary.cwd, session_id, at)
+        subagents, agents_capped = read_subagents(roots_here, primary.cwd, session_id, at, limit=None)
         agents_active = working_agents(subagents)
         status = session_status(claude_activity(group, recap, agents_active))
         live = [e for e in group if pid_alive(e.pid)]
         steerable_entry = next((e for e in live if e.steerable), None)
         sessions.append(SessionState(
             session_id=session_id,
+            worker_activity=activity_evidence,
+            runtime_status={"status": "active" if live and status.state == WORKING else "idle" if live else "offline",
+                            "observed_at": at, "source": "claude_roster"},
             cwd=primary.cwd,
             project=project_name(primary.cwd),
             state=status.state,
@@ -1816,10 +1851,12 @@ def build_snapshot(entries: list[RosterEntry] | None = None,
     if providers is None:
         providers = [ClaudeSessions(roots, entries)]
     sessions: list[SessionState] = []
+    provider_errors = []
     for provider in providers:
         try:
             sessions.extend(provider.discover(at))
         except Exception as e:
+            provider_errors.append(f"{provider.name} discovery unavailable: {type(e).__name__}")
             # One provider that cannot be read must not hide the others.
             import logging
             logging.getLogger("jarvis.sessions").warning(
@@ -1828,7 +1865,7 @@ def build_snapshot(entries: list[RosterEntry] | None = None,
     _assign_voice_names(sessions)
     _mark_primary(sessions)
     sessions.sort(key=lambda s: (s.project, s.voice_name))
-    return Snapshot(sessions=sessions, taken_at=at)
+    return Snapshot(sessions=sessions, taken_at=at, provider_errors=provider_errors)
 
 
 # A conversation that has died is kept this long so a completion can still be
@@ -2202,6 +2239,10 @@ class SessionWatcher:
         # (or thread reference) belonging to an event loop that is gone.
         self._event_loop = None
         self._loop_thread = None
+        for provider in self.providers:
+            close = getattr(provider, "close", None)
+            if close is not None:
+                await asyncio.to_thread(close)
         if task is None:
             return
         task.cancel()
@@ -2281,4 +2322,5 @@ def session_to_dict(s: SessionState) -> dict:
 def subagent_to_dict(a: Subagent) -> dict:
     return {"id": a.agent_id, "description": a.description, "type": a.agent_type,
             "background": a.background, "depth": a.depth, "state": a.state,
-            "started": a.started, "written": a.written, "workflow_run": a.workflow_run}
+            "started": a.started, "written": a.written, "workflow_run": a.workflow_run,
+            "parent_agent_id": a.parent_agent_id, "worker_activity": a.worker_activity}

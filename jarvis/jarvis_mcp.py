@@ -269,8 +269,11 @@ TOOL_SPECS = [
             "Read a capture back to the user aloud, lighting each line in its capture "
             "box as it is read: inside your reply when you are answering him, and on "
             "its own otherwise. It opens by naming who the capture is for (\"To "
-            "chitauri.\"), and refuses a capture addressed to no one. Call it as soon "
-            "as the capture is addressed, without asking him first. Returns once the "
+            "chitauri.\"), and refuses a capture addressed to no one. Call it only after "
+            "capturing all instructions accurately and completely and being reasonably "
+            "sure the user has nothing more to add. Update the capture as he continues; "
+            "if unsure, clarify before reading. Once complete and addressed, read "
+            "without asking whether he wants a read-back. Returns once the "
             "reading ends: read in full, or interrupted. Say nothing before calling "
             "it; after it, ask whether to send and end your turn."),
         "inputSchema": {
@@ -433,6 +436,11 @@ TOOL_SPECS = [
             },
             "required": ["kind", "title", "items"],
         },
+    },
+    {
+        "name": "list_workers",
+        "description": "All discovered brain, CLI, subagent and workflow workers with parent identities, per-parent counts and a deduplicated total. Same JSON as the UI. Distinguishes recent stream generation, tool waiting, queued, idle and unknown telemetry. Unknown is not zero token use.",
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "list_agents",
@@ -1296,8 +1304,10 @@ TOOL_SPECS = [
         "description": (
             "Ask the user to review a draft message exactly as it would go: it opens "
             "a capture box holding the recipient, subject, text and every file with "
-            "its size. It approves nothing. Read it back at once with read_capture, "
-            "without asking first; once his very next words after hearing it say yes "
+            "its size. It approves nothing. Before read_capture, ensure all instructions "
+            "are captured accurately and completely and the user is reasonably "
+            "finished adding to them; clarify if unsure. Then read it back without "
+            "asking whether to read; once his very next words after hearing it say yes "
             "or to send it, call send_message with that capture."),
         "inputSchema": {
             "type": "object",
