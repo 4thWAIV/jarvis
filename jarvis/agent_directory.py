@@ -40,8 +40,8 @@ class Agent:
     state: str            # working, idle, needs_you, ...
     active: bool
     needs: int            # needs-board items
-    # Its subagents working now (session_watch.read_subagents); a floor when
-    # `subagents_capped`.
+    # Compatibility fields; the HTTP projection fills these from the
+    # canonical worker snapshot, never from directory/file recency.
     subagents_working: int = 0
     subagents_capped: bool = False
 
@@ -123,20 +123,12 @@ def _entries(with_needs: bool = True
         out.append((Agent(session_id=row["session_id"], name=row["name"], project=project,
                           provider=s.provider if s else None,
                           state=s.state if s else row["state"], active=bool(row["active"]),
-                          needs=needs.get(row["session_id"], 0),
-                          **_subagent_counts(s)), s))
+                          needs=needs.get(row["session_id"], 0)), s))
     for s in sessions.values():
         out.append((Agent(session_id=s.session_id, name=session_watch.agent_name(s),
                           project=s.project, provider=s.provider, state=s.state,
-                          active=False, needs=needs.get(s.session_id, 0),
-                          **_subagent_counts(s)), s))
+                          active=False, needs=needs.get(s.session_id, 0)), s))
     return out
-
-
-def _subagent_counts(s: session_watch.SessionState | None) -> dict:
-    if s is None:
-        return {}
-    return {"subagents_working": s.agents_active, "subagents_capped": s.agents_capped}
 
 
 def agents() -> list[Agent]:

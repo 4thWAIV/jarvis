@@ -69,20 +69,20 @@ def agents_with_counts():
 
 
 
-def worker_inventory_fixture(now):
+def worker_inventory_fixture(now, thinking=None):
     from types import SimpleNamespace
     from jarvis.worker_inventory import build
     from jarvis.session_watch import SessionState, Subagent
     sessions = []
     for agent, count in zip(agents_with_counts()["agents"], (2, 1, 0)):
-        children = [Subagent(agent_id=f"{agent["session_id"]}-child-{i}", description="Child", agent_type="Explore", background=False, depth=1,
+        children = [Subagent(agent_id=({"s1": ["a1", "a2"], "s2": ["b1"]}[agent["session_id"]][i]), description="Child", agent_type="Explore", background=False, depth=1,
                              state="working", started=now - 5, written=now,
                              worker_activity={"state": "model_work", "observed_at": now,
-                                              "source": "native_request", "coverage": "request"})
+                                              "source": "native_request", "coverage": "request", "turn_open": True})
                     for i in range(count)]
         sessions.append(SessionState(session_id=agent["session_id"], cwd="/example", project="example-project",
-                                     state="idle", provider=agent["provider"], subagents=children,
-                                     worker_activity={"state": "idle", "observed_at": now, "source": "turn_end"}))
+                                     state="working" if agent["session_id"] == thinking else "idle", provider=agent["provider"], subagents=children,
+                                     worker_activity={"state": "model_work" if agent["session_id"] == thinking else "idle", "observed_at": now, "source": "turn_boundary", "turn_open": agent["session_id"] == thinking}))
     return build(SimpleNamespace(sessions=sessions, provider_errors=[], taken_at=now), now=now)
 
 
@@ -104,6 +104,7 @@ class _Api:
     def __init__(self, now):
         self.now = now
         self.transcripts = []
+        self.worker_response = None
 
     def body(self, path, query):
         now = self.now
@@ -131,7 +132,7 @@ class _Api:
                     "state": row["state"], "session_name": row["session_name"],
                     "entries": subagent_transcript(now, row["description"]), "earlier": None}
         if path == "/api/workers":
-            return worker_inventory_fixture(now)
+            return self.worker_response if self.worker_response is not None else worker_inventory_fixture(now)
         if path == "/api/agents":
             return agents_with_counts()
         if path == "/api/conversation":
@@ -191,7 +192,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
           tab: document.querySelector('.centre-tabs [aria-selected=true]').textContent,
           entries: [...document.querySelectorAll('.subagent-detail .transcript-entry pre')].map(e => e.textContent)})""")
         assert detail["name"] == "Proofread the setup guide"
-        assert "Working" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
+        assert "thinking" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
         assert detail["tab"] == "Subagent"
         assert "Drafted it; checking against the roadmap now." in detail["entries"]
 
@@ -246,9 +247,9 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
                                  && c.top >= box.top && c.bottom <= box.bottom)};
         })""")
         by_id = {r["id"]: r for r in rows}
-        assert by_id["s1"]["count"] == "2 model work"
-        assert by_id["s2"]["count"] == "1 model work"
-        assert by_id["s3"]["count"] == "0 model work"
+        assert by_id["s1"]["count"] == "2 active"
+        assert by_id["s2"]["count"] == "1 active"
+        assert by_id["s3"]["count"] == "0 active"
         assert len({r["height"] for r in rows}) == 1, rows
         assert all(r["inside"] for r in rows), rows
         assert await page.evaluate(FITS)
@@ -263,4 +264,20 @@ async def test_invalid_worker_response_keeps_the_page_usable(page_playwright, pa
         await page.wait_for_function("() => [...document.querySelectorAll('.agent-subagents')].some(e => e.textContent === 'Activity unknown')")
         await page.click(".right-tabs [data-ui-tab=workflows]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-1]")
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_agent_orb_and_counter_follow_the_same_worker_snapshot(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, api = await _open(p, page_url)
+        row = page.locator('.agents-list li[data-session-id=s1]')
+        await row.locator('.agent-orb[data-orb-state=idle]').wait_for()
+        assert await row.locator('.agent-subagents').text_content() == '2 active'
+        # The session's old 'working' status did not make its own orb think.
+        # Its family count includes two children; its own activity is idle.
+        result = worker_inventory_fixture(time.time(), thinking="s1")
+        api.worker_response = result
+        await row.locator('.agent-orb[data-orb-state=thinking]').wait_for()
+        assert await row.locator('.agent-subagents').text_content() == '3 active'
         await browser.close()

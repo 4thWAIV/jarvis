@@ -4396,7 +4396,12 @@ export const UI_CONTRACT = {
         "tell",
         "fromSlide",
         "resume",
-        "stop"
+        "stop",
+        "vote",
+        "gotIt",
+        "questions",
+        "words",
+        "send"
       ],
       "presentations": [
         {

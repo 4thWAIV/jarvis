@@ -366,7 +366,7 @@ def test_a_codex_session_has_no_subagents(tmp_path):
     assert sw.session_to_dict(s)["subagents"] == []
 
 
-def test_the_agents_list_says_how_many_are_working(tmp_path, monkeypatch):
+def test_directory_does_not_derive_activity_from_recent_files(tmp_path, monkeypatch):
     from jarvis import agent_directory
     _live_session(tmp_path, monkeypatch)
     _agent(tmp_path, "w1", [_line("user")], written=NOW - 5)
@@ -379,7 +379,7 @@ def test_the_agents_list_says_how_many_are_working(tmp_path, monkeypatch):
     finally:
         agent_directory.connect(sw.Snapshot)
 
-    assert (agent.subagents_working, agent.subagents_capped) == (2, False)
+    assert (agent.subagents_working, agent.subagents_capped) == (0, False)  # API adds the canonical counts.
 
 
 # ── the routes ──────────────────────────────────────────────────────────────

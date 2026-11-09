@@ -141,7 +141,10 @@ def mount(app: FastAPI, calls: Calls) -> None:
         return {"inbox": entry_json(entry), "package": packages_api.describe(package),
                 "problem": problem or None}
 
-    async def answer(inbox_id: str, body: dict = Body(default_factory=dict)):
+    async def answer(inbox_id: str, request: Request, body: dict = Body(default_factory=dict)):
+        # His answer is his act alone: his click on a page JARVIS serves.
+        if not packages_api.his_click(request):
+            return _refused(packages_api.NOT_HIS_ACT, 403)
         entry, problem = await calls.answer(inbox_id, str(body.get("decision") or ""),
                                             str(body.get("option") or ""),
                                             str(body.get("words") or ""),

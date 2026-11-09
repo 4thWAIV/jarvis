@@ -33,7 +33,7 @@ import { useT } from "./locale";
 export type Activity = "working" | "paused" | "blocked" | "waiting" | "done";
 
 /** What a node's own state says, before the clock is asked. */
-export type Standing = "active" | "blocked" | "waiting" | "done" | null;
+export type Standing = "working" | "active" | "blocked" | "waiting" | "done" | null;
 
 /** A node's look now: its standing, with an active one working until its
  *  `quietAt` (epoch seconds) and paused after. */
@@ -48,7 +48,7 @@ export function workStanding(state: string): Standing {
     // Working is sent only on live evidence (a subagent on the piece writing
     // now), so it glows. A report or verification is not generation
     // telemetry: activity_unknown and verifying never do.
-    case "working": return "active";
+    case "working": return "working";
     case "verifying": case "activity_unknown": return null;
     case "blocked": return "blocked";
     case "waiting_on_tim": return "waiting";

@@ -1,3 +1,4 @@
+import { useWorker } from "./workers";
 /**
  * The Workflows view of the right panel: a summary of every long workflow,
  * one compact two-line row each at the panel's fixed width, read at a
@@ -200,7 +201,7 @@ function WorkflowRow({ workflow: w, selected, ui }: {
             title={`${w.name}: ${STATE_WORDS[w.state]}`}
             ref={(el) => { row(ui)(el); state(el); }}
             {...bindingProps(bind("workflow.open", { workflowId: w.id }))}>
-      <WorkflowOrb state={w.state} size={30} />
+      <WorkflowOrb workflowId={w.id} state={w.state} size={30} />
       <span className="workflow-name">{w.name}</span>
       {finished
         ? <span className={`workflow-outcome outcome-${w.state}`}>{STATE_WORDS[w.state]}</span>
@@ -224,6 +225,7 @@ function WorkflowRow({ workflow: w, selected, ui }: {
  *  wrote, and below, the session that dispatched it. */
 function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolean }) {
   const t = useT();
+  const worker = useWorker(a.id);
   const look = SUBAGENT_LOOK[a.state];
   const ended = a.state === "finished";
   const name = a.description || a.type || t("right.workflows.subagent");
@@ -234,10 +236,10 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
     <button type="button" data-subagent-key={a.key} data-state={a.state}
             className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
               selected ? " selected" : ""}`}
-            title={`${name}: ${SUBAGENT_WORDS[a.state]}`}
+            title={`${name}: ${worker?.activity.orb_state ?? t("left.workers.unknown")}`}
             ref={(el) => { ui.whole(el); ui.part("row")(el); }}
             {...bindingProps(bind("subagent.open", { sessionId: a.session_id, agentId: a.id }))}>
-      <WorkflowOrb state={look} size={30} />
+      <WorkflowOrb workerId={a.id} state={look} size={30} />
       <span className="workflow-name">{name}</span>
       {ended
         ? <span className="workflow-outcome outcome-succeeded" ref={ui.part("state")}>{SUBAGENT_WORDS[a.state]}</span>

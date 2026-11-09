@@ -943,6 +943,9 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.deck_kind": (
+        "it reads the deck's decision ids only to compare them with the vote's own id, and "
+        "returns one of two fixed words, presentation or decision package"),
     # The page package's story (story_teller.py): the `state` they read is the
     # teller's own fixed state (telling, waiting, paused, finished, stopped);
     # the package id is JARVIS's own folder name (work_packages._label: the

@@ -41,6 +41,13 @@ import { createStore } from "./store";
 import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
 
+/** The standard vote's answer: Got it, or I have questions with his words. */
+export interface PageVote {
+  question: string;
+  answer: "got-it" | "questions" | "later" | "none" | null;
+  note: string;
+}
+
 export interface PackageInfo {
   id: string;
   name: string;
@@ -55,6 +62,9 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
+  /** The standard vote a page (not a deck) carries, with his answer so far
+   *  (package_inbox.page_vote), or null. */
+  vote?: PageVote | null;
   /** The room its page is made for: "wide" offers to take over the page.
    *  Missing from an older JARVIS's frame: the centre. */
   layout?: "centre" | "wide";

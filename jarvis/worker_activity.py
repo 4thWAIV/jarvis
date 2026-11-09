@@ -23,13 +23,19 @@ def observation(objects, provider, previous=None):
     state, at, source = 'unknown', None, 'no_activity_evidence'
     request_id, request_at, last_output = None, None, None
     tools = set()
+    turn_open = None
     if previous:
         state, at, source = previous.get('state', state), previous.get('observed_at'), previous.get('source', source)
         request_id, request_at = previous.get('request_id'), previous.get('request_started_at')
         last_output = previous.get('last_output_at')
         tools = set(previous.get('outstanding_tools') or [])
+        turn_open = previous.get('turn_open')
     for obj in objects:
         when = timestamp(obj.get('timestamp'))
+        # Native transcripts may append the prompt/tool result after the
+        # api-request it caused. File order must not undo a newer boundary.
+        if when is not None and at is not None and when < at:
+            continue
         p = obj.get('payload') or {}
         kind = obj.get('type')
         next_state = None
@@ -46,6 +52,7 @@ def observation(objects, provider, previous=None):
         else:
             if kind == 'api-request':
                 request_id, request_at = obj.get('id'), when
+                tools.clear()  # The provider request has consumed the prior tool batch.
                 next_state = 'model_work'
             elif kind == 'system' and obj.get('subtype') == 'turn_duration':
                 next_state = 'idle'
@@ -78,11 +85,25 @@ def observation(objects, provider, previous=None):
                 next_state = 'tool_wait' if tools else 'awaiting_model'
             elif kind == 'result': next_state = 'idle'
         if next_state:
+            turn_open = next_state != 'idle'
             state, at, source = next_state, when, f'{provider}:{kind}'
-    return {'state': state, 'observed_at': at, 'source': source,
+    return {'state': state, 'observed_at': at, 'source': source, 'turn_open': turn_open,
             'request_id': request_id, 'request_started_at': request_at, 'last_output_at': last_output,
             'outstanding_tools': sorted(tools),
             'coverage': 'stream' if provider == 'anthropic' and source.endswith('stream_event') else 'turn_and_output'}
+
+
+def merge_evidence(*observations):
+    """Latest phase, retaining a known open turn across a status-only join."""
+    values = [value for value in observations if value]
+    if not values:
+        return {}
+    latest = max(values, key=lambda value: value.get('observed_at') or 0)
+    known = [value for value in values if value.get('turn_open') is not None]
+    boundary = max(known, key=lambda value: value.get('observed_at') or 0) if known else {}
+    if latest.get('turn_open') is None and boundary.get('turn_open') is True:
+        return {**latest, 'turn_open': True}
+    return latest
 
 
 def current(evidence, now):
@@ -93,10 +114,22 @@ def current(evidence, now):
         state = 'unknown'
     if state in ('model_work', 'model_active') and (at is None or not 0 <= now - at <= MODEL_REQUEST_LEASE_SECONDS):
         state = 'unknown'
+    model_work = state in ('model_work', 'model_active', 'generating')
+    turn_open = evidence.get('turn_open') if at is not None else None
+    if state in ('idle', 'offline', 'queued'):
+        turn_open = False
+    # The existing main orb stays thinking for the whole open turn.
+    # Missing turn evidence is explicit; it is never an idle assertion.
+    orb_state = 'thinking' if turn_open is True else 'idle' if turn_open is False else 'unknown'
     return {**evidence, 'last_phase': evidence.get('last_phase', evidence.get('state', 'unknown')), 'state': state,
             'evidence_age_seconds': max(0, now - at) if at is not None else None,
-            'model_work': state in ('model_work', 'model_active', 'generating'),
-            'generating': state == 'generating'}
+            'model_work': model_work,
+            'generating': state == 'generating',
+            'turn_open': turn_open, 'active': turn_open is True, 'orb_state': orb_state,
+            'work_state': ('working' if evidence.get('proves_current_generation') is True
+                           else 'finished' if state in ('idle', 'offline')
+                           else 'waiting' if state in ('tool_wait', 'human_wait', 'external_wait', 'awaiting_model', 'finishing')
+                           else 'stale')}
 
 # Managed runs expose partial messages directly. Keep only their latest
 # observation, in memory, so a restart cannot resurrect a running claim.
@@ -165,7 +198,7 @@ class ManagedStream:
 
     def phase(self, sid, state):
         record_runtime('anthropic', sid, {
-            'state': state, 'observed_at': datetime.now(timezone.utc).timestamp(),
+            'state': state, 'turn_open': state != 'idle', 'observed_at': datetime.now(timezone.utc).timestamp(),
             'source': 'claude_task_lifecycle', 'coverage': 'lifecycle_only',
         })
         with _lock:
