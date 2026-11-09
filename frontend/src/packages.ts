@@ -49,6 +49,7 @@ export interface PageVote {
 }
 
 export interface PackageInfo {
+  communication?: { kind: "general" | "architecture"; title?: string; document_id?: string; revision?: string; source_revision?: string; kit_digest?: string; readable?: boolean };
   id: string;
   name: string;
   version: string;
@@ -260,8 +261,13 @@ export async function tellStory(id: string, action: "tell" | "resume" | "stop",
 
 /** Where its entry is served, to its frame. */
 export function entryUrl(info: PackageInfo): string {
-  const path = (info.entry ?? "").split("/").map(encodeURIComponent).join("/");
-  return `${base(info.id)}/files/${path}`;
+  return packageFileUrl(info, info.entry ?? "");
+}
+
+export function packageFileUrl(info: PackageInfo, relative: string): string {
+  const path = relative.split("/").map(encodeURIComponent).join("/");
+  const revision = info.communication?.kind === "architecture" ? info.communication.revision : undefined;
+  return `${base(info.id)}/files/${path}${revision ? `?canonical_revision=${encodeURIComponent(revision)}` : ""}`;
 }
 
 /** Save `data` as results/<name> in the package's folder. */
