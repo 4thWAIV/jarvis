@@ -58,6 +58,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "attachment_location", "make_attachment_local",
         "inspect_attachment", "list_bundle_members", "read_bundle_member",
         "look_at_bundle_page", "list_packages", "package_results",
+        "language_document",
         "diagnostics", "usage_status", "connections", "speech_models",
         "voice_input_settings", "attention_updates", "mark_updates_seen",
         "set_attention_settings", "update_status",

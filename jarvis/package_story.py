@@ -55,6 +55,11 @@ ANSWERS = re.compile(r"results/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.json")
 HELPER_PATH = "/api/packages/story.js"
 
 
+def encode(story: dict) -> bytes:
+    """The existing factory's JSON encoding for a generated story."""
+    return (json.dumps(story, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 class StoryError(ValueError):
     """Why a story file cannot be told, in words he can hear."""
 

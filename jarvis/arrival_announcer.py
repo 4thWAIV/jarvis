@@ -26,7 +26,9 @@ attention.py's one admission policy and digest.
                  files, whether it is to himself); the sender's roster name,
                  their JARVIS's network label and the subject are other
                  people's words, kept apart as untrusted. The body and
-                 filenames are never recorded here.
+                 filenames are never in the attention item: the body goes
+                 only to the conversation record (`Arrival.text`, one
+                 message in the person's thread, the server's to record).
     no replay    only what the store says is due is attended to, so a page
                  reconnecting, a restart or a resync never brings back an
                  arrival already completed.
@@ -96,6 +98,11 @@ class Arrival:
     subject: str
     files: int
     self_message: bool
+    # Who sent it, as the team server bound it to their device session, and
+    # what it says: for the person's thread in the conversation record,
+    # never for the attention item.
+    sender_github_id: int = 0
+    text: str = ""
 
     def attention(self) -> dict:
         """The attention item's facts and untrusted words."""
@@ -183,7 +190,9 @@ class ArrivalAnnouncer:
             message_id=m.message_id, thread_id=m.thread_id,
             sender=labels.person(m.sender_github_id) or "A teammate",
             jarvis=None if m.source_node_id == node_id else labels.jarvis(m.source_node_id),
-            subject=m.subject, files=len(m.attachments), self_message=local.self_message)
+            subject=m.subject, files=len(m.attachments), self_message=local.self_message,
+            sender_github_id=m.sender_github_id,
+            text=f"{m.subject}\n\n{m.text}".strip())
 
     async def _announce(self, server_id: str, owner: int, node_id: UUID,
                         labels: Labels) -> int:

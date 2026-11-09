@@ -3030,6 +3030,7 @@ export const UI_CONTRACT = {
         "currentVersion",
         "checkUpdates",
         "installUpdate",
+        "languageKit",
         "serverPort",
         "serverUptime"
       ],
@@ -4404,7 +4405,10 @@ export const UI_CONTRACT = {
         "gotIt",
         "questions",
         "words",
-        "send"
+        "send",
+        "source",
+        "check",
+        "readable"
       ],
       "presentations": [
         {

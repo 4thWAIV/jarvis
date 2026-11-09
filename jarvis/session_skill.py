@@ -55,6 +55,7 @@ def _agent_key() -> str:
 
 def render() -> str:
     """The skill with this install's folders filled in."""
+    from jarvis.language_documents import authoring_contract
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("{{needs_dir}}", str(data_paths.needs_dir()))
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
@@ -64,7 +65,8 @@ def render() -> str:
             .replace("{{make_package}}", _make_package())
             .replace("{{agent_key}}", _agent_key())
             .replace("{{making_a_package}}",
-                     str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md")))
+                     str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"))
+            + "\n\n" + authoring_contract() + "\n")
 
 
 def targets() -> list[Path]:

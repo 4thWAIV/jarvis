@@ -1,0 +1,44 @@
+{
+  "kind": "isolated simulation using existing capture and provider test double",
+  "question": "What does DocumentStore own?",
+  "source": {
+    "document_id": "document-2944b154979c4044bea4792f06f6fbca",
+    "revision": "14c775c9a7e7a5635e2e6a104caf6898db38284954ea8d9cf6717a7416ef0781",
+    "source_revision": "e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010",
+    "declaration": "DocumentStore",
+    "check_ok": true,
+    "package": {
+      "id": "a-proposed-document-store-06f6fbca-1.0.0-85547624",
+      "version": "1.0.0",
+      "delivered_archive_sha256": "855476243711eeef4f792c6b7e9b80b01c82848e3e2e6e9698523dfb6d6bad18"
+    },
+    "source": {
+      "member": "source.yaml",
+      "text": "scope: [review]\nlanguage: arch\nimport: [[metalang]]\ntitle: A proposed document store\ndeclare:\n- constant:\n    id: DocumentStore\n    is: element\n    value:\n      form: record\n      does: Owns an immutable document revision.\n      reach: internal\n      exactness: loose\n      groups: none\n      members: none\n      sits: {package: jarvis, assembly: none, namespace: none}\n      relates: {implements: none, answers: none, holds: none}\n",
+      "sha256": "e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010"
+    },
+    "understanding": {
+      "member": "UNDERSTANDING.md",
+      "text": "# A proposed document store\n\nThis proposed architecture has one declaration, DocumentStore. It is an internal record in the jarvis package. It owns an immutable document revision and uses loose exactness. No members, groups, assembly, namespace, implementation, answer or holding relationship are declared. This is a proposed language model, not a code correspondence or approval claim.\n\n## Package materials\nsource.yaml is the canonical architecture above. index.html is its unchanged upstream rendered view. check.json records language conformance and source/view hashes; it does not establish code correspondence or approval. canonical.json binds document identity, revision, Work and author provenance. UNDERSTANDING.md is this author-supplied explanation. package.json names the entry, this brief and the material-to-understanding associations. No package file establishes human approval.\n",
+      "sha256": "9222ed4cea6721f405d5ff6ce0c318ff0a5765e2a6bd801131efc42f533a4862"
+    },
+    "followup_reference": "Canonical document: document-2944b154979c4044bea4792f06f6fbca.\nCanonical revision: 14c775c9a7e7a5635e2e6a104caf6898db38284954ea8d9cf6717a7416ef0781.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+    "unresolved": [],
+    "outside_language": [
+      "No code correspondence claim is made."
+    ],
+    "observation": "Canonical source and author-supplied understanding only; no current DOM observation is claimed."
+  },
+  "proposed_revision": "e1c3b7464fecb6db52cba19d930990a349f23c1a243b6e03c3aaf4af618675a2",
+  "proposed_source_revision": "abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782",
+  "recipient": "11111111-2222-3333-4444-555555555555",
+  "read_back_text": "Please review the proposed correction to DocumentStore in canonical revision e1c3b7464fecb6db52cba19d930990a349f23c1a243b6e03c3aaf4af618675a2. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-2944b154979c4044bea4792f06f6fbca.\nCanonical revision: 14c775c9a7e7a5635e2e6a104caf6898db38284954ea8d9cf6717a7416ef0781.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+  "provider_handoff": [
+    [
+      "11111111-2222-3333-4444-555555555555",
+      "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your turn with your full reply; JARVIS reads it from your transcript and tells Tim. Do not send your answer to another session.]\n\nPlease review the proposed correction to DocumentStore in canonical revision e1c3b7464fecb6db52cba19d930990a349f23c1a243b6e03c3aaf4af618675a2. Proposed YAML SHA256: abc66ddafc7cc95e2e3496ebf7d56f1b8eebed1546acaf6a7dff48de1d46e782.\n\nCanonical document: document-2944b154979c4044bea4792f06f6fbca.\nCanonical revision: 14c775c9a7e7a5635e2e6a104caf6898db38284954ea8d9cf6717a7416ef0781.\nCanonical YAML SHA256: e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010.",
+      false
+    ]
+  ],
+  "approval": "Simulated next-word yes after full read-back; no human product approval is claimed."
+}

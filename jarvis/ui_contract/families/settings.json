@@ -53,7 +53,7 @@
               "voiceOutputProvider", "localVoice", "installLocalVoice", "previewVoice", "appearance",
               "teamState", "teamAddress", "teamSignIn", "teamApproval", "teamCancel", "teamSignInAgain",
               "teamDisconnect", "teamLogin", "teamLookUp", "teamRole", "teamAdd", "teamAddCancel",
-              "currentVersion", "checkUpdates", "installUpdate",
+              "currentVersion", "checkUpdates", "installUpdate", "languageKit",
               "serverPort", "serverUptime"],
      "presentations": [{"view": "main.settings",
                         "reveal": {"command": "settings.open", "args": {}}}]},

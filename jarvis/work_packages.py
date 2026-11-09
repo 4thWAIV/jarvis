@@ -112,6 +112,7 @@ class Manifest:
     story: Optional[str] = None
     layout: str = LAYOUTS[0]
     understanding: Optional[dict[str, str]] = None
+    communication: Optional[dict] = None
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -160,6 +161,11 @@ class Manifest:
             understanding = declaration(body.get("understanding"))
         except ValueError as error:
             raise PackageError(str(error)) from None
+        communication = body.get("communication")
+        if communication is not None:
+            if not isinstance(communication, dict) or communication.get("kind") not in {"general", "architecture"}:
+                raise PackageError("Its communication metadata must declare general or architecture.")
+            fields["communication"] = communication
         return cls(returns=tuple(returns), runs=runs, understanding=understanding or None, **fields)
 
     def named_files(self) -> dict[str, str]:
@@ -172,6 +178,7 @@ class Manifest:
                            "runs": self.runs, **self.named_files(),
                            **({"layout": self.layout} if self.layout != LAYOUTS[0] else {}),
                            **({"understanding": self.understanding} if self.understanding else {}),
+                           **({"communication": self.communication} if self.communication is not None else {}),
                            "returns": list(self.returns)}, indent=2)
 
 
@@ -302,6 +309,19 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
         return Recognition(None, root, f"Its {MANIFEST} cannot be read: {e}")
     except PackageError as e:
         return Recognition(None, root, str(e))
+    try:
+        from jarvis.language_projection import gate
+        communication = json.loads(raw).get("communication")
+        if f"{root}canonical.json" in files and (not communication or communication.get("kind") != "architecture"):
+            raise ValueError("Canonical source packages must declare architecture communication.")
+        def read_architecture(name):
+            member = files.get(f"{root}{name}")
+            if member is None:
+                raise ValueError(f"The architecture package is missing {name}.")
+            return bundle_archive.read_member(archive, member, limit=PAGE_FILE_MAX_BYTES)
+        gate(read_architecture, communication)
+    except (ValueError, OSError, bundle_archive.ArchiveError) as e:
+        return Recognition(None, root, f"Architecture publication refused: {e}")
     for key, named in manifest.named_files().items():
         member = files.get(f"{root}{named}")
         if member is None:
