@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import ssl
 import sys
 import unicodedata
@@ -279,7 +280,7 @@ def validate(content: Path) -> dict:
 # replaced, so a full-form deck passes through unchanged.
 
 KEYS = {
-    "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions"),
+    "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions", "understanding"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
                  "picture", "compare", "say", "text_only"),
@@ -431,7 +432,17 @@ def build(content: Path, out: Path, deck: dict) -> Path:
     said = io.StringIO()
     try:
         with contextlib.redirect_stdout(said):
+            from jarvis.package_understanding import declaration, prepare_deck
+            if (folder.is_symlink() or folder.resolve().parent != out.resolve()
+                    or archive.parent != out):
+                raise ValueError("Generated output must stay in the selected output folder.")
+            inputs = [content] + [content.parent / name for name in (
+                module.pictures_of(deck) + list(declaration(deck.get("understanding")).values()))]
+            if any(path.resolve().is_relative_to(folder.resolve()) for path in inputs):
+                raise ValueError("The generated output overlaps author inputs; choose a separate output folder.")
+            shutil.rmtree(folder, ignore_errors=True)
             module.build_deck(deck, content.parent, folder)
+            prepare_deck(folder, deck, module, content.parent)
             code = module.zip_package.main([str(folder), str(archive)])
     except (module.Bad, KeyError, ValueError, OSError) as e:
         raise Refused([f"The builder refused it: {e}"])
