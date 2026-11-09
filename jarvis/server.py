@@ -3958,6 +3958,20 @@ async def api_workers():
     return await asyncio.to_thread(_worker_inventory)
 
 
+def tool_list_workers(args: dict) -> str:
+    """The UI's current inventory, through the existing bounded JSON reader."""
+    inventory = _worker_inventory()
+    # The normal counts question is answered before the worker detail. Each
+    # invocation is a fresh observation, as with the other paged status reads.
+    answer = {key: inventory[key] for key in
+              ("total", "providers", "capacity", "coverage", "gaps", "taken_at")
+              if key in inventory}
+    answer.update(inventory)
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+                         "The current worker inventory as JSON", "list_workers", exact=True)
+    return head if chunk is None else head + "\n" + _wrap_untrusted("workers", chunk)
+
+
 @app.get("/api/sessions")
 async def api_list_sessions(state: str = ""):
     """Every Claude Code conversation on this machine. The snapshot is the
@@ -12083,7 +12097,7 @@ def tool_rename_agent(args: dict) -> str:
 
 
 TOOL_HANDLERS.update({
-    "list_workers": lambda args: json.dumps(_worker_inventory()),
+    "list_workers": tool_list_workers,
     "list_agents": tool_list_agents,
     "set_agent_active": tool_set_agent_active,
     "rename_agent": tool_rename_agent,
