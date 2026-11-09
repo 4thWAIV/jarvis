@@ -5,7 +5,7 @@ export interface WorkerCounts { workers: number; model_work: number; generating:
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
   native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { state: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
+  activity: { state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
   counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {

@@ -163,3 +163,16 @@ def test_managed_background_membership_does_not_finish_foreground_child():
         assert activity.managed('anthropic', 'foreground')['state'] == 'awaiting_model'
     finally:
         stream.close()
+
+
+def test_loaded_codex_child_remains_visible_without_its_parent(tmp_path):
+    import json
+    from jarvis.codex_sessions import child_sessions
+    path=tmp_path/'child.jsonl'
+    path.write_text(json.dumps({'type':'session_meta','payload':{'parent_thread_id':'unloaded'}})+'\n')
+    threads={'child':{'thread_source':'subagent','rollout_path':str(path),'cwd':'/project'}}
+    children=child_sessions(threads,[],include={'child'})
+    assert len(children)==1 and children[0].parent_session_id=='unloaded'
+    result=build(Snapshot(children,100),now=100)
+    assert result['total']['workers']==1
+    assert any('Parent not discovered' in gap for gap in result['gaps'])

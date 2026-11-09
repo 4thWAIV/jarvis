@@ -11,6 +11,7 @@ function WorkerTree({ worker, inventory, ancestors = [] }: { worker: Worker; inv
   return <li>
     <div><strong>{worker.name}</strong> <small>{worker.provider} · {worker.kind}</small></div>
     <div>{worker.activity.state.replace(/_/g, " ")} · {words(worker.counts)}</div>
+    {worker.activity.state === "unknown" && worker.activity.last_phase && worker.activity.last_phase !== "unknown" && <small>Last phase: {worker.activity.last_phase.replace(/_/g, " ")}.</small>}
     {worker.activity.evidence_age_seconds != null && <small>Last evidence {Math.round(worker.activity.evidence_age_seconds)} seconds ago.</small>}
     {worker.runtime?.status && <small>Runtime: {worker.runtime.status}. Slot: {worker.allocation}.</small>}
     {worker.native_hook_coverage === "not_observed" && <small>Native lifecycle hooks not observed yet.</small>}

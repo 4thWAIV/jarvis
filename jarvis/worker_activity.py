@@ -93,7 +93,7 @@ def current(evidence, now):
         state = 'unknown'
     if state in ('model_work', 'model_active') and (at is None or not 0 <= now - at <= MODEL_REQUEST_LEASE_SECONDS):
         state = 'unknown'
-    return {**evidence, 'last_phase': evidence.get('state', 'unknown'), 'state': state,
+    return {**evidence, 'last_phase': evidence.get('last_phase', evidence.get('state', 'unknown')), 'state': state,
             'evidence_age_seconds': max(0, now - at) if at is not None else None,
             'model_work': state in ('model_work', 'model_active', 'generating'),
             'generating': state == 'generating'}

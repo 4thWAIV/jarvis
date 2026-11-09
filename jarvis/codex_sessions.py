@@ -449,7 +449,7 @@ class CodexSessions:
                 # up once it has loaded its conversation.
                 steerable=True,
             ))
-        children = child_sessions(threads, sessions)
+        children = child_sessions(threads, sessions, include=runtime_rows if runtime_fresh else ())
         if runtime_fresh:
             parents = {child.session_id: child.parent_session_id for child in children}
             def belongs_to_runtime(child):
@@ -470,6 +470,7 @@ class CodexSessions:
                 session.state = "working" if runtime.get("status") == "active" else "idle"
         parent_by_id = {child.session_id: child.parent_session_id for child in children}
         roots = {session.session_id: session for session in sessions}
+        orphans = []
         for child in children:
             parent = child.parent_session_id
             visited = set()
@@ -477,6 +478,7 @@ class CodexSessions:
                 visited.add(parent)
                 parent = parent_by_id[parent]
             if parent not in roots:
+                orphans.append(child)  # A loaded child outlives an unloaded parent.
                 continue
             roots[parent].subagents.append(Subagent(
                 agent_id=child.session_id, description=child.given_name or child.title or child.session_id,
@@ -485,6 +487,7 @@ class CodexSessions:
                 started=child.started, written=child.worker_activity.get("observed_at") or 0,
                 parent_agent_id=child.parent_session_id or "", worker_activity=child.worker_activity,
                 runtime_status=child.runtime_status))
+        sessions.extend(orphans)
         for session in sessions:
             session.agents_seen = len(session.subagents)
             # Only stream evidence can contribute to the live inference count.
@@ -568,7 +571,7 @@ def thread_identity(path: str) -> dict:
     _PARENT_CACHE[path] = identity
     return identity
 
-def child_sessions(threads: dict, parents: list[SessionState]) -> list[SessionState]:
+def child_sessions(threads: dict, parents: list[SessionState], include=()) -> list[SessionState]:
     """Discover descendants by recorded parent identity, never shared cwd.
 
     A child can itself have children. A turn record does not establish that
@@ -581,7 +584,7 @@ def child_sessions(threads: dict, parents: list[SessionState]) -> list[SessionSt
             candidates[tid] = (thread, thread_identity(thread.get("rollout_path") or ""))
     children = []
     while candidates:
-        adopted = [tid for tid, (_, ident) in candidates.items() if ident.get("parent") in known]
+        adopted = [tid for tid, (_, ident) in candidates.items() if ident.get("parent") in known or tid in include]
         if not adopted:
             break
         for tid in adopted:
@@ -592,7 +595,7 @@ def child_sessions(threads: dict, parents: list[SessionState]) -> list[SessionSt
             children.append(SessionState(
                 session_id=tid, cwd=thread["cwd"], project=project_name(thread["cwd"]),
                 state=status.state, provider=NAME, origin="subagent",
-                parent_session_id=ident["parent"], given_name=ident.get("name", ""),
+                parent_session_id=ident.get("parent"), given_name=ident.get("name", ""),
                 title=(thread.get("title") or "")[:120],
                 worker_activity=worker_activity.observation(objects, NAME),
                 since=status.since, between_turns=status.between_turns))
