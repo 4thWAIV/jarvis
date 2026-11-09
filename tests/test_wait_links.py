@@ -15,8 +15,8 @@ import pytest
 
 from jarvis import (access_keys, attention_store, package_inbox, run_store, wait_links,
                     workflow_store, work_store)
-from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
-from tests.test_package_inbox import (BROWSER, deck_zip, marks,  # noqa: F401
+from tests.test_brain_page_parity import wired  # noqa: F401  (the fixture)
+from tests.test_package_inbox import (_call, BROWSER, deck_zip, marks,  # noqa: F401
                                       opened_deck, shown)
 
 DAY = wait_links.UNLINKED_AFTER_SEC

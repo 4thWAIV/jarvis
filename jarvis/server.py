@@ -8480,8 +8480,8 @@ for _tool_name in TOOL_MODELS:
             return await _package_tool(name, args)
         TOOL_HANDLERS[_tool_name] = tool_package_content
         TAINTING_TOOLS[_tool_name] = "package contents or its reported view, controlled by its sender"
-        UNTRUSTED_READING_TOOLS.add(_tool_name)
 ACTING_TOOLS.add("look_at_package_content")
+UNTRUSTED_READING_TOOLS.add("look_at_package_content")
 
 def _package_action_ref(reference):
     entry, _ = _inbox_one(reference)

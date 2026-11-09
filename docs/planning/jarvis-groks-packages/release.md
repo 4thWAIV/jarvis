@@ -4,6 +4,8 @@ Work: `work-afc13119d082`. Branch: `feature/jarvis-groks-packages`.
 
 Release is also blocked on the source conflict in `authorization-conflict.md`: the existing result bridge and answer-file adoption path bypass the new dispatcher scope. New product changes are stopped for design reconciliation. The latency-only decision draft is not the complete blocking handoff until that conflict is addressed.
 
+One approved follow-up case also remains unfinished: an explicitly historical reference cannot currently be prepared or delivered after the package changes. `PackageFollowups.prepare` requires the requested revisions to match the latest capture, and `context_guard` always rejects changed current revisions. The specification says: "An explicitly historical source reference is part of that wording, so an old revision is usable without pretending it is current." Completing this case needs an explicit historical evidence binding and approval coverage rather than parsing a phrase from draft prose. This is remaining implementation work under the approved historical-reference requirement; it is not supplied by the latency decision.
+
 The implementation review is recorded in `review/report.md`. Root reported presentation signoff for `package-understanding-implementation-rev-1.0.0-locala03` (`pkg-d6f39bbb32b8`). That report does not establish successful runtime classification, display capture, spoken approval or external delivery.
 
 ## Main reconciliation

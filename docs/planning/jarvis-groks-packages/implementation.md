@@ -19,7 +19,7 @@ The implementation starts from `2784484`. The specification inspected `eaf3683`.
 
 ## Current state
 
-Implementation and isolated acceptance review are complete. The review artifact is in `review/content.json`, with its implementation map, acceptance coverage, runtime limits and reproduction instructions in `review/report.md`. No release or deployment is part of this implementation.
+Release integration is in progress. The review artifact is in `review/content.json`, with its implementation map, acceptance coverage, runtime limits and reproduction instructions in `review/report.md`. The authority conflict and runtime gates are recorded in `release.md`; the historical-followup case remains unfinished. No release or deployment has occurred.
 
 ## Implementation checkpoint
 
