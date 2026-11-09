@@ -116,7 +116,7 @@ from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
-from jarvis import access_keys, agent_key_store, agent_keys, package_signature
+from jarvis import agent_key_store, agent_keys, package_signature
 from jarvis import bundle_archive
 from jarvis import reporters
 from jarvis import make_package
@@ -662,6 +662,8 @@ def _hint_from_any_thread(message: dict) -> None:
     except RuntimeError:
         if _main_loop is not None:
             _main_loop.call_soon_threadsafe(lambda: _send_to_session_clients(message))
+        else:
+            _send_to_session_clients(message)   # no loop running yet: nothing to race
 
 
 def _attend(kind: str, source_id, event: str, *, facts: Optional[dict] = None,
@@ -1954,8 +1956,8 @@ BOARD_PROOF_RETRY_SEC = 60.0
 
 
 def _board_writer(board: session_needs.Board):
-    """Who wrote `board`, as it is now, proven by a transcript showing the
-    write (`_writer_of`), kept per (project, mtime) in run_store's
+    """Who wrote `board`, as it is now, proven by its `.sig` from an
+    onboarded agent's key (`_file_signer`), kept per (project, mtime) in run_store's
     needs_board_writers so it is proven once per rewrite. None: unproven."""
     kept = run_store.board_writer(board.project, board.mtime)
     if kept is not None:
@@ -1966,12 +1968,16 @@ def _board_writer(board: session_needs.Board):
         return None
     signer, key, status, fingerprint = (_file_signer(board.path) if board.path is not None
                                         else (None, None, _UNSIGNED, ""))
-    if status == _HELD_SIGNER:
+    if status == _UNSIGNED and time.time() - board.mtime < SIG_GRACE_SEC:
+        return None                     # its .sig may still be on its way
+    if status != _GOOD_SIGNER:
+        # Unsigned, or signed by a key that is not an onboarded agent's: held
+        # (`_unrecognised_key`), never shown.
         _board_unproven[tried] = time.time()
         _unrecognised_key("board", f"the needs board for {board.project}",
                           fingerprint=fingerprint, session=key.session_id if key else "")
         return None
-    writer = signer or (_writer_of(board.path) if board.path is not None else None)
+    writer = signer
     if writer is None:
         _board_unproven[tried] = time.time()
         return None
@@ -2105,20 +2111,6 @@ def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool =
         return None
 
 
-def _writer_of(path: Path, claimed: Optional[str] = None
-               ) -> "Optional[session_message_sender.Sender]":
-    """Who wrote the file at `path` (a session's message, a needs board),
-    proven by a transcript showing the write; a claim (a From: line) only
-    says whose to look in first."""
-    try:
-        written_at = path.lstat().st_mtime
-    except OSError:
-        return None
-    return _prove(path.name, lambda t: session_message_sender.wrote(t, path, written_at),
-                  claimed, since=written_at - session_message_sender.WROTE_SLACK_SEC,
-                  key=("wrote", str(path), written_at))
-
-
 def _file_signer(path: Path):
     """(the proven sender or None, the key JARVIS holds or None, how, the
     signing key's fingerprint) for a message file or needs board, from the
@@ -2148,8 +2140,15 @@ def _file_signer(path: Path):
 
 
 def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
-    """Who sent a dropped message (`_writer_of`). None: it is held."""
-    return _writer_of(dropped.path, dropped.claimed)
+    """Who sent a dropped message: the onboarded agent whose key signed it
+    (`_file_signer`). None: it is held."""
+    signer, _key, status, _fp = _file_signer(dropped.path)
+    return signer if status == _GOOD_SIGNER else None
+
+
+# How long an unsigned message file or needs board is left for its `.sig`
+# (written by `agent_key sign` just after it) before it is held.
+SIG_GRACE_SEC = 60.0
 
 
 def _take_session_messages() -> list[run_store.SessionMessage]:
@@ -2161,22 +2160,23 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     from jarvis import agent_key
     for dropped in session_messages.collect(data_paths.session_messages_dir(),
                                             time.time()):
-        signer, key, status, fingerprint = _file_signer(dropped.path)
-        if status == _HELD_SIGNER:
-            # Signed by a key that is not an onboarded agent's: held where it
-            # was dropped until he chooses (`_unrecognised_key`).
+        sender = _message_sender(dropped)
+        if sender is None:
+            _, key, status, fingerprint = _file_signer(dropped.path)
+            try:
+                young = time.time() - dropped.path.lstat().st_mtime < SIG_GRACE_SEC
+            except OSError:
+                young = False
+            if status == _UNSIGNED and young:
+                continue                # its .sig may still be on its way
+            # Unsigned, or signed by a key that is not an onboarded agent's:
+            # held where it was dropped (`.held`), so its session sees it was
+            # not taken, until he chooses (`_unrecognised_key`).
             _hold_session_message(dropped)
             _unrecognised_key("message", f'the message "{dropped.subject}"',
                               fingerprint=fingerprint,
                               session=(key.session_id if key else "") or dropped.claimed or "",
                               path=str(dropped.path.with_suffix(session_messages.HELD_SUFFIX)))
-            continue
-        sender = signer or _message_sender(dropped)
-        if sender is None:
-            # No sender he could reply to: it never reaches him as a message.
-            # Held where it was dropped (`.held`), so its session sees it was
-            # not taken, and counted in Diagnostics (session_messages.held).
-            _hold_session_message(dropped)
             continue
         message_id = run_store.create_session_message(
             dropped.project, sender.name, dropped.subject, dropped.body,
@@ -2777,7 +2777,6 @@ async def start_session_watcher() -> None:
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
-    _spawn(_watch_inbox_proofs())
     _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
@@ -4098,16 +4097,13 @@ def _set_agent_active(session_id: str, active: bool, by: str):
 
 
 def _adopted_label(session_id: str) -> str:
-    """The label of an access key that names exactly this agent, else "":
-    kept on onboarding so the decisions it asked under that key stay its
-    own."""
-    try:
-        for k in access_keys.listing():
-            found = agent_directory.named(k["label"])
-            if [a.session_id for a in found] == [session_id]:
-                return k["label"]
-    except Exception:
-        log.warning("agent keys: the access keys were not read", exc_info=True)
+    """The label of an old access key (its record is only read, never
+    used to admit anything) that names exactly this agent, else "": kept on
+    onboarding so the decisions it asked under that key stay its own."""
+    for label in reporters.legacy_labels():
+        found = agent_directory.named(label)
+        if [a.session_id for a in found] == [session_id]:
+            return label
     return ""
 
 
@@ -4134,7 +4130,7 @@ def _revoke_agent_key(key, by: str, why: str):
     if done is not None:
         _attention_resolved("agent_key", key.fingerprint)
         _refuse_held(key.fingerprint, key.session_id if key.state != "onboarded" else "")
-        _hint_from_any_thread({"type": "agents"})
+        _hint_from_any_thread({"type": "work" if key.work_id else "agents"})
     return done
 
 
@@ -4258,10 +4254,7 @@ async def api_agent_keys(session: str = ""):
         if session:
             key = agent_key_store.for_session(session)
             return {"key": _key_json(key) if key else None}
-        # Requests still admitted on access keys, by label, over a week: at
-        # none, the access keys can go (the cut-over).
-        return {"keys": [_key_json(k) for k in agent_key_store.listing()],
-                "access_key_admissions_7d": agent_key_store.legacy_counts()}
+        return {"keys": [_key_json(k) for k in agent_key_store.listing()]}
     return await asyncio.to_thread(read)
 
 
@@ -8819,43 +8812,18 @@ def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
     return None
 
 
-# How long before a package arrives its make_package command may have been
-# run: the claimed session's transcript must have been written since.
-MAKE_PACKAGE_WINDOW_SEC = 2 * 3600.0
-PROVEN_BY_KEY = "access_key"
+PROVEN_BY_KEY = "agent_key"
 
 
-def _package_sender(claimed: str, source: str,
-                    reporter: "Optional[reporters.Reporter]",
-                    inbox_id: str = "", arrived_at: float = 0.0
+def _package_sender(claimed: str, reporter: "Optional[reporters.Reporter]"
                     ) -> "Optional[session_message_sender.Sender]":
-    """The session a package claims it came from (`?session=`), proven, or
-    None: a session the caller's access key owns (its label's agent), or one
-    whose own transcript, or the file of one of its subagents (a Claude
-    subagent's, or a Codex subagent rollout naming it as parent), shows
-    make_package delivering it: run on `source` lately, as it arrives, or,
-    for a row already in the inbox (`inbox_id`, arrived at `arrived_at`),
-    make_package's line saying JARVIS took it under that id
-    (make_package.ARRIVED_AS), which the command prints once it has posted
-    and which no other package has. Only the claimed session and its
-    subagents are looked in: a claim is proven or refused, never moved to
-    another."""
-    if not claimed:
-        return None
-    if reporter is not None and reporter.owns(claimed):
+    """The session an unsigned package claims it came from (`?session=`),
+    proven only by the signed request that brought it: a session the
+    calling agent's key is (its own). Anything else is not proven, and his
+    answers go nowhere."""
+    if claimed and reporter is not None and reporter.owns(claimed):
         return session_message_sender.Sender(claimed, reporter.name, PROVEN_BY_KEY)
-    whole = False
-    if inbox_id:
-        # Written after it arrived. Read whole only for a row older than the
-        # window, whose line may be far back in a long transcript.
-        words, since = (make_package.ARRIVED_AS.format(inbox_id=inbox_id),), arrived_at
-        whole = time.time() - arrived_at > MAKE_PACKAGE_WINDOW_SEC
-    elif source:
-        words, since = ("make_package", source), time.time() - MAKE_PACKAGE_WINDOW_SEC
-    else:
-        return None
-    return _prove("package inbox", lambda t: session_message_sender.ran(
-        t, words, since, whole=whole), claimed, only_claimed=True, since=since)
+    return None
 
 
 def _inbox_sender(project: str, claimed: str,
@@ -8870,66 +8838,6 @@ def _inbox_sender(project: str, claimed: str,
     clip = package_inbox.REF_MAX
     return package_inbox.Sender(project, proven.session_id, proven.name[:clip], claimed,
                                 how[:clip])
-
-
-# How long after it arrives a package whose claim was not proven on arrival
-# is looked for again: its make_package prints the inbox id it was given as
-# soon as it has posted, so the line lands in the transcript within moments.
-REPROVE_FOR_SEC = 10 * 60.0
-
-
-def _reprove_inbox_senders(now: Optional[float] = None) -> list[tuple]:
-    """For each open row whose claimed session is still to be proven (one
-    from before migration 4, or one whose claim was not proven as it
-    arrived): prove it from the transcripts by `_package_sender`'s rule for
-    a row already in the inbox, and record a proof with the row. A row not
-    proven is tried again until REPROVE_FOR_SEC after it arrived (once, for
-    one older than that), then recorded as not proven, with why. A proven
-    row is never touched. Blocking. (the row, its sender or None) each one
-    recorded."""
-    now = time.time() if now is None else now
-    done = []
-    for entry in package_inbox.to_reprove():
-        sender = _package_sender(entry.claimed_session, "", None, inbox_id=entry.id,
-                                 arrived_at=entry.arrived_at)
-        if sender is None and now - entry.arrived_at < REPROVE_FOR_SEC:
-            continue                    # its line may not be written yet
-        why = "" if sender else ("its session is not a listed agent running now"
-                                 if entry.claimed_session not in agent_directory.names_by_session()
-                                 else "no transcript of its session shows it delivered")
-        recorded = package_inbox.reproved(
-            entry.id, _inbox_sender(entry.from_project, entry.claimed_session, sender)
-            if sender else None, why)
-        if recorded is not None:
-            log.info("package inbox: %s's sender %s", entry.id,
-                     f"proven: {recorded.from_session}" if sender else f"not proven: {why}")
-            done.append((recorded, sender))
-    if done:
-        _hint_inbox([e for e, _ in done])
-    return done
-
-
-# How long the re-proof waits for the session watcher's first look and the
-# agents list to follow it: the proof reads the sessions running.
-REPROVE_AFTER_SEC = 10.0
-# How often the rows waiting for their proof are looked at.
-REPROVE_POLL_SEC = 5.0
-
-
-async def _watch_inbox_proofs() -> None:
-    """Once the session watcher has looked, `_reprove_inbox_senders` every
-    REPROVE_POLL_SEC while any row waits for its proof. Never raises out."""
-    for _ in range(600):
-        if session_watcher is not None and session_watcher.polled:
-            break
-        await asyncio.sleep(1.0)
-    await asyncio.sleep(REPROVE_AFTER_SEC)
-
-    async def look() -> None:
-        if await asyncio.to_thread(package_inbox.to_reprove):
-            await asyncio.to_thread(_reprove_inbox_senders)
-
-    await _every(REPROVE_POLL_SEC, "package inbox proofs", look)
 
 
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
@@ -8963,10 +8871,10 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     on this Mac is, recorded with its sender as proven, then its attention
     item and hints. Nothing is shown. Its sender is its signature's
     (`_package_signer`: the onboarded agent whose key signed it); one
-    signed by a key not onboarded is held (`_unrecognised_key`), never
-    unpacked; an unsigned one is proven by the transcripts
-    (`_package_sender`) until the cut-over. A decision package only with
-    its check's statement (`_decision_problem`). Blocking. (the arrival, the
+    signed by a key not onboarded, or unsigned on a request signed by one,
+    is held (`_unrecognised_key`), never unpacked; an unsigned one by the
+    tool token keeps its claim unproven (`_package_sender`). A decision
+    package only with its check's statement (`_decision_problem`). Blocking. (the arrival, the
     package, "") or (None, None, why not)."""
     try:
         signed = package_signature.read(zip_path)
@@ -8987,11 +8895,9 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
-    if fresh:
-        _hint_from_any_thread({"type": "packages"})
     if status == _GOOD_SIGNER and signed.work_key:
         _work_key_from_package(package, signed, key, work_id)
-    proven = signer if signer is not None else _package_sender(sender.claimed, source, reporter)
+    proven = signer if signer is not None else _package_sender(sender.claimed, reporter)
     sender = _inbox_sender(sender.project, signer.session_id if signer else sender.claimed,
                            proven)
     try:
@@ -9106,8 +9012,7 @@ def _package_signer(signed):
 def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
     """Why this zip may not be unpacked here, or None: only a decision
     package needs proof it passed its end-to-end check, which is its
-    onboarded signer's statement (package_signature.DECISION_CHECKED), or,
-    until the cut-over, the old stamp for this JARVIS's tool token. An
+    onboarded signer's statement (package_signature.DECISION_CHECKED). An
     isolated check JARVIS (decision_check_server) takes the signature of
     the key it was seeded with alone, since it is the check."""
     try:
@@ -9118,9 +9023,6 @@ def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
     if key is not None and signed is not None and (
             package_signature.DECISION_CHECKED in signed.statements
             or os.environ.get("JARVIS_DECISION_CHECK_SERVER") == "1"):
-        return None
-    stamped = decision_stamp.problem(zip_path, data_paths.ensure_tool_token())
-    if stamped is None:
         return None
     return ("This is a decision package that has not passed its check: decision packages "
             "reach him only through python -m jarvis.make_package, which checks them end to "
@@ -12715,15 +12617,10 @@ def tool_agent_keys(args: dict) -> str:
         return (_key_line(key, names) if key else
                 f"{_agent_said(agent)} has submitted no key, sir.")
     keys = agent_key_store.listing()
-    legacy = agent_key_store.legacy_counts()
-    tail = ([f"Access keys still used this week: {sum(legacy.values())} requests "
-             f"({len(legacy)} key{'s' if len(legacy) != 1 else ''})."] if legacy else
-            ["No access key was used this week."])
     if not keys:
-        return "\n".join(["No agent has submitted a key, sir.", *tail])
+        return "No agent has submitted a key, sir."
     return "\n".join([f"{_say_number(len(keys)).capitalize()} agent key"
-                      f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys]
-                     + tail)
+                      f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys])
 
 
 def tool_revoke_agent_key(args: dict) -> str:

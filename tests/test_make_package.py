@@ -21,8 +21,15 @@ def presentation() -> dict:
     return json.loads(json.dumps(mp.PRESENTATION_EXAMPLE))
 
 
+@pytest.fixture(autouse=True)
+def session_key():
+    """Session sess-1's own key, which every delivery is signed with."""
+    from jarvis import agent_keys
+    return agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent sess-1")
+
+
 def passing_check(monkeypatch, seen=None):
-    def check(archive, deck, out):
+    def check(archive, deck, out, signer=None, session=""):
         if seen is not None:
             seen.append(deck)
         return decision_check.Result(passed=["everything"])
@@ -36,7 +43,8 @@ def test_a_presentation_builds_without_votes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(dp, "post", delivery)
     passing_check(monkeypatch, seen)
     assert mp.main([str(write(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
-                    "--project", "lunch", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--project", "lunch", "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
     archive = tmp_path / "out" / "team-lunch-moved-1.0.0.zip"
     names = zipfile.ZipFile(archive).namelist()
     assert "SKILL.md" not in names and "scripts/decide.py" not in names
@@ -150,7 +158,8 @@ def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(dp, "post", delivery)
     monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("a folder is no deck"))
     assert mp.main([str(page_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
-                    "--project", "globe", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--project", "globe", "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
     archive = tmp_path / "out" / "globe-numbers-1.0.0.zip"
     names = zipfile.ZipFile(archive).namelist()
     assert "app.js" in names and "story.json" in names and "results/old.json" not in names
@@ -200,20 +209,19 @@ def test_the_old_command_name_is_the_same_command(tmp_path, capsys):
     assert "a presentation" in capsys.readouterr().out
 
 
-def test_a_decision_package_is_stamped_for_the_live_jarvis_a_presentation_is_not(
-        tmp_path, monkeypatch):
-    from jarvis import decision_stamp
+def test_a_decision_package_is_signed_as_checked_a_presentation_only_as_sent(
+        tmp_path, monkeypatch, session_key):
+    from jarvis import package_signature
     monkeypatch.setattr(dp, "post", _Delivery())
     passing_check(monkeypatch)
-    token = data_paths.ensure_tool_token()
     for name, deck in (("d", small_deck()), ("p", presentation())):
         out = tmp_path / name / "out"
         assert mp.main([str(write(tmp_path / name, deck)), "--out", str(out),
-                        "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                        "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
         [archive] = out.glob("*.zip")
-        names = zipfile.ZipFile(archive).namelist()
-        assert (decision_stamp.STAMP in names) == (name == "d")
-        assert decision_stamp.problem(archive, token) is None
+        signed = package_signature.read(archive)
+        assert signed.session == "sess-1" and signed.checks(session_key[1])
+        assert (package_signature.DECISION_CHECKED in signed.statements) == (name == "d")
 
 
 def test_a_deck_given_as_a_folder_is_refused(tmp_path):

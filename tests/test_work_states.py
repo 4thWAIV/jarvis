@@ -9,14 +9,17 @@ import time
 
 import pytest
 
-from jarvis import access_keys, data_paths, run_store, work_store
+from jarvis import data_paths, run_store, work_store
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 
 BROWSER = {"Origin": "http://localhost:5173"}
 
 
 def _key(label="asker"):
-    return {"Authorization": f"Bearer {access_keys.create(label, ['work'])}"}
+    """An onboarded agent (by its label's session) holding work, signing
+    every request."""
+    from tests.agent_key_fixtures import onboarded_auth
+    return onboarded_auth(("work",), f"sess-{label}")
 
 
 @pytest.fixture
@@ -27,7 +30,7 @@ def item(wired, tmp_path):
 
 
 def _report(w, item_id, kind, summary, auth=None, ok=True, **detail):
-    r = w.client.post(f"/api/work/{item_id}/events", headers=auth or _key(),
+    r = w.client.post(f"/api/work/{item_id}/events", auth=auth or _key(),
                       json={"kind": kind, "summary": summary, "detail": detail})
     assert (r.status_code == 200) == ok, r.text
     return r.json()
@@ -274,7 +277,7 @@ def test_no_reporter_can_say_done(wired, item):
         assert "Done is Tim's" in r["error"] or "Only he" in r["error"], (kind, r)
     r = _piece(wired, item.id, "b", auth=key, ok=False, state="blocked", until="x", then="done")
     assert "Done is Tim's" in r["error"]
-    r = wired.client.post(f"/api/work/{item.id}/review", headers=key, json={"action": "approve"})
+    r = wired.client.post(f"/api/work/{item.id}/review", auth=key, json={"action": "approve"})
     assert r.status_code == 403, "his review is the page's or his voice's, never a key's"
 
 

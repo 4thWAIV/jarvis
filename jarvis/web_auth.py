@@ -27,9 +27,7 @@ what admits it.
 key (agent_keys.py: `Authorization: JARVIS-Signature ...`), and is admitted
 only when the signature checks for a key Tim onboarded (agent_auth.py) and
 the agent's rights cover the request (agent_rights.allows). JARVIS holds no
-secret of the agent's: only its public key. Until the cut-over an agent may
-instead carry an access key (access_keys.py), admitted only to the routes
-its categories cover.
+secret of the agent's: only its public key.
 
 One route takes no credential at all: `POST /api/agent-keys`, a new agent
 submitting its public key (it has nothing else yet). It only ever records a
@@ -37,8 +35,8 @@ pending submission, which nothing trusts until the agent's own transcript
 proves it and Tim switches the agent on.
 
 So: a request is authorized if its `Origin` is one JARVIS actually serves
-from, if it carries the tool token, or if it carries an access key that
-covers it. A WebSocket with no `Origin` is not a
+from, if it carries the tool token, or if an onboarded agent signed it
+within its rights. A WebSocket with no `Origin` is not a
 browser; it is refused unless it has the token, because "no Origin" is
 exactly what the LAN exploit looks like, and refusing it outright would
 break the local clients that legitimately have no origin to send.
@@ -82,7 +80,6 @@ from urllib.parse import urlsplit
 
 from starlette.responses import JSONResponse
 
-from jarvis import access_keys
 from jarvis import agent_keys
 from jarvis import data_paths
 from jarvis.bundle_readers import html as bundle_html
@@ -543,10 +540,10 @@ def token_matches(supplied: Optional[str]) -> bool:
 
 
 # How a request got past the gate, kept in its ASGI scope under ADMITTED:
-# a page JARVIS serves, the tool token, an agent's access key, or an
-# onboarded agent's signature (whose principal is kept under PRINCIPAL).
+# a page JARVIS serves, the tool token, or an onboarded agent's signature
+# (whose principal is kept under PRINCIPAL).
 ADMITTED = "jarvis.admitted"
-BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY, BY_AGENT_KEY = "origin", "token", "access_key", "agent_key"
+BY_ORIGIN, BY_TOKEN, BY_AGENT_KEY = "origin", "token", "agent_key"
 PRINCIPAL = "jarvis.principal"
 # The fingerprint of the key a signed request checked for, onboarded or not.
 SIGNED_KEY = "jarvis.signed_key"
@@ -564,36 +561,24 @@ SIGNED_BODY_MAX = 32 * 1024 * 1024
 on_unrecognised = None
 
 
-def admission(origin: Optional[str], authorization: Optional[str],
-              method: str, path: str) -> Optional[str]:
-    """How the request is admitted (BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY), or
-    None. `method` is the HTTP method, or access_keys.WEBSOCKET for a
-    handshake."""
+def admission(origin: Optional[str], authorization: Optional[str]) -> Optional[str]:
+    """How an unsigned request is admitted (BY_ORIGIN, BY_TOKEN), or None.
+    A signed one is judged by `_signed`."""
     if origin_allowed(origin):
         return BY_ORIGIN
-    supplied = bearer(authorization)
-    if token_matches(supplied):
+    if token_matches(bearer(authorization)):
         return BY_TOKEN
-    if access_keys.allows(supplied, method, path):
-        return BY_ACCESS_KEY
     return None
 
 
-def request_authorized(origin: Optional[str], authorization: Optional[str],
-                       method: str, path: str) -> bool:
-    """`method` is the HTTP method, or access_keys.WEBSOCKET for a handshake."""
-    return admission(origin, authorization, method, path) is not None
-
-
-def admitted_by_access_key(scope: dict) -> bool:
-    """The request came in on an agent's access key."""
-    return scope.get(ADMITTED) == BY_ACCESS_KEY
+def request_authorized(origin: Optional[str], authorization: Optional[str]) -> bool:
+    return admission(origin, authorization) is not None
 
 
 def admitted_by_agent(scope: dict) -> bool:
-    """The request came in on an agent's own key or its access key: what it
-    may reach is its rights' routes, and never a person's yes."""
-    return scope.get(ADMITTED) in (BY_ACCESS_KEY, BY_AGENT_KEY)
+    """The request came in on an agent's own key: what it may reach is its
+    rights' routes, and never a person's yes."""
+    return scope.get(ADMITTED) == BY_AGENT_KEY
 
 
 def _header(scope: dict, name: bytes) -> Optional[str]:
@@ -603,29 +588,13 @@ def _header(scope: dict, name: bytes) -> Optional[str]:
     return None
 
 
-def access_key_label(scope: dict) -> Optional[str]:
-    """The label of the access key the request came in on, or None when it
-    came in another way."""
-    if not admitted_by_access_key(scope):
-        return None
-    return access_keys.label_of(bearer(_header(scope, b"authorization")))
-
-
 def scope_authorized(scope: dict) -> bool:
     """Whether the request may pass; how it was admitted is written into
     the scope (ADMITTED) for the routes that care. A signed request was
     judged by the gate already (`_signed`), and is not judged again."""
     if scope.get(ADMITTED) == BY_AGENT_KEY:
         return True
-    method = (access_keys.WEBSOCKET if scope.get("type") == "websocket"
-              else scope.get("method", "").upper())
-    scope[ADMITTED] = admission(_header(scope, b"origin"),
-                                _header(scope, b"authorization"),
-                                method, scope.get("path", ""))
-    if scope[ADMITTED] == BY_ACCESS_KEY:
-        # Counted for the cut-over: at none in a week, the access keys go.
-        from jarvis import agent_key_store
-        agent_key_store.count_legacy(access_key_label(scope) or "?")
+    scope[ADMITTED] = admission(_header(scope, b"origin"), _header(scope, b"authorization"))
     return scope[ADMITTED] is not None
 
 
@@ -765,8 +734,8 @@ class OriginGuard:
                     status_code=403,
                     content={"error": "Refused: this request did not come "
                                       "from a page JARVIS serves, and "
-                                      "carried no tool token or access "
-                                      "key that covers it."})
+                                      "carried no tool token or agent's "
+                                      "signature that covers it."})
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)

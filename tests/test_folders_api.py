@@ -121,13 +121,12 @@ def test_fixed_routes_are_not_taken_for_a_folder_id(wired):
 
 def test_changes_need_the_page_s_origin_or_the_tool_token(wired):
     server, client, folder, _hints = wired
-    from jarvis import access_keys, data_paths
+    from jarvis import agent_rights, data_paths
+    from tests.agent_key_fixtures import onboarded_auth
     assert _register(client, folder, headers={}).status_code == 403
-    for category in access_keys.CATEGORIES:
-        key = access_keys.create(f"agent-{category}", [category])
-        r = _register(client, folder, key=f"k-{category}",
-                      headers={"Authorization": f"Bearer {key}"})
-        assert r.status_code == 403, category
+    every = onboarded_auth(tuple(agent_rights.RIGHTS))
+    r = client.post("/api/folders", auth=every, json={"request_key": "k-agent", "path": str(folder)})
+    assert r.status_code == 403, "no right covers a folder change"
     token = data_paths.ensure_tool_token()
     ok = _register(client, folder, key="k-token", headers={"Authorization": f"Bearer {token}"})
     assert ok.status_code == 201

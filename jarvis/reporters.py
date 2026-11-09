@@ -4,10 +4,10 @@ An onboarded agent signs its requests with its own key (agent_keys.py):
 the request comes in as that key's principal, `agent:<session id>`, and
 that session is the only one a report on it may claim as its own. A
 work-item key (`workkey:<fingerprint>`) reports for the agent that issued
-it. Before agents had keys they carried access keys, whose label meant an
-agent: the listed agent (or agents, two may share a name) the agent
-directory names by it (`agent_directory.same_name`). A label that names no
-listed agent is shown as itself and owns no session.
+it. Before agents had keys they carried access keys, which admit nothing
+any more; their records (`key:<label>`) stay readable, the label meaning
+the listed agent (or agents, two may share a name) the agent directory
+names by it (`agent_directory.same_name`), else shown as itself.
 
 What is recorded is the principal (or `key:<label>`); the name is worked
 out each time it is shown, so a renamed agent is shown by its one name.
@@ -96,21 +96,27 @@ def of_scope(scope: dict) -> Optional[Reporter]:
     """The reporter a request came in as, or None when no agent's key
     admitted it (the page, the tool token)."""
     principal = web_auth.principal(scope)
-    if principal:
-        return of_principal(principal)
-    label = web_auth.access_key_label(scope)
-    return None if label is None else of_label(label)
+    return of_principal(principal) if principal else None
 
 
 def recorded(scope: dict) -> str:
     """How a request's reporter is written down: the agent key's principal,
-    `key:<label>` for an access key, else how it was admitted (the tool
-    token, the page)."""
-    principal = web_auth.principal(scope)
-    if principal:
-        return principal
-    label = web_auth.access_key_label(scope)
-    return f"{KEY_PREFIX}{label}" if label is not None else str(scope.get(web_auth.ADMITTED) or "")
+    else how it was admitted (the tool token, the page)."""
+    return web_auth.principal(scope) or str(scope.get(web_auth.ADMITTED) or "")
+
+
+def legacy_labels() -> list[str]:
+    """The labels in the old access keys' record (`access-keys.json`),
+    read only, to adopt one onto the agent it names when it is onboarded.
+    Nothing is admitted by them. Never raises."""
+    import json
+    from jarvis import data_paths
+    try:
+        data = json.loads(data_paths.access_keys_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    keys = data.get("keys") if isinstance(data, dict) else None
+    return [str(k.get("label")) for k in keys or [] if isinstance(k, dict) and k.get("label")]
 
 
 def aliases(scope: dict) -> tuple[str, ...]:

@@ -10,6 +10,8 @@ import subprocess
 import sys
 
 import pytest
+
+from tests.agent_key_fixtures import signing
 from fastapi.testclient import TestClient
 
 ORIGIN = {"Origin": "http://localhost:5173"}
@@ -40,13 +42,14 @@ def _events(store):
 
 
 def _key(category="workflows"):
-    from jarvis import access_keys
-    return {"Authorization": f"Bearer {access_keys.create('reporter-' + category, [category])}"}
+    """An onboarded agent holding only `category`, signing every request."""
+    from tests.agent_key_fixtures import onboarded_auth
+    return onboarded_auth((category,))
 
 
 def _start(client, headers, phases=("plan", "build")):
     r = client.post("/api/workflows", json={"name": "Speech migration", "project": "jarvis",
-                                            "phases": list(phases)}, headers=headers)
+                                            "phases": list(phases)}, auth=headers)
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -56,15 +59,15 @@ def test_a_workflows_key_reports_steps_and_opens_nothing_else(wired):
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
-    r = client.post(f"/api/workflows/{wid}/events", headers=key,
+    r = client.post(f"/api/workflows/{wid}/events", auth=key,
                     json={"kind": "task_added", "item": "spec", "summary": "Spec added.",
                           "detail": {"phase": "plan", "title": "Write the spec"}})
     assert r.status_code == 200 and r.json()["workflow"]["tasks_total"] == 1
     assert {"type": "workflows"} in hints
     for path in ("/api/restart", "/api/runs", f"/api/workflows/{wid}/decisions/x"):
-        assert client.post(path, json={}, headers=key).status_code == 403, path
+        assert client.post(path, json={}, auth=key).status_code == 403, path
     assert client.post("/api/workflows", json={"name": "x", "project": "y"},
-                       headers=_key("captures")).status_code == 403
+                       auth=_key("captures")).status_code == 403
 
 
 def test_a_refused_step_says_why(wired):
@@ -72,7 +75,7 @@ def test_a_refused_step_says_why(wired):
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
-    r = client.post(f"/api/workflows/{wid}/events", headers=key,
+    r = client.post(f"/api/workflows/{wid}/events", auth=key,
                     json={"kind": "phase_started", "item": "deploy", "summary": "Go."})
     assert r.status_code == 409 and "no phase deploy" in r.json()["error"]
 
@@ -87,7 +90,7 @@ def test_the_steps_worth_an_update_are_recorded_once(wired):
                  {"kind": "decision_needed", "summary": "Which engine?",
                   "detail": {"key": "engine", "options": ["deepgram", "apple"]}},
                  {"kind": "blocker_raised", "summary": "Tests are red.", "detail": {"key": "red"}}):
-        assert client.post(f"/api/workflows/{wid}/events", json=body, headers=key).status_code == 200
+        assert client.post(f"/api/workflows/{wid}/events", json=body, auth=key).status_code == 200
     asyncio.run(asyncio.sleep(0))
     assert _events(store) == ["phase_started", "decision_needed", "blocker_raised"]
     (item,) = store.items()
@@ -142,13 +145,13 @@ def test_he_answers_on_the_page_and_the_reporter_reads_it_back(wired, monkeypatc
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
-    client.post(f"/api/workflows/{wid}/events", headers=key,
+    client.post(f"/api/workflows/{wid}/events", auth=key,
                 json={"kind": "decision_needed", "summary": "Which engine?",
                       "detail": {"key": "engine"}})
 
     from jarvis import workflow_report
     monkeypatch.setattr(workflow_report, "_client",
-                        lambda cert, session="": TestClient(server.app, headers=key))
+                        lambda cert, session="": signing(TestClient(server.app), key))
     assert workflow_report.main(["workflow_report.py", "answer", wid, "engine"]) == \
         workflow_report.NOT_ANSWERED
 
@@ -164,7 +167,7 @@ def test_the_reporter_starts_and_reports(wired, monkeypatch, capsys):
     key = _key()
     from jarvis import workflow_report
     monkeypatch.setattr(workflow_report, "_client",
-                        lambda cert, session="": TestClient(server.app, headers=key))
+                        lambda cert, session="": signing(TestClient(server.app), key))
     assert workflow_report.main(["workflow_report.py", "start", "Rebrand", "--project", "denice",
                                  "--phase", "copy", "--phase", "merge"]) == 0
     wid = capsys.readouterr().out.strip()
@@ -251,12 +254,12 @@ def test_only_the_page_dismisses_and_the_reporter_cannot(wired):
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
-    client.post(f"/api/workflows/{wid}/events", headers=key,
+    client.post(f"/api/workflows/{wid}/events", auth=key,
                 json={"kind": "workflow_finished", "summary": "Done.", "detail": {"outcome": "succeeded"}})
-    r = client.post(f"/api/workflows/{wid}/events", headers=key,
+    r = client.post(f"/api/workflows/{wid}/events", auth=key,
                     json={"kind": "workflow_dismissed", "summary": "Gone."})
     assert r.status_code == 409 and "Only he dismisses" in r.json()["error"]
-    assert client.post(f"/api/workflows/{wid}/dismiss", headers=key).status_code == 403
+    assert client.post(f"/api/workflows/{wid}/dismiss", auth=key).status_code == 403
     r = client.post(f"/api/workflows/{wid}/dismiss", headers=ORIGIN)
     assert r.status_code == 200 and r.json()["workflow"]["dismissed"] is True
 
@@ -264,32 +267,34 @@ def test_only_the_page_dismisses_and_the_reporter_cannot(wired):
 
 # --- who reported it ------------------------------------------------------------
 
-def _named_key(label):
-    from jarvis import access_keys
-    return {"Authorization": f"Bearer {access_keys.create(label, ['workflows'])}"}
+def _named_key(session):
+    """The onboarded agent of `session`, holding workflows."""
+    from tests.agent_key_fixtures import onboarded_auth
+    return onboarded_auth(("workflows",), session)
 
 
-def test_every_event_carries_its_key_s_label_as_its_reporter(wired):
-    """A label that names no listed agent is shown as itself, proven by the key."""
+def test_every_event_carries_its_agent_as_its_reporter(wired):
+    """Who reported it is the signing key's agent, never the report's word."""
     server, _hints, _ = wired
+    server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle")})
     client = TestClient(server.app)
-    key = _named_key("claude-workflows")
+    key = _named_key("sess-plan-0001")
     wid = _start(client, key)
-    client.post(f"/api/workflows/{wid}/events", headers=key,
+    client.post(f"/api/workflows/{wid}/events", auth=key,
                 json={"kind": "task_added", "item": "spec", "summary": "Spec added.",
                       "detail": {"phase": "plan", "title": "Write the spec"}})
     events = client.get(f"/api/workflows/{wid}/events").json()["events"]
     assert {(e["reporter"], e["reporter_name"]) for e in events} == {
-        ("key:claude-workflows", "claude-workflows")}
+        ("agent:sess-plan-0001", "Planning")}
     w = client.get(f"/api/workflows/{wid}").json()["workflow"]
-    assert (w["reporter"], w["reporter_name"]) == ("key:claude-workflows", "claude-workflows")
+    assert (w["reporter"], w["reporter_name"]) == ("agent:sess-plan-0001", "Planning")
 
 
 def test_a_key_named_for_an_agent_reports_as_that_agent(wired):
     server, _hints, _ = wired
     server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle")})
     client = TestClient(server.app)
-    key = _named_key("planning")
+    key = _named_key("sess-plan-0001")
     wid = _start(client, key)
     w = client.get(f"/api/workflows/{wid}").json()["workflow"]
     assert w["reporter_name"] == "Planning"
@@ -300,17 +305,18 @@ def test_agent_attached_must_name_a_session_its_key_owns(wired):
     server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle"),
                                   "sess-other-001": ("Designer", "idle")})
     client = TestClient(server.app)
-    key = _named_key("planning")
+    key = _named_key("sess-plan-0001")
     wid = _start(client, key)
 
     def attach(session, headers):
-        return client.post(f"/api/workflows/{wid}/events", headers=headers,
+        signed = {"headers": headers} if isinstance(headers, dict) else {"auth": headers}
+        return client.post(f"/api/workflows/{wid}/events", **signed,
                            json={"kind": "agent_attached", "summary": "Attached.",
                                  "detail": {"session_id": session}})
     refused = attach("sess-other-001", key)
-    assert refused.status_code == 409 and "does not own" in refused.json()["error"]
+    assert refused.status_code == 409 and "not yours" in refused.json()["error"]
     assert attach("sess-plan-0001", key).status_code == 200
-    stranger = _named_key("claude-workflows")
-    assert attach("sess-plan-0001", stranger).status_code == 409, "a label naming no agent owns none"
+    stranger = _named_key("sess-stranger")
+    assert attach("sess-plan-0001", stranger).status_code == 409, "another agent owns none of it"
     assert attach("sess-plan-0001", ORIGIN).status_code in (403, 409)
     assert client.get(f"/api/workflows/{wid}").json()["workflow"]["agents"] == ["sess-plan-0001"]

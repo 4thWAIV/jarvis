@@ -64,7 +64,10 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
         pytest.skip(reason)
     content = write(tmp_path / "in", small_deck())
     out = tmp_path / "out"
-    code = dp.main([str(content), "--out", str(out), "--deliver-to", stand_in.url])
+    from jarvis import agent_keys, package_signature
+    _private, public = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
+    code = dp.main([str(content), "--out", str(out), "--session", "sess-1",
+                    "--deliver-to", stand_in.url])
     said = capsys.readouterr().out
     if "Executable doesn't exist" in said:          # pragma: no cover
         pytest.skip("no Playwright Chromium")
@@ -91,12 +94,11 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
 
     [(path, authorization, body)] = stand_in.posts
     assert path.partition("?")[0] == "/api/packages/inbox"
-    assert authorization == f"Bearer {data_paths.ensure_tool_token()}"
+    assert authorization.startswith(agent_keys.SCHEME), "signed with the session's own key"
     assert body == (out / "lunch-decisions-1.0.0.zip").read_bytes()
-    from jarvis import decision_stamp
-    assert decision_stamp.problem(out / "lunch-decisions-1.0.0.zip",
-                                  data_paths.ensure_tool_token()) is None, "stamped for it"
-    assert data_paths.ensure_tool_token() not in said
+    signed = package_signature.read(out / "lunch-decisions-1.0.0.zip")
+    assert signed.checks(public) and package_signature.DECISION_CHECKED in signed.statements, \
+        "signed as checked, once the isolated JARVIS seeded with its key passed it"
     assert "Arrived in Tim's package inbox as pkg-0123456789ab" in said
     assert "Nothing is shown until he asks for it." in said
 
@@ -108,7 +110,10 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
         pytest.skip(reason)
     content = write(tmp_path / "in", json.loads(json.dumps(mp.PRESENTATION_EXAMPLE)))
     out = tmp_path / "out"
-    code = mp.main([str(content), "--out", str(out), "--deliver-to", stand_in.url])
+    from jarvis import agent_keys
+    agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
+    code = mp.main([str(content), "--out", str(out), "--session", "sess-1",
+                    "--deliver-to", stand_in.url])
     said = capsys.readouterr().out
     if "Executable doesn't exist" in said:          # pragma: no cover
         pytest.skip("no Playwright Chromium")

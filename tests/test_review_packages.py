@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import data_paths, decision_stamp, make_package, run_store, work_store
+from jarvis import data_paths, make_package, package_signature, run_store, work_store
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_inbox import BROWSER, EXAMPLES, INBOX, send
 from tests.test_work_packages import marks  # noqa: F401
@@ -51,10 +51,13 @@ def review_zip(tmp_path: Path, also_ask: bool = False) -> bytes:
     manifest = json.loads((folder / "package.json").read_text())
     manifest["name"] = deck["name"]
     (folder / "package.json").write_text(json.dumps(manifest))
-    raw, stamped = tmp_path / f"{deck['name']}-raw.zip", tmp_path / f"{deck['name']}.zip"
+    raw, signed = tmp_path / f"{deck['name']}-raw.zip", tmp_path / f"{deck['name']}.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
-    decision_stamp.stamp(raw, stamped, data_paths.ensure_tool_token())
-    return stamped.read_bytes()
+    from tests.agent_key_fixtures import onboarded_auth
+    agent = onboarded_auth(session="gone").agent
+    package_signature.sign(raw, signed, agent.private, agent.public, "gone", "",
+                           (package_signature.DECISION_CHECKED,))
+    return signed.read_bytes()
 
 
 @pytest.fixture

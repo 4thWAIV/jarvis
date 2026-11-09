@@ -17,8 +17,9 @@ Every answer of his is also written for the agent that asked it, as one
 Markdown file in `data_paths.answers_dir()/<project>/<item>-<key>.md`
 (`write_answer`), so it is told without asking again.
 
-Reporters reach the two POSTs (and the answers read) with an access key in the `work` category
-(access_keys.py) through `work_report.py`; his answer needs the page's own
+Reporters reach the two POSTs (and the answers read) signed with their own
+onboarded key holding the `work` right (agent_rights.py), through
+`work_report.py`; his answer needs the page's own
 origin or the tool token, as every other change does (web_auth.py). Every
 committed change is told to `recorded`, which the server turns into the
 `work` hint on /ws/sessions and, for news, an attention item.

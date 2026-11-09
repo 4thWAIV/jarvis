@@ -478,3 +478,32 @@ Routine choices, one line each with the reason:
 - Withdrawals and `answers` accept every name the agent went by (`reporters.aliases`), so decisions asked under an adopted access-key label stay its own.
 - The report commands take `--as <session id>` rather than `--session`, because `workflow_report.py event` already has `--session` for `agent_attached`; they also read `JARVIS_AGENT_SESSION`, and `workflow_report.py event --session` is used when `--as` is not given.
 - `agent-keys` joins `repo_read.SENSITIVE_DIRS`, and `work-key` and `work-key.pub` `SENSITIVE_EXACT`, so no folder tool reads a key.
+
+### Phases 4 to 6 (second pull request)
+
+Built: `package_signature.py` (`agent-signature.json`), message files' and needs boards' `<file>.sig` (`agent_key sign`), the inbox's sender from the signature, the decision check seeded with the agent's key and its signed statement, `server._unrecognised_key` (hold, Work item Error, error package with Tim's two acts), `key_error_package.py`, work-item keys (`make_package --work`, `agent_key grant` and `renew`, the Overview line with Revoke), and the cut-over: `access_keys.py`, the decision stamp, the tool token in `make_package` and the transcript proof for packages, messages and needs boards are gone.
+
+Routine choices, one line each with the reason:
+
+- The Work item "goes to Error" as a new state, `error`, ahead of everything but done, set and cleared only by JARVIS (`error_raised`, `error_cleared`), because no existing state means "JARVIS holds something sent for it" and a reporter must not be able to clear it.
+- The Work item put in Error is the one the held thing was for (a package's `--work`, a report's item), since a hold for no item has none to mark.
+- The error package is one per subject (`key:<fingerprint>`, else `session:<id>` for an unsigned one), made again (a newer version replacing the open one) as holds are added, so Tim sees one current list per sender rather than one package per attempt.
+- The same thing held again (same subject, kind and words) is the same hold and changes nothing, so a retrying agent does not flood the inbox.
+- The error package is a page package whose two buttons save `results/act.json` through the frame's existing bridge, so the acts are his clicks with no new bridge message; they are honoured only for error packages JARVIS made.
+- "Switch it on" is offered only while the key waits for him; a pending or unknown key says the agent must run `init` and `submit` itself, because switching on can only accept a proven key.
+- A request signed by a fingerprint JARVIS holds no key for is refused and not held, because nothing proves it is anyone's; one by a key it holds (pending, waiting, revoked) is held and told.
+- A key JARVIS holds but has not onboarded may still reach `POST /api/packages/inbox`, so its package can be held rather than lost.
+- A file signature that does not match the file (changed after signing) counts as unsigned, not forged, so an agent that rewrites a board just signs it again.
+- An unsigned message file or needs board waits `SIG_GRACE_SEC` (60 s) for its `.sig` before it is held, because the agent signs just after writing.
+- A package signature that does not check for a held key's public key is held; one naming a key JARVIS does not hold, that does not check even for the key it names, is treated as unsigned.
+- An unsigned package on the tool token keeps its `?session=` as an unproven claim (his answers go nowhere), since the tool token is JARVIS's own and Tim's, not an agent's.
+- Message signatures carry no subagent name; a subagent's message shows as its parent agent's, as the design says subagents sign with the parent's key.
+- Work-item keys are only made for agent packages (`runs: agent`) with `--work` and `--session`, as the design says packages Tim answers get none.
+- A work-item key is live only while its item is open and not in History, checked at every request (`agent_auth`), as well as revoked when the item closes and on the 5-second look after it leaves; the read-time check makes the end immediate without joining the two stores' transactions.
+- A work-item key reports for the agent that issued it (shown by that agent's name), and reads the answers to its item's decisions whoever asked them.
+- Issuing and renewing a work-item key are part of the `work` right, so no new right is needed; a work-item key itself can do neither.
+- Package inbox migration 5 clears every `reprove` flag, since nothing is proven from transcripts any more.
+- `decision_stamp.py` keeps only the deck's marks and `is_decision_package`, which three modules use; the stamp itself is gone.
+- `access-keys.json` is read only for the labels an onboarded agent adopts (`reporters.legacy_labels`); nothing reads it to admit anything, and nothing deletes it.
+- The two Keychain items are left alone (Tim's answer to Q4).
+- Merging this pull request ends access keys: agents still using `JARVIS_ACCESS_KEY` must have made, submitted and been switched on with their own keys first.

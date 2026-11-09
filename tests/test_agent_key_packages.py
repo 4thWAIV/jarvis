@@ -186,7 +186,6 @@ def test_a_signed_message_is_its_agent_s_and_one_from_a_waiting_key_waits_for_hi
         wired, monkeypatch):
     from jarvis import agent_key, agent_key_store, data_paths, run_store
     server, *_, home = wired
-    monkeypatch.setattr(server, "_message_sender", lambda dropped: None)
     folder = data_paths.session_messages_dir() / "jarvis"
     folder.mkdir(parents=True, exist_ok=True)
     planner = Agent(home, PLAN).onboarded()

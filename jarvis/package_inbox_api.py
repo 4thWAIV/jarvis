@@ -6,9 +6,10 @@ server's one function for it, which the brain's tool calls too.
                                      inbox, checked, unpacked and recorded,
                                      never shown. The `packages` access
                                      key's only route (make_package sends it).
-                                     `session` is only a claim: his answers
-                                     go to it once it is proven
-                                     (server._package_sender), else nowhere
+                                     signed by the sending agent's key (in
+                                     the zip, package_signature.py, and on
+                                     the request); his answers go to the
+                                     session it proves, else nowhere
   GET  /api/packages/inbox           the open packages, newest first, and how
                                      many are closed (?closed=1 lists those)
   GET  /api/packages/inbox/{id}      one, with its questions and answers

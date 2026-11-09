@@ -297,7 +297,7 @@ function ItemKey({ itemKey }: { itemKey: NonNullable<WorkItem["work_keys"]>[numb
       {t("main.work.itemKey", { name: itemKey.issued_by || t("main.work.itemKeyNobody"),
                                  when: formatDateTime(itemKey.expires_at * 1000, { dateStyle: "medium" }) })}{" "}
       <code className="work-path">{itemKey.fingerprint}</code>{" "}
-      <button type="button" className="thread-key-revoke"
+      <button data-ui-action="domain" type="button" className="thread-key-revoke"
               onClick={() => { setFailed(null); revokeAgentKey(itemKey.fingerprint).catch((e: Error) => setFailed(e.message)); }}>
         {t("main.thread.keyRevoke")}</button>
       {failed && <span className="read-failure"> {t("main.thread.keyFailed", { error: failed })}</span>}

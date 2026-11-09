@@ -291,11 +291,12 @@ voice, with nothing to answer, no "Your answers" slide and nothing
 returned.
 
 A JARVIS unpacks a decision package (one holding `deck-data.js` and
-`scripts/decide.py`) from a file on this Mac only with a stamp for its own
-tool token that matches its files (`decision-check.json`, made by
-`jarvis/decision_stamp.py`: the SHA-256 of every other file and an HMAC of
-it by that token). Only the package command stamps one, after every check
-has passed, so a decision package reaches him no other way.
+`scripts/decide.py`) only when it is signed, with the statement that it
+passed its check, by an agent's key that JARVIS onboarded
+(`agent-signature.json`, made by `jarvis/package_signature.py`: the SHA-256
+of every other file, who signed it and what it vouches for, under the
+agent's SSH signature). Only the package command signs one so, after every
+check has passed, so a decision package reaches him no other way.
 
 ### What the receiver gets
 

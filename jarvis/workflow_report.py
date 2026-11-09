@@ -3,9 +3,7 @@
 The session running a long workflow calls this at every step, so the one
 durable record (workflow_store.py) always has the latest state and JARVIS
 can say it. Every request is signed with the agent's own onboarded key
-(`--as <session id>`, or JARVIS_AGENT_SESSION; agent_keys.py), or, while they
-are still accepted, carries an access key in the `workflows` category in
-JARVIS_ACCESS_KEY. It trusts the certificate given with --cert (the talk-to-jarvis skill gives
+(`--as <session id>`, or JARVIS_AGENT_SESSION; agent_keys.py). It trusts the certificate given with --cert (the talk-to-jarvis skill gives
 JARVIS's own). It reaches JARVIS at JARVIS_URL when that is set (a reporter
 that runs outside this data folder says where JARVIS is), else at the address
 the running server recorded (`server_address.running()`), else at
@@ -76,7 +74,7 @@ class _Client:
                  signer: tuple[Path, str] | None = None):
         # `signer` is the agent's own key (agent_keys.signer_for): every
         # request is signed with it. Without one, `key` is an access key
-        # sent as a bearer, as before agents had keys.
+        # sent as a bearer (the tool token, for a caller that has it).
         self.base_url, self.key, self.signer = base_url, key, signer
         self.context = ssl.create_default_context(cafile=str(cert) if cert and cert.exists() else None)
 
@@ -118,17 +116,13 @@ class _Client:
 def signed_client(cert: Path | None, session_id: str = "", right: str = "workflows") -> _Client:
     """A client that signs with the agent's own key (its session's, from
     `session_id` or JARVIS_AGENT_SESSION, else a work-item key in this
-    folder or above), else, while access keys are still accepted, one that
-    sends JARVIS_ACCESS_KEY."""
+    folder or above)."""
     signer = agent_keys.signer_for(session_id)
     if signer:
         return _Client(base_url(), "", cert, signer)
-    key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
-    if not key:
-        raise SystemExit("No agent key: run python -m jarvis.agent_key init --session <your "
-                         "session id> and submit it, then give --as <your session id> "
-                         f"(or set JARVIS_ACCESS_KEY to an access key in the {right} category).")
-    return _Client(base_url(), key, cert)
+    raise SystemExit("No agent key: run python -m jarvis.agent_key init --session <your "
+                     "session id> and submit it, then give --as <your session id>. Your key "
+                     f"needs the {right} right, which an onboarded agent has.")
 
 
 def _client(cert: Path | None, session_id: str = "") -> _Client:

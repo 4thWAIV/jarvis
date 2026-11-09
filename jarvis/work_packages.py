@@ -447,7 +447,7 @@ async def unpack_held(chunks: AsyncIterator[bytes],
     read from the held file (draft_files.Source.chunks): copied into a
     private file among the packages first, so the archive checked is the
     archive unpacked, then `unpack` exactly as a received zip. `check(zip)`
-    says why that copy may not be unpacked (decision_stamp.problem), or
+    says why that copy may not be unpacked (server._decision_problem), or
     None."""
     root = data_paths.packages_dir()
     root.mkdir(parents=True, exist_ok=True)

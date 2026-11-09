@@ -20,6 +20,8 @@ has one onboarded key: onboarding a new one revokes the old in the same
 transaction. Rights are rows of `agent_rights` (agent_rights.py judges
 them), kept by principal, so a session's rights outlive a key it replaces.
 `agent_key_events` keeps each change, with who did it and when.
+(`legacy_admissions`, which counted access-key use until the cut-over, is
+kept as it is and no longer written.)
 
 Schema `agent_keys_schema`, through run_store.migrate. This module is the
 only writer of its tables, one transaction per change.
@@ -411,29 +413,6 @@ def grants(principal: str) -> list[Grant]:
                             (principal,)).fetchall()
     return [Grant(r["principal"], r["right"], r["scope"], r["granted_at"], r["granted_by"])
             for r in rows]
-
-
-# -- the access keys still in use, counted for the cut-over ------------------------------
-
-def count_legacy(label: str, now: Optional[float] = None) -> None:
-    """One request admitted on an access key, counted by day. Never raises."""
-    day = time.strftime("%Y-%m-%d", time.localtime(time.time() if now is None else now))
-    try:
-        with closing(_connect()) as conn, conn:
-            conn.execute("INSERT INTO legacy_admissions (day, label, count) VALUES (?,?,1) "
-                         "ON CONFLICT(day, label) DO UPDATE SET count=count+1", (day, label))
-    except sqlite3.Error:
-        pass
-
-
-def legacy_counts(days: int = 7, now: Optional[float] = None) -> dict[str, int]:
-    """Access-key admissions by label over the last `days` days."""
-    now = time.time() if now is None else now
-    since = time.strftime("%Y-%m-%d", time.localtime(now - (days - 1) * 86400))
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT label, SUM(count) AS n FROM legacy_admissions WHERE day>=? "
-                            "GROUP BY label ORDER BY label", (since,)).fetchall()
-    return {r["label"]: r["n"] for r in rows}
 
 
 # -- what is held for a key not onboarded ------------------------------------------------

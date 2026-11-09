@@ -58,9 +58,7 @@ PRESENTATION_EXAMPLE = {
     ],
 }
 
-# What the command prints once JARVIS has taken the package. The inbox id is
-# JARVIS's own, answered to the poster alone, so a transcript holding this
-# line shows its session delivered that package (server._package_sender).
+# What the command prints once JARVIS has taken the package.
 ARRIVED_AS = "Arrived in Tim's package inbox as {inbox_id}"
 
 
@@ -240,11 +238,11 @@ def add_work_key(archive: Path, work_id: str) -> dict:
 
 # -- checking ------------------------------------------------------------------------
 
-def _check(made: Made, out: Path) -> bool:
+def _check(made: Made, out: Path, signer: tuple[Path, str], session: str) -> bool:
     """A deck end to end in an isolated JARVIS; True when every check passed."""
     from jarvis import decision_check
     print("Checking it in an isolated JARVIS…", flush=True)
-    result = decision_check.check(made.archive, made.deck, out / "check")
+    result = decision_check.check(made.archive, made.deck, out / "check", signer, session)
     if not result.ok:
         if result.passed:
             print("These checks passed:")
@@ -326,31 +324,28 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         for line in e.problems:
             print(f"  - {line}")
         return 1
-    print(f"Built a {made.kind}: {made.archive}")
-    if made.deck is not None and not _check(made, out):
-        return 1
-
     from jarvis import agent_keys
     # The session's own key, else (an agent package's run, working in it) the
-    # work-item key in this folder or above.
+    # work-item key in this folder or above. Nothing goes without one.
     signer = agent_keys.signer_for(args.session)
+    if signer is None:
+        print("Not delivered: there is no key to sign it with. Give --session <your session "
+              "id>, having made and submitted your key (python -m jarvis.agent_key init, then "
+              "submit), and once Tim has switched your agent on.")
+        return 1
+    print(f"Built a {made.kind}: {made.archive}")
+    if made.deck is not None and not _check(made, out, signer, args.session):
+        return 1
     try:
         decision = made.deck is not None and bool(made.deck.get("decisions"))
-        token = ""
-        if signer is not None:
-            # Signed with the session's own key (package_signature.py): who
-            # sent it, and, for a deck, that the files checked are these. An
-            # agent package for a Work item carries a key for that item alone.
-            grant = (add_work_key(made.archive, args.work) if args.work and
-                     made.kind == "agent package" and args.session else None)
-            sign(made.archive, signer, args.session, args.worker,
-                 (package_signature.DECISION_CHECKED,) if decision else (), grant)
-        else:
-            # Until the cut-over: the tool token, and the stamp it makes.
-            token = data_paths.ensure_tool_token()
-            if decision:
-                decision_stamp.stamp(made.archive, made.archive, token)
-        delivered = dp.deliver(made.archive, args.deliver_to, token, project=args.project,
+        # Signed with the session's own key (package_signature.py): who sent
+        # it, and, for a deck, that the files checked are these. An agent
+        # package for a Work item carries a key for that item alone.
+        grant = (add_work_key(made.archive, args.work) if args.work and
+                 made.kind == "agent package" and args.session else None)
+        sign(made.archive, signer, args.session, args.worker,
+             (package_signature.DECISION_CHECKED,) if decision else (), grant)
+        delivered = dp.deliver(made.archive, args.deliver_to, "", project=args.project,
                                session=args.session, workflow=args.workflow, work=args.work,
                                source=str(args.source), signer=signer)
     except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
@@ -366,14 +361,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(ARRIVED_AS.format(inbox_id=inbox_id) + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
-    if delivered.inbox.get("proof_pending"):
-        print(f"JARVIS proves that session {args.session} sent it from this command's output "
-              "in that session's own transcript (or its subagent's), within ten minutes; if "
-              "it cannot, his answers will not come back to it.")
-    elif delivered.inbox.get("unproven_claim"):
-        print(f"JARVIS could not prove that session {args.session} ran this command (its own "
-              "transcript must show make_package run on this source), so his answers will "
-              "not come back to it. Run the command yourself, in your own session.")
+    if delivered.inbox.get("unproven_claim"):
+        print(f"JARVIS did not take it as session {args.session}'s, so his answers will not "
+              "come back to it: sign it with that session's own onboarded key.")
     print("Nothing is shown until he asks for it. "
           + ("His answers come back to your session as a message"
              + (" and to the workflow as its decisions" if args.workflow else "") + "."

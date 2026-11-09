@@ -525,7 +525,9 @@ def usage_path(service: str = "anthropic") -> Path:
 
 
 def access_keys_path() -> Path:
-    """The digests of the access keys, by label and category (access_keys.py)."""
+    """The old access keys' record, by label and category: read only, for
+    the labels an onboarded agent adopts (reporters.legacy_labels). Access
+    keys admit nothing any more (agent keys replaced them)."""
     return data_dir() / "access-keys.json"
 
 

@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from jarvis import access_keys
 from jarvis import data_paths
 from jarvis import transcriber
 from jarvis import transcription_api
@@ -455,9 +454,11 @@ def test_the_page_or_the_token_opens_it_and_nothing_else_does(client, monkeypatc
         with pytest.raises(WebSocketDisconnect):
             with _open(client, headers) as ws:
                 ws.receive_json()
-    key = access_keys.create("everything", list(access_keys.CATEGORIES))
+    from jarvis import agent_rights
+    from tests.agent_key_fixtures import onboarded_auth
+    agent = onboarded_auth(tuple(agent_rights.RIGHTS)).agent
     with pytest.raises(WebSocketDisconnect):
-        with _open(client, {"Authorization": f"Bearer {key}"}) as ws:
+        with _open(client, agent.headers("GET", PROTOCOL["path"])) as ws:
             ws.receive_json()
 
 

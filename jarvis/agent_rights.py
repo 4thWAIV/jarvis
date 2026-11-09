@@ -6,8 +6,8 @@ were the access keys' categories, unchanged. A grant is one row of
 agent, `agent:<session id>`, or a work-item key, `workkey:<fingerprint>`),
 a right and a scope. The scope is `*` for every target, or `work:<id>` for
 one Work item; `project:<name>` comes later. `allows` is the only place a
-signed request's rights are judged (web_auth's BY_AGENT_KEY), and
-access_keys.py reads its categories from here, so there is one definition.
+signed request's rights are judged (web_auth's BY_AGENT_KEY). The rights
+were the access keys' categories, which admit nothing any more.
 
 The voice socket, settings, brains, restart and /internal/tool are in no
 right: those stay with the browser and the tool token.
