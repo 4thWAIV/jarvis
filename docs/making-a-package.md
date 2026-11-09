@@ -16,6 +16,8 @@ Run it with JARVIS's own Python. The talk-to-jarvis skill gives the exact comman
 | Know something (an update, a presentation) | One JSON file with only `slides` | A presentation: the same slides, told in JARVIS's voice, with nothing to answer |
 | Use a page of your own, have an agent do work, or follow steps with JARVIS | A folder | A page, agent or conversation package |
 
+A package sent for a work item (`--work <id>`) must ask Tim something: a deck needs at least one entry in `decisions`, and a hand-made page needs a `story.json` with `answers` (`results/<name>.json`) and at least one slide that `waits` for a question. The command and his JARVIS both refuse one that asks nothing, saying to add the vote. A package that names no work item may ask nothing.
+
 Only real product choices go to Tim, and he chooses by looking: every option is a picture of what he would see. Decide technical details (flags, labels, limits, thresholds, internal behaviour) yourself and never put them in a package.
 
 ## A deck: one JSON file

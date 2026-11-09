@@ -48,7 +48,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import decision_stamp, run_store, wait_links, work_packages
+from jarvis import decision_stamp, package_story, run_store, wait_links, work_packages
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -386,6 +386,43 @@ def title_of(package: Package) -> str:
     data = deck(package) or {}
     title = _text(data.get("title")) or package.manifest.name.replace("-", " ")
     return " ".join(title.split())[:TITLE_MAX]
+
+
+# ── a package for a Work item carries his vote ───────────────────────────
+# A package that names a Work item must ask him something he can answer:
+# a deck's `decisions`, or a page's story with an `answers` file and at least
+# one slide that `waits` for a question. make_package and the inbox route
+# both judge by `asks_a_question` and refuse in `no_vote`'s words; a package
+# that names no Work item may ask nothing.
+
+def asks_a_question(deck_data: Optional[dict],
+                    story: Optional[package_story.Story]) -> bool:
+    """Whether a deck's content or a story asks him at least one question."""
+    if isinstance(deck_data, dict) and any(isinstance(d, dict)
+                                           for d in deck_data.get("decisions") or []):
+        return True
+    return story is not None and story.answers is not None and any(
+        s.waits for s in story.slides)
+
+
+def asks_him(package: Package) -> bool:
+    """`asks_a_question` for an unpacked package: its deck's decisions (a
+    decision package only) or its story's waiting slides."""
+    try:
+        story = package.story()
+    except PackageError:
+        story = None
+    return bool(questions(package)) or asks_a_question(None, story)
+
+
+def no_vote(work_id: str) -> str:
+    """The refusal, saying what to add."""
+    return (f"It names work item {work_id} but asks Tim nothing, and every package for a "
+            f"Work item must carry his vote. Add the vote: in a deck's content, at least one "
+            f"entry in `decisions` (python -m jarvis.make_package --example decisions shows "
+            f"one); in a hand-made page package, a story with `answers` "
+            f"(results/<name>.json) and at least one slide that `waits` for a question. "
+            f"Nothing was delivered.")
 
 
 def summary(package: Package) -> str:

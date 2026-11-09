@@ -214,6 +214,28 @@ def make_folder(folder: Path, out: Path) -> Made:
     return Made(archive, title, f"{manifest['runs']} package", None)
 
 
+# -- his vote ---------------------------------------------------------------------------
+
+def check_vote(source: Path, work: str) -> None:
+    """A package for a Work item asks him something (package_inbox's one
+    rule, which the inbox route applies too): Refused when it asks nothing."""
+    if not work:
+        return
+    from jarvis import package_inbox, package_story
+    if source.is_dir():
+        manifest, story = manifest_of(source), None
+        if manifest.get("story"):
+            try:
+                story = package_story.parse((source / manifest["story"]).read_bytes())
+            except (OSError, package_story.StoryError) as e:
+                raise dp.Refused([f"Its story cannot be read: {e}"])
+        asks = package_inbox.asks_a_question(None, story)
+    else:
+        asks = package_inbox.asks_a_question(deck_of(source), None)
+    if not asks:
+        raise dp.Refused([package_inbox.no_vote(work)])
+
+
 # -- checking ------------------------------------------------------------------------
 
 def _check(made: Made, out: Path) -> bool:
@@ -280,6 +302,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"There is nothing at {source}.")
         return 1
     try:
+        check_vote(source, args.work)
         if args.check_only:
             if source.is_dir():
                 manifest = manifest_of(source)

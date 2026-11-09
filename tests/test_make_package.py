@@ -138,6 +138,73 @@ def page_folder(root: Path, **manifest) -> Path:
     return folder
 
 
+# -- a package for a Work item carries his vote --------------------------------------
+
+def asking(folder: Path) -> Path:
+    """The page folder's story with an answers file and one waiting slide."""
+    story = json.loads((folder / "story.json").read_text())
+    story["answers"] = "results/decisions.json"
+    story["slides"][-1]["waits"] = "go-ahead"
+    (folder / "story.json").write_text(json.dumps(story))
+    return folder
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+def test_a_presentation_for_a_work_item_is_refused_until_it_asks(
+        tmp_path, monkeypatch, capsys, check_only):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    passing_check(monkeypatch)
+    argv = [str(write(tmp_path / "in", presentation())), "--work", "work-1",
+            "--out", str(tmp_path / "out"), "--deliver-to", "http://127.0.0.1:19999"]
+    assert mp.main(argv + (["--check-only"] if check_only else [])) == 1
+    out = capsys.readouterr().out
+    assert "names work item work-1 but asks Tim nothing" in out and "Add the vote" in out
+    assert "`decisions`" in out and "`waits`" in out, "it says where the vote goes"
+    assert delivery.calls == [] and not (tmp_path / "out").exists(), "nothing built or sent"
+
+
+def test_a_page_folder_for_a_work_item_is_refused_until_its_story_waits(
+        tmp_path, monkeypatch, capsys):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    folder = page_folder(tmp_path / "in")
+    argv = [str(folder), "--work", "work-1", "--out", str(tmp_path / "out"),
+            "--deliver-to", "http://127.0.0.1:19999"]
+    assert mp.main(argv) == 1
+    assert "asks Tim nothing" in capsys.readouterr().out and delivery.calls == []
+    story = json.loads((folder / "story.json").read_text())
+    story["answers"] = "results/decisions.json"
+    (folder / "story.json").write_text(json.dumps(story))
+    assert mp.main(argv) == 1, "an answers file alone asks nothing: a slide must wait"
+    assert delivery.calls == []
+    asking(folder)
+    assert mp.main(argv) == 0
+    [(url, _token, _body)] = delivery.calls
+    assert "work=work-1" in url
+
+
+def test_a_package_that_asks_nothing_and_names_no_work_item_still_goes(
+        tmp_path, monkeypatch):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    passing_check(monkeypatch)
+    assert mp.main([str(write(tmp_path / "in", presentation())), "--out", str(tmp_path / "a"),
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    assert mp.main([str(page_folder(tmp_path / "f")), "--out", str(tmp_path / "b"),
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    assert len(delivery.calls) == 2
+
+
+def test_a_decision_deck_for_a_work_item_goes(tmp_path, monkeypatch):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    passing_check(monkeypatch)
+    assert mp.main([str(write(tmp_path / "in", small_deck())), "--work", "work-1",
+                    "--out", str(tmp_path / "out"), "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    assert len(delivery.calls) == 1
+
+
 def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
     manifest = mp.manifest_of(page_folder(tmp_path))
     assert manifest == {"purpose": "Show the numbers.", "runs": "page", "entry": "index.html",

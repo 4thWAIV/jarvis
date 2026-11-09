@@ -8641,6 +8641,9 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
             chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
+    if work_id and not await asyncio.to_thread(package_inbox.asks_him, package):
+        # Every package for a Work item carries his vote (package_inbox.no_vote).
+        return None, None, package_inbox.no_vote(work_id)
     proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
     sender = _inbox_sender(sender.project, sender.claimed, proven)
     try:

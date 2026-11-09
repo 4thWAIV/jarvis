@@ -208,6 +208,60 @@ def test_an_arrival_is_never_a_digest_candidate(record):
     assert record.candidates(0) == [] and record.pending_count() == 1
 
 
+# -- a package for a Work item carries his vote ----------------------------------------
+
+STORY_HELPER = '<script src="/api/packages/story.js"></script>'
+
+
+def story_zip(story: dict, name: str = "notes-page") -> bytes:
+    return make_zip({"index.html": "<p>notes</p>" + STORY_HELPER,
+                     "story.json": json.dumps(story)},
+                    {**PAGE, "name": name, "story": "story.json"})
+
+
+TOLD = {"title": "Notes", "slides": [{"title": "One", "beats": [{"say": "One."}]},
+                                     {"title": "Two", "beats": [{"say": "Two."}]}]}
+ASKS = {**TOLD, "answers": "results/decisions.json",
+        "slides": [TOLD["slides"][0], {**TOLD["slides"][1], "waits": "go-ahead"}]}
+
+
+@pytest.fixture
+def work_item(tmp_path):
+    folder = tmp_path / "work"
+    folder.mkdir()
+    return work_store.create("Notes", "folder", str(folder))
+
+
+@pytest.mark.parametrize("data", [
+    pytest.param(lambda tmp: page_zip(), id="a page with no story"),
+    pytest.param(lambda tmp: story_zip(TOLD), id="a story that waits for nothing"),
+])
+def test_a_package_for_a_work_item_that_asks_nothing_is_refused(
+        wired, shown, marks, record, tmp_path, work_item, data):
+    r = send(wired, data(tmp_path), work=work_item.id)
+    assert r.status_code == 409, r.text
+    said = r.json()["error"]
+    assert f"names work item {work_item.id} but asks Tim nothing" in said
+    assert "Add the vote" in said and "`decisions`" in said and "`waits`" in said
+    assert package_inbox.listing() == [] and record.pending_count() == 0 and shown == []
+
+
+def test_a_package_for_a_work_item_that_asks_is_taken(
+        wired, shown, marks, record, tmp_path, work_item):
+    r = send(wired, story_zip(ASKS), work=work_item.id)
+    assert r.status_code == 200, r.text
+    r = send(wired, deck_zip(tmp_path), work=work_item.id)
+    assert r.status_code == 200, r.text
+    assert len(package_inbox.listing()) == 2
+
+
+def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
+        wired, shown, marks, record, tmp_path):
+    assert send(wired, page_zip()).status_code == 200
+    assert send(wired, story_zip(TOLD, "told-page")).status_code == 200
+    assert len(package_inbox.listing()) == 2
+
+
 # -- open --------------------------------------------------------------------------------
 
 def test_open_is_his_click_or_his_asking(wired, shown, marks, record, tmp_path):

@@ -772,7 +772,13 @@ or, `REPROVE_FOR_SEC` after arrival (at once for an older row),
 `proof_pending`, not yet `unproven_claim`. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
-package only with its stamp), and `package_inbox.arrive` records it. Nothing
+package only with its stamp), and `package_inbox.arrive` records it. A
+package that names a work item must carry his vote: a deck's `decisions`, or
+a story with `answers` and at least one slide that `waits`
+(`package_inbox.asks_a_question` / `asks_him`); one that asks nothing is
+refused in `package_inbox.no_vote`'s words, by the route and by
+`make_package.check_vote` before anything is built. One that names no work
+item may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema
