@@ -3,14 +3,15 @@
  * as the big one (orb.ts), with fewer particles and a transparent background.
  *
  * What it shows is decided in one place, `agentOrbLook`: an agent the user
- * has not activated is entirely gray; an active one is idle when its session
- * is idle and thinking in every other state.
+ * has not activated is entirely gray. Activity comes from the same server
+ * result as the brain counters; session business state never means thinking.
  *
  * When a message's ray reaches the agent (RayLane.tsx), its orb goes into the
  * receiving state in the ray's colour for as long as the ray still shows.
  */
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useWorker, type Worker } from "./workers";
 import { isQuiet, quietUntil } from "./voiceHealth";
 import { agentReceipt, type AgentRow } from "./agents";
 import { createOrb, type Orb, type OrbState } from "./orb";
@@ -19,14 +20,15 @@ import { createOrb, type Orb, type OrbState } from "./orb";
 // them costs little to draw.
 const AGENT_ORB_PARTICLES = 300;
 
-export function agentOrbLook(agent: AgentRow): { gray: boolean; state: OrbState } {
-  return { gray: !agent.active, state: agent.state === "idle" ? "idle" : "thinking" };
+export function agentOrbLook(agent: AgentRow, worker?: Worker): { gray: boolean; state: OrbState } {
+  return { gray: !agent.active || !worker || worker.activity.orb_state === "unknown", state: worker?.activity.orb_state === "thinking" ? "thinking" : "idle" };
 }
 
 export function AgentOrb({ agent }: { agent: AgentRow }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const orbRef = useRef<Orb | null>(null);
-  const look = agentOrbLook(agent);
+  const worker = useWorker(agent.session_id, agent.provider);
+  const look = agentOrbLook(agent, worker);
   const quiet = useSyncExternalStore(quietUntil.subscribe, isQuiet);
 
   useEffect(() => {

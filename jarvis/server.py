@@ -14,6 +14,7 @@ import inspect
 import itertools
 import json
 import logging
+from jarvis import worker_activity
 import os
 import difflib
 import hashlib
@@ -4024,16 +4025,37 @@ async def ws_specs(ws: WebSocket):
         log.warning(f"/ws/specs error: {e}")
 
 
+_worker_snapshots = worker_inventory.SnapshotReader()
+
+
 def _worker_inventory() -> dict:
+    return _worker_snapshots.read(_collect_worker_inventory)
+
+
+def _collect_worker_inventory() -> dict:
     from jarvis import worker_hooks
     native, truncated = worker_hooks.observations(data_paths.data_dir(), time.time())
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
-    return worker_inventory.build(snap, agent_directory.names_by_session(),
-                                  run_store.list_runs(status=["queued", "running"], limit=10000),
-                                  brain_activity.feed.since(), time.time(),
-                                  workflows=workflow_store.active(),
-                                  capacity=run_executor_instance.capacity(),
-                                  native_observations=native, native_truncated=truncated)
+    # A missing source is a reported coverage gap, not a failed status read
+    # and not proof that there are no workers in that source.
+    import sqlite3
+    gaps = []
+    def read_source(name, read, missing):
+        try:
+            return read()
+        except (sqlite3.Error, OSError) as exc:
+            gaps.append(f'{name} unavailable: {type(exc).__name__}')
+            return missing
+    names = read_source('Agent names', run_store.agent_names, {})
+    runs = read_source('Managed runs', lambda: run_store.list_runs(status=["queued", "running"], limit=10000), [])
+    workflows = read_source('Workflows', workflow_store.active, [])
+    capacity = read_source('Worker capacity', run_executor_instance.capacity, None)
+    result = worker_inventory.build(snap, names, runs, brain_activity.feed.since(), time.time(),
+                                   workflows=workflows, capacity=capacity,
+                                   native_observations=native, native_truncated=truncated)
+    result['gaps'].extend(gaps)
+    return result
+
 
 
 @app.get("/api/workers")
@@ -4047,12 +4069,29 @@ def tool_list_workers(args: dict) -> str:
     # The normal counts question is answered before the worker detail. Each
     # invocation is a fresh observation, as with the other paged status reads.
     answer = {key: inventory[key] for key in
-              ("total", "providers", "capacity", "coverage", "gaps", "taken_at")
+              ("snapshot_id", "taken_at", "total", "providers", "capacity", "coverage", "gaps")
               if key in inventory}
     answer.update(inventory)
-    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")), _page_arg(args),
                          "The current worker inventory as JSON", "list_workers", exact=True)
     return head if chunk is None else head + "\n" + _wrap_untrusted("workers", chunk)
+
+
+def _session_rows(snapshot, wanted=()):
+    inventory = _worker_inventory()
+    workers = {worker['id']: worker for worker in inventory['workers']}
+    rows = []
+    for session in snapshot.sessions:
+        if wanted and session.state not in wanted:
+            continue
+        row = session_watch.session_to_dict(session)
+        worker = workers.get(worker_inventory.identity(session.provider, session.session_id))
+        row['activity'] = worker['activity'] if worker else None
+        row['snapshot_id'] = inventory.get('snapshot_id')
+        row['agents_active'] = worker['descendant_counts']['active'] if worker else 0
+        row['agents_capped'] = session.agents_capped or worker is None or bool(worker['descendant_counts']['unknown'])
+        rows.append(row)
+    return rows
 
 
 @app.get("/api/sessions")
@@ -4070,8 +4109,7 @@ async def api_list_sessions(state: str = ""):
     """
     snap = _snapshot_or_empty()
     wanted = {s for s in state.split(",") if s}
-    rows = [session_watch.session_to_dict(s) for s in snap.sessions
-            if not wanted or s.state in wanted]
+    rows = _session_rows(snap, wanted)
     projects: dict[str, list[str]] = {}
     for row in rows:
         projects.setdefault(row["project"], []).append(row["session_id"])
@@ -4083,7 +4121,18 @@ def _agents_for_page() -> list[dict]:
     how many items its project's needs board holds (the board is kept per
     project, so every agent in a project shows that project's count), and
     `provider`, who runs it."""
-    return [dataclasses.asdict(a) for a in agent_directory.agents()]
+    inventory = _worker_inventory()
+    workers = {worker['id']: worker for worker in inventory['workers']}
+    answer = []
+    for agent in agent_directory.agents():
+        row = dataclasses.asdict(agent)
+        worker = workers.get(worker_inventory.identity(agent.provider, agent.session_id))
+        row['activity'] = worker['activity'] if worker else None
+        row['snapshot_id'] = inventory.get('snapshot_id')
+        row['subagents_working'] = worker['descendant_counts']['active'] if worker else 0
+        row['subagents_capped'] = worker is None or bool(worker['descendant_counts']['unknown'])
+        answer.append(row)
+    return answer
 
 
 @app.get("/api/agents")
@@ -5078,7 +5127,7 @@ def _ask_which(session_ids: list[str]) -> str:
         a, s = agents.get(sid), sessions.get(sid)
         name = _agent_said(a) if a is not None else _said_name(s, "an agent with an unsayable name")
         state = a.state if a is not None else (s.state if s is not None else None)
-        facts = [_state_word(state)] if state else []
+        facts = [_worker_phase_words(s.provider if s is not None else a.provider, sid)] if state else []
         if s is not None and len(folders) > 1 and s.cwd:
             facts.append("in " + _said_name({"voice_name": Path(s.cwd).parent.name},
                                             "another folder"))
@@ -5140,7 +5189,7 @@ def tool_session_detail(args: dict) -> str:
     age = _say_age(_time.time() - session.since) if session.since else "at some point"
     head = [f"{_said_name(session, 'That session')} "
             f"({_plain_name(session.project, 'a project')}) is "
-            f"{_state_word(session.state)}, as of {age}."]
+            f"{_worker_phase_words(session.provider, session.session_id)}. Session last changed {age}."]
     if session.needs:
         head.append(f"It is {_phrase_needs(session.needs)}"
                     + (", which needs your own keystroke — I cannot answer it."
@@ -8839,6 +8888,9 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
             chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
+    if work_id and not await asyncio.to_thread(package_inbox.asks_him, package):
+        # A package for a Work item carries his vote (package_inbox.no_vote).
+        return None, None, package_inbox.no_vote(work_id, package.manifest.runs)
     proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
     sender = _inbox_sender(sender.project, sender.claimed, proven)
     try:
@@ -9066,18 +9118,33 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, (f"{question.id} takes one of {', '.join(o['id'] for o in question.options)}"
                       f", recommended, later or none. Nothing was recorded.")
     note = " ".join(str(words or "").split())[:500]
-    argv = [sys.executable, "-I", str(package.folder / package_inbox.DECIDE), question.id, chosen]
-    if note:
-        argv.append(note)
-    try:
-        ran = await asyncio.to_thread(
-            subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
-            timeout=DECIDE_TIMEOUT_SEC, env={**os.environ, **work_packages.command_env(package)})
-    except (OSError, subprocess.SubprocessError) as e:
-        return None, f"The package's decide.py could not run ({type(e).__name__}). Nothing was recorded."
-    if ran.returncode != 0:
-        return None, "The package's decide.py refused that answer. Nothing was recorded."
+    if not package_inbox.is_decision_package(package):
+        # A page's standard vote: written into its story's answers file.
+        try:
+            await asyncio.to_thread(package_inbox.record_story_answer, package, question,
+                                    chosen, note)
+        except work_packages.PackageError as e:
+            return None, f"{e} Nothing was recorded."
+    else:
+        argv = [sys.executable, "-I", str(package.folder / package_inbox.DECIDE), question.id,
+                chosen]
+        if note:
+            argv.append(note)
+        try:
+            ran = await asyncio.to_thread(
+                subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
+                timeout=DECIDE_TIMEOUT_SEC,
+                env={**os.environ, **work_packages.command_env(package)})
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, (f"The package's decide.py could not run ({type(e).__name__}). "
+                          f"Nothing was recorded.")
+        if ran.returncode != 0:
+            return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
+    global _package_shown
+    if _package_shown is not None and _package_shown.get("id") == package.id:
+        # A page that connects now shows his answer in the view's head.
+        _package_shown = await asyncio.to_thread(packages_api.describe, package)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
     said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
             if entry.decisions_total else "Recorded.")
@@ -9105,12 +9172,49 @@ def _sign_off_text(entry, package) -> str:
     if asked:
         lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
         lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
+        if entry.work_id and _has_questions(asked):
+            lines.append(f"His questions are on work item {entry.work_id} as decision "
+                         f"{_questions_key(entry)}.")
         lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
                      f" (and {package_inbox.SUMMARY} beside it).")
     else:
         lines = [f"Tim has reviewed your package {package.id} ({entry.id}) and signed it off. "
                  f"Anything it saved is in {package.folder / work_packages.RESULTS}."]
     return "\n".join(lines)[:CAPTURE_MAX_CHARS]
+
+
+def _has_questions(asked) -> Optional[object]:
+    """The standard vote answered "I have questions", or None."""
+    return next((q for q in asked if q.id == package_inbox.UNDERSTOOD_ID and q.applies
+                 and q.answer and q.answer["answer"] == package_inbox.HAS_QUESTIONS), None)
+
+
+def _questions_key(entry) -> str:
+    """The Work decision his questions on this package become."""
+    return f"{package_inbox.UNDERSTOOD_ID}-{entry.id}"
+
+
+def _inbox_questions_on_work(entry, package, where: str) -> None:
+    """He answered the standard vote "I have questions" on a package sent
+    for a Work item: they become that item's decision, asked and answered at
+    once in his words, so its agents read them (`work_report.py answer`). A
+    key already used is left as it is. On the loop."""
+    question = _has_questions(package_inbox.questions(package))
+    if not entry.work_id or question is None:
+        return
+    key = _questions_key(entry)
+    try:
+        work_store.record(work_store.WorkEvent(
+            entry.work_id, work_store.DECISION_NEEDED,
+            f"Tim has questions about the package {package.id}.",
+            {"key": key, "options": [o["name"] for o in question.options],
+             "package": entry.package_id}))
+        done = work_api.answer_decision(entry.work_id, key,
+                                        question.answer["note"] or question.answered_words(),
+                                        where)
+    except work_store.WorkRefused:
+        return
+    _work_recorded(done, work_store.DECISION_MADE)
 
 
 def _inbox_workflow_answers(entry, package) -> None:
@@ -9200,6 +9304,7 @@ def _inbox_sign_off_work(entry, package, how: str) -> None:
         except work_store.WorkRefused:
             continue
         _work_recorded(done, work_store.DECISION_MADE)
+    _inbox_questions_on_work(entry, package, where)
     if entry.work_id:
         try:
             done = work_store.record(work_store.WorkEvent(
@@ -10810,7 +10915,7 @@ async def tool_attention_updates(args: dict) -> str:
                                             time.time(), _update_message))
     except attention_api.Unavailable:
         return "The updates record is not running, sir."
-    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")), _page_arg(args),
                          "His updates (Review updates on the page), as JSON",
                          "attention_updates", exact=True)
     if chunk is None:
@@ -11293,42 +11398,22 @@ SUBAGENT_DOING_CHARS = 200
 
 
 def _subagent_now(session_id: str, agent_id: str):
-    """One subagent of a session, now: its description, its state from the
-    session watcher (working while written within AGENT_ACTIVE_WITHIN_SEC),
-    and its last tool or line. None when JARVIS has no such subagent."""
-    s = _snapshot_or_empty().by_id(session_id)
-    if s is None:
+    """Project the canonical worker activity into Work's existing live record."""
+    inventory = _worker_inventory()
+    matches = [worker for worker in inventory['workers']
+               if worker['session_id'] == (agent_id or session_id)
+               and (not agent_id or worker.get('parent_id') ==
+                    worker['provider'] + ':' + session_id)]
+    if len(matches) != 1:
         return None
-    provider = _session_provider_named(s.provider)
-    roots = getattr(provider, "roots", None) or session_watch.config_roots()
-    now = time.time()
-    # Its own file, by id: the snapshot's list is capped and misses later ids.
-    a = next((a for a in s.subagents if a.agent_id == agent_id), None) or \
-        session_watch.read_subagent(roots, s.cwd, session_id, agent_id, now)
-    if a is None:
-        return None
-    state = a.state
-    if state != session_watch.AGENT_WORKING and session_watch.background_waiting(
-            roots, s.cwd, session_id, agent_id, now):
-        # Its turn is over (or quiet) but background work it started is still
-        # running: it is waiting on it, not finished.
-        state = work_store.LIVE_WAITING
-    doing = ""
-    if provider is not None and hasattr(provider, "subagent_transcript"):
-        try:
-            entries = provider.subagent_transcript(s, agent_id, None, 3) or []
-        except Exception:
-            entries = []
-        for e in reversed(entries):
-            if e.role == "tool" and e.tool:
-                doing = f"Using {e.tool}"
-                break
-            if e.text and e.role in ("agent", "tool"):
-                doing = " ".join(e.text.split())[:SUBAGENT_DOING_CHARS]
-                break
-    return work_store.LiveAgent(name=a.description or "Subagent", state=state,
-                                written=a.written, doing=doing,
-                                active_within=session_watch.AGENT_ACTIVE_WITHIN_SEC)
+    worker = matches[0]
+    activity = worker['activity']
+    return work_store.LiveAgent(name=worker['name'], state=activity['work_state'],
+                                written=activity.get('observed_at') or 0,
+                                doing=activity['state'],
+                                active_within=worker_activity.MODEL_REQUEST_LEASE_SECONDS,
+                                activity=activity, snapshot_id=inventory.get("snapshot_id"))
+
 
 
 work_store.look_up_live_with(_subagent_now)
@@ -12118,13 +12203,21 @@ def _agent_said(agent) -> str:
     return _said_name({"voice_name": name}, "an agent with an unsayable name")
 
 
+def _worker_phase_words(provider, session_id):
+    worker = next((row for row in _worker_inventory()['workers']
+                   if row['id'] == worker_inventory.identity(provider, session_id)), None)
+    phase = worker['activity']['orb_state'] if worker else 'activity unknown'
+    return _plain_name(phase, 'activity unknown')
+
+
 def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
     """One agent: name, active or not, state (why it waits, and since when),
     project, needs-board count, and whether JARVIS can reach it. Never the
     session's own title or prompt: those are another session's words, and
     `session_detail` is where they are read."""
+    activity = _worker_phase_words(a.provider, a.session_id)
     bits = [f"{_agent_said(a)}: {'active' if a.active else 'inactive'}",
-            _state_word(a.state)]
+            _plain_name(activity, 'activity unknown')]
     if s is not None and s.needs:
         bits.append(_phrase_needs(s.needs)
                     + (" that needs your own keystroke" if s.needs_a_human_hand else ""))
@@ -12151,6 +12244,9 @@ def tool_list_agents(args: dict) -> str:
     wanted = str(args.get("filter") or "").strip().lower()
     if wanted in ("active", "inactive"):
         agents = [a for a in agents if a.active == (wanted == "active")]
+    elif wanted == "working":
+        workers = {row['id']: row for row in _worker_inventory()['workers']}
+        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('active')]
     elif wanted:
         agents = [a for a in agents if a.state == wanted]
     if not agents:
@@ -14860,8 +14956,7 @@ async def ws_sessions(websocket: WebSocket):
         await websocket.send_json({
             "type": "snapshot",
             "language": language_setting.state_frame()["language"],
-            "sessions": [session_watch.session_to_dict(s)
-                         for s in _snapshot_or_empty().sessions]})
+            "sessions": _session_rows(_snapshot_or_empty())})
         # People's messages drawn in the last few seconds, marked replay: a
         # page that has just (re)connected reconciles them, never animates.
         for frame in (messaging.replay_frames() if messaging is not None else []):
