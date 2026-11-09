@@ -7,7 +7,8 @@ on:
 
 jobs:
   runtime:
-    runs-on: macos-latest
+    # The repository already uses this macOS pool when arm64 capacity is short.
+    runs-on: macos-15-intel
     strategy:
       matrix:
         node: [22, 23, 24]
