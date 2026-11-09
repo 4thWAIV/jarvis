@@ -14,6 +14,8 @@ import pytest
 
 from jarvis import decision_check, decision_package as dp
 
+pytestmark = pytest.mark.usefixtures("authored_package_source")
+
 EXAMPLE = Path(__file__).parent.parent / "examples" / "packages" / "decision-deck"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
@@ -339,3 +341,21 @@ def test_a_signature_covers_every_file_and_names_what_it_vouches_for(tmp_path):
             data = b.read(info)
             c.writestr(info, data + b"// changed" if info.filename.endswith("deck.js") else data)
     assert not package_signature.read(changed).checks(public), "changed after it was signed"
+    plain = tmp_path / "plain.zip"
+    with zipfile.ZipFile(plain, "w") as z:
+        z.writestr("package.json", "{}")
+    assert not decision_stamp.is_decision_package(plain), "only decision packages"
+
+
+def test_installed_checker_uses_shipped_page_without_node(tmp_path, monkeypatch):
+    from jarvis import data_paths
+    shipped = tmp_path / "web"
+    shipped.mkdir()
+    (shipped / "index.html").write_text("<!doctype html><title>JARVIS</title>")
+    monkeypatch.setattr(data_paths, "CHECKOUT", False)
+    monkeypatch.setattr(data_paths, "FRONTEND_DIST", shipped)
+    monkeypatch.setattr(decision_check.subprocess, "run", lambda *a, **kw: pytest.fail("installed checker rebuilt source"))
+    assert decision_check.built_page() == shipped
+    (shipped / "index.html").unlink()
+    with pytest.raises(decision_check.CheckFailed, match="missing from this distribution"):
+        decision_check.built_page()

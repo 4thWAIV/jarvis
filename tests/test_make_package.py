@@ -18,6 +18,9 @@ from tests.test_decision_package import _Delivery, small_deck, write
 EXAMPLES = Path(__file__).parent.parent / "examples" / "packages"
 
 
+pytestmark = pytest.mark.usefixtures("authored_package_source")
+
+
 def presentation() -> dict:
     return json.loads(json.dumps(mp.PRESENTATION_EXAMPLE))
 

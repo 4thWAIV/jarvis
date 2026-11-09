@@ -1,4 +1,4 @@
-"""The decision package command's whole check, on a small deck, in a real
+"""The decision package command's post-author check, on a small deck, in a real
 isolated JARVIS (jarvis/decision_check.py): its own server process on a free
 port above 19000, the voice page built by vite, a headless Chromium on its
 real package frame at both centre sizes, voting checked, and the story
@@ -60,7 +60,8 @@ def stand_in():
     s.server.shutdown()
 
 
-def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stand_in, capsys):
+def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
+        tmp_path, stand_in, capsys, authored_package_source):
     reason = dashboard_page.why_unavailable()
     if reason:
         pytest.skip(reason)
@@ -105,7 +106,8 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert "Nothing is shown until he asks for it." in said
 
 
-def test_the_command_checks_a_presentation_and_its_one_vote(tmp_path, stand_in, capsys):
+def test_the_command_checks_a_presentation_and_its_one_vote(
+        tmp_path, stand_in, capsys, authored_package_source):
     """A presentation asks nothing of its own, so it ends with the standard
     vote (Got it, or I have questions), checked as any deck's vote is."""
     from jarvis import make_package as mp

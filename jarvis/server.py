@@ -629,6 +629,85 @@ def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
         log.warning(f"conversation: a {kind} from {counterpart} was not recorded: {e}")
 
 
+def _reported_proof(reporter: str) -> str:
+    """The proof a recorded reporter (reporters.recorded) gives of who sent
+    a report: an access key's label, else none (the tool token or the page
+    prove no agent, so `inbound` refuses it)."""
+    return "access_key" if str(reporter or "").startswith(reporters.KEY_PREFIX) else ""
+
+
+def _decision_message(where: str, question: str, options, recommendation) -> str:
+    """A decision asked of him, as its message in the asker's thread."""
+    lines = [f"Decision needed on {where}: {question}"]
+    picks = [str(o).strip() for o in options if str(o).strip()] \
+        if isinstance(options, list) else []
+    if picks:
+        lines.append("Options: " + "; ".join(picks))
+    if str(recommendation or "").strip():
+        lines.append(f"Recommended: {str(recommendation).strip()}")
+    return "\n".join(lines)
+
+
+def _record_board(board: "session_needs.Board") -> None:
+    """One proven rewrite of a needs board, as one message in its writer's
+    thread ("Planning's needs board: 3 items", then the board), with the
+    transcript proof that admitted it (`_board_writer`, kept per rewrite)."""
+    writer = _board_writer(board)
+    if writer is None:
+        return
+    n = board.items
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.AGENT,
+                    writer.session_id, writer.name,
+                    f"{writer.name}'s needs board: {n} item{'s' if n != 1 else ''}\n\n"
+                    f"{board.text}", writer.evidence,
+                    source_kind=conversation_log.Source.NEEDS_BOARD,
+                    source_id=f"{board.project.lower()}:{board.mtime}", subagent=writer.subagent)
+
+
+def _record_workflow_decision(w, event) -> None:
+    """A workflow's decision asked of him, one message in the workflow's
+    thread, proven by the access key that reported it."""
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.WORKFLOW,
+                    w.id, str(w.name or ""),
+                    _decision_message(str(w.name or "a workflow"), event.summary,
+                                      event.detail.get("options"),
+                                      event.detail.get("recommendation")),
+                    _reported_proof(event.reporter),
+                    source_kind=conversation_log.Source.WORKFLOW_DECISION,
+                    source_id=f"{w.id}:{workflow_store.open_key(event)}",
+                    detail={"reporter": event.reporter})
+
+
+def _record_work_decision(item, detail: Optional[dict]) -> None:
+    """A Work item's decision asked of him (its newest open one), one
+    message in the item's thread, proven by the access key that asked it."""
+    if not item.decisions:
+        return
+    d = max(item.decisions, key=lambda d: d.opened_at)
+    asker = str((detail or {}).get("asked_by") or "")
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.WORK,
+                    item.id, item.title,
+                    _decision_message(item.title, d.question, d.options, d.recommendation),
+                    _reported_proof(asker), source_kind=conversation_log.Source.WORK_DECISION,
+                    source_id=f"{item.id}:{d.key}", detail={"reporter": asker})
+
+
+def _record_package(entry, proven) -> None:
+    """A package in his inbox, one message in its thread, once its sender
+    is proven (its signature's onboarded key, `_package_signer`, else the
+    caller's key, `_package_sender`); one not proven is not recorded."""
+    if proven is None:
+        return
+    n = entry.decisions_total
+    text = (f"Package: {entry.title}" + (f"\n\n{entry.purpose}" if entry.purpose else "")
+            + (f"\n\n{n} decision{'s' if n != 1 else ''} to answer" if n else ""))
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.PACKAGE,
+                    entry.id, entry.title, text, proven.evidence,
+                    source_kind=conversation_log.Source.PACKAGE, source_id=entry.id,
+                    subagent=proven.subagent,
+                    detail={"agent": proven.name, "session": proven.session_id})
+
+
 def _agent_links(event: dict) -> dict:
     """The agent a watcher event is about, as conversation item links."""
     session = event.get("session") or {}
@@ -1941,7 +2020,8 @@ async def _attend_message(event: dict) -> None:
         links = _agent_links(event)
         _record_inbound(conversation_log.ItemKind.ANSWER, conversation_log.Counterpart.AGENT,
                         links.get("agent_session_id"), links.get("agent_name") or "",
-                        message["reply"], "watcher", source_kind="message",
+                        message["reply"], "watcher",
+                        source_kind=conversation_log.Source.MESSAGE,
                         source_id=_message_number(message),
                         message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
@@ -2065,6 +2145,7 @@ def _attend_board(board: session_needs.Board) -> None:
     people's words."""
     _attend("needs_board", board.project.lower(), "changed", facts={"items": board.items},
             untrusted={"agent": _board_owner(board)})
+    _record_board(board)
 
 
 async def _every(seconds: float, what: str, look) -> None:
@@ -2231,7 +2312,8 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                             conversation_log.Counterpart.AGENT, sender.session_id,
                             received.agent_name,
                             f"{received.subject}\n\n{received.body}".strip(), sender.evidence,
-                            source_kind="session_message", source_id=message_id,
+                            source_kind=conversation_log.Source.SESSION_MESSAGE,
+                            source_id=message_id,
                             subagent=sender.subagent, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
@@ -3388,6 +3470,7 @@ async def lifespan(application: FastAPI):
     await start_session_watcher()
     start_folders()
     start_knowledge()
+    language_kit_updates.runtime.start()
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -3423,6 +3506,7 @@ async def lifespan(application: FastAPI):
     await _stop_attention()
     await transcription_api.stop()
     await stop_knowledge()
+    await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -4755,6 +4839,8 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     if tool not in ACTING_TOOLS:
         return None
     if tool in UNTRUSTED_READING_TOOLS or tool in TAINT_EXEMPT_ACTING:
+        return None
+    if tool == "language_document" and language_document_api.read_only_operation(args):
         return None
     if tool in UI_TAINT_EXEMPT_ACTING and not (
             ui_contract.declared_effects(UI_OPERATIONS[tool](args or {}))
@@ -7570,8 +7656,14 @@ messaging: Optional[messaging_runtime.MessagingRuntime] = None
 
 def _attend_arrival(arrival, audible: bool) -> None:
     """A person's message has come in (arrival_announcer.py): one item per
-    message, this node's to speak of once it holds the presentation lease."""
+    message, this node's to speak of once it holds the presentation lease;
+    and one message in the person's thread, proven by the team server (the
+    sender's GitHub id, bound to their device session). Recorded once."""
     _attend("arrival", arrival.message_id, "arrived", audible=audible, **arrival.attention())
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.PERSON,
+                    arrival.sender_github_id or "", arrival.sender, arrival.text, "team_server",
+                    source_kind=conversation_log.Source.PERSON_MESSAGE,
+                    source_id=str(arrival.message_id))
 
 
 def _start_messaging() -> None:
@@ -8707,7 +8799,12 @@ async def _open_package_page(reference: str
     (the package, "") or (None, why not)."""
     try:
         package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+        if package.manifest.communication and package.manifest.communication.get("kind") == "architecture":
+            from jarvis.language_projection import package_reader
+            await asyncio.to_thread(package_reader, package, package.manifest.communication.get("revision"))
     except work_packages.PackageError as e:
+        return None, str(e)
+    except ValueError as e:
         return None, str(e)
     if not voice_clients:
         return None, "No JARVIS page is open to show it on."
@@ -8797,6 +8894,18 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
             f"from slide {told.slide} of {total}; it is being told.")
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
+
+from jarvis import language_document_api, language_kit_updates
+language_documents = language_document_api.Adapter()
+language_document_api.mount(app, language_documents)
+
+async def tool_language_document(args):
+    return _wrap_untrusted("canonical document", language_document_api.encoded_page(
+        await language_documents.call(args, reported_by="brain-tool")))
+
+TOOL_HANDLERS["language_document"] = tool_language_document
+ACTING_TOOLS.add("language_document")
+TAINTING_TOOLS["language_document"] = "canonical source and its author's coverage declaration"
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
@@ -9071,6 +9180,7 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     except package_inbox.InboxRefused as e:
         return None, None, str(e)
     _inbox_closed(arrival.superseded)
+    _record_package(arrival.entry, proven)
     if arrival.fresh:
         _inbox_attend(arrival.entry)
         _inbox_wait(arrival.entry, "wait_started")
@@ -10964,6 +11074,8 @@ def _workflow_recorded(w, event) -> None:
     the ones worth saying."""
     _workflows_said_silent.discard(w.id)
     _send_to_session_clients({"type": "workflows"})
+    if event.kind == "decision_needed":
+        _record_workflow_decision(w, event)
     happened = _workflow_attended(w, event)
     if happened:
         _attend("workflow", w.id, happened, facts={"phase": str(event.item or "")}
@@ -12457,6 +12569,7 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
         _attention_resolved("work", item.id)
         agent_key_store.revoke_where("jarvis", "its work item was closed", work_ids=[item.id])
     elif kind == work_store.DECISION_NEEDED:
+        _record_work_decision(item, detail)
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
     elif said_state in _WORK_NEWS_STATES:
         _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})

@@ -1,0 +1,17 @@
+scope: [review]
+language: arch
+import: [[metalang]]
+title: A proposed document store
+declare:
+- constant:
+    id: DocumentStore
+    is: element
+    value:
+      form: record
+      does: Owns an immutable document revision.
+      reach: internal
+      exactness: loose
+      groups: none
+      members: none
+      sits: {package: jarvis, assembly: none, namespace: none}
+      relates: {implements: none, answers: none, holds: none}

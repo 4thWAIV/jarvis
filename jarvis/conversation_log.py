@@ -67,6 +67,24 @@ PROOFS = frozenset({
 INBOUND_KINDS = frozenset({"from_agent", "answer", "message_in"})
 
 
+class Source(StrEnum):
+    """The record that is the truth for a message's own state, and how its
+    `source_id` names the row there."""
+    MESSAGE = "message"                  # run_store messages row: an agent's answer
+    SESSION_MESSAGE = "session_message"  # run_store session_messages row
+    NEEDS_BOARD = "needs_board"          # "<project>:<mtime>": one proven rewrite
+    WORKFLOW_DECISION = "workflow_decision"  # "<workflow id>:<decision key>"
+    WORK_DECISION = "work_decision"      # "<work item id>:<decision key>"
+    PACKAGE = "package"                  # the package inbox row's id
+    PERSON_MESSAGE = "person_message"    # the team server's message id
+
+
+# Shown in the Conversation view and an agent's thread (`page`, `thread`)
+# until the page's one list decides where they go (one_channel phase 4):
+# every kind but the messages from the other channels.
+_SHOWN = "kind <> 'message_in'"
+
+
 class ItemKind(StrEnum):
     HEARD = "heard"          # what Tim said
     TYPED = "typed"          # what Tim typed in the white box
@@ -303,8 +321,9 @@ def _read(where: str, args: list, before: int | None, limit: int) -> list[Conver
 
 def page(before: int | None = None, limit: int = PAGE) -> list[ConversationItem]:
     """The conversation, oldest first: the last `limit` items before item
-    `before` (the newest when None)."""
-    return _read("1=1", [], before, limit)
+    `before` (the newest when None). Messages from the other channels
+    (MESSAGE_IN) are in their threads (`thread_of`), not here yet."""
+    return _read(_SHOWN, [], before, limit)
 
 
 def after(item_id: int, limit: int = PAGE) -> list[ConversationItem]:
@@ -320,7 +339,7 @@ def after(item_id: int, limit: int = PAGE) -> list[ConversationItem]:
 def thread(agent_session_id: str, before: int | None = None,
            limit: int = PAGE) -> list[ConversationItem]:
     """Everything to and from one agent, oldest first, the same way."""
-    return _read("agent_session_id = ?", [agent_session_id], before, limit)
+    return _read(f"agent_session_id = ? AND {_SHOWN}", [agent_session_id], before, limit)
 
 
 class Unproven(ValueError):
