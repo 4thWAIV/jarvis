@@ -30,6 +30,10 @@ def observation(objects, provider, previous=None):
         tools = set(previous.get('outstanding_tools') or [])
     for obj in objects:
         when = timestamp(obj.get('timestamp'))
+        # Native transcripts may append the prompt/tool result after the
+        # api-request it caused. File order must not undo a newer boundary.
+        if when is not None and at is not None and when < at:
+            continue
         p = obj.get('payload') or {}
         kind = obj.get('type')
         next_state = None
@@ -46,6 +50,7 @@ def observation(objects, provider, previous=None):
         else:
             if kind == 'api-request':
                 request_id, request_at = obj.get('id'), when
+                tools.clear()  # The provider request has consumed the prior tool batch.
                 next_state = 'model_work'
             elif kind == 'system' and obj.get('subtype') == 'turn_duration':
                 next_state = 'idle'

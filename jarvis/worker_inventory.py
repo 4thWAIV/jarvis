@@ -87,6 +87,10 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         if row is None:
             continue  # Old hooks do not resurrect an exited session.
         row['hook_observed_at'] = hook.get('observed_at')
+        # Async prompt/start/post-tool hooks report receipt time, not a model
+        # boundary. They cannot erase a current, directly observed request.
+        if hook.get('state') == 'awaiting_model' and row['activity'].get('model_work'):
+            continue
         if (hook.get('observed_at') or 0) > (row['activity'].get('observed_at') or 0):
             evidence = {k: v for k, v in hook.items() if k not in ('tools', 'finished_tools', 'parent_id', 'session_id')}
             if now - evidence['observed_at'] > worker_activity.MODEL_REQUEST_LEASE_SECONDS:

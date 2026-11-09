@@ -144,3 +144,55 @@ def test_expired_hook_keeps_its_last_phase_visible(tmp_path):
     result=build(Snapshot([root],now),now=now,native_observations=rows)
     evidence=result['workers'][0]['activity']
     assert evidence['state']=='unknown' and evidence['last_phase']=='tool_wait'
+
+
+def test_late_prompt_record_cannot_erase_request_evidence_across_reads(tmp_path):
+    path = tmp_path / 'main.jsonl'
+    request = {'type': 'api-request', 'id': 'request', 'timestamp': '2026-11-09T16:14:56.619Z'}
+    prompt = {'type': 'user', 'timestamp': '2026-11-09T16:14:55.667Z',
+              'message': {'content': [{'type': 'text', 'text': 'private'}]}}
+    path.write_text(json.dumps(request) + '\n')
+    first = activity.file_observation(path, 'anthropic')
+    with path.open('a') as out:
+        out.write(json.dumps(prompt) + '\n')
+    observed = activity.file_observation(path, 'anthropic')
+    assert observed['state'] == 'model_work'
+    assert observed['observed_at'] == first['observed_at']
+    assert observed['request_id'] == 'request'
+    assert not activity.current(observed, first['observed_at'] + 121)['model_work']
+    with path.open('a') as out:
+        out.write(json.dumps({'type': 'system', 'subtype': 'turn_duration',
+                             'timestamp': '2026-11-09T16:14:58.860Z'}) + '\n')
+    assert activity.file_observation(path, 'anthropic')['state'] == 'idle'
+
+
+def test_new_request_consumes_prior_tools_before_late_result():
+    evidence = activity.observation([
+        {'type': 'assistant', 'timestamp': '2026-01-01T00:00:01Z',
+         'message': {'content': [{'type': 'tool_use', 'id': 'tool'}]}},
+        {'type': 'api-request', 'id': 'request', 'timestamp': '2026-01-01T00:00:03Z'},
+        {'type': 'user', 'timestamp': '2026-01-01T00:00:02Z',
+         'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'tool'}]}},
+    ], 'anthropic')
+    assert evidence['state'] == 'model_work'
+    assert evidence['outstanding_tools'] == []
+
+
+def test_async_prompt_hook_cannot_erase_confirmed_request_but_tool_can():
+    root = SessionState(session_id='root', provider='anthropic', cwd='/p', project='p', state='working',
+                        worker_activity={'state': 'model_work', 'observed_at': 100,
+                                         'source': 'anthropic:api-request', 'request_id': 'request'})
+    hook = {'session_id': 'root', 'observed_at': 101, 'state': 'awaiting_model',
+            'source': 'claude_hook:UserPromptSubmit', 'coverage': 'native_hooks'}
+    result = build(Snapshot([root], 102), now=102, native_observations=[hook])
+    assert result['total']['model_work'] == 1
+    assert result['workers'][0]['activity']['source'] == 'anthropic:api-request'
+    assert result['workers'][0]['hook_observed_at'] == 101
+    hook.update(state='tool_wait', source='claude_hook:PreToolUse')
+    result = build(Snapshot([root], 102), now=102, native_observations=[hook])
+    assert result['total']['model_work'] == 0
+    assert result['total']['tool_wait'] == 1
+    hook.update(state='awaiting_model', source='claude_hook:UserPromptSubmit')
+    root.worker_activity = {}
+    result = build(Snapshot([root], 102), now=102, native_observations=[hook])
+    assert result['total']['model_work'] == 0  # A prompt alone still proves no request.
