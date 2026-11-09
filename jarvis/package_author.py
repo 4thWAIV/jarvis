@@ -12,7 +12,7 @@ import time
 import tempfile
 from pathlib import Path
 
-from jarvis import brain_provider, data_paths
+from jarvis import brain_provider, data_paths, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
 
@@ -90,8 +90,10 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               + str(handoff) + "; resolve its relative evidence paths from " + str(handoff.parent)
               + ". Write a deck to content.json in your working directory, or write a folder "
               "package under package/ with package.json. Put supporting assets alongside that "
-              "source, and your evidence/review notes in evidence.md. Validate with the existing "
-              "make_package --check-only command. Do not deliver, invoke creation without "
+              "source, and your evidence/review notes in evidence.md. Validate with this installation’s "
+              "exact command: " + session_skill._make_package() + " <source> --check-only. "
+              "The supplied skill, guide and command are sufficient even if no user skill copy "
+              "has been installed. Do not deliver, invoke creation without "
               "--check-only, modify application code or send messages. The originating command "
               "owns rendering checks and delivery. If evidence prevents a truthful package, "
               "write author-blocked.md explaining the precise gap and do not create source. "

@@ -67,6 +67,7 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     assert receipt['author_session'] != receipt['origin_session'] == 'origin-session'
     prompt = (receipt_path.parent / 'received-prompt.txt').read_text()
     assert str(pa.SKILL) in prompt and str(source) in prompt
+    assert pa.session_skill._make_package() in prompt
     assert 'do not launch another author' in prompt
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
