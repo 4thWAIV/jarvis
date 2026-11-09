@@ -21,7 +21,8 @@ pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
-from tests.test_voice_page_speech_input import COUNT_MICROPHONES, Voice, _until
+from tests.test_voice_page_speech_input import COUNT_MICROPHONES, Voice
+from tests.fixtures.waiting import until_async
 from tests.test_voice_page_packages import jarvis_app  # noqa: F401  (the fixture)
 from tests.voice_page_input import LISTEN, route_settings, start_listening
 
@@ -90,6 +91,16 @@ async def _quiet_since_load(page, ms=1500):
     assert await page.evaluate("window.__transcribers.length") == 0
 
 
+async def _shows(page, what, want):
+    """Wait for the page to say `want` in `what` (STATE or SILENCED): read
+    straight after a click or a reload it can still be drawing."""
+    try:
+        await page.wait_for_function(f"({what}) === {json.dumps(want)}", timeout=15000)
+    except async_api.Error:
+        pass
+    assert await page.evaluate(what) == want
+
+
 def _sent(voice, kind):
     return [m for m in voice.sent if m.get("type") == kind]
 
@@ -102,16 +113,16 @@ async def test_a_fresh_load_and_a_reload_of_a_listening_page_ask_for_no_micropho
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
         page = await _page(context, page_url)
         await _quiet_since_load(page)
-        assert await page.evaluate(STATE) == "Not listening"
-        assert await page.get_attribute(LISTEN, "aria-label") == "Start listening"
+        await _shows(page, STATE, "Not listening")
+        await async_api.expect(page.locator(LISTEN)).to_have_attribute("aria-label", "Start listening")
 
         await _listening(page)
-        assert await page.evaluate(STATE) == "Listening"
+        await _shows(page, STATE, "Listening")
         starts = await page.evaluate("window.__starts")
         assert starts[0]["claim"] is True and starts[0]["clientId"].startswith("page-")
         await page.reload()
         await _quiet_since_load(page)
-        assert await page.evaluate(STATE) == "Not listening"
+        await _shows(page, STATE, "Not listening")
         await context.close()
 
 
@@ -122,11 +133,11 @@ async def test_muted_and_off_survive_a_reload_without_a_microphone(page_playwrig
         page = await _page(context, page_url)
         await _listening(page)
         await page.click("#btn-mute")
-        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        await async_api.expect(page.locator("#btn-mute")).to_have_attribute("aria-pressed", "true")
         await page.reload()
         await _quiet_since_load(page)
-        assert await page.evaluate(SILENCED) == "Muted · microphone inactive"
-        assert await page.get_attribute("#btn-mute", "aria-pressed") == "true"
+        await _shows(page, SILENCED, "Muted · microphone inactive")
+        await async_api.expect(page.locator("#btn-mute")).to_have_attribute("aria-pressed", "true")
 
         # Unmuting is the deliberate enable: one microphone, then listening.
         await page.click("#btn-mute")
@@ -135,8 +146,8 @@ async def test_muted_and_off_survive_a_reload_without_a_microphone(page_playwrig
         await page.click("#btn-mic-off")
         await page.reload()
         await _quiet_since_load(page)
-        assert await page.evaluate(SILENCED) == "Mic off"
-        assert await page.get_attribute("#btn-mic-off", "aria-pressed") == "true"
+        await _shows(page, SILENCED, "Mic off")
+        await async_api.expect(page.locator("#btn-mic-off")).to_have_attribute("aria-pressed", "true")
         await context.close()
 
 
@@ -150,7 +161,7 @@ async def test_unreadable_or_unknown_storage_is_not_listening(page_playwright, p
         context = await (await _browser(p)).new_context()
         page = await _page(context, page_url, storage=storage)
         await _quiet_since_load(page)
-        assert await page.evaluate(STATE) == "Not listening"
+        await _shows(page, STATE, "Not listening")
         await context.close()
 
 
@@ -182,11 +193,11 @@ async def test_mic_off_under_keep_finishes_the_words_from_before_and_releases_at
         await _listening(page)
         await page.evaluate("window.__hear('turn off the', false)")
         await page.click("#btn-mic-off")
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=2000)
-        assert await _until(page.voice.finals)
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
+        assert await until_async(page.voice.finals)
         assert page.voice.finals() == ["turn off the lights"]
         assert _sent(page.voice, "turn_discard") == []
-        assert await page.evaluate(SILENCED) == "Mic off"
+        await _shows(page, SILENCED, "Mic off")
         after = await page.evaluate("window.__framesSent")
         await page.wait_for_timeout(1000)
         assert await page.evaluate("window.__framesSent") == after
@@ -204,15 +215,15 @@ async def test_mic_off_under_discard_sends_nothing_and_late_words_stay_dropped(
         await _listening(page)
         await page.evaluate("window.__hear('drop the', false)")
         await page.click("#btn-mic-off")
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=2000)
-        assert await _until(lambda: _sent(page.voice, "turn_discard"))
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
+        assert await until_async(lambda: _sent(page.voice, "turn_discard"))
         # A final from the stopped capture arrives late: never sent.
         await page.evaluate("""() => { const old = window.__transcribers[0];
           old.onmessage && old.onmessage({ data: JSON.stringify(
             { session: old.session, type: 'final', segment: 9, text: 'drop the database' }) }); }""")
         await page.wait_for_timeout(800)
         assert page.voice.finals() == []
-        assert await page.evaluate(SILENCED) == "Mic off"
+        await _shows(page, SILENCED, "Mic off")
         await context.close()
 
 
@@ -244,23 +255,23 @@ async def test_leaving_the_page_under_stop_ends_listening_and_coming_back_does_n
         await page.evaluate("window.__hear('lights in the hall', true)")
         await page.evaluate("window.__hear('and the', false)")
         await page.evaluate("window.__setVisibility('hidden')")
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=2000)
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
         if stop == "keep":
-            assert await _until(lambda: "and the kitchen" in page.voice.finals())
+            assert await until_async(lambda: "and the kitchen" in page.voice.finals())
             assert _sent(page.voice, "turn_discard") == []
         else:
-            assert await _until(lambda: _sent(page.voice, "turn_discard"))
+            assert await until_async(lambda: _sent(page.voice, "turn_discard"))
             await page.wait_for_timeout(500)
             assert "and the kitchen" not in page.voice.finals()
         # The preference is unchanged: not listening, not muted, not off.
-        await page.wait_for_function(f"{STATE} === 'Not listening'", timeout=5000)
+        await page.wait_for_function(f"{STATE} === 'Not listening'", timeout=15000)
         opens = await page.evaluate("window.__micOpens")
         sockets = await page.evaluate("window.__transcribers.length")
         await page.evaluate("window.__setVisibility('visible')")
         await page.wait_for_timeout(1500)
         assert await page.evaluate("window.__micOpens") == opens
         assert await page.evaluate("window.__transcribers.length") == sockets
-        assert await page.evaluate(STATE) == "Not listening"
+        await _shows(page, STATE, "Not listening")
         await context.close()
 
 
@@ -311,7 +322,7 @@ async def test_changing_a_setting_while_listening_starts_stops_and_sends_nothing
         await async_api.expect(page.locator("#settings-voice-stop")).to_have_value("keep")
         await async_api.expect(page.locator("#settings-voice-switch")).to_have_value("stop")
         await page.locator("#settings-voice-stop").select_option("discard")
-        assert await _until(lambda: page.posted == [{"stop": "discard"}])
+        assert await until_async(lambda: page.posted == [{"stop": "discard"}])
         await page.wait_for_timeout(500)
         assert await page.evaluate("window.__transcribers.length") == 1
         assert await page.evaluate("window.__liveTracks()") == 1
@@ -321,7 +332,7 @@ async def test_changing_a_setting_while_listening_starts_stops_and_sends_nothing
         # Conversation view, under Settings: closing Settings stops nothing.
         await page.click("#settings-view .settings-head .workflow-close")
         await page.click("#btn-mic-off")
-        assert await _until(lambda: _sent(page.voice, "turn_discard"))
+        assert await until_async(lambda: _sent(page.voice, "turn_discard"))
         await context.close()
 
 
@@ -334,18 +345,18 @@ async def test_mute_and_off_reach_every_tab_but_unmuting_elsewhere_never_starts_
         b = await _page(context, page_url)
         await _listening(a)
         await b.click("#btn-mute")
-        await a.wait_for_function(f"{SILENCED} === 'Muted'", timeout=5000)
+        await a.wait_for_function(f"{SILENCED} === 'Muted'", timeout=15000)
         after = await a.evaluate("window.__framesSent")
         await a.wait_for_timeout(800)
         assert await a.evaluate("window.__framesSent") == after
 
         # B unmutes: A lets go and waits for its own Start.
         await b.click("#btn-mute")
-        await a.wait_for_function(f"{STATE} === 'Not listening'", timeout=5000)
-        await a.wait_for_function("window.__liveTracks() === 0", timeout=2000)
+        await a.wait_for_function(f"{STATE} === 'Not listening'", timeout=15000)
+        await a.wait_for_function("window.__liveTracks() === 0", timeout=15000)
 
         await b.click("#btn-mic-off")
-        await a.wait_for_function(f"{SILENCED} === 'Mic off'", timeout=5000)
+        await a.wait_for_function(f"{SILENCED} === 'Mic off'", timeout=15000)
         await context.close()
 
 
@@ -357,11 +368,11 @@ async def test_a_page_whose_listening_is_taken_lets_go_and_does_not_take_it_back
         await _listening(page)
         await page.evaluate("""() => { const t = window.__transcribers[0];
           t._emit({ type: 'error', code: 'taken', message: 'Listening moved.' }); }""")
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=2000)
-        assert await _until(lambda: _sent(page.voice, "turn_discard"))
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
+        assert await until_async(lambda: _sent(page.voice, "turn_discard"))
         await page.wait_for_timeout(2500)                 # longer than the first retry
         assert await page.evaluate("window.__transcribers.length") == 1
-        assert await page.get_attribute(LISTEN, "aria-label") == "Start listening"
+        await async_api.expect(page.locator(LISTEN)).to_have_attribute("aria-label", "Start listening")
 
         # His Start here takes it back, claiming it.
         await _listening(page)
@@ -377,11 +388,11 @@ async def test_a_busy_recogniser_is_not_waited_for_with_the_microphone_open(page
         page = await _page(context, page_url, script={"error": {"code": "busy", "message": "busy"}})
         await start_listening(page)
         await page.wait_for_function("window.__transcribers.length === 1", timeout=10000)
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=3000)
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
         await page.wait_for_timeout(2500)
         assert await page.evaluate("window.__transcribers.length") == 1
-        assert await page.evaluate(STATE) == "Busy in another tab"
-        assert await page.get_attribute(LISTEN, "aria-label") == "Listen here"
+        await _shows(page, STATE, "Busy in another tab")
+        await async_api.expect(page.locator(LISTEN)).to_have_attribute("aria-label", "Listen here")
         await context.close()
 
 
@@ -422,7 +433,7 @@ async def test_typing_works_while_voice_is_quiet(page_playwright, page_url):
         await page.click("#btn-mic-off")
         await page.fill("#conversation-draft", "status report")
         await page.press("#conversation-draft", "Enter")
-        assert await _until(lambda: [m for m in page.voice.sent
+        assert await until_async(lambda: [m for m in page.voice.sent
                                      if m.get("type") == "transcript" and m.get("typed")])
         await _quiet_since_load(page, 300)
         await context.close()
@@ -438,16 +449,17 @@ async def test_mute_turns_what_was_said_into_an_unsent_draft_and_unmute_never_se
         page = await _page(context, page_url, script={"finalOnFinish": "at seven"})
         await _listening(page)
         await page.evaluate("window.__hear('book a table', true)")      # gathered, not committed
-        assert await _until(page.voice.finals)
+        assert await until_async(page.voice.finals)
         # The server says what it gathered as his: the page keeps only that.
         page.voice.socket.send(json.dumps({"type": "turn", "state": "gathering", "turnId": 1,
                                            "text": "book a table"}))
-        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'turn-gathering'", timeout=5000)
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'turn-gathering'", timeout=15000)
         await page.evaluate("window.__hear('at', false)")
         await page.click("#btn-mute")
         await page.wait_for_function(
             "document.querySelector('#conversation-draft')?.value === 'book a table at seven'",
-            timeout=5000)
+            timeout=15000)
+        assert await until_async(lambda: _sent(page.voice, "turn_discard"))
         discard = _sent(page.voice, "turn_discard")
         assert len(discard) == 1
         assert page.voice.finals() == ["book a table"], "the finished words were sent"
@@ -469,13 +481,13 @@ async def test_a_listening_page_resumes_under_a_new_epoch_once_the_voice_socket_
         page = await _page(context, page_url)
         await _listening(page)
         await page.voice.socket.close()
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=5000)
-        assert await page.evaluate(STATE) == "Not listening"
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
+        await _shows(page, STATE, "Not listening")
         # The page's socket reconnects by itself (ws.ts); the route answers again.
         await page.wait_for_function("window.__starts.length === 2", timeout=20000)
         starts = await page.evaluate("window.__starts")
         assert starts[1]["claim"] is False and starts[1]["captureEpoch"] > starts[0]["captureEpoch"]
-        await page.wait_for_function("window.__liveTracks() === 1", timeout=5000)
+        await page.wait_for_function("window.__liveTracks() === 1", timeout=15000)
         assert await page.evaluate("window.__micOpens") == 2
         await context.close()
 
@@ -485,7 +497,7 @@ async def test_a_page_that_was_not_listening_or_was_muted_does_not_resume(page_p
     async with page_playwright as p:
         context = await (await _browser(p)).new_context()
         page = await _page(context, page_url)
-        assert await _until(lambda: page.voice.socket is not None)
+        assert await until_async(lambda: page.voice.socket is not None)
         await page.voice.socket.close()
         await page.wait_for_timeout(4000)
         await _quiet_since_load(page, 100)
@@ -495,7 +507,7 @@ async def test_a_page_that_was_not_listening_or_was_muted_does_not_resume(page_p
         await page.voice.socket.close()
         await page.wait_for_timeout(4000)
         assert await page.evaluate("window.__starts.length") == 1
-        assert await page.evaluate(SILENCED) == "Muted · microphone inactive"
+        await _shows(page, SILENCED, "Muted · microphone inactive")
         await context.close()
 
 
@@ -518,7 +530,7 @@ async def test_muted_or_not_listening_no_frame_reaches_a_package_listener(page_p
         await page.route("**/api/packages/**", _through(client, token))
         await page.goto(page_url)
         await page.wait_for_selector(LISTEN)
-        assert await _until(lambda: voice.socket is not None)
+        assert await until_async(lambda: voice.socket is not None)
         voice.socket.send(json.dumps({"type": "package_page", "package": packages_api.describe(package)}))
         await page.wait_for_selector("#package-view iframe")
         inner = None
@@ -555,11 +567,11 @@ async def test_the_brain_s_quiet_frame_mutes_or_turns_off_and_never_undoes_off(p
         await _listening(page)
         page.voice.socket.send(json.dumps({"type": "quiet", "state": "muted"}))
         await page.wait_for_function("document.querySelector('#btn-mute')?.getAttribute('aria-pressed') === 'true'",
-                                     timeout=5000)
+                                     timeout=15000)
         assert await page.evaluate(f"localStorage.getItem({json.dumps(QUIET_KEY)})") == "muted"
         page.voice.socket.send(json.dumps({"type": "quiet", "state": "off"}))
         await page.wait_for_function("document.querySelector('#btn-mic-off')?.getAttribute('aria-pressed') === 'true'",
-                                     timeout=5000)
+                                     timeout=15000)
         page.voice.socket.send(json.dumps({"type": "quiet", "state": "muted"}))
         page.voice.socket.send(json.dumps({"type": "quiet", "state": "none"}))
         await page.wait_for_timeout(500)

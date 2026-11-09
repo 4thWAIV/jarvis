@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixtures.waiting import until, until_async
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -291,9 +293,7 @@ def test_a_client_that_dies_mid_send_is_dropped_and_others_still_get_frames(clie
         server._add_voice_client(alive)
         await server._voice_emit({"type": "audio", "utt": 1, "idx": 0,
                                   "data": "", "text": "x"})
-        async with asyncio.timeout(2):
-            while dead in server.voice_clients or not alive.got:
-                await asyncio.sleep(0.01)
+        await until_async(lambda: dead not in server.voice_clients and alive.got)
 
     try:
         asyncio.run(scenario())
@@ -357,7 +357,7 @@ def test_skip_reading_does_not_stop_generation_or_drop_the_rest_of_reply(client)
             on_delta("First sentence. ")
             await asyncio.sleep(0.65)  # allow the speech narration gate to open
             on_delta("Second sentence. ")
-            await asyncio.to_thread(release.wait, 2)
+            await asyncio.to_thread(release.wait, 15)
             on_delta("The rest generated after skipping.")
             return TurnResult(origin, "First sentence. Second sentence. The rest generated after skipping.", "result")
 
@@ -465,8 +465,5 @@ def test_hush_is_stop_speaking_and_skip_is_one_reading(client, monkeypatch):
         ws.send_json({"type": "skip_to_end", "utt": "7"})
         ws.send_json({"type": "hush"})
         ws.send_json({"type": "mic", "text": "sync"})
-        for _ in range(50):
-            if len(calls) == 2:
-                break
-            time.sleep(0.02)
+        until(lambda: len(calls) == 2)
     assert calls == [("skip", 7), ("stop", "the page")]

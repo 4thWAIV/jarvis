@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 ROOT = Path(__file__).resolve().parent.parent / "jarvis"
 SINKS = {"say", "read_aloud", "read_into", "narrate", "begin_turn"}
@@ -235,7 +236,8 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
     reminder = asyncio.create_task(team_reminder.remind_once(
         SimpleNamespace(record=attention.record, resolve=attention.resolve),
         lambda: False, settle_sec=0, watch_sec=0.01))
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: attention.get(team_reminder.KIND, team_reminder.SOURCE)), \
+        "the reminder was never recorded"
     reminder.cancel()
     await _drain(server)
     assert isinstance(destination, transmission.Destination)

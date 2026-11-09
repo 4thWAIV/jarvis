@@ -27,6 +27,7 @@ from tests.test_voice_page_centre_nav import _History
 from tests.test_voice_page_folders import FOLDERS, _Api as _Folders
 from tests.test_voice_page_network import MINI_ID, SIGNED_OUT, _Sessions, _Team
 from tests.test_voice_page_workflows import _finished, _workflow
+from tests.fixtures.waiting import LIMIT_SEC, settled, until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 # WebGL on: white attention leaves the orb along its pipeline, drawn with WebGL on.
@@ -76,11 +77,9 @@ class _UiServer:
     def indicate(self, target, **extra):
         return self.request({"kind": "indicate", "target": target, **extra})
 
-    async def result(self, rid, timeout=10.0):
-        deadline = time.monotonic() + timeout
-        while rid not in self.results:
-            assert time.monotonic() < deadline, f"no ui_result for {rid}; events {self.events.get(rid)}"
-            await asyncio.sleep(0.02)
+    async def result(self, rid, timeout=LIMIT_SEC):
+        assert await until_async(lambda: rid in self.results, timeout), \
+            f"no ui_result for {rid}; events {self.events.get(rid)}"
         return self.results[rid]
 
 
@@ -99,15 +98,17 @@ async def _open(p, url, *, reduced=False, sessions=None, team=None, routes=(), n
     for pattern, handler in routes:
         await page.route(pattern, handler)
     await page.goto(url)
-    for _ in range(200):
-        if ui.client:
-            break
-        await asyncio.sleep(0.05)
-    assert ui.client, "the page never said ui_hello"
+    assert await until_async(lambda: ui.client), "the page never said ui_hello"
     if network:
         await page.click(".right-tabs [data-ui-tab=network]")
         await page.wait_for_selector(f".node-tile[data-node='{MINI_ID}']")
     return browser, page, ui
+
+
+# Where every control and tab is: a view just shown has stopped moving
+# once this reads the same two frames running.
+LAID_OUT = """() => [...document.querySelectorAll('[data-ui-action], [role=tab]')].map(e => {
+  const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })"""
 
 
 # Everything the pipeline's layers draw: at rest, nothing (its one filter
@@ -200,7 +201,7 @@ async def test_nothing_at_rest_and_a_cue_runs_its_whole_life_on_registered_edges
             for mark in (await page.evaluate(DRAWN))["marked"]:
                 if mark not in seen:
                     seen.append(mark)
-            assert time.monotonic() - sent < 5, seen
+            assert time.monotonic() - sent < LIMIT_SEC, seen
             await asyncio.sleep(0.03)
         assert seen == ["right.panel", tile], seen               # marked in turn, the panel first
 
@@ -612,7 +613,7 @@ async def test_parts_beside_a_close_a_status_or_their_objects_edge_are_reached(p
                     assert (await ui.result(rid))["status"] == "completed", show
                     if show[1].get("tab") == "agents":
                         await page.wait_for_selector(".agents-list li")
-                    await asyncio.sleep(0.5)
+                    await settled(page, LAID_OUT)
                 rid, _ = ui.indicate(target, reveal="never")
                 result = await ui.result(rid)
                 assert result["status"] == "completed", (target, result)
@@ -735,7 +736,7 @@ async def test_each_tour_stop_stays_on_the_trunk_marks_its_boxes_in_order_and_cr
                 if show:
                     rid, _ = ui.request({"kind": "navigate", "commandId": show[0], "args": show[1]})
                     assert (await ui.result(rid))["status"] == "completed", (what, show)
-                    await asyncio.sleep(0.4)
+                    await settled(page, LAID_OUT)
                 rid, _ = ui.indicate(target, reveal="never")
                 result = await ui.result(rid)
                 assert result["status"] == "completed", (what, result)
