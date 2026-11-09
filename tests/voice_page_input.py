@@ -10,9 +10,11 @@ the conversation history as he does waits for that scroll to end.
 import json
 
 from jarvis import voice_control
+from tests.fixtures.waiting import settled
 
 LISTEN = "#btn-listen"
 SETTINGS_PATH = "**/api/settings/voice-input"
+HISTORY_SCROLL = "() => document.querySelector('.conversation-history').scrollTop"
 
 
 async def start_listening(page, timeout: float = 10000) -> None:
@@ -30,7 +32,10 @@ async def his_scroll(page, act) -> None:
       document.querySelector('.conversation-history').addEventListener(
         'scrollend', () => { window.__scrollEnded = true; }, {once: true}); }""")
     await act()
-    await page.wait_for_function("window.__scrollEnded")
+    await page.wait_for_function("window.__scrollEnded", timeout=15000)
+    # A scroll of the page's own (to the latest, on load) can end after the
+    # listener is set and before his starts: read on until it has stopped.
+    await settled(page, HISTORY_SCROLL)
 
 
 async def route_settings(page, stop="keep", switch="stop", status=200, sounds=True, **more):

@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from jarvis import (language_setting, speech_models, transcriber, transcription_api,
                     voice_diagnostics)
 from jarvis.transcriber import TranscriptionService
+from tests.fixtures.waiting import until_async
 from tests.test_transcriber import _archive
 from tests.test_transcription_ws import (FakeEngine, PAGE, _app as _socket_app, _open,
                                          _ready, _until, word)
@@ -144,7 +145,7 @@ async def test_switch_loads_the_other_model_in_place_of_the_first():
     assert service.active is None
     # The next capture is heard by the new model.
     service.admit()
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: engines[1].sessions), engines[1].sessions
     assert engines[0].sessions and engines[1].sessions
     await service.switch(SPANISH)
     assert loaded == ["en", "es"], "switching to the model it has loads nothing"

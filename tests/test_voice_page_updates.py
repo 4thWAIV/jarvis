@@ -20,6 +20,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_network import _envelope, _open, _Team
 from tests.test_voice_page_team_reminder import SIGNED_OUT, _Status
+from tests.fixtures.waiting import settled, until_async
 
 pytestmark = pytest.mark.page
 
@@ -87,10 +88,10 @@ async def test_a_burst_is_one_count_reviewed_in_words_and_marked_seen(page_playw
         assert await notice.locator(".updates-list b").count() == 0, "a name is text, never markup"
         await async_api.expect(rows.nth(1)).to_contain_text("The work in jarvis failed")
         await rows.nth(0).get_by_role("button", name="Seen").click()
-        assert ("seen", [1]) in record.posts
+        assert await until_async(lambda: ("seen", [1]) in record.posts), record.posts
         await async_api.expect(notice.locator("p")).to_have_text("2 updates waiting")
         await notice.get_by_role("button", name="Mark all seen").click()
-        assert ("seen", None) in record.posts
+        assert await until_async(lambda: ("seen", None) in record.posts), record.posts
         await async_api.expect(notice).to_have_count(0)
         await browser.close()
 
@@ -102,14 +103,22 @@ async def test_hold_spoken_updates_saves_away_and_stays_until_resumed(page_playw
         browser, page = await _open(p, page_url, _Team(_envelope), routes=record.routes())
         notice = page.locator("#updates-notice")
         await notice.get_by_role("button", name="Hold spoken updates").click()
-        assert ("settings", {"away": True}) in record.posts
+        assert await until_async(lambda: ("settings", {"away": True}) in record.posts), record.posts
         await notice.get_by_role("button", name="Mark all seen").click()
         # Nothing pending, but held: still there, to resume.
         await async_api.expect(notice.locator("p")).to_have_text("Spoken updates are held")
         await notice.get_by_role("button", name="Resume spoken updates").click()
-        assert ("settings", {"away": False}) in record.posts
+        assert await until_async(lambda: ("settings", {"away": False}) in record.posts), record.posts
         await async_api.expect(notice).to_have_count(0)
         await browser.close()
+
+
+STACK = """() => {
+  const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect();
+    return {y: r.top, height: r.height}; };
+  return {reminder: box('#team-reminder'), notice: box('#updates-notice'),
+          conversation: document.querySelector('#conversation').getBoundingClientRect().top};
+}"""
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -121,10 +130,9 @@ async def test_with_the_sign_in_reminder_both_stack_and_cover_nothing(page_playw
         reminder, notice = page.locator("#team-reminder"), page.locator("#updates-notice")
         await async_api.expect(reminder).to_have_count(1)
         await async_api.expect(notice).to_have_count(1)
-        first, second = await reminder.bounding_box(), await notice.bounding_box()
+        boxes = await settled(page, STACK)
+        first, second, conversation = boxes["reminder"], boxes["notice"], boxes["conversation"]
         assert second["y"] >= first["y"] + first["height"], "one above the other"
-        conversation = await page.locator("#conversation").evaluate(
-            "e => e.getBoundingClientRect().top")
         assert conversation >= second["y"] + second["height"], (second, conversation)
         await browser.close()
 
@@ -165,8 +173,8 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         await page.wait_for_function("""() => { const v = document.querySelector('#folders-view'),
           m = document.querySelector('#centre-mic #mic-control');
           return !!(v && m) && v.getBoundingClientRect().bottom
-            <= document.querySelector('#centre-mic').getBoundingClientRect().top; }""", timeout=5000)
-        shape = await page.evaluate(GEOMETRY)
+            <= document.querySelector('#centre-mic').getBoundingClientRect().top; }""", timeout=15000)
+        shape = await settled(page, GEOMETRY)
         assert shape["noticeHeight"] in ("", "0px"), shape
         for c in (shape["chip"], shape["reminder"]):
             # A 24px pill and, above it, the 8px lane a pointer's leaf runs in.
@@ -181,7 +189,7 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         await async_api.expect(chip.locator(".updates-dropdown .updates-list li")).to_have_count(3)
         await async_api.expect(chip.get_by_role("button", name="Mark all seen")).to_be_visible()
         await async_api.expect(chip.get_by_role("button", name="Hold spoken updates")).to_be_visible()
-        assert (await page.evaluate(GEOMETRY))["view"] == shape["view"]
+        assert (await settled(page, GEOMETRY))["view"] == shape["view"]
         # Escape closes it; so do the chip again and a click outside.
         await page.keyboard.press("Escape")
         await async_api.expect(chip.locator(".updates-list")).to_have_count(0)
@@ -208,7 +216,7 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         # Mark all seen in the dropdown: the chip goes.
         await chip.get_by_role("button", name="3 updates").click()
         await chip.get_by_role("button", name="Mark all seen").click()
-        assert ("seen", None) in record.posts
+        assert await until_async(lambda: ("seen", None) in record.posts), record.posts
         await async_api.expect(chip).to_have_count(0)
         await browser.close()
 
@@ -243,5 +251,5 @@ async def test_a_session_message_has_read_reply_and_seen_and_read_leaves_it_unti
         await async_api.expect(row).to_contain_text("Your reply to Designer")
         assert posted == ["read", "reply"]
         await row.get_by_role("button", name="Seen").click()
-        assert ("seen", [147]) in record.posts
+        assert await until_async(lambda: ("seen", [147]) in record.posts), record.posts
         await browser.close()

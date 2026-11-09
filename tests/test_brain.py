@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from jarvis import claude_provider
+from tests.fixtures.waiting import until_async
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -247,10 +248,7 @@ async def test_stuck_turn_times_out_and_restarts(tmp_path):
         gen = b.generation
         r = await b.turn("SLOW:3 never")
         assert r.stop_reason == "timeout"
-        for _ in range(50):
-            if b.ready and b.generation > gen:
-                break
-            await asyncio.sleep(0.1)
+        assert await until_async(lambda: b.ready and b.generation > gen)
         assert b.generation == gen + 1 and b.ready
         assert "restarting" in states and states[-1] == "ready"
     finally:
@@ -266,10 +264,7 @@ async def test_crash_mid_turn_restarts_with_backoff(tmp_path):
         gen = b.generation
         r = await b.turn("DIE now")
         assert r.stop_reason == "died"
-        for _ in range(60):
-            if b.ready and b.generation > gen:
-                break
-            await asyncio.sleep(0.1)
+        assert await until_async(lambda: b.ready and b.generation > gen)
         assert b.ready and b.generation == gen + 1
         r2 = await b.turn("alive?")
         assert r2.text == "Echo: alive?"
@@ -287,15 +282,9 @@ async def test_too_many_crashes_marks_failed(tmp_path):
         b.on_state(lambda s, info: states.append(s))
         await b.start()
         await b.turn("DIE")            # restart 1 (allowed)
-        for _ in range(60):
-            if b.ready:
-                break
-            await asyncio.sleep(0.1)
+        assert await until_async(lambda: b.ready)
         await b.turn("DIE")            # restart 2 (exceeds max_restarts=1)
-        for _ in range(60):
-            if b.failed:
-                break
-            await asyncio.sleep(0.1)
+        assert await until_async(lambda: b.failed)
         assert b.failed and "failed" in states
         r = await b.turn("anyone?")
         assert r.stop_reason == "not_running"
@@ -335,14 +324,6 @@ async def test_missing_binary_fails_cleanly(tmp_path):
 
 # ── recovery paths the first review found untested ──────────────────────
 
-async def _wait_until(pred, seconds=8.0):
-    for _ in range(int(seconds / 0.1)):
-        if pred():
-            return True
-        await asyncio.sleep(0.1)
-    return False
-
-
 @pytest.mark.asyncio
 async def test_restart_keeps_trying_when_the_replacement_dies_during_warmup(tmp_path, monkeypatch):
     from jarvis import brain
@@ -357,7 +338,7 @@ async def test_restart_keeps_trying_when_the_replacement_dies_during_warmup(tmp_
         marker.write_text("x")                     # the NEXT spawn exits 1 at startup
         r = await b.turn("DIE")
         assert r.stop_reason == "died"
-        assert await _wait_until(lambda: b.ready and b.generation == gen + 2)
+        assert await until_async(lambda: b.ready and b.generation == gen + 2)
         assert not b.failed and not marker.exists()
         assert states.count("restarting") == 2 and states[-1] == "ready"
         assert (await b.turn("alive?")).text == "Echo: alive?"
@@ -375,8 +356,9 @@ async def test_turn_during_the_restart_gap_does_not_bind_to_the_dying_process(tm
         assert (await b.turn("SLOW:3 stuck")).stop_reason == "timeout"
         t0 = time.monotonic()
         r = await b.turn("anyone there?")
-        assert r.stop_reason == "not_running" and time.monotonic() - t0 < 0.3
-        assert await _wait_until(lambda: b.ready and b.generation == gen + 1)
+        # Bound to the dying process it would wait out a whole turn timeout.
+        assert r.stop_reason == "not_running" and time.monotonic() - t0 < b.config.turn_timeout
+        assert await until_async(lambda: b.ready and b.generation == gen + 1)
         assert (await b.turn("now?")).text == "Echo: now?"
     finally:
         await b.stop()
@@ -422,7 +404,7 @@ async def test_rate_limit_spanning_a_restart_neither_fails_the_brain_nor_leaks(t
         assert (await b.turn("RATELIMIT")).stop_reason == "result"
         assert (await b.turn("still limited?")).stop_reason == "rate_limited"
         b._session.kill()                                   # a crash while rate-limited
-        assert await _wait_until(lambda: b.ready and b.generation == gen + 1)
+        assert await until_async(lambda: b.ready and b.generation == gen + 1)
         assert not b.failed and len(b._restart_times) == 1
         assert (await b.turn("after restart")).stop_reason == "rate_limited"   # limited, but alive
     finally:
@@ -436,7 +418,7 @@ async def test_start_after_failed_is_a_fresh_boot(tmp_path):
     try:
         await b.start()
         b._session.kill()                                   # any crash exceeds max_restarts=0
-        assert await _wait_until(lambda: b.failed)
+        assert await until_async(lambda: b.failed)
         assert await b.start() is True
         assert b.ready and not b.failed
         assert (await b.turn("back?")).text == "Echo: back?"
@@ -483,10 +465,10 @@ async def test_start_on_a_running_brain_replaces_it_without_orphans(tmp_path):
         assert await b.start() is True
         second = b._session.proc.pid
         assert second != first and b.ready
-        assert await _wait_until(lambda: not _alive(first), 3.0)
+        assert await until_async(lambda: not _alive(first))
     finally:
         await b.stop()
-    assert await _wait_until(lambda: not _alive(second), 3.0)
+    assert await until_async(lambda: not _alive(second))
 
 
 @pytest.mark.asyncio
@@ -496,7 +478,7 @@ async def test_start_during_a_pending_restart_yields_exactly_one_process(tmp_pat
     try:
         await b.start()
         b._session.kill()                                   # restart pending (0.5 s backoff)
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: b.restarting), "the crash was never noticed"
         assert await b.start() is True                     # operator retry during the gap
         pid = b._session.proc.pid
         gen = b.generation
@@ -505,7 +487,7 @@ async def test_start_during_a_pending_restart_yields_exactly_one_process(tmp_pat
         assert b._restart_task is None or b._restart_task.done()
     finally:
         await b.stop()
-    assert await _wait_until(lambda: not _alive(pid), 3.0)
+    assert await until_async(lambda: not _alive(pid))
 
 
 @pytest.mark.asyncio
@@ -527,9 +509,9 @@ async def test_warmup_timeout_kills_the_hung_child(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_provider.ClaudeSession, "kill", spy)
     b._session.proc.kill()                             # crash the current one
     try:
-        assert await _wait_until(lambda: b.ready and not marker.exists() and len(hung) >= 1, 8.0)
+        assert await until_async(lambda: b.ready and not marker.exists() and len(hung) >= 1)
         for pid in hung:
-            assert await _wait_until(lambda: not _alive(pid), 3.0), f"hung child {pid} still alive"
+            assert await until_async(lambda: not _alive(pid)), f"hung child {pid} still alive"
         assert not b.failed
     finally:
         await b.stop()          # a live child left behind by a failing test hangs pytest's loop teardown
@@ -580,7 +562,7 @@ async def test_a_warmup_that_errors_never_reports_ready(tmp_path, monkeypatch):
     try:
         assert await b.start() is False
         assert not b.ready
-        assert await _wait_until(lambda: b.failed, 8.0)
+        assert await until_async(lambda: b.failed)
         assert not b.running
         assert any(s == "failed" for s, _ in states)
     finally:
@@ -631,7 +613,7 @@ async def test_ordinary_warmup_failure_still_retries(tmp_path, monkeypatch):
     try:
         b.on_state(lambda s, info: states.append((s, info)))
         assert await b.start() is False
-        assert await _wait_until(lambda: b.failed, 8.0)
+        assert await until_async(lambda: b.failed)
         assert b.failure_reason is None                 # not classified as fatal
         assert sum(1 for s, _ in states if s == "restarting") == 2   # the full budget was used
         assert b.generation == 3                         # 1 initial attempt + 2 restarts
@@ -648,9 +630,9 @@ async def test_auth_fatal_failure_kills_the_process_and_leaks_nothing(tmp_path, 
         assert await b.start() is False
         assert b.failed and b.failure_reason == "auth"
         pid = b._session.proc.pid if b._session else None
-        assert await _wait_until(lambda: not b.running, 3.0)   # kill() is async; give it a moment to be reaped
+        assert await until_async(lambda: not b.running)   # kill() is async; give it a moment to be reaped
         if pid is not None:
-            assert await _wait_until(lambda: not _alive(pid), 3.0), f"child {pid} still alive"
+            assert await until_async(lambda: not _alive(pid)), f"child {pid} still alive"
     finally:
         await b.stop()   # must not hang or raise against an already-dead process
 
@@ -950,10 +932,8 @@ async def test_oversized_stderr_line_is_skipped_and_brain_survives(tmp_path, mon
         with caplog.at_level(logging.DEBUG, logger="jarvis.brain"):
             r = await _bounded(b.turn("SKIPSTDERR:300000"), 20, b,
                                "jarvis.brain.turn(SKIPSTDERR)")
-            for _ in range(50):
-                if any("STDERR-MARKER-AFTER-SKIP" in rec.message for rec in caplog.records):
-                    break
-                await asyncio.sleep(0.05)
+            await until_async(lambda: any("STDERR-MARKER-AFTER-SKIP" in rec.message
+                                          for rec in caplog.records))
         assert r.stop_reason == "result"
         assert any("oversized" in rec.message.lower() for rec in caplog.records)
         assert any("STDERR-MARKER-AFTER-SKIP" in rec.message for rec in caplog.records)

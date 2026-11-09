@@ -24,6 +24,7 @@ from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION, _silence_wav
 from tests.test_voice_page_conversation import _Voice
 from tests.voice_page_input import route_settings, start_listening
+from tests.fixtures.waiting import settled
 
 pytestmark = pytest.mark.page
 
@@ -289,8 +290,7 @@ async def _measure(page, state):
     got = {}
     for width in (WIDE, NARROW):
         await page.set_viewport_size({'width': width, 'height': 900})
-        await asyncio.sleep(.25)
-        got[width] = await page.evaluate(CONTROL)
+        got[width] = await settled(page, CONTROL)
     return got
 
 
@@ -486,8 +486,7 @@ async def test_no_state_moves_the_text_box_or_the_history(page_url):
                 " document.querySelector('#conversation-control').getBoundingClientRect().height]"
         for width in (WIDE, NARROW):
             await page.set_viewport_size({'width': width, 'height': 900})
-            await asyncio.sleep(.2)
-            first = await page.evaluate(where)
+            first = await settled(page, where)
             for steps, state in ([[HEARD], 'hearing'], [[_turn()], 'overlap-hearing-earlier'],
                                  [[('final', HEARD)], 'turn-gathering'], [[_turn('stalled')], 'turn-stalled'],
                                  [SPEAKING, 'overlap-reading-waiting'], [[_turn('idle')], 'speaking'],
@@ -498,8 +497,7 @@ async def test_no_state_moves_the_text_box_or_the_history(page_url):
                     await _shows(page, state)
                 except Exception:
                     raise AssertionError((width, state, await page.evaluate(STATE)))
-                await asyncio.sleep(.1)
-                assert await page.evaluate(where) == first, (width, state)
+                assert await settled(page, where) == first, (width, state)
             await page.evaluate("window.__hear('reset', true)")
             await _shows(page, 'empty')
         await browser.close()

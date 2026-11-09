@@ -24,6 +24,7 @@ import pytest
 pytestmark = [pytest.mark.page, pytest.mark.webgl]
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import until_async
 from tests.test_voice_page_rays import AGENTS, PRIMARY, SECOND, RAYS, _segments, _to
 
 TIM, MATT = 863470, 1001
@@ -173,11 +174,14 @@ async def test_a_row_that_goes_while_the_ray_shows_hands_it_to_the_queue_icon(pa
         browser, page = await _open(p, page_url, [(0.5, _event("outgoing"))])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
         await page.evaluate(f"document.querySelector(\"{ROW}\").remove()")
-        await page.wait_for_timeout(200)
-        (ray,) = await page.evaluate(RAYS)
-        sx, sy, top, cx, ey, ex = _segments(ray["d"])
-        icon = await _centre(page, QUEUE_TAB)
-        assert abs(ex - icon[0]) < 1 and abs(ey - icon[1]) < 1, "never a stale row"
+
+        async def at_the_icon():
+            # The ray is routed again on the next frame, not at once.
+            (ray,) = await page.evaluate(RAYS)
+            _sx, _sy, _top, _cx, ey, ex = _segments(ray["d"])
+            icon = await _centre(page, QUEUE_TAB)
+            return abs(ex - icon[0]) < 1 and abs(ey - icon[1]) < 1
+        assert await until_async(at_the_icon), "never a stale row"
         await browser.close()
 
 
@@ -219,7 +223,9 @@ async def test_a_burst_shows_five_rays_and_counts_the_rest(page_playwright, page
         browser, page = await _open(p, page_url, burst)
         await page.wait_for_function(
             "document.querySelectorAll('#ray-lane .ray').length === 5", timeout=10000)
-        await page.wait_for_timeout(300)
+        # The three past the five are counted once they have come in.
+        await page.wait_for_function(
+            "document.querySelector('#ray-lane .ray-overflow')?.textContent === '+3'", timeout=15000)
         assert len(await page.evaluate(GROUPS)) == 5
         assert await page.evaluate(
             "document.querySelector('#ray-lane .ray-overflow').textContent") == "+3"
@@ -292,5 +298,5 @@ async def test_an_agent_s_message_past_the_ray_limit_still_lights_the_agents_tab
         assert all(g["id"].startswith("human:") for g in await page.evaluate(GROUPS))
         await page.wait_for_function(
             "document.querySelector(\".right-tabs [aria-label='Agents']\").classList.contains('lit')",
-            timeout=5000)
+            timeout=15000)
         await browser.close()

@@ -28,6 +28,7 @@ from tests.test_voice_page_navigation import _Voice
 from tests.test_voice_page_packages import _through, jarvis_app  # noqa: F401
 from tests.test_voice_page_workflows import _Server, _Sessions
 from tests.voice_page_input import start_listening
+from tests.fixtures.waiting import settled, until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -37,6 +38,10 @@ SIZES = {"1440": (1440, 813), "1280": (1280, 713)}   # the page a Chrome window 
 RECT = """(sel) => { const el = document.querySelector(sel); if (!el) return null;
   const r = el.getBoundingClientRect(); return {left: r.left, top: r.top, right: r.right, bottom: r.bottom,
                                                 width: r.width, height: r.height}; }"""
+
+
+async def _rect_is(page, sel, want) -> bool:
+    return await page.evaluate(RECT, sel) == want
 
 
 def _overlap(a, b) -> bool:
@@ -66,10 +71,7 @@ async def _open(p, page_url, size, routes=()):
         await page.route(pattern, handler)
     await page.goto(page_url)
     await page.wait_for_selector(".right-tabs [role=tab]")
-    for _ in range(100):
-        if voice.client:
-            break
-        await page.wait_for_timeout(50)
+    assert await until_async(lambda: voice.client), "the voice socket never connected"
     return browser, page, voice
 
 
@@ -93,8 +95,8 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
             # (Generous waits: the recogniser's start is slow on a busy machine.)
             await start_listening(page, timeout=20000)
             await page.wait_for_selector("#centre-mic #mic-meter", timeout=20000)
-            normal = await page.evaluate(RECT, "#package-view iframe")
-            corner = await page.evaluate(RECT, "#centre-mic")
+            normal = await settled(page, RECT, "#package-view iframe")
+            corner = await settled(page, RECT, "#centre-mic")
             # The microphone corner covers no part of the frame.
             assert corner and not _overlap(normal, corner), (normal, corner)
             await _shot(page, f"{size}-normal")
@@ -107,7 +109,7 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
             assert await page.locator(".centre-tabs").count() == 0
             assert await page.evaluate("document.documentElement.dataset.layout") == "takeover"
             # The right panel is a rail of its six icons, none of its views.
-            rail = await page.evaluate(RECT, "#right-column")
+            rail = await settled(page, RECT, "#right-column")
             assert rail["width"] <= 60, rail
             assert await page.locator("#right-column.rail .rail-tabs [role=tab]").count() == 6
             assert await page.locator("#right-column .right-panel").count() == 0
@@ -116,8 +118,8 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
             assert await page.locator("#takeover-bar #stop-slot").count() == 1
             assert await page.locator("#centre-mic").count() == 0
             # The frame is wider and taller, and nothing of the bar covers it.
-            taken = await page.evaluate(RECT, "#package-view iframe")
-            bar_box = await page.evaluate(RECT, "#takeover-bar")
+            taken = await settled(page, RECT, "#package-view iframe")
+            bar_box = await settled(page, RECT, "#takeover-bar")
             assert taken["width"] >= normal["width"] + 150, (normal, taken)
             assert taken["height"] > normal["height"], (normal, taken)
             assert not _overlap(taken, bar_box) and not _overlap(taken, rail), (taken, bar_box, rail)
@@ -142,11 +144,9 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
             assert await page.locator("#right-column .right-panel").count() == 1
             # The corner's height reaches the frame through a ResizeObserver
             # once the microphone is back in it: wait for that, as a frame would.
-            await page.wait_for_function(
-                "(want) => { const r = document.querySelector('#package-view iframe')"
-                "?.getBoundingClientRect(); return !!r && Math.abs(r.bottom - want) < 0.5; }",
-                arg=normal["bottom"], timeout=5000)
-            assert await page.evaluate(RECT, "#package-view iframe") == normal
+            # The whole box, not only its bottom: the panel's width comes back too.
+            assert await until_async(lambda: _rect_is(page, "#package-view iframe", normal)), \
+                (await page.evaluate(RECT, "#package-view iframe"), normal)
             assert await page.locator("#centre-mic #mic-control").count() == 1
         finally:
             await browser.close()
@@ -286,7 +286,9 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             inner = next(f for f in page.frames if f.url.endswith("/files/index.html"))
             told = "() => window.__layouts.length ? window.__layouts[window.__layouts.length - 1] : null"
             await inner.wait_for_function(f"({told})() !== null")
-            frame = await page.evaluate(RECT, "#package-view iframe")
+            frame = await settled(page, RECT, "#package-view iframe")
+            await inner.wait_for_function(f"(w) => Math.abs(({told})().width - w) <= 1", arg=frame["width"],
+                                          timeout=15000)
             last = await inner.evaluate(told)
             assert last["mode"] == "normal"
             assert abs(last["width"] - frame["width"]) <= 1 and abs(last["height"] - frame["height"]) <= 1, (last, frame)
@@ -301,7 +303,9 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
 
             await enter.click()
             await inner.wait_for_function(f"({told})().mode === 'takeover'")
-            taken = await page.evaluate(RECT, "#package-view iframe")
+            taken = await settled(page, RECT, "#package-view iframe")
+            await inner.wait_for_function(f"(w) => Math.abs(({told})().width - w) <= 1", arg=taken["width"],
+                                          timeout=15000)
             last = await inner.evaluate(told)
             assert abs(last["width"] - taken["width"]) <= 1 and last["width"] > frame["width"] + 150, (last, taken)
             await _shot(page, "room-taken-over")
@@ -366,17 +370,14 @@ async def test_while_taken_over_updates_and_a_read_back_keep_the_layout_and_a_re
             await async_api.expect(sheet).to_contain_text("Deploy at noon.")
             assert await page.evaluate("document.documentElement.dataset.layout") == "takeover"
             # The sheet covers nothing: the item's head and every tab start below it.
-            sheet_box = await page.evaluate(RECT, "#takeover-sheet")
+            sheet_box = await settled(page, RECT, "#takeover-sheet")
             for part in ("#workflow-detail .workflow-detail-head", "#workflow-detail .workflow-tabs"):
-                box = await page.evaluate(RECT, part)
+                box = await settled(page, RECT, part)
                 assert box["top"] >= sheet_box["bottom"], (part, box, sheet_box)
             await _shot(page, "readback-sheet")
             # Send on the sheet is the box's own Send.
             await sheet.locator(".capture-send").click()
-            for _ in range(50):
-                if sent:
-                    break
-                await page.wait_for_timeout(50)
+            assert await until_async(lambda: sent), "Send posted nothing"
             assert sent == ["9/send"]
             await readback.click()
             await async_api.expect(sheet).to_have_count(0)
@@ -411,8 +412,8 @@ async def test_a_work_item_takes_over_by_its_button_and_restores(page_url):
             await async_api.expect(bar).to_be_visible()
             title = await page.locator("#work-detail .work-detail-name").text_content()
             await async_api.expect(bar.locator(".takeover-name")).to_have_text(title)
-            detail = await page.evaluate(RECT, "#work-detail")
-            rail = await page.evaluate(RECT, "#right-column")
+            detail = await settled(page, RECT, "#work-detail")
+            rail = await settled(page, RECT, "#right-column")
             assert detail["right"] <= rail["left"] and rail["width"] <= 60, (detail, rail)
             await _shot(page, "work-taken-over")
             closed = await voice.navigate("work.close", {})
