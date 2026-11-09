@@ -4,6 +4,7 @@ import type { CatalogOf } from "../locale";
 import type { leftEn } from "./left.en";
 
 export const leftEs: CatalogOf<typeof leftEn> = {
+  "left.workers.active": "{count} activos",
   "left.workers.modelWork": "{count} en trabajo del modelo",
   "left.workers.unconfirmed": "{count} sin confirmar",
   "left.workers.tools": "{count} en herramientas",
@@ -17,7 +18,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.workers.children": "{count} registros hijos",
   "left.workers.unavailable": "Actividad no disponible",
   "left.workers.unknown": "Actividad desconocida",
-  "left.workers.label": "Trabajo del modelo de agentes de {account}: {activity}",
+  "left.workers.label": "Actividad de agentes de {account}: {activity}",
   "left.workers.all": "Todos",
   "left.workers.allWorkers": "Todos los trabajadores",
   "left.workers.runtimeActive": "{count} activos en ejecución",

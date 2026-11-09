@@ -1,3 +1,4 @@
+import { WorkOwnerActivity } from "./WorkerStatus";
 /**
  * One work item, in full: the centre area's Work view, opened by clicking
  * its row in the right panel's Work tab (`work.open`), which stays in view;
@@ -37,6 +38,7 @@
  * drawn as plain text.
  */
 
+import { workerChanges } from "./workers";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copyPath } from "./attachmentLocation";
 import { CENTRE_SOCKET } from "./ConversationView";
@@ -56,7 +58,7 @@ import { answerWorkDecision, blockerWords, followUpWords, liveWords, needWords, 
          rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
-import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
          workStanding, type Activity } from "./nodeActivity";
 import { WorkMarkDot } from "./WorkPanel";
 
@@ -70,7 +72,7 @@ type Part = (name: string) => (el: Element | null) => void;
 
 export function WorkDetail({ id }: { id: string }) {
   const t = useT();
-  const live = useLiveRead(() => getWorkItem(id), [workChanged]);
+  const live = useLiveRead(() => getWorkItem(id), [workChanged, workerChanges]);
   const item = live.value?.item;
   const events = live.value?.events ?? [];
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
@@ -381,7 +383,7 @@ function Pieces({ item, part }: { item: WorkItem; part: Part }) {
   const t = useT();
   // Every piece's look from one clock, so a line knows whether the piece it
   // waits for is working.
-  const now = useActivityClock(item.pieces.map((p) => p.quiet_at));
+  const now = 0; // Work activity is already computed by the worker authority.
   const looks = new Map(item.pieces.map((p) => [p.key, pieceActivity(p, now)]));
   return (
     <section ref={part("pieces")}>
@@ -440,7 +442,7 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           <ActivityMark activity={activity} target={ui.part("activity")} />
           {piece.title}</span>
         <span className="work-piece-who" data-who={piece.who.kind} ref={ui.part("who")}>
-          {whoWords(piece.who)}
+          <WorkOwnerActivity owner={piece.who} />{whoWords(piece.who)}
           {piece.worker && " "}
           {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}

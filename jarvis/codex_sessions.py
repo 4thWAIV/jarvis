@@ -466,7 +466,7 @@ class CodexSessions:
             runtime = runtime_rows.get(session.session_id) if runtime_fresh else None
             session.runtime_status = {"status": runtime.get("status"), "observed_at": runtime_at} if runtime else {"status": "unknown", "error": runtime_error}
             if runtime and runtime.get("activity"):
-                session.worker_activity = runtime["activity"]
+                session.worker_activity = worker_activity.merge_evidence(session.worker_activity, runtime["activity"])
                 session.state = "working" if runtime.get("status") == "active" else "idle"
         parent_by_id = {child.session_id: child.parent_session_id for child in children}
         roots = {session.session_id: session for session in sessions}

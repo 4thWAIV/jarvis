@@ -2400,6 +2400,10 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .package-head { display: flex; align-items: center; gap: 12px; }
 .package-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .package-head-words p { margin: 0; color: rgba(255, 255, 255, 0.6); }
+.package-vote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.package-vote [aria-pressed="true"] { border-color: rgba(94, 234, 212, 0.8); }
+.package-vote-words { min-width: 12em; }
+.package-vote-recorded { color: rgba(255, 255, 255, 0.6); }
 .package-frame {
   flex: 1;
   min-height: 0;

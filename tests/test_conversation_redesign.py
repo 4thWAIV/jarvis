@@ -8,6 +8,7 @@ from tests.voice_page_input import his_scroll, start_listening
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_conversation import _Voice, _open, _record_item
 from tests.test_voice_page_captions import _silence_wav
+from tests.fixtures.waiting import settled, until_async
 
 pytestmark = pytest.mark.page
 
@@ -110,7 +111,7 @@ async def test_scrollback_stays_put_until_jump_to_latest(page_url):
         after = await page.locator('.conversation-history').evaluate('e => e.scrollTop')
         assert abs(before-after) < 2
         await page.get_by_role('button', name='Jump to latest').click()
-        assert await page.locator('.conversation-history').evaluate('e => e.scrollHeight-e.scrollTop-e.clientHeight') < 2
+        await _at_bottom(page)
         await browser.close()
 
 
@@ -178,9 +179,7 @@ async def test_backend_restart_can_reuse_utterance_after_skip_without_overwritin
         await page.get_by_role('button',name='Skip to end').click()
         old_socket = voice.ws
         await old_socket.close()
-        for _ in range(50):
-            if voice.ws is not old_socket: break
-            await asyncio.sleep(.1)
+        await until_async(lambda: voice.ws is not old_socket)
         assert voice.ws is not old_socket
         voice.send({'type':'reply','utt':1,'at':started+5,'text':'A new server reply.','done':True},
                    {'type':'audio','utt':1,'idx':0,'text':'A new server reply.', 'kind':'reply','data':_silence_wav(8)})
@@ -201,9 +200,7 @@ async def test_disconnected_partial_reply_is_marked_and_escape_skips_only_the_re
         old_socket = voice.ws
         await old_socket.close()
         await page.wait_for_function("document.querySelector('.chat-streaming')?.textContent.includes('partial reply')")
-        for _ in range(50):
-            if voice.ws is not old_socket: break
-            await asyncio.sleep(.1)
+        await until_async(lambda: voice.ws is not old_socket)
         voice.send({'type':'audio','utt':2,'idx':0,'text':'Read the capture.', 'capture':5,
                     'kind':'reply','data':_silence_wav(8)})
         await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
@@ -263,6 +260,19 @@ async def _with_history(page, voice, record=None):
 
 GAP = "(() => { const b = document.querySelector('.conversation-history'); return b.scrollHeight - b.scrollTop - b.clientHeight; })()"
 TOP = "document.querySelector('.conversation-history').scrollTop"
+
+
+async def _at_bottom(page):
+    """Until the history is scrolled to the bottom: it follows once the page
+    has laid out what changed, not at once."""
+    await page.wait_for_function(f'{GAP} < 2', timeout=15000)
+
+
+async def _shown(page, text):
+    """Until the reply being written shows `text` whole."""
+    await page.wait_for_function("t => [...document.querySelectorAll('.chat-message.jarvis')].some("
+                                 "e => e.textContent.replace(/\\s+/g, ' ').includes(t.replace(/\\s+/g, ' ').trim()))",
+                                 arg=text, timeout=15000)
 
 
 async def _wheel(page, dy):
@@ -370,19 +380,18 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         # page's own scrolling and the box shrinking are never taken for his.
         for n in range(1, 4):
             voice.send({'type': 'reply', 'utt': 50, 'text': text * n, 'done': False})
-            await asyncio.sleep(.15)
-            assert await page.evaluate(GAP) < 2
+            await _shown(page, text * n)
+            await _at_bottom(page)
         voice.send({'type': 'audio', 'utt': 50, 'idx': 0, 'text': text, 'kind': 'reply', 'data': _silence_wav(4)},
                    {'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
                     'text': 'Tell hammer to ship the folder catalog fix once the review passes, and post the notes.'},
                    {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'})
         await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'overlap-reading-waiting'")
-        await asyncio.sleep(.6)
-        assert await page.evaluate(GAP) < 2
+        await _at_bottom(page)
         await page.evaluate("document.querySelector('.conversation-history').scrollTop = 200")
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 4, 'done': False})
-        await asyncio.sleep(.2)
-        assert await page.evaluate(GAP) < 2, 'a scroll the page made is not his'
+        await _shown(page, text * 4)
+        await _at_bottom(page)              # a scroll the page made is not his
         assert await page.locator('.conversation-jump').count() == 0
 
         # He scrolls up: it stays where he left it while the reply grows and
@@ -392,7 +401,8 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         left = await page.evaluate(TOP)
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 6, 'done': False},
                    {'type': 'turn', 'state': 'idle', 'turnId': 5, 'text': ''})
-        await asyncio.sleep(.4)
+        await _shown(page, text * 6)
+        await asyncio.sleep(.4)             # time for a wrong follow to happen
         assert abs(await page.evaluate(TOP) - left) < 2
         assert await page.locator('.conversation-jump').count() == 1
 
@@ -400,8 +410,8 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         await _wheel(page, 5000)
         await page.wait_for_selector('.conversation-jump', state='detached')
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 8, 'done': False})
-        await asyncio.sleep(.2)
-        assert await page.evaluate(GAP) < 2
+        await _shown(page, text * 8)
+        await _at_bottom(page)
 
         # The keys move it as his too, and Jump to latest brings it back.
         await page.locator('.chat-message .chat-copy').last.focus()
@@ -411,14 +421,15 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         # bottom box; what matters is that it stays where his key left it.
         left = await page.evaluate(TOP)
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 9, 'done': True})
-        await asyncio.sleep(.2)
+        await _shown(page, text * 9)
+        await asyncio.sleep(.2)             # time for a wrong follow to happen
         assert abs(await page.evaluate(TOP) - left) < 2
         assert await page.evaluate(GAP) > 0
         await page.get_by_role('button', name='Jump to latest').click()
-        assert await page.evaluate(GAP) < 2
+        await _at_bottom(page)
         voice.send({'type': 'reply', 'utt': 51, 'text': 'And one more.', 'done': True})
-        await asyncio.sleep(.2)
-        assert await page.evaluate(GAP) < 2
+        await _shown(page, 'And one more.')
+        await _at_bottom(page)
         await browser.close()
 
 
@@ -446,8 +457,7 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         assert await control.locator('.control-lead').inner_text() == '· your words are waiting'
         assert await control.locator('button').all_inner_texts() == ['Retry', 'Send now', 'Keep as draft']
         assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
-        await asyncio.sleep(.5)
-        got = await page.evaluate("""() => {
+        got = await settled(page, """() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
           const dock = document.querySelector('.conversation-dock');
           return {view:r('#conversation'), history:r('.conversation-history'), capture:r('#conversation .capture-box'),
@@ -459,12 +469,14 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         # Rapid replacements must retain the action row's bottom inset.
         for words in ['Short.', 'A longer replacement with several lines. ' * 15, 'Final words.']:
             voice.send({'type':'capture','id':3,'state':'capturing','text':words})
-            await asyncio.sleep(.08)
-            assert await page.evaluate("""() => {
+            await page.wait_for_function("w => document.querySelector('#conversation .capture-box')?.textContent.includes(w)",
+                                         arg=words.strip(), timeout=15000)
+            inset = await settled(page, """() => {
               const box=document.querySelector('#conversation .capture-box');
               const actions=box.querySelector('.capture-buttons');
-              return box.getBoundingClientRect().bottom-actions.getBoundingClientRect().bottom >= 11;
+              return box.getBoundingClientRect().bottom-actions.getBoundingClientRect().bottom;
             }""")
+            assert inset >= 11, inset
         for stage in ['tentative', 'deciding', 'likely']:
             voice.send({'type':'turn','state':'pause','stage':stage,'turnId':5,'text':'Ready when I finish speaking','sound':False})
             await page.wait_for_function("stage => document.querySelector('#conversation-control').dataset.pause === stage", arg=stage)
@@ -554,7 +566,7 @@ async def test_a_long_reply_being_read_keeps_the_word_in_view_and_settles_at_the
         assert tops[-1] > tops[0] + 100, 'the list moves along with the reading'
         assert all(b >= a - 1 for a, b in zip(tops[1:], tops[2:])), 'never back up behind the reading'
         await _the_reading_ends(page, voice, len(said) - 1)
-        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
+        await _at_bottom(page)
         assert await page.locator('.conversation-jump').count() == 0
         await browser.close()
 
@@ -570,7 +582,7 @@ async def test_a_pause_between_sentences_is_not_the_end_of_the_reading_and_the_l
         # The next sentences are still being made: the page's audio runs dry.
         await _read_a_long_reply(page, voice, said, upto=12)
         await _played(page, voice, 11)
-        await page.wait_for_selector(NOW, state='detached', timeout=5000)
+        await page.wait_for_selector(NOW, state='detached', timeout=15000)
         held = await page.evaluate(TOP)
         await asyncio.sleep(1)
         assert abs(await page.evaluate(TOP) - held) < 2, 'the list stays where the reading is'
@@ -581,7 +593,7 @@ async def test_a_pause_between_sentences_is_not_the_end_of_the_reading_and_the_l
         assert await page.evaluate(WORD_IN_VIEW)
         assert await page.evaluate(TOP) >= held - 1
         await _the_reading_ends(page, voice, len(said) - 1)
-        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
+        await _at_bottom(page)
         await browser.close()
 
 

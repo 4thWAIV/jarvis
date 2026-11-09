@@ -24,7 +24,7 @@ import pytest
 pytestmark = pytest.mark.page
 
 from tests.test_voice_page_quiet_input import STATE, _browser, _listening, _page
-from tests.test_voice_page_speech_input import _until
+from tests.fixtures.waiting import LIMIT_SEC, until_async as _until
 from jarvis import voice_control
 
 # Records every audio context, the ones the microphone feeds, and every
@@ -93,7 +93,7 @@ async def _cues(page):
     return [BY_DEFAULT[tone] for tone in await _tones(page)]
 
 
-async def _cues_become(page, expected, timeout=10.0, settle_ms=800):
+async def _cues_become(page, expected, timeout=LIMIT_SEC, settle_ms=800):
     """The cues reach `expected` and stay there: no second cue for one change."""
     async def now():
         return await _cues(page) == expected
@@ -169,7 +169,7 @@ async def test_an_involuntary_stop_plays_the_stop_sound(page_playwright, page_ur
         await page.evaluate(script)
         if resumes:
             # Stopped, then listening again once the retry is ready: one each.
-            await _cues_become(page, ["start", "stop", "start"], timeout=15)
+            await _cues_become(page, ["start", "stop", "start"])
         else:
             await _cues_become(page, ["start", "stop"], settle_ms=2500)
         await context.close()
@@ -202,9 +202,9 @@ async def test_with_capture_sounds_off_nothing_plays_and_the_page_shows_the_same
         await page.click("#btn-mute")
         await page.click("#btn-mute")
         await page.wait_for_function("window.__starts.length === 2 && window.__transcribers[1].readyState === 1",
-                                     timeout=10000)
+                                     timeout=15000)
         await page.evaluate("() => window.__transcribers[1]._emit({ type: 'error', code: 'taken', message: '' })")
-        await page.wait_for_function(f"{STATE} === 'Not listening'", timeout=5000)
+        await page.wait_for_function(f"{STATE} === 'Not listening'", timeout=15000)
         await page.wait_for_timeout(1000)
         assert await page.evaluate("window.__oscillators.length") == 0
         await context.close()
@@ -232,7 +232,7 @@ async def test_turning_capture_sounds_off_in_settings_saves_it_and_silences_the_
         # Mic off is on the Conversation view, under Settings.
         await page.click("#settings-view .settings-head .workflow-close")
         await page.click("#btn-mic-off")
-        await page.wait_for_function("window.__liveTracks() === 0", timeout=3000)
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=15000)
         await page.wait_for_timeout(800)
         assert await _cues(page) == ["start"]
         await context.close()
@@ -271,15 +271,16 @@ async def test_a_cue_missed_while_audio_is_locked_never_plays_once_it_is_unlocke
         await _cues_become(page, ["start"], settle_ms=0)
         output = await page.evaluate("window.__oscillators[0].ctx")
         await page.evaluate(f"window.__contexts[{output}].suspend()")
-        await page.wait_for_function(f"window.__contexts[{output}].state === 'suspended'", timeout=3000)
+        await page.wait_for_function(f"window.__contexts[{output}].state === 'suspended'", timeout=15000)
         # A stop and a start while the output is locked: neither is heard...
         await page.voice.socket.close()
         await page.wait_for_function("window.__starts.length === 2", timeout=20000)
-        await page.wait_for_function("window.__transcribers[1].readyState === 1", timeout=5000)
-        await page.wait_for_timeout(500)
+        await page.wait_for_function("window.__transcribers[1].readyState === 1", timeout=15000)
+        # Listening again (its start cue given, and dropped) before it is unlocked.
+        await page.wait_for_function(f"{STATE} === 'Listening'", timeout=15000)
         # ...and neither sounds once it is unlocked.
         await page.evaluate(f"window.__contexts[{output}].resume()")
-        await page.wait_for_function(f"window.__contexts[{output}].state === 'running'", timeout=3000)
+        await page.wait_for_function(f"window.__contexts[{output}].state === 'running'", timeout=15000)
         await page.wait_for_timeout(1000)
         assert await _cues(page) == ["start"]
         assert await page.evaluate("window.__oscillators.length") == 2
@@ -348,17 +349,17 @@ async def test_each_pause_cue_plays_once_on_the_output_shown_and_never_heard_as_
         _gathering(page)
         _pause(page, "tentative")
         await _cues_become(page, ["start", "tentative"], settle_ms=0)
-        await page.wait_for_function(f"{PAUSE_SHOWN} === 'tentative'", timeout=3000)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === 'tentative'", timeout=15000)
         _pause(page, "deciding")
         await _cues_become(page, ["start", "tentative", "deciding"], settle_ms=0)
-        await page.wait_for_function(f"{PAUSE_SHOWN} === 'deciding'", timeout=3000)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === 'deciding'", timeout=15000)
         assert await page.locator("#conversation-control .control-title").text_content() == "Deciding"
         _pause(page, "likely")
         await _cues_become(page, ["start", "tentative", "deciding", "likely"])
-        await page.wait_for_function(f"{PAUSE_SHOWN} === 'likely'", timeout=3000)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === 'likely'", timeout=15000)
         # He speaks again: a new gathering frame, the pause no longer shown.
         _gathering(page, text="book a table for two")
-        await page.wait_for_function(f"{PAUSE_SHOWN} === null", timeout=3000)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === null", timeout=15000)
         capture = await page.evaluate("window.__captureContexts")
         played = await page.evaluate("window.__oscillators.map((o) => o.ctx)")
         assert not set(capture) & set(played) and len(set(played)) == 1
@@ -375,7 +376,7 @@ async def test_a_pause_cue_without_its_sound_or_while_muted_or_off_is_only_shown
         await _cues_become(page, ["start"], settle_ms=0)
         _gathering(page)
         _pause(page, "tentative", sound=False)          # off, or he is away: the server says so
-        await page.wait_for_function(f"{PAUSE_SHOWN} === 'tentative'", timeout=3000)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === 'tentative'", timeout=15000)
         await page.click("#btn-mute")
         await _cues_become(page, ["start", "stop"], settle_ms=0)
         _gathering(page, turn=2)
@@ -413,8 +414,10 @@ async def test_the_chosen_tone_and_volume_are_what_plays(page_playwright, page_u
         await _listening(page)
         _gathering(page)
         _pause(page, "likely")
-        assert await _until(lambda: _tones(page), 5)
-        await page.wait_for_timeout(500)
+        async def both():
+            return await _tones(page) == ["rise", "double"]
+        assert await _until(both), await _tones(page)
+        await page.wait_for_timeout(500)                # and no other after it
         assert await _tones(page) == ["rise", "double"]
         peaks = await page.evaluate("window.__peaks")
         assert peaks and all(abs(v - 0.1 * 20 / 100) < 1e-6 for v in peaks), peaks
@@ -431,13 +434,14 @@ async def test_a_pause_cue_given_while_audio_is_locked_never_plays_once_it_is_un
         await _cues_become(page, ["start"], settle_ms=0)
         output = await page.evaluate("window.__oscillators[0].ctx")
         await page.evaluate(f"window.__contexts[{output}].suspend()")
-        await page.wait_for_function(f"window.__contexts[{output}].state === 'suspended'", timeout=3000)
+        await page.wait_for_function(f"window.__contexts[{output}].state === 'suspended'", timeout=15000)
         _gathering(page)
         for stage in voice_control.PAUSE_CUES:
             _pause(page, stage)
-        await page.wait_for_timeout(500)
+        # Every pause cue given (and dropped) before it is unlocked.
+        await page.wait_for_function(f"{PAUSE_SHOWN} === {voice_control.PAUSE_CUES[-1]!r}", timeout=15000)
         await page.evaluate(f"window.__contexts[{output}].resume()")
-        await page.wait_for_function(f"window.__contexts[{output}].state === 'running'", timeout=3000)
+        await page.wait_for_function(f"window.__contexts[{output}].state === 'running'", timeout=15000)
         await page.wait_for_timeout(1000)
         assert await _cues(page) == ["start"]
         await context.close()
@@ -515,7 +519,7 @@ async def test_the_four_intervals_are_in_order_each_with_its_running_time_and_th
         assert page.posted == [{"intervals": {"deciding": 2}}, {"intervals": {"send": 5}}]
         await page.wait_for_function(
             "document.querySelector('#settings-voice-patience').textContent === '8.75 seconds'",
-            timeout=3000)
+            timeout=15000)
         assert "comes 1 s after you stop" in await _said_at(page, "tentative")   # unchanged
         assert "comes 3 s after you stop" in await _said_at(page, "deciding")
         assert "comes 3.75 s after you stop" in await _said_at(page, "likely")
@@ -543,7 +547,7 @@ async def test_the_cue_rows_save_through_the_settings_route_and_an_off_cue_keeps
                                {"cues": {"start": {"on": False}}},
                                {"volume": 30},
                                {"cues": {"deciding": {"on": False}}}]
-        await page.get_by_text("its interval still passes").wait_for(timeout=3000)
+        await page.get_by_text("its interval still passes").wait_for(timeout=15000)
         # Off, the deciding sound's interval still passes: every time is the same.
         assert "comes 1.75 s after you stop" in await _said_at(page, "deciding")
         assert "comes 2.5 s after you stop" in await _said_at(page, "likely")

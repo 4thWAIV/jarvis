@@ -15,6 +15,7 @@
 
 import { getJson, postAnswer } from "./fetchJson";
 import type { InboxDetail } from "./packageInbox";
+import { workerChanges } from "./workers";
 import { liveRead } from "./liveRead";
 import { formatDateTime, t, wordsOf } from "./locale";
 import { createStore } from "./store";
@@ -268,7 +269,7 @@ export function safeWorkItem(item: WorkItem): WorkItem {
 export const workList = liveRead(async () => {
   const result = await getJson<WorkList>("/api/work");
   return {...result, items: result.items.map(safeWorkItem), history: (result.history ?? []).map(safeWorkItem)};
-}, [workChanged]);
+}, [workChanged, workerChanges]);
 
 /** One item in full: with its latest events and the open packages sent for
  *  it (`make_package --work`), each with its questions. */

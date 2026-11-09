@@ -16,6 +16,7 @@ import pytest
 
 from jarvis import session_messages as sm
 from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 
 def _drop(folder, project, name, text, age=60.0):
@@ -233,10 +234,7 @@ async def test_the_watch_takes_and_records_a_dropped_message(server, monkeypatch
 
     task = asyncio.ensure_future(server._watch_session_messages())
     try:
-        for _ in range(200):
-            if attention.items():
-                break
-            await asyncio.sleep(0.01)
+        assert await until_async(attention.items), "never recorded"
     finally:
         task.cancel()
 

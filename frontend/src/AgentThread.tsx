@@ -1,3 +1,4 @@
+import { WorkerPhase } from "./WorkerStatus";
 /**
  * One agent's thread: everything sent to it and from it, on record, oldest
  * at the top (conversation.ts). The centre area's Thread view, opened by
@@ -20,7 +21,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { agentsChanged, getAgentKey, revokeAgentKey, type AgentKey } from "./agents";
 import { CENTRE_SOCKET, earlierPages, historyRows, RecordItem } from "./ConversationView";
-import { agentStateWords, conversationChanged, getThread, openThread } from "./conversation";
+import { conversationChanged, getThread, openThread } from "./conversation";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, useT, type Translate } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
@@ -72,7 +73,7 @@ export function AgentThread({ sessionId, name }: { sessionId: string; name: stri
       <div className="thread-header" ref={ui.part("header")}>
         <h3>{title}</h3>
         {agent && <span className={`thread-state state-${agent.state}`} ref={ui.part("state")}>
-          {agentStateWords(agent.state)}</span>}
+          <WorkerPhase sessionId={sessionId} /></span>}
         <button type="button" className="thread-close" aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("thread.close", {}))}>×</button>
       </div>

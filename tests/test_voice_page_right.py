@@ -16,7 +16,6 @@ Playwright's (the folder, workflow, subsystem and Queue fakes of their own
 page tests), and /ws/voice is the pipeline test's stand-in backend.
 """
 
-import asyncio
 import json
 import re
 import os
@@ -34,6 +33,7 @@ from tests.test_voice_page_network import MINI_ID, _Sessions, _Team
 from tests.test_voice_page_pipeline import _UiServer
 from tests.test_voice_page_subsystems import _Server as _Subsystems
 from tests.test_voice_page_workflows import _Server as _Workflows
+from tests.fixtures.waiting import LIMIT_SEC, settled, until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -47,7 +47,7 @@ class _Ui(_UiServer):
         for m in msgs:
             self.ws.send(json.dumps(m))
 
-    async def run(self, operation, timeout=10.0):
+    async def run(self, operation, timeout=LIMIT_SEC):
         rid, _ = self.request(operation)
         return await self.result(rid, timeout)
 
@@ -88,11 +88,7 @@ async def _open(p, url, queue_world=None, *, language=None, team=None, subsystem
         routes = sc.QueueRoutes(queue_world, ui)
         await routes.install(page)
     await page.goto(url)
-    for _ in range(200):
-        if ui.client:
-            break
-        await asyncio.sleep(0.05)
-    assert ui.client, "the page never said ui_hello"
+    assert await until_async(lambda: ui.client), "the page never said ui_hello"
     return browser, page, ui, routes
 
 
@@ -383,8 +379,7 @@ async def _right_tabs(page_url, language, world):
             for tab, rows, target in RIGHT_TABS:
                 await page.click(f".right-tabs [data-ui-tab='{tab}']")
                 await page.wait_for_selector(rows)
-                await page.wait_for_timeout(300)
-                spill = await page.evaluate(SPILL)
+                spill = await settled(page, SPILL)
                 result = await ui.indicate({"region": "right", "view": f"right.{tab}", **target})
                 assert result["status"] == "completed", json.dumps([language, tab, result])
                 if evidence:

@@ -11,6 +11,7 @@ import pytest_asyncio
 
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
 from jarvis.turn_controller import TurnController
+from tests.fixtures.waiting import until_async
 from tests.test_speech import Harness
 
 
@@ -29,26 +30,26 @@ class Sent:
 @pytest.mark.asyncio
 async def test_finals_heard_with_a_short_pause_between_are_one_utterance():
     sent = Sent()
-    u = TurnController(sent, hold=0.2)
+    u = TurnController(sent, hold=1.0)     # each pause below is a tenth of it
     u.final("send a message to agent guard", 1)
     await asyncio.sleep(0.1)
     u.final("asking for its status", 2)
     await asyncio.sleep(0.1)
     assert sent.calls == [], "nothing goes while he may still be talking"
-    await asyncio.sleep(0.2)
+    assert await until_async(lambda: sent.calls), sent.calls
     assert sent.calls == [("send a message to agent guard asking for its status", 2)]
 
 
 @pytest.mark.asyncio
 async def test_more_words_on_the_way_hold_it_longer():
     sent = Sent()
-    u = TurnController(sent, hold=0.2)
+    u = TurnController(sent, hold=1.0)
     u.final("don't restart", 1)
-    for _ in range(4):
-        await asyncio.sleep(0.1)
+    for _ in range(5):                     # 1.5 s in all, each gap under the hold
+        await asyncio.sleep(0.3)
         u.interim()                        # an interim: he is still going
     assert sent.calls == []
-    await asyncio.sleep(0.3)
+    assert await until_async(lambda: sent.calls), sent.calls
     assert sent.calls == [("don't restart", 1)]
 
 
@@ -67,7 +68,8 @@ async def test_send_now_sends_what_was_heard_at_once_and_only_once():
     u = TurnController(sent, hold=0.2)
     u.final("first part", 7)
     assert u.send_now()
-    await asyncio.sleep(0.3)
+    assert await until_async(lambda: sent.calls), sent.calls
+    await asyncio.sleep(0.3)               # past the hold: its deadline sends nothing more
     assert sent.calls == [("first part", 7)]
 
 
@@ -88,33 +90,37 @@ async def h():
 
 @pytest.mark.asyncio
 async def test_an_announcement_waits_for_him_to_stop_talking(h):
+    h.sched.pause_after = h.sched.end_of_turn = 1.0   # ten times the look below
     await h.sched.user_interim("so what I want is")
     await h.sched.say("Delivered to Agent Guard, sir.", Priority.NORMAL, label="announcement")
     await asyncio.sleep(0.1)
     assert h.audio() == []
-    await asyncio.sleep(0.25)
+    assert await until_async(lambda: h.audio()), h.audio()
     assert [t for _, _, t in h.audio()] == ["Delivered to Agent Guard, sir."]
 
 
 @pytest.mark.asyncio
 async def test_a_reply_waits_until_he_has_finished(h):
+    h.sched.end_of_turn = 1.0                         # twenty times the look below
     await h.sched.user_final("tell me the weather")
     utt = h.sched.begin_turn()
     h.sched.feed(utt, "It is sunny, sir.")
     await h.sched.end_turn(utt)
     await asyncio.sleep(0.05)
     assert h.audio() == [], "he spoke a moment ago"
-    await asyncio.sleep(0.3)
+    assert await until_async(lambda: h.audio()), h.audio()
     assert [t for _, _, t in h.audio()] == ["It is sunny, sir."]
 
 
 @pytest.mark.asyncio
 async def test_what_he_typed_is_answered_at_once(h):
+    # Longer than the wait below, so the reply sounding proves typing held nothing.
+    h.sched.pause_after = h.sched.end_of_turn = 60.0
     await h.sched.user_final("what time is it", typed=True)
     utt = h.sched.begin_turn()
     h.sched.feed(utt, "Five o'clock, sir.")
     await h.sched.end_turn(utt)
-    await asyncio.sleep(0.08)
+    assert await until_async(lambda: h.audio()), h.audio()
     assert [t for _, _, t in h.audio()] == ["Five o'clock, sir."]
 
 
