@@ -225,6 +225,17 @@ def test_the_reader_set_is_every_acting_tool_that_only_reads(wired):
             f"{writer} does more than read; foreign text must not reach it"
 
 
+def test_language_document_reads_survive_taint_but_publication_and_source_edits_do_not(wired):
+    server = wired
+    from jarvis.language_document_api import READ_ONLY_OPERATIONS
+    assert "language_document" not in server.UNTRUSTED_READING_TOOLS
+    for operation in READ_ONLY_OPERATIONS:
+        assert server._untrusted_content_refusal("language_document", True, args={"operation": operation}) is None
+    for operation in ("validate", "publish", "unknown", None, []):
+        assert server._untrusted_content_refusal("language_document", True, args={"operation": operation})
+
+
+
 def test_the_endpoint_refuses_a_spawn_in_a_turn_that_read_the_web(wired):
     server = wired
 

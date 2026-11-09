@@ -1,0 +1,13 @@
+{
+  "diagnostics": "<document-root>/document.yaml \u2014 1 declaration, checked against \"arch\", the language it names\n\nChecked, and nothing is wrong.\n",
+  "exit_code": 0,
+  "kit_digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0",
+  "meaning": "Language conformance is separate from code correspondence and human approval.",
+  "ok": true,
+  "problems": [],
+  "render_diagnostics": "view.html \u2014 293KB, drawn in the browser by React\n",
+  "runtime": "v23.5.0",
+  "source_sha256": "e479017ffaac79fe6f03fc7c6f108fd116d4b0323c7a7de1f04b491e3c9f4010",
+  "upstream_ok": true,
+  "view_sha256": "5b02f579b68b10e0e89067345bc22e136eecde076846ce6872de154e740235c7"
+}

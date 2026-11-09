@@ -43,7 +43,7 @@ USUAL_FILES = {"page": "index.html", "agent": "BRIEF.md", "conversation": "SKILL
 STORY_FILE = "story.json"
 DEFAULT_RETURNS = ["results/**"]
 MANIFEST_FIELDS = ("name", "version", "purpose", "runs", "skill", "brief", "entry", "story",
-                   "returns", "understanding")
+                   "returns", "understanding", "communication")
 STORY_HELPER = "/api/packages/story.js"
 FIRST_VERSION = "1.0.0"
 
@@ -141,6 +141,11 @@ def manifest_of(folder: Path) -> dict:
         raise dp.Refused([f"{path} must be one JSON object."])
     problems = dp.unknown_fields("package.json", given, "package.json", MANIFEST_FIELDS)
     manifest = dict(given)
+    try:
+        from jarvis.language_projection import folder_gate
+        folder_gate(folder, manifest.get("communication"))
+    except (ValueError, OSError) as error:
+        problems.append(f"Architecture publication refused: {error}")
     if not dp._text(manifest.get("purpose")).strip():
         problems.append(f"{path} needs a purpose: one sentence saying what the package does "
                         f"and why. It is the one field that cannot be worked out.")

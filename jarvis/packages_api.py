@@ -82,6 +82,7 @@ def describe(package: Package) -> dict:
     return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
             "runs": m.runs, "entry": m.entry, "layout": m.layout, "source": package.source,
             "sources": list(package.sources),
+            **({"communication": m.communication} if m.communication else {}),
             "story": story.outline() if story is not None else None}
 
 
@@ -137,12 +138,18 @@ def mount(app: FastAPI,
         packages = await asyncio.to_thread(work_packages.every)
         return {"packages": [describe(p) for p in packages]}
 
-    async def page_file(package_id: str, path: str):
+    async def page_file(package_id: str, path: str, canonical_revision: str | None = None):
         try:
             package = await asyncio.to_thread(work_packages.find, package_id,
                                               work_packages.PAGE)
-            data = await asyncio.to_thread(work_packages.page_file, package, path)
-        except PackageError as e:
+            if package.manifest.communication and package.manifest.communication.get("kind") == "architecture":
+                from jarvis.language_projection import checked_member
+                data = await asyncio.to_thread(checked_member, package, path, canonical_revision)
+            else:
+                if canonical_revision is not None:
+                    raise PackageError("The requested package has no canonical architecture revision.")
+                data = await asyncio.to_thread(work_packages.page_file, package, path)
+        except (ValueError, PackageError) as e:
             return _refused(e)
         return Response(data, media_type=media_type(path),
                         headers={"Cache-Control": "no-store"})

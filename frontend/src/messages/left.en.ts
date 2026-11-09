@@ -407,4 +407,11 @@ export const leftEn = {
   "left.team.roleMember": "Member",
   "left.team.roleAdmin": "Administrator",
   "left.team.add": "Add",
+  "left.updates.languageKit": "Architecture language kit",
+  "left.updates.kitActive": "Active kit: {version}.",
+  "left.updates.kitNotAdopted": "The architecture language kit has not been adopted on this installation.",
+  "left.updates.kitLastCheck": "Last update check: {when}.",
+  "left.updates.kitCompatibility": "A candidate is staged for review. The working kit remains active.",
+  "left.updates.kitUnavailable": "The language-kit status could not be read.",
+  "left.updates.kitReading": "Reading the language-kit status…",
 } as const;

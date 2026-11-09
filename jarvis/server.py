@@ -3323,6 +3323,7 @@ async def lifespan(application: FastAPI):
     await start_session_watcher()
     start_folders()
     start_knowledge()
+    language_kit_updates.runtime.start()
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -3358,6 +3359,7 @@ async def lifespan(application: FastAPI):
     await _stop_attention()
     await transcription_api.stop()
     await stop_knowledge()
+    await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -4382,6 +4384,8 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     if tool not in ACTING_TOOLS:
         return None
     if tool in UNTRUSTED_READING_TOOLS or tool in TAINT_EXEMPT_ACTING:
+        return None
+    if tool == "language_document" and language_document_api.read_only_operation(args):
         return None
     if tool in UI_TAINT_EXEMPT_ACTING and not (
             ui_contract.declared_effects(UI_OPERATIONS[tool](args or {}))
@@ -8324,7 +8328,12 @@ async def _open_package_page(reference: str
     (the package, "") or (None, why not)."""
     try:
         package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+        if package.manifest.communication and package.manifest.communication.get("kind") == "architecture":
+            from jarvis.language_projection import package_reader
+            await asyncio.to_thread(package_reader, package, package.manifest.communication.get("revision"))
     except work_packages.PackageError as e:
+        return None, str(e)
+    except ValueError as e:
         return None, str(e)
     if not voice_clients:
         return None, "No JARVIS page is open to show it on."
@@ -8414,6 +8423,18 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
             f"from slide {told.slide} of {total}; it is being told.")
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
+
+from jarvis import language_document_api, language_kit_updates
+language_documents = language_document_api.Adapter()
+language_document_api.mount(app, language_documents)
+
+async def tool_language_document(args):
+    return _wrap_untrusted("canonical document", language_document_api.encoded_page(
+        await language_documents.call(args, reported_by="brain-tool")))
+
+TOOL_HANDLERS["language_document"] = tool_language_document
+ACTING_TOOLS.add("language_document")
+TAINTING_TOOLS["language_document"] = "canonical source and its author's coverage declaration"
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
