@@ -1,6 +1,6 @@
 # Canonical architecture integration review
 
-Work: `work-4429d24c58b0`. The prior broad integration is preserved at `saved/language-kit-before-author-content` (`e565d78`). This port uses minimal package PR97 at `c2af8ad`. It does not include the archived generic inspection, snapshot, observer, classifier, history, follow-up or PDF-generation services.
+Work: `work-4429d24c58b0`. The prior broad integration is preserved at `saved/language-kit-before-author-content` (`e565d78`). This port uses minimal package PR97 at `7e7061d`. It does not include the archived generic inspection, snapshot, observer, classifier, history, follow-up or PDF-generation services.
 
 ## Approved language source
 
@@ -28,4 +28,4 @@ Architecture is enabled for canonical storage, checked publication, authored sou
 
 ## Current verification
 
-The [actual frame](architecture-frame.png) passed on the minimal path, with exact source/check/author links and the original upstream HTML. The [source](source.yaml), [checker evidence](check.json), [author understanding](UNDERSTANDING.md) and [follow-up trial](correction-followup.json) belong to that exercise. Browser inspection is explicitly test evidence, not a product observer service. The capture trial uses simulated next-word approval and a provider test double. Focused storage/gate/API/capture and header-audit cases passed; the broad regression remains a release gate. No deployment or actual external-agent delivery is claimed. The prepared Deployment Package remains a draft until root records the merged/running revision, passing required checks and live result.
+The [actual frame](architecture-frame.png) passed on the minimal path, with exact source/check/author links and the original upstream HTML. The [source](source.yaml), [checker evidence](check.json), [author understanding](UNDERSTANDING.md) and [follow-up trial](correction-followup.json) belong to that exercise. Browser inspection is explicitly test evidence, not a product observer service. The capture trial uses simulated next-word approval and a provider test double. Focused storage/gate/API/capture and header-audit cases passed; the [broad local regression](post-integration.xml) passed after final PR97 reconciliation, with 428 passed and two existing skips. Required PR/main CI and actual deployment remain release gates. No deployment or actual external-agent delivery is claimed. The prepared Deployment Package remains a draft until root records the merged/running revision, passing required checks and live result.
