@@ -20,7 +20,9 @@ from tests.loopback_server import LoopbackThreadingHTTPServer
 from tests.test_decision_package import small_deck, write
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
-pytestmark = pytest.mark.page
+# The isolated JARVIS checks the deck's signature with the real ssh-keygen,
+# so the agent's key here is a real one too (conftest fakes it otherwise).
+pytestmark = [pytest.mark.page, pytest.mark.ssh_keygen]
 
 
 class _StandIn:
@@ -151,7 +153,9 @@ def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
         for item in src.infolist():
             if item.filename.rsplit("/", 1)[-1] != "deck.css":
                 dst.writestr(item, src.read(item))
-    result = decision_check.check(bare, made.deck, tmp_path / "check")
+    from jarvis import agent_keys
+    signer = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
+    result = decision_check.check(bare, made.deck, tmp_path / "check", signer, "sess-1")
     if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
         pytest.skip("no Playwright Chromium")
     assert not result.ok

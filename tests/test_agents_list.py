@@ -408,18 +408,18 @@ def test_a_claude_code_brain_is_anthropic_s():
 # --- the needs-board count ------------------------------------------------------
 
 def _wrote(tmp_path, monkeypatch, server, session, path):
-    """`session`'s own transcript shows it writing `path`: what proves a board's writer."""
-    monkeypatch.setattr(server.session_watch, "config_roots", lambda: [tmp_path / "claude"])
-    t = sw.transcript_path(tmp_path / "claude", session.cwd, session.session_id)
-    t.parent.mkdir(parents=True, exist_ok=True)
-    with open(t, "a") as fh:
-        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
-                 f'"input":{{"file_path":"{path}"}}}}]}}}}\n')
+    """`session`'s onboarded agent signed `path` (`<path>.sig`, as `python -m
+    jarvis.agent_key sign` writes it): what proves a board's writer."""
+    from jarvis import agent_key, agent_keys
+    from tests.agent_key_fixtures import onboarded_auth
+    agent = onboarded_auth(session=session.session_id).agent
+    agent_key.sig_path(path).write_text(agent_keys.sign(
+        agent.private, agent_keys.MESSAGE, agent_key.message_text(path, path.read_bytes())))
 
 
 def test_each_agent_carries_the_needs_of_the_board_it_wrote(wired, monkeypatch, tmp_path):
-    """Only the agent a transcript proves wrote a board counts it: never every
-    agent in its project."""
+    """Only the agent whose key signed a board counts it: never every agent
+    in its project."""
     server, store = wired
     from jarvis import data_paths
     folder = data_paths.needs_dir()
