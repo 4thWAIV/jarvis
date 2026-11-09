@@ -312,3 +312,18 @@ def test_permission_wait_keeps_the_same_open_turn_as_the_main_orb():
     assert result['total']['active'] == 1
     assert result['workers'][0]['activity']['orb_state'] == 'thinking'
     assert result['total']['model_work'] == 0
+
+
+def test_stale_child_open_turn_needs_its_own_current_evidence():
+    evidence = {'state': 'tool_wait', 'turn_open': True, 'observed_at': 100}
+    child = Subagent('old-child', 'Child', 'native', True, 1, 'stale', 90, 100,
+                     worker_activity=evidence)
+    parent = session(subagents=[child], runtime_status={'status': 'active', 'observed_at': 500})
+    result = build(Snapshot([parent], 500), now=500)
+    row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
+    assert row['activity']['orb_state'] == 'unknown'
+    assert result['total']['active'] == 0
+    child.runtime_status.update(status='active', observed_at=500)
+    result = build(Snapshot([parent], 500), now=500)
+    row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
+    assert row['activity']['orb_state'] == 'thinking'

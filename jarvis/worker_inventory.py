@@ -36,7 +36,7 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,
                'project': project, 'parent_id': identity(provider, parent) if parent else None,
                'kind': kind, 'workflow_id': workflow, 'allocation': 'unknown' if kind == 'subagent' else 'observed',
-               'activity': live, 'runtime': runtime or {}}
+               'activity': live, 'runtime': runtime or {}, 'discovery_state': state}
         if runtime and runtime.get('status') in ('active', 'idle'):
             row['allocation'] = 'loaded'
         if runtime and runtime.get('error') and runtime['error'] not in gaps:
@@ -152,7 +152,16 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     # Finalize once after all provider/liveness overrides. Every consumer
     # receives this same activity, including its presentation projection.
     for row in workers:
-        row['activity'] = worker_activity.current(row['activity'], now)
+        # A stale child file cannot establish that its open turn still exists.
+        # A fresh status may sustain an observed turn, never invent one.
+        runtime = row['runtime']
+        runtime_live = runtime.get('status') == 'active' and 0 <= now - (runtime.get('observed_at') or 0) <= 10
+        evidence = row['activity']
+        evidence_fresh = 0 <= now - (evidence.get('observed_at') or 0) <= worker_activity.MODEL_REQUEST_LEASE_SECONDS
+        if (row.pop('discovery_state', None) == 'stale' and not runtime_live
+                and not evidence_fresh and not worker_activity.managed(row['provider'], row['session_id'])):
+            evidence = {**evidence, 'state': 'unknown', 'turn_open': None}
+        row['activity'] = worker_activity.current(evidence, now)
     def counts(items):
         model_work = sum(r['activity']['model_work'] for r in items)
         active = sum(r['activity']['active'] for r in items)
