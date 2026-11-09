@@ -1,5 +1,26 @@
 from jarvis.codex_runtime import event_evidence, RuntimeObserver
 from jarvis import worker_activity
+import json
+
+
+def test_server_request_with_matching_id_is_not_a_response(tmp_path):
+    observer = RuntimeObserver(tmp_path)
+    class Socket:
+        def __init__(self):
+            self.sent = []
+            self.messages = iter([
+                {'id': 1, 'method': 'item/commandExecution/requestApproval',
+                 'params': {'threadId': 'one'}},
+                {'method': 'item/reasoning/textDelta', 'params': {'threadId': 'one'}},
+                {'id': 1, 'result': {'data': ['one']}},
+            ])
+        def send(self, message): self.sent.append(json.loads(message))
+        def recv(self, **kwargs): return json.dumps(next(self.messages))
+    socket = Socket()
+    assert observer._request(socket, 'thread/loaded/list', {}) == {'data': ['one']}
+    assert len(socket.sent) == 1  # Observation never answers the approval request.
+    assert worker_activity.managed('openai', 'one')['state'] == 'generating'
+    observer.close()
 
 
 def test_runtime_generation_only_from_model_deltas():

@@ -94,7 +94,10 @@ class RuntimeObserver:
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             event = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
-            if event.get('id') == request_id:
+            # Server requests have their own ID namespace. They are not replies
+            # to us, even when their numeric ID matches an outstanding request.
+            if (event.get('id') == request_id and 'method' not in event
+                    and ('result' in event or 'error' in event)):
                 if 'error' in event:
                     raise RuntimeError(f'{method} refused')
                 return event.get('result') or {}
