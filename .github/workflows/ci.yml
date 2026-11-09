@@ -117,6 +117,19 @@ jobs:
           cd /tmp
           /tmp/wheel-check/bin/jarvis --help
           /tmp/wheel-check/bin/python -c "import jarvis.server, jarvis.data_paths as p; assert (p.FRONTEND_DIST / 'index.html').is_file(); assert not p.CHECKOUT"
+          /tmp/wheel-check/bin/python - <<'PYTHON'
+          import json, tempfile
+          from pathlib import Path
+          from jarvis import package_author, make_package, session_skill, decision_check, data_paths
+          assert package_author.SKILL.is_file() and package_author.GUIDE.is_file()
+          assert decision_check.built_page() == data_paths.FRONTEND_DIST
+          assert 'human-package-author' in session_skill.render('human-package-author')
+          with tempfile.TemporaryDirectory() as folder:
+              root = Path(folder)
+              source = root / 'content.json'
+              source.write_text(json.dumps(make_package.PRESENTATION_EXAMPLE))
+              assert make_package.make_deck(source, root / 'out').archive.is_file()
+          PYTHON
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:

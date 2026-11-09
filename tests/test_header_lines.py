@@ -355,6 +355,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_author.author": (
+        "it records provider model/session metadata and raw author text in local source/provenance "
+        "files for the originating factory command. It does not create a trusted JARVIS header or "
+        "speak session text. Its handoff prompt is the caller's explicit authoring input, and any "
+        "later inbox reading of packaged author content retains the existing untrusted wrapper."),
     "language_documents.document_title": (
         "the source title stays a data value in canonical metadata, is rendered as escaped text by React, "
         "and is serialized inside the escaped language-document tool envelope; it is not a trusted brain header. "
