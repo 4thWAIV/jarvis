@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from tests.fixtures.waiting import until_async
 from tests.test_session_steer import (FakeBrain, FakeSpeech, Harness, _Client,  # noqa: F401
                                       _fake_session_state, _wait_for_receipt,
                                       fake_session, wired)
@@ -487,7 +488,7 @@ async def test_a_turn_heard_while_another_runs_still_reads_its_capture_back(
     client.start()
     try:
         first = asyncio.create_task(wired._handle_utterance("first", heard=1))
-        await asyncio.sleep(0.05)
+        assert await until_async(lambda: brain._lock.locked()), "the first turn never began"
         second = asyncio.create_task(wired._handle_utterance("tell chitauri", heard=2))
         await asyncio.sleep(0.05)
         brain.release.set()
@@ -721,12 +722,11 @@ async def test_send_accepts_and_sends_to_the_agent_it_is_addressed_to(
     server.tool_capture({"text": "Add a health check.", "to": "chitauri"})
 
     r = _press(server, 1, "send")
-    for _ in range(100):
-        if sent:
-            break
-        await asyncio.sleep(0.01)
-
     assert r.status_code == 200 and r.json()["capture"] == 1
+    told = f"as message {r.json()['message']}"
+    assert await until_async(lambda: sent and any(told in n for n in server._notes_for_brain)), \
+        (sent, server._notes_for_brain)
+
     assert asked == ["c"], "it goes to the session the box is addressed to, by its id"
     assert sent == [server.STEER_SIGNATURE + "Add a health check."]
     assert f"as message {r.json()['message']}" in server._with_notes_for_brain("")

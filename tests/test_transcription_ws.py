@@ -19,6 +19,7 @@ from jarvis import transcriber
 from jarvis import transcription_api
 from jarvis import web_auth
 from jarvis.transcriber import PROTOCOL, RecognitionEvent
+from tests.fixtures.waiting import LIMIT_SEC, until
 
 PAGE = {"Origin": "http://localhost:5173"}
 START = {"type": "start", "version": 2, "sampleRate": 16000, "channels": 1,
@@ -254,16 +255,11 @@ def test_the_capture_counts_the_frames_it_was_given_and_decoded(client, engine):
         for w in ("one", "two", "three"):
             ws.send_bytes(word(w))
         capture = transcription_api.service.active
-        deadline = time.monotonic() + 5
-        while capture.frames_received < 3 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        until(lambda: capture.frames_received >= 3)
         assert (capture.frames_received, capture.frames_decoded) == (3, 0)
         engine.gate.set()
         _until(ws, "interim")
-        deadline = time.monotonic() + 5
-        while capture.frames_decoded < 3 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert capture.frames_decoded == 3
+        assert until(lambda: capture.frames_decoded >= 3) and capture.frames_decoded == 3
         service = transcription_api.service
         assert service.capture_of("page-a") is capture and service.capture_of("page-b") is None
         # Covered once the last frames' interim, held back to coalesce, has
@@ -335,10 +331,7 @@ def test_a_page_that_disconnects_mid_sentence_sends_no_command(client, engine):
     with _open(client) as ws:
         _ready(ws)
         ws.send_bytes(word("half"))
-    deadline = time.monotonic() + 2
-    while transcription_api.service._active is not None and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert transcription_api.service._active is None
+    assert until(lambda: transcription_api.service._active is None)
     with _open(client) as ws:
         _ready(ws)
         ws.send_bytes(word("new"))
@@ -430,10 +423,7 @@ def test_connecting_again_and_again_leaves_no_threads_or_sessions(client, engine
             _ready(ws)
             ws.send_bytes(word("x"))
             ws.send_text(json.dumps({"type": "abort"}))
-    deadline = time.monotonic() + 2
-    while not all(s.closed for s in engine.sessions) and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert all(s.closed for s in engine.sessions)
+    assert until(lambda: all(s.closed for s in engine.sessions))
     assert _own_threads() <= before
 
 
@@ -506,7 +496,7 @@ def test_a_page_that_asks_for_diagnostics_is_sent_its_health_and_its_seconds_are
         # Each health is sent after its sample is written. A sample taken
         # before the telemetry arrived (a busy machine) has none of the page's
         # counts; the next one has them. So read health until it is recorded.
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + LIMIT_SEC
         while True:
             health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
             assert health["state"] in voice_diagnostics.STATES
@@ -583,20 +573,24 @@ def test_a_drop_is_recorded_with_its_cause_and_the_busiest_processes_then_the_re
     assert [e.kind for e in events if e.kind in ("ready", "reconnect")] == ["ready", "reconnect"]
 
 
+@pytest.mark.parametrize("listing_sec", [0, 0.5], ids=["quick", "slow-process-list"])
 def test_a_drop_the_page_reports_on_its_abort_is_recorded_with_its_reason_cause_and_lost_seconds(
-        client, monkeypatch):
+        client, monkeypatch, listing_sec):
     """A page that threw away the audio it held (here: recognition fell
     behind, with the tab hidden) says so on its abort; the record keeps it
     as a drop with the cause in force and the seconds lost, the summary
-    counts it, and the next capture is a reconnect."""
+    counts it, and the next capture is a reconnect. Listing the busiest
+    processes can be slow on a busy machine (CI run 42500468984): the samples
+    taken meanwhile never replace the cause the drop happened under."""
     monkeypatch.setattr(voice_diagnostics, "SAMPLE_EVERY_SEC", 0.1)
-    monkeypatch.setattr(voice_diagnostics, "top_processes", lambda limit=5: [])
+    monkeypatch.setattr(voice_diagnostics, "top_processes",
+                        lambda limit=5: (time.sleep(listing_sec), [])[1])
     with _open(client) as ws:
         ws.send_text(json.dumps({**START, "diagnostics": True}))
         while ws.receive_json()["type"] != "ready":
             pass
         ws.send_text(json.dumps({**TELEMETRY, "tabHidden": True, "heldSec": 9.9, "messages": []}))
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + LIMIT_SEC
         while time.monotonic() < deadline:
             health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
             if health["causeCode"] == "tabHidden":
@@ -604,7 +598,9 @@ def test_a_drop_the_page_reports_on_its_abort_is_recorded_with_its_reason_cause_
         assert health["causeCode"] == "tabHidden"
         ws.send_text(json.dumps({"type": "abort",
                                  "dropped": {"reason": "fellBehind", "lostSec": 10.0}}))
-        # Context exit cancels the handler; let its abort finish recording first.
+        # The server closes the socket once it has recorded the drop. Leaving
+        # before that cancels the handler (Starlette's TestClient cancels its
+        # app on close; uvicorn does not), and the drop is never written.
         with pytest.raises(WebSocketDisconnect):
             while True:
                 ws.receive_json()

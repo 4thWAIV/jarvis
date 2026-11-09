@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from jarvis import messaging_ports as ports
 from jarvis import messaging_runtime, team_api
 from jarvis.messaging_wire import CAPABILITY
+from tests.fixtures.waiting import until_async
 
 NODE = "00000000-0000-4000-8000-000000007222"
 SERVER = "00000000-0000-4000-8000-0000000000aa"
@@ -96,11 +97,7 @@ async def test_start_follows_the_connection_and_stop_ends_everything():
     rt, _ = runtime(Connection(signed_in=True))
     offers_messaging(rt)
     rt.start()
-    for _ in range(100):
-        if rt.running():
-            break
-        await asyncio.sleep(0.01)
-    assert rt.running()
+    assert await until_async(rt.running)
     await rt.stop()
     assert not rt.running() and rt.delivery._task is None and rt._follower is None
 

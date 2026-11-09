@@ -22,6 +22,7 @@ from tests.test_agents_list_fits import FITS, async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
 from tests.test_voice_page_workflows import _workflow
+from tests.fixtures.waiting import settled
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -164,7 +165,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
         await page.click(".right-tabs [role=tab][title=Work]")
         row = page.locator(".subagent-row[data-subagent-key='agent:s2/b1']")
         await row.wait_for(timeout=10000)
-        got = await page.evaluate("""() => {
+        got = await settled(page, """() => {
           const sub = document.querySelector('.subagent-row');
           const wf = document.querySelector('.workflow-row[data-workflow-id=wf-1]');
           return {name: sub.querySelector('.workflow-name').textContent,
@@ -235,7 +236,7 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
     async with page_playwright as p:
         browser, page, _api = await _open(p, page_url)
         await page.wait_for_selector(".agents-list li[data-session-id=s1] .agent-subagents")
-        rows = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {
+        rows = await settled(page, """() => [...document.querySelectorAll('.agents-list li')].map(li => {
           const count = li.querySelector('.agent-subagents');
           const box = li.querySelector('.agent-entry').getBoundingClientRect();
           const c = count && count.getBoundingClientRect();

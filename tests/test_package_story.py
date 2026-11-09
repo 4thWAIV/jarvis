@@ -12,11 +12,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 
 import pytest
 
 from jarvis import package_story, spoken_words, work_packages
 from jarvis.package_story import StoryError
+from tests.fixtures.waiting import until_async
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_modes import BROWSER, EXAMPLES, PAGE, unpacked
 from tests.test_speech import Harness, h  # noqa: F401  (the fixture)
@@ -133,7 +135,7 @@ async def test_withdraw_stops_one_utterance_and_leaves_the_rest(h):
     story = package_story.parse(_story())
     told = h.sched.narrate(story.cues("pkg", 1))
     other = await h.sched.say("Something else.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: told.outcomes()[0] == "queued"), told.outcomes()
     await h.sched.withdraw(told, reason="test")
     assert told.was_cancelled and "stop" in h.types()
     await h.ack_all()
@@ -166,11 +168,23 @@ class Teller:
 
     async def ended(self):
         task = self.teller.telling.task if self.teller.telling else None
-        for _ in range(100):
-            await self.h.ack_all(rounds=2)
-            if task is None or task.done():
-                return
-        raise AssertionError("the story never ended")
+        await self.h.ack_all(until=lambda: task is None or task.done())
+
+    async def first_heard(self):
+        """Wait for the slide being told to sound, then play its first chunk:
+        a story stopped or spoken over mid-slide."""
+        before = len(self.h.audio())
+        assert await until_async(lambda: len(self.h.audio()) > before), "the slide never sounded"
+        utt, idx, _ = self.h.audio()[before]
+        await self.h.ack(utt, idx)
+
+    async def play_for(self, seconds):
+        """Play whatever is sent for `seconds` of real time: the time for
+        something that must not happen (more words, the next slide) to show."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            await self.h.ack_all(until=lambda: True)
+            await asyncio.sleep(0.03)
 
 
 @pytest.mark.asyncio
@@ -203,7 +217,7 @@ async def test_stop_ends_the_voice_and_the_story(h, deck, monkeypatch):
     assert stopped.package.id == deck.id and stopped.slide is None
     assert "stop" in h.types() and t.states()[-1][0] == "stopped"
     heard = len(h.audio())
-    await h.ack_all(rounds=3)
+    await t.play_for(0.1)
     assert len(h.audio()) == heard, "nothing more is said once it is stopped"
     again = await t.teller.stop()
     assert again.already and again.ended.state == "stopped", "a second Stop: already, not none"
@@ -213,12 +227,9 @@ async def test_stop_ends_the_voice_and_the_story(h, deck, monkeypatch):
 async def test_his_speaking_pauses_the_story_and_it_is_still_running(h, deck):
     t = Teller(h)
     await t.teller.tell(deck.id)
-    await h.ack_all(rounds=2)
+    await t.first_heard()
     await h.sched.barge_in(reason="he spoke")
-    for _ in range(50):
-        if t.frames and t.frames[-1]["state"] == "paused":
-            break
-        await asyncio.sleep(0.02)
+    assert await until_async(lambda: t.frames and t.frames[-1]["state"] == "paused"), t.states()
     assert t.states()[-1][0] == "paused" and t.teller.status()["state"] == "paused"
     assert (await t.teller.stop()).package.id == deck.id
 
@@ -227,7 +238,7 @@ async def test_his_speaking_pauses_the_story_and_it_is_still_running(h, deck):
 async def test_telling_from_another_slide_stops_the_one_being_told(h, deck):
     t = Teller(h)
     await t.teller.tell(deck.id)
-    await h.ack_all(rounds=1)
+    await t.first_heard()
     await t.teller.tell(deck.id, 3)
     assert ("stopped", 1) in t.states()
     await t.ended()
