@@ -1352,12 +1352,18 @@ def _subagent_at(f: Path, run: str | None, now: float) -> "Subagent | None":
         state = AGENT_WORKING
     else:
         state = AGENT_STALE
+    evidence = facts["worker_activity"]
+    if state != AGENT_WORKING and any(
+            task is not None and not (task[1] and task[0] is not None and now - task[0] > MONITOR_MAX_SEC)
+            for task in _background_tasks(f, st).values()):
+        evidence = {"state": "external_wait", "observed_at": now,
+                    "source": "native_background_task", "coverage": "task_lifecycle"}
     return Subagent(
         agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
         description=facts["description"], agent_type=facts["agent_type"],
         background=facts["background"], depth=facts["depth"], state=state,
         started=facts["started"], written=st.st_mtime, workflow_run=run,
-        parent_agent_id=facts["parent_agent_id"], worker_activity=facts["worker_activity"])
+        parent_agent_id=facts["parent_agent_id"], worker_activity=evidence)
 
 
 def read_subagent(roots, cwd: str, session_id: str, agent_id: str,

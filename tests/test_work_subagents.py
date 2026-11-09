@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis import session_watch, work_store
+from jarvis import session_watch, work_store, worker_inventory
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_work_states import _key, _piece, _report
 
@@ -41,18 +41,18 @@ def subagent(wired, monkeypatch):
         sub = session_watch.Subagent(agent_id=AGENT, description="Release agent",
                                      agent_type="general-purpose", background=True, depth=1,
                                      state=agent["state"], started=None,
-                                     written=agent["written"])
-        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=[sub],
+                                     written=agent["written"], worker_activity={"state": "model_work" if agent["state"] == "working" else "unknown", "observed_at": agent["written"]})
+        session = session_watch.SessionState(session_id=SESSION, provider="anthropic", project="test", subagents=[sub],
                                   cwd="/Users/someone/code/jarvis",
                                   # Only the watcher's view of it: the agent directory
                                   # (who reported, by key) passes it over.
-                                  state=session_watch.GONE)
-        return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
-                               sessions=[session])
+                                  state=session_watch.IDLE)
+        return session_watch.Snapshot([session],time.time())
 
     provider = SimpleNamespace(subagent_transcript=lambda s, aid, before, limit:
                                entries if aid == AGENT else None, roots=[wired.tmp / "no-root"])
     monkeypatch.setattr(wired.server, "_snapshot_or_empty", snapshot)
+    monkeypatch.setattr(wired.server, "_worker_inventory", lambda: worker_inventory.build(snapshot(), now=time.time()))
     monkeypatch.setattr(wired.server, "_session_provider_named", lambda name: provider)
     work_store.look_up_live_with(wired.server._subagent_now)
     return agent
@@ -80,22 +80,21 @@ def test_a_subagent_jarvis_cannot_find_is_refused(wired, item, subagent):
     assert "JARVIS has no agent" in r["error"]
 
 
-def test_a_subagent_writing_now_makes_its_piece_and_item_working(wired, item, subagent):
+def test_model_request_is_visible_but_does_not_prove_assignment_generation(wired, item, subagent):
     _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
     [piece] = got["pieces"]
-    assert (piece["state"], piece["activity_reason"]) == ("working", "")
-    assert piece["who"]["name"] == "Release agent"
-    assert piece["live"]["state"] == "working" and piece["live"]["doing"] == "Using Bash"
-    assert piece["quiet_at"] > time.time(), "it glows while the subagent writes"
-    assert (got["state"], got["activity_reason"], got["stalled"]) == ("working", "", False)
-    said = _call(wired, "work_status", item=item.id)["text"]
-    assert "its subagent is working, now: Using Bash" in said and "Release agent" in said
+    assert piece["state"] == "activity_unknown"
+    assert piece["live"]["activity"]["model_work"]
+    assert not piece["live"]["activity"]["generating"]
+    assert piece["live"]["activity"]["orb_state"] == "thinking"
+    assert piece["live"]["snapshot_id"]
+    assert got["state"] == "activity_unknown"
 
 
 @pytest.mark.parametrize("state,reason", [
     (session_watch.AGENT_FINISHED, "Its subagent has finished."),
-    (session_watch.AGENT_STALE, "Its subagent has not written anything for a while."),
+    (session_watch.AGENT_STALE, "Current token generation for this assignment is not confirmed."),
 ])
 def test_finished_or_gone_quiet_the_piece_says_so(wired, item, subagent, state, reason):
     subagent["state"] = state
@@ -112,7 +111,7 @@ def test_a_session_s_own_working_claim_is_still_unconfirmed(wired, item, subagen
     _piece(wired, item.id, "plan", auth=_key(), state="working",
            who={"kind": "agent", "ref": SESSION})
     [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
-    assert piece["state"] == "activity_unknown" and piece["live"] is None
+    assert piece["state"] == "activity_unknown" and piece["live"]["state"] == "finished"
 
 
 def test_the_agent_id_is_the_one_that_names_its_transcript(tmp_path):
@@ -175,17 +174,17 @@ def real_session(wired, monkeypatch, tmp_path):
     root = tmp_path / "claude"
 
     def snapshot():
-        agents, _capped = session_watch.read_subagents(root, CWD, SESSION, time.time())
-        session = SimpleNamespace(session_id=SESSION, provider="anthropic", subagents=agents,
+        agents, _capped = session_watch.read_subagents(root, CWD, SESSION, time.time(), limit=None)
+        session = session_watch.SessionState(session_id=SESSION, provider="anthropic", project="test", subagents=agents,
                                   cwd=CWD,
                                   # Only the watcher's view of it: the agent directory
                                   # (who reported, by key) passes it over.
-                                  state=session_watch.GONE)
-        return SimpleNamespace(by_id=lambda sid: session if sid == SESSION else None,
-                               sessions=[session])
+                                  state=session_watch.IDLE)
+        return session_watch.Snapshot([session],time.time())
 
     provider = SimpleNamespace(roots=[root], subagent_transcript=lambda *a: [])
     monkeypatch.setattr(wired.server, "_snapshot_or_empty", snapshot)
+    monkeypatch.setattr(wired.server, "_worker_inventory", lambda: worker_inventory.build(snapshot(), now=time.time()))
     monkeypatch.setattr(wired.server, "_session_provider_named", lambda name: provider)
     work_store.look_up_live_with(wired.server._subagent_now)
     return root
@@ -198,7 +197,7 @@ def test_an_agent_named_by_id_is_found_whatever_the_cap(wired, real_session):
     listed, capped = session_watch.read_subagents(real_session, CWD, SESSION, time.time())
     assert capped and all(a.agent_id != "zlate0000000001" for a in listed)
     live = wired.server._subagent_now(SESSION, "zlate0000000001")
-    assert (live.name, live.state) == ("Agent zlate0000000001", "working")
+    assert (live.name, live.state) == ("Agent zlate0000000001", "stale")
 
 
 def test_ended_its_turn_but_waiting_on_its_monitor_says_so(wired, real_session, item):
@@ -252,9 +251,8 @@ def test_a_subagent_waiting_on_background_work_is_the_item_s_line_never_stalled(
     assert "Waiting on Release agent's background work." in _call(wired, "work_status")["text"]
 
 
-def test_a_subagent_working_now_makes_the_item_working_with_its_line(wired, item, subagent):
+def test_a_request_phase_does_not_change_work_business_state(wired, item, subagent):
     _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
-    assert (got["state"], got["live"]["state"], got["live"]["doing"]) == (
-        "working", "working", "Using Bash")
-    assert "Release agent is working now: Using Bash." in _call(wired, "work_status")["text"]
+    assert got["state"] == "activity_unknown"
+    assert got["pieces"][0]["live"]["activity"]["orb_state"] == "thinking"

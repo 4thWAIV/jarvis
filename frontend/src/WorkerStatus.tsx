@@ -1,7 +1,8 @@
+import { ParticleOrb, WORKFLOW_PALETTE } from "./WorkflowVisuals";
 import { useSyncExternalStore } from "react";
 import { useT, type Translate } from "./locale";
 import { brains, activeBrain } from "./brains";
-import { useWorkers, type WorkerCounts, type Inventory, type Worker } from "./workers";
+import { useWorkers, findWorker, type WorkerCounts, type Inventory, type Worker } from "./workers";
 
 function words(t: Translate, c: WorkerCounts) {
   return [t("left.workers.modelWork", {count: c.model_work}),
@@ -57,9 +58,24 @@ export function WorkerTotal({ provider, compact = false }: { provider?: string; 
 export function WorkerFamily({ sessionId, provider }: { sessionId: string; provider?: string | null }) {
   const t = useT();
   const { value, error } = useWorkers();
-  const matches = value?.workers.filter(w => w.session_id === sessionId && (!provider || w.provider === provider)) ?? [];
-  const root = matches.length === 1 ? matches[0] : undefined;
+  const root = findWorker(value, sessionId, provider);
   return <span className="agent-subagents" title={error ?? value?.coverage}>
     {root ? words(t, root.counts) : t("left.workers.unknown")}
+  </span>;
+}
+
+/** Work's owner activity is separate from its assignment/completion state. */
+export function WorkOwnerActivity({owner}: {owner: {kind: string; ref: string | null}}) {
+  const {value} = useWorkers();
+  const t = useT();
+  if (!owner.ref || owner.kind === "tim") return null;
+  const child = owner.ref.split("/sub:");
+  const worker = findWorker(value, child[1] ?? owner.ref);
+  const activity = owner.kind === "workflow" ? value?.workflow_counts?.[owner.ref] : worker?.activity;
+  return <span data-worker-snapshot={value?.snapshot_id} title={value?.coverage}>
+    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: activity?.orb_state ?? "idle", gray: !activity}}
+      dataState={activity?.orb_state ?? "unknown"} className="workflow-orb" size={20} particles={120} />
+    <small>{owner.kind === "workflow" && value?.workflow_counts?.[owner.ref]
+      ? words(t, value.workflow_counts[owner.ref]) : worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}</small>
   </span>;
 }

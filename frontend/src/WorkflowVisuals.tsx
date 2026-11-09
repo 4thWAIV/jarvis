@@ -14,6 +14,7 @@
  *   - AgeBar: how long something has been open, as a filling bar.
  */
 
+import { useWorkers, findWorker } from "./workers";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { isQuiet, quietUntil } from "./voiceHealth";
@@ -26,7 +27,7 @@ export const WORKFLOW_PALETTE: OrbPalette = {
 };
 
 const ORB_LOOK: Record<WorkflowState, { state: OrbState; gray: boolean }> = {
-  running: { state: "thinking", gray: false },
+  running: { state: "idle", gray: false },
   waiting: { state: "idle", gray: false },
   needs_you: { state: "speaking", gray: false },
   blocked: { state: "compacting", gray: false },
@@ -68,9 +69,13 @@ export function ParticleOrb({ palette, look, dataState, className, size, particl
   );
 }
 
-export function WorkflowOrb({ state, size, particles = 300 }: {
-  state: WorkflowState; size: number; particles?: number }) {
-  return <ParticleOrb palette={WORKFLOW_PALETTE} look={ORB_LOOK[state]} dataState={state}
+export function WorkflowOrb({ state, size, particles = 300, workflowId, workerId }: {
+  state: WorkflowState; size: number; particles?: number; workflowId?: string; workerId?: string }) {
+  const {value} = useWorkers();
+  const activity = workerId ? findWorker(value, workerId)?.activity : undefined;
+  const orbState = activity?.orb_state ?? (workflowId ? value?.workflow_counts?.[workflowId]?.orb_state : undefined);
+  const look = state === "running" ? {...ORB_LOOK[state], state: orbState ?? "idle" as const} : ORB_LOOK[state];
+  return <ParticleOrb palette={WORKFLOW_PALETTE} look={look} dataState={state}
                       className="workflow-orb" size={size} particles={particles} />;
 }
 

@@ -98,10 +98,16 @@ def current(evidence, now):
         state = 'unknown'
     if state in ('model_work', 'model_active') and (at is None or not 0 <= now - at <= MODEL_REQUEST_LEASE_SECONDS):
         state = 'unknown'
+    model_work = state in ('model_work', 'model_active', 'generating')
     return {**evidence, 'last_phase': evidence.get('last_phase', evidence.get('state', 'unknown')), 'state': state,
             'evidence_age_seconds': max(0, now - at) if at is not None else None,
-            'model_work': state in ('model_work', 'model_active', 'generating'),
-            'generating': state == 'generating'}
+            'model_work': model_work,
+            'generating': state == 'generating',
+            'orb_state': 'thinking' if model_work else 'idle',
+            'work_state': ('working' if evidence.get('proves_current_generation') is True
+                           else 'finished' if state in ('idle', 'offline')
+                           else 'waiting' if state in ('tool_wait', 'human_wait', 'external_wait', 'awaiting_model', 'finishing')
+                           else 'stale')}
 
 # Managed runs expose partial messages directly. Keep only their latest
 # observation, in memory, so a restart cannot resurrect a running claim.

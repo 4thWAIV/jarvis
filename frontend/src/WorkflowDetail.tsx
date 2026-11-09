@@ -255,7 +255,7 @@ function OneWorkflow({ id }: { id: string }) {
     <ShownSince.Provider value={since}>
     <div id="workflow-detail" ref={ui.whole}>
       <div className="workflow-detail-head" ref={ui.part("header")}>
-        <WorkflowOrb state={w?.state ?? "running"} size={88} particles={600} />
+        <WorkflowOrb workflowId={w?.id} state={w?.state ?? "running"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{w?.name ?? t("main.workflow.workflow")}</span>
           {w && <span className="workflow-detail-pills">
@@ -379,7 +379,7 @@ function SubagentDetail({ sessionId, agentId }: { sessionId: string; agentId: st
     <div id="workflow-detail" className="subagent-detail" data-subagent-key={`agent:${sessionId}/${agentId}`}
          ref={ui.whole}>
       <div className="workflow-detail-head" ref={ui.part("header")}>
-        <WorkflowOrb state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
+        <WorkflowOrb workerId={agentId} state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{page?.name ?? t("main.workflow.subagent")}</span>
           {page && <span className="workflow-detail-pills">

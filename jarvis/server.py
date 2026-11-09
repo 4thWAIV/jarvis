@@ -14,6 +14,7 @@ import inspect
 import itertools
 import json
 import logging
+from jarvis import worker_activity
 import os
 import difflib
 import hashlib
@@ -3941,7 +3942,14 @@ async def ws_specs(ws: WebSocket):
         log.warning(f"/ws/specs error: {e}")
 
 
+_worker_snapshots = worker_inventory.SnapshotReader()
+
+
 def _worker_inventory() -> dict:
+    return _worker_snapshots.read(_collect_worker_inventory)
+
+
+def _collect_worker_inventory() -> dict:
     from jarvis import worker_hooks
     native, truncated = worker_hooks.observations(data_paths.data_dir(), time.time())
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
@@ -3964,7 +3972,7 @@ def tool_list_workers(args: dict) -> str:
     # The normal counts question is answered before the worker detail. Each
     # invocation is a fresh observation, as with the other paged status reads.
     answer = {key: inventory[key] for key in
-              ("total", "providers", "capacity", "coverage", "gaps", "taken_at")
+              ("total", "providers", "capacity", "coverage", "gaps", "snapshot_id", "taken_at")
               if key in inventory}
     answer.update(inventory)
     head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
@@ -4000,7 +4008,18 @@ def _agents_for_page() -> list[dict]:
     how many items its project's needs board holds (the board is kept per
     project, so every agent in a project shows that project's count), and
     `provider`, who runs it."""
-    return [dataclasses.asdict(a) for a in agent_directory.agents()]
+    inventory = _worker_inventory()
+    workers = {worker['id']: worker for worker in inventory['workers']}
+    answer = []
+    for agent in agent_directory.agents():
+        row = dataclasses.asdict(agent)
+        worker = workers.get(worker_inventory.identity(agent.provider, agent.session_id))
+        row['activity'] = worker['activity'] if worker else None
+        row['snapshot_id'] = inventory.get('snapshot_id')
+        row['subagents_working'] = worker['descendant_counts']['model_work'] if worker else 0
+        row['subagents_capped'] = worker is None or bool(worker['descendant_counts']['unknown'])
+        answer.append(row)
+    return answer
 
 
 @app.get("/api/agents")
@@ -11184,42 +11203,22 @@ SUBAGENT_DOING_CHARS = 200
 
 
 def _subagent_now(session_id: str, agent_id: str):
-    """One subagent of a session, now: its description, its state from the
-    session watcher (working while written within AGENT_ACTIVE_WITHIN_SEC),
-    and its last tool or line. None when JARVIS has no such subagent."""
-    s = _snapshot_or_empty().by_id(session_id)
-    if s is None:
+    """Project the canonical worker activity into Work's existing live record."""
+    inventory = _worker_inventory()
+    matches = [worker for worker in inventory['workers']
+               if worker['session_id'] == (agent_id or session_id)
+               and (not agent_id or worker.get('parent_id') ==
+                    worker['provider'] + ':' + session_id)]
+    if len(matches) != 1:
         return None
-    provider = _session_provider_named(s.provider)
-    roots = getattr(provider, "roots", None) or session_watch.config_roots()
-    now = time.time()
-    # Its own file, by id: the snapshot's list is capped and misses later ids.
-    a = next((a for a in s.subagents if a.agent_id == agent_id), None) or \
-        session_watch.read_subagent(roots, s.cwd, session_id, agent_id, now)
-    if a is None:
-        return None
-    state = a.state
-    if state != session_watch.AGENT_WORKING and session_watch.background_waiting(
-            roots, s.cwd, session_id, agent_id, now):
-        # Its turn is over (or quiet) but background work it started is still
-        # running: it is waiting on it, not finished.
-        state = work_store.LIVE_WAITING
-    doing = ""
-    if provider is not None and hasattr(provider, "subagent_transcript"):
-        try:
-            entries = provider.subagent_transcript(s, agent_id, None, 3) or []
-        except Exception:
-            entries = []
-        for e in reversed(entries):
-            if e.role == "tool" and e.tool:
-                doing = f"Using {e.tool}"
-                break
-            if e.text and e.role in ("agent", "tool"):
-                doing = " ".join(e.text.split())[:SUBAGENT_DOING_CHARS]
-                break
-    return work_store.LiveAgent(name=a.description or "Subagent", state=state,
-                                written=a.written, doing=doing,
-                                active_within=session_watch.AGENT_ACTIVE_WITHIN_SEC)
+    worker = matches[0]
+    activity = worker['activity']
+    return work_store.LiveAgent(name=worker['name'], state=activity['work_state'],
+                                written=activity.get('observed_at') or 0,
+                                doing=activity['state'],
+                                active_within=worker_activity.MODEL_REQUEST_LEASE_SECONDS,
+                                activity=activity, snapshot_id=inventory.get("snapshot_id"))
+
 
 
 work_store.look_up_live_with(_subagent_now)
@@ -12013,8 +12012,11 @@ def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
     project, needs-board count, and whether JARVIS can reach it. Never the
     session's own title or prompt: those are another session's words, and
     `session_detail` is where they are read."""
+    worker = next((row for row in _worker_inventory()['workers']
+                   if row['id'] == worker_inventory.identity(a.provider, a.session_id)), None)
+    activity = worker['activity']['state'].replace('_', ' ') if worker else 'activity unknown'
     bits = [f"{_agent_said(a)}: {'active' if a.active else 'inactive'}",
-            _state_word(a.state)]
+            _plain_name(activity, 'activity unknown')]
     if s is not None and s.needs:
         bits.append(_phrase_needs(s.needs)
                     + (" that needs your own keystroke" if s.needs_a_human_hand else ""))
@@ -12041,6 +12043,9 @@ def tool_list_agents(args: dict) -> str:
     wanted = str(args.get("filter") or "").strip().lower()
     if wanted in ("active", "inactive"):
         agents = [a for a in agents if a.active == (wanted == "active")]
+    elif wanted == "working":
+        workers = {row['id']: row for row in _worker_inventory()['workers']}
+        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('model_work')]
     elif wanted:
         agents = [a for a in agents if a.state == wanted]
     if not agents:

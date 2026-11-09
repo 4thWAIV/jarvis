@@ -6,6 +6,9 @@ worker may belong to several containers without being counted several times.
 from __future__ import annotations
 
 from jarvis import worker_activity
+import threading
+import time
+import uuid
 
 
 def identity(provider, session):
@@ -27,7 +30,8 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         if latest.get('coverage_gap'):
             gaps.append(latest['coverage_gap'])
         # Session completion/liveness beats any previously observed output.
-        if not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you'):
+        if (not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you')
+                and live['state'] != 'external_wait'):
             live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False)
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,
                'project': project, 'parent_id': identity(provider, parent) if parent else None,
@@ -145,8 +149,14 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     for row in workers:
         if row['parent_id'] and row['parent_id'] not in rows:
             gaps.append(f"Parent not discovered for {row['name']}.")
+    # Finalize once after all provider/liveness overrides. Every consumer
+    # receives this same activity, including its presentation projection.
+    for row in workers:
+        row['activity'] = worker_activity.current(row['activity'], now)
     def counts(items):
-        return {'workers': len(items), 'model_work': sum(r['activity'].get('model_work', False) for r in items), 'generating': sum(r['activity']['generating'] for r in items),
+        model_work = sum(r['activity']['model_work'] for r in items)
+        return {'orb_state': 'thinking' if model_work else 'idle',
+                'workers': len(items), 'model_work': model_work, 'generating': sum(r['activity']['generating'] for r in items),
                 'unknown': sum(r['activity']['state'] in ('unknown', 'awaiting_model', 'recent_output', 'finishing') for r in items),
                 'tool_wait': sum(r['activity']['state'] == 'tool_wait' for r in items),
                 'runtime_active': sum(r['runtime'].get('status') == 'active' and 0 <= now - (r['runtime'].get('observed_at') or 0) <= 10 for r in items),
@@ -159,10 +169,37 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
             found.update(extra)
         return [r for r in workers if r['id'] in found]
     for row in workers:
-        row['counts'] = counts(descendants(row['id']))
+        family = descendants(row['id'])
+        row['counts'] = counts(family)
+        row['descendant_counts'] = counts([child for child in family if child['id'] != row['id']])
     projects = {p: counts([r for r in workers if r['project'] == p]) for p in {r['project'] for r in workers} if p}
     providers = {p: counts([r for r in workers if r['provider'] == p]) for p in {r['provider'] for r in workers}}
-    return {'workers': workers, 'total': counts(workers), 'projects': projects, 'providers': providers,
+    workflow_ids = {r['workflow_id'] for r in workers if r['workflow_id']}
+    workflow_ids.update(w['id'] for r in workers for w in r.get('workflows', []))
+    workflow_counts = {}
+    for wid in workflow_ids:
+        members = {child['id']: child for row in workers
+                   if row['workflow_id'] == wid or any(w['id'] == wid for w in row.get('workflows', []))
+                   for child in descendants(row['id'])}
+        workflow_counts[wid] = counts(list(members.values()))
+    return {'snapshot_id': uuid.uuid4().hex, 'workflow_counts': workflow_counts, 'workers': workers, 'total': counts(workers), 'projects': projects, 'providers': providers,
             'capacity': capacity, 'taken_at': now, 'evidence_window_seconds': worker_activity.EVIDENCE_SECONDS,
             'generation': (brain_events or {}).get('generation'), 'gaps': gaps,
             'coverage': 'Model work means an observed model-request phase, including possible provider wait; it is not continuous backend token generation. Tools and unconfirmed observations are counted separately. Native Claude delegation is unchanged.'}
+
+
+class SnapshotReader:
+    """One published inventory for all consumers during its observation interval."""
+    def __init__(self, interval=0.5):
+        self.interval = interval
+        self._lock = threading.Lock()
+        self._value = None
+        self._at = 0.0
+
+    def read(self, collect):
+        with self._lock:
+            now = time.monotonic()
+            if self._value is None or now - self._at >= self.interval:
+                self._value = collect()
+                self._at = time.monotonic()
+            return self._value

@@ -1,15 +1,16 @@
 import { useSyncExternalStore } from "react";
 import { createStore } from "./store";
 
-export interface WorkerCounts { workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
+export interface WorkerCounts { orb_state?: "thinking" | "idle"; workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
   native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
+  activity: { orb_state?: "thinking" | "idle"; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
   counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {
-  workers: Worker[]; total: WorkerCounts; providers: Record<string, WorkerCounts>;
+  snapshot_id?: string;
+  workflow_counts?: Record<string, WorkerCounts>; workers: Worker[]; total: WorkerCounts; providers: Record<string, WorkerCounts>;
   projects: Record<string, WorkerCounts>; capacity?: { total: number; occupied: number; queued: number; free: number }; taken_at: number; coverage: string; gaps: string[];
 }
 const store = createStore<{ value: Inventory | null; error: string | null }>({ value: null, error: null });
@@ -56,3 +57,16 @@ function subscribe(callback: () => void) {
   };
 }
 export function useWorkers() { return useSyncExternalStore(subscribe, store.get); }
+
+/** Identity lookup only; activity is computed by the server. */
+export function findWorker(value: Inventory | null, sessionId: string, provider?: string | null): Worker | undefined {
+  const matches = value?.workers.filter(w => w.session_id === sessionId && (!provider || w.provider === provider)) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
+}
+export function useWorker(sessionId: string, provider?: string | null): Worker | undefined {
+  return findWorker(useWorkers().value, sessionId, provider);
+}
+export const workerSnapshot = store.get;
+export const subscribeWorkers = subscribe;
+
+export const workerChanges = { subscribe, get: store.get };

@@ -68,7 +68,7 @@ def agents_with_counts():
 
 
 
-def worker_inventory_fixture(now):
+def worker_inventory_fixture(now, thinking=None):
     from types import SimpleNamespace
     from jarvis.worker_inventory import build
     from jarvis.session_watch import SessionState, Subagent
@@ -80,8 +80,8 @@ def worker_inventory_fixture(now):
                                               "source": "native_request", "coverage": "request"})
                     for i in range(count)]
         sessions.append(SessionState(session_id=agent["session_id"], cwd="/example", project="example-project",
-                                     state="idle", provider=agent["provider"], subagents=children,
-                                     worker_activity={"state": "idle", "observed_at": now, "source": "turn_end"}))
+                                     state="working" if agent["session_id"] == thinking else "idle", provider=agent["provider"], subagents=children,
+                                     worker_activity={"state": "model_work" if agent["session_id"] == thinking else "idle", "observed_at": now, "source": "turn_boundary"}))
     return build(SimpleNamespace(sessions=sessions, provider_errors=[], taken_at=now), now=now)
 
 
@@ -103,6 +103,7 @@ class _Api:
     def __init__(self, now):
         self.now = now
         self.transcripts = []
+        self.worker_response = None
 
     def body(self, path, query):
         now = self.now
@@ -130,7 +131,7 @@ class _Api:
                     "state": row["state"], "session_name": row["session_name"],
                     "entries": subagent_transcript(now, row["description"]), "earlier": None}
         if path == "/api/workers":
-            return worker_inventory_fixture(now)
+            return self.worker_response if self.worker_response is not None else worker_inventory_fixture(now)
         if path == "/api/agents":
             return agents_with_counts()
         if path == "/api/conversation":
@@ -262,4 +263,20 @@ async def test_invalid_worker_response_keeps_the_page_usable(page_playwright, pa
         await page.wait_for_function("() => [...document.querySelectorAll('.agent-subagents')].some(e => e.textContent === 'Activity unknown')")
         await page.click(".right-tabs [data-ui-tab=workflows]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-1]")
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_agent_orb_and_counter_follow_the_same_worker_snapshot(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, api = await _open(p, page_url)
+        row = page.locator('.agents-list li[data-session-id=s1]')
+        await row.locator('.agent-orb[data-orb-state=idle]').wait_for()
+        assert await row.locator('.agent-subagents').text_content() == '2 model work'
+        # The session's old 'working' status did not make its own orb think.
+        # Its family count includes two children; its own activity is idle.
+        result = worker_inventory_fixture(time.time(), thinking="s1")
+        api.worker_response = result
+        await row.locator('.agent-orb[data-orb-state=thinking]').wait_for()
+        assert await row.locator('.agent-subagents').text_content() == '3 model work'
         await browser.close()

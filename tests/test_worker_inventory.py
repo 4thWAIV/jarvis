@@ -217,3 +217,46 @@ def test_loaded_codex_child_remains_visible_without_its_parent(tmp_path):
     result=build(Snapshot(children,100),now=100)
     assert result['total']['workers']==1
     assert any('Parent not discovered' in gap for gap in result['gaps'])
+
+
+def test_activity_projection_is_shared_by_work_orb_and_counts(monkeypatch):
+    from jarvis import server
+    worker = session('main', worker_activity={'state': 'model_work', 'observed_at': 100})
+    published = build(Snapshot([worker], 100), now=101)
+    monkeypatch.setattr(server, '_worker_inventory', lambda: published)
+    row = published['workers'][0]
+    work = server._subagent_now('main', '')
+    assert work.activity is row['activity']
+    assert work.snapshot_id == published['snapshot_id']
+    assert work.state == row['activity']['work_state'] == 'stale'
+    assert row['activity']['orb_state'] == published['providers']['anthropic']['orb_state'] == 'thinking'
+    assert published['total']['model_work'] == 1
+
+
+def test_snapshot_reader_publishes_one_result_for_all_consumers(monkeypatch):
+    from jarvis import worker_inventory
+    clock = [100]
+    monkeypatch.setattr(worker_inventory.time, 'monotonic', lambda: clock[0])
+    reader = worker_inventory.SnapshotReader()
+    calls = []
+    def collect():
+        calls.append(True)
+        return build(Snapshot([], 100), now=100)
+    first = reader.read(collect)
+    assert reader.read(collect) is first
+    assert len(calls) == 1
+    clock[0] += 1
+    second = reader.read(collect)
+    assert second['snapshot_id'] != first['snapshot_id']
+
+
+def test_workflow_aggregates_the_same_worker_rows_without_double_counting():
+    from types import SimpleNamespace
+    child = Subagent('child', 'Child', 'worker', False, 1, 'working', 99, 100,
+                     worker_activity={'state': 'model_work', 'observed_at': 100}, workflow_run='wf')
+    parent = session(subagents=[child], worker_activity={'state': 'tool_wait', 'observed_at': 100})
+    published = build(Snapshot([parent], 100), now=100,
+                      workflows=[SimpleNamespace(id='wf', name='Workflow', agents=['parent', 'child'])])
+    assert published['workflow_counts']['wf']['model_work'] == 1
+    assert published['workflow_counts']['wf']['orb_state'] == 'thinking'
+    assert published['total']['model_work'] == 1

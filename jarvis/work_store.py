@@ -622,23 +622,26 @@ _AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 def subagent_of(person: Who) -> Optional[tuple[str, str]]:
-    """(session id, agent id) when `person` is a session's subagent."""
-    if person.kind != AGENT or not person.ref or SUB not in person.ref:
+    """Provider session and optional native child identity."""
+    if person.kind != AGENT or not person.ref:
         return None
+    if SUB not in person.ref:
+        return person.ref, ""
     session, _, agent = person.ref.partition(SUB)
     return session, agent
 
 
 @dataclass(frozen=True)
 class LiveAgent:
-    """A subagent as its own files show it now: live evidence of work, read
-    by the session watcher (session_watch.read_subagents), never reported."""
+    """A projection of the canonical worker result, never a worker claim."""
     name: str                 # its description: the dispatcher's words
-    state: str                # working (written within AGENT_ACTIVE_WITHIN_SEC), finished, stale,
+    state: str                # working (confirmed generation), finished, stale,
                               # or waiting (on background work it started)
-    written: float            # its transcript's last write
-    doing: str                # its last tool, or its last line: its own words, walled
-    active_within: float      # how long after a write it still counts as working
+    written: float            # last observed activity boundary
+    doing: str                # canonical phase, separate from assignment business status
+    active_within: float      # evidence lease for display refresh
+    activity: Optional[dict] = None  # exact canonical worker activity
+    snapshot_id: Optional[str] = None
 
 
 # How a subagent is looked up: (session id, agent id) -> LiveAgent or None.
@@ -669,7 +672,7 @@ LIVE_WORKING = "working"
 LIVE_WAITING = "waiting"
 # Why a piece on a subagent is not shown working, in his terms.
 _LIVE_REASON = {"finished": "Its subagent has finished.",
-                "stale": "Its subagent has not written anything for a while.",
+                "stale": "Current token generation for this assignment is not confirmed.",
                 LIVE_WAITING: "Its subagent is waiting on its own background work."}
 
 
