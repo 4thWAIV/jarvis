@@ -8,5 +8,11 @@
     "results/clip.wav",
     "results/level.json",
     "results/note.txt"
-  ]
+  ],
+  "brief": "BRIEF.md",
+  "understanding": {
+    "app.js": "BRIEF.md",
+    "index.html": "BRIEF.md",
+    "style.css": "BRIEF.md"
+  }
 }

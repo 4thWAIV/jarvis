@@ -8095,9 +8095,42 @@ async def tool_open_package(args: dict) -> str:
         f"those files, then request_message_review."))
 
 
+def _package_understanding_page(package, offset, prefix=""):
+    """Page only the author's explicitly declared Markdown through the existing inbox read."""
+    from jarvis import package_understanding
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        return "understanding_offset must be a nonnegative integer."
+    manifest = json.loads(package.manifest.as_json())
+    try:
+        parts = [f"# {name}\n{text}"
+                 for name, text in package_understanding.author_texts(package.folder, manifest)]
+    except ValueError as error:
+        return _wrap_untrusted(_INBOX_WRAP_NAME, str(error))
+    if not parts:
+        return "This package declares no authored Markdown understanding."
+    text = "\n\n".join(parts)
+    if offset > len(text):
+        return "understanding_offset is beyond this package's declared understanding."
+    head = prefix + "Author-supplied understanding; continue package_inbox with understanding_offset until next_offset is null.\n"
+    take = min(800, len(text) - offset)
+    while True:
+        next_offset = offset + take if offset + take < len(text) else None
+        body = json.dumps({"package": package.id, "offset": offset, "next_offset": next_offset,
+                           "total_chars": len(text), "text": text[offset:offset + take]}, ensure_ascii=False)
+        wrapped = _wrap_untrusted(_INBOX_WRAP_NAME, body)
+        if len(body) <= _WRAP_CONTENT_CAP and len(head + wrapped) <= TOOL_RESULT_CAP:
+            return head + wrapped
+        if take <= 1:
+            return "The package understanding response cannot fit the existing tool limit."
+        take = max(1, take // 2)
+
+
 def _package_opened(package: "work_packages.Package", fresh: bool, what_next: str) -> str:
     """What the brain is told of a package just opened: where it is, what to
     do with it, its package.json and its skill or brief."""
+    if package.manifest.understanding:
+        return _package_understanding_page(package, 0,
+            prefix=f"Package {package.id} is open. " + what_next + "\n")
     try:
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
@@ -9175,6 +9208,18 @@ def tool_package_inbox(args: dict) -> str:
     """The packages agents have sent him: the open ones, the closed ones, or
     one in full with its questions."""
     reference = str(args.get("package") or "").strip()
+    if "understanding_offset" in args:
+        if not reference:
+            return "Name the package whose authored understanding to read."
+        entry = package_inbox.get(reference) or _inbox_one(reference)[0]
+        try:
+            package = work_packages.find(entry.package_id if entry else reference)
+        except work_packages.PackageError as error:
+            return _wrap_untrusted(_INBOX_WRAP_NAME, str(error))
+        offset = args["understanding_offset"]
+        if not isinstance(offset, int) or isinstance(offset, bool):
+            return "understanding_offset must be a nonnegative integer."
+        return _package_understanding_page(package, int(offset))
     if reference:
         entry, problem = _inbox_one(reference)
         if entry is None:
@@ -9184,7 +9229,9 @@ def tool_package_inbox(args: dict) -> str:
         body = _inbox_line(entry) + (f"\nPurpose: {entry.purpose}" if entry.purpose else "")
         if asked:
             body += "\n" + _inbox_questions(asked)
-        return ("One package in his inbox.\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
+        hint = (" Read its authored understanding with package_inbox understanding_offset=0."
+                if package and package.manifest.understanding else "")
+        return ("One package in his inbox." + hint + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
     rows = package_inbox.listing(closed=bool(args.get("closed")))
     if not rows:
         return ("No closed packages, sir." if args.get("closed")
@@ -9217,6 +9264,15 @@ async def tool_open_inbox_package(args: dict) -> str:
             what_next += ("When he says he is done with it, sign_off_package tells "
                           "the sender.")
         body = package.manifest.as_json() + ("\n" + _inbox_questions(asked) if asked else "")
+        if package.manifest.understanding:
+            head = what_next + " Read supplied understanding with package_inbox understanding_offset=0.\n"
+            # Keep the existing current-answer guidance first, without crowding it out with the coverage map.
+            body = _inbox_questions(asked) if asked else package.manifest.as_json()
+            response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body)
+            while len(response) > TOOL_RESULT_CAP:
+                body = body[:max(1, len(body) // 2)]
+                response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body + "\n… (metadata truncated)")
+            return response
         return what_next + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body)
     return _package_opened(package, True, _PACKAGE_HOW[package.manifest.runs]
                            + " When he is done with it, sign_off_package tells the "

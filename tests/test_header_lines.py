@@ -36,6 +36,7 @@ import importlib
 import re
 import sys
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -354,6 +355,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_understanding.prepare_deck": (
+        "it writes the author's structured slide/decision content and labeled narration into the "
+        "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
+        "that Markdown as untrusted; complete access and hostile delimiters are driven by "
+        "test_package_understanding.py"),
     "codex_runtime._request": "Formats a fixed internal RPC method in a timeout/error, never a spoken header or brain instruction; runtime failures expose only the exception class in inventory JSON.",
     "codex_runtime.event_evidence": "Formats a provider event-method name as evidence-source metadata; no text delta or tool argument is retained and the inventory tool output is taint-wrapped.",
     "session_watch.build_snapshot": "Formats provider discovery failure metadata from a configured provider name and exception class; the inventory exposes it as JSON through the taint-wrapped list_workers tool, not a spoken line.",
@@ -1911,7 +1917,8 @@ def _drive_package_inbox(server, session, monkeypatch):
                          {"answer": "electric", "choice": HOSTILE, "note": HOSTILE, "at": "",
                           "recommended": True}),
              pi.Question("blend", HOSTILE, "", [], "", "", False, None)]
-    monkeypatch.setattr(server, "_inbox_package", lambda entry: (object(), None))
+    monkeypatch.setattr(server, "_inbox_package", lambda entry: (
+        SimpleNamespace(manifest=SimpleNamespace(understanding=None)), None))
     monkeypatch.setattr(pi, "questions", lambda package: asked)
     return [server.tool_package_inbox({}), server.tool_package_inbox({"closed": True}),
             server.tool_package_inbox({"package": ids[0]}),

@@ -7,5 +7,10 @@
   "returns": [
     "results/summary.md",
     "results/counts.json"
-  ]
+  ],
+  "understanding": {
+    "texts/harbour.txt": "BRIEF.md",
+    "texts/orchard.txt": "BRIEF.md",
+    "texts/workshop.txt": "BRIEF.md"
+  }
 }
