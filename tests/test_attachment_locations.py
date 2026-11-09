@@ -560,6 +560,9 @@ def test_a_package_s_agent_is_handed_the_zip_it_was_unpacked_from(wired, monkeyp
     monkeypatch.setattr(wired.server, "_SKIP_PERMISSIONS", True)
     from jarvis import work_packages
     package = work_packages.find("stats").id
+    monkeypatch.setattr(wired.server, "_package_action_scope", wired.server.package_authority.mint(
+        user_turn_id="attachment-agent-handoff", package=wired.server._package_action_ref(package),
+        operation="execute_package", origin="user_control"))
     assert "Started" in _call(wired, "run_package_agent", package=package)["text"]
     zipped = loc.lookup(SERVER, MATT, message_id, attachment_id)
     (prompt,) = spawned

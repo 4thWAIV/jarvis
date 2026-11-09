@@ -59,6 +59,13 @@ def isolated_server(wired, monkeypatch, tmp_path):
 def envelope(text):
     return json.loads(text.split('\n', 1)[1].rsplit('\n', 1)[0])
 
+
+async def loaded_package_frame(page):
+    element = await page.locator('#package-view iframe').element_handle()
+    frame = await element.content_frame()
+    await frame.wait_for_load_state('load')
+    return frame
+
 @pytest.mark.asyncio(loop_scope='session')
 async def test_generic_page_state_and_visual_mcp_evidence(page_playwright, isolated_server):
     from tests import dashboard_page
@@ -85,7 +92,7 @@ async def test_generic_page_state_and_visual_mcp_evidence(page_playwright, isola
                 await asyncio.sleep(.05)
             assert server.package_views.mounts
             client = next(iter(server.package_views.mounts.values())).view.client_id
-            frame = page.frame_locator('#package-view iframe')
+            frame = await loaded_package_frame(page)
             await frame.locator('#assumptions summary').click()
             await frame.locator('#detail').evaluate('(el)=>{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r);}')
             args = {'package': package.id, 'client': client}
@@ -163,12 +170,12 @@ async def test_factory_keyboard_navigation_and_two_clients_keep_distinct_views(p
                 if server.ui_clients.pages(): break
                 await asyncio.sleep(.05)
             assert (await http.post(f'/api/packages/{package.id}/page', headers={'Origin': base})).status_code == 200
-            frame = first.frame_locator('#package-view iframe')
+            frame = await loaded_package_frame(first)
             await frame.locator('#next').click()
             await frame.locator('body').press('ArrowRight')
             first_slide = await frame.locator('.slide.current').get_attribute('id')
             for _ in range(100):
-                mounts = [m for m in server.package_views.mounts.values() if m.view.package.package_id == package.id]
+                mounts = [m for m in server.package_views.mounts.values() if m.view.package.package_id == package.id and m.view.sequence > 0]
                 if mounts: break
                 await asyncio.sleep(.05)
             first_client = mounts[0].view.client_id
@@ -182,8 +189,9 @@ async def test_factory_keyboard_navigation_and_two_clients_keep_distinct_views(p
             second = await browser.new_page(viewport={'width': 1440, 'height': 1000})
             await second.goto(base)
             await second.frame_locator('#package-view iframe').locator('.slide.current').wait_for()
+            await loaded_package_frame(second)
             for _ in range(100):
-                mounts = [m for m in server.package_views.mounts.values() if m.view.package.package_id == package.id and m.view.client_id != first_client]
+                mounts = [m for m in server.package_views.mounts.values() if m.view.package.package_id == package.id and m.view.client_id != first_client and m.view.sequence > 0]
                 if mounts: break
                 await asyncio.sleep(.05)
             second_client = mounts[0].view.client_id
