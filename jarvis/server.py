@@ -5616,7 +5616,10 @@ async def tool_reply(args: dict) -> str:
         text = str(args.get("text") or "").strip()
         if messaging is None or not text:
             return _person_reply(item)
-        return await messaging.tools.draft_message({"reply_to": item.source_id, "text": text})
+        # draft_message answers with the draft's id, its recipient's label and
+        # its revision; it never says the text back.
+        drafted = await messaging.tools.draft_message({"reply_to": item.source_id, "text": text})
+        return drafted
     # On the loop: a new capture is told to the pages from here.
     return _reply_said(*_reply_capture(item), args)
 
