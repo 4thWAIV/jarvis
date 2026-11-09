@@ -611,6 +611,19 @@ def _record(kind: str, text: str, **links) -> None:
         log.warning(f"conversation: a {kind} item was not recorded: {e}")
 
 
+def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
+                    **links) -> None:
+    """One message to him from a counterpart, on record in its thread with
+    its proof (conversation_log.inbound, which refuses one without), then the
+    pages are told. Never raises: one that cannot be written is logged."""
+    if not str(text or "").strip() or not ref:
+        return
+    try:
+        conversation_log.inbound(kind, counterpart, str(ref), name, text, evidence, **links)
+    except Exception as e:
+        log.warning(f"conversation: a {kind} from {counterpart} was not recorded: {e}")
+
+
 def _agent_links(event: dict) -> dict:
     """The agent a watcher event is about, as conversation item links."""
     session = event.get("session") or {}
@@ -1916,7 +1929,14 @@ async def _attend_message(event: dict) -> None:
         _attention_resolved("agent_message", _message_number(message))
         return
     if kind == "answered" and message.get("reply"):
-        _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
+        # Read from the transcript of the session it was sent to: the
+        # watcher's proof of who answered.
+        links = _agent_links(event)
+        _record_inbound(conversation_log.ItemKind.ANSWER, conversation_log.Counterpart.AGENT,
+                        links.get("agent_session_id"), links.get("agent_name") or "",
+                        message["reply"], "watcher", source_kind="message",
+                        source_id=_message_number(message),
+                        message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
     words = _agent_words(session)
     if kind == "send_failed" and message.get("failure"):
@@ -2141,11 +2161,13 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                           f"aside and will be recorded again")
         received = run_store.get_session_message(message_id)
         if received is not None:
-            # The thread it joins: its sender's, when it is known.
-            _record(conversation_log.ItemKind.FROM_AGENT,
-                    f"{received.subject}\n\n{received.body}".strip(),
-                    agent_session_id=sender.session_id,
-                    agent_name=received.agent_name, session_message_id=message_id)
+            # The thread it joins: its proven sender's.
+            _record_inbound(conversation_log.ItemKind.FROM_AGENT,
+                            conversation_log.Counterpart.AGENT, sender.session_id,
+                            received.agent_name,
+                            f"{received.subject}\n\n{received.body}".strip(), sender.evidence,
+                            source_kind="session_message", source_id=message_id,
+                            subagent=sender.subagent, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
 
