@@ -124,7 +124,8 @@ function AgentKeyLine({ sessionId, part }: {
       {key.state === "onboarded" && key.rights.length > 0 && (
         <span>{t("main.thread.keyRights", { rights: key.rights.map((r) => r.right).join(", ") })}</span>
       )}
-      <button type="button" className="thread-key-revoke" ref={part("revoke")} onClick={revoke}>
+      <button data-ui-action="domain" type="button" className="thread-key-revoke" ref={part("revoke")}
+              onClick={revoke}>
         {t("main.thread.keyRevoke")}</button>
       {failed && <span className="read-failure">{t("main.thread.keyFailed", { error: failed })}</span>}
     </div>
