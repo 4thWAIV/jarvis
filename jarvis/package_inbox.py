@@ -48,7 +48,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import decision_stamp, run_store, wait_links, work_packages
+from jarvis import decision_stamp, package_story, run_store, wait_links, work_packages
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -313,10 +313,10 @@ def deck(package: Package) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
-def _record(package: Package) -> dict:
-    """Its answers as results/decisions.json holds them now; {} when there
-    are none or the file cannot be read."""
-    raw = work_packages.read_result(package, RECORD)
+def _record(package: Package, name: str = RECORD) -> dict:
+    """Its answers as results/<name> (decisions.json by default) holds them
+    now; {} when there are none or the file cannot be read."""
+    raw = work_packages.read_result(package, name)
     try:
         body = json.loads(raw) if raw else {}
     except ValueError:
@@ -336,7 +336,7 @@ def questions(package: Package) -> list[Question]:
     raw = [d for d in (data or {}).get("decisions") or [] if isinstance(d, dict)
            and ID.fullmatch(_text(d.get("id")))]
     if not raw:
-        return []
+        return _story_questions(package)
     record = _record(package)
     options = {d["id"]: [{"id": _text(o.get("id")), "name": _text(o.get("name")),
                           "says": _text(o.get("says"))}
@@ -386,6 +386,162 @@ def title_of(package: Package) -> str:
     data = deck(package) or {}
     title = _text(data.get("title")) or package.manifest.name.replace("-", " ")
     return " ".join(title.split())[:TITLE_MAX]
+
+
+# ── every package carries his vote ───────────────────────────────────────
+# Tim's rule: packages carry votes for him. make_package gives a deck or page
+# that asks nothing the standard vote, `understood`, at its end: a deck as one
+# more decision (`understood`), a hand-made page as its story's last slide
+# (`understood_slide`), waiting on its answers file, each in the deck's or
+# story's language. JARVIS reads a page's
+# `understood` from that file (`questions`) and records his answer there
+# (`record_story_answer`), since a page has no decide.py. An agent or a
+# conversation package cannot carry one, so it may not name a Work item;
+# make_package and the inbox route refuse in `no_vote`'s words.
+
+UNDERSTOOD_ID, GOT_IT, HAS_QUESTIONS = "understood", "got-it", "questions"
+# The vote's words in each language a deck or story may be in (en, es).
+_VOTE_WORDS = {
+    "en": {"short": "Got it?", "question": "Is it clear, or do you have questions?",
+           "got": ("Got it", "It is clear: nothing to ask."),
+           "asks": ("I have questions",
+                    "Say what you want to ask: your words go back to the sender."),
+           "reason": "Choose Got it once you have read it; your questions go back to the sender.",
+           "text_only": "Whether he understood it is a reply, not a choice between looks.",
+           "say": "That is all of it. Got it, or do you have questions?"},
+    "es": {"short": "¿Entendido?", "question": "¿Está claro, o tiene preguntas?",
+           "got": ("Entendido", "Está claro: no hay nada que preguntar."),
+           "asks": ("Tengo preguntas",
+                    "Diga lo que quiere preguntar: sus palabras vuelven a quien lo envió."),
+           "reason": "Elija Entendido cuando lo haya leído; sus preguntas vuelven a quien lo "
+                     "envió.",
+           "text_only": "Si lo entendió es una respuesta, no una elección entre imágenes.",
+           "say": "Eso es todo. ¿Entendido, o tiene preguntas?"},
+}
+
+
+def _vote_words(language: str) -> dict:
+    return _VOTE_WORDS.get(language, _VOTE_WORDS["en"])
+
+
+def understood(language: str) -> dict:
+    """The standard vote as a deck's decision, in `language`."""
+    w = _vote_words(language)
+    return {"id": UNDERSTOOD_ID, "short": w["short"], "question": w["question"],
+            "options": [{"id": GOT_IT, "name": w["got"][0], "says": w["got"][1]},
+                        {"id": HAS_QUESTIONS, "name": w["asks"][0], "says": w["asks"][1]}],
+            "recommended": GOT_IT, "reason": w["reason"], "text_only": w["text_only"]}
+
+
+def understood_slide(language: str) -> dict:
+    """The standard vote as a story's last slide, in `language`."""
+    w = _vote_words(language)
+    return {"title": w["short"], "waits": UNDERSTOOD_ID, "beats": [{"say": w["say"]}]}
+
+
+# Where make_package keeps a page's answers when its story names none.
+STORY_ANSWERS = f"{work_packages.RESULTS}/{RECORD}"
+# The runs that can carry a vote.
+VOTING_RUNS = (work_packages.PAGE,)
+
+
+def asks_a_question(deck_data: Optional[dict],
+                    story: Optional[package_story.Story]) -> bool:
+    """Whether a deck's content or a story asks him at least one question."""
+    if isinstance(deck_data, dict) and any(isinstance(d, dict)
+                                           for d in deck_data.get("decisions") or []):
+        return True
+    return story is not None and story.answers is not None and any(
+        s.waits for s in story.slides)
+
+
+def _story_of(package: Package) -> Optional[package_story.Story]:
+    try:
+        return package.story()
+    except PackageError:
+        return None
+
+
+def asks_him(package: Package) -> bool:
+    """`asks_a_question` for an unpacked package: its deck's decisions (a
+    decision package only) or its story's waiting slides."""
+    return bool(questions(package)) or asks_a_question(None, _story_of(package))
+
+
+def _story_questions(package: Package) -> list[Question]:
+    """A package with no deck: the standard `understood` its story waits
+    for, with the answer its answers file holds; [] when it has none. A
+    story's other questions are its own page's, never answered here."""
+    story = _story_of(package)
+    if story is None or story.answers is None or story.asking(UNDERSTOOD_ID) is None:
+        return []
+    entry = _record(package, story.answers.split("/", 1)[1]).get(UNDERSTOOD_ID)
+    vote = understood(story.language)
+    options = [{k: o[k] for k in ("id", "name", "says")} for o in vote["options"]]
+    answer = None
+    if isinstance(entry, dict) and entry.get("answer") in {o["id"] for o in options} | set(SPECIAL):
+        answer = {"answer": entry["answer"], "choice": _text(entry.get("choice")),
+                  "note": _text(entry.get("note")), "at": _text(entry.get("at")),
+                  "recommended": entry["answer"] == GOT_IT}
+    return [Question(UNDERSTOOD_ID, vote["question"], "", options, GOT_IT,
+                     vote["reason"], True, answer)]
+
+
+def record_story_answer(package: Package, question: Question, option: str,
+                        note: str) -> None:
+    """His answer to a story's `understood`, written into its answers file
+    as decide.py writes a deck's (the story waiting on it goes on). Refused
+    (PackageError) for a package whose story does not ask it."""
+    story = _story_of(package)
+    if story is None or story.answers is None or question.id != UNDERSTOOD_ID:
+        raise PackageError(f"{package.id} does not ask {question.id}.")
+    name = story.answers.split("/", 1)[1]
+    record = _record(package, name)
+    record[UNDERSTOOD_ID] = {
+        "answer": option, "choice": question.option_name(option), "note": note,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "recommended": option == GOT_IT}
+    work_packages.save_result(package, name, (json.dumps(
+        record, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def with_understood_slide(story: Optional[dict], language: str) -> dict:
+    """A page's story, as JSON, with the standard vote at its end in
+    `language`: its answers file kept (STORY_ANSWERS when it names none) and
+    the vote's slide last. With no story it is a story of that one slide,
+    told in `language`."""
+    told = dict(story or {"language": language})
+    told.setdefault("title", _vote_words(language)["short"])
+    told["answers"] = told.get("answers") or STORY_ANSWERS
+    told["slides"] = [*(told.get("slides") or []), understood_slide(language)]
+    return told
+
+
+def page_vote(package: Package) -> Optional[dict]:
+    """The standard vote a page package (not a deck, which asks on its own
+    slide) carries, as the package view's head shows it: its question and
+    his answer and words, or None for a package without one."""
+    if is_decision_package(package):
+        return None
+    asked = next((q for q in _story_questions(package) if q.id == UNDERSTOOD_ID), None)
+    if asked is None:
+        return None
+    return {"question": asked.id, "answer": asked.answer["answer"] if asked.answer else None,
+            "note": asked.answer["note"] if asked.answer else ""}
+
+
+def no_vote(work_id: str, runs: str) -> str:
+    """The refusal: a package for a Work item that does not carry his vote."""
+    if runs not in VOTING_RUNS:
+        article = "an" if runs[:1] in "aeiou" else "a"
+        return (f"It names work item {work_id}, but {article} {runs} package cannot carry "
+                f"Tim's vote, "
+                f"and every package for a Work item must. Send it without --work, or send "
+                f"what he should answer as a deck or a page package, which carry the vote. "
+                f"Nothing was delivered.")
+    return (f"It names work item {work_id} but asks Tim nothing, and every package must carry "
+            f"his vote. Make it with python -m jarvis.make_package, which adds the standard "
+            f"vote (Got it / I have questions) to a deck or page that asks nothing. Nothing "
+            f"was delivered.")
 
 
 def summary(package: Package) -> str:

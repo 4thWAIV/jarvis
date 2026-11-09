@@ -784,7 +784,34 @@ or, `REPROVE_FOR_SEC` after arrival (at once for an older row),
 `proof_pending`, not yet `unproven_claim`. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
-package only with its stamp), and `package_inbox.arrive` records it. Nothing
+package only with its stamp), and `package_inbox.arrive` records it. Every
+package carries his vote: `make_package` gives a deck or page that asks
+nothing the standard one, `package_inbox.understood` (`understood`:
+`got-it` Got it, `questions` I have questions with his words; Entendido and
+Tengo preguntas in Spanish, `_VOTE_WORDS`), at its end, in the deck's or
+story's language, else the language in force as it is built
+(`make_package.built_language`, `language_setting.saved`; a page's own
+story is in its own language, English when it names none): a deck as one
+more decision, a page as its story's last slide (`with_understood_slide`,
+`understood_slide`) waiting on its answers file. A page that carries it has
+Got it and I have questions (a field for his words, then Send) in the
+package view's head beside Done, outside the frame (`PackageView.tsx`
+`VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
+post to the inbox's answer route, which takes only his click
+(`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
+package shown so a reload shows his answer. A deck asks on its own slide.
+A page's `understood` is read from that file (`package_inbox.questions`,
+`_story_questions`) and his answer written there
+(`record_story_answer`, from `_answer_inbox_decision` when there is no
+decide.py), so the Work tab, voice and the sign-off capture treat it as a
+deck's. At sign-off an I have questions on a package sent with `--work`
+is also that item's decision `understood-<inbox id>`, asked and answered at
+once in his words (`server._inbox_questions_on_work`), and the capture
+names it. An agent or conversation package cannot carry a vote, so one that
+names a work item is refused (`package_inbox.no_vote`) by
+`make_package.check_vote` and by the route, which also refuses any package
+for a work item that asks nothing (`asks_him`). One that names no work item
+may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema
