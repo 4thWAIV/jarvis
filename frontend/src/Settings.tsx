@@ -710,6 +710,7 @@ function UpdatesSection() {
 
   return (
     <>
+      <LanguageKitStatus />
       {current && (
         <p className="update-current" ref={currentUi.whole}>
           {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={current} />)}
@@ -761,6 +762,28 @@ function UpdatesSection() {
       </div>
     </>
   );
+}
+
+function LanguageKitStatus() {
+  const t = useT();
+  const label = t("left.updates.languageKit");
+  const target = useSettingsItem("languageKit", label);
+  const live = useLiveRead(async () => {
+    const response = await fetch("/api/language-kits/status");
+    if (!response.ok) throw new Error(t("left.updates.kitUnavailable"));
+    return response.json() as Promise<{ active: { version: string } | null; adopted?: boolean; active_error?: string; last_check: number | null; error?: string; compatibility_review_required?: boolean }>;
+  });
+  useEffect(() => { const timer = setInterval(live.refresh, 60000); return () => clearInterval(timer); }, [live.refresh]);
+  const state = live.value;
+  return <SettingsRow label={label} labelRef={target.part("label")}>
+    <div ref={target.whole}>
+      <p>{state?.active ? t("left.updates.kitActive", { version: state.active.version }) : state ? t("left.updates.kitNotAdopted") : t("left.updates.kitReading")}</p>
+      {state?.last_check ? <p>{t("left.updates.kitLastCheck", { when: formatDateTime(state.last_check * 1000, { dateStyle: "short", timeStyle: "short" }) })}</p> : null}
+      {state?.compatibility_review_required && <p>{t("left.updates.kitCompatibility")}</p>}
+      {(live.error || state?.error) && <p role="status">{live.error || state?.error}</p>}
+      {state?.adopted && state.active_error && <p role="status">{state.active_error}</p>}
+    </div>
+  </SettingsRow>;
 }
 
 function ServerSection({ status, failed }: { status: Status | null; failed: boolean }) {

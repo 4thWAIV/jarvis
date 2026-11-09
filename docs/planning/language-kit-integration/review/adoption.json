@@ -1,0 +1,50 @@
+{
+  "environment": "Isolated adoption check; not the live installation.",
+  "status": {
+    "active": {
+      "version": "0.1.108172209-pre-release",
+      "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0"
+    },
+    "adopted": true,
+    "candidate": {
+      "commit": "c918581ffda7a6fad7c05dde13f54aeb5760fdfb",
+      "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0",
+      "version": "0.1.108172209-pre-release"
+    },
+    "compatibility_review_required": false,
+    "error": null,
+    "etag": "W/\"3526f2fa1e81c2c692e471b29037314e4238df66437d5ce5926cb969a6374e23\"",
+    "failures": 0,
+    "last_check": 1794191168.620595,
+    "next_check": 1794212768.620595
+  },
+  "release": {
+    "checks": [
+      "release",
+      "gate",
+      "windows",
+      "macos",
+      "linux",
+      "typescript (windows-latest)",
+      "typescript (macos-latest)",
+      "typescript (ubuntu-latest)",
+      "version"
+    ],
+    "commit": "c918581ffda7a6fad7c05dde13f54aeb5760fdfb",
+    "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0",
+    "repository": "4thWAIV/agent-guard",
+    "version": "0.1.108172209-pre-release"
+  },
+  "smoke": {
+    "fixtures": {
+      "import-escape": true,
+      "invalid-form": true,
+      "malformed": true,
+      "missing-language": true,
+      "pending-members": true,
+      "valid": true
+    },
+    "runtime": "v23.5.0",
+    "view_sha256": "aae06132a13ddb872b6c889533afaa5f6fbc7de65d52921f594b61d1f85bb192"
+  }
+}

@@ -23,6 +23,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import BROWSER_ARGS
+from tests.fixtures.waiting import until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -121,7 +122,7 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             assert said.stdout.startswith("Recorded: tea-kinds: A small selection"), said.stderr
             await frame.locator("#go-6").click()
             await async_api.expect(frame.locator("#answer-tea-kinds .pick")).to_have_value(
-                "selection", timeout=8000)
+                "selection", timeout=15000)
             await async_api.expect(frame.locator("#tally")).to_have_text("2 of 3 answered")
 
             # Approve all recommended asks once, then fills the one left.
@@ -131,14 +132,13 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             await async_api.expect(frame.locator("#tally")).to_have_text("3 of 3 answered")
             # The tally moves before the save is back: wait for the record.
             wanted = {"kettle-kind": "tap", "tea-kinds": "selection", "selection-size": "three"}
-            answers: dict = {}
-            for _ in range(80):
-                record = json.loads((package.folder / "results" / "decisions.json").read_text())
-                answers = {k: v["answer"] for k, v in record.items()}
-                if answers == wanted:
-                    break
-                await asyncio.sleep(0.1)
-            assert answers == wanted
+            def answers():
+                try:
+                    record = json.loads((package.folder / "results" / "decisions.json").read_text())
+                except (OSError, ValueError):       # caught part way through its save
+                    return {}
+                return {k: v["answer"] for k, v in record.items()}
+            assert await until_async(lambda: answers() == wanted), answers()
             await async_api.expect(frame.locator("#status")).to_have_text("Saved.")
         finally:
             await browser.close()

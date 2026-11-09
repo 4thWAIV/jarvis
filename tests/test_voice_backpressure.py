@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixtures.waiting import until_async
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Any wait here is bounded: a test for "this must not block" that can itself
@@ -81,7 +83,7 @@ def test_a_wedged_client_does_not_delay_the_frame(srv):
         server._add_voice_client(reader)
         await asyncio.wait_for(server._voice_emit(AUDIO), DEADLINE)
         # Hand the writers one turn of the loop to actually send.
-        await asyncio.wait_for(_until(lambda: reader.got), DEADLINE)
+        assert await until_async(lambda: reader.got)
         return reader.got
 
     got = asyncio.run(scenario())
@@ -97,7 +99,7 @@ def test_a_wedged_client_does_not_delay_a_session_event(srv):
         server._add_session_client(reader)
         await asyncio.wait_for(
             server._broadcast_session_event({"session": "x"}), DEADLINE)
-        await asyncio.wait_for(_until(lambda: reader.got), DEADLINE)
+        assert await until_async(lambda: reader.got)
         return reader.got
 
     got = asyncio.run(scenario())
@@ -134,8 +136,7 @@ def test_a_client_whose_socket_fails_is_dropped(srv):
         server._add_voice_client(broken)
         server._add_voice_client(reader)
         await asyncio.wait_for(server._voice_emit(AUDIO), DEADLINE)
-        await asyncio.wait_for(
-            _until(lambda: broken not in server.voice_clients), DEADLINE)
+        assert await until_async(lambda: broken not in server.voice_clients and reader.got)
 
     asyncio.run(scenario())
     assert reader.got == [AUDIO]
@@ -167,7 +168,7 @@ def test_dropping_a_client_stops_its_writer(srv):
         server._add_voice_client(reader)
         task = server._voice_writers[reader]
         server._drop_voice_client(reader)
-        await asyncio.wait_for(_until(task.done), DEADLINE)
+        assert await until_async(task.done)
         return task
 
     task = asyncio.run(scenario())
@@ -175,6 +176,3 @@ def test_dropping_a_client_stops_its_writer(srv):
     assert reader not in server.voice_clients
 
 
-async def _until(predicate, step: float = 0.01):
-    while not predicate():
-        await asyncio.sleep(step)

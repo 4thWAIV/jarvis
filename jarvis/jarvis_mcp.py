@@ -2760,6 +2760,10 @@ def _token() -> str:
 # of thousands. Only `text` goes through that cap.
 
 
+from jarvis.language_document_api import tool_spec as _language_document_spec
+TOOL_SPECS.append(_language_document_spec())
+
+
 def _image_block(raw) -> dict | None:
     """A well-formed MCP image content block from the server's `image` field.
 

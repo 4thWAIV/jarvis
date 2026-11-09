@@ -360,6 +360,30 @@ EXEMPT = {
         "files for the originating factory command. It does not create a trusted JARVIS header or "
         "speak session text. Its handoff prompt is the caller's explicit authoring input, and any "
         "later inbox reading of packaged author content retains the existing untrusted wrapper."),
+    "language_documents.document_title": (
+        "the source title stays a data value in canonical metadata, is rendered as escaped text by React, "
+        "and is serialized inside the escaped language-document tool envelope; it is not a trusted brain header. "
+        "Hostile title and author delimiters are driven by test_language_document_api.py"),
+    "language_documents.validate": (
+        "author, title, scope and source findings are stored as revision data and returned through the shared "
+        "paged JSON envelope; the brain adapter escapes and wraps every segment. Hostile provenance and exact "
+        "continuations are driven by test_language_document_api.py"),
+    "language_documents.retrieve": (
+        "the stored source metadata is returned as JSON data, not interpolated into system or voice headers. "
+        "The language-document adapter escapes every segment before wrapping it as untrusted. Header boundaries "
+        "and complete hostile-field retrieval are driven by test_language_document_api.py"),
+    "language_kit_updates.check": (
+        "release names are validated identifiers before use, and remote failures remain fields in update status. "
+        "No release text becomes a trusted brain header; capability results use the language-document wrapper "
+        "and Settings draws diagnostics as text. Metadata failure paths are driven by test_language_kit_updates.py"),
+    "language_projection._publish": (
+        "document titles pass through the existing package slug function for filenames and remain metadata "
+        "for escaped UI or wrapped brain output; publication returns structured references, not a trusted title "
+        "line. Exact source/check/view publication is driven by test_language_projection.py"),
+    "language_projection.gate": (
+        "the gate compares source-bearing canonical fields and returns no foreign prose on success. Its "
+        "coverage rejection uses fixed diagnostic text rather than copying unresolved source statements into "
+        "package-opening errors. Mutation and hostile coverage cases are driven by test_language_projection.py"),
     "package_understanding.prepare_deck": (
         "it writes the author's structured slide/decision content and labeled narration into the "
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
@@ -861,6 +885,15 @@ EXEMPT = {
     "server._proven_boards": (
         "it logs only the projects whose boards were held, file stems JARVIS reads from its "
         "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "server._record_board": (
+        "it records a proven needs-board rewrite as one message in its writer's thread; it "
+        "says nothing, and the record's readers show it as text or wall it for the brain"),
+    "server._record_package": (
+        "it records a proven package arrival as one message in its thread; it says nothing, "
+        "and the record's readers show it as text or wall it for the brain"),
+    "server._record_work_decision": (
+        "it records a Work decision as one message in the item's thread; it says nothing, "
+        "and the record's readers show it as text or wall it for the brain"),
     "conversation_log.threads": (
         "it lists threads as records, the counterpart's name as its newest message named "
         "it; it says nothing, and every reader that shows a name walls it"),
@@ -939,6 +972,9 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.deck_kind": (
+        "it reads the deck's decision ids only to compare them with the vote's own id, and "
+        "returns one of two fixed words, presentation or decision package"),
     # The page package's story (story_teller.py): the `state` they read is the
     # teller's own fixed state (telling, waiting, paused, finished, stopped);
     # the package id is JARVIS's own folder name (work_packages._label: the

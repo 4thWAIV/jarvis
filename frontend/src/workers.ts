@@ -1,15 +1,16 @@
 import { useSyncExternalStore } from "react";
 import { createStore } from "./store";
 
-export interface WorkerCounts { workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
+export interface WorkerCounts { orb_state?: "thinking" | "idle" | "unknown"; active: number; workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
   native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
+  activity: { orb_state?: "thinking" | "idle" | "unknown"; active?: boolean; turn_open?: boolean | null; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
   counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {
-  workers: Worker[]; total: WorkerCounts; providers: Record<string, WorkerCounts>;
+  snapshot_id?: string;
+  workflow_counts?: Record<string, WorkerCounts>; workers: Worker[]; total: WorkerCounts; providers: Record<string, WorkerCounts>;
   projects: Record<string, WorkerCounts>; capacity?: { total: number; occupied: number; queued: number; free: number }; taken_at: number; coverage: string; gaps: string[];
 }
 const store = createStore<{ value: Inventory | null; error: string | null }>({ value: null, error: null });
@@ -17,11 +18,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function counts(value: unknown): value is WorkerCounts {
-  return record(value) && ["workers", "model_work", "generating", "unknown", "tool_wait", "queued", "runtime_active"]
+  return record(value) && ["workers", "active", "model_work", "generating", "unknown", "tool_wait", "queued", "runtime_active"]
     .every(key => typeof value[key] === "number" && Number.isFinite(value[key]) && Number(value[key]) >= 0);
 }
 function inventory(value: unknown): value is Inventory {
-  if (!record(value) || !Array.isArray(value.workers) || !counts(value.total)
+  if (!record(value) || typeof value.snapshot_id !== "string" || !Array.isArray(value.workers) || !counts(value.total)
       || !record(value.providers) || !Object.values(value.providers).every(counts)
       || !record(value.projects) || !Object.values(value.projects).every(counts)
       || !Array.isArray(value.gaps) || !value.gaps.every(gap => typeof gap === "string")
@@ -56,3 +57,16 @@ function subscribe(callback: () => void) {
   };
 }
 export function useWorkers() { return useSyncExternalStore(subscribe, store.get); }
+
+/** Identity lookup only; activity is computed by the server. */
+export function findWorker(value: Inventory | null, sessionId: string, provider?: string | null): Worker | undefined {
+  const matches = value?.workers.filter(w => w.session_id === sessionId && (!provider || w.provider === provider)) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
+}
+export function useWorker(sessionId: string, provider?: string | null): Worker | undefined {
+  return findWorker(useWorkers().value, sessionId, provider);
+}
+export const workerSnapshot = store.get;
+export const subscribeWorkers = subscribe;
+
+export const workerChanges = { subscribe, get: store.get };

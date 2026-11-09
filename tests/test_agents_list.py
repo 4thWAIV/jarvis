@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import session_watch as sw
 from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
+from tests.fixtures.waiting import until_async
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -137,10 +138,12 @@ def test_the_page_reads_and_activates(wired):
     store.sync_agents({"s1": ("hammer", "idle")})
     client = TestClient(server.app)
 
-    assert client.get("/api/agents").json() == {
-        "agents": [{"session_id": "s1", "name": "hammer", "project": "", "provider": None,
-                    "state": "idle", "active": False, "needs": 0,
-                    "subagents_working": 0, "subagents_capped": False}]}
+    [row] = client.get("/api/agents").json()["agents"]
+    assert {k: row[k] for k in ("session_id", "name", "state", "active")} == {
+        "session_id": "s1", "name": "hammer", "state": "idle", "active": False}
+    assert row["activity"] is None  # Registration alone is not observed activity.
+    assert row["subagents_working"] == 0 and row["subagents_capped"]
+    assert row["snapshot_id"]
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["active"] is True
     assert client.post("/api/agents/nope/active", json={"active": True},
@@ -162,11 +165,11 @@ def test_the_brain_lists_and_switches_agents(wired):
     server, store = wired
     store.sync_agents({"s1": ("hammer", "idle"), "s2": ("anvil", "idle")})
 
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: inactive, idle."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: inactive, activity unknown."
     assert server.tool_set_agent_active({"name": "Hammer", "active": True}) == \
         "hammer is now active, sir."
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: active, idle."
-    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, idle."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: active, activity unknown."
+    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, activity unknown."
 
 
 def test_an_unknown_or_ambiguous_name_is_not_guessed(wired):
@@ -302,7 +305,7 @@ def test_the_brain_renames_by_the_current_name(wired):
         "hammer is now Forge, sir."
     assert "already goes by that name" in server.tool_rename_agent(
         {"name": "anvil", "new_name": "forge"})
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nForge: inactive, idle."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nForge: inactive, activity unknown."
     assert "rename_agent" in server.ACTING_TOOLS
 
 
@@ -470,11 +473,17 @@ async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, mo
     monkeypatch.setattr(server, "_hint_agents_changed", lambda: hints.append(1))
     monkeypatch.setattr(server, "NEEDS_POLL_SEC", 0.01)
 
+    from jarvis import subsystem_diagnostics as sd
     monkeypatch.setattr(server, "_attend_board", lambda board: None)
+    earlier = sd.beats.get(sd.NEEDS_LOOP)
     task = asyncio.ensure_future(server._watch_needs_board())
-    await asyncio.sleep(0.05)
+
+    def first_look_done():                            # its heartbeat, this loop's own
+        beat = sd.beats.get(sd.NEEDS_LOOP)
+        return beat is not earlier and beat is not None and beat.last_ok_at is not None
+    assert await until_async(first_look_done), "the first look never finished"
     assert hints == [], "the first look only records"
     board.write_text("## Decisions\n")                # down to none
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: hints), hints
     task.cancel()
     assert hints == [1]

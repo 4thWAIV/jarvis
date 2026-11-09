@@ -15,7 +15,11 @@
  * A package with a story has Tell the story, a slide to start from, and
  * Stop: the same `_package_story` the brain's `tell_package_story` calls.
  *
- * Done in its head signs it off (DoneButton), for every package.
+ * Done in its head signs it off (DoneButton), for every package. A page
+ * that carries the standard vote (not a deck, which asks on its own slide)
+ * has Got it and I have questions beside it (VoteControls), outside the
+ * frame: the inbox's answer route, his click, the same answer as his voice
+ * and the Work tab give.
  *
  * Registered for pointing at as `packageView` (its head, its frame, Done,
  * Close, and the story's controls); Close runs `package.close`, as the
@@ -26,8 +30,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge } from "./packageBridge";
-import { signOff } from "./packageInbox";
-import { entryUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
+import { answerInbox, signOff } from "./packageInbox";
+import { entryUrl, packageFileUrl, storyRunning, storyState, tellStory, type PackageInfo, type PageVote } from "./packages";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
@@ -52,16 +56,25 @@ export function PackageView({ info }: { info: PackageInfo }) {
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <section className="package-head" ref={ui.part("header")}>
         <div className="package-head-words">
-          <h2>{info.name}</h2>
+          <h2>{info.communication?.title ?? info.name}</h2>
           <p>{info.purpose}</p>
           {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
         </div>
+        {info.vote && <VoteControls id={info.id} vote={info.vote} onSaid={setSaid} part={ui.part} />}
         <DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />
         <TakeoverButton partRef={ui.part("takeover")} lit={offered} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>
       </section>
+      {info.communication?.kind === "architecture" && <section className="package-canonical" aria-label={t("main.package.canonical")}>
+        <p>{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</p>
+        <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
+        <a href={packageFileUrl(info, "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
+        {info.communication.readable && <> {" · "}
+          <a href={packageFileUrl(info, "UNDERSTANDING.md")} target="_blank" rel="noopener noreferrer" ref={ui.part("readable")} data-ui-action="domain">{t("main.package.readable")}</a>
+        </>}
+      </section>}
       {info.story && <StoryControls info={info} onSaid={setSaid} part={ui.part} />}
       <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
               title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
@@ -89,6 +102,61 @@ function DoneButton({ id, onSaid, target }: {
               void signOff(id).then((why) => { setBusy(false); onSaid(why); });
             }}>
       {t("main.package.done")}</button>
+  );
+}
+
+type VotePart = "vote" | "gotIt" | "questions" | "words" | "send";
+
+/** The standard vote in the head: Got it records at once; I have questions
+ *  opens a field for his words, recorded with Send. Each goes through the
+ *  inbox's answer route (answerInbox), which takes only his click. */
+function VoteControls({ id, vote, onSaid, part }: {
+  id: string; vote: PageVote; onSaid: (s: Said | null) => void;
+  part: (name: VotePart) => (el: Element | null) => void }) {
+  const t = useT();
+  const [answer, setAnswer] = useState(vote.answer);
+  const [asking, setAsking] = useState(false);
+  const [words, setWords] = useState(vote.note);
+  const [busy, setBusy] = useState(false);
+  const record = async (option: "got-it" | "questions", note = "") => {
+    setBusy(true);
+    const problem = await answerInbox(id, vote.question, option, note);
+    setBusy(false);
+    if (problem) {
+      onSaid({ original: problem });
+      return;
+    }
+    setAnswer(option);
+    setAsking(false);
+    onSaid(null);
+  };
+  return (
+    <div className="package-vote" role="group" aria-label={t("main.package.vote.label")} ref={part("vote")}
+         data-answer={answer ?? undefined}>
+      <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+              aria-pressed={answer === "got-it"} ref={part("gotIt")} onClick={() => void record("got-it")}>
+        {t("main.package.vote.gotIt")}</button>
+      <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+              aria-pressed={answer === "questions"} aria-expanded={asking} ref={part("questions")}
+              onClick={() => setAsking(!asking)}>
+        {t("main.package.vote.questions")}</button>
+      {asking && (
+        <>
+          <input type="text" className="package-vote-words" data-ui-action="input" value={words}
+                 placeholder={t("main.package.vote.words")} aria-label={t("main.package.vote.words")}
+                 ref={part("words")} maxLength={500} onChange={(e) => setWords(e.target.value)} />
+          <button type="button" className="settings-btn primary" data-ui-action="domain"
+                  disabled={busy || !words.trim()} ref={part("send")}
+                  onClick={() => void record("questions", words.trim())}>
+            {t("main.package.vote.send")}</button>
+        </>
+      )}
+      {!asking && answer && (
+        <span className="package-vote-recorded" role="status">
+          {answer === "got-it" ? t("main.package.vote.gotItRecorded") : t("main.package.vote.questionsRecorded")}
+        </span>
+      )}
+    </div>
   );
 }
 

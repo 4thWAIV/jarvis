@@ -127,7 +127,10 @@ read-back names who it is for, as the agent directory names it now
 `lead` chunk, heard as part of the reading, which the page does not light on
 the box; `captureLead` on its frame), and a person's text already opens "To
 <name>." (`messaging_ports.human_readback`). The brain reads a capture back
-as soon as it is addressed, without asking whether he wants it read back.
+only once it holds all of his instructions, accurately and completely, and it is
+reasonably sure he has nothing more to add: it keeps updating the same capture as
+he goes on, asks a short question when unsure, and then reads it back without
+asking whether he wants it read back.
 Approved means one of two things. Either it was heard in full since its text
 or its recipient last changed (`read_capture` or the box's Read, played and
 not skipped or cut short; or Accept on screen), recording the recipient it
@@ -201,7 +204,20 @@ record in their agent's thread). `conversation_log.inbound` is the one way
 a message to him is recorded and refuses one without proof (`Unproven`);
 `outbound`, `thread_of` and `threads` are its other half. An agent's answer
 (proof `watcher`) and a session message (its own proof) go through it
-(`server._record_inbound`).
+(`server._record_inbound`). Phase 2: every other channel does too, each
+as a `message_in` item whose `source_kind` is a `conversation_log.Source`:
+a proven needs-board rewrite in its writer's thread (`_record_board`, the
+transcript proof `_board_writer` kept per rewrite; source
+`<project>:<mtime>`), a workflow's and a Work item's decision in its
+thread (`_record_workflow_decision`, `_record_work_decision`: proof
+`access_key` only when its reporter is a key, `_reported_proof`; source
+`<id>:<key>`), a package once its sender is proven, at arrival or on
+re-proof (`_record_package`, counterpart the inbox row), and a person's
+message (`_attend_arrival`, proof `team_server`, ref their GitHub id; the
+body is on `Arrival.text` for this record only, never the attention
+item). `message_in` items are kept out of `page` and `thread` (the
+Conversation view, an agent's thread and the brain's recall) until the
+page's one list (phase 4) decides where they show.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -784,7 +800,34 @@ or, `REPROVE_FOR_SEC` after arrival (at once for an older row),
 `proof_pending`, not yet `unproven_claim`. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
-package only with its stamp), and `package_inbox.arrive` records it. Nothing
+package only with its stamp), and `package_inbox.arrive` records it. Every
+package carries his vote: `make_package` gives a deck or page that asks
+nothing the standard one, `package_inbox.understood` (`understood`:
+`got-it` Got it, `questions` I have questions with his words; Entendido and
+Tengo preguntas in Spanish, `_VOTE_WORDS`), at its end, in the deck's or
+story's language, else the language in force as it is built
+(`make_package.built_language`, `language_setting.saved`; a page's own
+story is in its own language, English when it names none): a deck as one
+more decision, a page as its story's last slide (`with_understood_slide`,
+`understood_slide`) waiting on its answers file. A page that carries it has
+Got it and I have questions (a field for his words, then Send) in the
+package view's head beside Done, outside the frame (`PackageView.tsx`
+`VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
+post to the inbox's answer route, which takes only his click
+(`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
+package shown so a reload shows his answer. A deck asks on its own slide.
+A page's `understood` is read from that file (`package_inbox.questions`,
+`_story_questions`) and his answer written there
+(`record_story_answer`, from `_answer_inbox_decision` when there is no
+decide.py), so the Work tab, voice and the sign-off capture treat it as a
+deck's. At sign-off an I have questions on a package sent with `--work`
+is also that item's decision `understood-<inbox id>`, asked and answered at
+once in his words (`server._inbox_questions_on_work`), and the capture
+names it. An agent or conversation package cannot carry a vote, so one that
+names a work item is refused (`package_inbox.no_vote`) by
+`make_package.check_vote` and by the route, which also refuses any package
+for a work item that asks nothing (`asks_him`). One that names no work item
+may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema

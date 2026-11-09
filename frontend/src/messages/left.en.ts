@@ -9,6 +9,7 @@
  */
 
 export const leftEn = {
+  "left.workers.active": "{count} active",
   "left.workers.modelWork": "{count} model work",
   "left.workers.unconfirmed": "{count} unconfirmed",
   "left.workers.tools": "{count} in tools",
@@ -22,7 +23,7 @@ export const leftEn = {
   "left.workers.children": "{count} child records",
   "left.workers.unavailable": "Activity unavailable",
   "left.workers.unknown": "Activity unknown",
-  "left.workers.label": "{account} agent model work: {activity}",
+  "left.workers.label": "{account} agent activity: {activity}",
   "left.workers.all": "All",
   "left.workers.allWorkers": "All workers",
   "left.workers.runtimeActive": "{count} runtime-active",
@@ -407,4 +408,11 @@ export const leftEn = {
   "left.team.roleMember": "Member",
   "left.team.roleAdmin": "Administrator",
   "left.team.add": "Add",
+  "left.updates.languageKit": "Architecture language kit",
+  "left.updates.kitActive": "Active kit: {version}.",
+  "left.updates.kitNotAdopted": "The architecture language kit has not been adopted on this installation.",
+  "left.updates.kitLastCheck": "Last update check: {when}.",
+  "left.updates.kitCompatibility": "A candidate is staged for review. The working kit remains active.",
+  "left.updates.kitUnavailable": "The language-kit status could not be read.",
+  "left.updates.kitReading": "Reading the language-kit status…",
 } as const;

@@ -294,3 +294,89 @@ def test_items_on_record_before_threads_join_their_agent_s_thread(monkeypatch, t
     assert {i.kind for i in cl.thread_of(cl.Counterpart.AGENT, "s1")} == {
         ItemKind.TO_AGENT, ItemKind.ANSWER, ItemKind.FROM_AGENT}
     assert items[ItemKind.HEARD].counterpart_kind is None
+
+
+# --- one channel, phase 2: every channel writes through inbound, with its proof ------
+
+def _messages_in(cl_kind, ref):
+    return [i for i in cl.thread_of(cl_kind, ref) if i.kind == ItemKind.MESSAGE_IN]
+
+
+def test_a_proven_needs_board_rewrite_is_one_message_in_its_writer_s_thread(server, monkeypatch):
+    srv, _, _ = server
+    from pathlib import Path
+    from jarvis import session_message_sender, session_needs
+    writer = session_message_sender.Sender("s1", "Feynman (Planning)", "subagent_transcript",
+                                           "Feynman", "Planning")
+    proofs = {1.0: writer, 2.0: None}
+    monkeypatch.setattr(srv, "_board_writer", lambda b: proofs[b.mtime])
+    board = session_needs.Board("Planning", "# Planning\n- pick a port\n- name it", 1.0,
+                                session="s1", owner="Feynman (Planning)", path=Path("/x"))
+    srv._attend_board(board)
+    srv._attend_board(board)                          # the same rewrite: once
+    srv._attend_board(session_needs.Board("Planning", "# Planning\n- forged", 2.0))
+    [got] = _messages_in(cl.Counterpart.AGENT, "s1")
+    assert got.text.startswith("Feynman (Planning)'s needs board: 2 items\n\n# Planning")
+    assert (got.sender_evidence, got.sender_subagent, got.source_kind, got.source_id) == (
+        "subagent_transcript", "Feynman", "needs_board", "planning:1.0")
+    assert cl.page() == [], "the Conversation view does not show it before phase 4"
+
+
+def test_a_workflow_decision_is_recorded_only_on_a_key_s_report(server):
+    srv, _, _ = server
+    from jarvis import workflow_store
+    wid = workflow_store.start("Build", "jarvis", [], "key:planning")
+    asked = workflow_store.WorkflowEvent(wid, "decision_needed", None, "Which port?",
+                                         {"key": "port", "options": ["8340", "9000"],
+                                          "recommendation": "8340"}, reporter="key:planning")
+    srv._workflow_recorded(workflow_store.record(asked), asked)
+    token = workflow_store.WorkflowEvent(wid, "decision_needed", None, "Forged?",
+                                         {"key": "forged"}, reporter="token")
+    srv._workflow_recorded(workflow_store.record(token), token)
+    [got] = _messages_in(cl.Counterpart.WORKFLOW, wid)
+    assert got.text == ("Decision needed on Build: Which port?\nOptions: 8340; 9000\n"
+                        "Recommended: 8340")
+    assert (got.sender_evidence, got.source_kind, got.source_id, got.detail["name"]) == (
+        "access_key", "workflow_decision", f"{wid}:port", "Build")
+
+
+def test_a_work_decision_is_one_message_in_the_item_s_thread(server, tmp_path):
+    srv, _, _ = server
+    from jarvis import work_store
+    item = work_store.create("Speech", "folder", str(tmp_path), reporter="key:planning")
+    detail = {"key": "model", "options": ["Kroko"], "asked_by": "key:planning"}
+    item = work_store.record(work_store.WorkEvent(item.id, work_store.DECISION_NEEDED,
+                                                  "Which model?", detail, reporter="key:planning"))
+    srv._work_recorded(item, work_store.DECISION_NEEDED, detail)
+    srv._work_recorded(item, work_store.DECISION_NEEDED, detail)
+    [got] = _messages_in(cl.Counterpart.WORK, item.id)
+    assert got.text.startswith("Decision needed on Speech: Which model?\nOptions: Kroko")
+    assert (got.sender_evidence, got.source_id) == ("access_key", f"{item.id}:model")
+
+
+def test_a_package_is_recorded_once_its_sender_is_proven(server):
+    srv, _, _ = server
+    from types import SimpleNamespace
+    from jarvis import session_message_sender
+    entry = SimpleNamespace(id="inbox-1", title="Ports", purpose="Pick one.", decisions_total=2)
+    srv._record_package(entry, None)
+    assert _messages_in(cl.Counterpart.PACKAGE, "inbox-1") == []
+    srv._record_package(entry, session_message_sender.Sender("s1", "Planning", "access_key"))
+    [got] = _messages_in(cl.Counterpart.PACKAGE, "inbox-1")
+    assert got.text == "Package: Ports\n\nPick one.\n\n2 decisions to answer"
+    assert (got.sender_evidence, got.detail["agent"], got.detail["session"]) == (
+        "access_key", "Planning", "s1")
+
+
+def test_a_person_s_message_is_one_message_in_their_thread(server):
+    srv, _, _ = server
+    import uuid
+    from jarvis.arrival_announcer import Arrival
+    arrival = Arrival(uuid.uuid4(), uuid.uuid4(), "Ana", None, "Lunch", 0, False,
+                      sender_github_id=42, text="Lunch\n\nAt noon?")
+    srv._attend_arrival(arrival, False)
+    srv._attend_arrival(arrival, True)                # claimed later: still once
+    [got] = _messages_in(cl.Counterpart.PERSON, "42")
+    assert (got.text, got.sender_evidence, got.source_id, got.detail["name"]) == (
+        "Lunch\n\nAt noon?", "team_server", str(arrival.message_id), "Ana")
+    assert "At noon" not in str(arrival.attention()), "the body never reaches attention"

@@ -2377,6 +2377,10 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .package-head { display: flex; align-items: center; gap: 12px; }
 .package-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .package-head-words p { margin: 0; color: rgba(255, 255, 255, 0.6); }
+.package-vote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.package-vote [aria-pressed="true"] { border-color: rgba(94, 234, 212, 0.8); }
+.package-vote-words { min-width: 12em; }
+.package-vote-recorded { color: rgba(255, 255, 255, 0.6); }
 .package-frame {
   flex: 1;
   min-height: 0;
@@ -4291,3 +4295,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .worker-counter > summary::-webkit-details-marker { display: none; }
 .worker-counter > summary small { font-size: 9px; color: #b9d6e9; }
 .worker-counter[open] { border-color: var(--ui-accent); }
+.package-canonical {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--ui-edge);
+}
+.package-canonical p { margin: 0 0 4px; }
+.package-canonical a { color: var(--ui-accent); text-decoration: underline; }
