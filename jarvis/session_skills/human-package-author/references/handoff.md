@@ -1,6 +1,6 @@
 # Handoff and return
 
-Use this as a short Markdown record, not a new application protocol. Link existing records instead of copying them. Omit irrelevant detail; write `unknown` where a consequential fact is missing.
+The factory handoff input is defined only in `docs/making-a-package.md`. Use the guidance below to prepare that input and its evidence, and to write the author’s Markdown return notes. Link existing records instead of copying them. Omit irrelevant detail; write `unknown` where a consequential fact is missing.
 
 ## Origin to author
 
