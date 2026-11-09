@@ -16,6 +16,7 @@ import pytest
 
 from jarvis import data_paths, team_client
 from jarvis.team_client import TeamConnection, TeamError
+from tests.fixtures.waiting import until_async
 
 URL = "https://team.example"
 SERVER_ID = "srv-1"
@@ -263,8 +264,8 @@ async def test_poll_loop_runs_on_its_own_task_and_stops(conn, server, monkeypatc
     monkeypatch.setattr(team_client, "STATUS_INTERVAL_SEC", 0.01)
     await connect(conn, server)
     conn.start()
-    await asyncio.sleep(0.1)
-    assert sum(1 for c in server.calls if c[1] == "/api/v1/status") >= 2
+    assert await until_async(
+        lambda: sum(1 for c in server.calls if c[1] == "/api/v1/status") >= 2), server.calls
     await conn.stop()
     assert conn._poller is None
 

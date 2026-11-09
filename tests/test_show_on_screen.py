@@ -6,6 +6,7 @@ import asyncio
 import importlib
 
 import pytest
+from tests.fixtures.waiting import until_async
 
 
 @pytest.fixture
@@ -186,11 +187,9 @@ async def _first_audio_kind(make):
     await sched.start()
     try:
         await make(sched)
-        for _ in range(100):
-            audio = [m for m in sent if m.get("type") == "audio"]
-            if audio:
-                return audio[0]["kind"]
-            await asyncio.sleep(0.02)
+        audio = await until_async(lambda: [m for m in sent if m.get("type") == "audio"])
+        if audio:
+            return audio[0]["kind"]
     finally:
         await sched.stop()
 

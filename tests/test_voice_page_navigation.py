@@ -20,6 +20,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_workflows import _Server, _Sessions
+from tests.fixtures.waiting import until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -50,20 +51,15 @@ class _Voice:
             self.results[msg["requestId"]] = msg
 
     async def request(self, operation: dict, expected: int | None = None) -> dict:
-        for _ in range(100):
-            if self.client:
-                break
-            await asyncio.sleep(0.05)
+        assert await until_async(lambda: self.client), "the page never said hello"
         self.sent += 1
         rid = f"req-{self.sent}"
         self.ws.send(json.dumps({
             "type": "ui_request", "protocol": PROTOCOL, "requestId": rid, "clientId": self.client,
             "epoch": 1, "turn": "t1", "expectedNavigationRevision": expected,
             "expiresAt": int(time.time() * 1000) + 15000, "operation": operation}))
-        for _ in range(200):
-            if rid in self.results:
-                return self.results[rid]
-            await asyncio.sleep(0.05)
+        if await until_async(lambda: rid in self.results):
+            return self.results[rid]
         raise AssertionError(f"no ui_result for {operation}")
 
     async def navigate(self, command: str, args: dict) -> dict:

@@ -9,17 +9,16 @@ import pytest
 
 from jarvis import session_steer
 from tests.fixtures.captures import captured
+from tests.fixtures.waiting import LIMIT_SEC, until, until_async
 
 
-def _wait_for_receipt(received, timeout=2.0):
+def _wait_for_receipt(received, timeout=LIMIT_SEC):
     """`post_to_session` returns as soon as `sendall` completes, not once the
     fixture's server thread has looped back around, decoded, and appended to
     `received` — that append genuinely races the test's own assertion.
     Confirmed 100% reproducible on this machine without this wait: every
     `received[0]` access failed with IndexError/JSONDecodeError."""
-    deadline = time.monotonic() + timeout
-    while not received and time.monotonic() < deadline:
-        time.sleep(0.01)
+    until(lambda: received, timeout=timeout)
 
 
 @pytest.fixture
@@ -633,15 +632,15 @@ class TurnRig:
         self.task = asyncio.create_task(self.server._handle_utterance(text))
         return self.task
 
-    async def wait_until_speaking(self, prefix, timeout=5.0):
+    async def wait_until_speaking(self, prefix, timeout=LIMIT_SEC):
         """Wait until a chunk starting with `prefix` has been SENT to the client."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            for m in self.h.msgs:
-                if m["type"] == "audio" and m["text"].startswith(prefix):
-                    return m
-            await asyncio.sleep(0.01)
-        pytest.fail(f"never spoke a chunk starting with {prefix!r}")
+        def spoken():
+            return next((m for m in self.h.msgs
+                         if m["type"] == "audio" and m["text"].startswith(prefix)), None)
+        m = await until_async(spoken, timeout=timeout)
+        if m is None:
+            pytest.fail(f"never spoke a chunk starting with {prefix!r}")
+        return m
 
     def audio(self):
         return [m for m in self.h.msgs if m["type"] == "audio"]
@@ -704,11 +703,7 @@ async def test_a_cancel_word_in_the_window_after_the_readback_blocks_the_send(
                        cancel_window=2.0) as rig:
         task = rig.start()
         s = rig.h.sched
-        for _ in range(500):                     # wait for the window to open
-            if s.classify("wait") == "cancel":
-                break
-            await asyncio.sleep(0.01)
-        else:
+        if not await until_async(lambda: s.classify("wait") == "cancel"):
             pytest.fail("the cancel window never opened")
         assert await s.user_final("wait") == "cancel"
         await asyncio.wait_for(task, timeout=15)
@@ -850,10 +845,6 @@ def test_a_priority_message_asks_claude_code_to_take_it_now(fake_session):
     path, received, _ = fake_session
     assert session_steer.post_to_session(path, "stop and use Postgres", interrupt=True) == \
         session_steer.SENT
-    import time as _t
-    for _ in range(100):
-        if received:
-            break
-        _t.sleep(0.01)
+    _wait_for_receipt(received)
     line = json.loads(received[-1].strip().splitlines()[-1])
     assert line["priority"] == "now" and line["message"]["content"] == "stop and use Postgres"

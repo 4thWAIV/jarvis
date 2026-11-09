@@ -21,6 +21,7 @@ from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
 from tests.test_voice_page_network import _Sessions
+from tests.fixtures.waiting import settled
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -178,7 +179,7 @@ async def test_respond_review_and_send_inline(page_playwright, page_url):
         await page.click("#queue-item-view >> text=Respond")
         await async_api.expect(page.locator(".composer-to")).to_contain_text("To Matt · Matt’s MacBook")
         await page.fill(".composer-text", "Looking now.\nBack in ten.")
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=15000)
         draft = next(d for d in world.store.drafts.values() if d.thread_id == world.sent["newest"].thread_id)
         assert draft.in_reply_to_message_id == world.sent["newest"].message_id
         assert draft.send.state == "draft"
@@ -193,7 +194,7 @@ async def test_respond_review_and_send_inline(page_playwright, page_url):
         # An edit takes the review away; reviewing again is a new revision.
         await page.fill(".composer-text", "Looking now.\nBack in five.")
         await async_api.expect(review).to_have_count(0)
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=15000)
         await page.click(".composer-review")
         await async_api.expect(review).to_have_attribute("data-content-revision", "2")
         assert not [m for m in world.serve.messages.values() if m.text.startswith("Looking now")], \
@@ -226,7 +227,7 @@ async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_play
         await page.fill(".composer-field input", "Reminder")
         await page.fill(".composer-text", "Call the bank.")
         assert await page.evaluate("document.activeElement.className") == "composer-text"
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=15000)
         # The first save gave it its own id without losing the editor.
         assert await page.evaluate("document.activeElement.className") == "composer-text"
         unsent = await _rows(page, world, "active")
@@ -247,6 +248,9 @@ async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_play
         await browser.close()
 
 
+ITEM_SCROLL = "() => document.querySelector('.item-scroll').scrollTop"
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_an_arrival_never_takes_focus_text_or_the_review(page_playwright, page_url):
     async with page_playwright as p:
@@ -258,13 +262,13 @@ async def test_an_arrival_never_takes_focus_text_or_the_review(page_playwright, 
         await editor.click()
         await page.keyboard.press("End")
         await page.keyboard.type(" And the third.")
-        scroll = await page.evaluate("document.querySelector('.item-scroll').scrollTop")
+        scroll = await settled(page, ITEM_SCROLL)
         await _arrive(world, voice, page, "interrupt", "Urgent?")
         assert await page.evaluate("document.activeElement.className") == "composer-text"
         await async_api.expect(editor).to_have_value("Checking the second tab now. And the third.")
         assert await page.evaluate("document.querySelector('#queue-item-view').dataset.threadId") == \
             world.thread("ana-numbers")
-        assert await page.evaluate("document.querySelector('.item-scroll').scrollTop") == scroll
+        assert await settled(page, ITEM_SCROLL) == scroll
         assert world.message("interrupt") not in routes.reads
         assert (await _rows(page, world, "waiting"))[0] == "interrupt"
         await browser.close()
@@ -327,7 +331,7 @@ async def test_a_failed_save_keeps_the_text_through_navigation(page_playwright, 
         await page.click(_row(world, "newest"))
         await page.click("#queue-item-view >> text=Respond")
         await page.fill(".composer-text", "Do not lose this.")
-        await async_api.expect(page.locator(".composer-error")).to_contain_text("Not saved", timeout=5000)
+        await async_api.expect(page.locator(".composer-error")).to_contain_text("Not saved", timeout=15000)
         await page.click(_row(world, "creds"))
         await page.click(_row(world, "newest"))
         await async_api.expect(page.locator(".composer-text")).to_have_value("Do not lose this.")

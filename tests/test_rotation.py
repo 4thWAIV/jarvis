@@ -16,7 +16,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tests.test_brain import _alive, _config, _wait_until  # noqa: E402
+from tests.fixtures.waiting import until_async  # noqa: E402
+from tests.test_brain import _alive, _config  # noqa: E402
 
 from jarvis import brain  # noqa: E402
 
@@ -106,7 +107,7 @@ async def test_a_rotation_cannot_race_a_turn(tmp_path):
         await b.start()
 
         turn = asyncio.create_task(b.turn("SLOW:1 hello"))
-        await asyncio.sleep(0.05)
+        assert await until_async(lambda: b._turn_lock.locked()), "the turn never began"
         rot = asyncio.create_task(b.rotate(handover="x"))
         result = await turn
         assert await rot is True
@@ -214,7 +215,7 @@ async def test_a_rotation_that_loses_both_processes_is_handed_back_to_the_restar
         assert await b.rotate(handover="x") is False
 
         monkeypatch.undo()
-        assert await _wait_until(lambda: b.ready, 8.0), "left mute with no restart"
+        assert await until_async(lambda: b.ready), "left mute with no restart"
         assert (await b.turn("still there?")).stop_reason == "result"
     finally:
         await b.stop()
@@ -232,10 +233,10 @@ async def test_the_superseded_process_is_not_orphaned(tmp_path):
 
         new_pid = b._session.proc.pid
         assert new_pid != old_pid
-        assert await _wait_until(lambda: not _alive(old_pid), 3.0), "superseded child still alive"
+        assert await until_async(lambda: not _alive(old_pid)), "superseded child still alive"
     finally:
         await b.stop()
-    assert await _wait_until(lambda: not _alive(new_pid), 3.0)
+    assert await until_async(lambda: not _alive(new_pid))
 
 
 @pytest.mark.asyncio
