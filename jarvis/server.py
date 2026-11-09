@@ -3918,12 +3918,15 @@ async def ws_specs(ws: WebSocket):
 
 
 def _worker_inventory() -> dict:
+    from jarvis import worker_hooks
+    native, truncated = worker_hooks.observations(data_paths.data_dir(), time.time())
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
     return worker_inventory.build(snap, agent_directory.names_by_session(),
                                   run_store.list_runs(status=["queued", "running"], limit=10000),
                                   brain_activity.feed.since(), time.time(),
                                   workflows=workflow_store.active(),
-                                  capacity=run_executor_instance.capacity())
+                                  capacity=run_executor_instance.capacity(),
+                                  native_observations=native, native_truncated=truncated)
 
 
 @app.get("/api/workers")

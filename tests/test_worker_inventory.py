@@ -112,7 +112,7 @@ def test_parent_cycle_is_reported_and_remains_visible():
 
 def test_claude_api_request_is_not_token_generation():
     ev = activity.observation([{'type': 'api-request', 'timestamp': '2026-01-01T00:00:00Z'}], 'anthropic')
-    assert ev['state'] == 'awaiting_model'
+    assert ev['state'] == 'model_work'
     assert not activity.current(ev, ev['observed_at'])['generating']
 
 

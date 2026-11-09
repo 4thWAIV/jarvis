@@ -1147,6 +1147,7 @@ def read_agent_meta(transcript: Path) -> dict:
     if not isinstance(body, dict):
         body = {}
     return {
+        "native_finished": body.get("finished") if isinstance(body.get("finished"), bool) else None,
         "agent_type": str(body.get("agentType") or ""),
         "description": " ".join(str(body.get("description") or "").split())[:MAX_DESCRIPTION],
         "parent_agent_id": str(body.get("parentAgentId") or ""),
@@ -1175,10 +1176,13 @@ class Subagent:
 def _finished(path: Path) -> bool:
     """Its last message is the assistant's, and ended the turn."""
     for o in reversed(tail_objects(path, _AGENT_TAIL_BYTES)):
+        if o.get("type") == "api-request":
+            return False
         if o.get("type") in ("user", "assistant"):
             message = o.get("message")
             return (o.get("type") == "assistant" and isinstance(message, dict)
-                    and message.get("stop_reason") == "end_turn")
+                    and message.get("stop_reason") == "end_turn"
+                    and any(isinstance(b, dict) and b.get("type") == "text" for b in message.get("content", [])))
     return False
 
 
@@ -1207,13 +1211,29 @@ _agent_cache_lock = threading.Lock()
 
 
 def _agent_facts(path: Path, st: os.stat_result) -> dict:
-    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    side = path.with_name(path.stem + META_SUFFIX)
+    try:
+        meta_stat = side.lstat()
+        meta_key = (meta_stat.st_ino, meta_stat.st_size, meta_stat.st_mtime_ns)
+    except OSError:
+        meta_stat, meta_key = None, None
+    key = (st.st_ino, st.st_size, st.st_mtime_ns, meta_key)
     with _agent_cache_lock:
         hit = _AGENT_CACHE.get(str(path))
     if hit is not None and hit[0] == key:
         return hit[1]
     from jarvis.worker_activity import observation
-    facts = {**read_agent_meta(path), "worker_activity": observation(tail_objects(path, _AGENT_TAIL_BYTES), PROVIDER), "finished": _finished(path),
+    meta = read_agent_meta(path)
+    evidence = observation(tail_objects(path, _AGENT_TAIL_BYTES), PROVIDER)
+    finished = meta["native_finished"]
+    if finished is None:
+        finished = _finished(path)
+    elif finished and meta_stat and (evidence.get("request_started_at") or 0) > meta_stat.st_mtime:
+        finished = False  # A resumed request supersedes an older completion.
+    if finished:
+        evidence = {**evidence, "state": "idle", "observed_at": meta_stat.st_mtime if meta_stat else st.st_mtime,
+                    "source": "claude_native_finished" if meta["native_finished"] is not None else "claude_final_text"}
+    facts = {**meta, "worker_activity": evidence, "finished": finished,
              "started": _first_stamp(path) or getattr(st, "st_birthtime", None)}
     with _agent_cache_lock:
         _AGENT_CACHE.pop(str(path), None)

@@ -12,17 +12,21 @@ def identity(provider, session):
     return f'{provider}:{session}'
 
 
-def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(), capacity=None):
+def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(), capacity=None, native_observations=(), native_truncated=False):
     names = names or {}
     rows = {}
     gaps = list(snapshot.provider_errors)
+    if native_truncated:
+        gaps.append('Native hook history exceeded its observation window; phase reconstruction may be incomplete.')
 
     def add(provider, sid, name, project, evidence, state, kind='agent', parent=None, workflow=None, runtime=None):
         key = identity(provider, sid)
-        live = worker_activity.current(worker_activity.managed(provider, sid) or evidence, now)
+        streamed = worker_activity.managed(provider, sid)
+        latest = max((streamed, evidence or {}), key=lambda e: e.get('observed_at') or 0)
+        live = worker_activity.current(latest, now)
         # Session completion/liveness beats any previously observed output.
         if not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you'):
-            live.update(state='idle' if state != 'gone' else 'offline', generating=False)
+            live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False)
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,
                'project': project, 'parent_id': identity(provider, parent) if parent else None,
                'kind': kind, 'workflow_id': workflow, 'allocation': 'unknown' if kind == 'subagent' else 'observed',
@@ -71,8 +75,24 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
                   'unknown', 'subagent', child['parent_id'])
         row['runtime'] = {'status': child['state'], 'observed_at': now, 'source': 'managed_process'}
         row['allocation'] = 'loaded'
+    for hook in native_observations:
+        sid = hook['session_id']
+        key = identity('anthropic', sid)
+        row = rows.get(key)
+        parent = rows.get(identity('anthropic', hook.get('parent_id')))
+        if row is None and parent is not None:
+            row = add('anthropic', sid, 'Claude native child', parent['project'], {}, 'unknown', 'subagent', hook['parent_id'])
+        if row is None:
+            continue  # Old hooks do not resurrect an exited session.
+        row['hook_observed_at'] = hook.get('observed_at')
+        if (hook.get('observed_at') or 0) > (row['activity'].get('observed_at') or 0):
+            evidence = {k: v for k, v in hook.items() if k not in ('tools', 'parent_id', 'session_id')}
+            if now - evidence['observed_at'] > worker_activity.MODEL_REQUEST_LEASE_SECONDS:
+                evidence.update(last_phase=evidence['state'], state='unknown')
+            row['activity'] = worker_activity.current(evidence, now)
     # Brain stream is already recorded at the producer; don't derive activity
     # from conversation text or start another pulse/timer mechanism.
+    brain_tools = {}
     for event in (brain_events or {}).get('events', []):
         if event.get('kind') not in ('turn', 'tool'):
             continue
@@ -80,16 +100,21 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         stage = event.get('stage')
         if event['kind'] == 'turn':
             state = ('idle' if stage in ('completed', 'failed', 'cancelled') else
-                     'generating' if stage in ('first_output', 'streaming') else 'awaiting_model')
+                     'generating' if stage in ('first_output', 'streaming') else 'model_work')
+            if state == 'idle': brain_tools.pop(provider, None)
         else:
-            state = 'tool_wait' if stage == 'started' else 'awaiting_model'
+            active_tools = brain_tools.setdefault(provider, set())
+            call = event.get('call_id') or event.get('id') or event.get('tool') or 'unknown'
+            if stage == 'started': active_tools.add(call)
+            else: active_tools.discard(call)
+            state = 'tool_wait' if active_tools else 'model_work'
         row = add(provider, 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
         row['activity'] = worker_activity.current({'state': state, 'observed_at': event.get('at'),
                                                   'source': 'brain_stream', 'coverage': 'stream'}, now)
     if stale:
         for row in rows.values():
             if row['kind'] != 'brain' and not worker_activity.managed(row['provider'], row['session_id']):
-                row['activity'] = {**row['activity'], 'state': 'unknown', 'generating': False}
+                row['activity'] = {**row['activity'], 'state': 'unknown', 'generating': False, 'model_work': False}
     for workflow in workflows:
         for sid in workflow.agents:
             found = [row for row in rows.values() if row['session_id'] == sid]
@@ -98,6 +123,9 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
             for row in found:
                 row.setdefault('workflows', []).append({'id': workflow.id, 'name': workflow.name})
     workers = list(rows.values())
+    for row in workers:
+        if row['provider'] == 'anthropic' and row['kind'] in ('agent', 'subagent'):
+            row['native_hook_coverage'] = 'observed' if row.get('hook_observed_at') else 'not_observed'
     for row in workers:
         seen = {row['id']}
         parent = row['parent_id']
@@ -112,8 +140,8 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         if row['parent_id'] and row['parent_id'] not in rows:
             gaps.append(f"Parent not discovered for {row['name']}.")
     def counts(items):
-        return {'workers': len(items), 'generating': sum(r['activity']['generating'] for r in items),
-                'unknown': sum(r['activity']['state'] in ('unknown', 'awaiting_model', 'recent_output', 'model_active') for r in items),
+        return {'workers': len(items), 'model_work': sum(r['activity'].get('model_work', False) for r in items), 'generating': sum(r['activity']['generating'] for r in items),
+                'unknown': sum(r['activity']['state'] in ('unknown', 'awaiting_model', 'recent_output', 'finishing') for r in items),
                 'tool_wait': sum(r['activity']['state'] == 'tool_wait' for r in items),
                 'runtime_active': sum(r['runtime'].get('status') == 'active' and 0 <= now - (r['runtime'].get('observed_at') or 0) <= 10 for r in items),
                 'queued': sum(r['activity']['state'] == 'queued' for r in items)}
@@ -131,4 +159,4 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     return {'workers': workers, 'total': counts(workers), 'projects': projects, 'providers': providers,
             'capacity': capacity, 'taken_at': now, 'evidence_window_seconds': worker_activity.EVIDENCE_SECONDS,
             'generation': (brain_events or {}).get('generation'), 'gaps': gaps,
-            'coverage': 'Recent stream deltas show observed generation. Codex runtime activity is shown separately from generation deltas. Claude terminals and native subagents do not expose token deltas or empty slot reservations; unknown is not zero.'}
+            'coverage': 'Model work means an observed model-request phase, including possible provider wait; it is not continuous backend token generation. Tools and unconfirmed observations are counted separately. Native Claude delegation is unchanged.'}

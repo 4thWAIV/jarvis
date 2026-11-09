@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { createStore } from "./store";
 
-export interface WorkerCounts { workers: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
+export interface WorkerCounts { workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
-  parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { state: string; generating: boolean; observed_at?: number; source?: string };
+  native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
+  activity: { state: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
   counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {

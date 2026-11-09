@@ -3,7 +3,7 @@ import { brains, activeBrain } from "./brains";
 import { useWorkers, type WorkerCounts, type Inventory, type Worker } from "./workers";
 
 function words(c: WorkerCounts) {
-  return `${c.generating} generating${c.unknown ? ` · ${c.unknown} unknown` : ""}${c.tool_wait ? ` · ${c.tool_wait} in tools` : ""}${c.queued ? ` · ${c.queued} queued` : ""}`;
+  return `${c.model_work} model work${c.unknown ? ` · ${c.unknown} unconfirmed` : ""}${c.tool_wait ? ` · ${c.tool_wait} in tools` : ""}${c.queued ? ` · ${c.queued} queued` : ""}`;
 }
 function WorkerTree({ worker, inventory, ancestors = [] }: { worker: Worker; inventory: Inventory; ancestors?: string[] }) {
   if (ancestors.includes(worker.id)) return <li>Parent cycle: {worker.name}</li>;
@@ -11,7 +11,9 @@ function WorkerTree({ worker, inventory, ancestors = [] }: { worker: Worker; inv
   return <li>
     <div><strong>{worker.name}</strong> <small>{worker.provider} · {worker.kind}</small></div>
     <div>{worker.activity.state.replace(/_/g, " ")} · {words(worker.counts)}</div>
+    {worker.activity.evidence_age_seconds != null && <small>Last evidence {Math.round(worker.activity.evidence_age_seconds)} seconds ago.</small>}
     {worker.runtime?.status && <small>Runtime: {worker.runtime.status}. Slot: {worker.allocation}.</small>}
+    {worker.native_hook_coverage === "not_observed" && <small>Native lifecycle hooks not observed yet.</small>}
     {worker.workflow_id && <small>Workflow: {worker.workflow_id}</small>}
     {!!children.length && <details><summary>{children.length} child records</summary><ul>{children.map(child => <WorkerTree key={child.id} worker={child} inventory={inventory} ancestors={[...ancestors, worker.id]} />)}</ul></details>}
   </li>;
@@ -28,12 +30,12 @@ export function WorkerTotal({ provider, compact = false }: { provider?: string; 
   const count = compact ? (account ? value?.providers[account] : undefined) : value?.total;
   const label = count ? words(count) : "Activity unavailable";
   return <details className={`worker-total${compact ? " weekly-avatar worker-counter" : ""}`} title={error ?? label}>
-    <summary aria-label={`${account ?? "All"} agent token activity: ${label}`}>
-      {compact ? <><span>{count?.generating ?? "—"}</span>{!!count?.unknown && <small>+?</small>}</> : label}
+    <summary aria-label={`${account ?? "All"} agent model work: ${label}`}>
+      {compact ? <><span>{count?.model_work ?? "—"}</span>{!!count?.unknown && <small>+?</small>}</> : label}
     </summary>
     <div className="worker-inventory">
       <h4>All workers</h4>
-      {value && <p><strong>{value.total.runtime_active} runtime-active</strong> · {value.total.generating} observed generating · {value.total.tool_wait} in tools</p>}
+      {value && <p><strong>{value.total.runtime_active} runtime-active</strong> · {value.total.model_work} model work · {value.total.tool_wait} in tools</p>}
       <p>{error ?? value?.coverage}</p>
       {value?.capacity && <p>Managed run slots: {value.capacity.occupied} occupied, {value.capacity.queued} queued, {value.capacity.free} free. External CLI slot reservations are unknown.</p>}
       {value?.gaps.map(g => <p key={g}>{g}</p>)}

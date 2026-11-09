@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 EVIDENCE_SECONDS = 2.0
+MODEL_REQUEST_LEASE_SECONDS = 120.0
 
 
 def timestamp(value):
@@ -18,8 +19,15 @@ def timestamp(value):
         return None
 
 
-def observation(objects, provider):
+def observation(objects, provider, previous=None):
     state, at, source = 'unknown', None, 'no_activity_evidence'
+    request_id, request_at, last_output = None, None, None
+    tools = set()
+    if previous:
+        state, at, source = previous.get('state', state), previous.get('observed_at'), previous.get('source', source)
+        request_id, request_at = previous.get('request_id'), previous.get('request_started_at')
+        last_output = previous.get('last_output_at')
+        tools = set(previous.get('outstanding_tools') or [])
     for obj in objects:
         when = timestamp(obj.get('timestamp'))
         p = obj.get('payload') or {}
@@ -37,27 +45,43 @@ def observation(objects, provider):
                 elif event in ('message', 'reasoning') and p.get('role') != 'user': next_state = 'recent_output'
         else:
             if kind == 'api-request':
-                next_state = 'awaiting_model'
+                request_id, request_at = obj.get('id'), when
+                next_state = 'model_work'
+            elif kind == 'system' and obj.get('subtype') == 'turn_duration':
+                next_state = 'idle'
             elif kind == 'system' and obj.get('subtype') == 'thinking_tokens' and obj.get('estimated_tokens_delta', 0) > 0:
                 next_state = 'generating'
             elif kind == 'tool_progress':
                 next_state = 'tool_wait'
             elif kind == 'stream_event':
                 event = obj.get('event') or {}
-                if event.get('type') == 'content_block_delta': next_state = 'generating'
+                if event.get('type') == 'message_start': next_state = 'model_work'
+                elif event.get('type') == 'content_block_delta': next_state = 'generating'
                 elif event.get('type') == 'message_stop': next_state = 'awaiting_model'
             elif kind == 'assistant':
                 message = obj.get('message') or {}
                 blocks = message.get('content') or []
-                if message.get('stop_reason') == 'end_turn': next_state = 'idle'
-                elif any(isinstance(b, dict) and b.get('type') == 'tool_use' for b in blocks): next_state = 'tool_wait'
+                calls = [b for b in blocks if isinstance(b, dict) and b.get('type') == 'tool_use']
+                if calls:
+                    tools.update(b.get('id') for b in calls if b.get('id'))
+                    next_state = 'tool_wait'
+                elif request_id and obj.get('requestRef') == request_id:
+                    # A thinking block may carry end_turn while text is still
+                    # being generated. Only whole-worker evidence ends it.
+                    next_state = 'model_work'
+                    last_output = when
                 else: next_state = 'recent_output'
             elif kind == 'user':
-                next_state = 'awaiting_model'
+                content = (obj.get('message') or {}).get('content') or []
+                if isinstance(content, list):
+                    tools.difference_update(b.get('tool_use_id') for b in content if isinstance(b, dict) and b.get('type') == 'tool_result')
+                next_state = 'tool_wait' if tools else 'awaiting_model'
             elif kind == 'result': next_state = 'idle'
         if next_state:
             state, at, source = next_state, when, f'{provider}:{kind}'
     return {'state': state, 'observed_at': at, 'source': source,
+            'request_id': request_id, 'request_started_at': request_at, 'last_output_at': last_output,
+            'outstanding_tools': sorted(tools),
             'coverage': 'stream' if provider == 'anthropic' and source.endswith('stream_event') else 'turn_and_output'}
 
 
@@ -65,9 +89,14 @@ def current(evidence, now):
     evidence = dict(evidence or {})
     state = evidence.get('state', 'unknown')
     at = evidence.get('observed_at')
-    if state in ('generating', 'recent_output', 'model_active') and (at is None or not 0 <= now - at <= EVIDENCE_SECONDS):
+    if state in ('generating', 'recent_output') and (at is None or not 0 <= now - at <= EVIDENCE_SECONDS):
         state = 'unknown'
-    return {**evidence, 'state': state, 'generating': state == 'generating'}
+    if state in ('model_work', 'model_active') and (at is None or not 0 <= now - at <= MODEL_REQUEST_LEASE_SECONDS):
+        state = 'unknown'
+    return {**evidence, 'last_phase': evidence.get('state', 'unknown'), 'state': state,
+            'evidence_age_seconds': max(0, now - at) if at is not None else None,
+            'model_work': state in ('model_work', 'model_active', 'generating'),
+            'generating': state == 'generating'}
 
 # Managed runs expose partial messages directly. Keep only their latest
 # observation, in memory, so a restart cannot resurrect a running claim.
@@ -86,7 +115,7 @@ def record_runtime(provider, session_id, evidence):
 
 def record_managed(provider, session_id, event):
     event = {**event, 'timestamp': datetime.now(timezone.utc).isoformat()}
-    evidence = observation([event], provider)
+    evidence = observation([event], provider, managed(provider, session_id))
     if evidence['state'] == 'unknown':
         return
     with _lock:

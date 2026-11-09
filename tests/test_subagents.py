@@ -346,7 +346,11 @@ def test_the_snapshot_carries_each_subagent(tmp_path, monkeypatch):
     body = sw.session_to_dict(s)
 
     assert (body["agents_seen"], body["agents_active"]) == (2, 1)
-    assert body["subagents"] == [
+    for agent in body["subagents"]:
+        assert "parent_agent_id" in agent
+        assert "state" in agent["worker_activity"]
+    assert [{k: v for k, v in agent.items() if k not in ("parent_agent_id", "worker_activity")}
+            for agent in body["subagents"]] == [
         {"id": "w", "description": "Write the release notes", "type": "general-purpose",
          "background": True, "depth": 1, "state": "working",
          "started": pytest.approx(NOW - 50), "written": pytest.approx(NOW - 5),
