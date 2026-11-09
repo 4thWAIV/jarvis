@@ -103,6 +103,7 @@ def test_existing_inbox_tool_exposes_all_declared_author_text_with_no_source_rea
         offset = page['next_offset']
     text = ''.join(chunks)
     assert long_text in text and 'opaque PDF bytes' not in text
+    assert 'Author-declared members: chart.pdf' in text
     assert text.count('# Meaning') == 1 and 'Final author detail.' in text
     opened = wired.server._package_opened(package, True, 'It is open on the page.')
     assert 'understanding_offset' in opened and opened.endswith('</session-output>')
@@ -159,3 +160,73 @@ def test_creation_rejects_author_text_that_cannot_fit_the_existing_read_budget(t
     monkeypatch.setattr(understanding.repo_read, 'READ_MAX_FILE_BYTES', 100)
     with pytest.raises(decision_package.Refused, match='in total'):
         make_package.make_folder(folder, tmp_path / 'out')
+
+
+def test_factory_preserves_an_author_document_named_understanding(tmp_path):
+    from tests.test_decision_package import small_deck, write
+    deck = small_deck()
+    deck['understanding'] = {'pictures/plate.svg': 'UNDERSTANDING.md'}
+    content = write(tmp_path / 'in', deck)
+    authored_text = '# Plate\nThe plate marks the proposed meal setting.'
+    (content.parent / 'UNDERSTANDING.md').write_text(authored_text)
+    archive = decision_package.build(content, tmp_path / 'out', deck)
+    with zipfile.ZipFile(archive) as z:
+        manifest = json.loads(z.read('package.json'))
+        assert z.read('UNDERSTANDING.md').decode() == authored_text
+        assert manifest['brief'] != 'UNDERSTANDING.md'
+        assert manifest['understanding']['pictures/plate.svg'] == 'UNDERSTANDING.md'
+
+
+def test_rebuilding_in_the_same_output_keeps_only_the_current_author_view(tmp_path):
+    from tests.test_decision_package import small_deck, write
+    deck = small_deck()
+    content = write(tmp_path / 'in', deck)
+    out = tmp_path / 'out'
+    decision_package.build(content, out, deck)
+    deck['title'] = 'Updated lunch'
+    archive = decision_package.build(content, out, deck)
+    with zipfile.ZipFile(archive) as z:
+        manifest = json.loads(z.read('package.json'))
+        assert 'Updated lunch' in z.read(manifest['brief']).decode()
+        assert [name for name in z.namelist() if name.startswith('UNDERSTANDING')] == ['UNDERSTANDING.md']
+
+
+def test_output_cleanup_refuses_to_overlap_author_inputs(tmp_path):
+    from tests.test_decision_package import small_deck, write
+    deck = small_deck()
+    content = write(tmp_path / deck['name'], deck)
+    before = content.read_bytes()
+    with pytest.raises(decision_package.Refused, match='output overlaps author inputs'):
+        decision_package.build(content, tmp_path, deck)
+    assert content.read_bytes() == before
+    assert (content.parent / 'pictures' / 'plate.svg').is_file()
+
+
+def test_opening_authored_decision_package_preserves_current_answer_guidance(wired, marks, tmp_path, monkeypatch):
+    from jarvis import package_inbox
+    from tests.test_decision_package import small_deck, write
+    deck = small_deck()
+    content = write(tmp_path / 'in', deck)
+    archive = decision_package.build(content, tmp_path / 'out', deck)
+    package, _ = work_packages.unpack(archive, 'ab12cd34')
+    entry = package_inbox.arrive(package, 'test-sha', package_inbox.Sender(project='tests')).entry
+    async def opened(*args):
+        return entry, package, ''
+    monkeypatch.setattr(wired.server, '_open_inbox_package', opened)
+    reply = _call(wired, 'open_inbox_package', package=entry.id)
+    assert reply['ok'] and reply['text'].endswith('</session-output>')
+    assert 'decision where:' in reply['text'] and 'Recorded: not answered' in reply['text']
+    assert 'understanding_offset=0' in reply['text']
+
+
+def test_generated_output_name_cannot_clean_an_unrelated_directory(tmp_path):
+    from tests.test_decision_package import small_deck, write
+    deck = small_deck()
+    content = write(tmp_path / 'in', deck)
+    unrelated = tmp_path / 'unrelated'
+    unrelated.mkdir()
+    (unrelated / 'keep.txt').write_text('Keep this author input.')
+    deck['name'] = '../unrelated'
+    with pytest.raises(decision_package.Refused, match='Generated output must stay'):
+        decision_package.build(content, tmp_path / 'out', deck)
+    assert (unrelated / 'keep.txt').read_text() == 'Keep this author input.'

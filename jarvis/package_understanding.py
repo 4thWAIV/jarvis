@@ -53,8 +53,11 @@ def markdown_text(folder, name) -> str:
 def author_texts(folder, manifest):
     """The declared author view stays within the existing text-file read budget."""
     total = 0
+    coverage = declaration(manifest.get('understanding'))
     for name in documents(manifest):
-        text = markdown_text(folder, name)
+        covered = [member for member, document in coverage.items() if document == name]
+        text = (("Author-declared members: " + ', '.join(covered) + '\n\n') if covered else '')
+        text += markdown_text(folder, name)
         total += len(("# " + name + "\n" + text + "\n\n").encode('utf-8'))
         if total > repo_read.READ_MAX_FILE_BYTES:
             raise ValueError('Authored understanding exceeds the existing 4 MiB text-read limit in total.')
@@ -129,8 +132,10 @@ def prepare_deck(folder, deck, template, source_dir) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding='utf-8')
     name = 'UNDERSTANDING.md'
-    if (folder / name).exists():
-        raise ValueError(f'{name} is reserved for the shared deck authoring output; use another author Markdown name.')
+    number = 1
+    while (folder / name).exists():
+        number += 1
+        name = f'UNDERSTANDING-{number}.md'
     lines = ['# ' + deck['title'], '',
              '## Author content',
              'The following is the author-supplied slide and decision content. Table headings and rows retain their structure.',

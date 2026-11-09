@@ -9247,7 +9247,14 @@ async def tool_open_inbox_package(args: dict) -> str:
                           "the sender.")
         body = package.manifest.as_json() + ("\n" + _inbox_questions(asked) if asked else "")
         if package.manifest.understanding:
-            return _package_understanding_page(package, 0, prefix=what_next + "\n")
+            head = what_next + " Read supplied understanding with package_inbox understanding_offset=0.\n"
+            # Keep the existing current-answer guidance first, without crowding it out with the coverage map.
+            body = _inbox_questions(asked) if asked else package.manifest.as_json()
+            response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body)
+            while len(response) > TOOL_RESULT_CAP:
+                body = body[:max(1, len(body) // 2)]
+                response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body + "\n… (metadata truncated)")
+            return response
         return what_next + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body)
     return _package_opened(package, True, _PACKAGE_HOW[package.manifest.runs]
                            + " When he is done with it, sign_off_package tells the "
