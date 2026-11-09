@@ -120,6 +120,11 @@ def signed_client(cert: Path | None, session_id: str = "", right: str = "workflo
     signer = agent_keys.signer_for(session_id)
     if signer:
         return _Client(base_url(), "", cert, signer)
+    # Until the cut-over (legacy_access.py: no access key used for 7 days),
+    # an old access key still works.
+    key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
+    if key:
+        return _Client(base_url(), key, cert)
     raise SystemExit("No agent key: run python -m jarvis.agent_key init --session <your "
                      "session id> and submit it, then give --as <your session id>. Your key "
                      f"needs the {right} right, which an onboarded agent has.")

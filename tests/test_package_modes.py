@@ -631,8 +631,7 @@ def test_a_decision_package_unpacks_here_only_signed_as_checked_by_an_onboarded_
     assert r.status_code == 409 and "has not passed its check" in r.json()["error"]
     signed = folder / "signed.zip"
     stranger = agent_keys.make_pair(tmp_path / "stranger", "x")
-    package_signature.sign(archive, signed, *stranger, "sess-x", "",
-                           (package_signature.DECISION_CHECKED,))
+    package_signature.sign(archive, signed, *stranger, "sess-x", (package_signature.DECISION_CHECKED,))
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
     assert r.status_code == 409 and "has not passed its check" in r.json()["error"], \
         "a key JARVIS never onboarded vouches for nothing"
@@ -640,7 +639,6 @@ def test_a_decision_package_unpacks_here_only_signed_as_checked_by_an_onboarded_
     package_signature.sign(archive, signed, agent.private, agent.public, "sess-deck")
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
     assert r.status_code == 409, "signed, but not as checked"
-    package_signature.sign(archive, signed, agent.private, agent.public, "sess-deck", "",
-                           (package_signature.DECISION_CHECKED,))
+    package_signature.sign(archive, signed, agent.private, agent.public, "sess-deck", (package_signature.DECISION_CHECKED,))
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
     assert r.status_code == 200, r.text

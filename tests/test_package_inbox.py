@@ -51,8 +51,7 @@ def deck_zip(tmp_path: Path, version: str = "1.0.0", session: str = "sess-tea") 
     raw = tmp_path / f"raw-{version}-{session}.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     agent = onboarded_auth(session=session).agent
-    package_signature.sign(raw, signed, agent.private, agent.public, session, "",
-                           (package_signature.DECISION_CHECKED,))
+    package_signature.sign(raw, signed, agent.private, agent.public, session, (package_signature.DECISION_CHECKED,))
     return signed.read_bytes()
 
 

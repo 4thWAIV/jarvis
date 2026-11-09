@@ -497,7 +497,7 @@ Routine choices, one line each with the reason:
 - An unsigned message file or needs board waits `SIG_GRACE_SEC` (60 s) for its `.sig` before it is held, because the agent signs just after writing.
 - A package signature that does not check for a held key's public key is held; one naming a key JARVIS does not hold, that does not check even for the key it names, is treated as unsigned.
 - An unsigned package on the tool token keeps its `?session=` as an unproven claim (his answers go nowhere), since the tool token is JARVIS's own and Tim's, not an agent's.
-- Message signatures carry no subagent name; a subagent's message shows as its parent agent's, as the design says subagents sign with the parent's key.
+- A subagent is named "<subagent> (<agent>)" (Tim's standing rule: every sender identified, no backdoor) only from proof: its own transcript file shows it writing the message or board, or running make_package on that source; the parent's signature proves the parent. `--worker` was removed, since an agent's own words cannot name the sender; with no proof the parent alone is shown.
 - Work-item keys are only made for agent packages (`runs: agent`) with `--work` and `--session`, as the design says packages Tim answers get none.
 - A work-item key is live only while its item is open and not in History, checked at every request (`agent_auth`), as well as revoked when the item closes and on the 5-second look after it leaves; the read-time check makes the end immediate without joining the two stores' transactions.
 - A work-item key reports for the agent that issued it (shown by that agent's name), and reads the answers to its item's decisions whoever asked them.
@@ -506,4 +506,24 @@ Routine choices, one line each with the reason:
 - `decision_stamp.py` keeps only the deck's marks and `is_decision_package`, which three modules use; the stamp itself is gone.
 - `access-keys.json` is read only for the labels an onboarded agent adopts (`reporters.legacy_labels`); nothing reads it to admit anything, and nothing deletes it.
 - The two Keychain items are left alone (Tim's answer to Q4).
-- Merging this pull request ends access keys: agents still using `JARVIS_ACCESS_KEY` must have made, submitted and been switched on with their own keys first.
+- The cut-over guard (`legacy_access.py`): old access keys keep working, exactly as before, until none has been used for seven days (and use has been watched for at least seven days); then the cut-over is recorded and they admit nothing, for good. So merging cuts nobody off; the agents should still onboard first (the steps are in the PR).
+- The report commands keep the `JARVIS_ACCESS_KEY` fallback while an agent has no key of its own, so an agent that has not onboarded yet keeps reporting through the guard's week.
+
+## Cut-over steps (before and after merging the second pull request)
+
+The access keys on record (labels only; the keys themselves are in the agents' environments and the two Keychain items, which nothing reads): `diagnostics-work` (work), `agent-guard` (work), `workflow-reporter`, `human-messaging-workflow` and `claude-workflows` (workflows). Diagnostics' `jarvis-work-access-key` and Planning's `jarvis-workflows-access-key` are among them.
+
+1. **Merge #87 and bring the live JARVIS to it** (`.venv/bin/python -m jarvis.update`, which restarts it). From then on every access-key request is counted, and `POST /api/agent-keys` exists.
+2. **Each agent that reports (Diagnostics, Planning, Agent Guard, and any other that holds one of the keys above) runs, itself, in its own session**, from the live checkout, with its own session id:
+
+   ```
+   cd /Users/timothystockstill/code/macos/4thWAIV/jarvis
+   PYTHONPATH=$PWD .venv/bin/python -P -m jarvis.agent_key --cert cert.pem init --session <its session id>
+   PYTHONPATH=$PWD .venv/bin/python -P -m jarvis.agent_key --cert cert.pem submit --session <its session id> --fingerprint <the SHA256:… init printed>
+   ```
+
+   It must run `submit` as its own tool call. Within ten minutes JARVIS finds that call in the session's own transcript, and the key waits.
+3. **Tim, once per agent:** on the Agents tab, choose All and click the agent's switch. A box with a waiting key shows "New key" and its switch shows off, even when the agent is active. That one click switches the agent on and accepts its key, recorded as his, with the time. By voice it is "switch <agent> on".
+4. **Each agent checks and moves over:** `… agent_key --cert cert.pem status --session <its session id>` says `onboarded`. From then on it gives `--as <its session id>` to every `work_report.py` and `workflow_report.py` call, and `--session <its session id>` to `make_package`. Asked "who still uses access keys?", JARVIS's `agent_keys` answers from the count, as does `GET /api/agent-keys`.
+5. **Merge #101 and update.** Access keys keep working until none has been used for seven days (`legacy_access.py`). An agent that has not moved over is never cut off mid-week. Then they stop for good. Reinstall the skill so every session learns the new commands: `.venv/bin/python -m jarvis.session_skill install`.
+6. **Nothing touches the Keychain.** The two old items open nothing once the cut-over is recorded, and Tim may leave them.

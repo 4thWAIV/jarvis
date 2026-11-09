@@ -324,8 +324,7 @@ def test_a_signature_covers_every_file_and_names_what_it_vouches_for(tmp_path):
     assert package_signature.read(archive) is None, "unsigned until it is checked"
     private, public = _key()
     signed_zip = tmp_path / "signed.zip"
-    package_signature.sign(archive, signed_zip, private, public, "abc", "",
-                           (package_signature.DECISION_CHECKED,))
+    package_signature.sign(archive, signed_zip, private, public, "abc", (package_signature.DECISION_CHECKED,))
     signed = package_signature.read(signed_zip)
     assert signed.fingerprint == agent_keys.fingerprint(public) and signed.checks(public)
     other = agent_keys.make_pair(tmp_path / "other", "x")[1]

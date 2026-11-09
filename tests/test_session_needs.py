@@ -256,3 +256,19 @@ def test_read_file_may_read_the_needs_board_but_no_other_jarvis_data(
     for closed in ("data/tool-token", "data/jarvis/mcp.json"):
         with pytest.raises(repo_read.Refused):
             repo_read.resolve_within(project, closed)
+
+
+def test_a_board_a_subagent_wrote_is_shown_as_it_with_its_parent(wired, tmp_path):
+    """The parent's key signs the board; the subagent is named only because
+    its own file shows it writing the board."""
+    from jarvis import session_watch
+    server, folder = wired
+    p = _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "agent-guard"))
+         / GUARD / "subagents")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "agent-a1.jsonl").write_text(
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
+        f'"input":{{"file_path":"{p}"}}}}]}}}}\n')
+    (d / "agent-a1.meta.json").write_text('{"description":"Feynman"}')
+    assert f"# Feynman ({NAMES[GUARD]})\n" in server.tool_session_needs({})

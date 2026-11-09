@@ -1997,7 +1997,7 @@ def _board_writer(board: session_needs.Board):
         _unrecognised_key("board", f"the needs board for {board.project}",
                           fingerprint=fingerprint, session=key.session_id if key else "")
         return None
-    writer = signer
+    writer = _with_writing_subagent(key, board.path) if signer is not None else None
     if writer is None:
         _board_unproven[tried] = time.time()
         return None
@@ -2115,7 +2115,7 @@ _session_messages_task: Optional[asyncio.Task] = None
 
 
 def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool = False,
-           since: float = 0.0, key=None, own_only: bool = False
+           since: float = 0.0, key=None, own_only: bool = False, subagents_only: bool = False
            ) -> "Optional[session_message_sender.Sender]":
     """The listed agent, or a subagent of one, whose own transcript `shows`
     proves the act (session_message_sender.proven_by), from the sessions
@@ -2125,7 +2125,8 @@ def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool =
             shows, claimed, _snapshot_or_empty().sessions, session_watch.config_roots(),
             agent_directory.names_by_session(),
             codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()),
-            only_claimed=only_claimed, since=since, key=key, own_only=own_only)
+            only_claimed=only_claimed, since=since, key=key, own_only=own_only,
+            subagents_only=subagents_only)
     except Exception:
         log.warning("%s: its sender was not worked out", what, exc_info=True)
         return None
@@ -2162,8 +2163,19 @@ def _file_signer(path: Path):
 def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
     """Who sent a dropped message: the onboarded agent whose key signed it
     (`_file_signer`). None: it is held."""
-    signer, _key, status, _fp = _file_signer(dropped.path)
-    return signer if status == _GOOD_SIGNER else None
+    signer, key, status, _fp = _file_signer(dropped.path)
+    return _with_writing_subagent(key, dropped.path) if status == _GOOD_SIGNER else None
+
+
+def _with_writing_subagent(key, path: Path) -> "session_message_sender.Sender":
+    """The signing agent of a message file or needs board, named with the
+    subagent whose own transcript shows writing `path`, if one does."""
+    try:
+        written_at = path.lstat().st_mtime
+    except OSError:
+        return _signer_sender(key)
+    return _signer_sender(key, lambda t: session_message_sender.wrote(t, path, written_at),
+                          written_at - session_message_sender.WROTE_SLACK_SEC, path.name)
 
 
 # How long an unsigned message file or needs board is left for its `.sig`
@@ -4307,7 +4319,11 @@ async def api_agent_keys(session: str = ""):
         if session:
             key = agent_key_store.for_session(session)
             return {"key": _key_json(key) if key else None}
-        return {"keys": [_key_json(k) for k in agent_key_store.listing()]}
+        from jarvis import legacy_access
+        # The cut-over guard: the access keys still used, by label, and when
+        # they stop being accepted at the earliest.
+        return {"keys": [_key_json(k) for k in agent_key_store.listing()],
+                "access_keys": legacy_access.status()}
     return await asyncio.to_thread(read)
 
 
@@ -8900,6 +8916,9 @@ def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
 
 
 PROVEN_BY_KEY = "agent_key"
+# How long before a package arrives a subagent's make_package may have run:
+# its own transcript must have been written since (`_signer_sender`).
+MAKE_PACKAGE_WINDOW_SEC = 2 * 3600.0
 
 
 def _package_sender(claimed: str, reporter: "Optional[reporters.Reporter]"
@@ -8984,6 +9003,12 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         return None, None, str(e)
     if status == _GOOD_SIGNER and signed.work_key:
         _work_key_from_package(package, signed, key, work_id)
+    if signer is not None and source and key is not None and \
+            key.principal.startswith(agent_key_store.AGENT):
+        # Which of the agent's subagents ran make_package on it, if one did.
+        since = time.time() - MAKE_PACKAGE_WINDOW_SEC
+        signer = _signer_sender(key, lambda t: session_message_sender.ran(
+            t, ("make_package", source), since), since, "package inbox")
     proven = signer if signer is not None else _package_sender(sender.claimed, reporter)
     sender = _inbox_sender(sender.project, signer.session_id if signer else sender.claimed,
                            proven)
@@ -9057,15 +9082,22 @@ _UNSIGNED, _GOOD_SIGNER, _HELD_SIGNER = "unsigned", "good", "held"
 PROVEN_BY_SIGNATURE = "agent_signature"
 
 
-def _signer_sender(key, worker: str = "") -> "session_message_sender.Sender":
-    """The onboarded agent a key is, as a proven sender: its one name, and a
-    subagent's own words for itself beside it ("logo build agent
-    (Planning)")."""
+def _signer_sender(key, shows=None, since: float = 0.0, what: str = ""
+                   ) -> "session_message_sender.Sender":
+    """The onboarded agent a key is, as a proven sender, by its one name.
+    Its signature proves the agent; which of its subagents did it is proven
+    only by that subagent's own file showing the act (`shows`, since
+    `since`: session_message_sender.proven_by with `subagents_only`), never
+    by anything the agent says, and is then shown "<subagent> (<agent>)"
+    (Tim's rule: every sender identified, a subagent with its listed
+    parent). With no such proof, the agent alone."""
     name = agent_directory.names_by_session().get(key.session_id, "") or key.session_id
-    worker = " ".join(str(worker or "").split())[:80]
-    if worker:
-        return session_message_sender.Sender(key.session_id, f"{worker} ({name})",
-                                             PROVEN_BY_SIGNATURE, worker, name)
+    if shows is not None:
+        sub = _prove(what or "a subagent", shows, key.session_id, only_claimed=True,
+                     since=since, subagents_only=True)
+        if sub is not None and sub.subagent:
+            return session_message_sender.Sender(key.session_id, f"{sub.subagent} ({name})",
+                                                 PROVEN_BY_SIGNATURE, sub.subagent, name)
     return session_message_sender.Sender(key.session_id, name, PROVEN_BY_SIGNATURE, "", name)
 
 
@@ -9082,13 +9114,13 @@ def _package_signer(signed):
     key = agent_key_store.get(signed.fingerprint)
     if key is not None and key.admitted() and key.principal.startswith(agent_key_store.AGENT):
         if signed.checks(key.public_key):
-            return _signer_sender(key, signed.worker), key, _GOOD_SIGNER
+            return _signer_sender(key), key, _GOOD_SIGNER
         return None, key, _HELD_SIGNER
     if key is not None and key.admitted() and key.principal.startswith(agent_key_store.WORK_KEY):
         # A work-item key sends for the agent that issued it, on its item.
         issuer = agent_key_store.for_session(key.issued_by[len(agent_key_store.AGENT):])
         if signed.checks(key.public_key) and issuer is not None and issuer.admitted():
-            return _signer_sender(issuer, signed.worker or "item key"), key, _GOOD_SIGNER
+            return _signer_sender(issuer), key, _GOOD_SIGNER
         return None, key, _HELD_SIGNER
     genuine = bool(signed.public_key) and \
         agent_keys.fingerprint(signed.public_key) == signed.fingerprint and \
@@ -12727,10 +12759,25 @@ def tool_agent_keys(args: dict) -> str:
         return (_key_line(key, names) if key else
                 f"{_agent_said(agent)} has submitted no key, sir.")
     keys = agent_key_store.listing()
+    tail = [_cutover_line()]
     if not keys:
-        return "No agent has submitted a key, sir."
+        return "\n".join(["No agent has submitted a key, sir.", *tail])
     return "\n".join([f"{_say_number(len(keys)).capitalize()} agent key"
-                      f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys])
+                      f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys]
+                     + tail)
+
+
+def _cutover_line() -> str:
+    """Where the cut-over from access keys stands (legacy_access.status)."""
+    from jarvis import legacy_access
+    st = legacy_access.status()
+    if st["cut_over_at"] is not None:
+        return "Access keys admit nothing any more."
+    used = sum(st["used"].values())
+    when = time.strftime("%d %B", time.localtime(st["stops_after"]))
+    return (f"Access keys are still accepted: {_say_number(used)} request"
+            f"{'s' if used != 1 else ''} on them this week. They stop once none is used for "
+            f"seven days, {when} at the earliest.")
 
 
 def tool_revoke_agent_key(args: dict) -> str:

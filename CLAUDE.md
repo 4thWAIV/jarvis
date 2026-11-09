@@ -73,9 +73,15 @@ this presents as "the UI is up but nothing works" rather than as an error.
   "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
   (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
   `packages`, `watch`), never the voice socket, settings or
-  `/internal/tool`. Access keys, which agents carried before, admit
-  nothing any more (`access_keys.py` is gone; `access-keys.json` is only
-  read for the labels an onboarded agent adopts). The one route open with
+  `/internal/tool`. Access keys, which agents carried before
+  (`access_keys.py` is gone), are accepted only while the cut-over guard
+  waits (`legacy_access.py`): until none in `access-keys.json` has been
+  used for seven days (counted per day and label in `legacy_admissions`,
+  watched for at least seven days), each still opens its categories'
+  routes as `BY_ACCESS_KEY`, recorded as `key:<label>`; the first look
+  that finds the guard satisfied records the cut-over
+  (`agent_key_settings`), for good. `agent_keys` and `GET /api/agent-keys`
+  say where it stands. The one route open with
   no credential is `POST /api/agent-keys`, a new agent's key submission,
   which only records a pending key; a key JARVIS holds but has not
   onboarded may reach `POST /api/packages/inbox` alone, to be held.
@@ -130,9 +136,8 @@ revoked. `agent-keys` and `work-key` are sensitive names to every folder
 reader.
 Everything an agent sends is signed: a package carries
 `agent-signature.json` (`package_signature.py`, `jarvis-package@v1`: the
-SHA-256 of every other file, the key, its session, a subagent's `worker`
-words, `statements` such as `DECISION_CHECKED`, an optional `work_key`
-grant), made by `make_package`, which delivers nothing without the
+SHA-256 of every other file, the key, its session, `statements` such as
+`DECISION_CHECKED`, an optional `work_key` grant), made by `make_package`, which delivers nothing without the
 session's key (`agent_keys.signer_for`); a message file or needs board
 carries `<file>.sig` (`agent_key sign`, `jarvis-message@v1`). A signature
 counts only for a key JARVIS holds as onboarded, never one the file names.
@@ -308,10 +313,16 @@ agent and nothing of its text. The agent is its real sender
 `agent_signature` and `sender_subagent`), proven only by `<file>.sig`
 beside it: `python -m jarvis.agent_key sign` by an onboarded agent's key
 over the file's name and bytes as they are now (`server._file_signer`).
-Its `From: <session id>` line proves nothing. A record from before agent
-keys may be a subagent's ("<its name> (<listed parent>)"), and a reply to
-it goes to the parent's session, read back "To Planning, for Feynman." (the
-capture's `for`, dropped once it is addressed elsewhere). An unsigned file
+The signature proves the listed agent; a subagent of it is named ("<its
+name> (<listed parent>)", Tim's rule: every sender identified, no
+backdoor) only when that subagent's own file shows it writing the message
+(`server._signer_sender`, `session_message_sender.proven_by` with
+`subagents_only`: a Claude subagent's file named by its meta description,
+or a Codex subagent rollout naming its parent), never from anything the
+agent or the file says; with no such proof, the parent alone. Its `From:
+<session id>` line proves nothing. A reply to a subagent's message goes to
+the parent's session, read back "To Planning, for Feynman." (the capture's
+`for`, dropped once it is addressed elsewhere). An unsigned file
 is left `SIG_GRACE_SEC` (60 s) for its `.sig`; then it, and one signed by a
 key that is not an onboarded agent's, is never shown as a message: it is
 held where it was dropped (`<name>.held`, `server._hold_session_message`;
@@ -861,8 +872,9 @@ jarvis.make_package` checks and builds it, then posts the zip's bytes to
 signature's (`agent-signature.json`, `package_signature.py`;
 `server._package_signer`): the onboarded agent whose key signed it, its
 answers going to that session (`from_session`, `sender_evidence`
-`agent_signature`, a subagent's `--worker` words as `subagent:<name>`,
-shown "name (parent)"). One signed by a key that is not an onboarded
+`agent_signature`; a subagent named only when its own file shows it
+running make_package on that `source`, `subagent:<name>`, shown "name
+(parent)"). One signed by a key that is not an onboarded
 agent's, or sent unsigned on a request signed by one, is held
 (`_unrecognised_key`), never unpacked, until he onboards it. One unsigned
 on the tool token keeps `?session=` as a claim that only the signed request
@@ -2008,6 +2020,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   seam and signing, the agent's command, the record of keys and rights,
   the rights and their one check, and checking a signed request (see
   "Agent keys")
+- `legacy_access.py` — The cut-over guard: old access keys accepted until
+  none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature
   (who sent it, what it vouches for, a work-item key grant), and the error
   package for something a key JARVIS does not know sent

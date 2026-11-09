@@ -234,10 +234,10 @@ def make_folder(folder: Path, out: Path) -> Made:
 
 # -- signing --------------------------------------------------------------------------
 
-def sign(archive: Path, signer: tuple[Path, str], session: str, worker: str = "",
+def sign(archive: Path, signer: tuple[Path, str], session: str,
          statements: tuple[str, ...] = (), work_key: dict | None = None) -> None:
     """Sign the zip in place with the session's own key (package_signature)."""
-    package_signature.sign(archive, archive, signer[0], signer[1], session, worker, statements,
+    package_signature.sign(archive, archive, signer[0], signer[1], session, statements,
                            work_key)
 
 
@@ -302,9 +302,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--workflow", default="",
                         help="the workflow it is for: it waits on his answers, which come "
                              "back as its decisions")
-    parser.add_argument("--worker", default="",
-                        help="a subagent's own words for itself, shown beside your agent's "
-                             "name (signed with the package)")
     parser.add_argument("--work", default="",
                         help="the work item it is for: its questions show on that item's "
                              "Decisions tab")
@@ -363,7 +360,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         # package for a Work item carries a key for that item alone.
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
-        sign(made.archive, signer, args.session, args.worker,
+        sign(made.archive, signer, args.session,
              (package_signature.DECISION_CHECKED,) if decision else (), grant)
         delivered = dp.deliver(made.archive, args.deliver_to, "", project=args.project,
                                session=args.session, workflow=args.workflow, work=args.work,

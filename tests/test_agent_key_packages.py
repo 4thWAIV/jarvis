@@ -20,13 +20,36 @@ SKILL = {"name": "notes-skill", "version": "1.0.0", "purpose": "Say the notes.",
          "runs": "conversation", "skill": "SKILL.md", "returns": ["results/**"]}
 
 
-def signed_zip(tmp_path: Path, agent: Agent, manifest=SKILL, statements=(), worker="",
+def signed_zip(tmp_path: Path, agent: Agent, manifest=SKILL, statements=(),
                files=None) -> bytes:
     raw = tmp_path / f"raw-{manifest['name']}-{manifest['version']}.zip"
     raw.write_bytes(make_zip(files or {"SKILL.md": "Say the notes."}, manifest))
-    package_signature.sign(raw, raw, agent.private, agent.public, agent.session_id, worker,
-                           statements)
+    package_signature.sign(raw, raw, agent.private, agent.public, agent.session_id, statements)
     return raw.read_bytes()
+
+
+def _running(monkeypatch, server, tmp_path, session=PLAN):
+    """`session` running in tmp/plan, its transcripts under tmp/claude."""
+    from types import SimpleNamespace
+    s = SimpleNamespace(session_id=session, cwd=str(tmp_path / "plan"), project="plan",
+                        provider="anthropic", voice_name="Planning", state="idle",
+                        agents_active=0, agents_capped=False)
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: SimpleNamespace(sessions=[s]))
+    monkeypatch.setattr(server.session_watch, "config_roots", lambda: [tmp_path / "claude"])
+    return s
+
+
+def subagent_ran(tmp_path, session, description, command):
+    """A Claude subagent of `session` (its own file, named by its meta
+    description) running `command`."""
+    from jarvis import session_watch
+    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "plan"))
+         / session / "subagents")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "agent-a1b2c3.jsonl").write_text(json.dumps({"type": "assistant", "message": {
+        "content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}})
+        + "\n")
+    (d / "agent-a1b2c3.meta.json").write_text(json.dumps({"description": description}))
 
 
 def send(client, agent: Agent, data: bytes, **query):
@@ -42,18 +65,39 @@ def _start_work(client, agent, folder):
     return r.json()["id"]
 
 
-def test_a_signed_package_is_its_onboarded_agent_s_by_its_signature(wired, marks, tmp_path):
+def test_a_signed_package_is_its_onboarded_agent_s_by_its_signature(wired, marks, tmp_path,
+                                                                    monkeypatch):
     server, *_ , home = wired
     client = TestClient(server.app)
+    _running(monkeypatch, server, tmp_path)
     agent = Agent(home, PLAN).onboarded()
-    data = signed_zip(tmp_path, agent, worker="logo build agent")
+    data = signed_zip(tmp_path, agent)
     signed = package_signature.read(tmp_path / "raw-notes-skill-1.0.0.zip")
     assert signed.fingerprint == agent.fingerprint and signed.checks(agent.public)
-    r = send(client, agent, data, session=PLAN)
+    r = send(client, agent, data, session=PLAN, source="notes")
     assert r.status_code == 200, r.text
     row = r.json()["inbox"]
-    assert row["from_session"] == PLAN and row["sender_evidence"] == "subagent:logo build agent"
-    assert row["sender"] == "logo build agent (Planning)"
+    assert (row["from_session"], row["sender_evidence"], row["sender"]) == (
+        PLAN, "agent_signature", "Planning"), "no subagent proven: the agent alone"
+
+
+def test_a_subagent_is_named_with_its_parent_only_on_its_own_file_s_proof(wired, marks,
+                                                                         tmp_path, monkeypatch):
+    """The parent's signature proves the parent; the subagent is named only
+    when its own file shows it running make_package on that source."""
+    server, *_ , home = wired
+    client = TestClient(server.app)
+    _running(monkeypatch, server, tmp_path)
+    agent = Agent(home, PLAN).onboarded()
+    subagent_ran(tmp_path, PLAN, "Feynman",
+                 f"python -m jarvis.make_package notes/ --session {PLAN}")
+    r = send(client, agent, signed_zip(tmp_path, agent), session=PLAN, source="notes/")
+    row = r.json()["inbox"]
+    assert (row["sender"], row["sender_evidence"]) == ("Feynman (Planning)", "subagent:Feynman")
+    other = {**SKILL, "version": "1.0.1"}
+    r = send(client, agent, signed_zip(tmp_path, agent, other), session=PLAN,
+             source="elsewhere/")
+    assert r.json()["inbox"]["sender"] == "Planning", "its file shows another source"
 
 
 def test_a_package_changed_after_it_was_signed_is_held(wired, marks, tmp_path):
@@ -256,7 +300,7 @@ def test_a_work_key_in_an_agent_package_reports_on_its_item_alone_and_ends_with_
     raw = tmp_path / "agent.zip"
     raw.write_bytes(make_zip({"BRIEF.md": "Build it."}, AGENT_PKG))
     grant = make_package.add_work_key(raw, wid)
-    make_package.sign(raw, (agent.private, agent.public), PLAN, "", (), grant)
+    make_package.sign(raw, (agent.private, agent.public), PLAN, (), grant)
     r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
     assert r.status_code == 200, r.text
     package = work_packages.find(r.json()["package"]["id"])

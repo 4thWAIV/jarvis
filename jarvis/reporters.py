@@ -94,15 +94,24 @@ def of_kept(kept: str) -> Optional[Reporter]:
 
 def of_scope(scope: dict) -> Optional[Reporter]:
     """The reporter a request came in as, or None when no agent's key
-    admitted it (the page, the tool token)."""
+    admitted it (the page, the tool token). While the cut-over guard still
+    accepts access keys (legacy_access.py), one's label is its reporter."""
     principal = web_auth.principal(scope)
-    return of_principal(principal) if principal else None
+    if principal:
+        return of_principal(principal)
+    label = web_auth.access_key_label(scope)
+    return of_label(label) if label is not None else None
 
 
 def recorded(scope: dict) -> str:
     """How a request's reporter is written down: the agent key's principal,
-    else how it was admitted (the tool token, the page)."""
-    return web_auth.principal(scope) or str(scope.get(web_auth.ADMITTED) or "")
+    `key:<label>` for an access key the guard still accepts, else how it was
+    admitted (the tool token, the page)."""
+    principal = web_auth.principal(scope)
+    if principal:
+        return principal
+    label = web_auth.access_key_label(scope)
+    return f"{KEY_PREFIX}{label}" if label is not None else str(scope.get(web_auth.ADMITTED) or "")
 
 
 def legacy_labels() -> list[str]:

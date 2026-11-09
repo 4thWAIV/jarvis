@@ -20,8 +20,8 @@ has one onboarded key: onboarding a new one revokes the old in the same
 transaction. Rights are rows of `agent_rights` (agent_rights.py judges
 them), kept by principal, so a session's rights outlive a key it replaces.
 `agent_key_events` keeps each change, with who did it and when.
-(`legacy_admissions`, which counted access-key use until the cut-over, is
-kept as it is and no longer written.)
+(`legacy_admissions` counts access-key use per day while the cut-over guard
+still accepts them, legacy_access.py.)
 
 Schema `agent_keys_schema`, through run_store.migrate. This module is the
 only writer of its tables, one transaction per change.
@@ -121,7 +121,18 @@ _HELD = """
     );
 """
 
-_MIGRATIONS = {1: _SCHEMA, 2: _HELD}
+# 3: a few named facts of the record's own: when the cut-over guard began
+# watching access-key use, and when access keys stopped being accepted
+# (legacy_access.py).
+_SETTINGS = """
+    CREATE TABLE agent_key_settings (
+        name   TEXT PRIMARY KEY,
+        value  TEXT NOT NULL,
+        at     REAL NOT NULL
+    );
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _HELD, 3: _SETTINGS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -587,3 +598,63 @@ def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
                             " ORDER BY submitted_at",
                             (ONBOARDED, work_id) if work_id else (ONBOARDED,)).fetchall()
     return [_row(r) for r in rows]
+
+
+# -- the cut-over guard's record (legacy_access.py) --------------------------------------
+
+def setting(name: str) -> Optional[tuple[str, float]]:
+    """(value, when it was set) of one named fact, or None."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT value, at FROM agent_key_settings WHERE name=?",
+                         (name,)).fetchone()
+    return (r["value"], r["at"]) if r else None
+
+
+def set_setting(name: str, value: str, now: Optional[float] = None,
+                keep: bool = False) -> None:
+    """Set one named fact (with `keep`, only if it is not set yet)."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO agent_key_settings (name, value, at) VALUES (?,?,?) "
+                     + ("ON CONFLICT(name) DO NOTHING" if keep else
+                        "ON CONFLICT(name) DO UPDATE SET value=excluded.value, at=excluded.at"),
+                     (name, value, now))
+
+
+def count_legacy(label: str, now: Optional[float] = None) -> None:
+    """One request admitted on an access key, counted by day. Never raises."""
+    day = time.strftime("%Y-%m-%d", time.localtime(time.time() if now is None else now))
+    try:
+        with closing(_connect()) as conn, conn:
+            conn.execute("INSERT INTO legacy_admissions (day, label, count) VALUES (?,?,1) "
+                         "ON CONFLICT(day, label) DO UPDATE SET count=count+1", (day, label))
+    except sqlite3.Error:
+        pass
+
+
+def legacy_counts(days: int = 7, now: Optional[float] = None) -> dict[str, int]:
+    """Access-key admissions by label over the last `days` days."""
+    now = time.time() if now is None else now
+    since = time.strftime("%Y-%m-%d", time.localtime(now - (days - 1) * 86400))
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT label, SUM(count) AS n FROM legacy_admissions WHERE day>=? "
+                            "GROUP BY label ORDER BY label", (since,)).fetchall()
+    return {r["label"]: r["n"] for r in rows}
+
+
+def first_legacy_day() -> Optional[float]:
+    """The start of the first day an access-key admission was counted."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT MIN(day) AS d FROM legacy_admissions").fetchone()
+    if not r or not r["d"]:
+        return None
+    return time.mktime(time.strptime(r["d"], "%Y-%m-%d"))
+
+
+def last_legacy_day_end() -> Optional[float]:
+    """The end of the last day an access-key admission was counted."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT MAX(day) AS d FROM legacy_admissions").fetchone()
+    if not r or not r["d"]:
+        return None
+    return time.mktime(time.strptime(r["d"], "%Y-%m-%d")) + 86400

@@ -334,6 +334,36 @@ def test_a_writer_whose_key_was_revoked_is_held(server, monkeypatch, tmp_path):
     assert server._take_session_messages() == [] and p.with_suffix(".held").exists()
 
 
+def _subagent_wrote(tmp_path, session, description, path):
+    """A Claude subagent of `session` whose own file shows it writing `path`."""
+    from jarvis import session_watch
+    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "guard"))
+         / session / "subagents")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "agent-a1b2c3.jsonl").write_text(
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
+        f'"input":{{"file_path":"{path}"}}}}]}}}}\n')
+    (d / "agent-a1b2c3.meta.json").write_text('{"description":"%s"}' % description)
+
+
+def test_a_subagent_s_message_names_it_with_its_parent_from_its_own_file(server, tmp_path):
+    """Its parent's key signs it, which proves the parent; the subagent is
+    named only because its own file shows it writing the message."""
+    p = _sent(tmp_path, "guard", "m", "# Found it\nThe bug is in x.")
+    _subagent_wrote(tmp_path, GUARD, "Feynman", p)
+    [m] = server._take_session_messages()
+    assert (m.agent_name, m.sender_session, m.sender_evidence, m.sender_subagent) == (
+        "Feynman (Agent Guard)", GUARD, "agent_signature", "Feynman")
+
+
+def test_with_no_subagent_proof_the_parent_alone_is_named(server, tmp_path):
+    """A From: line or a body claiming a subagent proves nothing."""
+    p = _sent(tmp_path, "guard", "m", "# I am Feynman\nFrom: Feynman\nx")
+    _subagent_wrote(tmp_path, GUARD, "Feynman", p.with_name("another.md"))
+    [m] = server._take_session_messages()
+    assert m.agent_name == "Agent Guard" and not m.sender_subagent
+
+
 @pytest.mark.asyncio
 async def test_a_reply_to_a_subagent_goes_to_its_parent_naming_it(server, monkeypatch, tmp_path):
     """A message recorded as a subagent's (before agent keys, when its own

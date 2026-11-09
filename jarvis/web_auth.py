@@ -81,6 +81,7 @@ from urllib.parse import urlsplit
 from starlette.responses import JSONResponse
 
 from jarvis import agent_keys
+from jarvis import agent_rights
 from jarvis import data_paths
 from jarvis.bundle_readers import html as bundle_html
 
@@ -544,6 +545,10 @@ def token_matches(supplied: Optional[str]) -> bool:
 # (whose principal is kept under PRINCIPAL).
 ADMITTED = "jarvis.admitted"
 BY_ORIGIN, BY_TOKEN, BY_AGENT_KEY = "origin", "token", "agent_key"
+# An old access key, accepted only while the cut-over guard waits
+# (legacy_access.py); its label is kept under LEGACY_LABEL.
+BY_ACCESS_KEY = "access_key"
+LEGACY_LABEL = "jarvis.access_key_label"
 PRINCIPAL = "jarvis.principal"
 # The fingerprint of the key a signed request checked for, onboarded or not.
 SIGNED_KEY = "jarvis.signed_key"
@@ -563,7 +568,8 @@ on_unrecognised = None
 
 def admission(origin: Optional[str], authorization: Optional[str]) -> Optional[str]:
     """How an unsigned request is admitted (BY_ORIGIN, BY_TOKEN), or None.
-    A signed one is judged by `_signed`."""
+    A signed one is judged by `_signed`, an old access key by
+    `scope_authorized`."""
     if origin_allowed(origin):
         return BY_ORIGIN
     if token_matches(bearer(authorization)):
@@ -576,9 +582,15 @@ def request_authorized(origin: Optional[str], authorization: Optional[str]) -> b
 
 
 def admitted_by_agent(scope: dict) -> bool:
-    """The request came in on an agent's own key: what it may reach is its
-    rights' routes, and never a person's yes."""
-    return scope.get(ADMITTED) == BY_AGENT_KEY
+    """The request came in on an agent's own key (or, while the cut-over
+    guard waits, an old access key): what it may reach is its rights'
+    routes, and never a person's yes."""
+    return scope.get(ADMITTED) in (BY_AGENT_KEY, BY_ACCESS_KEY)
+
+
+def access_key_label(scope: dict) -> Optional[str]:
+    """The label of the old access key the request came in on, or None."""
+    return scope.get(LEGACY_LABEL) if scope.get(ADMITTED) == BY_ACCESS_KEY else None
 
 
 def _header(scope: dict, name: bytes) -> Optional[str]:
@@ -595,7 +607,16 @@ def scope_authorized(scope: dict) -> bool:
     if scope.get(ADMITTED) == BY_AGENT_KEY:
         return True
     scope[ADMITTED] = admission(_header(scope, b"origin"), _header(scope, b"authorization"))
+    if scope[ADMITTED] is None:
+        from jarvis import legacy_access
+        label = legacy_access.admit(
+            bearer(_header(scope, b"authorization")),
+            agent_rights.WEBSOCKET if scope.get("type") == "websocket"
+            else scope.get("method", "").upper(), scope.get("path", ""))
+        if label is not None:
+            scope[ADMITTED], scope[LEGACY_LABEL] = BY_ACCESS_KEY, label
     return scope[ADMITTED] is not None
+
 
 
 def principal(scope: dict) -> Optional[str]:
@@ -633,7 +654,7 @@ async def _signed(scope: dict, receive):
     """Judge a signed request: (receive to pass on, None) when it may go on,
     or (receive, (status, why)) when it is refused. Writes ADMITTED,
     PRINCIPAL and SIGNED_KEY into the scope."""
-    from jarvis import agent_auth, agent_rights
+    from jarvis import agent_auth
     websocket = scope.get("type") == "websocket"
     method = "GET" if websocket else scope.get("method", "").upper()
     body = b""

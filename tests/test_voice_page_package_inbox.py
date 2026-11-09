@@ -51,8 +51,7 @@ def jarvis_app(monkeypatch, tmp_path):
     raw, stamped = tmp_path / "raw.zip", tmp_path / "deck.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     agent = onboarded_auth(session="sess-1").agent
-    package_signature.sign(raw, stamped, agent.private, agent.public, "sess-1", "",
-                           (package_signature.DECISION_CHECKED,))
+    package_signature.sign(raw, stamped, agent.private, agent.public, "sess-1", (package_signature.DECISION_CHECKED,))
     (tmp_path / "work").mkdir()
     item = work_store.create("Office tea service", "folder", str(tmp_path / "work"))
     from fastapi.testclient import TestClient
