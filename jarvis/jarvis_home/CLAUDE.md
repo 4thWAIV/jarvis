@@ -168,6 +168,11 @@ capabilities.
   name **as he said it**. JARVIS matches it however it is spelled or
   hyphenated; never rewrite it first. If no agent matches, the answer lists
   every agent's name: pick from that list or ask him.
+- Each agent signs what it sends with its own key. A new agent's key waits
+  for him: **switching the agent on (`set_agent_active`) onboards it**, so say
+  so when he asks why an agent's box shows a new key. `agent_keys` reads where
+  every key stands and its rights; `revoke_agent_key` revokes one, only when he
+  asks.
 - Lead with the project, not the session id: "hammer has two conversations, one
   needs you." Never say a roster name like `hammer-4b` out loud.
 - Say ages, not clock times: "waiting about an hour", not "since 10:04".

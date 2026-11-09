@@ -226,6 +226,8 @@ ALLOWED_TOOLS = [
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
+    "mcp__jarvis__agent_keys",
+    "mcp__jarvis__revoke_agent_key",
     # The page's navigation and white attention (ui_control.py): ui_map reads
     # (untrusted block); ui_navigate, ui_indicate and ui_journey are ACTING_TOOLS.
     "mcp__jarvis__ui_map",
@@ -380,13 +382,17 @@ class ClaudeSession:
         cmd = shlex.split(self.claude) + [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages",
-            "--model", c.model, "--effort", c.effort, "--name", "jarvis",
-            "--setting-sources", "project", "--strict-mcp-config",
-            "--tools", ",".join(granted_tools(c.connections)),
+            "--name", "package-author" if c.authoring else "jarvis",
+            "--setting-sources", "user,project" if c.authoring else "project", "--strict-mcp-config",
+            "--tools", "default" if c.authoring else ",".join(granted_tools(c.connections)),
             "--settings", json.dumps({"crossSessionInbound": "accept"}),
             "--dangerously-skip-permissions",
             "--append-system-prompt", instructions,
         ]
+        if c.model:
+            cmd += ["--model", c.model]
+        if c.effort:
+            cmd += ["--effort", c.effort]
         if c.mcp_config:
             cmd += ["--mcp-config", str(c.mcp_config)]
         cmd += list(c.extra_args)

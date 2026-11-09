@@ -118,6 +118,10 @@ def _newest_source() -> float:
 def built_page() -> Path:
     """The voice page built by vite into a temporary folder, kept while no
     source is newer, so a second package does not build it again."""
+    if not data_paths.CHECKOUT:
+        if (data_paths.FRONTEND_DIST / "index.html").is_file():
+            return data_paths.FRONTEND_DIST
+        raise CheckFailed("The installed JARVIS page is missing from this distribution.")
     key = hashlib.sha256(f"{FRONTEND}:{_newest_source()}".encode()).hexdigest()[:16]
     dist = Path(tempfile.gettempdir()) / f"jarvis-decision-page-{key}"
     if (dist / "index.html").is_file():

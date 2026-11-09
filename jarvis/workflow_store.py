@@ -376,13 +376,13 @@ def _answered_by(conn, event: WorkflowEvent, now: float) -> "wait_links.Settled"
     ends at once."""
     if event.kind == "decision_made" and _his(event.detail):
         found = wait_links.answer(wait_links.WORKFLOW, {event.workflow_id},
-                                  _open_key(event), str(event.detail.get("how") or "page"), now)
+                                  open_key(event), str(event.detail.get("how") or "page"), now)
         return wait_links.settle(conn, found, now)
     if event.kind == "wait_started" and event.detail.get("link"):
         link = wait_links.parse(event.detail["link"])
         found = wait_links.already(conn, link, wait_links.WORKFLOW, event.workflow_id)
         if found is not None:
-            _end_wait(conn, event.workflow_id, _open_key(event), link, found, now)
+            _end_wait(conn, event.workflow_id, open_key(event), link, found, now)
             return wait_links.Settled(workflows={event.workflow_id})
     return wait_links.Settled()
 
@@ -461,7 +461,7 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> Optional[WorkflowEven
                 detail.get("outcome"), ItemState.done)
             _set_item(conn, wid, slug, outcome)
     elif kind in _OPENS:
-        key = _open_key(event)
+        key = open_key(event)
         if kind == "wait_started":
             event = _linked(conn, event, key)
             detail = event.detail
@@ -475,7 +475,7 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> Optional[WorkflowEven
             (wid, _OPENS[kind], key, event.summary, json.dumps(detail), now))
         return event
     elif kind in _CLOSES:
-        key = _open_key(event)
+        key = open_key(event)
         gone = conn.execute("DELETE FROM workflow_open WHERE workflow_id=? AND kind=? AND key=?",
                             (wid, _CLOSES[kind], key)).rowcount
         if not gone:
@@ -524,7 +524,7 @@ def decision_answer(conn, wid: str, key: Optional[str]) -> "Optional[wait_links.
     except sqlite3.OperationalError:
         return None
     for e in map(_event, rows):
-        if _his(e.detail) and _open_key(e) == key:
+        if _his(e.detail) and open_key(e) == key:
             return wait_links.answer(wait_links.WORKFLOW, {wid}, key,
                                      str(e.detail.get("how") or "page"), e.at)
     return None
@@ -590,10 +590,10 @@ def _answered(conn, wid: str, key: str) -> bool:
     """Whether a decision_made under `key` carried an answer."""
     rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
                         "AND kind='decision_made'", (wid,))
-    return any("answer" in e.detail and _open_key(e) == key for e in map(_event, rows))
+    return any("answer" in e.detail and open_key(e) == key for e in map(_event, rows))
 
 
-def _open_key(event: WorkflowEvent) -> str:
+def open_key(event: WorkflowEvent) -> str:
     """Which wait, decision or blocker: `detail.key`, else the item, else
     the summary made a slug. The closing event names the same one."""
     key = event.detail.get("key")
@@ -779,8 +779,7 @@ def with_decisions(boards: list) -> list:
                     f"- {w.name} needs a decision ({o.key}): {o.summary}")
     out = list(boards)
     for (project, reporter), extra in lines.items():
-        who = reporters.of_label(reporter[len(reporters.KEY_PREFIX):]) \
-            if reporter.startswith(reporters.KEY_PREFIX) else None
+        who = reporters.of_kept(reporter)
         out.append(session_needs.Board(project, "## Workflow decisions\n" + "\n".join(extra),
                                        time.time(), session=who.sessions[0] if who and
                                        who.sessions else "",

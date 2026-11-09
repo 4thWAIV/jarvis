@@ -764,10 +764,15 @@ def test_a_claimed_session_nothing_proves_gets_no_answers_and_the_row_says_so(
     assert not any(c.get("to_session") == "sess-1" for c in wired.server._captures.values())
 
 
+@pytest.mark.parametrize("command, source", [
+    ("python -m jarvis.make_package notes/ --session sess-1", "notes"),
+    ("python -m jarvis.make_package --handoff handoff.json --engine codex --session sess-1", "handoff.json"),
+    ("python -m jarvis.make_package --handoff handoff.json --engine claude --session sess-1", "handoff.json"),
+])
 def test_the_claimed_session_s_transcript_running_make_package_proves_it(
-        wired, shown, marks, proof):
-    proof("sess-1", "python -m jarvis.make_package notes/ --session sess-1")
-    got = send(wired, page_zip(), session="sess-1", source="notes").json()
+        wired, shown, marks, proof, command, source):
+    proof("sess-1", command)
+    got = send(wired, page_zip(), session="sess-1", source=source).json()
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
         "sess-1", "chitauri", "transcript")

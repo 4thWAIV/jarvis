@@ -144,6 +144,7 @@ def test_the_page_reads_and_activates(wired):
     assert row["activity"] is None  # Registration alone is not observed activity.
     assert row["subagents_working"] == 0 and row["subagents_capped"]
     assert row["snapshot_id"]
+    assert (row["key"], row["key_fingerprint"]) == (None, None)  # no key of its own yet
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["active"] is True
     assert client.post("/api/agents/nope/active", json={"active": True},

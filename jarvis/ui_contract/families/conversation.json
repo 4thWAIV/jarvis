@@ -31,7 +31,7 @@
                        {"view": "main.takeover", "reveal": {"command": "layout.sheet", "args": {"shown": true}}}]},
     {"kind": "sources", "entity": "record", "label": "Sources", "parts": ["chip", "items"],
      "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
-    {"kind": "agentThread", "entity": "session", "label": "Agent thread", "parts": ["header", "state", "close", "earlier"],
+    {"kind": "agentThread", "entity": "session", "label": "Agent thread", "parts": ["header", "state", "close", "earlier", "key", "revoke"],
      "presentations": [{"view": "main.thread", "reveal": {"command": "thread.open", "args": {"sessionId": "$key"}}}]},
     {"kind": "threadRecord", "entity": null, "keyOf": ["session", "record"], "label": "Thread record",
      "parts": ["record", "text", "answer", "agent", "expand", "restore"],

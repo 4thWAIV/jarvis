@@ -2,9 +2,10 @@
 
 The session running a long workflow calls this at every step, so the one
 durable record (workflow_store.py) always has the latest state and JARVIS
-can say it. It needs an access key in the `workflows` category in
-JARVIS_ACCESS_KEY (`python -m jarvis.access_keys create <label> workflows`), and
-trusts the certificate given with --cert (the talk-to-jarvis skill gives
+can say it. Every request is signed with the agent's own onboarded key
+(`--as <session id>`, or JARVIS_AGENT_SESSION; agent_keys.py), or, while they
+are still accepted, carries an access key in the `workflows` category in
+JARVIS_ACCESS_KEY. It trusts the certificate given with --cert (the talk-to-jarvis skill gives
 JARVIS's own). It reaches JARVIS at JARVIS_URL when that is set (a reporter
 that runs outside this data folder says where JARVIS is), else at the address
 the running server recorded (`server_address.running()`), else at
@@ -12,7 +13,7 @@ https://localhost:8340. A recorded loopback address (127.0.0.1 or ::1) is
 dialled as localhost on the recorded scheme and port, because the certificate
 names localhost and not the address. It runs as a plain script, under
 whichever Python the session has, so it imports nothing outside the standard
-library and the package's own `server_address`.
+library and the package's own `server_address` and `agent_keys`.
 
     python workflow_report.py [--cert <cert.pem>] start <name> --project <project> [--phase <phase> ...]
     python workflow_report.py event <id> <kind> <summary> [--item <slug>] [--key <slug>]
@@ -46,7 +47,7 @@ if not __package__:
     # package's parent on the path so this copy's own package is imported.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis import server_address  # noqa: E402
+from jarvis import agent_keys, server_address  # noqa: E402
 
 DEFAULT_URL = "https://localhost:8340"
 # Hosts the certificate does not name; a server recorded on one is dialled as localhost.
@@ -71,8 +72,12 @@ class _Client:
     """Just enough HTTP for this command, with the standard library only, so
     it runs under whichever Python the reporting session has."""
 
-    def __init__(self, base_url: str, key: str, cert: Path | None):
-        self.base_url, self.key = base_url, key
+    def __init__(self, base_url: str, key: str, cert: Path | None,
+                 signer: tuple[Path, str] | None = None):
+        # `signer` is the agent's own key (agent_keys.signer_for): every
+        # request is signed with it. Without one, `key` is an access key
+        # sent as a bearer, as before agents had keys.
+        self.base_url, self.key, self.signer = base_url, key, signer
         self.context = ssl.create_default_context(cafile=str(cert) if cert and cert.exists() else None)
 
     def __enter__(self):
@@ -85,8 +90,18 @@ class _Client:
               params: dict | None = None) -> _Response:
         url = self.base_url + path + (("?" + urllib.parse.urlencode(params)) if params else "")
         data = json.dumps(body).encode() if body is not None else None
-        request = urllib.request.Request(url, data=data, method=method, headers={
-            "Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
+        return self.send_bytes(method, url, data, "application/json")
+
+    def send_bytes(self, method: str, url: str, data: bytes | None,
+                   content_type: str) -> _Response:
+        """One request, signed by the agent's key when it has one."""
+        headers = {"Content-Type": content_type}
+        if self.signer:
+            headers["Authorization"] = agent_keys.request_header(
+                self.signer[0], self.signer[1], method, url, data or b"")
+        elif self.key:
+            headers["Authorization"] = f"Bearer {self.key}"
+        request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, context=self.context, timeout=10) as r:
                 return _Response(r.status, r.read(), r.headers.get("content-type", ""))
@@ -100,11 +115,24 @@ class _Client:
         return self._send("GET", path, params=params)
 
 
-def _client(cert: Path | None) -> _Client:
+def signed_client(cert: Path | None, session_id: str = "", right: str = "workflows") -> _Client:
+    """A client that signs with the agent's own key (its session's, from
+    `session_id` or JARVIS_AGENT_SESSION, else a work-item key in this
+    folder or above), else, while access keys are still accepted, one that
+    sends JARVIS_ACCESS_KEY."""
+    signer = agent_keys.signer_for(session_id)
+    if signer:
+        return _Client(base_url(), "", cert, signer)
     key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
     if not key:
-        raise SystemExit("Set JARVIS_ACCESS_KEY to an access key in the workflows category.")
+        raise SystemExit("No agent key: run python -m jarvis.agent_key init --session <your "
+                         "session id> and submit it, then give --as <your session id> "
+                         f"(or set JARVIS_ACCESS_KEY to an access key in the {right} category).")
     return _Client(base_url(), key, cert)
+
+
+def _client(cert: Path | None, session_id: str = "") -> _Client:
+    return signed_client(cert, session_id, "workflows")
 
 
 def base_url() -> str:
@@ -148,6 +176,8 @@ def _post(client, path: str, body: dict) -> dict:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="workflow_report.py")
     parser.add_argument("--cert", type=Path)
+    parser.add_argument("--as", dest="as_session", default="",
+                        help="your session id: every request is signed with its key")
     sub = parser.add_subparsers(dest="command", required=True)
     start = sub.add_parser("start")
     start.add_argument("name")
@@ -169,7 +199,7 @@ def main(argv: list[str]) -> int:
     answer.add_argument("key")
     args = parser.parse_args(argv[1:])
 
-    with _client(args.cert) as client:
+    with _client(args.cert, args.as_session or getattr(args, "session", None) or "") as client:
         if args.command == "start":
             print(_post(client, "/api/workflows", {"name": args.name, "project": args.project,
                                                    "phases": args.phase})["id"])

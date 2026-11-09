@@ -226,7 +226,8 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
     w = SimpleNamespace(id="wf-1", name="build", state="succeeded")
     for kind in ("phase_started", "decision_needed", "blocker_raised", "workflow_finished",
                  "task_started"):
-        server._workflow_recorded(w, SimpleNamespace(kind=kind, item="phase-2"))
+        server._workflow_recorded(w, SimpleNamespace(kind=kind, item="phase-2", summary="Which?",
+                                                    detail={}, reporter=""))
     staged = server._StagedSteer(session_id="s1", voice_name="hammer", project="jarvis",
                                  prompt="go", socket_path=None, message_id=11)
     destination = server._AgentDestination(staged)

@@ -103,16 +103,35 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     # Brain stream is already recorded at the producer; don't derive activity
     # from conversation text or start another pulse/timer mechanism.
     brain_tools = {}
+    brain_turns = {}
+    for turn in (brain_events or {}).get('open_turns', []):
+        brain_turns.setdefault(turn.get('provider') or 'unknown', set()).add(turn['id'])
     for event in (brain_events or {}).get('events', []):
         if event.get('kind') not in ('turn', 'tool'):
             continue
         provider = event.get('provider') or 'unknown'
         stage = event.get('stage')
         if event['kind'] == 'turn':
+            turns = brain_turns.setdefault(provider, set())
+            turn_id = event.get('id') or 'turn'
+            if stage in ('completed', 'failed', 'cancelled'):
+                turns.discard(turn_id)
+            else:
+                turns.add(turn_id)
             state = ('idle' if stage in ('completed', 'failed', 'cancelled') else
                      'generating' if stage in ('first_output', 'streaming') else 'model_work')
-            if state == 'idle': brain_tools.pop(provider, None)
+            if state == 'idle':
+                brain_tools.pop(provider, None)
+                if turns: state = 'model_work'
         else:
+            # Operator/host tools are recorded in this same feed. They do
+            # not establish a brain turn, nor reopen one that has ended.
+            if not brain_turns.get(provider):
+                if brain_events is not None and 'open_turns' in brain_events:
+                    row = add(provider, 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
+                    row['activity'] = {'state': 'idle', 'turn_open': False,
+                                       'observed_at': event.get('at'), 'source': 'brain_stream', 'coverage': 'stream'}
+                continue
             active_tools = brain_tools.setdefault(provider, set())
             call = event.get('call_id') or event.get('id') or event.get('tool') or 'unknown'
             if stage == 'started': active_tools.add(call)
@@ -121,6 +140,25 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         row = add(provider, 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
         row['activity'] = worker_activity.current({'state': state, 'observed_at': event.get('at'),
                                                   'source': 'brain_stream', 'coverage': 'stream', 'turn_open': state != 'idle'}, now)
+    # The producer owns turn lifetime. Its snapshot survives event eviction
+    # and includes overlapping turns without requiring another observer.
+    if brain_events is not None and 'open_turns' in brain_events:
+        if brain_events.get('provider'):
+            add(brain_events['provider'], 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
+        open_by_provider = {}
+        for turn in brain_events['open_turns']:
+            open_by_provider.setdefault(turn.get('provider') or 'unknown', []).append(turn)
+        for provider, turns in open_by_provider.items():
+            row = rows.get(identity(provider, 'brain')) or add(provider, 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
+            evidence = row['activity']
+            if evidence.get('state') in ('idle', 'unknown', 'offline'):
+                evidence = {**evidence, 'state': 'model_work',
+                            'observed_at': max(t['started_at'] for t in turns),
+                            'source': 'brain_stream', 'coverage': 'stream'}
+            row['activity'] = {**evidence, 'turn_open': True}
+        for row in rows.values():
+            if row['kind'] == 'brain' and row['provider'] not in open_by_provider:
+                row['activity'] = {**row['activity'], 'state': 'idle', 'turn_open': False}
     if stale:
         for row in rows.values():
             if row['kind'] != 'brain' and not worker_activity.managed(row['provider'], row['session_id']):

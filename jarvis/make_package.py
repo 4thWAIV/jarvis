@@ -1,7 +1,7 @@
 """The one way an agent makes a package and sends it to Tim.
 
-    python -m jarvis.make_package CONTENT.json | FOLDER [--project P] [--session ID]
-                                  [--workflow ID] [--work ID]
+    python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
+                                  --session ID [--project P] [--workflow ID] [--work ID]
                                   [--check-only] [--example [decisions|presentation]]
 
 docs/making-a-package.md is the whole of how to use it. In short:
@@ -17,7 +17,9 @@ docs/making-a-package.md is the whole of how to use it. In short:
   has no story) gets the same vote as its story's last slide. An agent or
   conversation package cannot carry a vote, so it may not name a Work item.
 
-Either way the command checks it, builds and zips it, checks it again (a deck
+The command launches a fresh author on the caller's engine first. Existing source
+can accompany the handoff as evidence; --check-only validates source without a model.
+The command checks the author's result, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the
 receiver's own reading of the zip, work_packages.recognise), and only then
 sends it to the live JARVIS's package inbox (package_inbox.py): unpacked
@@ -46,7 +48,7 @@ USUAL_FILES = {"page": "index.html", "agent": "BRIEF.md", "conversation": "SKILL
 STORY_FILE = "story.json"
 DEFAULT_RETURNS = ["results/**"]
 MANIFEST_FIELDS = ("name", "version", "purpose", "runs", "skill", "brief", "entry", "story",
-                   "returns", "understanding")
+                   "returns", "understanding", "communication")
 STORY_HELPER = "/api/packages/story.js"
 FIRST_VERSION = "1.0.0"
 
@@ -159,6 +161,11 @@ def manifest_of(folder: Path) -> dict:
         raise dp.Refused([f"{path} must be one JSON object."])
     problems = dp.unknown_fields("package.json", given, "package.json", MANIFEST_FIELDS)
     manifest = dict(given)
+    try:
+        from jarvis.language_projection import folder_gate
+        folder_gate(folder, manifest.get("communication"))
+    except (ValueError, OSError) as error:
+        problems.append(f"Architecture publication refused: {error}")
     if not dp._text(manifest.get("purpose")).strip():
         problems.append(f"{path} needs a purpose: one sentence saying what the package does "
                         f"and why. It is the one field that cannot be worked out.")
@@ -238,7 +245,7 @@ def _with_vote(built: Path, manifest: dict) -> None:
         package_story.parse(json.dumps(told).encode("utf-8"))
     except package_story.StoryError as e:
         raise dp.Refused([f"The vote could not be added to its story: {e}"])
-    path.write_text(json.dumps(told, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_bytes(package_story.encode(told))
     manifest["story"] = path.name if not named else named
     # A story made here is understood as the page it is told over is: the
     # author's understanding names every member it holds.
@@ -337,7 +344,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         description="Make a package, check it, and deliver it to Tim's JARVIS. "
                     "docs/making-a-package.md has everything.")
     parser.add_argument("source", type=Path, nargs="?",
-                        help="a deck's content (one JSON file) or a hand-made package's folder")
+                        help="existing source to validate with --check-only or give the fresh author as evidence")
+    parser.add_argument("--handoff", type=Path, help="JSON evidence, audience and questions for the fresh author")
+    parser.add_argument("--engine", choices=("claude", "codex"), help="the originating session’s own engine")
     parser.add_argument("--example", nargs="?", const="decisions",
                         choices=("decisions", "presentation"),
                         help="print a minimal deck to start from, and stop")
@@ -363,15 +372,15 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(json.dumps(dp.EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
                          indent=2))
         return 0
-    if args.source is None:
-        parser.error("give the content file or the package's folder (or --example)")
-    source = args.source.resolve()
-    if not source.exists():
+    if args.source is None and (args.check_only or args.handoff is None):
+        parser.error("give source for --check-only, or --handoff for creation")
+    source = args.source.resolve() if args.source else None
+    if source is not None and not source.exists():
         print(f"There is nothing at {source}.")
         return 1
     try:
-        check_vote(source, args.work)
         if args.check_only:
+            check_vote(source, args.work)
             if source.is_dir():
                 manifest = manifest_of(source)
                 print(f"The folder is right: a {manifest['runs']} package, "
@@ -387,6 +396,10 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
+        from jarvis import package_author
+        source = package_author.prepare(args.handoff, args.engine, out, source=source,
+                                        session=args.session, work=args.work, workflow=args.workflow)
+        check_vote(source, args.work)
         made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
     except dp.Refused as e:
         print("Not built. These need changing:")
@@ -407,7 +420,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             decision_stamp.stamp(made.archive, made.archive, token)
         delivered = dp.deliver(made.archive, args.deliver_to, token, project=args.project,
                                session=args.session, workflow=args.workflow, work=args.work,
-                               source=str(args.source))
+                               source=str(args.handoff or args.source))
     except OSError as e:
         print(f"Not delivered: {e}")
         return 1

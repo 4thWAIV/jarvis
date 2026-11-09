@@ -147,7 +147,7 @@ def test_he_answers_on_the_page_and_the_reporter_reads_it_back(wired, monkeypatc
 
     from jarvis import workflow_report
     monkeypatch.setattr(workflow_report, "_client",
-                        lambda cert: TestClient(server.app, headers=key))
+                        lambda cert, session="": TestClient(server.app, headers=key))
     assert workflow_report.main(["workflow_report.py", "answer", wid, "engine"]) == \
         workflow_report.NOT_ANSWERED
 
@@ -163,7 +163,7 @@ def test_the_reporter_starts_and_reports(wired, monkeypatch, capsys):
     key = _key()
     from jarvis import workflow_report
     monkeypatch.setattr(workflow_report, "_client",
-                        lambda cert: TestClient(server.app, headers=key))
+                        lambda cert, session="": TestClient(server.app, headers=key))
     assert workflow_report.main(["workflow_report.py", "start", "Rebrand", "--project", "denice",
                                  "--phase", "copy", "--phase", "merge"]) == 0
     wid = capsys.readouterr().out.strip()

@@ -69,15 +69,66 @@ this presents as "the UI is up but nothing works" rather than as an error.
   request including reads, because DNS rebinding is the way around "no
   CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
   and then needs `JARVIS_ALLOWED_ORIGINS`.
-  An agent the user lets do one kind of thing carries an access key
-  instead of the token (`access_keys.py`): it opens only the routes of its
-  categories (`captures`, `agents`, `runs`, `workflows`, `work`, `watch`), never the voice
-  socket, settings or `/internal/tool`. `python -m jarvis.access_keys create
-  <label> <category>...` prints the key once; only its digest is stored.
+  An onboarded agent signs each request with its own key instead (see
+  "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights. Until
+  the cut-over an agent may still carry an access key (`access_keys.py`):
+  it opens only the routes of its categories (the rights, defined in
+  `agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
+  `packages`, `watch`), never the voice socket, settings or
+  `/internal/tool`. `python -m jarvis.access_keys create <label>
+  <category>...` prints the key once; only its digest is stored. The one
+  route open with no credential is `POST /api/agent-keys`, a new agent's
+  key submission, which only records a pending key.
 
 ## Product direction
 
 `docs/roadmap.md` is the shared product roadmap; keep priorities and status distinctions there rather than duplicating them in implementation notes. The new React workspace is the primary user interface. Denice and its successor engine stages are future product work, not implemented backends to describe as available today.
+
+## Agent keys
+Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
+(`agent_keys.py`, every call through the one seam `RUNNER`; tests fake it,
+`ssh_keygen`-marked tests run the real one): the private half is a 0600
+file in `<its config home>/jarvis/agent-keys/<session id>/` and never
+leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
+only public keys (`agent_key_store.py`, schema `agent_keys_schema`: keys,
+`agent_rights`, `agent_key_events`, `legacy_admissions`). `python -m
+jarvis.agent_key init` makes it and `submit` posts it to `POST
+/api/agent-keys`, signed by itself (`jarvis-key-submit@v1`); a key is
+`pending` until its claimed session's own transcript (never a subagent's,
+`session_message_sender.called`: an assistant tool call naming
+`jarvis.agent_key`, `submit`, the session and the fingerprint) proves it,
+looked for at once and every `AGENT_KEYS_POLL_SEC` for
+`PROOF_WINDOW_SEC` (10 minutes), else dropped; at most `PENDING_MAX` (50)
+pending. Proven, it is `waiting`: a silent attention item (`agent_key`)
+and "New key" on the agent's box. Switching the agent on is Tim's act of
+onboarding it (his answer, Q1): `server._set_agent_active`, shared by the
+page's switch and the brain's `set_agent_active`, onboards the waiting key,
+recorded with the time and `page` or `voice`, gives it
+`agent_rights.DEFAULT_RIGHTS` (`work`, `workflows`, `packages`, `watch`,
+his answer, Q2) when the agent has none, revokes the session's older key,
+and adopts an access-key label naming exactly that agent
+(`_adopted_label`), so its earlier decisions stay its own
+(`reporters.aliases`). An active agent whose key waits shows its switch
+off, so switching it on accepts it. Signed requests (`Authorization:
+JARVIS-Signature key=, created=, nonce=, body=, sig=` over
+`jarvis-request@v1`, method, path, query, Host, created, nonce and body
+digest) are checked by `agent_auth.check` from the gate
+(`web_auth._signed`): within `FRESH_SEC` (60 s), a nonce not seen in 120 s,
+the whole body (at most 32 MB) matching its digest before the route runs,
+the key onboarded and live, then `agent_rights.allows`. A signed read by a
+key JARVIS holds goes on (`agent_key status` reads `GET
+/api/agent-keys/mine`). The principal (`agent:<session id>`) is
+`web_auth.principal`, recorded by `reporters.recorded` and shown by its one
+name; old `key:<label>` records stay readable. `work_report.py` and
+`workflow_report.py` sign with `--as <session id>` (or
+`JARVIS_AGENT_SESSION`), else send `JARVIS_ACCESS_KEY`. The agent's thread
+shows its key, when and how it was onboarded, its rights and Revoke
+(`POST /api/agent-keys/<fingerprint>/revoke`, the brain's acting
+`revoke_agent_key`); `agent_keys` reads them all, with the access-key
+admissions of the last week. Keys of agents dropped from the list are
+revoked. `agent-keys` and `work-key` are sensitive names to every folder
+reader. The design and its progress are
+`docs/planning/agent-keys/design.md`.
 
 ## Clearing the conversation
 JARVIS never clears, rotates or replaces its conversation without the user's
@@ -204,7 +255,20 @@ record in their agent's thread). `conversation_log.inbound` is the one way
 a message to him is recorded and refuses one without proof (`Unproven`);
 `outbound`, `thread_of` and `threads` are its other half. An agent's answer
 (proof `watcher`) and a session message (its own proof) go through it
-(`server._record_inbound`).
+(`server._record_inbound`). Phase 2: every other channel does too, each
+as a `message_in` item whose `source_kind` is a `conversation_log.Source`:
+a proven needs-board rewrite in its writer's thread (`_record_board`, the
+transcript proof `_board_writer` kept per rewrite; source
+`<project>:<mtime>`), a workflow's and a Work item's decision in its
+thread (`_record_workflow_decision`, `_record_work_decision`: proof
+`access_key` only when its reporter is a key, `_reported_proof`; source
+`<id>:<key>`), a package once its sender is proven, at arrival or on
+re-proof (`_record_package`, counterpart the inbox row), and a person's
+message (`_attend_arrival`, proof `team_server`, ref their GitHub id; the
+body is on `Arrival.text` for this record only, never the attention
+item). `message_in` items are kept out of `page` and `thread` (the
+Conversation view, an agent's thread and the brain's recall) until the
+page's one list (phase 4) decides where they show.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -1951,7 +2015,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and
   `WorkDetail.tsx` are the page's side
 - `access_keys.py` — Access keys by category, for agents the user lets
-  reach some of JARVIS's routes without the tool token
+  reach some of JARVIS's routes without the tool token, until the cut-over
+- `agent_keys.py` / `agent_key.py` / `agent_key_store.py` /
+  `agent_rights.py` / `agent_auth.py` — Agents' own keys: the ssh-keygen
+  seam and signing, the agent's command, the record of keys and rights,
+  the rights and their one check, and checking a signed request (see
+  "Agent keys")
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   about the needs board and session messages
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending

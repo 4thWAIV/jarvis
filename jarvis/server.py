@@ -115,6 +115,7 @@ from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
+from jarvis import access_keys, agent_key_store, agent_keys
 from jarvis import reporters
 from jarvis import make_package
 from jarvis import story_teller as story_teller_module
@@ -623,6 +624,85 @@ def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
         conversation_log.inbound(kind, counterpart, str(ref), name, text, evidence, **links)
     except Exception as e:
         log.warning(f"conversation: a {kind} from {counterpart} was not recorded: {e}")
+
+
+def _reported_proof(reporter: str) -> str:
+    """The proof a recorded reporter (reporters.recorded) gives of who sent
+    a report: an access key's label, else none (the tool token or the page
+    prove no agent, so `inbound` refuses it)."""
+    return "access_key" if str(reporter or "").startswith(reporters.KEY_PREFIX) else ""
+
+
+def _decision_message(where: str, question: str, options, recommendation) -> str:
+    """A decision asked of him, as its message in the asker's thread."""
+    lines = [f"Decision needed on {where}: {question}"]
+    picks = [str(o).strip() for o in options if str(o).strip()] \
+        if isinstance(options, list) else []
+    if picks:
+        lines.append("Options: " + "; ".join(picks))
+    if str(recommendation or "").strip():
+        lines.append(f"Recommended: {str(recommendation).strip()}")
+    return "\n".join(lines)
+
+
+def _record_board(board: "session_needs.Board") -> None:
+    """One proven rewrite of a needs board, as one message in its writer's
+    thread ("Planning's needs board: 3 items", then the board), with the
+    transcript proof that admitted it (`_board_writer`, kept per rewrite)."""
+    writer = _board_writer(board)
+    if writer is None:
+        return
+    n = board.items
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.AGENT,
+                    writer.session_id, writer.name,
+                    f"{writer.name}'s needs board: {n} item{'s' if n != 1 else ''}\n\n"
+                    f"{board.text}", writer.evidence,
+                    source_kind=conversation_log.Source.NEEDS_BOARD,
+                    source_id=f"{board.project.lower()}:{board.mtime}", subagent=writer.subagent)
+
+
+def _record_workflow_decision(w, event) -> None:
+    """A workflow's decision asked of him, one message in the workflow's
+    thread, proven by the access key that reported it."""
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.WORKFLOW,
+                    w.id, str(w.name or ""),
+                    _decision_message(str(w.name or "a workflow"), event.summary,
+                                      event.detail.get("options"),
+                                      event.detail.get("recommendation")),
+                    _reported_proof(event.reporter),
+                    source_kind=conversation_log.Source.WORKFLOW_DECISION,
+                    source_id=f"{w.id}:{workflow_store.open_key(event)}",
+                    detail={"reporter": event.reporter})
+
+
+def _record_work_decision(item, detail: Optional[dict]) -> None:
+    """A Work item's decision asked of him (its newest open one), one
+    message in the item's thread, proven by the access key that asked it."""
+    if not item.decisions:
+        return
+    d = max(item.decisions, key=lambda d: d.opened_at)
+    asker = str((detail or {}).get("asked_by") or "")
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.WORK,
+                    item.id, item.title,
+                    _decision_message(item.title, d.question, d.options, d.recommendation),
+                    _reported_proof(asker), source_kind=conversation_log.Source.WORK_DECISION,
+                    source_id=f"{item.id}:{d.key}", detail={"reporter": asker})
+
+
+def _record_package(entry, proven) -> None:
+    """A package in his inbox, one message in its thread, once its sender
+    is proven (`_package_sender`: the caller's key or the transcript that ran
+    make_package); one not proven is recorded when it is."""
+    if proven is None:
+        return
+    n = entry.decisions_total
+    text = (f"Package: {entry.title}" + (f"\n\n{entry.purpose}" if entry.purpose else "")
+            + (f"\n\n{n} decision{'s' if n != 1 else ''} to answer" if n else ""))
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.PACKAGE,
+                    entry.id, entry.title, text, proven.evidence,
+                    source_kind=conversation_log.Source.PACKAGE, source_id=entry.id,
+                    subagent=proven.subagent,
+                    detail={"agent": proven.name, "session": proven.session_id})
 
 
 def _agent_links(event: dict) -> dict:
@@ -1935,7 +2015,8 @@ async def _attend_message(event: dict) -> None:
         links = _agent_links(event)
         _record_inbound(conversation_log.ItemKind.ANSWER, conversation_log.Counterpart.AGENT,
                         links.get("agent_session_id"), links.get("agent_name") or "",
-                        message["reply"], "watcher", source_kind="message",
+                        message["reply"], "watcher",
+                        source_kind=conversation_log.Source.MESSAGE,
                         source_id=_message_number(message),
                         message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
@@ -2048,6 +2129,7 @@ def _attend_board(board: session_needs.Board) -> None:
     people's words."""
     _attend("needs_board", board.project.lower(), "changed", facts={"items": board.items},
             untrusted={"agent": _board_owner(board)})
+    _record_board(board)
 
 
 async def _every(seconds: float, what: str, look) -> None:
@@ -2099,7 +2181,8 @@ _session_messages_task: Optional[asyncio.Task] = None
 
 
 def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool = False,
-           since: float = 0.0, key=None) -> "Optional[session_message_sender.Sender]":
+           since: float = 0.0, key=None, own_only: bool = False
+           ) -> "Optional[session_message_sender.Sender]":
     """The listed agent, or a subagent of one, whose own transcript `shows`
     proves the act (session_message_sender.proven_by), from the sessions
     running now. None when nothing proves it. Never raises."""
@@ -2108,7 +2191,7 @@ def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool =
             shows, claimed, _snapshot_or_empty().sessions, session_watch.config_roots(),
             agent_directory.names_by_session(),
             codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()),
-            only_claimed=only_claimed, since=since, key=key)
+            only_claimed=only_claimed, since=since, key=key, own_only=own_only)
     except Exception:
         log.warning("%s: its sender was not worked out", what, exc_info=True)
         return None
@@ -2167,7 +2250,8 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                             conversation_log.Counterpart.AGENT, sender.session_id,
                             received.agent_name,
                             f"{received.subject}\n\n{received.body}".strip(), sender.evidence,
-                            source_kind="session_message", source_id=message_id,
+                            source_kind=conversation_log.Source.SESSION_MESSAGE,
+                            source_id=message_id,
                             subagent=sender.subagent, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
@@ -2749,6 +2833,7 @@ async def start_session_watcher() -> None:
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
     _spawn(_watch_inbox_proofs())
+    _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
         _usage_task = _spawn(_poll_usage())
@@ -3324,6 +3409,7 @@ async def lifespan(application: FastAPI):
     await start_session_watcher()
     start_folders()
     start_knowledge()
+    language_kit_updates.runtime.start()
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -3359,6 +3445,7 @@ async def lifespan(application: FastAPI):
     await _stop_attention()
     await transcription_api.stop()
     await stop_knowledge()
+    await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -4036,10 +4123,17 @@ async def api_list_sessions(state: str = ""):
 def _agents_for_page() -> list[dict]:
     """The agents list, as the agent directory gives it: each with `needs`,
     how many items its project's needs board holds (the board is kept per
-    project, so every agent in a project shows that project's count), and
-    `provider`, who runs it."""
+    project, so every agent in a project shows that project's count),
+    `provider`, who runs it, its worker activity from the inventory, and
+    `key`, where its own key stands (`waiting` for his switch, `onboarded`,
+    `pending`, or None)."""
     inventory = _worker_inventory()
     workers = {worker['id']: worker for worker in inventory['workers']}
+    try:
+        keys = agent_key_store.by_session()
+    except Exception:
+        log.warning("agents: the agent keys were not read", exc_info=True)
+        keys = {}
     answer = []
     for agent in agent_directory.agents():
         row = dataclasses.asdict(agent)
@@ -4048,6 +4142,9 @@ def _agents_for_page() -> list[dict]:
         row['snapshot_id'] = inventory.get('snapshot_id')
         row['subagents_working'] = worker['descendant_counts']['active'] if worker else 0
         row['subagents_capped'] = worker is None or bool(worker['descendant_counts']['unknown'])
+        key = keys.get(agent.session_id)
+        row['key'] = key.state if key else None
+        row['key_fingerprint'] = key.fingerprint if key else None
         answer.append(row)
     return answer
 
@@ -4107,12 +4204,206 @@ async def api_rename_agent(session_id: str, req: AgentNameRequest):
 
 @app.post("/api/agents/{session_id}/active")
 async def api_set_agent_active(session_id: str, req: AgentActiveRequest):
-    """The user activating or deactivating one agent, from the page."""
-    row = await asyncio.to_thread(run_store.set_agent_active, session_id, req.active)
+    """The user activating or deactivating one agent, from the page.
+    Switching it on also onboards its waiting key (`_set_agent_active`)."""
+    row, key = await asyncio.to_thread(_set_agent_active, session_id, req.active,
+                                       agent_key_store.ON_THE_PAGE)
     if row is None:
         return JSONResponse(status_code=404, content={"error": "No such agent"})
+    return {**row, "key": _key_json(key) if key else None}
+
+
+# ---------------------------------------------------------------------------
+# Agent keys: each agent's own key pair, submitted, proven and onboarded
+# (agent_keys.py, agent_key_store.py, agent_rights.py)
+# ---------------------------------------------------------------------------
+
+def _set_agent_active(session_id: str, active: bool, by: str):
+    """(the agent's row, the key it was onboarded with or None), or (None,
+    None) for no such agent. His switching an agent on is also his act of
+    onboarding its waiting key (Tim's answer to the design's Q1), recorded
+    as his with the time; switching it off changes no key. Shared by the
+    page's switch and the brain's `set_agent_active`."""
+    row = run_store.set_agent_active(session_id, active)
+    if row is None:
+        return None, None
+    key = _onboard_agent(session_id, by) if active else None
     _hint_agents_changed()
-    return row
+    return row, key
+
+
+def _adopted_label(session_id: str) -> str:
+    """The label of an access key that names exactly this agent, else "":
+    kept on onboarding so the decisions it asked under that key stay its
+    own."""
+    try:
+        for k in access_keys.listing():
+            found = agent_directory.named(k["label"])
+            if [a.session_id for a in found] == [session_id]:
+                return k["label"]
+    except Exception:
+        log.warning("agent keys: the access keys were not read", exc_info=True)
+    return ""
+
+
+def _onboard_agent(session_id: str, by: str):
+    """Onboard the agent's waiting key, if it has one. The key, or None."""
+    key = agent_key_store.onboard(session_id, by, _adopted_label(session_id))
+    if key is None:
+        return None
+    log.info("agent keys: %s onboarded for %s by %s", key.fingerprint, session_id, by)
+    _attention_resolved("agent_key", key.fingerprint)
+    _agent_key_onboarded(key)
+    return key
+
+
+def _agent_key_onboarded(key) -> None:
+    """What waited for this key now goes on. Nothing waits yet; held
+    packages and messages do from phase 4."""
+
+
+def _revoke_agent_key(key, by: str, why: str):
+    """Revoke one key (his Revoke, by voice, or JARVIS's own reason). The
+    revoked key, or None when it was not live."""
+    done = agent_key_store.revoke(key.fingerprint, by, why)
+    if done is not None:
+        _attention_resolved("agent_key", key.fingerprint)
+        _hint_agents_changed()
+    return done
+
+
+def _key_json(key) -> dict:
+    """A key as the page and the brain read it: its row and its rights."""
+    return {**key.public(), "rights": [dataclasses.asdict(g) for g in
+                                       agent_key_store.grants(key.principal)]}
+
+
+# How long before its submission a key's submit command may have been
+# written to its transcript (the call is recorded as it starts).
+KEY_PROOF_SLACK_SEC = 30.0
+
+
+def _prove_agent_key(key) -> bool:
+    """Prove a pending key from its claimed session's own transcript: an
+    assistant tool call running `jarvis.agent_key submit` naming the
+    session and the fingerprint. Never a subagent's file. Blocking."""
+    words = ("jarvis.agent_key", "submit", key.session_id, key.fingerprint)
+    since = key.submitted_at - KEY_PROOF_SLACK_SEC
+    sender = _prove("agent key", lambda t: session_message_sender.called(t, words, since),
+                    key.session_id, only_claimed=True, since=since, own_only=True)
+    if sender is None:
+        return False
+    proven = agent_key_store.proven(key.fingerprint, sender.evidence)
+    if proven is not None:
+        log.info("agent keys: %s proven for %s (%s)", key.fingerprint, sender.name,
+                 sender.evidence)
+        _attend("agent_key", key.fingerprint, "waiting", untrusted={"agent": sender.name},
+                audible=False)
+        _hint_agents_changed()
+    return True
+
+
+def _look_after_agent_keys(now: Optional[float] = None) -> None:
+    """Prove the pending keys, drop the ones past their window, and revoke
+    the keys of agents dropped from the list. Blocking."""
+    for key in agent_key_store.to_prove(now):
+        _prove_agent_key(key)
+    agent_key_store.drop_unproven(now)
+    listed = run_store.agent_names()
+    gone = [k.session_id for k in agent_key_store.by_session().values()
+            if k.state == agent_key_store.ONBOARDED and k.session_id not in listed]
+    if gone:
+        agent_key_store.revoke_where("jarvis", "its agent was dropped from the list", gone)
+        _hint_agents_changed()
+
+
+AGENT_KEYS_POLL_SEC = 5.0
+
+
+async def _watch_agent_keys() -> None:
+    """Once the session watcher has looked, `_look_after_agent_keys` every
+    AGENT_KEYS_POLL_SEC. Never raises out."""
+    for _ in range(600):
+        if session_watcher is not None and session_watcher.polled:
+            break
+        await asyncio.sleep(1.0)
+
+    async def look() -> None:
+        await asyncio.to_thread(_look_after_agent_keys)
+
+    await _every(AGENT_KEYS_POLL_SEC, "agent keys", look)
+
+
+class AgentKeySubmission(BaseModel):
+    session: str
+    public_key: str
+    signature: str
+    provider: str = ""
+
+
+@app.post(web_auth.SUBMIT_PATH)
+async def api_submit_agent_key(req: AgentKeySubmission):
+    """A new agent submitting its public key, signed by the key itself
+    (`python -m jarvis.agent_key submit`). The one route open with no
+    credential: it only ever records a pending key, which nothing trusts
+    until its session's own transcript proves it and Tim switches the agent
+    on."""
+    from jarvis import agent_key
+    try:
+        text = agent_key.submit_text(req.session, req.public_key)
+    except agent_keys.AgentKeyError as e:
+        return JSONResponse(status_code=422, content={"error": str(e)})
+    good = await asyncio.to_thread(agent_keys.verify, req.public_key, agent_keys.SUBMIT, text,
+                                   req.signature)
+    if not good:
+        return JSONResponse(status_code=403, content={
+            "error": "The submission is not signed by the key it submits."})
+    try:
+        key = await asyncio.to_thread(agent_key_store.submit, req.public_key, req.session,
+                                      req.provider)
+    except agent_key_store.KeyRefused as e:
+        return JSONResponse(status_code=409, content={"error": str(e)})
+    if key.state == agent_key_store.PENDING:
+        await asyncio.to_thread(_prove_agent_key, key)
+        key = await asyncio.to_thread(agent_key_store.get, key.fingerprint) or key
+    return {"fingerprint": key.fingerprint, "state": key.state}
+
+
+@app.get(web_auth.SUBMIT_PATH + "/mine")
+async def api_my_agent_key(request: Request):
+    """Where the signing key stands, for `agent_key status`."""
+    fingerprint = request.scope.get(web_auth.SIGNED_KEY)
+    key = await asyncio.to_thread(agent_key_store.get, fingerprint) if fingerprint else None
+    if key is None:
+        return JSONResponse(status_code=403, content={"error": "Sign the request with your key."})
+    return {"fingerprint": key.fingerprint, "state": key.state}
+
+
+@app.get(web_auth.SUBMIT_PATH)
+async def api_agent_keys(session: str = ""):
+    """Every live key, or the one that matters now for one agent."""
+    def read():
+        if session:
+            key = agent_key_store.for_session(session)
+            return {"key": _key_json(key) if key else None}
+        # Requests still admitted on access keys, by label, over a week: at
+        # none, the access keys can go (the cut-over).
+        return {"keys": [_key_json(k) for k in agent_key_store.listing()],
+                "access_key_admissions_7d": agent_key_store.legacy_counts()}
+    return await asyncio.to_thread(read)
+
+
+@app.post(web_auth.SUBMIT_PATH + "/{fingerprint:path}/revoke")
+async def api_revoke_agent_key(fingerprint: str):
+    """His Revoke, on the agent's detail."""
+    key = await asyncio.to_thread(agent_key_store.get, fingerprint)
+    if key is None:
+        return JSONResponse(status_code=404, content={"error": "No such key"})
+    done = await asyncio.to_thread(_revoke_agent_key, key, agent_key_store.ON_THE_PAGE,
+                                   "revoked by Tim")
+    if done is None:
+        return JSONResponse(status_code=409, content={"error": "That key is already revoked."})
+    return {"key": _key_json(done)}
 
 
 # The tool result cap is what keeps the brain's context under budget.
@@ -4295,6 +4586,10 @@ TAINT_EXEMPT_TOOLS = {
         "it puts the brain's own words on the screen and reads nothing; the "
         "page draws them as plain text and only web addresses are kept as links"),
     "rename_agent": "it sets a name on the agents list, it does not read",
+    "agent_keys": (
+        "it prints agent names through the same `_said_name` wall as every spoken "
+        "session name, and JARVIS's own record of keys, fingerprints and rights"),
+    "revoke_agent_key": "it revokes a key in JARVIS's own record, it does not read",
     "list_agents": (
         "it prints only agent and project names, each through the same "
         "`_said_name` wall as every spoken session name, and JARVIS's own "
@@ -4445,6 +4740,8 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     if tool not in ACTING_TOOLS:
         return None
     if tool in UNTRUSTED_READING_TOOLS or tool in TAINT_EXEMPT_ACTING:
+        return None
+    if tool == "language_document" and language_document_api.read_only_operation(args):
         return None
     if tool in UI_TAINT_EXEMPT_ACTING and not (
             ui_contract.declared_effects(UI_OPERATIONS[tool](args or {}))
@@ -6418,9 +6715,9 @@ def _refuse_unaddressed(capture: dict) -> None:
 
 def _refuse_an_agent_approving(request: Request, capture: dict) -> None:
     """A message to a person is approved by him alone: an agent admitted on
-    an access key may draft it and ask for the review, never accept or
+    its own key or an access key may draft it and ask for the review, never accept or
     send it (403)."""
-    if capture.get("human") and web_auth.admitted_by_access_key(request.scope):
+    if capture.get("human") and web_auth.admitted_by_agent(request.scope):
         raise HTTPException(status_code=403,
                             detail="Only he can approve a message to a person.")
 
@@ -7260,8 +7557,14 @@ messaging: Optional[messaging_runtime.MessagingRuntime] = None
 
 def _attend_arrival(arrival, audible: bool) -> None:
     """A person's message has come in (arrival_announcer.py): one item per
-    message, this node's to speak of once it holds the presentation lease."""
+    message, this node's to speak of once it holds the presentation lease;
+    and one message in the person's thread, proven by the team server (the
+    sender's GitHub id, bound to their device session). Recorded once."""
     _attend("arrival", arrival.message_id, "arrived", audible=audible, **arrival.attention())
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.PERSON,
+                    arrival.sender_github_id or "", arrival.sender, arrival.text, "team_server",
+                    source_kind=conversation_log.Source.PERSON_MESSAGE,
+                    source_id=str(arrival.message_id))
 
 
 def _start_messaging() -> None:
@@ -8387,7 +8690,12 @@ async def _open_package_page(reference: str
     (the package, "") or (None, why not)."""
     try:
         package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+        if package.manifest.communication and package.manifest.communication.get("kind") == "architecture":
+            from jarvis.language_projection import package_reader
+            await asyncio.to_thread(package_reader, package, package.manifest.communication.get("revision"))
     except work_packages.PackageError as e:
+        return None, str(e)
+    except ValueError as e:
         return None, str(e)
     if not voice_clients:
         return None, "No JARVIS page is open to show it on."
@@ -8477,6 +8785,18 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
             f"from slide {told.slide} of {total}; it is being told.")
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
+
+from jarvis import language_document_api, language_kit_updates
+language_documents = language_document_api.Adapter()
+language_document_api.mount(app, language_documents)
+
+async def tool_language_document(args):
+    return _wrap_untrusted("canonical document", language_document_api.encoded_page(
+        await language_documents.call(args, reported_by="brain-tool")))
+
+TOOL_HANDLERS["language_document"] = tool_language_document
+ACTING_TOOLS.add("language_document")
+TAINTING_TOOLS["language_document"] = "canonical source and its author's coverage declaration"
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
@@ -8727,6 +9047,7 @@ def _reprove_inbox_senders(now: Optional[float] = None) -> list[tuple]:
         if recorded is not None:
             log.info("package inbox: %s's sender %s", entry.id,
                      f"proven: {recorded.from_session}" if sender else f"not proven: {why}")
+            _record_package(recorded, sender)
             done.append((recorded, sender))
     if done:
         _hint_inbox([e for e, _ in done])
@@ -8789,6 +9110,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
     except package_inbox.InboxRefused as e:
         return None, None, str(e)
     _inbox_closed(arrival.superseded)
+    await asyncio.to_thread(_record_package, arrival.entry, proven)
     if arrival.fresh:
         _inbox_attend(arrival.entry)
         _inbox_wait(arrival.entry, "wait_started")
@@ -10293,6 +10615,8 @@ def _workflow_recorded(w, event) -> None:
     the ones worth saying."""
     _workflows_said_silent.discard(w.id)
     _send_to_session_clients({"type": "workflows"})
+    if event.kind == "decision_needed":
+        _record_workflow_decision(w, event)
     happened = _workflow_attended(w, event)
     if happened:
         _attend("workflow", w.id, happened, facts={"phase": str(event.item or "")}
@@ -10351,9 +10675,12 @@ def _attach_refused(scope: dict, session_id) -> str:
     session_id = str(session_id or "").strip()
     reporter = reporters.of_scope(scope)
     if reporter is None:
-        return ("Only an access key attaches a session to a workflow: the session it names "
-                "must be its own agent's.")
+        return ("Only an agent's own key attaches a session to a workflow: the session it "
+                "names must be its own.")
     if not reporter.owns(session_id):
+        if not reporter.label:
+            return ("That session is not yours: an agent's key attaches only its own "
+                    "session.")
         return (f"The access key {reporter.label!r} does not own that session: a key's label "
                 f"names its agent, and only that agent's own sessions may be attached.")
     return ""
@@ -11781,6 +12108,7 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
         # Closed for good: nothing it said is news any longer.
         _attention_resolved("work", item.id)
     elif kind == work_store.DECISION_NEEDED:
+        _record_work_decision(item, detail)
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
     elif said_state in _WORK_NEWS_STATES:
         _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})
@@ -12170,11 +12498,69 @@ def tool_set_agent_active(args: dict) -> str:
     if problem:
         return problem
     active = _truthy(args.get("active"))
-    row = run_store.set_agent_active(agent["session_id"], active)
+    row, key = _set_agent_active(agent["session_id"], active, agent_key_store.BY_VOICE)
     if row is None:
         return "That agent has just ended, sir."
-    _hint_agents_changed()
-    return f"{_agent_said(row)} is now {'active' if active else 'inactive'}, sir."
+    return (f"{_agent_said(row)} is now {'active' if active else 'inactive'}"
+            + (", and its key is onboarded" if key else "") + ", sir.")
+
+
+def _key_line(key, names: dict) -> str:
+    agent = names.get(key.session_id)
+    who = _agent_said({"name": agent}) if agent else "an agent no longer listed"
+    state = {agent_key_store.WAITING: "waits for you: switching it on onboards it",
+             agent_key_store.PENDING: "is submitted, not yet proven",
+             agent_key_store.ONBOARDED: "is onboarded",
+             agent_key_store.REVOKED: "is revoked"}.get(key.state, key.state)
+    when = (f", since {time.strftime('%d %B %H:%M', time.localtime(key.onboarded_at))} "
+            f"({key.onboarded_by})" if key.onboarded_at and key.state == "onboarded" else "")
+    rights = ", ".join(g.right + ("" if g.scope == "*" else f" ({g.scope})")
+                       for g in agent_key_store.grants(key.principal))
+    return (f"- {who}: key {key.fingerprint} {state}{when}"
+            + (f"; rights: {rights}" if rights and key.state == "onboarded" else ""))
+
+
+def tool_agent_keys(args: dict) -> str:
+    """The agents' keys: each one's agent, fingerprint, where it stands and
+    its rights. With `name`, only that agent's."""
+    names = agent_directory.names_by_session()
+    if str(args.get("name") or "").strip():
+        agent, problem = _find_agent(args)
+        if problem:
+            return problem
+        key = agent_key_store.for_session(agent["session_id"])
+        return (_key_line(key, names) if key else
+                f"{_agent_said(agent)} has submitted no key, sir.")
+    keys = agent_key_store.listing()
+    legacy = agent_key_store.legacy_counts()
+    tail = ([f"Access keys still used this week: {sum(legacy.values())} requests "
+             f"({len(legacy)} key{'s' if len(legacy) != 1 else ''})."] if legacy else
+            ["No access key was used this week."])
+    if not keys:
+        return "\n".join(["No agent has submitted a key, sir.", *tail])
+    return "\n".join([f"{_say_number(len(keys)).capitalize()} agent key"
+                      f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys]
+                     + tail)
+
+
+def tool_revoke_agent_key(args: dict) -> str:
+    """Revoke an agent's key, by the agent's name or the key's fingerprint,
+    as his Revoke does."""
+    wanted = str(args.get("fingerprint") or "").strip()
+    if wanted:
+        key = agent_key_store.get(wanted)
+        if key is None:
+            return "No key has that fingerprint, sir."
+    else:
+        agent, problem = _find_agent(args)
+        if problem:
+            return problem
+        key = agent_key_store.for_session(agent["session_id"])
+        if key is None:
+            return f"{_agent_said(agent)} has no key to revoke, sir."
+    done = _revoke_agent_key(key, agent_key_store.BY_VOICE, "revoked by Tim")
+    return ("Revoked, sir: nothing signed with that key is taken any more." if done
+            else "That key was already revoked, sir.")
 
 
 def tool_rename_agent(args: dict) -> str:
@@ -12198,9 +12584,11 @@ TOOL_HANDLERS.update({
     "list_agents": tool_list_agents,
     "set_agent_active": tool_set_agent_active,
     "rename_agent": tool_rename_agent,
+    "agent_keys": tool_agent_keys,
+    "revoke_agent_key": tool_revoke_agent_key,
 })
 # They change the user's own list; only he may ask for that.
-ACTING_TOOLS.update({"set_agent_active", "rename_agent"})
+ACTING_TOOLS.update({"set_agent_active", "rename_agent", "revoke_agent_key"})
 
 
 # ---------------------------------------------------------------------------

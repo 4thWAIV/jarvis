@@ -80,9 +80,10 @@ WEB_SEARCH_TOOL = "web_search"
 WINDOW_NAMES = {300: "five_hour", 10080: "seven_day"}
 
 
-def child_env() -> dict[str, str]:
+def child_env(*, authoring: bool = False) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
-    env["CODEX_HOME"] = str(data_paths.codex_home())
+    if not authoring:
+        env["CODEX_HOME"] = str(data_paths.codex_home())
     return env
 
 
@@ -282,16 +283,18 @@ class CodexSession:
         return shlex.split(self.codex) + list(args)
 
     async def open(self, instructions: str) -> None:
-        home = data_paths.codex_home()
-        write_config(self.config.mcp_config)
-        listing = await asyncio.create_subprocess_exec(
-            *self._cmd("features", "list"), env=child_env(), cwd=str(self.config.home),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await listing.communicate()
-        self.disabled = features_to_disable(out.decode(errors="replace"))
+        home = self.config.home if self.config.authoring else data_paths.codex_home()
+        env = child_env(authoring=self.config.authoring)
+        if not self.config.authoring:
+            write_config(self.config.mcp_config)
+            listing = await asyncio.create_subprocess_exec(
+                *self._cmd("features", "list"), env=env, cwd=str(self.config.home),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await listing.communicate()
+            self.disabled = features_to_disable(out.decode(errors="replace"))
         argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
         self.proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(self.config.home), env=child_env(),
+            *argv, cwd=str(self.config.home), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
         self._reader = asyncio.create_task(self._read_stdout(self.proc))
@@ -302,7 +305,8 @@ class CodexSession:
             self._notify("initialized")
             started = await self._call("thread/start", {
                 "model": self.config.model, "cwd": str(self.config.home),
-                "approvalPolicy": "never", "sandbox": "read-only",
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write" if self.config.authoring else "read-only",
                 "developerInstructions": instructions,
             }, timeout=self.config.warmup_timeout)
             thread = started.get("thread") or {}
