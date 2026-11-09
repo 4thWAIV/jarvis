@@ -46,3 +46,26 @@ message the package came in (`reply_to`), with a one-line text such as
 "Spanish speech test results" and every path `package_results` gave in
 `files`. Then `request_message_review`, offer to read it back, and send it
 only on their yes.
+
+
+## Supplied content
+
+### sentences.txt
+
+sí
+no
+cancela
+empezar de cero
+sí, adelante
+espérate un momento
+¿qué agentes están trabajando ahora?
+léeme el último mensaje del agente de diagnósticos
+mándale un mensaje al agente guardia preguntando cómo va
+¿tengo mensajes nuevos?
+recuérdame a las tres y media llamar al banco
+no reinicies el servidor hasta que pasen las pruebas
+¿cuántos agentes terminaron hoy?
+pon un temporizador de quince minutos
+son las cinco y cuarto de la tarde
+
+The scripts are technical support: fetch_model.py obtains the checked model, record.sh prompts and records each sentence, and bench.py measures the recordings. The instructions above describe their inputs, outputs and approval points.

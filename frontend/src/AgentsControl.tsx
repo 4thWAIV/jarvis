@@ -32,12 +32,13 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { WorkerFamily } from "./WorkerStatus";
 import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
 import { useT } from "./locale";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
-         switchedOn, workingCount, type AgentRow } from "./agents";
+         switchedOn, type AgentRow } from "./agents";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import {
@@ -243,10 +244,7 @@ function AgentItem({ agent, switchable, onToggle }: {
             </svg>
           </span>
         )}
-        {(agent.subagents_working ?? 0) > 0 && (
-          <span className="agent-subagents">
-            {workingCount(agent.subagents_working!, !!agent.subagents_capped)}</span>
-        )}
+        <WorkerFamily sessionId={agent.session_id} provider={agent.provider} />
       </button>
       {/* Only in the All view; in Active the agent's box takes the
           whole row. */}

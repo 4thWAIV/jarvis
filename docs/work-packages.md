@@ -390,3 +390,8 @@ is a three-slide deck on making a pot of tea. Its story rings each of the
 three ingredients, each of the four numbered steps, and on the last slide
 opens the green tea's detail view, points at its temperature and time, and
 closes it again. It sends nothing back (`returns` is empty).
+
+
+## Authored understanding
+
+`package.json` may name an `understanding` object mapping supplied member paths to author-written Markdown member paths. The existing optional `brief` and `skill` remain the entry points for authored instructions; multiple declared Markdown explanations are also available through the existing package inbox read. `make_package` requires coverage for supplied content and technical assets, checks that referenced Markdown exposes text, and excludes package metadata and the explanations themselves from self-mapping. Existing installed packages remain readable with their original manifests. See [author understanding](making-a-package.md#author-understanding) for creation examples and limits.

@@ -1,0 +1,39 @@
+{
+  "title": "UI agent status: keep native agents, show their work",
+  "slides": [
+    {
+      "title": "Keep Claude's agents. Observe what each one is doing.",
+      "short": "Native agents",
+      "say": "Claude will keep creating and running its own subagents. We will not route those agents through a replacement JARVIS host. The missing piece is observation: each worker's own request records and lifecycle events tell us when it is doing model work, executing tools, idle, or no longer reliably observed.",
+      "blocks": [{"picture": "native-observation.svg", "alt": "Native parent and child observed without routing execution through JARVIS", "caption": "Execution stays native. JARVIS receives activity observations."}]
+    },
+    {
+      "title": "The count must tell you what kind of work is happening",
+      "short": "Count meanings",
+      "say": "The main count should say model work. That means the worker is in a model-request phase, which may include waiting for the provider. Tools have their own count. If we lose reliable observation, the worker stays visible as unconfirmed. Actual arriving tokens give us an additional recent-output signal; they do not prove that tokens are continuously being generated between updates.",
+      "blocks": [
+        {"facts": [{"n": "3", "text": "Model work"}, {"n": "2", "text": "Executing tools"}, {"n": "1", "text": "Unconfirmed"}]},
+        {"note": "Illustrative counts. Assignment and occupied slots are separate."},
+        {"p": "Every worker stays under its parent or project. Workflow membership does not count it twice."}
+      ]
+    },
+    {
+      "title": "Native records can show requests and tools separately",
+      "short": "The evidence",
+      "say": "The child transcripts already contain request IDs that link to their own response blocks. Child sidecars also record completion and nested parent identity. Native hooks add tool boundaries and approval waits. We must fix one trap: a thinking block can carry an end-turn flag while more output is still coming. That flag alone cannot make the worker idle. A busy parent process also cannot stand in for its children's activity.",
+      "blocks": [
+        {"table": {"head": ["Observed event", "What it establishes"], "rows": [["Child request recorded", "Model request began"], ["Tool begins or batch finishes", "Tool phase boundaries"], ["Whole worker completion", "Worker is no longer active"], ["Observation lost", "Unconfirmed, not silently idle"]]}},
+        {"note": "Installed hook coverage is incomplete. The full native observer still needs building."}
+      ]
+    },
+    {
+      "title": "Show freshness, then prove the full path locally",
+      "short": "Next work",
+      "say": "Next we add the neutral hook recorder, track each request and tool batch, then connect those phases to the existing counters. The board will show when evidence last arrived. We will measure the delay rather than promise an instant count. The local exercise must include background children, simultaneous tools, slow requests and lost connections. Your active sessions have not been changed.",
+      "blocks": [
+        {"points": [{"b": "Record.", "text": "Native hooks and per-worker request boundaries."}, {"b": "Reconcile.", "text": "One phase and one identity per worker."}, {"b": "Show.", "text": "Model work, tools and missing coverage together."}, {"b": "Exercise.", "text": "Nested agents, delays, failures and recovery."}]},
+        {"note": "This is the revised plan. The native observer is not deployed yet."}
+      ]
+    }
+  ]
+}

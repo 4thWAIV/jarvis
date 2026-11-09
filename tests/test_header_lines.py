@@ -36,6 +36,7 @@ import importlib
 import re
 import sys
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -354,6 +355,18 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_understanding.prepare_deck": (
+        "it writes the author's structured slide/decision content and labeled narration into the "
+        "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
+        "that Markdown as untrusted; complete access and hostile delimiters are driven by "
+        "test_package_understanding.py"),
+    "codex_runtime._request": "Formats a fixed internal RPC method in a timeout/error, never a spoken header or brain instruction; runtime failures expose only the exception class in inventory JSON.",
+    "codex_runtime.event_evidence": "Formats a provider event-method name as evidence-source metadata; no text delta or tool argument is retained and the inventory tool output is taint-wrapped.",
+    "session_watch.build_snapshot": "Formats provider discovery failure metadata from a configured provider name and exception class; the inventory exposes it as JSON through the taint-wrapped list_workers tool, not a spoken line.",
+    "worker_activity.observation": "Formats provider and record type as a source identifier inside evidence JSON; the metadata is returned by list_workers under its registered untrusted-content wrapper.",
+    "worker_hooks.observations": "Formats a hook event kind as metadata in the native observer; the resulting inventory is JSON and list_workers is registered as tainting, with no spoken-header path.",
+    "worker_hooks.record": "Formats local event filenames only from clock and UUID values. Its JSON contains metadata, never prompts or tool arguments; it produces no hook stdout or human narration.",
+    "worker_inventory.build": "Formats stable provider/session IDs and coverage messages inside JSON. React renders these as text, and the identical list_workers tool output is registered as tainting rather than interpolated into a trusted header.",
     "project_store.answer_accomplishment": (
         "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (
@@ -839,6 +852,9 @@ EXEMPT = {
     "server._proven_boards": (
         "it logs only the projects whose boards were held, file stems JARVIS reads from its "
         "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "conversation_log.threads": (
+        "it lists threads as records, the counterpart's name as its newest message named "
+        "it; it says nothing, and every reader that shows a name walls it"),
     "server._inbox_sender": (
         "it keeps a package's proven sender on its row, clipped to the row's limit; the "
         "name reaches the page as text and the brain only inside package_inbox's wall"),
@@ -1919,7 +1935,8 @@ def _drive_package_inbox(server, session, monkeypatch):
                          {"answer": "electric", "choice": HOSTILE, "note": HOSTILE, "at": "",
                           "recommended": True}),
              pi.Question("blend", HOSTILE, "", [], "", "", False, None)]
-    monkeypatch.setattr(server, "_inbox_package", lambda entry: (object(), None))
+    monkeypatch.setattr(server, "_inbox_package", lambda entry: (
+        SimpleNamespace(manifest=SimpleNamespace(understanding=None)), None))
     monkeypatch.setattr(pi, "questions", lambda package: asked)
     return [server.tool_package_inbox({}), server.tool_package_inbox({"closed": True}),
             server.tool_package_inbox({"package": ids[0]}),
