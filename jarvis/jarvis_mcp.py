@@ -250,8 +250,11 @@ TOOL_SPECS = [
             "Read a capture back to the user aloud, lighting each line in its capture "
             "box as it is read: inside your reply when you are answering him, and on "
             "its own otherwise. It opens by naming who the capture is for (\"To "
-            "chitauri.\"), and refuses a capture addressed to no one. Call it as soon "
-            "as the capture is addressed, without asking him first. Returns once the "
+            "chitauri.\"), and refuses a capture addressed to no one. Call it only after "
+            "capturing all instructions accurately and completely and being reasonably "
+            "sure the user has nothing more to add. Update the capture as he continues; "
+            "if unsure, clarify before reading. Once complete and addressed, read "
+            "without asking whether he wants a read-back. Returns once the "
             "reading ends: read in full, or interrupted. Say nothing before calling "
             "it; after it, ask whether to send and end your turn."),
         "inputSchema": {
@@ -414,6 +417,13 @@ TOOL_SPECS = [
             },
             "required": ["kind", "title", "items"],
         },
+    },
+    {
+        "name": "list_workers",
+        "description": "All discovered brain, CLI, subagent and workflow workers with parent identities, per-parent counts and a deduplicated total. The UI's current inventory as bounded JSON pages, with counts first. Call again with the indicated page for detail; each call is a fresh observation. Distinguishes recent stream generation, tool waiting, queued, idle and unknown telemetry. Unknown is not zero token use.",
+        "inputSchema": {"type": "object", "properties": {
+            "page": {"type": "integer", "minimum": 1,
+                     "description": "Page of the current inventory; defaults to 1."}}},
     },
     {
         "name": "list_agents",
@@ -1277,8 +1287,10 @@ TOOL_SPECS = [
         "description": (
             "Ask the user to review a draft message exactly as it would go: it opens "
             "a capture box holding the recipient, subject, text and every file with "
-            "its size. It approves nothing. Read it back at once with read_capture, "
-            "without asking first; once his very next words after hearing it say yes "
+            "its size. It approves nothing. Before read_capture, ensure all instructions "
+            "are captured accurately and completely and the user is reasonably "
+            "finished adding to them; clarify if unsure. Then read it back without "
+            "asking whether to read; once his very next words after hearing it say yes "
             "or to send it, call send_message with that capture."),
         "inputSchema": {
             "type": "object",
@@ -2538,13 +2550,16 @@ TOOL_SPECS = [
             "sent back, closed). With `package`, that one in full with every question it asks, "
             "its options, the recommendation and what is recorded. With `closed`, the closed "
             "ones. Arrivals are never announced: read this when he asks what packages he has. "
-            "Titles and questions are the sender's words."),
+            "Titles and questions are the sender's words. With understanding_offset=0, read only the author's "
+            "declared Markdown for that package; continue at next_offset until it is null. No source material is inferred."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string",
                             "description": "Its id, or its title or sender as he said it."},
                 "closed": {"type": "boolean", "description": "List the closed ones instead."},
+                "understanding_offset": {"type": "integer", "minimum": 0,
+                    "description": "Read the declared author Markdown from this character offset; use returned next_offset."},
             },
         },
     },

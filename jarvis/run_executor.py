@@ -21,7 +21,7 @@ import time
 from typing import Callable
 
 from jarvis import claude_env
-from jarvis import stream_parser
+from jarvis import stream_parser, worker_activity
 
 log = logging.getLogger("jarvis.run_executor")
 
@@ -208,6 +208,7 @@ class RunExecutor:
                  poll_sec: float = _READ_POLL_SEC):
         self._store = store
         self._claude_path = claude_path or shutil.which("claude") or "claude"
+        self._occupied_slots = 0
         self._max_concurrent = max_concurrent
         self._grace_sec = grace_sec
         self._eof_grace_sec = eof_grace_sec
@@ -221,6 +222,8 @@ class RunExecutor:
         # Concurrency gate. A counting semaphore, not a poll over
         # active_count(): a burst of tasks that all reached the gate in the
         # same loop turn each counted the others as "active" and slept forever.
+        self._occupied_slots = 0
+        self._max_concurrent = max_concurrent
         self._slots = asyncio.Semaphore(max_concurrent)
         # Run ids whose cancellation has been *requested*. Recorded before the
         # signal is sent, so whichever coroutine reaches the terminal write
@@ -254,6 +257,14 @@ class RunExecutor:
         counts queued tasks too, which is exactly why it must not gate.
         """
         return len([t for t in self._tasks.values() if not t.done()])
+
+    def capacity(self) -> dict:
+        """Owned process slots and queued drivers; neither implies inference."""
+        occupied = self._occupied_slots
+        return {"scope": "managed_runs", "total": self._max_concurrent,
+                "occupied": occupied, "queued": max(0, self.active_count() - occupied),
+                "free": max(0, self._max_concurrent - occupied),
+                "external_slots": "unknown"}
 
     def _resolve_model(self, model: str | None) -> str:
         """Explicit argument, else JARVIS_RUN_MODEL, else 'sonnet'.
@@ -446,7 +457,7 @@ class RunExecutor:
     def _command(self, run_id: str, resume_from: str | None,
                 model: str | None = None) -> list[str]:
         base = shlex.split(self._claude_path)
-        cmd = base + ["-p", "--output-format", "stream-json", "--verbose",
+        cmd = base + ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                       "--session-id", run_id]
         if resume_from:
             # Verified against CLI 2.1.251: --session-id is rejected alongside
@@ -572,6 +583,7 @@ class RunExecutor:
         try:
             await self._slots.acquire()
             slot_held = True
+            self._occupied_slots += 1
 
             if run_id in self._cancelling:
                 # Cancelled while queued: never spawn anything.
@@ -758,6 +770,7 @@ class RunExecutor:
                 # shutdown and cancellation must still propagate.
                 raise
         finally:
+            worker_activity.forget_managed("anthropic", run_id)
             self._procs.pop(run_id, None)
             self._cancelling.discard(run_id)
             if stderr_task is not None and not stderr_task.done():
@@ -765,6 +778,7 @@ class RunExecutor:
             if slot_held:
                 # Released only after the child has been reaped, and on every
                 # exit path: a leaked permit permanently shrinks capacity.
+                self._occupied_slots -= 1
                 self._slots.release()
 
     async def _consume(self, run_id: str, proc) -> None:
@@ -803,6 +817,7 @@ class RunExecutor:
         # _IDLE_OUTPUT_SEC), so every wait for a line is also a chance to ask
         # the two questions EOF would otherwise have answered: has the
         # process exited, and has it been quiet for too long.
+        activity_stream = worker_activity.ManagedStream(run_id)
         line_task = None
         last_line = time.monotonic()
         # Consecutive quiet ticks during which the child has already exited.
@@ -868,7 +883,13 @@ class RunExecutor:
                 if event is None:
                     continue
 
+                activity_stream.record(event)
                 kind = stream_parser.event_kind(event)
+                # Partial chunks exist to measure live activity. The complete
+                # assistant blocks already persist the content and usage; do
+                # not duplicate every token in the permanent run-event log.
+                if kind == "stream_event" or (kind == "system" and event.get("subtype") == "thinking_tokens"):
+                    continue
                 # Capped, not stored verbatim: STREAM_LINE_LIMIT is 64 MiB
                 # and jarvis.db is permanent. See stream_parser.cap_payload —
                 # it shrinks the long strings inside the event rather than
@@ -938,5 +959,6 @@ class RunExecutor:
                 # (idle, exited-but-held, cancellation): there is nothing
                 # left for a line to change.
                 line_task.cancel()
+            activity_stream.close()
             # Never lose buffered events, even on cancellation or a read error.
             await flush()

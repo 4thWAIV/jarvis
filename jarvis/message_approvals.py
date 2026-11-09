@@ -751,6 +751,8 @@ class MessagingTools:
         except ports.SendRefused:
             return "That message is past review; list its item to see where it stands."
         return (f"Capture {draft.capture_id} holds the message as it would go. Nothing is "
-                f"approved. Read it back now with read_capture, without asking first; "
+                f"approved. Before read_capture, ensure the capture accurately contains all "
+                f"instructions and the user has reasonably finished adding to them; "
+                f"clarify if unsure. Then read it back without asking whether to read; "
                 f"on his yes after hearing it, call send_message with capture "
                 f"{draft.capture_id}.")

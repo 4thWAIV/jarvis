@@ -1,0 +1,23 @@
+{
+  "title": "UI agent status: native worker visibility",
+  "slides": [
+    {
+      "title": "See model work, tools and missing coverage separately",
+      "short": "What changed",
+      "say": "The change adds worker counts to the existing brain display and keeps children under their parent or project. Model work means a model request is in progress, including possible provider wait. Tools have a separate count. Unconfirmed means observation is missing or too old. Claude still creates and runs its own subagents.",
+      "blocks": [{"picture": "brain-slots-review.png", "alt": "Existing brain account displays with worker counts", "caption": "Illustrative counts shown by the production components."}]
+    },
+    {
+      "title": "A thinking block no longer means the agent has finished",
+      "short": "What was fixed",
+      "say": "Claude can put an end-turn flag on a thinking block while more output is still coming. We now track request references and the native completion marker. Parallel tools stay in the tool count until their work ends. Workflow membership does not duplicate a worker. If observation is lost, the last phase and its age stay visible instead of leaving a false active claim.",
+      "blocks": [{"points": ["Request and response IDs stay connected.", "Native completion markers end child activity.", "Parent and workflow references share one worker record.", "Stale evidence becomes unconfirmed, not idle."]}]
+    },
+    {
+      "title": "Deployment and live validation are still pending",
+      "short": "Release status",
+      "say": "This source is prepared for the deployment handoff; it is not a claim that the running app has been updated. Planning must deploy the application and install the neutral native observer. The default Claude login expired, so a new authenticated model test is still blocked. Existing sessions were not restarted. This slide must be updated with the actual release and live result before delivery.",
+      "blocks": [{"lead": "Not yet delivered to the running application."}, {"points": ["Merge and deploy after checks.", "Install observation hooks while preserving existing hooks.", "Show which sessions have actually reported lifecycle events.", "Complete the authenticated live check and record its result."]}]
+    }
+  ]
+}
