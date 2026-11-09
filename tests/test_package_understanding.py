@@ -230,3 +230,23 @@ def test_generated_output_name_cannot_clean_an_unrelated_directory(tmp_path):
     with pytest.raises(decision_package.Refused, match='Generated output must stay'):
         decision_package.build(content, tmp_path / 'out', deck)
     assert (unrelated / 'keep.txt').read_text() == 'Keep this author input.'
+
+
+@pytest.mark.parametrize('kind', ['caption', 'gallery-caption', 'decision-context'])
+def test_existing_author_picture_descriptions_need_no_duplicate_sidecar(tmp_path, kind):
+    from tests.test_decision_package import SVG, small_deck, write
+    deck = small_deck()
+    picture = 'pictures/explained.svg'
+    if kind == 'caption':
+        deck['slides'][0]['blocks'] = [{'picture': picture, 'caption': 'The blue area is the review boundary.'}]
+    elif kind == 'gallery-caption':
+        deck['slides'][0]['blocks'] = [{'pictures': [{'src': picture, 'caption': 'The blue area is the review boundary.'}]}]
+    else:
+        deck['decisions'][0].update(picture=picture, context='The blue area is the review boundary.')
+    content = write(tmp_path / 'in', deck)
+    (content.parent / picture).write_text(SVG)
+    archive = decision_package.build(content, tmp_path / 'out', deck)
+    with zipfile.ZipFile(archive) as z:
+        manifest = json.loads(z.read('package.json'))
+        assert manifest['understanding'][picture] == manifest['brief']
+        assert 'The blue area is the review boundary.' in z.read(manifest['brief']).decode()

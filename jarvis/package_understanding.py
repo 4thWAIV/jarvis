@@ -96,12 +96,17 @@ def authored_picture_references(deck):
     for slide in deck.get('slides', []):
         for block in slide.get('blocks', []):
             picture = block.get('picture')
-            if picture and block.get('alt'):
+            if picture and (block.get('alt') or block.get('caption')):
                 described.add(picture if isinstance(picture, str) else picture['src'])
             for picture in block.get('pictures', []):
-                if isinstance(picture, dict) and picture.get('src') and picture.get('alt'):
+                if isinstance(picture, dict) and picture.get('src') and (picture.get('alt') or picture.get('caption')):
                     described.add(picture['src'])
     for question in deck.get('decisions', []):
+        if question.get('context'):
+            for field in ('picture', 'compare'):
+                if question.get(field):
+                    picture = question[field]
+                    described.add(picture if isinstance(picture, str) else picture['src'])
         for option in question.get('options', []):
             if option.get('picture') and option.get('name') and option.get('says'):
                 picture = option['picture']
@@ -146,7 +151,7 @@ def prepare_deck(folder, deck, template, source_dir) -> None:
              'index.html is the shared deck shell. deck.js handles slide navigation and choices; deck.css supplies layout. '
              'deck-data.js contains the author content above. story.json supplies the narration above. '
              'For a decision deck, SKILL.md explains answering and scripts/decide.py records the chosen answers in results/.', '']
-    # Existing alt text and option name/says are author-provided picture references.
+    # Existing alt/caption, decision context and option name/says are authored picture references.
     # Their semantic adequacy is the author's responsibility; no pixels are interpreted.
     described = authored_picture_references(deck)
     (folder / name).write_text('\n'.join(lines) + '\n', encoding='utf-8')
