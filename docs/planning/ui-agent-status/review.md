@@ -2,13 +2,11 @@
 
 Work item: `work-6f00ebb716c2` (UI agent status).
 
-## What remains
+## Current direction
 
-The complete current-token count is not available for Claude terminal sessions or Claude native subagents. Claude's partial-message stream covers its main session, but does not forward subagent token deltas. Claude terminal `logs` returns terminal output and `attach` opens the terminal; neither is a structured per-worker token subscription. The roster, API-request transcript entries, task lifecycle and completed assistant blocks establish phases but cannot distinguish generation from a stalled request. Standalone Codex sessions outside the running app-server likewise retain transcript-only coverage.
+The proposal to replace native Claude delegation with hosted workers is withdrawn. The revised [native activity plan](native-activity-plan.md) preserves native terminal sessions and native subagents. It separates model-request work, tool execution, idle and unconfirmed observation, using request boundaries and native lifecycle hooks. It includes the observed premature-completion defect caused by thinking blocks carrying `end_turn`.
 
-Closing this gap requires an execution change: run each counted Claude worker as its own hosted partial-message session, with its own stream and parent relation. Preserve subscription authentication, conversation continuity, approval handling, cancellation and messaging. Native subagents would become separately hosted workers. Existing named terminal sessions must hand over only at an idle boundary; there must never be two writers to one conversation. Codex workers should use the observable app-server runtime. This is a change to how workers execute, not another counter or a different label. `execution-decision.json` explains that choice for delivery through the package factory by Planning.
-
-The UI does not replace missing measurement with zero. A number plus `+?` means there are observed generating workers plus workers whose current generation cannot be measured. Runtime-active, tool-waiting, queued and observed-generating remain separate. Generation means a stream delta arrived within the last two seconds; it is not a billing measurement or a claim about server-side computation between chunks.
+The committed counters currently show recent generation evidence and unknown coverage. They have not yet been converted to the revised model-work phases. This branch remains an implementation in progress, not a complete live all-worker count. The native observer, phase reducer and revised count labels are the next work; no active sessions have been changed.
 
 ## Implemented
 
@@ -36,4 +34,4 @@ Runtime/session/inventory/executor regression tests passed. The frontend product
 
 ## Handoff
 
-The inventory and runtime adapters are implemented in the isolated `feature/ui-agent-status` worktree. Planning owns delivery of the Work-linked decision package and any live deployment. The complete all-worker count remains unfinished until the execution integration covers workers that currently have no token stream. Do not mark this Work item complete because the inventory is present.
+The inventory and runtime adapters are implemented in the isolated `feature/ui-agent-status` worktree. Planning owns delivery of the Work-linked decision package and any live deployment. The complete all-worker view remains unfinished until native observation and the revised phase reducer cover those workers. Do not mark this Work item complete because the inventory is present.
