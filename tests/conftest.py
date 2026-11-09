@@ -531,3 +531,14 @@ async def page_playwright(request, _chromium_for_the_session):
     await playwright.close()
     if request.node.stash.get(_FAILED, False):
         await _chromium_for_the_session.relaunch()
+
+
+@pytest.fixture
+def authored_package_source(monkeypatch):
+    """Exercise factory rendering/delivery after authorship in existing tests.
+
+    test_package_author separately exercises the mandatory gate and both real
+    provider adapters. This fixture is opt-in, never a global author bypass.
+    """
+    from jarvis import package_author
+    monkeypatch.setattr(package_author, "prepare", lambda handoff, engine, out, **kw: kw["source"])
