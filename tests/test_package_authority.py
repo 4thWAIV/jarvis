@@ -79,3 +79,30 @@ def test_classifier_failure_reaches_only_attempted_package_actions(wired, monkey
     result = _call(wired, 'run_package_agent', package='unavailable-package')
     assert result['ok'] is False and 'intent_unavailable' in result['text']
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_classification_releases_the_voice_turn(wired, monkeypatch):
+    server = wired.server
+    entered, ended = asyncio.Event(), []
+    lock = asyncio.Lock()
+    async def classify(*args):
+        entered.set()
+        await asyncio.Future()
+    async def end_turn(utterance):
+        ended.append(utterance.id)
+    async def emit(frame):
+        pass
+    monkeypatch.setattr(server.package_authority, 'classify', classify)
+    monkeypatch.setattr(server, '_turn_lock', lock)
+    monkeypatch.setattr(server, '_voice_emit', emit)
+    monkeypatch.setattr(server, 'brain_instance', SimpleNamespace(ready=True))
+    monkeypatch.setattr(server, 'speech', SimpleNamespace(
+        begin_turn=lambda: SimpleNamespace(id=17), end_turn=end_turn))
+    task = asyncio.create_task(server._handle_utterance('Ask the sender about the cost.'))
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ended == [17] and not lock.locked()
+    assert server._turn_utt is None and server._package_action_scope is None

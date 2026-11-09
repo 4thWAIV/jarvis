@@ -1,5 +1,7 @@
 # Voice package action release decision
 
+Readiness: `needs-scope-decision`. The latency-only draft must not be delivered as the complete blocking decision until `../authorization-conflict.md` is reconciled by the design owner. The existing result bridge can adopt package-controlled answer files without the new action scope. The draft's vote does not address that path.
+
 ## Owner and authority
 
 Sol owns package implementation on `feature/jarvis-groks-packages`, Work `work-afc13119d082`. Root owns human delivery, Work reporting and the live checkout. The implementation approval is `authorize-package-implementation` / `approve-and-build` in `data/packages/jarvis-groks-packages-approve-and-build-1.0.0-local658/results/decisions.json`. Root requested a concrete blocking-decision source while independent release work continues. This assignment is source-only. No package has been delivered by this worker.

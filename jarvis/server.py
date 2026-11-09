@@ -3124,33 +3124,33 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     bound_page, _ = ui_clients.bound_page(heard)
     _package_turn_view = package_views.freeze_turn(bound_page.client_id) if bound_page else None
     try:
-        intent = await package_authority.classify(text, {
-            "client_id": bound_page.client_id if bound_page else None,
-            "view": _package_turn_view.model_dump(mode="json") if _package_turn_view else None})
-        if intent.operation:
-            if intent.target:
-                entry, problem = _inbox_one(intent.target)
-                if entry is None:
-                    raise InspectionError("ambiguous_package", problem)
-                reference = PackageRef(package_id=entry.package_id, inbox_id=entry.id)
-            elif _package_turn_view:
-                reference = _package_turn_view.package
-            else:
-                raise InspectionError("ambiguous_package", "Choose the package for this action.")
-            recipient = None
-            if intent.recipient and intent.recipient.casefold() not in {"sender", "the sender"}:
-                recipients = agent_directory.find_sessions(intent.recipient)
-                if len(recipients) != 1:
-                    raise InspectionError("ambiguous_recipient", "Choose the exact live recipient session.")
-                recipient = recipients[0].session_id
-            _package_action_scope = package_authority.mint(user_turn_id=utt.id, package=reference,
-                operation=intent.operation, utterance=text, recipient=recipient,
-                decision=intent.decision, answer=intent.answer)
-    except InspectionError as error:
-        _package_action_failure = error.failure.code
-    try:
         try:
             try:
+                try:
+                    intent = await package_authority.classify(text, {
+                        "client_id": bound_page.client_id if bound_page else None,
+                        "view": _package_turn_view.model_dump(mode="json") if _package_turn_view else None})
+                    if intent.operation:
+                        if intent.target:
+                            entry, problem = _inbox_one(intent.target)
+                            if entry is None:
+                                raise InspectionError("ambiguous_package", problem)
+                            reference = PackageRef(package_id=entry.package_id, inbox_id=entry.id)
+                        elif _package_turn_view:
+                            reference = _package_turn_view.package
+                        else:
+                            raise InspectionError("ambiguous_package", "Choose the package for this action.")
+                        recipient = None
+                        if intent.recipient and intent.recipient.casefold() not in {"sender", "the sender"}:
+                            recipients = agent_directory.find_sessions(intent.recipient)
+                            if len(recipients) != 1:
+                                raise InspectionError("ambiguous_recipient", "Choose the exact live recipient session.")
+                            recipient = recipients[0].session_id
+                        _package_action_scope = package_authority.mint(user_turn_id=utt.id, package=reference,
+                            operation=intent.operation, utterance=text, recipient=recipient,
+                            decision=intent.decision, answer=intent.answer)
+                except InspectionError as error:
+                    _package_action_failure = error.failure.code
                 screen = _ScreenOnly(lambda d: speech.feed(utt, d), _show_on_screen)
                 hold = _OneLinePerTurn(screen.feed)
                 def delta(d: str) -> None:
@@ -8476,9 +8476,9 @@ async def _package_tool(tool, args):
 
 for _tool_name in TOOL_MODELS:
     if _tool_name != "prepare_package_followup":
-        async def _content_handler(args, name=_tool_name):
+        async def tool_package_content(args, name=_tool_name):
             return await _package_tool(name, args)
-        TOOL_HANDLERS[_tool_name] = _content_handler
+        TOOL_HANDLERS[_tool_name] = tool_package_content
         TAINTING_TOOLS[_tool_name] = "package contents or its reported view, controlled by its sender"
         UNTRUSTED_READING_TOOLS.add(_tool_name)
 ACTING_TOOLS.add("look_at_package_content")
@@ -8504,7 +8504,7 @@ async def _prepare_package_followup_ui(package_id, body, request):
     finally:
         package_authority._scopes.pop(scope.scope_id, None)
 
-async def _prepare_package_followup(args):
+async def tool_prepare_package_followup(args):
     from jarvis.package_content_contract import FollowupRequest
     try:
         ref = package_tools.package_ref(str(args.get("package") or ""))
@@ -8520,7 +8520,7 @@ async def _prepare_package_followup(args):
         return _wrap_untrusted("package content", error.failure.model_dump_json() if isinstance(error, InspectionError)
                                else '{"code":"bad_request"}')
 
-TOOL_HANDLERS["prepare_package_followup"] = _prepare_package_followup
+TOOL_HANDLERS["prepare_package_followup"] = tool_prepare_package_followup
 ACTING_TOOLS.add("prepare_package_followup")
 TAINTING_TOOLS["prepare_package_followup"] = "an evidence-grounded message drafted from package content"
 

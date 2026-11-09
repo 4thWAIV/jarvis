@@ -2,6 +2,8 @@
 
 Work: `work-afc13119d082`. Branch: `feature/jarvis-groks-packages`.
 
+Release is also blocked on the source conflict in `authorization-conflict.md`: the existing result bridge and answer-file adoption path bypass the new dispatcher scope. New product changes are stopped for design reconciliation. The latency-only decision draft is not the complete blocking handoff until that conflict is addressed.
+
 The implementation review is recorded in `review/report.md`. Root reported presentation signoff for `package-understanding-implementation-rev-1.0.0-locala03` (`pkg-d6f39bbb32b8`). That report does not establish successful runtime classification, display capture, spoken approval or external delivery.
 
 ## Main reconciliation
@@ -9,6 +11,10 @@ The implementation review is recorded in `review/report.md`. Root reported prese
 `3c924ac` merges `origin/main` at `8a5717a`. The package inbox sender-proof changes and one-channel conversation records merged without conflicts. The built frontend passes TypeScript and Vite compilation. The attachment handoff fixture supplies an exact user-control execute scope. The browser fixtures wait for the loaded frame and the observer handshake before requesting its current location.
 
 The full local run exposed an ordinary-conversation regression: an unavailable classifier note was added to every user turn. The implementation now retains its internal failure code and reports it only when that turn attempts a package action. Ordinary conversation receives the same user text as before. The existing voice activity/socket tests exercise that behavior, and a targeted authority test ensures package mutation still receives `intent_unavailable` without running its handler.
+
+Canceling classification now uses the existing voice-turn cleanup, ending the speech turn and releasing its lock. A regression first reproduced the unfinished turn, then passed after classification moved inside that cleanup block. The combined authority, ordinary voice activity and voice-socket rerun passes 49 tests. The Work-review fixture reuses the existing scoped request helper and passes its 22 tests. Screen tests pass with the primary checkout's existing machine-local `sips` skip setting copied into this worktree's ignored local config; the black-frame sampling test failed before that setting because its `sips` conversion could not run. No screen implementation was changed.
+
+The new dispatch functions use the repository's `tool_` naming convention; public tool names are unchanged. The argument-echo audit passes all 11 cases after that rename. Final PR checks must run on the consolidated commits; the earlier PR workflow was canceled after a known fixture correction to avoid finishing a stale run.
 
 ## Runtime evidence and release gates
 
