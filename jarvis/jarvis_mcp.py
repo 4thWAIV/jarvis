@@ -438,6 +438,11 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "list_workers",
+        "description": "All discovered brain, CLI, subagent and workflow workers with parent identities, per-parent counts and a deduplicated total. Same JSON as the UI. Distinguishes recent stream generation, tool waiting, queued, idle and unknown telemetry. Unknown is not zero token use.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "list_agents",
         "description": (
             "Every agent running on this machine (Claude Code and Codex), active "
