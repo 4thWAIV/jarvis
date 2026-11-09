@@ -79,6 +79,21 @@ class Source(StrEnum):
     PERSON_MESSAGE = "person_message"    # the team server's message id
 
 
+# Each source's update in the attention record (attention_store: kind, and
+# the event that is the message), and whether its source_id is the update's
+# source with a ":<part>" after it (one board rewrite, one decision key):
+# then the update is about its newest message.
+UPDATES: dict[Source, tuple[str, str, bool]] = {
+    Source.MESSAGE: ("agent_message", "answered", False),
+    Source.SESSION_MESSAGE: ("session_message", "arrived", False),
+    Source.NEEDS_BOARD: ("needs_board", "changed", True),
+    Source.WORKFLOW_DECISION: ("workflow", "decision_needed", True),
+    Source.WORK_DECISION: ("work", "decision_needed", True),
+    Source.PACKAGE: ("package", "arrived", False),
+    Source.PERSON_MESSAGE: ("arrival", "arrived", False),
+}
+
+
 # Shown in the Conversation view and an agent's thread (`page`, `thread`)
 # until the page's one list decides where they go (one_channel phase 4):
 # every kind but the messages from the other channels.
@@ -201,8 +216,14 @@ _COUNTERPARTS = """
         WHERE source_kind IS NOT NULL AND kind = 'message_in';
 """
 
+# 3 (one_channel phase 3): a message is found from its update by its source.
+_BY_SOURCE = """
+    CREATE INDEX IF NOT EXISTS conversation_items_by_source
+        ON conversation_items (source_kind, source_id, id);
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA, 2: _COUNTERPARTS}
+_MIGRATIONS = {1: _SCHEMA, 2: _COUNTERPARTS, 3: _BY_SOURCE}
 
 _listener: Callable[[ConversationItem], None] | None = None
 
@@ -418,6 +439,43 @@ def threads(limit: int = PAGE) -> list[Thread]:
     return [Thread(r["counterpart_kind"], r["counterpart_ref"],
                    named[(r["counterpart_kind"], r["counterpart_ref"])], latest[r["last"]],
                    int(r["inbound"])) for r in rows]
+
+
+def get(item_id: int) -> ConversationItem | None:
+    """One item by its id, or None."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM conversation_items WHERE id=?",
+                           (int(item_id),)).fetchone()
+    return _item(row) if row else None
+
+
+def update_of(item: ConversationItem) -> tuple[str, str] | None:
+    """The attention update (kind, source id) a message to him is, or None
+    for an item that is no message from a counterpart."""
+    if not item.inbound or item.source_kind not in UPDATES.keys() or item.source_id is None:
+        return None
+    kind, _, keyed = UPDATES[Source(item.source_kind)]
+    return kind, item.source_id.rpartition(":")[0] if keyed else item.source_id
+
+
+def message_for(kind: str, source_id: str, event: str) -> ConversationItem | None:
+    """The message an attention update is about: the newest inbound item
+    from its source, while the update's event is that message (a workflow
+    update about a new phase is no message). None otherwise."""
+    found = [(s, keyed) for s, (k, e, keyed) in UPDATES.items() if k == kind and e == event]
+    if not found:
+        return None
+    source, keyed = found[0]
+    source_id = str(source_id)
+    kinds = sorted(INBOUND_KINDS)
+    match = ("source_id >= ? AND source_id < ?", [f"{source_id}:", f"{source_id};"]) if keyed \
+        else ("source_id = ?", [source_id])
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            f"SELECT * FROM conversation_items WHERE source_kind = ? AND {match[0]} "
+            f"AND kind IN ({','.join('?' * len(kinds))}) ORDER BY id DESC LIMIT 1",
+            [str(source), *match[1], *kinds]).fetchone()
+    return _item(row) if row else None
 
 
 def capture_events(limit: int = 200) -> list[ConversationItem]:

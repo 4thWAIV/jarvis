@@ -32,6 +32,10 @@ export interface AttentionItem {
   created_at: number;
   updated_at: number;
   seen_at: number | null;
+  /** The message in the conversation record this update is (an agent's
+   *  answer, a session's message, a needs board, a decision, a package, a
+   *  person's message): what Read and Reply take. Null for any other. */
+  message: number | null;
 }
 
 export interface AttentionSettings {

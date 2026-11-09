@@ -822,15 +822,9 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
-    "server._read_message_aloud": (
-        "it speaks one session's message aloud to him, as he asked (Read), through the "
-        "voice; its words never reach the brain, whose tool gets only a fixed sentence"),
-    "server._read_answer_aloud": (
-        "it speaks one agent's answer aloud to him, as he asked (Read), through the voice; "
-        "its words never reach the brain, whose tool gets only a fixed sentence"),
-    "server._answer_reply_capture": (
-        "it opens a capture to the session that answered; its only words are its own "
-        "refusal naming the message by number, and the recipient through the directory"),
+    "server._sender_name": (
+        "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
+        "through _said_name, which refuses anything but a plain name; never to the brain"),
     "server._replying": (
         "its note to the brain names the capture by number and its recipient through "
         "_recipient_name's wall; no word of the message"),

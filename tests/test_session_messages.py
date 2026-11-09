@@ -397,7 +397,8 @@ async def test_a_reply_to_a_subagent_goes_to_its_parent_naming_it(server, monkey
     p = _drop(data_paths.session_messages_dir(), "guard", "m", "# Found it\nx")
     _claude_subagent(tmp_path, GUARD, "a1b2c3", "Feynman", p)
     [m] = server._take_session_messages()
-    r = TestClient(server.app).post(f"/api/session-messages/{m.id}/reply", headers=ORIGIN)
+    item = server.conversation_log.message_for("session_message", str(m.id), "arrived")
+    r = TestClient(server.app).post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
     capture = server._captures[r.json()["capture"]]
     assert (capture["to_session"], server._read_back_lead(capture)) == (
         GUARD, "To Agent Guard, for Feynman."), "named as the directory names it, spaces and all"
@@ -420,49 +421,63 @@ def _taken(server, monkeypatch, attention):
 ORIGIN = {"Origin": "http://localhost:5173"}
 
 
+def _message_of(client, kind: str, source) -> int:
+    """The message id the Updates entry for (kind, source) carries: what its
+    Read and Reply post to."""
+    [entry] = [i for i in client.get("/api/attention").json()["items"]
+               if i["kind"] == kind and i["source_id"] == str(source)]
+    assert entry["message"] is not None, entry
+    return entry["message"]
+
+
 def test_read_speaks_that_one_message_and_it_is_seen_once_heard(server, monkeypatch, attention):
     from fastapi.testclient import TestClient
     m = _taken(server, monkeypatch, attention)
     client = TestClient(server.app)
-    r = client.post(f"/api/session-messages/{m.id}/read", headers=ORIGIN)
+    item = _message_of(client, "session_message", m.id)
+    r = client.post(f"/api/messages/{item}/read", headers=ORIGIN)
     assert r.status_code == 200 and r.json()["reading"], r.text
     assert server.said == ["Agent Guard writes: Status. All good."], "that message only"
     assert server.run_store.get_session_message(m.id).read_at is not None
-    (item,) = attention.items(("pending", "seen", "resolved"))
-    assert item.state == "seen"
-    assert client.post("/api/session-messages/999/read", headers=ORIGIN).status_code == 404
-    assert client.post(f"/api/session-messages/{m.id}/read").status_code == 403, "his click only"
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "seen"
+    assert client.post("/api/messages/999/read", headers=ORIGIN).status_code == 404
+    assert client.post(f"/api/messages/{item}/read").status_code == 403, "his click only"
 
 
 def test_read_cut_off_leaves_the_entry_pending(server, monkeypatch, attention):
     from fastapi.testclient import TestClient
     m = _taken(server, monkeypatch, attention)
     server.speech.heard = False
-    TestClient(server.app).post(f"/api/session-messages/{m.id}/read", headers=ORIGIN)
-    (item,) = attention.items(("pending", "seen", "resolved"))
-    assert item.state == "pending"
+    client = TestClient(server.app)
+    client.post(f"/api/messages/{_message_of(client, 'session_message', m.id)}/read",
+                headers=ORIGIN)
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "pending"
 
 
 def test_the_brain_reads_it_aloud_through_the_same_call(server, monkeypatch, attention):
     import inspect
+    from fastapi.testclient import TestClient
     m = _taken(server, monkeypatch, attention)
-    said = asyncio.run(server.tool_read_session_message_aloud({"message": m.id}))
+    item = _message_of(TestClient(server.app), "session_message", m.id)
+    said = asyncio.run(server.tool_read_aloud({"message": item}))
     assert said.startswith("Reading message") and server.said == ["Agent Guard writes: Status. All good."]
-    assert "_read_message_aloud(" in inspect.getsource(server.api_read_session_message)
-    assert "_read_message_aloud(" in inspect.getsource(server.tool_read_session_message_aloud)
+    assert "read_aloud(" in inspect.getsource(server.api_read_message)
+    assert "read_aloud(" in inspect.getsource(server.tool_read_aloud)
 
 
 def test_reply_is_a_capture_to_its_sender_read_back_and_sent_on_his_yes(server, monkeypatch,
                                                                        attention):
     from fastapi.testclient import TestClient
     m = _taken(server, monkeypatch, attention)
-    r = TestClient(server.app).post(f"/api/session-messages/{m.id}/reply", headers=ORIGIN)
+    client = TestClient(server.app)
+    item = _message_of(client, "session_message", m.id)
+    r = client.post(f"/api/messages/{item}/reply", headers=ORIGIN)
     assert r.status_code == 200, r.text
     capture = server._captures[r.json()["capture"]]
     assert (capture["to"], capture["to_session"], capture["text"]) == ("Agent Guard", GUARD, "")
-    async def reply():
-        return server.tool_reply_to_session_message({"message": m.id, "text": "Thanks, ship it."})
-    said = asyncio.run(reply())
+    said = asyncio.run(server.tool_reply({"message": item, "text": "Thanks, ship it."}))
     newest = max(server._captures.values(), key=lambda c: c["id"])
     assert (newest["to_session"], newest["text"]) == (GUARD, "Thanks, ship it.")
     assert "read_capture" in said and "his yes" in said
@@ -470,12 +485,15 @@ def test_reply_is_a_capture_to_its_sender_read_back_and_sent_on_his_yes(server, 
     assert not transmission.accepted(newest), "nothing goes until it is read back and he says yes"
 
 
-def test_a_message_with_no_known_sender_cannot_be_replied_to(server, monkeypatch):
+def test_a_message_that_is_not_on_record_cannot_be_replied_to(server):
+    """A message to him is replied to only through its record, which only a
+    proven sender's message gets into (conversation_log.inbound)."""
     from fastapi.testclient import TestClient
     mid = server.run_store.create_session_message("guard", "Denice and Designer", "Old", "x")
-    r = TestClient(server.app).post(f"/api/session-messages/{mid}/reply", headers=ORIGIN)
-    assert r.status_code == 409 and "no one to reply to" in r.json()["detail"]
-    assert "no one to reply to" in server.tool_reply_to_session_message({"message": mid})
+    assert server.conversation_log.message_for("session_message", str(mid), "arrived") is None
+    r = TestClient(server.app).post("/api/messages/999/reply", headers=ORIGIN)
+    assert r.status_code == 404
+    assert "Nothing was captured" in asyncio.run(server.tool_reply({"message": 999}))
 
 
 def test_a_read_back_names_its_recipient_as_the_directory_names_it(server, monkeypatch):
@@ -491,63 +509,145 @@ def test_a_read_back_names_its_recipient_as_the_directory_names_it(server, monke
 # --- an agent's answer to his message: the same Read, Reply and Seen ------------------
 
 def _answered(server, monkeypatch, attention, reply="Done: all tests pass."):
-    """His message to Agent Guard, answered, with its update pending."""
+    """His message to Agent Guard, answered, on record as the watcher read
+    it, with its update pending; the id its Updates entry's Read takes."""
+    from fastapi.testclient import TestClient
     monkeypatch.setattr(server, "attention_record", attention)
     store = server.run_store
     mid = store.create_message(GUARD, "anthropic", "Agent Guard", "guard", "Run the tests.",
                                status=store.MessageStatus.SENT)
     store.update_message(mid, status=store.MessageStatus.ANSWERED, reply=reply)
+    cl = server.conversation_log
+    server._record_inbound(cl.ItemKind.ANSWER, cl.Counterpart.AGENT, GUARD, "Agent Guard", reply,
+                           "watcher", source_kind=cl.Source.MESSAGE, source_id=mid,
+                           message_id=mid)
     attention.record("agent_message", str(mid), "answered", facts={"message_id": mid},
                      untrusted={"agent": "Agent Guard"})
-    return mid
+    return _message_of(TestClient(server.app), "agent_message", mid)
 
 
 def test_read_speaks_an_agent_s_answer_and_it_is_seen_once_heard(server, monkeypatch, attention):
     from fastapi.testclient import TestClient
-    mid = _answered(server, monkeypatch, attention)
+    item = _answered(server, monkeypatch, attention)
     client = TestClient(server.app)
-    r = client.post(f"/api/agent-messages/{mid}/read", headers=ORIGIN)
+    r = client.post(f"/api/messages/{item}/read", headers=ORIGIN)
     assert r.status_code == 200 and r.json()["reading"], r.text
     assert server.said == ["Agent Guard answers: Done: all tests pass."], "that answer only"
-    (item,) = attention.items(("pending", "seen", "resolved"))
-    assert item.state == "seen"
-    unanswered = server.run_store.create_message(GUARD, "anthropic", "Agent Guard", "guard", "x")
-    assert client.post(f"/api/agent-messages/{unanswered}/read", headers=ORIGIN).status_code == 404
-    assert client.post(f"/api/agent-messages/{mid}/read").status_code == 403, "his click only"
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "seen"
+    assert client.post(f"/api/messages/{item}/read").status_code == 403, "his click only"
 
 
 def test_an_answer_cut_off_stays_pending(server, monkeypatch, attention):
     from fastapi.testclient import TestClient
-    mid = _answered(server, monkeypatch, attention)
+    item = _answered(server, monkeypatch, attention)
     server.speech.heard = False
-    TestClient(server.app).post(f"/api/agent-messages/{mid}/read", headers=ORIGIN)
-    (item,) = attention.items(("pending", "seen", "resolved"))
-    assert item.state == "pending"
+    TestClient(server.app).post(f"/api/messages/{item}/read", headers=ORIGIN)
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "pending"
 
 
 def test_reply_to_an_answer_is_a_capture_to_the_session_that_answered(server, monkeypatch,
                                                                       attention):
     from fastapi.testclient import TestClient
     from jarvis import transmission
-    mid = _answered(server, monkeypatch, attention)
-    r = TestClient(server.app).post(f"/api/agent-messages/{mid}/reply", headers=ORIGIN)
+    item = _answered(server, monkeypatch, attention)
+    r = TestClient(server.app).post(f"/api/messages/{item}/reply", headers=ORIGIN)
     assert r.status_code == 200, r.text
     capture = server._captures[r.json()["capture"]]
     assert (capture["to_session"], server._read_back_lead(capture)) == (GUARD, "To Agent Guard.")
-
-    async def reply():
-        return server.tool_reply_to_message({"message": mid, "text": "Ship it."})
-    said = asyncio.run(reply())
+    said = asyncio.run(server.tool_reply({"message": item, "text": "Ship it."}))
     newest = max(server._captures.values(), key=lambda c: c["id"])
     assert (newest["to_session"], newest["text"]) == (GUARD, "Ship it.")
     assert "read_capture" in said and not transmission.accepted(newest)
 
 
-def test_the_brain_reads_an_answer_aloud_through_the_same_call(server, monkeypatch, attention):
-    import inspect
-    mid = _answered(server, monkeypatch, attention)
-    said = asyncio.run(server.tool_read_message_reply_aloud({"message": mid}))
-    assert said.startswith("Reading the answer") and server.said == [
+def test_the_brain_finds_the_message_in_its_updates(server, monkeypatch, attention):
+    """attention_updates names each message update's message, the id the
+    brain's read_aloud and reply take, as the page's entry does."""
+    item = _answered(server, monkeypatch, attention)
+    out = asyncio.run(server.tool_attention_updates({}))
+    assert f'"message": {item}' in out
+    said = asyncio.run(server.tool_read_aloud({"message": item}))
+    assert said.startswith("Reading message") and server.said == [
         "Agent Guard answers: Done: all tests pass."]
-    assert "_read_answer_aloud(" in inspect.getsource(server.api_read_answer)
-    assert "_read_answer_aloud(" in inspect.getsource(server.tool_read_message_reply_aloud)
+
+
+# --- one channel, phase 3: the same Read and Reply for every channel's message -------
+
+def _inbound(server, counterpart, ref, name, text, evidence, source, source_id, **links):
+    cl = server.conversation_log
+    server._record_inbound(cl.ItemKind.MESSAGE_IN, counterpart, ref, name, text, evidence,
+                           source_kind=source, source_id=source_id, **links)
+    kind, event, _ = cl.UPDATES[source]
+    return cl.message_for(kind, str(source_id).split(":")[0], event)
+
+
+def test_a_decision_is_read_aloud_and_replied_to_through_its_asking_key(server, monkeypatch,
+                                                                       attention):
+    from fastapi.testclient import TestClient
+    from jarvis import reporters
+    cl = server.conversation_log
+    monkeypatch.setattr(server, "attention_record", attention)
+    monkeypatch.setattr(reporters, "of_label", lambda label: reporters.Reporter(
+        label, "Agent Guard", (GUARD,) if label == "guard" else ()))
+    item = _inbound(server, cl.Counterpart.WORK, "work-1", "Speech",
+                    "Decision needed on Speech: Which model?", "access_key",
+                    cl.Source.WORK_DECISION, "work-1:model", detail={"reporter": "key:guard"})
+    attention.record("work", "work-1", "decision_needed", untrusted={"work": "Speech"})
+    client = TestClient(server.app)
+    assert _message_of(client, "work", "work-1") == item.id
+    client.post(f"/api/messages/{item.id}/read", headers=ORIGIN)
+    assert server.said == ["Decision needed on Speech: Which model?"]
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "seen"
+    r = client.post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
+    capture = server._captures[r.json()["capture"]]
+    assert capture["to_session"] == GUARD, "its proven asker, the key's agent"
+    token = _inbound(server, cl.Counterpart.WORK, "work-2", "Other", "Decision needed: x",
+                     "access_key", cl.Source.WORK_DECISION, "work-2:k",
+                     detail={"reporter": "key:nobody"})
+    r = client.post(f"/api/messages/{token.id}/reply", headers=ORIGIN)
+    assert r.status_code == 409 and "no one to reply to" in r.json()["detail"]
+
+
+def test_a_package_is_replied_to_through_its_proven_sender(server, monkeypatch):
+    from fastapi.testclient import TestClient
+    cl = server.conversation_log
+    item = _inbound(server, cl.Counterpart.PACKAGE, "inbox-1", "Ports", "Package: Ports",
+                    "subagent_transcript", cl.Source.PACKAGE, "inbox-1", subagent="Feynman",
+                    detail={"agent": "Feynman (Agent Guard)", "session": GUARD})
+    r = TestClient(server.app).post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
+    capture = server._captures[r.json()["capture"]]
+    assert (capture["to_session"], server._read_back_lead(capture)) == (
+        GUARD, "To Agent Guard, for Feynman.")
+
+
+def test_a_person_s_message_is_read_aloud_and_replied_to_as_a_draft(server, monkeypatch,
+                                                                   attention):
+    from fastapi.testclient import TestClient
+    cl = server.conversation_log
+    monkeypatch.setattr(server, "attention_record", attention)
+    mid = "00000000-0000-0000-0000-000000000042"
+    item = _inbound(server, cl.Counterpart.PERSON, "42", "Ana", "Lunch\n\nAt noon?",
+                    "team_server", cl.Source.PERSON_MESSAGE, mid)
+    attention.record("arrival", mid, "arrived", untrusted={"sender": "Ana"})
+    client = TestClient(server.app)
+    client.post(f"/api/messages/{_message_of(client, 'arrival', mid)}/read", headers=ORIGIN)
+    assert server.said == ["Ana writes: Lunch. At noon?"]
+    r = client.post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
+    assert r.status_code == 200 and r.json() == {"capture": None, "to": "Ana"}
+    assert f"reply_to {mid}" in server._with_notes_for_brain("")
+    said = asyncio.run(server.tool_reply({"message": item.id}))
+    assert "draft_message" in said and "request_message_review" in said
+
+
+def test_an_update_that_is_no_message_names_none(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    cl = server.conversation_log
+    monkeypatch.setattr(server, "attention_record", attention)
+    _inbound(server, cl.Counterpart.WORKFLOW, "wf-1", "Build", "Decision needed on Build: x",
+             "access_key", cl.Source.WORKFLOW_DECISION, "wf-1:port")
+    attention.record("workflow", "wf-1", "phase_started", untrusted={"workflow": "Build"})
+    [entry] = TestClient(server.app).get("/api/attention").json()["items"]
+    assert entry["message"] is None, "a new phase is no message"

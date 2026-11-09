@@ -28,10 +28,10 @@ SETTINGS = {"oldest_event_sec": 60.0, "digest_cooldown_sec": 120.0,
             "settled_exchange_sec": 10.0, "engagement_sec": 120.0, "away": False}
 
 
-def _item(id, kind, event, **untrusted):
+def _item(id, kind, event, message=None, **untrusted):
     return {"id": id, "kind": kind, "source_id": str(id), "revision": 1, "event": event,
             "facts": {}, "untrusted": untrusted, "state": "pending",
-            "created_at": 1.0, "updated_at": 1.0, "seen_at": None}
+            "created_at": 1.0, "updated_at": 1.0, "seen_at": None, "message": message}
 
 
 class _Attention:
@@ -216,7 +216,8 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_session_message_has_read_reply_and_seen_and_read_leaves_it_until_heard(
         page_playwright, page_url):
-    record = _Attention([_item(147, "session_message", "arrived", agent="Designer")])
+    record = _Attention([_item(147, "session_message", "arrived", message=147,
+                               agent="Designer")])
     posted = []
 
     async def act(route):
@@ -227,7 +228,7 @@ async def test_a_session_message_has_read_reply_and_seen_and_read_leaves_it_unti
 
     async with page_playwright as p:
         browser, page = await _open(p, page_url, _Team(_envelope),
-                                    routes=record.routes() + [("**/api/session-messages/*/*", act)])
+                                    routes=record.routes() + [("**/api/messages/*/*", act)])
         notice = page.locator("#updates-notice")
         await notice.get_by_role("button", name="Review updates").click()
         row = notice.locator(".updates-list li[data-message-id='147']")

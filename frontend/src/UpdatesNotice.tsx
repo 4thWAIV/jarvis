@@ -119,10 +119,7 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
       {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} />
-        : item.kind === "session_message"
-          ? <MessageLine key={item.id} item={item} route="session-messages" />
-        : item.kind === "agent_message" && item.event === "answered"
-          ? <MessageLine key={item.id} item={item} route="agent-messages" /> : (
+        : item.message != null ? <MessageLine key={item.id} item={item} message={item.message} /> : (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -176,19 +173,18 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
 /** A package's reduced line: who sent it, its title and how many decisions
  *  wait, with Open and Seen. The words are the sender's, drawn as text. */
-/** A message to him: a session's message (`session-messages`) or an agent's
- *  answer to his message (`agent-messages`). Seen (as every entry), Read
- *  (JARVIS reads that one message aloud, the brain's read_session_message_aloud
- *  or read_message_reply_aloud; the entry stays until it has been heard in
- *  full) and Reply (a capture addressed to the session that sent it for what
- *  he says or types next, read back and sent on his yes, the brain's
- *  reply_to_session_message or reply_to_message). */
-function MessageLine({ item, route }: { item: AttentionItem; route: "session-messages" | "agent-messages" }) {
+/** A message to him, whatever channel it came by (an agent's answer, a
+ *  session's message, a needs board, a decision, a person's message): Seen
+ *  (as every entry), Read (JARVIS reads that one message aloud, the brain's
+ *  read_aloud; the entry stays until it has been heard in full) and Reply
+ *  (a capture addressed to its proven sender for what he says or types
+ *  next, read back and sent on his yes; for a person, a draft to review;
+ *  the brain's reply). Both post to the one route by the message's id. */
+function MessageLine({ item, message }: { item: AttentionItem; message: number }) {
   const t = useT();
   const [said, setSaid] = useState<string | null>(null);
   const post = async (action: "read" | "reply") => {
-    const res = await fetch(`/api/${route}/${encodeURIComponent(item.source_id)}/${action}`,
-                            { method: "POST" }).catch(() => null);
+    const res = await fetch(`/api/messages/${message}/${action}`, { method: "POST" }).catch(() => null);
     if (!res?.ok) {
       const body = res ? ((await res.json().catch(() => ({}))) as { detail?: string }) : {};
       setSaid(body.detail || t("main.updates.readFailed"));
@@ -199,7 +195,7 @@ function MessageLine({ item, route }: { item: AttentionItem; route: "session-mes
                               : t("main.updates.replyTo", { name: body.to ?? "" }));
   };
   return (
-    <li className="updates-session-message" data-message-id={item.source_id}>
+    <li className="updates-session-message" data-message-id={message}>
       <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
       <button type="button" className="settings-btn" data-ui-action="domain"
               onClick={() => void post("read")}>{t("main.updates.read")}</button>
