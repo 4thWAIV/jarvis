@@ -327,3 +327,13 @@ def test_stale_child_open_turn_needs_its_own_current_evidence():
     result = build(Snapshot([parent], 500), now=500)
     row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
     assert row['activity']['orb_state'] == 'thinking'
+
+
+def test_first_tool_page_contains_snapshot_identity_and_complete_provider_counts(wired, monkeypatch):
+    import json
+    now = 1794249000.123456
+    expected = build(Snapshot([session('claude'), session('codex', 'openai')], now), now=now)
+    monkeypatch.setattr(wired.server, '_worker_inventory', lambda: expected)
+    chunk = _worker_page(_call(wired, 'list_workers')['text'])
+    for key in ('snapshot_id', 'taken_at', 'total', 'providers'):
+        assert json.dumps(key) + ':' + json.dumps(expected[key], separators=(',', ':')) in chunk

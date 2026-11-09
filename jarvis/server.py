@@ -3986,10 +3986,10 @@ def tool_list_workers(args: dict) -> str:
     # The normal counts question is answered before the worker detail. Each
     # invocation is a fresh observation, as with the other paged status reads.
     answer = {key: inventory[key] for key in
-              ("total", "providers", "snapshot_id", "taken_at", "capacity", "coverage", "gaps")
+              ("snapshot_id", "taken_at", "total", "providers", "capacity", "coverage", "gaps")
               if key in inventory}
     answer.update(inventory)
-    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")), _page_arg(args),
                          "The current worker inventory as JSON", "list_workers", exact=True)
     return head if chunk is None else head + "\n" + _wrap_untrusted("workers", chunk)
 
@@ -10750,7 +10750,7 @@ async def tool_attention_updates(args: dict) -> str:
                                             time.time()))
     except attention_api.Unavailable:
         return "The updates record is not running, sir."
-    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")), _page_arg(args),
                          "His updates (Review updates on the page), as JSON",
                          "attention_updates", exact=True)
     if chunk is None:

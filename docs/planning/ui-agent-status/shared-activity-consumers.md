@@ -25,7 +25,7 @@
 
 ## Meaning and limits
 
-The visible activity uses the existing main-orb behavior: thinking starts when a turn opens and ends when the turn completes. Tools and waits within that turn do not turn the orb idle. The visible count is the number of workers with an observed open turn. It does not claim instantaneous token generation. Missing turn evidence remains unknown, separately counted; runtime-active status alone does not create a turn.
+The visible activity uses the existing main-orb behavior: thinking starts when a turn opens and ends when the turn completes. Tools and waits within that turn do not turn the orb idle. The visible count is the number of workers with an observed open turn. It does not claim instantaneous token generation. Missing turn evidence remains unknown, separately counted; runtime-active status alone does not create a turn. A stale child transcript needs current evidence from that child to retain an open turn; its parent being active is insufficient. Unknown orbs use neutral material and idle motion while their activity record remains unknown.
 
 Model-request phases, recent streamed output, tool activity and permission waits remain internal detail in the same snapshot. They no longer substitute a different visible activity rule for the main orb's turn behavior.
 
