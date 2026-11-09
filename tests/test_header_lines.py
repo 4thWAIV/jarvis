@@ -581,6 +581,16 @@ EXEMPT = {
         "turn_started`, whose `record` refuses any field outside `FIELDS`; no "
         "session's or person's words reach a string. Driven by "
         "tests/test_brain_activity.py"),
+    "brain_activity.turn_started": (
+        "the `provider` it keeps is the brain provider's own name (`claude` or "
+        "`codex`), and the event it records is a turn id and its origin, through "
+        "`record`, which refuses any field outside `FIELDS`; no session's or "
+        "person's words reach a string. Driven by tests/test_brain_activity.py"),
+    "brain_activity.turn_ended": (
+        "it records the turn's id, the brain provider's own name, a character "
+        "count and a duration through `record`, which refuses any field outside "
+        "`FIELDS`; no session's or person's words reach a string. Driven by "
+        "tests/test_brain_activity.py"),
     "server.tool_project_notes": (
         "the `text` and `stamp` it prints are a project note's, read from "
         "JARVIS's own projects folder, and every one goes back only inside the "

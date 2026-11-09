@@ -180,7 +180,8 @@ class ToolActivity:
         """Every kept tool event after `seq`, oldest first, with the latest
         sequence number and the oldest one the feed still keeps (None when
         empty). Other kinds share the numbers, so a reader may see gaps."""
-        body = self.feed.since(seq, kinds=(brain_activity.TOOL,))
+        snapshot = self.feed.since(seq, kinds=(brain_activity.TOOL,))
+        body = {key: snapshot[key] for key in ("generation", "seq", "oldest", "events")}
         body["events"] = [{k: e[k] for k in TOOL_FIELDS} for e in body["events"]]
         return body
 
