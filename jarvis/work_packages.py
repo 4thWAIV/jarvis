@@ -111,6 +111,7 @@ class Manifest:
     entry: Optional[str] = None
     story: Optional[str] = None
     layout: str = LAYOUTS[0]
+    understanding: Optional[dict[str, str]] = None
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -154,7 +155,12 @@ class Manifest:
                 raise PackageError("Its package.json names a layout, but only a page package "
                                    "has a page to lay out.")
             fields["layout"] = layout
-        return cls(returns=tuple(returns), runs=runs, **fields)
+        from jarvis.package_understanding import declaration
+        try:
+            understanding = declaration(body.get("understanding"))
+        except ValueError as error:
+            raise PackageError(str(error)) from None
+        return cls(returns=tuple(returns), runs=runs, understanding=understanding or None, **fields)
 
     def named_files(self) -> dict[str, str]:
         """The files package.json names, by field, which the zip must hold."""
@@ -165,6 +171,7 @@ class Manifest:
         return json.dumps({"name": self.name, "version": self.version, "purpose": self.purpose,
                            "runs": self.runs, **self.named_files(),
                            **({"layout": self.layout} if self.layout != LAYOUTS[0] else {}),
+                           **({"understanding": self.understanding} if self.understanding else {}),
                            "returns": list(self.returns)}, indent=2)
 
 
@@ -299,6 +306,9 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
         member = files.get(f"{root}{named}")
         if member is None:
             return Recognition(None, root, f"Its {key} file {named!r} is not in the zip.")
+    for name in {name for pair in (manifest.understanding or {}).items() for name in pair}:
+        if f"{root}{name}" not in files:
+            return Recognition(None, root, f"Its understanding member {name!r} is not in the zip.")
     if manifest.story:
         try:
             package_story.parse(bundle_archive.read_member(

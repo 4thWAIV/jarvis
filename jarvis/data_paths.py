@@ -144,6 +144,7 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "083a94de9e0316698de18329919d6218af17180909c7029cb9a4a3d70f3c0b2b",  # complete capture before read-back
     "25981ab1a51bf43caa7ccc2d4e713f5a824fa4494ea52f23b2f158e36c011f68",  # describe the current React workspace
     "fa669514729ae29315c5b40a29587cc48e0636bf88b2e1e466ad21f3cfa0398a",  # brain home under JARVIS_DATA_DIR
     "05e770673312b589529b570f63ec49167eb901d0363642040bef11411ed5ae43",  # announce what needs you now
@@ -231,6 +232,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
     "d7a681178ec7ad2c7d150f6309c64541469c6f79fef776ea0d23b2ff074ca54e",  # vector search in the Knowledge section
     "240b1c6a02c8a862914353f7d053b8abae90d1b23f193a99b5dd7f4821c9c2e1",  # agent keys: switching an agent on onboards its key
+    "2c9ccefba59069d51e83d3971bb0882d935aba4757919c4d77f69b3c9a254d0d",  # agent keys merged with main's worker notes
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
