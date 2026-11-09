@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from jarvis import data_paths, decision_stamp, make_package, run_store, work_store
-from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
-from tests.test_package_inbox import BROWSER, EXAMPLES, INBOX, send
+from tests.test_brain_page_parity import wired  # noqa: F401  (the fixture)
+from tests.test_package_inbox import BROWSER, EXAMPLES, INBOX, _call, send
 from tests.test_work_packages import marks  # noqa: F401
 from tests.test_work_states import _key, _piece, _review
 
