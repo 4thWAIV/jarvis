@@ -107,6 +107,8 @@ SENSITIVE_DIRS = frozenset({
     ".config", ".password-store", ".netrc", ".npm", ".yarn", ".cargo",
     ".local", ".mozilla", ".keychain", ".keys", "secrets", ".secrets",
     "library", ".authinfo", ".subversion", ".gem", ".m2",
+    # Agents' own key pairs (agent_keys.py: <config home>/jarvis/agent-keys/).
+    "agent-keys",
 })
 
 # A filename containing any of these is refused. Deliberately narrow strings
@@ -133,6 +135,8 @@ SENSITIVE_EXACT = frozenset({
     # exact name, not a "token" fragment in SENSITIVE_NAME_PARTS, because
     # `tokenizer.py` is ordinary code and must stay readable.
     "tool-token",
+    # A work-item key inside an unpacked package (agent_keys.WORK_KEY).
+    "work-key", "work-key.pub",
 })
 
 # A `.env` is a secret; a `.env.example` is documentation, and is often the

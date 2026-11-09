@@ -870,10 +870,6 @@ EXEMPT = {
     "work_store.answers_for": (
         "it returns his answers to an access key's own decisions as data for that agent "
         "(GET /api/work/answers, work_report.py answers); none of it reaches the brain"),
-    "work_api.mount": (
-        "the Work routes: they return the record as JSON to the page and the reporting "
-        "agents and print nothing for the brain, which reads the same record through "
-        "work_status's wall"),
     "server._read_message_aloud": (
         "it speaks one session's message aloud to him, as he asked (Read), through the "
         "voice; its words never reach the brain, whose tool gets only a fixed sentence"),
@@ -1319,6 +1315,28 @@ EXEMPT = {
         "counts and a failure code worded by Refused.shown, which returns its "
         "spec's fixed sentence even for a code it does not know; the file's "
         "name and paths go in the untrusted block `_location_reply` adds"),
+    # Agent keys (agent_keys.py and its record): fingerprints, states and
+    # JARVIS's own words; an agent's name only through the voice-name wall.
+    "agent_auth.not_onboarded": (
+        "it returns fixed sentences chosen by the key's state, a value JARVIS wrote itself; no field of the key is interpolated into them"),
+    "agent_key.status": (
+        "the agent's own command printing its own key's fingerprint and the state JARVIS answered, to the agent's terminal; never a header the brain reads"),
+    "agent_keys.work_key": (
+        "it reads a key file's path and public key off disk for the agent's own command and returns them; nothing is printed or said"),
+    "reporters.of_label": (
+        "it builds the `key:<label>` record a request is kept as; a name it returns is shown on the page as text and goes to the brain only through _said_name or a walled block"),
+    "reporters.of_principal": (
+        "it builds the `agent:<session>` record and looks up the agent's one name; the name reaches the brain only through _said_name or a walled block, never a header"),
+    "server._adopted_label": (
+        "it compares access-key labels with the agent directory and returns a label to store; nothing is printed, said or shown from it"),
+    "server._key_line": (
+        "the agent's name goes through _agent_said (the voice-name wall); the rest is the key's fingerprint, JARVIS's fixed state words and the rights' fixed names. Driven by tests/test_agent_keys.py"),
+    "server.api_my_agent_key": (
+        "a route answering the signing agent with its own key's fingerprint and state as JSON; no header the brain reads"),
+    "server.tool_agent_keys": (
+        "every line comes from _key_line (the agent's name through the voice-name wall) or fixed words with counts. Driven by tests/test_agent_keys.py"),
+    "server.tool_revoke_agent_key": (
+        "its answers are fixed sentences, and the agent's name only through _agent_said, the voice-name wall. Driven by tests/test_agent_keys.py"),
 }
 
 

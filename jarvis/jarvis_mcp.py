@@ -516,7 +516,8 @@ TOOL_SPECS = [
         "name": "set_agent_active",
         "description": (
             "Activate or deactivate one agent on the agents list, by its name. "
-            "Only when the user asks for it."),
+            "Switching an agent on also onboards its waiting key (agent_keys), "
+            "recorded as his act. Only when the user asks for it."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -526,6 +527,33 @@ TOOL_SPECS = [
                            "description": "True to activate, false to deactivate."},
             },
             "required": ["name", "active"],
+        },
+    },
+    {
+        "name": "agent_keys",
+        "description": (
+            "The agents' own keys, which they sign everything they send with: "
+            "each one's agent, fingerprint, where it stands (submitted, waiting "
+            "for him to switch the agent on, onboarded, revoked) and its rights. "
+            "With `name`, one agent's."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string",
+                                    "description": "The agent as the user refers to it."}},
+        },
+    },
+    {
+        "name": "revoke_agent_key",
+        "description": (
+            "Revoke an agent's key, by the agent's name or the key's fingerprint, "
+            "as his Revoke does: nothing signed with it is taken any more. Only "
+            "when the user asks for it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The agent as the user refers to it."},
+                "fingerprint": {"type": "string", "description": "The key's SHA256 fingerprint."},
+            },
         },
     },
     {

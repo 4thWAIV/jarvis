@@ -23,9 +23,18 @@ It sends no `Origin` at all, but it can read the tool token out of a 0600
 file in the data directory, which only this user can open. That token is
 what admits it.
 
-**An agent the user has let do one kind of thing.** It carries an access
-key (access_keys.py) instead of the tool token, and is admitted only to the
-routes the key's categories cover.
+**An agent the user has onboarded.** It signs each request with its own
+key (agent_keys.py: `Authorization: JARVIS-Signature ...`), and is admitted
+only when the signature checks for a key Tim onboarded (agent_auth.py) and
+the agent's rights cover the request (agent_rights.allows). JARVIS holds no
+secret of the agent's: only its public key. Until the cut-over an agent may
+instead carry an access key (access_keys.py), admitted only to the routes
+its categories cover.
+
+One route takes no credential at all: `POST /api/agent-keys`, a new agent
+submitting its public key (it has nothing else yet). It only ever records a
+pending submission, which nothing trusts until the agent's own transcript
+proves it and Tim switches the agent on.
 
 So: a request is authorized if its `Origin` is one JARVIS actually serves
 from, if it carries the tool token, or if it carries an access key that
@@ -62,6 +71,7 @@ therefore says it will not be framed — see `SECURITY_HEADERS`.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -73,6 +83,7 @@ from urllib.parse import urlsplit
 from starlette.responses import JSONResponse
 
 from jarvis import access_keys
+from jarvis import agent_keys
 from jarvis import data_paths
 from jarvis.bundle_readers import html as bundle_html
 
@@ -532,9 +543,21 @@ def token_matches(supplied: Optional[str]) -> bool:
 
 
 # How a request got past the gate, kept in its ASGI scope under ADMITTED:
-# a page JARVIS serves, the tool token, or an agent's access key.
+# a page JARVIS serves, the tool token, an agent's access key, or an
+# onboarded agent's signature (whose principal is kept under PRINCIPAL).
 ADMITTED = "jarvis.admitted"
-BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY = "origin", "token", "access_key"
+BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY, BY_AGENT_KEY = "origin", "token", "access_key", "agent_key"
+PRINCIPAL = "jarvis.principal"
+# The fingerprint of the key a signed request checked for, onboarded or not.
+SIGNED_KEY = "jarvis.signed_key"
+# The one route open with no credential: a new agent submitting its key.
+SUBMIT_PATH = "/api/agent-keys"
+# The most of a signed request's body the gate reads to check its digest.
+SIGNED_BODY_MAX = 32 * 1024 * 1024
+# Told of a state-changing request refused because its key is not an
+# onboarded agent's (agent_auth.Checked, method, path, query), so the
+# server can hold it and tell Tim. Never allowed to fail the refusal.
+on_unrecognised = None
 
 
 def admission(origin: Optional[str], authorization: Optional[str],
@@ -559,9 +582,14 @@ def request_authorized(origin: Optional[str], authorization: Optional[str],
 
 
 def admitted_by_access_key(scope: dict) -> bool:
-    """The request came in on an agent's access key: what it may reach is
-    its categories' routes, and never a person's yes."""
+    """The request came in on an agent's access key."""
     return scope.get(ADMITTED) == BY_ACCESS_KEY
+
+
+def admitted_by_agent(scope: dict) -> bool:
+    """The request came in on an agent's own key or its access key: what it
+    may reach is its rights' routes, and never a person's yes."""
+    return scope.get(ADMITTED) in (BY_ACCESS_KEY, BY_AGENT_KEY)
 
 
 def _header(scope: dict, name: bytes) -> Optional[str]:
@@ -581,13 +609,86 @@ def access_key_label(scope: dict) -> Optional[str]:
 
 def scope_authorized(scope: dict) -> bool:
     """Whether the request may pass; how it was admitted is written into
-    the scope (ADMITTED) for the routes that care."""
+    the scope (ADMITTED) for the routes that care. A signed request was
+    judged by the gate already (`_signed`), and is not judged again."""
+    if scope.get(ADMITTED) == BY_AGENT_KEY:
+        return True
     method = (access_keys.WEBSOCKET if scope.get("type") == "websocket"
               else scope.get("method", "").upper())
     scope[ADMITTED] = admission(_header(scope, b"origin"),
                                 _header(scope, b"authorization"),
                                 method, scope.get("path", ""))
+    if scope[ADMITTED] == BY_ACCESS_KEY:
+        # Counted for the cut-over: at none in a week, the access keys go.
+        from jarvis import agent_key_store
+        agent_key_store.count_legacy(access_key_label(scope) or "?")
     return scope[ADMITTED] is not None
+
+
+def principal(scope: dict) -> Optional[str]:
+    """The onboarded agent (or work-item key) a signed request came in as,
+    or None when it came in another way."""
+    return scope.get(PRINCIPAL) if scope.get(ADMITTED) == BY_AGENT_KEY else None
+
+
+async def _whole_body(receive):
+    """(the body, a receive that gives it again) or (None, receive) when it
+    is over SIGNED_BODY_MAX."""
+    chunks, size, more = [], 0, True
+    while more:
+        message = await receive()
+        if message.get("type") != "http.request":
+            return b"".join(chunks), receive
+        chunk = message.get("body") or b""
+        size += len(chunk)
+        if size > SIGNED_BODY_MAX:
+            return None, receive
+        chunks.append(chunk)
+        more = bool(message.get("more_body"))
+    body, given = b"".join(chunks), False
+
+    async def replay():
+        nonlocal given
+        if not given:
+            given = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+    return body, replay
+
+
+async def _signed(scope: dict, receive):
+    """Judge a signed request: (receive to pass on, None) when it may go on,
+    or (receive, (status, why)) when it is refused. Writes ADMITTED,
+    PRINCIPAL and SIGNED_KEY into the scope."""
+    from jarvis import agent_auth, agent_rights
+    websocket = scope.get("type") == "websocket"
+    method = "GET" if websocket else scope.get("method", "").upper()
+    body = b""
+    if not websocket:
+        body, receive = await _whole_body(receive)
+        if body is None:
+            return receive, (413, "That signed request is larger than JARVIS reads.")
+    path = scope.get("path", "")
+    query = (scope.get("query_string") or b"").decode("latin-1")
+    checked = await asyncio.to_thread(agent_auth.check, _header(scope, b"authorization"),
+                                      method, path, query, _header(scope, b"host") or "", body)
+    scope[SIGNED_KEY] = checked.key.fingerprint if checked.key else None
+    judged = agent_rights.WEBSOCKET if websocket else method
+    changes = websocket or method in MUTATING_METHODS
+    if checked.principal:
+        scope[ADMITTED], scope[PRINCIPAL] = BY_AGENT_KEY, checked.principal
+        if not changes or await asyncio.to_thread(agent_rights.allows, checked.principal,
+                                                  judged, path, query):
+            return receive, None
+        return receive, (403, "Refused: this agent's rights do not cover that request.")
+    if not changes and checked.key is not None:
+        return receive, None            # a read, by a key JARVIS holds: the route judges it
+    if changes and on_unrecognised is not None:
+        try:
+            on_unrecognised(checked, method, path, query)
+        except Exception:
+            log.warning("an unrecognised key's request was not recorded", exc_info=True)
+    return receive, (403, f"Refused: {checked.refused}")
 
 
 class OriginGuard:
@@ -623,6 +724,24 @@ class OriginGuard:
                     status_code=403,
                     content={"error": "Refused: that Host is not one JARVIS "
                                       "answers to."})(scope, receive, send)
+            return
+        if kind in ("http", "websocket") and agent_keys.is_signed(
+                _header(scope, b"authorization")):
+            receive, refused = await _signed(scope, receive)
+            if refused is not None:
+                self._log_refusal(scope, f"{kind} (signature)")
+                if kind == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                else:
+                    await JSONResponse(status_code=refused[0],
+                                       content={"error": refused[1]})(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+        if kind == "http" and scope.get("method", "").upper() == "POST" and \
+                scope.get("path") == SUBMIT_PATH:
+            # A new agent's key: recorded as pending, trusted for nothing.
+            await self.app(scope, receive, send)
             return
         if kind == "websocket":
             if not scope_authorized(scope):

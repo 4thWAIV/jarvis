@@ -123,8 +123,9 @@ def _check_who(detail: dict) -> None:
 
 def asker(scope: dict) -> str:
     """Who is reporting, as every report's reporter and a decision's asker
-    are kept (reporters.recorded): an access key by its label, else how the
-    request was admitted (the tool token, or a page)."""
+    are kept (reporters.recorded): an agent key's principal, an access key
+    by its label, else how the request was admitted (the tool token, or a
+    page)."""
     return reporters.recorded(scope)
 
 
@@ -491,9 +492,12 @@ def _added_key(item_id: str) -> str:
     return ""
 
 
-def answers_json(asked_by: str, since: float) -> list[dict]:
-    """His answers to the decisions `asked_by` asked, since `since`."""
-    return [dataclasses.asdict(a) for a in work_store.answers_for(asked_by, since)]
+def answers_json(asked_by, since: float) -> list[dict]:
+    """His answers to the decisions `asked_by` (one reporter as recorded,
+    or every name it has gone by) asked, since `since`."""
+    names = (asked_by,) if isinstance(asked_by, str) else tuple(dict.fromkeys(asked_by))
+    found = [a for name in names for a in work_store.answers_for(name, since)]
+    return [dataclasses.asdict(a) for a in sorted(found, key=lambda a: a.answered_at)]
 
 
 def signed_off_without_answer(item_id: str, key: str) -> work_store.WorkItem:
@@ -525,11 +529,11 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """His answers to the decisions the calling access key asked, oldest
         first: what `work_report.py answers --since` lists."""
         web_auth.scope_authorized(request.scope)
-        label = web_auth.access_key_label(request.scope)
-        if label is None:
-            return JSONResponse({"error": "Answers are listed for the access key that asked "
+        who = reporters.of_scope(request.scope)
+        if who is None:
+            return JSONResponse({"error": "Answers are listed for the agent's key that asked "
                                           "the decisions."}, status_code=403)
-        found = await asyncio.to_thread(answers_json, f"key:{label}", since)
+        found = await asyncio.to_thread(answers_json, (who.kept, *who.aliases), since)
         return {"answers": found}
 
     @app.get("/api/work/{item_id}")
@@ -575,11 +579,14 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
             return refused(ValueError("Only the agent that asked a decision withdraws it; "
                                       "he answers it."))
         # Who asked or withdraws is the route's to say, never the report's.
-        detail = {k: v for k, v in req.detail.items() if k not in ("asked_by", "by")}
+        detail = {k: v for k, v in req.detail.items() if k not in ("asked_by", "by", "by_any")}
         if req.kind == work_store.DECISION_NEEDED:
             detail["asked_by"] = by
         elif req.kind == work_store.DECISION_WITHDRAWN:
             detail["by"] = by
+            # Every name its earlier asks may be under (an onboarded agent's
+            # adopted access-key label): those decisions stay its own.
+            detail["by_any"] = list(reporters.aliases(request.scope))
 
         def write():
             if req.kind == work_store.PIECE:

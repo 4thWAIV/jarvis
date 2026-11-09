@@ -226,6 +226,8 @@ ALLOWED_TOOLS = [
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
+    "mcp__jarvis__agent_keys",
+    "mcp__jarvis__revoke_agent_key",
     # The page's navigation and white attention (ui_control.py): ui_map reads
     # (untrusted block); ui_navigate, ui_indicate and ui_journey are ACTING_TOOLS.
     "mcp__jarvis__ui_map",

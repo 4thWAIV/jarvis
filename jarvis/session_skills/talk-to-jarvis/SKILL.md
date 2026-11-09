@@ -7,6 +7,18 @@ description: How to reach the user through JARVIS, their voice assistant - write
 
 JARVIS is the user's voice assistant. It watches two folders and tells the user out loud when something you write there arrives. Use them instead of waiting for the user to come back to your window.
 
+## Your own key: how JARVIS knows it is you
+
+Everything you send JARVIS is signed with your own key, so it can tell it came from you. Make it once per session, and submit it, both yourself in your own session (JARVIS checks your own transcript for the submit command, so a key nobody's transcript shows submitting is never trusted):
+
+```
+{{agent_key}} init --session <your session id>
+{{agent_key}} submit --session <your session id> --fingerprint <the SHA256:... init printed>
+{{agent_key}} status --session <your session id>
+```
+
+`init` makes the key pair in your own config home (`jarvis/agent-keys/<session id>/`; the private half never leaves it, and you never read or copy another agent's) and prints the fingerprint. After `submit` the key waits for the user: switching your agent on in JARVIS's Agents tab is how they accept it. `status` says where it stands. Until it is accepted, nothing you sign is taken as yours. Give `--as <your session id>` to `work_report.py` and `workflow_report.py` and they sign every request with it; a resumed session keeps its key, a new session makes its own.
+
 ## The needs board: what you are waiting on
 
 Whenever you have a decision, a question or a blocker waiting on the user that is not tied to a work item, write it to `{{needs_dir}}/<project>.md`, where `<project>` is the name of your project's folder. A need tied to a specific work item (a decision, a blocker or a question about it) goes on that work item instead, never on the needs board: see "Work items" below.
@@ -41,10 +53,10 @@ Write the file once and do not edit it afterwards. JARVIS picks it up within sec
 
 ## Workflows: reporting long work as it goes
 
-When you run a long piece of work in phases, such as a multi-step build or a workflow of several agents, report each step to JARVIS's workflow monitor so the user can see it and JARVIS can always tell them where it stands. This needs an access key in the `workflows` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> workflows`. The key's label is who reports: label it with your agent's name, and every event shows as yours. `agent_attached` may name only a session of the agent the key's label names; any other is refused.
+When you run a long piece of work in phases, such as a multi-step build or a workflow of several agents, report each step to JARVIS's workflow monitor so the user can see it and JARVIS can always tell them where it stands. Give `--as <your session id>` on every call: each request is signed with your own accepted key (see "Your own key"), and every event shows as yours. `agent_attached` may name only your own session; any other is refused. (Until the cut-over, an access key in the `workflows` category in `JARVIS_ACCESS_KEY` still works in its place.)
 
 ```
-python3 {{workflow_report}} start "<name>" --project <project> --phase <phase> --phase <phase>
+python3 {{workflow_report}} --as <your session id> start "<name>" --project <project> --phase <phase> --phase <phase>
 python3 {{workflow_report}} event <id> agent_attached "<who is running it>" --session <your session id>
 python3 {{workflow_report}} event <id> phase_started "<one sentence>" --item <phase>
 python3 {{workflow_report}} event <id> phase_added "<one sentence>" --item <phase> --title "<title>"
@@ -61,7 +73,7 @@ Whenever you wait on the user, link the wait to what will answer it with `--unti
 
 ## Work items: who is doing each piece
 
-When you take on a piece of work that lives in a ZIP work package or a folder on this Mac, track it on JARVIS's Work tab, so the user sees its state and exactly who is on each part of it. This needs an access key in the `work` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> work`. Every report, its pieces and its events show the key's label as who reported them (your agent's name when the label is it), never anything the report says.
+When you take on a piece of work that lives in a ZIP work package or a folder on this Mac, track it on JARVIS's Work tab, so the user sees its state and exactly who is on each part of it. Give `--as <your session id>` on every call: each request is signed with your own accepted key (see "Your own key"), and every report, its pieces and its events show your agent's name as who reported them, never anything the report says. (Until the cut-over, an access key in the `work` category in `JARVIS_ACCESS_KEY` still works in its place.)
 
 ```
 python3 {{work_report}} start "<title>" --folder <path> --area "<area>"        (or --zip <path>; --area is optional)

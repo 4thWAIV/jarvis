@@ -3186,7 +3186,8 @@ export const UI_CONTRACT = {
         "row",
         "name",
         "state",
-        "orb"
+        "orb",
+        "key"
       ],
       "presentations": [
         {
@@ -4345,7 +4346,9 @@ export const UI_CONTRACT = {
         "header",
         "state",
         "close",
-        "earlier"
+        "earlier",
+        "key",
+        "revoke"
       ],
       "presentations": [
         {
