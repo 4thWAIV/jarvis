@@ -120,8 +120,9 @@ jobs:
           /tmp/wheel-check/bin/python - <<'PYTHON'
           import json, tempfile
           from pathlib import Path
-          from jarvis import package_author, make_package, session_skill
+          from jarvis import package_author, make_package, session_skill, decision_check, data_paths
           assert package_author.SKILL.is_file() and package_author.GUIDE.is_file()
+          assert decision_check.built_page() == data_paths.FRONTEND_DIST
           assert 'human-package-author' in session_skill.render('human-package-author')
           with tempfile.TemporaryDirectory() as folder:
               root = Path(folder)

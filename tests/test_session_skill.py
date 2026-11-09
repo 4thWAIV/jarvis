@@ -59,13 +59,19 @@ def test_install_writes_every_existing_home_and_status_follows(homes):
     assert session_skill.status()[wanted[0]] == session_skill.OUT_OF_DATE
 
 
-def test_a_tool_he_does_not_use_gets_nothing(homes, monkeypatch, tmp_path):
-    monkeypatch.setattr(session_skill.codex_sessions, "codex_home",
-                        lambda: tmp_path / "no-codex")
-    _tmp, claude, _codex = homes
-
+@pytest.mark.parametrize("engine", ["claude", "codex"])
+def test_a_tool_he_does_not_use_gets_nothing(homes, monkeypatch, tmp_path, engine):
+    _tmp, claude, codex = homes
+    if engine == "claude":
+        monkeypatch.setattr(session_skill.codex_sessions, "codex_home", lambda: tmp_path / "no-codex")
+        available = claude
+    else:
+        monkeypatch.setattr(session_skill.session_watch, "config_roots", lambda: [])
+        available = codex
     assert len(session_skill.targets()) == 3
-    assert all(path.is_relative_to(claude) for path in session_skill.targets())
+    assert all(path.is_relative_to(available) for path in session_skill.targets())
+    session_skill.install()
+    assert (available / "skills/human-package-author/SKILL.md").is_file()
 
 
 def test_the_command_installs_and_anything_else_is_usage(homes, capsys):

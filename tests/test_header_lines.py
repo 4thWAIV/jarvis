@@ -355,6 +355,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_author.author": (
+        "it records provider model/session metadata and raw author text in local source/provenance "
+        "files for the originating factory command. It does not create a trusted JARVIS header or "
+        "speak session text. Its handoff prompt is the caller's explicit authoring input, and any "
+        "later inbox reading of packaged author content retains the existing untrusted wrapper."),
     "package_understanding.prepare_deck": (
         "it writes the author's structured slide/decision content and labeled narration into the "
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "

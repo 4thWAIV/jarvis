@@ -323,3 +323,17 @@ def test_only_a_stamped_decision_package_unpacks_and_only_for_its_token(tmp_path
     with zipfile.ZipFile(plain, "w") as z:
         z.writestr("package.json", "{}")
     assert decision_stamp.problem(plain, "token-a") is None, "only decision packages"
+
+
+def test_installed_checker_uses_shipped_page_without_node(tmp_path, monkeypatch):
+    from jarvis import data_paths
+    shipped = tmp_path / "web"
+    shipped.mkdir()
+    (shipped / "index.html").write_text("<!doctype html><title>JARVIS</title>")
+    monkeypatch.setattr(data_paths, "CHECKOUT", False)
+    monkeypatch.setattr(data_paths, "FRONTEND_DIST", shipped)
+    monkeypatch.setattr(decision_check.subprocess, "run", lambda *a, **kw: pytest.fail("installed checker rebuilt source"))
+    assert decision_check.built_page() == shipped
+    (shipped / "index.html").unlink()
+    with pytest.raises(decision_check.CheckFailed, match="missing from this distribution"):
+        decision_check.built_page()
