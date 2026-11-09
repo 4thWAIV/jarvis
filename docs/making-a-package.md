@@ -3,10 +3,32 @@
 This page is the only description of how to make a package and send it to Tim. Every kind goes through one command, and nothing else: never build, zip, attach or deliver a package by hand.
 
 ```bash
-python -m jarvis.make_package <content.json | folder> --session <your session id> [--workflow <id>] [--work <id>]
+python -m jarvis.make_package --handoff handoff.json --engine <claude|codex> --session <your session id> [--workflow <id>] [--work <id>]
 ```
 
 Run it with JARVIS's own Python. The talk-to-jarvis skill gives the exact command for this Mac, which works from any folder. From inside the JARVIS checkout it is `.venv/bin/python -m jarvis.make_package`, and then give `--project <your project>` as well, since the project otherwise defaults to the name of the folder you run it from.
+
+## Fresh author on the caller's engine
+
+Creation launches a fresh author through the existing provider session on the caller's own engine. A Codex caller uses `--engine codex`; a Claude caller uses `--engine claude`. Only that executable and its existing subscription login are needed. The other engine is never a fallback. The author starts a new conversation with the shipped `human-package-author` skill, the handoff and its evidence, without inheriting the originating conversation. The author's tools can read evidence and write the package source.
+
+The originating caller supplies one handoff JSON file:
+
+```json
+{
+  "purpose": "Explain the released microphone-check page",
+  "audience": "The person using JARVIS, who knows the microphone controls",
+  "questions": ["Does recording send my clip?", "What does saving do?"],
+  "evidence": ["./release-receipt.json", "./source/BRIEF.md"],
+  "decision": "information only"
+}
+```
+
+`purpose` and `audience` are nonempty text. `questions` and `evidence` are nonempty lists of text. Evidence may name local files, URLs and the source revisions needed to evaluate them; relative local references are relative to the handoff file. Additional context may include the actual decision and its scope, known limitations and ownership. Supply facts and reader questions, not an instruction to defend a draft. Existing source can accompany the handoff as the positional argument; the fresh author treats it as evidence.
+
+The command waits for the author, accepts its `content.json` or `package/` output, then runs the existing validation, build, rendered checks and inbox delivery. `--session`, `--work` and `--workflow` remain the originating caller's associations. Author failure, timeout, missing source or invalid output prevents delivery. The author receipt and evidence remain under the output folder's `author/` directory. The author does not deliver or recursively launch another author.
+
+For source validation while authoring, use `python -m jarvis.make_package <content.json | folder> --check-only`. This never launches a model or delivers. Creation without a handoff is refused. `--example` also remains model-free. Install the shared skills into existing Claude and Codex homes with `python -m jarvis.session_skill install`.
 
 ## Author understanding
 
@@ -101,7 +123,7 @@ Worked out for you: `name` (from the folder's name), `version`, `runs` (from whi
 
 ## What the command does
 
-1. Checks the content and lists everything to change at once. `--check-only` stops here.
+1. Launches a fresh author from the handoff, then checks its source and lists everything to change at once. `--check-only` validates existing source without launching an author.
 2. Builds and zips it. A deck is built by the shared deck, `examples/packages/decision-deck/`.
 3. Checks it again. A deck is opened in an isolated JARVIS of its own, never Tim's: found and opened by its title, its own styles in force in the package frame, every slide fitting at both screen sizes with readable text, and its story told to the end. For a decision package it also checks that every vote control is visible and large enough, that the story waits at each question until it is answered (by a Choose click and by voice in turn), that Stop ends it within a second from the page and from JARVIS, and that it resumes at the first unanswered question. Every slide and step is photographed. A folder's zip is read the way Tim's JARVIS will read it.
 4. Only if everything passed, sends it to Tim's package inbox (a decision package stamped as checked first, since his JARVIS opens no other). It is unpacked there and listed in the Packages section of his Queue tab and in his updates, as one line naming you, its title and how many decisions wait. It is never shown and never spoken until he asks for it.

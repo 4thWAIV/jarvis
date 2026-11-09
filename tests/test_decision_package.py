@@ -14,6 +14,8 @@ import pytest
 
 from jarvis import decision_check, decision_package as dp
 
+pytestmark = pytest.mark.usefixtures("authored_package_source")
+
 EXAMPLE = Path(__file__).parent.parent / "examples" / "packages" / "decision-deck"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'

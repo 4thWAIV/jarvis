@@ -46,8 +46,10 @@ def test_the_skill_is_not_one_of_the_brain_s_own():
 
 def test_install_writes_every_existing_home_and_status_follows(homes):
     _tmp, claude, codex = homes
-    wanted = [claude / "skills" / "talk-to-jarvis" / "SKILL.md",
-              codex / "skills" / "talk-to-jarvis" / "SKILL.md"]
+    wanted = session_skill.targets()
+    assert len(wanted) == 6
+    assert claude / "skills/human-package-author/SKILL.md" in wanted
+    assert codex / "skills/human-package-author/references/handoff.md" in wanted
 
     assert session_skill.status() == {p: session_skill.MISSING for p in wanted}
     assert session_skill.install() == wanted
@@ -62,13 +64,14 @@ def test_a_tool_he_does_not_use_gets_nothing(homes, monkeypatch, tmp_path):
                         lambda: tmp_path / "no-codex")
     _tmp, claude, _codex = homes
 
-    assert session_skill.targets() == [claude / "skills" / "talk-to-jarvis" / "SKILL.md"]
+    assert len(session_skill.targets()) == 3
+    assert all(path.is_relative_to(claude) for path in session_skill.targets())
 
 
 def test_the_command_installs_and_anything_else_is_usage(homes, capsys):
     assert session_skill.main(["session_skill.py"]) == 2
     assert session_skill.main(["session_skill.py", "install"]) == 0
-    assert capsys.readouterr().out.count("installed ") == 2
+    assert capsys.readouterr().out.count("installed ") == 6
 
 
 def test_preflight_reports_and_never_installs(homes):

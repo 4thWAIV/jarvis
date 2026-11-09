@@ -168,8 +168,9 @@ class BrainConfig:
     # Who runs the brain (brain_provider.provider): also the provider whose
     # logo the voice page shows on the orb.
     provider: str = brain_provider.DEFAULT_PROVIDER
-    model: str = "sonnet"
-    effort: str = "low"
+    model: str | None = "sonnet"
+    effort: str | None = "low"
+    authoring: bool = False  # fresh package author; voice defaults stay restricted
     claude_path: Optional[str] = None       # the anthropic provider's `claude`
     codex_path: Optional[str] = None        # the openai provider's `codex`
     turn_timeout: float = 90.0
