@@ -3994,6 +3994,23 @@ def tool_list_workers(args: dict) -> str:
     return head if chunk is None else head + "\n" + _wrap_untrusted("workers", chunk)
 
 
+def _session_rows(snapshot, wanted=()):
+    inventory = _worker_inventory()
+    workers = {worker['id']: worker for worker in inventory['workers']}
+    rows = []
+    for session in snapshot.sessions:
+        if wanted and session.state not in wanted:
+            continue
+        row = session_watch.session_to_dict(session)
+        worker = workers.get(worker_inventory.identity(session.provider, session.session_id))
+        row['activity'] = worker['activity'] if worker else None
+        row['snapshot_id'] = inventory.get('snapshot_id')
+        row['agents_active'] = worker['descendant_counts']['active'] if worker else 0
+        row['agents_capped'] = session.agents_capped or worker is None or bool(worker['descendant_counts']['unknown'])
+        rows.append(row)
+    return rows
+
+
 @app.get("/api/sessions")
 async def api_list_sessions(state: str = ""):
     """Every Claude Code conversation on this machine. The snapshot is the
@@ -4009,8 +4026,7 @@ async def api_list_sessions(state: str = ""):
     """
     snap = _snapshot_or_empty()
     wanted = {s for s in state.split(",") if s}
-    rows = [session_watch.session_to_dict(s) for s in snap.sessions
-            if not wanted or s.state in wanted]
+    rows = _session_rows(snap, wanted)
     projects: dict[str, list[str]] = {}
     for row in rows:
         projects.setdefault(row["project"], []).append(row["session_id"])
@@ -14774,8 +14790,7 @@ async def ws_sessions(websocket: WebSocket):
         await websocket.send_json({
             "type": "snapshot",
             "language": language_setting.state_frame()["language"],
-            "sessions": [session_watch.session_to_dict(s)
-                         for s in _snapshot_or_empty().sessions]})
+            "sessions": _session_rows(_snapshot_or_empty())})
         # People's messages drawn in the last few seconds, marked replay: a
         # page that has just (re)connected reconciles them, never animates.
         for frame in (messaging.replay_frames() if messaging is not None else []):

@@ -303,3 +303,12 @@ def test_unavailable_database_source_is_a_coverage_gap_not_a_broken_status_read(
     result = server._collect_worker_inventory()
     assert 'Managed runs unavailable: OperationalError' in result['gaps']
     assert result['snapshot_id']
+
+
+def test_permission_wait_keeps_the_same_open_turn_as_the_main_orb():
+    worker = SessionState(session_id='waiting', provider='anthropic', cwd='/project', project='Project', state='needs_you', worker_activity={
+        'state': 'human_wait', 'turn_open': True, 'observed_at': 100})
+    result = build(Snapshot([worker], 100), now=100)
+    assert result['total']['active'] == 1
+    assert result['workers'][0]['activity']['orb_state'] == 'thinking'
+    assert result['total']['model_work'] == 0

@@ -25,17 +25,12 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     def add(provider, sid, name, project, evidence, state, kind='agent', parent=None, workflow=None, runtime=None):
         key = identity(provider, sid)
         streamed = worker_activity.managed(provider, sid)
-        latest = max((streamed, evidence or {}), key=lambda e: e.get('observed_at') or 0)
-        # Joining an already open native turn may expose only runtime status.
-        # Keep an observed transcript turn start; runtime liveness alone
-        # still cannot create it. Explicit runtime terminal events win.
-        if latest.get('turn_open') is None and (evidence or {}).get('turn_open') is True:
-            latest = {**latest, 'turn_open': True}
+        latest = worker_activity.merge_evidence(streamed, evidence)
         live = worker_activity.current(latest, now)
         if latest.get('coverage_gap'):
             gaps.append(latest['coverage_gap'])
         # Session completion/liveness beats any previously observed output.
-        if (not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you')
+        if (not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished')
                 and live['state'] != 'external_wait'):
             live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False, turn_open=False)
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,

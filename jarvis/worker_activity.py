@@ -93,6 +93,19 @@ def observation(objects, provider, previous=None):
             'coverage': 'stream' if provider == 'anthropic' and source.endswith('stream_event') else 'turn_and_output'}
 
 
+def merge_evidence(*observations):
+    """Latest phase, retaining a known open turn across a status-only join."""
+    values = [value for value in observations if value]
+    if not values:
+        return {}
+    latest = max(values, key=lambda value: value.get('observed_at') or 0)
+    known = [value for value in values if value.get('turn_open') is not None]
+    boundary = max(known, key=lambda value: value.get('observed_at') or 0) if known else {}
+    if latest.get('turn_open') is None and boundary.get('turn_open') is True:
+        return {**latest, 'turn_open': True}
+    return latest
+
+
 def current(evidence, now):
     evidence = dict(evidence or {})
     state = evidence.get('state', 'unknown')
