@@ -1299,6 +1299,8 @@ EXEMPT = {
         "it records a refused report's method, path and summary as a hold for the error package, escaped there; nothing reaches the brain's headers"),
     "server._signer_sender": (
         "it builds the proven sender record of a signed package or message from JARVIS's own agent directory; names reach the brain only through _said_name or a walled block"),
+    "server._ask_understood_on_work": (
+        "it records the standard vote, JARVIS's own fixed words, as a Work decision; the agent's session id goes into the record as its asker, never into a line the brain reads"),
     "server.tool_revoke_agent_key": (
         "its answers are fixed sentences, and the agent's name only through _agent_said, the voice-name wall. Driven by tests/test_agent_keys.py"),
 }

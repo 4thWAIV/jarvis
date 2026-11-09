@@ -172,7 +172,7 @@ def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch
     monkeypatch.setattr(dp, "post", delivery)
     passing_check(monkeypatch, seen)
     assert mp.main([str(write(tmp_path / "in", presentation())), "--work", "work-1",
-                    "--out", str(tmp_path / "out"), "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--out", str(tmp_path / "out"), "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, _body)] = delivery.calls
     assert "work=work-1" in url and seen[0]["decisions"][-1]["id"] == "understood"
 
@@ -188,7 +188,7 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
                                                      "understanding": {"index.html": "about.md"}}))
     out = tmp_path / "out"
     assert mp.main([str(folder), "--work", "work-1", "--out", str(out),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(out)
     assert story["answers"] == "results/decisions.json"
     assert [s.get("waits") for s in story["slides"]] == ["understood"]
@@ -204,7 +204,7 @@ def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, 
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
     assert mp.main([str(folder), "--out", str(tmp_path / "a"),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(tmp_path / "a")
     assert [s["title"] for s in story["slides"]][:-1] == [s["title"] for s in given["slides"]]
     assert story["slides"][-1]["waits"] == "understood"
@@ -213,7 +213,7 @@ def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, 
     given["slides"][-1]["waits"] = "go-ahead"
     (folder / "story.json").write_text(json.dumps(given))
     assert mp.main([str(folder), "--out", str(tmp_path / "b"),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     assert built_story(tmp_path / "b") == given
 
 
@@ -246,12 +246,12 @@ def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
     (folder / "package.json").write_text(json.dumps({"purpose": "Saludar.",
                                                      "understanding": {"index.html": "about.md"}}))
     assert mp.main([str(folder), "--out", str(tmp_path / "a"),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(tmp_path / "a")
     assert story["language"] == "es" and story["slides"][-1]["title"] == "¿Entendido?"
     # A page's own story names no language, so it is told in English: so is its vote.
     assert mp.main([str(page_folder(tmp_path / "f")), "--out", str(tmp_path / "b"),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     assert built_story(tmp_path / "b")["slides"][-1]["title"] == "Got it?"
 
 

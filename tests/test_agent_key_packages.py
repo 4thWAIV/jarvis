@@ -16,6 +16,9 @@ from tests.test_agent_keys import DIAG, ORIGIN, PLAN, keygen, wired  # noqa: F40
 from tests.test_work_packages import make_zip, marks  # noqa: F401
 
 INBOX = "/api/packages/inbox"
+# An agent package (for a Work item, its vote is asked on the item).
+NOTES_AGENT = {"name": "notes-agent", "version": "1.0.0", "purpose": "Note it.",
+               "runs": "agent", "brief": "BRIEF.md", "returns": ["results/**"]}
 SKILL = {"name": "notes-skill", "version": "1.0.0", "purpose": "Say the notes.",
          "runs": "conversation", "skill": "SKILL.md", "returns": ["results/**"]}
 
@@ -127,10 +130,10 @@ def test_a_key_not_onboarded_is_held_with_its_work_item_in_error_until_he_switch
     key = agent_key_store.submit(agent.public, PLAN)
     agent_key_store.proven(key.fingerprint, "transcript")
 
-    r = send(client, agent, signed_zip(tmp_path, agent), session=PLAN, work=wid)
+    r = send(client, agent, signed_zip(tmp_path, agent, NOTES_AGENT, files={"BRIEF.md": "Note it."}), session=PLAN, work=wid)
     assert r.status_code == 409 and "Held" in r.json()["error"]
     [held] = agent_key_store.held()
-    assert held.kind == "package" and "notes skill" in held.what and held.work_id == wid
+    assert held.kind == "package" and "notes agent" in held.what and held.work_id == wid
     assert Path(held.path).is_file()
     item = work_store.get(wid)
     assert item.state == "error" and "Planning" in item.headline
@@ -140,12 +143,12 @@ def test_a_key_not_onboarded_is_held_with_its_work_item_in_error_until_he_switch
     assert error.name.startswith("key-error-") and error.work_id == wid
     from jarvis import work_packages
     page = (work_packages.find(error.package_id).folder / "index.html").read_text()
-    assert agent.fingerprint in page and PLAN in page and "notes skill" in page
+    assert agent.fingerprint in page and PLAN in page and "notes agent" in page
     assert "Switch Planning on" in page and "Refuse and revoke" in page
     assert store.get("package", error.id) is not None
 
     # The same package again is the same hold, and no second error package.
-    assert send(client, agent, signed_zip(tmp_path, agent), session=PLAN,
+    assert send(client, agent, signed_zip(tmp_path, agent, NOTES_AGENT, files={"BRIEF.md": "Note it."}), session=PLAN,
                 work=wid).status_code == 409
     assert len(agent_key_store.held()) == 1
     assert len([e for e in package_inbox.listing() if e.from_agent == "JARVIS"]) == 1
@@ -158,10 +161,12 @@ def test_a_key_not_onboarded_is_held_with_its_work_item_in_error_until_he_switch
     assert agent_key_store.for_session(PLAN).state == "onboarded"
     assert agent_key_store.for_session(PLAN).onboarded_by == "page"
     assert agent_key_store.held() == []
-    arrived = [e for e in package_inbox.listing() if e.name == "notes-skill"]
+    arrived = [e for e in package_inbox.listing() if e.name == "notes-agent"]
     assert arrived and arrived[0].from_session == PLAN and arrived[0].work_id == wid
     assert package_inbox.get(error.id).state == "closed"
     assert work_store.get(wid).state != "error"
+    assert [d.key for d in work_store.get(wid).decisions] == [f"understood-{arrived[0].id}"], \
+        "released, its vote is asked on the item"
     assert not Path(held.path).exists()
 
 

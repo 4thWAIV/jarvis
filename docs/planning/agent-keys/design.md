@@ -527,3 +527,11 @@ The access keys on record (labels only; the keys themselves are in the agents' e
 4. **Each agent checks and moves over:** `… agent_key --cert cert.pem status --session <its session id>` says `onboarded`. From then on it gives `--as <its session id>` to every `work_report.py` and `workflow_report.py` call, and `--session <its session id>` to `make_package`. Asked "who still uses access keys?", JARVIS's `agent_keys` answers from the count, as does `GET /api/agent-keys`.
 5. **Merge #101 and update.** Access keys keep working until none has been used for seven days (`legacy_access.py`). An agent that has not moved over is never cut off mid-week. Then they stop for good. Reinstall the skill so every session learns the new commands: `.venv/bin/python -m jarvis.session_skill install`.
 6. **Nothing touches the Keychain.** The two old items open nothing once the cut-over is recorded, and Tim may leave them.
+
+### Merged with PR 89 (every package carries his vote): option A
+
+PR 89, on main, made every package carry Tim's vote and refused agent and conversation packages sent with `--work`. The decision (option A) keeps both of Tim's rules: work-item keys are "created as part of making the package", and "packages must have votes".
+
+- An agent package sent with `--work` is allowed again and carries its work-item key. Its vote is the standard one (Got it / I have questions), asked as it arrives as the item's decision `understood-<inbox id>`, by its sending agent, on its Decisions tab (`server._ask_understood_on_work`). `make_package.check_vote` and the inbox route still refuse a conversation package that names a work item, and the route refuses any other package for a work item that asks nothing.
+- A presentation follows PR 89: it carries the standard vote, is checked like a decision package in the isolated JARVIS, and is signed with the statement that it passed. There is no "only as sent" path.
+- The inbox route reads the signature first (the sender, or a hold), then the decision check, then the vote check, and only then issues a package's work-item key, so a refused package never leaves a key behind.

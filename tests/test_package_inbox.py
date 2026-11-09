@@ -301,8 +301,8 @@ def presentation_zip(tmp_path) -> bytes:
     out.mkdir()
     made = make_package.make_deck(content, out)
     from tests.agent_key_fixtures import onboarded_auth
-    agent = onboarded_auth(session="sess-tea").agent
-    package_signature.sign(made.archive, made.archive, agent.private, agent.public, "sess-tea",
+    agent = onboarded_auth(session="sess-1").agent
+    package_signature.sign(made.archive, made.archive, agent.private, agent.public, "sess-1",
                            (package_signature.DECISION_CHECKED,))
     return made.archive.read_bytes()
 
