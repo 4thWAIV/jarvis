@@ -87,10 +87,16 @@ def mount(app, inspection, views, owner, *, prepare_followup=None):
             raise InspectionError("revision_mismatch", "That snapshot belongs to another package.")
         return snap
 
-    async def text(package_id, snapshot_id: str, member_id: str, part: str = "source", continuation: str | None = None):
+    async def text(package_id, snapshot_id: str, member_id: str, part: str = "source", continuation: str | None = None, target: str | None = None):
         try:
+            try:
+                location = PackageLocation.model_validate_json(target) if target else PackageLocation(member_id=member_id, part=part)
+            except ValueError:
+                raise InspectionError("bad_location", "The requested location does not match the package location schema.") from None
+            if location.member_id != member_id:
+                raise InspectionError("location_mismatch", "The query member differs from the requested location.")
             got = await asyncio.wait_for(inspection.read(owner=owner(), snapshot=checked_snapshot(package_id, snapshot_id),
-                location=PackageLocation(member_id=member_id, part=part), continuation=continuation), 15)
+                location=location, continuation=continuation), 15)
             return got.model_dump(mode="json")
         except InspectionError as e:
             return failure(e)
@@ -107,16 +113,16 @@ def mount(app, inspection, views, owner, *, prepare_followup=None):
 
     async def page(package_id, page: int, snapshot_id: str, member_id: str):
         try:
-            evidence, rendered = await asyncio.wait_for(inspection.render(owner=owner(),
+            visual = await asyncio.wait_for(inspection.render(owner=owner(),
                 snapshot=checked_snapshot(package_id, snapshot_id),
                 location=PackageLocation(member_id=member_id, location=PageLocation(page=page)), options=RenderOptions()), 15)
-            return inspection.images.document(owner(), evidence, rendered).model_dump(mode="json")
+            return visual.model_dump(mode="json")
         except InspectionError as e:
             return failure(e)
 
     async def image(package_id, token):
         try:
-            data, media_type = inspection.images.resolve(owner(), token)
+            data, media_type = inspection.images.resolve(owner(), token, package_id)
             return Response(data, media_type=media_type, headers={"Cache-Control": "no-store"})
         except InspectionError as error:
             return failure(error)
@@ -126,8 +132,8 @@ def mount(app, inspection, views, owner, *, prepare_followup=None):
             return JSONResponse({"error": packages_api.NOT_HIS_ACT}, status_code=403)
         try:
             mount = views.choose(owner(), PackageRef(package_id=package_id), body.get("client"))
-            evidence, shot, metadata = await views.capture(owner=owner(), view=mount.view, display=body.get("display", 1))
-            return inspection.images.screen(owner(), evidence, shot, metadata).model_dump(mode="json")
+            visual = await views.capture(owner=owner(), view=mount.view, display=body.get("display", 1))
+            return visual.model_dump(mode="json")
         except InspectionError as error:
             return failure(error)
 

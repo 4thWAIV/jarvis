@@ -1540,6 +1540,18 @@ def brain_cwd() -> str:
 _brain_cwd = brain_cwd
 
 
+_INTERNAL_BRAIN_PIDS: set[int] = set()
+
+
+def register_internal_brain(pid: int) -> None:
+    """A host-spawned classification process is not a user agent."""
+    _INTERNAL_BRAIN_PIDS.add(pid)
+
+
+def unregister_internal_brain(pid: int) -> None:
+    _INTERNAL_BRAIN_PIDS.discard(pid)
+
+
 def _is_own_brain(entry: RosterEntry) -> bool:
     """True for JARVIS's own brain process, never a user conversation.
 
@@ -1550,6 +1562,8 @@ def _is_own_brain(entry: RosterEntry) -> bool:
     (this user does, at .../Projects/jarvis) and a name-based check would
     wrongly exclude that real conversation too.
     """
+    if entry.pid in _INTERNAL_BRAIN_PIDS:
+        return True
     if entry.entrypoint != "sdk-cli":
         return False
     try:

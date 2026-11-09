@@ -19,12 +19,12 @@ The implementation starts from `2784484`. The specification inspected `eaf3683`.
 
 ## Current state
 
-Source reconciliation is complete. Reader extraction is in progress. No release or deployment is part of this implementation.
+Implementation and isolated acceptance review are complete. The review artifact is in `review/content.json`, with its implementation map, acceptance coverage, runtime limits and reproduction instructions in `review/report.md`. No release or deployment is part of this implementation.
 
 ## Implementation checkpoint
 
 The package content service now includes immutable snapshots, source/results revisions, original-delivery source identities, local/team cache scopes, leases, opaque cursors, SQLite substring search, source citations, generated frontend contracts, revision-pinned asset routes, generic DOM observations, factory slide reporting, ordinary attachment viewer state, isolated HTML rendering, image result references, deliberate display capture, direct-user action scopes, capture preparation reuse, and evidence binding through staging and delivery.
 
-The existing attachment and capture contracts remain in use. New package follow-ups use `CapturePreparation`, `transmission`, and the existing `messages` rows. The current testing checkpoint includes the package content acceptance tests, reader tests, package modes/story tests, capture and transmission tests, and tool registration tests. The built frontend compiles.
+The existing attachment and capture contracts remain in use. New package follow-ups use `CapturePreparation`, `transmission`, and the existing `messages` rows. The final regression run passed 619 tests across package content, authority, inbox, work packages, package modes/story, readers/cache, capture/transmission, tool trust, MCP, providers, agent roster and package factory modules. The browser run passed both application tests using the built frontend, isolated backend and actual MCP forwarding. Raw final output is retained in `review/regression-tests.txt` and `review/browser-tests.txt`.
 
-The isolated browser demonstration, expanded adversarial fixtures, and final review artifact are still in progress. No release, merge, deployment, or live service restart has occurred.
+Generated contracts match their Python models. The official package check accepts `review/content.json`. The browser evidence contains source/DOM separation, selection, tabs/details, visibility, independent narration, manual factory navigation, multiple clients and reconstructed image pixels. Actual Mac display permission, cloud classification latency, spoken read-back and delivery to an external agent remain runtime review items. No release, merge, deployment, or live service restart has occurred.

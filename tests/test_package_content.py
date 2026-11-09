@@ -323,3 +323,77 @@ def test_active_cache_leases_are_shared_by_attachment_and_package_facades(tmp_pa
     b.trim()
     assert a.get(first) == b'a' * 80
     a.release('active-frame'); b.release('new-frame')
+
+@pytest.mark.asyncio
+async def test_requested_line_range_and_malformed_deck_raw_source_remain_exact(world):
+    from jarvis.bundle_contract import LineLocation
+    service, owner, ref, folder = world
+    (folder / 'long.txt').write_text('First\nSecond\nThird\nFourth\n')
+    (folder / 'deck-data.js').write_text('window.DECK = function(){ return "unexecuted"; };')
+    overview = await service.inspect(owner=owner, package=ref)
+    member = next(m for m in overview.first_members if m.relative_path == 'long.txt')
+    result = await service.read(owner=owner, snapshot=overview.snapshot,
+        location=PackageLocation(member_id=member.member_id, location=LineLocation(start=3, end=3)))
+    assert ''.join(c.text for c in result.chunks) == 'Third\n'
+    assert result.complete and result.coverage.unread_members == len(overview.first_members)
+    deck = next(m for m in overview.first_members if m.relative_path == 'deck-data.js')
+    raw = await service.read(owner=owner, snapshot=overview.snapshot, location=PackageLocation(member_id=deck.member_id))
+    assert 'function(){ return "unexecuted"; }' in raw.chunks[0].text
+    for task in service._jobs.values():
+        await task
+    assert next(m for m in service.snapshots.members(owner, overview.snapshot) if m.member_id == deck.member_id).reason == 'structured_deck_unavailable'
+
+@pytest.mark.asyncio
+async def test_corrupt_manifest_is_accounted_for_without_losing_other_members(world):
+    service, owner, ref, folder = world
+    (folder / 'package.json').write_text('{invalid JSON')
+    overview = await service.inspect(owner=owner, package=ref)
+    assert any(m.relative_path == 'package.json' and m.reason == 'manifest_invalid' for m in overview.first_members)
+    assert any(m.relative_path == 'long.txt' for m in overview.first_members)
+    for task in service._jobs.values():
+        await task
+
+@pytest.mark.asyncio
+async def test_pdf_image_text_reader_parity_and_results_preserve_source_render_cache(world, monkeypatch):
+    from jarvis import bundle_readers
+    from jarvis.bundle_readers import _quartz
+    from jarvis.bundle_inspection import BundleInspection, Owner
+    from jarvis.bundle_contract import PageLocation, RenderOptions
+    from tests.test_bundle_inspection import Files
+    from tests.bundle_fixtures import FakeOsascript, two_page_pdf, png_bytes
+    service, owner, ref, folder = world
+    fake = FakeOsascript()
+    monkeypatch.setattr(_quartz, 'RUNNER', fake)
+    _quartz.forget_health()
+    contents = {'supporting.pdf': two_page_pdf(), 'diagram.png': png_bytes(), 'plain.txt': b'Exact same document text.\n'}
+    for name, data in contents.items():
+        (folder / name).write_bytes(data)
+    overview = await service.inspect(owner=owner, package=ref)
+    files = Files(folder.parent.parent / 'attachment-downloads')
+    team_owner = Owner('reader-parity', 1)
+    attachment = BundleInspection(files, DerivedCache(folder.parent.parent / 'attachment-cache'))
+    for name in ('supporting.pdf', 'plain.txt'):
+        key = files.add(team_owner, contents[name], name)
+        info = attachment.classify(team_owner, key)
+        member = next(m for m in overview.first_members if m.relative_path == name)
+        from_package = await service.read(owner=owner, snapshot=overview.snapshot, location=PackageLocation(member_id=member.member_id))
+        from_attachment = attachment.read_member(team_owner, key, info.root_member_id, max_chars=700)
+        assert [(c.evidence.location.location, c.text) for c in from_package.chunks] == [(c.location, c.text) for c in from_attachment.chunks]
+    image_member = next(m for m in overview.first_members if m.relative_path == 'diagram.png')
+    reader = bundle_readers.reader_for('png')
+    original = reader.render
+    calls = []
+    def counted(*args):
+        calls.append(1)
+        return original(*args)
+    monkeypatch.setattr(reader, 'render', counted)
+    location = PackageLocation(member_id=image_member.member_id, location=PageLocation(page=1))
+    a = await service.render(owner=owner, snapshot=overview.snapshot, location=location, options=RenderOptions())
+    (folder / 'results/decisions.json').write_text('{"recorded":"yes"}')
+    current = await service.inspect(owner=owner, package=ref)
+    b = await service.render(owner=owner, snapshot=current.snapshot, location=location, options=RenderOptions())
+    assert len(calls) == 1 and a.image.width == b.image.width
+    assert service.images.resolve(owner, a.image.imageRef.rsplit('/', 1)[-1])[0] == contents['diagram.png']
+    for task in service._jobs.values():
+        await task
+    _quartz.forget_health()

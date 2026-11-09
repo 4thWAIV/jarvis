@@ -107,7 +107,7 @@ export const storyState = createStore<StoryState | null>(null);
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
 
-const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id, (info) => info.id);
+const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id && a.snapshotId === b.snapshotId, (info) => info.id);
 /** The page package shown in the centre area, or none. Read-only: the
  *  controls run `package.open` and `package.close`. */
 export const openPackage = packageSlot.value;
@@ -175,7 +175,7 @@ export function packageClosed(id: string): void {
  *  showing. */
 export function showPackage(info: PackageInfo): void {
   described.set(info.id, info);
-  if (openPackage.get()?.id !== info.id) void dispatch("package.open", { packageId: info.id }, { actor: "brain" });
+  if (openPackage.get()?.id !== info.id || openPackage.get()?.snapshotId !== info.snapshotId) void dispatch("package.open", { packageId: info.id }, { actor: "brain" });
 }
 
 /** A page package the server has just opened on his click: shown here at

@@ -87,9 +87,24 @@ def prepare(server, language: str, page: Path) -> None:
         # is; between calls no turn is under way, so the floor is free and
         # a story waiting for his answer goes on once it has one.
         calls["open"] += 1
+        previous_scope = server._package_action_scope
+        scope = None
+        from jarvis.package_authority import PACKAGE_ACTION_TOOLS
+        operation = PACKAGE_ACTION_TOOLS.get(tool)
         try:
+            if operation:
+                scope = server.package_authority.mint(user_turn_id="isolated-factory-check",
+                    package=server._package_action_ref(str(args.get("package") or "")),
+                    operation=operation, origin="user_control",
+                    utterance=str(args.get("option") or args.get("command") or ""),
+                    decision=args.get("decision"), answer=args.get("option"))
+                server._package_action_scope = scope
             return await dispatch(tool, handler, args)
         finally:
+            server._package_action_scope = previous_scope
+            if scope:
+                server.package_authority._scopes.pop(scope.scope_id, None)
+                server.package_authority._utterances.pop(scope.scope_id, None)
             calls["open"] -= 1
 
     async def start_without_a_brain():

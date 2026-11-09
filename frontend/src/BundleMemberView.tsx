@@ -35,7 +35,7 @@ import { sizeText } from "./queueStore";
 import { createStore } from "./store";
 import type { CommandArgs } from "./uiContract";
 import { bind, bindingProps } from "./uiNavigation";
-import { registerCommand, useUiTarget } from "./uiRegistry";
+import { registerCommand, useUiTarget, visibilityOf } from "./uiRegistry";
 
 function where(location: Location): string {
   switch (location.kind) {
@@ -137,7 +137,7 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
     const rect = root?.getBoundingClientRect();
     const selected = window.getSelection();
     return {messageId, attachmentId, memberId, page, zoom: window.visualViewport?.scale ?? 1,
-      textMode: showText, visible: document.visibilityState === "visible" && !!rect?.width && !!rect?.height,
+      textMode: showText, visible: document.visibilityState === "visible" && visibilityOf(root) === "visible",
       focused: document.hasFocus(), selectedText: selection && selected?.anchorNode && root?.contains(selected.anchorNode)
         ? selected.toString().slice(0, 4000) : null};
   }), [messageId, attachmentId, memberId, page, showText]);

@@ -61,6 +61,11 @@ class _Reader(HTMLParser):
         self.skipping = 0
         self.resources: list[str] = []
         self._in_style = False
+        self.headings = []
+        self.links = []
+        self.references = []
+        self._heading = None
+        self._link = None
 
     def _add(self, url: str) -> None:
         url = url.strip()
@@ -75,6 +80,16 @@ class _Reader(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
+        values = dict(attrs)
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._heading = {"level": int(tag[1]), "element_id": values.get("id"), "text": ""}
+            self.headings.append(self._heading)
+        if tag == "a" and values.get("href"):
+            self._link = {"href": values["href"], "text": ""}
+            self.links.append(self._link)
+        for key, value in attrs:
+            if value and key in {"src", "href", "poster", "data", "xlink:href"}:
+                self.references.append(value)
         if tag in _SKIPPED:
             self.skipping += 1
         if tag == "style":
@@ -104,6 +119,10 @@ class _Reader(HTMLParser):
 
     def handle_endtag(self, tag):
         tag = tag.lower()
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._heading = None
+        if tag == "a":
+            self._link = None
         if tag in _SKIPPED and self.skipping:
             self.skipping -= 1
         if tag == "style":
@@ -117,6 +136,10 @@ class _Reader(HTMLParser):
         if self.skipping:
             return
         self.lines[-1] += data
+        if self._heading is not None:
+            self._heading["text"] += data
+        if self._link is not None:
+            self._link["text"] += data
 
 
 def parse(data: bytes) -> tuple[str, list[str]]:
@@ -140,6 +163,13 @@ class HtmlReader:
 
     def parsed(self, source: MemberSource) -> tuple[str, list[str]]:
         return parse(read_bounded(source, HTML_MAX_BYTES))
+
+    def outline(self, source: MemberSource) -> dict:
+        parser = _Reader()
+        parser.feed(_paging.decode(read_bounded(source, HTML_MAX_BYTES)))
+        parser.close()
+        return {"headings": parser.headings, "links": parser.links,
+                "references": list(dict.fromkeys(parser.references))}
 
     def describe(self, source: MemberSource, detected: Detected) -> Description:
         try:

@@ -1,4 +1,6 @@
 /** Host-owned package mounts on the authenticated voice connection. */
+import { mainView } from './uiNavigation';
+import { visibilityOf } from './uiRegistry';
 import { CLIENT_ID } from './uiClient';
 import type { JarvisSocket } from './ws';
 import { OBSERVATION_BYTES, OBSERVATION_SCHEMA, type ObserveResponse } from './packageContentContract';
@@ -41,8 +43,7 @@ type Mount = { frame: HTMLIFrameElement; packageId: string; snapshotId: string;
 let socket: JarvisSocket | null = null;
 const mounts = new Set<Mount>();
 const post = (mount: Mount, message: object) => mount.frame.contentWindow?.postMessage({jarvis: 'package', ...message}, '*');
-const state = (m: Mount) => ({focused: document.hasFocus(), visible: document.visibilityState === 'visible' &&
-  m.frame.getBoundingClientRect().width > 0 && m.frame.getBoundingClientRect().height > 0});
+const state = (m: Mount) => ({focused: document.hasFocus(), visible: document.visibilityState === 'visible' && mainView.get() === 'package' && visibilityOf(m.frame) === 'visible'});
 const open = (m: Mount) => socket?.send({type: 'package_view_mount', packageId: m.packageId,
   snapshotId: m.snapshotId, clientId: CLIENT_ID, ...state(m)});
 
@@ -95,11 +96,13 @@ export function observeFrame(frame: HTMLIFrameElement, packageId: string, snapsh
   window.addEventListener('message', messages);
   window.addEventListener('focus', changed); window.addEventListener('blur', changed);
   document.addEventListener('visibilitychange', changed);
+  const resized = () => {changed(); requestAnimationFrame(changed);};
+  const stopView = mainView.subscribe(resized);
   const resize = new ResizeObserver(changed); resize.observe(frame);
   open(m);
   return () => {
     socket?.send({type: 'package_view_close', mountId: m.mountId});
-    mounts.delete(m); resize.disconnect(); frame.removeEventListener('load', loaded);
+    mounts.delete(m); stopView(); resize.disconnect(); frame.removeEventListener('load', loaded);
     window.removeEventListener('message', messages); window.removeEventListener('focus', changed);
     window.removeEventListener('blur', changed); document.removeEventListener('visibilitychange', changed);
   };
@@ -114,12 +117,14 @@ let documentProvider: ((selection: boolean) => Record<string, unknown>) | null =
 export function registerDocumentView(provider: (selection: boolean) => Record<string, unknown>): () => void {
   documentProvider = provider;
   const report = () => reportDocumentView(provider(false));
+  const stopView = mainView.subscribe(() => {report(); requestAnimationFrame(report);});
   const events = ['focus', 'blur', 'resize'];
   events.forEach(name => window.addEventListener(name, report));
   document.addEventListener('visibilitychange', report);
   report();
   return () => {
     if (documentProvider === provider) {documentProvider = null; reportDocumentView(null);}
+    stopView();
     events.forEach(name => window.removeEventListener(name, report));
     document.removeEventListener('visibilitychange', report);
   };

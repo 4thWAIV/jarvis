@@ -134,7 +134,10 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__ui_indicate,mcp__jarvis__ui_journey,mcp__jarvis__ui_clear,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
-        "WebSearch,WebFetch,Skill")
+        "WebSearch,WebFetch,Skill,"
+        "mcp__jarvis__inspect_package,mcp__jarvis__read_package_content,"
+        "mcp__jarvis__search_package_content,mcp__jarvis__observe_package_view,"
+        "mcp__jarvis__look_at_package_content,mcp__jarvis__prepare_package_followup")
     assert cmd[cmd.index("--tools") + 1] == ",".join(claude_provider.ALLOWED_TOOLS), (
         "the pin above IS ALLOWED_TOOLS — a name that appears in one and not "
         "the other means the list this test guards is no longer the list the "

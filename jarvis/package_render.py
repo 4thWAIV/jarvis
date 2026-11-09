@@ -8,6 +8,10 @@ import asyncio
 import base64
 import json
 import sys
+import os
+import signal
+import shutil
+import tempfile
 from urllib.parse import unquote, urlsplit
 from jarvis import bundle_archive
 from jarvis.bundle_contract import RenderedPage, RenderedPageInfo
@@ -29,8 +33,13 @@ async def render(inspection, owner, snapshot, location, options):
         total += len(data)
     payload = json.dumps({'resources': resources, 'entry': selected.relative_path,
         'slide': location.slide_id, 'max_edge': options.max_edge}).encode()
+    scratch = tempfile.mkdtemp(prefix='render-', dir=inspection.snapshots.cache.scratch_scope(owner))
+    child_env = {key: value for key, value in os.environ.items()
+                 if key in {'PATH', 'HOME', 'LANG', 'LC_ALL', 'PYTHONPATH', 'PLAYWRIGHT_BROWSERS_PATH'}}
+    child_env['TMPDIR'] = scratch
     process = await asyncio.create_subprocess_exec(sys.executable, '-m', 'jarvis.package_render', '--worker',
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        env=child_env, start_new_session=True)
     try:
         out, _ = await asyncio.wait_for(process.communicate(payload), 12)
         if process.returncode:
@@ -46,8 +55,26 @@ async def render(inspection, owner, snapshot, location, options):
         raise InspectionError('renderer_timeout', 'The isolated renderer exceeded its deadline.', retryable=True) from None
     finally:
         if process.returncode is None:
-            process.kill()
+            # Kill this renderer's descendants before the worker, while parentage is known.
+            try:
+                listing = await asyncio.create_subprocess_exec('ps', '-axo', 'pid=,ppid=',
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                listed, _ = await asyncio.wait_for(listing.communicate(), 1)
+                pairs = [tuple(map(int, line.split())) for line in listed.decode().splitlines() if len(line.split()) == 2]
+                family = {process.pid}
+                for _ in range(10):
+                    found = {pid for pid, parent in pairs if parent in family}
+                    if found <= family: break
+                    family.update(found)
+                for pid in sorted(family - {process.pid}, reverse=True):
+                    try: os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+            except (OSError, ValueError, asyncio.TimeoutError):
+                pass
+            try: process.kill()
+            except ProcessLookupError: pass
             await process.communicate()
+        shutil.rmtree(scratch, ignore_errors=True)
 
 async def worker(payload):
     from playwright.async_api import async_playwright
@@ -87,7 +114,12 @@ async def worker(payload):
                 if not found:
                     raise ValueError('The declarative factory slide is unavailable.')
             await page.wait_for_timeout(150)
-            png = await page.screenshot(type='png', timeout=5000)
+            clip = None
+            if payload['entry'].lower().endswith('.svg'):
+                bounds = await page.locator('svg').first.bounding_box()
+                if bounds and 0 < bounds['width'] <= edge and 0 < bounds['height'] <= 1000:
+                    clip = bounds
+            png = await page.screenshot(type='png', timeout=5000, clip=clip)
             from jarvis.screen import _png_size
             width, height = _png_size(png)
             return {'png': base64.b64encode(png).decode(), 'width': width, 'height': height}

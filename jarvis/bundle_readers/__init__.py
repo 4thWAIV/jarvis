@@ -310,3 +310,19 @@ def health() -> dict[FormatId, ReaderHealth]:
         for fmt in sorted(reader.formats):
             found[fmt] = state
     return found
+
+
+OPERATION_ORDER = ("download", "list_archive", "extract", "read_text", "render", "ocr", "edit_export", "execute")
+
+
+def support_for(detected: Detected):
+    """Inventory capabilities from the one format registry and runtime health."""
+    if detected.format in ARCHIVES:
+        return "unsupported", "nested_archive", ()
+    reader = reader_for(detected.format)
+    if reader is None:
+        return "unsupported", "unknown_format" if detected.format == "unknown" else "reader_unavailable", ()
+    state = reader.health()
+    if not state.available:
+        return "unsupported", state.reason or "reader_unavailable", ()
+    return "readable", None, tuple(op for op in OPERATION_ORDER if op in state.operations)

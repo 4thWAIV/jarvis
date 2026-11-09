@@ -1,0 +1,181 @@
+[
+  {
+    "request": "Inspect the current Costs tab and selected assumption.",
+    "tool": "observe_package_view",
+    "result": {
+      "view": {
+        "client_id": "page-cb981b89-720b-492d",
+        "view_id": "view-2134852c698472bf1134b01e",
+        "mount_id": "mount-5218ad9bd4271645a7dd4cb9",
+        "package": {
+          "package_id": "package-content-review-1.0.0-demo1234",
+          "inbox_id": null
+        },
+        "content_revision": "2d9728b0d9a0bb11d8f9e38ea27fc1e8589e3c13779b9858b56e1d71fae304b8",
+        "sequence": 1
+      },
+      "current_at_receipt": true,
+      "location": {
+        "member_id": "m5c0b87d87755c57ce238196c",
+        "part": "source",
+        "location": null,
+        "slide_id": null,
+        "beat_id": null,
+        "element_id": null,
+        "text_start": null,
+        "text_end": null
+      },
+      "selection": "Two hours of setup.",
+      "narration": null,
+      "text": "Package content review\nCosts\nDelivery\nCosts\nThe source estimate is ten dollars.\nAssumptions\nTwo hours of setup.\nReported image references (pixels not inspected): [{\"member_id\": \"m971c85b580f543fac717c3d5\", \"source\": \"http://127.0.0.1:49772/api/packages/package-content-review-1.0.0-demo1234/files/@snapshots/2d9728b0d9a0bb11d8f9e38ea27fc1e8589e3c13779b9858b56e1d71fae304b8/diagram.svg\", \"alt\": \"Caption: Operations funds Budget.\"}]\nReported locator: {\"slideId\":null,\"tabId\":\"costs\",\"elementId\":null,\"fragment\":\"\",\"openDetails\":[\"assumptions\"]}",
+      "source_evidence": [],
+      "limits": [
+        "reported_dom_package_controlled",
+        "occlusion_canvas_closed_shadow_unverified",
+        "unvisited_dynamic_states"
+      ]
+    }
+  },
+  {
+    "request": "Inspect the current tab after manual navigation.",
+    "tool": "observe_package_view",
+    "result": {
+      "view": {
+        "client_id": "page-cb981b89-720b-492d",
+        "view_id": "view-2134852c698472bf1134b01e",
+        "mount_id": "mount-5218ad9bd4271645a7dd4cb9",
+        "package": {
+          "package_id": "package-content-review-1.0.0-demo1234",
+          "inbox_id": null
+        },
+        "content_revision": "2d9728b0d9a0bb11d8f9e38ea27fc1e8589e3c13779b9858b56e1d71fae304b8",
+        "sequence": 3
+      },
+      "evidence": {
+        "evidence_id": "ev-dad18e74de046f90906e57de",
+        "snapshot": {
+          "snapshot_id": "snap-eb46a25c9aabbcc92c54dd10f1ee2d7c",
+          "package": {
+            "package_id": "package-content-review-1.0.0-demo1234",
+            "inbox_id": null
+          },
+          "delivery_sha256": "ad24951c3c6017ebbe499a751d31b68d6c7284d75820f11ec4fb29fd2970fb0a",
+          "content_revision": "2d9728b0d9a0bb11d8f9e38ea27fc1e8589e3c13779b9858b56e1d71fae304b8",
+          "results_revision": "0a722a628846ba236d6b9a94765c286071ab272a4fc9e5518f271b6f5524953b"
+        },
+        "location": {
+          "member_id": "m5c0b87d87755c57ce238196c",
+          "part": "source",
+          "location": null,
+          "slide_id": null,
+          "beat_id": null,
+          "element_id": null,
+          "text_start": null,
+          "text_end": null
+        },
+        "kind": "reported_dom",
+        "view_id": "view-2134852c698472bf1134b01e",
+        "sequence": 3,
+        "observed_at": "2026-11-09T01:33:26.167473+00:00"
+      },
+      "received_at": "2026-11-09T01:33:26.167473+00:00",
+      "focused": true,
+      "visible": true,
+      "current": true,
+      "active_location": {
+        "member_id": "m5c0b87d87755c57ce238196c",
+        "part": "source",
+        "location": null,
+        "slide_id": null,
+        "beat_id": null,
+        "element_id": null,
+        "text_start": null,
+        "text_end": null
+      },
+      "content": {
+        "chunks": [
+          {
+            "evidence": {
+              "evidence_id": "ev-dad18e74de046f90906e57de",
+              "snapshot": {
+                "snapshot_id": "snap-eb46a25c9aabbcc92c54dd10f1ee2d7c",
+                "package": {
+                  "package_id": "package-content-review-1.0.0-demo1234",
+                  "inbox_id": null
+                },
+                "delivery_sha256": "ad24951c3c6017ebbe499a751d31b68d6c7284d75820f11ec4fb29fd2970fb0a",
+                "content_revision": "2d9728b0d9a0bb11d8f9e38ea27fc1e8589e3c13779b9858b56e1d71fae304b8",
+                "results_revision": "0a722a628846ba236d6b9a94765c286071ab272a4fc9e5518f271b6f5524953b"
+              },
+              "location": {
+                "member_id": "m5c0b87d87755c57ce238196c",
+                "part": "source",
+                "location": null,
+                "slide_id": null,
+                "beat_id": null,
+                "element_id": null,
+                "text_start": null,
+                "text_end": null
+              },
+              "kind": "reported_dom",
+              "view_id": "view-2134852c698472bf1134b01e",
+              "sequence": 3,
+              "observed_at": "2026-11-09T01:33:26.167473+00:00"
+            },
+            "text": "Package content review\nCosts\nDelivery\nDelivery\nDelivery is scheduled for Friday.\nReported locator: {\"slideId\":null,\"tabId\":\"delivery\",\"elementId\":null,\"fragment\":\"\",\"openDetails\":[]}"
+          }
+        ],
+        "coverage": {
+          "inventory_complete": true,
+          "text_complete": true,
+          "dynamic_coverage": "observed_state",
+          "unread_members": 6,
+          "pending_members": 0,
+          "unreadable_members": 1,
+          "visual_evidence": [],
+          "gaps": [
+            "reported_dom_package_controlled",
+            "occlusion_canvas_closed_shadow_unverified",
+            "unvisited_dynamic_states",
+            "unsupported.mp3: reader_unavailable"
+          ],
+          "next": null
+        },
+        "complete": true,
+        "next": null
+      },
+      "narration": null,
+      "selected_text": null,
+      "limits": [
+        "reported_dom_package_controlled",
+        "occlusion_canvas_closed_shadow_unverified",
+        "unvisited_dynamic_states"
+      ]
+    }
+  },
+  {
+    "request": "Inspect the arrows as pixels rather than trusting the caption.",
+    "tool": "look_at_package_content",
+    "result": {
+      "evidence_id": "ev-aa3d4c3a435e5bb05c401264",
+      "kind": "reconstructed_render",
+      "image": {
+        "kind": "document",
+        "mediaType": "image/png",
+        "width": 600,
+        "height": 160,
+        "page": 1,
+        "pageCount": 1,
+        "imageRef": "/api/packages/package-content-review-1.0.0-demo1234/inspection/images/T1NITPE6KQ2yYLhJVnEhx2FPPUfzni_I"
+      },
+      "limits": [
+        "reconstructed_from_source_bytes",
+        "initial_loaded_state"
+      ],
+      "sequence_before": null,
+      "sequence_after": null,
+      "complete": true,
+      "next": null
+    }
+  }
+]

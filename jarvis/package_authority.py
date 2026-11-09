@@ -17,9 +17,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 from pydantic import Field
-from jarvis import brain_provider, data_paths
+from jarvis import brain_provider, data_paths, session_watch
 from jarvis.brain import BrainConfig
 from jarvis.package_content_contract import InspectionError, PackageRef, Shape
+
+PACKAGE_ACTION_TOOLS = {"answer_package_decision": "answer_decision", "sign_off_package": "sign_off",
+                        "run_package_command": "execute_package", "run_package_agent": "execute_package"}
 
 OPERATIONS = Literal['prepare_followup', 'answer_decision', 'sign_off', 'execute_package']
 
@@ -56,6 +59,7 @@ class PackageAuthority:
         self._ready = None
         self._warming = None
         self._scopes = {}
+        self._utterances = {}
 
     def warm(self):
         if not self.enabled():
@@ -97,14 +101,21 @@ class PackageAuthority:
         session = self.provider_factory(config.provider).session(config, event, exited)
         try:
             await asyncio.wait_for(session.open(INSTRUCTIONS % json.dumps(Intent.model_json_schema())), 30)
+            pid = getattr(getattr(session, "proc", None), "pid", None)
+            if pid is not None:
+                session_watch.register_internal_brain(pid)
             self._ready = (session, future, folder)
-        except (OSError, asyncio.TimeoutError):
+        except BaseException as error:
+            if not future.done(): future.cancel()
             session.kill()
             await session.close(0.1)
             shutil.rmtree(folder, ignore_errors=True)
+            if isinstance(error, asyncio.CancelledError):
+                raise
 
     async def classify(self, utterance, host):
         self._scopes.clear()
+        self._utterances.clear()
         ready, self._ready = self._ready, None
         self.warm()
         if ready is None:
@@ -116,17 +127,22 @@ class PackageAuthority:
                 raw = await future
             intent = Intent.model_validate_json(raw, strict=True)
             # Model output cannot introduce answer/target words absent from the direct utterance.
-            for value in (intent.target, intent.recipient, intent.answer):
+            for value in (intent.target, intent.recipient, intent.decision, intent.answer):
                 if value and value.casefold() not in utterance.casefold():
                     raise InspectionError('ambiguous_intent', 'The classified action includes words the user did not supply.')
             if intent.ambiguous:
                 raise InspectionError('ambiguous_intent', 'The requested package action or target needs clarification.')
             return intent
+        except InspectionError:
+            raise
         except (asyncio.TimeoutError, ValueError):
             raise InspectionError('intent_unavailable', 'The direct-intent classifier did not return a valid result within its deadline.', retryable=True) from None
         finally:
             session.kill()
             await session.close(0.1)
+            pid = getattr(getattr(session, "proc", None), "pid", None)
+            if pid is not None:
+                session_watch.unregister_internal_brain(pid)
             shutil.rmtree(folder, ignore_errors=True)
 
     def mint(self, *, user_turn_id, package, operation, utterance='', recipient=None,
@@ -135,6 +151,7 @@ class PackageAuthority:
             operation, recipient, hashlib.sha256(utterance.encode()).hexdigest(), origin,
             time.monotonic() + 120, decision, answer)
         self._scopes[scope.scope_id] = scope
+        self._utterances[scope.scope_id] = utterance
         return scope
 
     def require(self, scope, *, package, operation, recipient=None):
@@ -145,6 +162,7 @@ class PackageAuthority:
 
     def end_turn(self):
         self._scopes.clear()
+        self._utterances.clear()
 
     async def close(self):
         if self._warming:
@@ -152,8 +170,12 @@ class PackageAuthority:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._warming
         if self._ready:
-            session, _, folder = self._ready
+            session, future, folder = self._ready
+            if not future.done(): future.cancel()
             session.kill()
             await session.close(0.1)
+            pid = getattr(getattr(session, "proc", None), "pid", None)
+            if pid is not None:
+                session_watch.unregister_internal_brain(pid)
             shutil.rmtree(folder, ignore_errors=True)
             self._ready = None

@@ -79,8 +79,7 @@ ASSET_MAX_BYTES = 16 * 1024 * 1024
 _ASSET_TYPES = {"css": "text/css", "woff": "font/woff", "woff2": "font/woff2",
                 "ttf": "font/ttf", "otf": "font/otf"}
 _ASSET_FORMATS = frozenset({"html", "svg", "png", "jpeg", "gif", "webp"})
-_OPERATION_ORDER: tuple[Operation, ...] = ("download", "list_archive", "extract", "read_text",
-                                           "render", "ocr", "edit_export", "execute")
+_OPERATION_ORDER = bundle_readers.OPERATION_ORDER
 
 
 @dataclass(frozen=True)
@@ -221,16 +220,8 @@ def _operations(ops) -> list[Operation]:
 def _quick_support(detected: Detected) -> tuple[Support, Optional[Reason], list[Operation]]:
     """A member's support from its format and this Mac's readers, without
     reading it (a listing reads only heads)."""
-    if detected.format in ARCHIVES:
-        return "unsupported", "nested_archive", []
-    reader = reader_for(detected.format)
-    if reader is None:
-        reason = "unknown_format" if detected.format == "unknown" else "reader_unavailable"
-        return "unsupported", reason, []
-    state = reader.health()
-    if not state.available:
-        return "unsupported", state.reason or "reader_unavailable", []
-    return "readable", None, _operations(set(state.operations))
+    support, reason, operations = bundle_readers.support_for(detected)
+    return support, reason, list(operations)
 
 
 def _clip(path: str) -> str:

@@ -20,6 +20,9 @@ class ContentRequest(Shape):
     snapshot: str
     member: str
     part: Literal['source', 'results', 'narration'] = 'source'
+    location: Location | None = None
+    slide: str | None = None
+    element: str | None = None
     continuation: str | None = None
 
 class SearchRequest(Shape):
@@ -147,23 +150,31 @@ class PackageToolAdapter:
             if tool == 'inspect_package':
                 reference = self.package_ref(model.package)
                 found = self.inspection._cursors.get(model.continuation) if model.continuation else None
+                if model.continuation and found is None:
+                    raise InspectionError("cursor_expired", "The inspection continuation expired; restart explicitly rather than substituting the latest package.")
                 if found:
                     snapshot = found.snapshot
                     state = self.pager.resume(owner, snapshot, tool, args, model.continuation)
                     if state:
                         return self.pager.emit(owner, snapshot, tool, args, [], state=state)
+                    if found.operation == "structure":
+                        result = await self.inspection.structure(owner, snapshot, model.continuation)
+                        records = [{"evidence_id": chunk.evidence.evidence_id, "kind": "summary", "location": "Source outline",
+                            "text": chunk.text, "text_start": chunk.evidence.location.text_start or 0} for chunk in result.chunks]
+                        return self.pager.emit(owner, snapshot, tool, args, records,
+                            reader_next=result.next, coverage=self.pager.compact_coverage(result.coverage))
                     if found.operation == "members":
                         page = await self.inspection.members(owner=owner, snapshot=snapshot, continuation=model.continuation)
                         evidence = self.inspection.evidence(owner, snapshot, None, "summary")
                         return self.pager.emit(owner, snapshot, tool, args,
-                            [{"evidence_id": evidence.evidence_id, "kind": "summary", "location": "Package inventory", "text": page.model_dump_json()}], reader_next=page.next)
+                            [{"evidence_id": evidence.evidence_id, "kind": "summary", "location": "Package inventory", "text": page.model_dump_json()}], reader_next=page.next or self.inspection.structure_start(owner, snapshot))
                 overview = await self.inspection.inspect(owner=owner, package=reference, expected_revision=model.expected_revision)
                 evidence = self.inspection.evidence(owner, overview.snapshot, None, 'summary')
                 # Overview is exact structured metadata paged inside a JSON text field.
                 records = [{'evidence_id': evidence.evidence_id, 'kind': 'summary',
                             'location': 'Package inventory', 'text': overview.model_dump_json()}]
                 return self.pager.emit(owner, overview.snapshot, tool, args, records,
-                    reader_next=overview.next, coverage=self.pager.compact_coverage(overview.coverage))
+                    reader_next=overview.next or self.inspection.structure_start(owner, overview.snapshot), coverage=self.pager.compact_coverage(overview.coverage))
             if tool in {'read_package_content', 'search_package_content'}:
                 snapshot = self.inspection.snapshots.get(owner, model.snapshot)
                 state = self.pager.resume(owner, snapshot, tool, args, model.continuation)
@@ -171,7 +182,8 @@ class PackageToolAdapter:
                     return self.pager.emit(owner, snapshot, tool, args, [], state=state)
                 if tool == 'read_package_content':
                     result = await self.inspection.read(owner=owner, snapshot=snapshot,
-                        location=PackageLocation(member_id=model.member, part=model.part), continuation=model.continuation)
+                        location=PackageLocation(member_id=model.member, part=model.part, location=model.location,
+                            slide_id=model.slide, element_id=model.element), continuation=model.continuation)
                 else:
                     result = await self.inspection.search(owner=owner, snapshot=snapshot,
                         query=model.query, continuation=model.continuation)
@@ -204,7 +216,8 @@ class PackageToolAdapter:
                 text = json.dumps({'view': observation.view.model_dump(mode='json'), 'current_at_receipt': observation.current,
                     'location': observation.active_location.model_dump(mode='json') if observation.active_location else None,
                     'selection': observation.selected_text, 'narration': observation.narration.model_dump(mode='json') if observation.narration else None,
-                    'text': '\n'.join(c.text for c in observation.content.chunks), 'limits': observation.limits}, ensure_ascii=False)
+                    'text': '\n'.join(c.text for c in observation.content.chunks if c.evidence.kind == 'reported_dom'),
+                    'source_evidence': [c.model_dump(mode='json') for c in observation.content.chunks if c.evidence.kind != 'reported_dom'], 'limits': observation.limits}, ensure_ascii=False)
                 return self.pager.emit(owner, observation.evidence.snapshot, tool, args,
                     [{'evidence_id': observation.evidence.evidence_id, 'kind': 'reported_dom',
                       'location': 'Observed package view', 'current': observation.current, 'text': text}], reader_next=observation.content.next,
@@ -217,15 +230,14 @@ class PackageToolAdapter:
                     if not model.package:
                         raise InspectionError('ambiguous_view', 'Choose the package and visible local client to capture.')
                     mount = self.views.choose(owner, self.package_ref(model.package), model.client, self.turn_view())
-                    evidence, shot, metadata = await self.views.capture(owner=owner, view=mount.view, display=model.display)
-                    visual = self.inspection.images.screen(owner, evidence, shot, metadata)
-                    return self.image(self.visual_text(visual), shot.png)
+                    visual = await self.views.capture(owner=owner, view=mount.view, display=model.display)
+                    data, media_type = self.inspection.images.resolve(owner, visual.image.imageRef.rsplit('/', 1)[-1])
+                    return self.image(self.visual_text(visual), data, media_type)
                 if not model.snapshot or not model.member:
                     raise InspectionError('member_required', 'Choose a source snapshot and member to render.')
                 snapshot = self.inspection.snapshots.get(owner, model.snapshot)
-                evidence, rendered = await self.inspection.render(owner=owner, snapshot=snapshot,
+                visual = await self.inspection.render(owner=owner, snapshot=snapshot,
                     location=PackageLocation(member_id=model.member, location=PageLocation(page=model.page)), options=RenderOptions())
-                visual = self.inspection.images.document(owner, evidence, rendered)
                 data, media_type = self.inspection.images.resolve(owner, visual.image.imageRef.rsplit('/', 1)[-1])
                 return self.image(self.visual_text(visual), data, media_type)
             raise InspectionError('unsupported_operation', 'This adapter does not prepare transmissions.')

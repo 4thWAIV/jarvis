@@ -393,6 +393,8 @@ class ClaudeSession:
         ]
         if c.mcp_config:
             cmd += ["--mcp-config", str(c.mcp_config)]
+        if c.classification_only:
+            cmd += ["--bare", "--no-session-persistence"]
         cmd += list(c.extra_args)
         return cmd
 

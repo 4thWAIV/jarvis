@@ -1,0 +1,41 @@
+{
+  "title": "Package understanding implementation review",
+  "slides": [
+    {
+      "title": "Read the package and follow its current view",
+      "say": "The implementation is ready for isolated behavior review. Source contents, the page on screen, and narration have separate evidence. Package follow-ups use the existing capture approval and message delivery flow.",
+      "blocks": [
+        {"lead": "Source, current view and narration stay separate."},
+        {"points": ["Every member has an inventory and capability state.", "Unread and unsupported content remains visible.", "A follow-up becomes a draft for the proven sender."]}
+      ]
+    },
+    {
+      "title": "The current tab follows manual navigation",
+      "say": "This is the built frontend running against an isolated backend. The current-view tool reported Delivery after manual navigation. It also read selected text and an expanded detail on the Costs tab.",
+      "blocks": [
+        {"picture": "current-delivery-tab.png", "alt": "The isolated JARVIS package frame showing the Delivery tab.", "caption": "An actual browser test artifact. Hidden frames are unavailable as the current view."}
+      ]
+    },
+    {
+      "title": "Inspect pixels before describing a diagram",
+      "say": "The diagram image came through the real MCP image result. Its arrow runs from Budget to Operations. The supplied caption says the opposite. The result is labeled a reconstructed render of source bytes.",
+      "blocks": [
+        {"picture": "diagram-render.png", "alt": "A source diagram with an arrow from Budget to Operations.", "caption": "Source render. It does not establish what is on the Mac display."}
+      ]
+    },
+    {
+      "title": "Follow-ups use the existing approval flow",
+      "say": "A direct request can prepare a source-grounded message for the proven sender or an explicitly named recipient. The capture shows the wording and source references. Changes to the text, recipient or evidence require another approval.",
+      "blocks": [
+        {"points": ["Package content cannot supply a user action scope.", "Preparation does not send the message.", "The existing message record holds queued, sent and reply status."]}
+      ]
+    },
+    {
+      "title": "Review the runtime limits before release",
+      "say": "The isolated browser run used actual frontend and MCP results with the cloud brain and speech disabled. Remote display capture remains unavailable. Cloud classification latency, spoken read-back and delivery to a real agent still need normal-runtime review before release.",
+      "blocks": [
+        {"points": ["DOM text remains package-controlled evidence.", "Dynamic states and unavailable readers remain gaps.", "The implementation map and raw test evidence are saved beside this review."]}
+      ]
+    }
+  ]
+}

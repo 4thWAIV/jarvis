@@ -53,12 +53,12 @@ export function startJarvis(orb: Orb): void {
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
-  startPackageViews(socket);
   startSessionsSocket();
   // The interface's language: the one in force on the server (locale.ts).
   startLocale();
   // The brain's UI requests come to this page on the same socket.
   const uiClient = startUiClient(socket);
+  startPackageViews(socket);
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());

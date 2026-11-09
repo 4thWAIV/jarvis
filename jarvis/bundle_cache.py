@@ -165,6 +165,8 @@ class DerivedCache:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
             os.replace(partial, final)
+            if isinstance(key, ScopedCacheKey) and key.kind == "source":
+                os.chmod(final, 0o400)
         except BaseException:
             partial.unlink(missing_ok=True)
             raise

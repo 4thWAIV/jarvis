@@ -293,14 +293,23 @@ def deck(package: Package) -> Optional[dict]:
     return read_deck_data(text)
 
 
-def read_deck_data(text: str) -> Optional[dict]:
+def read_deck_data(text: str, *, structure: bool = False) -> Optional[dict]:
     """Read the shared JSON assignment without evaluating JavaScript."""
     try:
         start = text.index(DATA_PREFIX) + len(DATA_PREFIX)
         data = json.JSONDecoder().raw_decode(text, start)[0]
     except (ValueError, TypeError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if structure:
+        for name in ("slides", "decisions"):
+            values = data.get(name, [])
+            if not isinstance(values, list) or not all(isinstance(value, dict) for value in values):
+                return None
+        if any("blocks" in slide and (not isinstance(slide["blocks"], list) or not all(isinstance(block, dict) for block in slide["blocks"])) for slide in data.get("slides", [])):
+            return None
+    return data
 
 
 def _record(package: Package) -> dict:

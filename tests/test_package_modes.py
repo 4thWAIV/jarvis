@@ -286,7 +286,7 @@ def test_the_page_s_files_are_framed_only_by_jarvis_and_sandboxed(wired, page):
     listed = c.get("/api/packages")
     assert listed.headers["x-frame-options"] == "DENY", "everything else is never framed"
     (described,) = listed.json()["packages"]
-    assert described == {"id": page.id, "name": "check", "version": "1.0.0",
+    assert described == {"inspectionRef": {"package_id": page.id}, "id": page.id, "name": "check", "version": "1.0.0",
                          "purpose": MANIFEST["purpose"], "runs": "page",
                          "entry": "web/index.html", "layout": "centre", "source": "ab12cd34",
                          "sources": ["ab12cd34"], "story": None}

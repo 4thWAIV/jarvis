@@ -4496,8 +4496,7 @@ async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
                         "session" if tool in MEMORY_WRITERS else "turn")
             return _tool_reply(False, refusal), tool_activity.REFUSED
 
-    package_operations = {"answer_package_decision": "answer_decision", "sign_off_package": "sign_off",
-                          "run_package_command": "execute_package", "run_package_agent": "execute_package"}
+    package_operations = PACKAGE_ACTION_TOOLS
     if tool in package_operations:
         try:
             reference = _package_action_ref(str(args.get("package") or ""))
@@ -4511,6 +4510,14 @@ async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
                 question = next((q for q in questions if q.id == str(args.get("decision") or "")), None)
                 if question is None or not scope.answer or (scope.decision and question.id != scope.decision):
                     raise InspectionError("intent_mismatch", "The direct request did not supply this decision and answer.")
+                if not scope.decision:
+                    open_questions = [q for q in questions if q.applies and not q.answer]
+                    if len(open_questions) != 1 or open_questions[0].id != question.id:
+                        raise InspectionError("ambiguous_decision", "The direct request did not identify one decision.")
+                note = str(args.get("words") or "")
+                utterance = package_authority._utterances.get(scope.scope_id, "")
+                if note and note.casefold() not in utterance.casefold():
+                    raise InspectionError("intent_mismatch", "The proposed note was not supplied by the user.")
                 if _inbox_option(question, scope.answer) != _inbox_option(question, str(args.get("option") or "")):
                     raise InspectionError("intent_mismatch", "The proposed option differs from the user's supplied answer.")
         except (InspectionError, ValueError) as error:
@@ -8418,7 +8425,7 @@ def _package_content_ref(package):
 
 packages_api.content_reference = _package_content_ref
 from jarvis.capture_service import CapturePreparation
-from jarvis.package_authority import PackageAuthority
+from jarvis.package_authority import PackageAuthority, PACKAGE_ACTION_TOOLS
 from jarvis.package_followups import PackageFollowups
 capture_preparation = CapturePreparation(_record_capture, _capture_show, lambda: _turn_heard)
 package_authority = PackageAuthority(enabled=_brain_autostart)
@@ -8446,7 +8453,6 @@ for _tool_name in TOOL_MODELS:
         TAINTING_TOOLS[_tool_name] = "package contents or its reported view, controlled by its sender"
         UNTRUSTED_READING_TOOLS.add(_tool_name)
 ACTING_TOOLS.add("look_at_package_content")
-TAINT_EXEMPT_ACTING.add("look_at_package_content")
 
 def _package_action_ref(reference):
     entry, _ = _inbox_one(reference)

@@ -5,7 +5,7 @@
   var nonce = null, sequence = 0, locator = {}, timer = null, last = 0;
   var frozen = new Map(), observations = [], ids = new WeakMap(), nextId = 0;
   var MAX_BYTES = 65536, MAX_BLOCKS = 200, MAX_IMAGES = 64;
-  function post(message) { parent.postMessage(Object.assign({jarvis: 'package', protocol: 1}, message), '*'); }
+  function post(message) { parent.postMessage(JSON.parse(JSON.stringify(Object.assign({jarvis: 'package', protocol: 1}, message))), '*'); }
   function id(el) { if (el.id) return el.id.slice(0, 256); if (!ids.has(el)) ids.set(el, 'dom-' + (++nextId)); return ids.get(el); }
   function rect(el) { var r = el.getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height}; }
   function visible(el) {
@@ -49,21 +49,25 @@
     return {text: s.toString().slice(0, 4000), anchorBlock: id(s.anchorNode.parentElement), focusBlock: id(s.focusNode.parentElement), startOffset: s.anchorOffset, endOffset: s.focusOffset};
   }
   function collect() {
+    var limited = false, collectedChars = 0;
     var blocks = [], images = [], limits = ['reported_dom_package_controlled', 'occlusion_canvas_closed_shadow_unverified', 'unvisited_dynamic_states'];
     var candidates = document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,td,th,pre,blockquote,figcaption,summary,button,[role="tab"],label,div,span,a,strong,em,b,i,small,code');
     candidates.forEach(function (el) {
+      if (blocks.length >= 10000 || collectedChars >= 2000000) {limited = true; return;}
       if (!visible(el) || el.closest('input,textarea,select')) return;
       // Only direct text avoids repeated ancestor copies and hidden descendants.
       var text = Array.from(el.childNodes).filter(function (n) {return n.nodeType === 3;}).map(function (n) {return n.textContent;}).join(' ').trim();
       if (!text) return;
+      if (text.length + collectedChars > 2000000) {text = text.slice(0, 2000000 - collectedChars); limited = true;}
+      collectedChars += text.length;
       var role = /^H[1-6]$/.test(el.tagName) ? 'heading' : /^(TD|TH)$/.test(el.tagName) ? 'table' : el.tagName === 'LI' ? 'list' : /^(BUTTON|SUMMARY|LABEL)$/.test(el.tagName) ? 'control' : 'paragraph';
       for (var start = 0; start < text.length; start += 8000) blocks.push({id: id(el) + ':' + start, role: role, text: text.slice(start, start + 8000), rect: rect(el), sourceElementId: el.id || undefined});
     });
-    document.querySelectorAll('img').forEach(function (el) { if (visible(el)) images.push({source: (el.currentSrc || el.src).slice(0, 2048), alt: el.alt.slice(0, 4000), rect: rect(el)}); });
+    document.querySelectorAll('img').forEach(function (el) { if (images.length >= 4096 || collectedChars + el.alt.length + (el.currentSrc || el.src).length > 2000000) {limited = true; return;} if (visible(el)) {collectedChars += el.alt.length + (el.currentSrc || el.src).length; images.push({source: (el.currentSrc || el.src).slice(0, 2048), alt: el.alt.slice(0, 4000), rect: rect(el)}); } });
     var resources = performance.getEntriesByType('resource');
     if (resources.some(function (r) { var url; try {url = new URL(r.name);} catch (_) {return false;} return url.pathname.indexOf('/api/packages/') === 0 && url.pathname.indexOf('/files/') > 0 && url.pathname.indexOf('/files/@snapshots/') < 0; })) limits.push('mixed_source_revision');
     if (resources.some(function (r) {try {return new URL(r.name).origin !== location.origin;} catch (_) {return false;}})) limits.push('external_resources_observed');
-    var truncated = blocks.length > 10000 || blocks.reduce(function (sum, b) {return sum + b.text.length;}, 0) > 2000000;
+    var truncated = limited || blocks.length > 10000 || blocks.reduce(function (sum, b) {return sum + b.text.length;}, 0) > 2000000;
     if (truncated) {blocks = blocks.slice(0, 10000); var chars = 0; blocks = blocks.filter(function (b) {chars += b.text.length; return chars <= 2000000;}); limits.push('observation_budget');}
     return {truncated: truncated, sequence: sequence, observedAt: new Date().toISOString(), locator: where(),
       viewport: {width: innerWidth, height: innerHeight, scrollX: scrollX, scrollY: scrollY}, blocks: blocks, images: images, selection: selection(), limits: limits};

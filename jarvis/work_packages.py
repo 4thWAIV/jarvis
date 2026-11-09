@@ -337,7 +337,7 @@ def _record(folder_name: str) -> Optional[dict]:
 
 
 def _write_record(folder_name: str, sha256: str, attachment: str,
-                  source_revision: Optional[str] = None) -> None:
+                  source_revision: Optional[str] = None, manifest: Optional[Manifest] = None) -> None:
     """Record that `attachment` (whose bytes hash to `sha256`) is this
     package, keeping the attachments recorded before it."""
     body = _record(folder_name) or {}
@@ -348,7 +348,8 @@ def _write_record(folder_name: str, sha256: str, attachment: str,
     path.parent.mkdir(mode=0o700, exist_ok=True)
     temp = path.with_name(f"{PARTIAL}{uuid.uuid4()}")
     temp.write_text(json.dumps({**body, "sha256": sha256, "attachments": attachments,
-                               **({"source_revision": source_revision} if source_revision else {})}),
+                               **({"source_revision": source_revision} if source_revision else {}),
+                               **({"manifest": manifest.as_json()} if manifest else {})}),
                     encoding="utf-8")
     os.replace(temp, path)
 
@@ -358,6 +359,34 @@ def sha256_of(package: "Package") -> str:
     keeps it; "" for a folder from before records were kept."""
     recorded = (_record(package.folder.name) or {}).get("sha256")
     return recorded if isinstance(recorded, str) else ""
+
+
+def find_for_inspection(reference: str) -> "Package":
+    """Registered source remains inspectable if its current manifest is corrupt.
+
+    Execution still uses find() and its current-manifest validation.
+    """
+    found = None
+    try:
+        found = find(reference)
+        if found.id == reference:
+            return found
+    except PackageError:
+        pass
+    records = data_paths.packages_dir() / RECORDS
+    if records.is_dir():
+        for record in records.glob("*.json"):
+            if record.stem != reference:
+                continue
+            folder = data_paths.packages_dir() / record.stem
+            body = _record(record.stem) or {}
+            raw = body.get("manifest")
+            if folder.is_dir() and not folder.is_symlink() and isinstance(raw, str):
+                return Package(folder, Manifest.parse(raw.encode()),
+                    tuple(a for a in body.get("attachments", []) if isinstance(a, str)))
+    if found:
+        return found
+    raise PackageError(f"There is no registered package {reference!r} to inspect.")
 
 
 def delivered_source_revision(package: "Package") -> Optional[str]:
@@ -444,7 +473,7 @@ def unpack(archive_path: Path, attachment_id: str,
                 return _load(final), False
     except bundle_archive.ArchiveError as e:
         raise PackageError(str(e)) from None
-    _write_record(final.name, sha256, attachment, delivered_revision)
+    _write_record(final.name, sha256, attachment, delivered_revision, found.manifest)
     try:
         (clear_mark or unquarantine)(final)
     except (OSError, subprocess.SubprocessError) as e:

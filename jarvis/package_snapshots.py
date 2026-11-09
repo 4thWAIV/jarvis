@@ -61,17 +61,12 @@ def digest(data: bytes) -> str:
 
 def describe_member(path, raw, source_revision, results_revision):
     found = bundle_readers.detect(path, raw[:bundle_readers.SNIFF_BYTES])
-    reader = bundle_readers.reader_for(found.format)
-    health = reader.health() if reader else None
-    reason = ("nested_archive" if found.format in bundle_readers.ARCHIVES else
-              health.reason if health and not health.available else
-              "unknown_format" if found.format == "unknown" else
-              "reader_unavailable" if not reader else None)
-    readable = health is not None and health.available and reason is None
+    support, reason, operations = bundle_readers.support_for(found)
+    readable = support == "readable"
     return Member(member_id=member_id(results_revision if path.startswith("results/") else source_revision, path),
         relative_path=path, size=len(raw), sha256=digest(raw), detected_format=found.format,
-        support="readable" if readable else "unsupported",
-        operations=tuple(sorted(health.operations)) if readable else (),
+        support=support,
+        operations=operations,
         state="pending" if readable else "unreadable", reason=reason)
 
 
@@ -140,7 +135,7 @@ class PackageSnapshots:
         else:
             entry = None
         try:
-            package = work_packages.find(ref.package_id)
+            package = work_packages.find_for_inspection(ref.package_id)
         except work_packages.PackageError as e:
             raise InspectionError("package_not_found", str(e)) from None
         if package.id != ref.package_id:
@@ -150,6 +145,7 @@ class PackageSnapshots:
     def _scan(self, package):
         """Directory metadata is a consistency hint; digests establish identity."""
         rows = []
+        checked_paths = set()
         root = package.folder
         if root.is_symlink():
             raise InspectionError("unsafe_member", "The package directory is a symlink.")
@@ -162,6 +158,9 @@ class PackageSnapshots:
                     checked = bundle_archive.normalised(relative)
                 except bundle_archive.ArchiveError:
                     raise InspectionError("unsafe_member", "A package member has an unsafe path.") from None
+                if checked in checked_paths:
+                    raise InspectionError("unsafe_member", "Two package members have the same canonical path.")
+                checked_paths.add(checked)
                 if stat.S_ISLNK(st.st_mode) or not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
                     raise InspectionError("unsafe_member", "A package member is a link or special file.")
                 if stat.S_ISREG(st.st_mode):
@@ -184,7 +183,7 @@ class PackageSnapshots:
                         child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                         os.close(fd)
                         fd = child
-                    filefd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                    filefd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                     with os.fdopen(filefd, "rb") as source:
                         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                             raise InspectionError("unsafe_member", "A member changed into a special file.")
@@ -216,7 +215,12 @@ class PackageSnapshots:
                         raise
                     if attempt:
                         raise InspectionError("source_changed", "The package changed during both snapshot attempts.", retryable=True) from None
-            manifest = work_packages.Manifest.parse(data[work_packages.MANIFEST])
+            manifest_invalid = False
+            try:
+                manifest = work_packages.Manifest.parse(data[work_packages.MANIFEST])
+            except work_packages.PackageError:
+                manifest = package.manifest
+                manifest_invalid = True
             source = [(p, len(b), digest(b)) for p, b in data.items() if not p.startswith("results/")]
             results = [(p, len(b), digest(b)) for p, b in data.items() if p.startswith("results/")]
             content_rev, results_rev = revision(source), revision(results)
@@ -228,6 +232,9 @@ class PackageSnapshots:
                 content_revision=content_rev, results_revision=results_rev)
             members = [describe_member(path, raw, content_rev, results_rev)
                        for path, raw in sorted(data.items())]
+            if manifest_invalid:
+                members = [m.model_copy(update={"reason": "manifest_invalid", "state": "partial"})
+                           if m.relative_path == work_packages.MANIFEST else m for m in members]
             keys = [self.cache_key(owner, m) for m in members]
             lease = f"snapshot-build-{sid}"
             self.cache.lease(lease, keys)
@@ -266,6 +273,9 @@ class PackageSnapshots:
                 return snapshot
             sid = "snap-" + digest((owner_key(owner) + snapshot.package.model_dump_json() + snapshot.content_revision + result_rev).encode())[:32]
             updated = snapshot.model_copy(update={"snapshot_id": sid, "results_revision": result_rev})
+            with self.db() as conn:
+                if conn.execute("SELECT 1 FROM package_content_snapshots WHERE snapshot_id=? AND owner=?", (sid, owner_key(owner))).fetchone():
+                    return updated
             members = [describe_member(path, raw, snapshot.content_revision, result_rev) for path, raw in sorted(data.items())]
             lease = "results-build-" + sid
             self.cache.lease(lease, [self.cache_key(owner, m) for m in members])
@@ -276,6 +286,8 @@ class PackageSnapshots:
                     conn.execute("INSERT OR IGNORE INTO package_content_snapshots SELECT ?,owner,package_id,inbox_id,delivery_sha256,content_revision,?,schema_version,inventory_complete,?,manifest FROM package_content_snapshots WHERE snapshot_id=?",
                         (sid, result_rev, time.time(), snapshot.snapshot_id))
                     conn.execute("INSERT OR IGNORE INTO package_content_members SELECT ?,member_id,relative_path,part,digest,size,metadata FROM package_content_members WHERE snapshot_id=? AND part='source'", (sid, snapshot.snapshot_id))
+                    conn.execute("INSERT OR IGNORE INTO package_content_chunks SELECT ?,c.member_id,c.ordinal,c.location,c.text,c.part FROM package_content_chunks c JOIN package_content_members m ON m.snapshot_id=c.snapshot_id AND m.member_id=c.member_id WHERE c.snapshot_id=? AND m.part='source' AND json_extract(m.metadata,'$.state')='indexed'", (sid, snapshot.snapshot_id))
+                    conn.execute("INSERT INTO package_content_search SELECT ?,s.member_id,s.ordinal,s.text FROM package_content_search s JOIN package_content_members m ON m.snapshot_id=s.snapshot_id AND m.member_id=s.member_id WHERE s.snapshot_id=? AND m.part='source' AND json_extract(m.metadata,'$.state')='indexed'", (sid, snapshot.snapshot_id))
                     for member in members:
                         conn.execute("INSERT OR IGNORE INTO package_content_members VALUES (?,?,?,?,?,?,?)", (sid, member.member_id, member.relative_path, "results", member.sha256, member.size, member.model_dump_json()))
             except CacheBudgetError as error:
@@ -303,9 +315,18 @@ class PackageSnapshots:
         if actual != snapshot:
             raise InspectionError("revision_mismatch", "The supplied snapshot identity does not match its record.")
         with self.db() as conn:
-            return [Member.model_validate_json(row[0]) for row in conn.execute(
+            members = [Member.model_validate_json(row[0]) for row in conn.execute(
                 "SELECT metadata FROM package_content_members WHERE snapshot_id=? ORDER BY relative_path",
                 (snapshot.snapshot_id,))]
+        result = []
+        for member in members:
+            reader = bundle_readers.reader_for(member.detected_format)
+            health = reader.health() if reader else None
+            if health and not health.available:
+                member = member.model_copy(update={"support": "unsupported", "operations": (),
+                    "reason": health.reason or "reader_unavailable"})
+            result.append(member)
+        return result
 
     def source(self, owner, snapshot, mid):
         members = self.members(owner, snapshot)

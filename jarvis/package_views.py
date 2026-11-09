@@ -209,12 +209,33 @@ class PackageViews:
             text += "\nReported image references (pixels not inspected): " + json.dumps(image_refs)
         if response.locator.tabId or response.locator.openDetails:
             text += "\nReported locator: " + response.locator.model_dump_json()
-        chunks = (ContentChunk(evidence=evidence, text=text),) if text else ()
+        limits = list(response.limits)
+        source_chunks = []
+        html_member = next((m for m in members if m.detected_format == "html"), None)
+        if html_member:
+            from jarvis import bundle_readers
+            source = self.inspection.snapshots.source(owner, mount.snapshot, html_member.member_id)
+            try:
+                outline = bundle_readers.reader_for("html").outline(source)
+                for heading in outline["headings"]:
+                    identifier = heading.get("element_id")
+                    if not identifier:
+                        continue
+                    reported = next((b for b in response.blocks if b.role == "heading" and b.sourceElementId == identifier), None)
+                    if reported and " ".join(reported.text.split()) != " ".join(heading["text"].split()):
+                        limits.append("content_mismatch")
+                        reference = self.inspection.evidence(owner, mount.snapshot,
+                            PackageLocation(member_id=html_member.member_id, element_id=identifier), "source_text")
+                        source_chunks.append(ContentChunk(evidence=reference, text=heading["text"]))
+            except (InspectionError, ValueError):
+                limits.append("source_correspondence_unavailable")
+        chunks = ((ContentChunk(evidence=evidence, text=text),) if text else ()) + tuple(source_chunks)
+
         next_cursor = self.inspection.cursor(owner, mount.snapshot, "observe", mount.view.mount_id,
             {"mount_id": mount.view.mount_id, "continuation": response.continuation,
              "sequence": response.sequence}) if response.continuation else None
         content = ContentPage(chunks=chunks, coverage=self.inspection.coverage(owner, mount.snapshot,
-            complete=response.complete, dynamic="observed_state", gaps=response.limits),
+            complete=response.complete, dynamic="observed_state", gaps=limits),
             complete=response.complete, next=next_cursor)
         # A story cue is not proof of a completed spoken beat.
         status = self.narration()
@@ -228,7 +249,7 @@ class PackageViews:
             visible=mount.visible, current=current and mount.visible,
             active_location=active, content=content, narration=narration,
             selected_text=response.selection.text if response.selection else None,
-            limits=tuple(response.limits))
+            limits=tuple(dict.fromkeys(limits)))
 
     async def observe(self, *, owner, package, client_id=None, turn_view=None):
         mount = self.choose(owner, package, client_id, turn_view)
@@ -265,6 +286,7 @@ class PackageViews:
             if before == after:
                 evidence = self.inspection.evidence(owner, mount.snapshot, None, "screen_capture",
                     view_id=view.view_id, sequence=after, observed_at=utc_now())
-                return evidence, shot, {"display": display, "sequence_before": before,
-                    "sequence_after": after, "limits": ["display_pixels_package_association_unverified"]}
+                return self.inspection.images.screen(owner, evidence, shot, {"display": display,
+                    "sequence_before": before, "sequence_after": after,
+                    "limits": ["display_pixels_package_association_unverified"]})
         raise InspectionError("view_changed", "The package view changed during both display captures.", retryable=True)
