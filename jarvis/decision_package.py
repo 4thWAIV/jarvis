@@ -279,7 +279,7 @@ def validate(content: Path) -> dict:
 # replaced, so a full-form deck passes through unchanged.
 
 KEYS = {
-    "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions"),
+    "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions", "understanding"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
                  "picture", "compare", "say", "text_only"),
@@ -432,6 +432,8 @@ def build(content: Path, out: Path, deck: dict) -> Path:
     try:
         with contextlib.redirect_stdout(said):
             module.build_deck(deck, content.parent, folder)
+            from jarvis.package_understanding import prepare_deck
+            prepare_deck(folder, deck, module, content.parent)
             code = module.zip_package.main([str(folder), str(archive)])
     except (module.Bad, KeyError, ValueError, OSError) as e:
         raise Refused([f"The builder refused it: {e}"])

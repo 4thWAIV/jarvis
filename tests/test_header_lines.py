@@ -354,6 +354,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_understanding.prepare_deck": (
+        "it writes the author's structured slide/decision content and labeled narration into the "
+        "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
+        "that Markdown as untrusted; complete access and hostile delimiters are driven by "
+        "test_package_understanding.py"),
     "project_store.answer_accomplishment": (
         "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (

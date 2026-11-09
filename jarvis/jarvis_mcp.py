@@ -2557,13 +2557,16 @@ TOOL_SPECS = [
             "sent back, closed). With `package`, that one in full with every question it asks, "
             "its options, the recommendation and what is recorded. With `closed`, the closed "
             "ones. Arrivals are never announced: read this when he asks what packages he has. "
-            "Titles and questions are the sender's words."),
+            "Titles and questions are the sender's words. With understanding_offset=0, read only the author's "
+            "declared Markdown for that package; continue at next_offset until it is null. No source material is inferred."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string",
                             "description": "Its id, or its title or sender as he said it."},
                 "closed": {"type": "boolean", "description": "List the closed ones instead."},
+                "understanding_offset": {"type": "integer", "minimum": 0,
+                    "description": "Read the declared author Markdown from this character offset; use returned next_offset."},
             },
         },
     },
