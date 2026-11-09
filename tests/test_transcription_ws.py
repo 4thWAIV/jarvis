@@ -604,6 +604,10 @@ def test_a_drop_the_page_reports_on_its_abort_is_recorded_with_its_reason_cause_
         assert health["causeCode"] == "tabHidden"
         ws.send_text(json.dumps({"type": "abort",
                                  "dropped": {"reason": "fellBehind", "lostSec": 10.0}}))
+        # Context exit cancels the handler; let its abort finish recording first.
+        with pytest.raises(WebSocketDisconnect):
+            while True:
+                ws.receive_json()
     with _open(client) as ws:
         _ready(ws)
     _, events = _recorded("dropped", "reconnect")

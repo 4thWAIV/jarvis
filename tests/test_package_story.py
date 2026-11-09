@@ -187,10 +187,18 @@ async def test_a_story_is_told_slide_by_slide_to_the_end(h, deck):
 
 
 @pytest.mark.asyncio
-async def test_stop_ends_the_voice_and_the_story(h, deck):
+async def test_stop_ends_the_voice_and_the_story(h, deck, monkeypatch):
+    audio_ready = asyncio.Event()
+    async def emitted(message):
+        await h.emit(message)
+        if message["type"] == "audio":
+            audio_ready.set()
+    monkeypatch.setattr(h.sched, "_emit_raw", emitted)
     t = Teller(h)
     await t.teller.tell(deck.id, 2)
-    await h.ack_all(rounds=2)
+    # Stop active speech; acknowledging everything can leave an inter-slide gap.
+    await asyncio.wait_for(audio_ready.wait(), 5)
+    assert any(m["type"] == "audio" and not m.get("_acked") for m in h.msgs)
     stopped = await t.teller.stop()
     assert stopped.package.id == deck.id and stopped.slide is None
     assert "stop" in h.types() and t.states()[-1][0] == "stopped"
