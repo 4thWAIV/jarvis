@@ -739,7 +739,7 @@ export function createOrb(canvas: HTMLCanvasElement,
     if (tx) lineMat.color.lerp(tx.colour, txStrength * TX_COLOUR);
 
     // The core: its own pale colour, or the transmission's while one is going.
-    const coreColour = tx ? mixed.copy(CORE_COLOUR).lerp(tx.colour, txStrength) : CORE_COLOUR;
+    const coreColour = gray ? mixed.set(GRAY) : tx ? mixed.copy(CORE_COLOUR).lerp(tx.colour, txStrength) : CORE_COLOUR;
     coreMat.color.copy(coreColour);
     coreHaloMat.color.copy(coreColour);
   }
