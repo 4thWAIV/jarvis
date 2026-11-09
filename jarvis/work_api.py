@@ -282,8 +282,9 @@ def review_from_package(entry, package) -> Optional[work_store.WorkItem]:
     if action is None:
         return None
     source = {"package": entry.id, "answered_at": str(asked.answer.get("at") or "")}
-    if work_store.reviewed(entry.work_id, source):
-        return None
+    if any(work_store.reviewed(entry.work_id, {**source, "package": row.id})
+           for row in package_inbox.rows_for_package(entry.package_id)):
+        return None             # this answer is on record, through any row of the package
     try:
         return review(entry.work_id, action, asked.answer.get("note") or "", IN_A_PACKAGE,
                       source)
@@ -447,6 +448,8 @@ def review(item_id: str, action: str, words: str, where: str,
     if kind is None:
         raise work_store.WorkRefused("A review is approve, not_done or add_work.")
     words = " ".join(str(words or "").split())
+    if action == NOT_DONE and not words:
+        words = work_store.NO_NOTE      # his words are optional: it goes back all the same
     in_package = where == IN_A_PACKAGE
     if action == APPROVE and (waiting := other_package_questions(item_id)):
         raise work_store.WorkRefused(

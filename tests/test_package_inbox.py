@@ -500,7 +500,10 @@ def test_a_claimed_session_nothing_proves_gets_no_answers_and_the_row_says_so(
     got = send(wired, page_zip(), session="sess-1", source="notes/").json()
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.claimed_session, entry.sender_evidence) == ("", "sess-1", "")
-    assert got["inbox"]["unproven_claim"] is True
+    assert got["inbox"]["proof_pending"] is True, "looked for again: its output may prove it"
+    later = time.time() + wired.server.REPROVE_FOR_SEC + 1
+    [(entry, sender)] = wired.server._reprove_inbox_senders(now=later)
+    assert sender is None and entry.unproven_claim
     assert "go nowhere" in _call(wired, "package_inbox")["text"]
     r = signoff(wired, got["package"]["id"])
     assert "not proven to have sent it" in r.json()["said"]
@@ -532,3 +535,158 @@ def test_a_key_proves_the_sessions_of_the_agent_its_label_names(wired, shown, ma
     assert (entry.from_session, entry.sender_evidence) == ("sess-1", "access_key")
     other = send(wired, page_zip("1.0.1"), headers=auth, session="sess-2").json()
     assert package_inbox.get(other["inbox"]["id"]).from_session == "", "not its agent's session"
+
+
+# -- the packages delivered before their sender had to be proven ------------------------
+
+def _printed(tmp_path, session, text):
+    """`session`'s transcript holds a tool result printing `text`, as
+    make_package's output lands in the session that ran it."""
+    from jarvis import session_watch
+    t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / "tea"), session)
+    t.parent.mkdir(parents=True, exist_ok=True)
+    with open(t, "a") as fh:
+        fh.write(json.dumps({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": text}]}}) + "\n")
+
+
+# Days ago: a row older than every window.
+OLD = time.time() - 3 * 24 * 3600
+
+
+def _older(wired, version="1.0.0", session="sess-1"):
+    """A row as migration 3 left one delivered before it: its session only
+    a claim, and (migration 4) to be proven once again."""
+    got = wired.send_unproven(version, session)
+    with __import__("sqlite3").connect(data_paths.db_path()) as conn:
+        conn.execute("UPDATE package_inbox SET reprove=1, arrived_at=? WHERE id=?", (OLD, got))
+    return got
+
+
+@pytest.fixture
+def older(wired, shown, marks, proof):
+    def send_unproven(version, session):
+        return send(wired, page_zip(version), session=session).json()["inbox"]["id"]
+    wired.send_unproven = send_unproven
+    return wired
+
+
+def test_an_older_row_is_proven_by_its_session_s_own_record_of_delivering_it(older, tmp_path):
+    inbox_id = _older(older)
+    _printed(tmp_path, "sess-1", "Built a page package.\n" + make_package.ARRIVED_AS.format(
+        inbox_id=inbox_id) + " (package notes-page-1.0.0-x).")
+    import os
+    os.utime(next((tmp_path / "claude").rglob("sess-1.jsonl")), (OLD + 60, OLD + 60))
+    [(entry, sender)] = older.server._reprove_inbox_senders()
+    assert (entry.from_session, entry.from_agent, entry.sender_evidence, entry.reprove) == (
+        "sess-1", "chitauri", "transcript", 0)
+    assert package_inbox.events(inbox_id)[-1]["kind"] == package_inbox.SENDER_PROVEN
+    assert older.server._reprove_inbox_senders() == [], "once"
+    assert package_inbox.get(inbox_id).revision == entry.revision
+
+
+def test_an_older_row_nothing_proves_stays_unproven_and_says_why(older, tmp_path):
+    inbox_id = _older(older)
+    _printed(tmp_path, "sess-2", make_package.ARRIVED_AS.format(inbox_id=inbox_id))
+    [(entry, sender)] = older.server._reprove_inbox_senders()
+    assert sender is None and entry.from_session == "" and entry.reprove == 0
+    last = package_inbox.events(inbox_id)[-1]
+    assert (last["kind"], last["how"]) == (package_inbox.SENDER_NOT_PROVEN,
+                                           "no transcript of its session shows it delivered")
+    assert older.server._reprove_inbox_senders() == []
+
+
+def test_an_older_row_from_a_session_no_longer_listed_says_so(older, tmp_path):
+    inbox_id = _older(older, session="sess-gone")
+    [(entry, sender)] = older.server._reprove_inbox_senders()
+    assert sender is None and package_inbox.events(inbox_id)[-1]["how"] == \
+        "its session is not a listed agent running now"
+
+
+def test_a_new_arrival_is_proven_once_its_make_package_output_says_its_inbox_id(
+        older, tmp_path):
+    """The command line may name its source through a shell variable ($D):
+    unproven as it arrives, it is proven by make_package's own output, which
+    gives the inbox id JARVIS answered it alone."""
+    got = send(older, page_zip(), session="sess-1", source="/tmp/x/content.json").json()
+    inbox_id = got["inbox"]["id"]
+    assert got["inbox"]["proof_pending"] and not got["inbox"]["unproven_claim"]
+    assert older.server._reprove_inbox_senders() == [], "its output is not written yet"
+    _printed(tmp_path, "sess-1", make_package.ARRIVED_AS.format(inbox_id=inbox_id))
+    [(entry, _)] = older.server._reprove_inbox_senders()
+    assert (entry.from_session, entry.sender_evidence, entry.proof_pending) == (
+        "sess-1", "transcript", False)
+
+
+def _claude_subagent(tmp_path, session, agent_id, description, line):
+    from jarvis import session_watch
+    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "tea"))
+         / session / "subagents")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"agent-{agent_id}.jsonl").write_text(json.dumps(line) + "\n")
+    (d / f"agent-{agent_id}.meta.json").write_text(json.dumps({"description": description}))
+
+
+def test_a_claude_subagent_of_the_claimed_session_proves_it_as_it_arrives(
+        wired, shown, marks, proof, tmp_path):
+    _claude_subagent(tmp_path, "sess-1", "a1b2c3", "Feynman", {
+        "type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash",
+            "input": {"command": "python -m jarvis.make_package notes/ --session sess-1"}}]}})
+    got = send(wired, page_zip(), session="sess-1", source="notes").json()
+    entry = package_inbox.get(got["inbox"]["id"])
+    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
+        "sess-1", "Feynman (chitauri)", "subagent:Feynman")
+
+
+def test_a_claude_subagent_s_output_proves_it_after(wired, shown, marks, proof, tmp_path):
+    got = send(wired, page_zip(), session="sess-1", source="$D/content.json").json()
+    _claude_subagent(tmp_path, "sess-1", "d4e5f6", "Review packages", {
+        "type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t",
+            "content": make_package.ARRIVED_AS.format(inbox_id=got["inbox"]["id"])}]}})
+    [(entry, _)] = wired.server._reprove_inbox_senders()
+    assert (entry.from_agent, entry.sender_evidence) == (
+        "Review packages (chitauri)", "subagent:Review packages")
+
+
+def test_a_codex_subagent_of_the_claimed_thread_proves_it(wired, shown, marks, proof, tmp_path,
+                                                         monkeypatch):
+    from types import SimpleNamespace
+    parent = "019a-codex-parent"
+    sessions = wired.server._snapshot_or_empty().sessions + [SimpleNamespace(
+        session_id=parent, cwd=str(tmp_path / "tea"), project="tea", provider="openai",
+        voice_name="Planning", state="idle", agents_active=0, agents_capped=False)]
+    monkeypatch.setattr(wired.server, "_snapshot_or_empty", lambda: SimpleNamespace(sessions=sessions))
+    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
+                        lambda: {"sess-1": "chitauri", parent: "Planning"})
+    own, sub = tmp_path / "codex" / "own.jsonl", tmp_path / "codex" / "sub.jsonl"
+    own.parent.mkdir(parents=True)
+    own.write_text(json.dumps({"type": "session_meta", "payload": {"source": "cli"}}) + "\n")
+    sub.write_text(json.dumps({"type": "session_meta", "payload": {"source": {"subagent": {
+        "thread_spawn": {"parent_thread_id": parent, "agent_nickname": "Hopper"}}}}}) + "\n"
+        + json.dumps({"type": "response_item", "payload": {"type": "function_call", "arguments":
+            json.dumps({"cmd": f"python -m jarvis.make_package notes/ --session {parent}"})}})
+        + "\n")
+    monkeypatch.setattr(wired.server.codex_sessions, "threads", lambda home: {
+        parent: {"rollout_path": str(own), "thread_source": "cli"},
+        "019b-child": {"rollout_path": str(sub), "thread_source": "subagent"}})
+    got = send(wired, page_zip(), session=parent, source="notes").json()
+    entry = package_inbox.get(got["inbox"]["id"])
+    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
+        parent, "Hopper (Planning)", "subagent:Hopper")
+
+
+def test_migration_4_marks_only_the_open_claimed_unproven_rows(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / "db.sqlite")
+    conn.row_factory = sqlite3.Row
+    run_store.migrate(conn, "package_inbox_schema",
+                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 3}, "inbox")
+    for n, (claimed, proven, state) in enumerate((("s", "", "arrived"), ("s", "s", "arrived"),
+                                                  ("", "", "arrived"), ("s", "", "closed"))):
+        conn.execute("INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
+                     "purpose, runs, state, revision, arrived_at, claimed_session, from_session, "
+                     "sender_evidence) VALUES (?, 'p', 'x', 'n', '1', 't', 'p', 'page', ?, 1, 0, "
+                     "?, ?, ?)", (f"r{n}", state, claimed, proven, "transcript" if proven else ""))
+    run_store.migrate(conn, "package_inbox_schema", package_inbox._MIGRATIONS, "inbox")
+    marked = [r["id"] for r in conn.execute("SELECT id FROM package_inbox WHERE reprove=1")]
+    assert marked == ["r0"]

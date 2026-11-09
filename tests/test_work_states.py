@@ -317,7 +317,8 @@ def test_not_done_yet_sends_it_back_with_his_note_for_its_agents(wired, item):
     assert noted != approved
     assert "Not done yet, he said: The logo is still blurry." in _call(
         wired, "work_status", item=item.id)["text"]
-    assert "Say it in his words" in _review(wired, item.id, "not_done", ok=False)["error"]
+    assert "Say it in his words" in _review(wired, item.id, "add_work", ok=False)["error"], \
+        "added work needs his words; not done yet does not"
 
 
 def test_add_work_is_a_new_piece_in_his_words_and_its_agents_are_told(wired, item):

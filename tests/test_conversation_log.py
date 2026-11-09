@@ -226,3 +226,71 @@ async def test_a_restored_capture_whose_number_is_taken_gets_a_new_one(captures)
     assert "back as capture" in out and "back as capture 1 " not in out
     assert any(c["text"] == "First words." for c in srv._captures.values())
     assert "restore_capture" in srv.ACTING_TOOLS
+
+
+# --- one channel, phase 1: every message in its counterpart's thread, with proof ------
+
+def test_a_message_to_him_is_refused_without_a_proof(store):
+    for evidence in ("", "from_line", "it said so"):
+        with pytest.raises(cl.Unproven):
+            cl.inbound(ItemKind.MESSAGE_IN, cl.Counterpart.WORKFLOW, "wf-1", "Build", "x",
+                       evidence, source_kind="workflow_event", source_id=1)
+    with pytest.raises(cl.Unproven):
+        cl.inbound(ItemKind.MESSAGE_IN, cl.Counterpart.WORKFLOW, "wf-1", "Build", "x",
+                   "access_key", source_kind="workflow_event", source_id="")
+    with pytest.raises(ValueError):
+        cl.inbound(ItemKind.HEARD, cl.Counterpart.AGENT, "s1", "Planning", "x", "transcript",
+                   source_kind="x", source_id=1)
+    assert cl.page() == []
+
+
+def test_a_proven_message_is_in_its_counterpart_s_thread_once(store):
+    first = cl.inbound(ItemKind.FROM_AGENT, cl.Counterpart.AGENT, "s1", "Feynman (Planning)",
+                       "Found it.", "subagent_transcript", subagent="Feynman",
+                       source_kind="session_message", source_id=7, session_message_id=7)
+    again = cl.inbound(ItemKind.FROM_AGENT, cl.Counterpart.AGENT, "s1", "Feynman (Planning)",
+                       "Found it.", "subagent_transcript", subagent="Feynman",
+                       source_kind="session_message", source_id=7, session_message_id=7)
+    assert again.id == first.id, "once per source"
+    cl.outbound(ItemKind.TO_AGENT, cl.Counterpart.AGENT, "s1", "Thanks.", agent_session_id="s1",
+                message_id=3)
+    other = cl.inbound(ItemKind.MESSAGE_IN, cl.Counterpart.WORK, "work-1", "Speech", "Decide?",
+                       "access_key", source_kind="work_event", source_id=12)
+    assert [i.text for i in cl.thread_of(cl.Counterpart.AGENT, "s1")] == ["Found it.", "Thanks."]
+    got = cl.thread_of(cl.Counterpart.AGENT, "s1")[0]
+    assert (got.inbound, got.sender_evidence, got.sender_subagent, got.agent_session_id) == (
+        True, "subagent_transcript", "Feynman", "s1")
+    assert [(t.counterpart_kind, t.counterpart_ref, t.name, t.inbound) for t in cl.threads()] == [
+        ("work", "work-1", "Speech", 1), ("agent", "s1", "Feynman (Planning)", 1)]
+    assert cl.threads()[0].latest.id == other.id
+
+
+def test_items_on_record_before_threads_join_their_agent_s_thread(monkeypatch, tmp_path):
+    """Migration 2: an older database's agent items are put in their agent's
+    thread, an answer as read by the watcher, a session message with the
+    proof it was admitted on."""
+    import sqlite3
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    from jarvis import data_paths, run_store
+    importlib.reload(data_paths)
+    importlib.reload(run_store)
+    run_store.init_db()
+    with sqlite3.connect(data_paths.db_path()) as conn:
+        conn.executescript(cl._SCHEMA)
+        conn.execute("INSERT INTO session_messages (id, project, agent_name, subject, body, "
+                     "received_at, sender_session, sender_evidence, sender_subagent) "
+                     "VALUES (5, 'p', 'Feynman (Planning)', 's', 'b', 0, 's1', "
+                     "'subagent_transcript', 'Feynman')")
+        for kind, mid, smid in (("to_agent", 9, None), ("answer", 9, None),
+                                ("from_agent", None, 5), ("heard", None, None)):
+            conn.execute("INSERT INTO conversation_items (at, kind, text, agent_session_id, "
+                         "agent_name, message_id, session_message_id) VALUES (0, ?, 'x', ?, "
+                         "'Planning', ?, ?)", (kind, None if kind == "heard" else "s1", mid, smid))
+    cl._migrated.clear()
+    items = {i.kind: i for i in cl.page()}
+    assert items[ItemKind.ANSWER].sender_evidence == "watcher"
+    assert (items[ItemKind.FROM_AGENT].sender_evidence,
+            items[ItemKind.FROM_AGENT].sender_subagent) == ("subagent_transcript", "Feynman")
+    assert {i.kind for i in cl.thread_of(cl.Counterpart.AGENT, "s1")} == {
+        ItemKind.TO_AGENT, ItemKind.ANSWER, ItemKind.FROM_AGENT}
+    assert items[ItemKind.HEARD].counterpart_kind is None
