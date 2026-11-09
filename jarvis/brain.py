@@ -592,6 +592,8 @@ class Brain:
         # reason: an edited persona never receives it. English adds nothing,
         # and neither does plain "sir", the persona's own address.
         base += language_rule(spoken_words.active_language(), self.config.honorific)
+        from jarvis.language_documents import authoring_contract
+        base += "\n\n" + authoring_contract() + "\n"
         # `_handover` is what the OUTGOING brain wrote a moment ago in this
         # same process; it always wins over the journal on disk, which is the
         # cold-start fallback and may be days old.

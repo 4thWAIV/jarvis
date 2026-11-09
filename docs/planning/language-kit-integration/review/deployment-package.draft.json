@@ -1,0 +1,101 @@
+{
+  "title": "Architecture language kit: deployment record",
+  "slides": [
+    {
+      "title": "Deployment evidence is pending",
+      "blocks": [
+        {
+          "lead": "This source is prepared for the deployed result. It is not a deployment record yet."
+        },
+        {
+          "points": [
+            "Replace this slide with the actual merged revision and CI result.",
+            "Record the adopted kit version and supported Node runtime.",
+            "Record the live source/check/page/discussion result and rollback procedure."
+          ]
+        }
+      ],
+      "beats": [
+        {
+          "say": "This is a prepared package source. Its deployment evidence must be completed before delivery."
+        }
+      ]
+    },
+    {
+      "title": "The architecture page in JARVIS",
+      "blocks": [
+        {
+          "picture": "architecture-frame.png",
+          "alt": "The upstream architecture page in the actual JARVIS PackageView sandbox."
+        },
+        {
+          "note": "The screenshot is an isolated review. The original YAML and checker evidence share its exact source revision."
+        }
+      ],
+      "beats": [
+        {
+          "say": "The isolated review shows the upstream architecture page inside JARVIS. The YAML and checker evidence remain available beside the page."
+        }
+      ]
+    },
+    {
+      "title": "A correction retains its original source",
+      "blocks": [
+        {
+          "points": [
+            "Read the visible DocumentStore declaration through package understanding.",
+            "Create a proposed child revision without editing the original source.",
+            "Read the exact addressed follow-up back before approval and handoff."
+          ]
+        },
+        {
+          "note": "The isolated provider and next-word approval are test doubles. Actual deployment and external delivery must be recorded separately."
+        }
+      ],
+      "beats": [
+        {
+          "say": "The isolated scenario reads the same declaration, creates a proposed child revision and prepares a message through the existing capture flow. It exercises read-back and approval with test doubles."
+        }
+      ]
+    },
+    {
+      "title": "Enabled and staged capabilities",
+      "blocks": [
+        {
+          "table": {
+            "head": [
+              "Capability",
+              "Deployment scope"
+            ],
+            "rows": [
+              [
+                "Architecture",
+                "Canonical source and checked projections."
+              ],
+              [
+                "MetaLang",
+                "Carried by the kit. Authoring adoption remains staged."
+              ],
+              [
+                "Proposal",
+                "Vote mapping remains staged."
+              ],
+              [
+                "EvoLang",
+                "Unavailable upstream."
+              ]
+            ]
+          }
+        },
+        {
+          "note": "This architecture milestone does not complete every supported communication capability."
+        }
+      ],
+      "beats": [
+        {
+          "say": "Architecture is the first enabled capability. MetaLang and proposal are carried, while their wider adoption remains staged. EvoLang is unavailable upstream."
+        }
+      ]
+    }
+  ]
+}

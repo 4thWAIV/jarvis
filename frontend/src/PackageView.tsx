@@ -27,7 +27,7 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge } from "./packageBridge";
 import { signOff } from "./packageInbox";
-import { entryUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
+import { entryUrl, packageFileUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
@@ -52,7 +52,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <section className="package-head" ref={ui.part("header")}>
         <div className="package-head-words">
-          <h2>{info.name}</h2>
+          <h2>{info.communication?.title ?? info.name}</h2>
           <p>{info.purpose}</p>
           {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
         </div>
@@ -62,6 +62,14 @@ export function PackageView({ info }: { info: PackageInfo }) {
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>
       </section>
+      {info.communication?.kind === "architecture" && <section className="package-canonical" aria-label={t("main.package.canonical")}>
+        <p>{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</p>
+        <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
+        <a href={packageFileUrl(info, "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
+        {info.communication.readable && <> {" · "}
+          <a href={packageFileUrl(info, "UNDERSTANDING.md")} target="_blank" rel="noopener noreferrer" ref={ui.part("readable")} data-ui-action="domain">{t("main.package.readable")}</a>
+        </>}
+      </section>}
       {info.story && <StoryControls info={info} onSaid={setSaid} part={ui.part} />}
       <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
               title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
