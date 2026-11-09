@@ -127,7 +127,10 @@ read-back names who it is for, as the agent directory names it now
 `lead` chunk, heard as part of the reading, which the page does not light on
 the box; `captureLead` on its frame), and a person's text already opens "To
 <name>." (`messaging_ports.human_readback`). The brain reads a capture back
-as soon as it is addressed, without asking whether he wants it read back.
+only once it holds all of his instructions, accurately and completely, and it is
+reasonably sure he has nothing more to add: it keeps updating the same capture as
+he goes on, asks a short question when unsure, and then reads it back without
+asking whether he wants it read back.
 Approved means one of two things. Either it was heard in full since its text
 or its recipient last changed (`read_capture` or the box's Read, played and
 not skipped or cut short; or Accept on screen), recording the recipient it
