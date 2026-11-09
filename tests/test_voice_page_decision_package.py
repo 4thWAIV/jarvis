@@ -145,7 +145,14 @@ def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
     with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(bare, "w") as dst:
         for item in src.infolist():
             if item.filename.rsplit("/", 1)[-1] != "deck.css":
-                dst.writestr(item, src.read(item))
+                body = src.read(item)
+                if item.filename.rsplit("/", 1)[-1] == "package.json":
+                    manifest = json.loads(body)
+                    # Keep the declared member list valid so this test reaches
+                    # the browser's missing-styles check rather than ingestion.
+                    manifest["understanding"].pop("deck.css")
+                    body = json.dumps(manifest).encode()
+                dst.writestr(item, body)
     result = decision_check.check(bare, made.deck, tmp_path / "check")
     if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
         pytest.skip("no Playwright Chromium")

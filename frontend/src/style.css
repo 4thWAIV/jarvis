@@ -4273,3 +4273,21 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .knowledge-why { font-size: 11px; padding: 0 6px; border-radius: 8px; color: var(--ui-secondary);
   border: 1px solid rgba(var(--ui-accent-rgb), 0.3); }
 .knowledge-why[data-why="near"] { color: var(--ui-accent); }
+
+/* Live worker evidence stays inside the existing brain and agent panels. */
+.worker-total { padding: .35rem .5rem; color: var(--text, #eee); font-size: .78rem; }
+.worker-total small { display: block; }
+
+.worker-total { position: relative; }
+.worker-total summary { cursor: pointer; }
+.worker-inventory { position: absolute; top: 100%; left: 0; width: min(440px, 85vw); max-height: 65vh; overflow: auto; z-index: 30; padding: 12px; border: 1px solid var(--ui-accent); border-radius: 8px; background: #111d27; color: #edf5fc; box-shadow: 0 8px 32px #0009; }
+.worker-inventory p { font-size: 12px; line-height: 1.4; margin: 6px 0; }
+.worker-inventory ul { list-style: none; margin: 4px 0; padding-left: 12px; border-left: 1px solid #527a91; }
+.worker-inventory li { padding: 6px 0; }
+.worker-inventory small { color: #b9d6e9; }
+
+.worker-counter { padding: 0; }
+.worker-counter > summary { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: 2px; font-variant-numeric: tabular-nums; font-size: 14px; }
+.worker-counter > summary::-webkit-details-marker { display: none; }
+.worker-counter > summary small { font-size: 9px; color: #b9d6e9; }
+.worker-counter[open] { border-color: var(--ui-accent); }
