@@ -565,7 +565,7 @@ def test_the_brain_finds_the_message_in_its_updates(server, monkeypatch, attenti
     brain's read_aloud and reply take, as the page's entry does."""
     item = _answered(server, monkeypatch, attention)
     out = asyncio.run(server.tool_attention_updates({}))
-    assert f'"message": {item}' in out
+    assert f'"message":{item}' in out
     said = asyncio.run(server.tool_read_aloud({"message": item}))
     assert said.startswith("Reading message") and server.said == [
         "Agent Guard answers: Done: all tests pass."]
