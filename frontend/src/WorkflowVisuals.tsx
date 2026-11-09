@@ -74,7 +74,7 @@ export function WorkflowOrb({ state, size, particles = 300, workflowId, workerId
   const {value} = useWorkers();
   const activity = workerId ? findWorker(value, workerId)?.activity : undefined;
   const orbState = activity?.orb_state ?? (workflowId ? value?.workflow_counts?.[workflowId]?.orb_state : undefined);
-  const look = state === "running" ? {...ORB_LOOK[state], state: orbState ?? "idle" as const} : ORB_LOOK[state];
+  const look = workerId || state === "running" || orbState === "thinking" ? {...ORB_LOOK[state], state: orbState ?? "idle" as const} : ORB_LOOK[state];
   return <ParticleOrb palette={WORKFLOW_PALETTE} look={look} dataState={state}
                       className="workflow-orb" size={size} particles={particles} />;
 }

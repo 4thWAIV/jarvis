@@ -79,3 +79,10 @@ export function WorkOwnerActivity({owner}: {owner: {kind: string; ref: string | 
       ? words(t, value.workflow_counts[owner.ref]) : worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}</small>
   </span>;
 }
+
+export function WorkerPhase({sessionId}: {sessionId: string}) {
+  const {value} = useWorkers();
+  const t = useT();
+  const worker = findWorker(value, sessionId);
+  return <span data-worker-snapshot={value?.snapshot_id}>{worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}</span>;
+}

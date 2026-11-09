@@ -74,7 +74,7 @@ def worker_inventory_fixture(now, thinking=None):
     from jarvis.session_watch import SessionState, Subagent
     sessions = []
     for agent, count in zip(agents_with_counts()["agents"], (2, 1, 0)):
-        children = [Subagent(agent_id=f"{agent["session_id"]}-child-{i}", description="Child", agent_type="Explore", background=False, depth=1,
+        children = [Subagent(agent_id=({"s1": ["a1", "a2"], "s2": ["b1"]}[agent["session_id"]][i]), description="Child", agent_type="Explore", background=False, depth=1,
                              state="working", started=now - 5, written=now,
                              worker_activity={"state": "model_work", "observed_at": now,
                                               "source": "native_request", "coverage": "request"})
@@ -191,7 +191,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
           tab: document.querySelector('.centre-tabs [aria-selected=true]').textContent,
           entries: [...document.querySelectorAll('.subagent-detail .transcript-entry pre')].map(e => e.textContent)})""")
         assert detail["name"] == "Proofread the setup guide"
-        assert "Working" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
+        assert "model work" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
         assert detail["tab"] == "Subagent"
         assert "Drafted it; checking against the roadmap now." in detail["entries"]
 

@@ -5014,7 +5014,7 @@ def _ask_which(session_ids: list[str]) -> str:
         a, s = agents.get(sid), sessions.get(sid)
         name = _agent_said(a) if a is not None else _said_name(s, "an agent with an unsayable name")
         state = a.state if a is not None else (s.state if s is not None else None)
-        facts = [_state_word(state)] if state else []
+        facts = [_worker_phase_words(s.provider if s is not None else a.provider, sid)] if state else []
         if s is not None and len(folders) > 1 and s.cwd:
             facts.append("in " + _said_name({"voice_name": Path(s.cwd).parent.name},
                                             "another folder"))
@@ -5076,7 +5076,7 @@ def tool_session_detail(args: dict) -> str:
     age = _say_age(_time.time() - session.since) if session.since else "at some point"
     head = [f"{_said_name(session, 'That session')} "
             f"({_plain_name(session.project, 'a project')}) is "
-            f"{_state_word(session.state)}, as of {age}."]
+            f"{_worker_phase_words(session.provider, session.session_id)}. Session last changed {age}."]
     if session.needs:
         head.append(f"It is {_phrase_needs(session.needs)}"
                     + (", which needs your own keystroke — I cannot answer it."
@@ -12007,14 +12007,19 @@ def _agent_said(agent) -> str:
     return _said_name({"voice_name": name}, "an agent with an unsayable name")
 
 
+def _worker_phase_words(provider, session_id):
+    worker = next((row for row in _worker_inventory()['workers']
+                   if row['id'] == worker_inventory.identity(provider, session_id)), None)
+    phase = worker['activity']['state'].replace('_', ' ') if worker else 'activity unknown'
+    return _plain_name(phase, 'activity unknown')
+
+
 def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
     """One agent: name, active or not, state (why it waits, and since when),
     project, needs-board count, and whether JARVIS can reach it. Never the
     session's own title or prompt: those are another session's words, and
     `session_detail` is where they are read."""
-    worker = next((row for row in _worker_inventory()['workers']
-                   if row['id'] == worker_inventory.identity(a.provider, a.session_id)), None)
-    activity = worker['activity']['state'].replace('_', ' ') if worker else 'activity unknown'
+    activity = _worker_phase_words(a.provider, a.session_id)
     bits = [f"{_agent_said(a)}: {'active' if a.active else 'inactive'}",
             _plain_name(activity, 'activity unknown')]
     if s is not None and s.needs:
