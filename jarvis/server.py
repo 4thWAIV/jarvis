@@ -3090,7 +3090,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     the socket loop keeps receiving `played` acks and interim text meanwhile.
     `heard` is the id the page gave this transcript; a capture made on this
     turn records it, so the page can move those words to the capture."""
-    global _turn_utt, _turn_heard, _turn_reads, _package_action_scope, _package_turn_view
+    global _turn_utt, _turn_heard, _turn_reads, _package_action_scope, _package_action_failure, _package_turn_view
     if brain_instance is None or speech is None:
         return
     t0 = time.monotonic()
@@ -3120,6 +3120,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     reads: list = []
     _turn_utt, _turn_heard, _turn_reads = utt, heard, reads
     _package_action_scope = None
+    _package_action_failure = None
     bound_page, _ = ui_clients.bound_page(heard)
     _package_turn_view = package_views.freeze_turn(bound_page.client_id) if bound_page else None
     try:
@@ -3146,7 +3147,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 operation=intent.operation, utterance=text, recipient=recipient,
                 decision=intent.decision, answer=intent.answer)
     except InspectionError as error:
-        _notes_for_brain.append(f"Package action scope unavailable: {error.failure.code}. Reading is available; no package mutation is authorized by this scope.")
+        _package_action_failure = error.failure.code
     try:
         try:
             try:
@@ -3176,6 +3177,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 reply.finish()  # an error also closes the live text stream, as failed
                 package_authority.end_turn()
                 _package_action_scope = None
+                _package_action_failure = None
                 _package_turn_view = None
                 _turn_utt, _turn_heard, _turn_reads = None, None, None
                 try:
@@ -4521,6 +4523,8 @@ async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
             return _tool_reply(False, refusal), tool_activity.REFUSED
 
     package_operations = PACKAGE_ACTION_TOOLS
+    if (tool in package_operations or tool == "prepare_package_followup") and _package_action_scope is None and _package_action_failure:
+        return _tool_reply(False, _package_action_failure + " — package action intent is unavailable for this turn; source reading remains available."), tool_activity.REFUSED
     if tool in package_operations:
         try:
             reference = _package_action_ref(str(args.get("package") or ""))
@@ -8454,6 +8458,7 @@ from jarvis.package_followups import PackageFollowups
 capture_preparation = CapturePreparation(_record_capture, _capture_show, lambda: _turn_heard)
 package_authority = PackageAuthority(enabled=_brain_autostart)
 _package_action_scope = None
+_package_action_failure = None
 _package_turn_view = None
 package_followups = PackageFollowups(package_inspection, package_authority, lambda: _captures,
                                      _new_capture, capture_preparation)

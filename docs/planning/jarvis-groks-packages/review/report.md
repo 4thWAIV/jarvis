@@ -4,6 +4,8 @@ Branch: `feature/jarvis-groks-packages`. Work: `work-afc13119d082`.
 
 The build is available for isolated behavior review. The live checkout and services were preserved. Release and deployment remain outside this handoff.
 
+Subsequent release integration found that the configured OpenAI model is unavailable to the account and the measured offered-model requests exceed the approved two-second classification deadline. Production package actions fail closed in those cases. Current release gates, diagnostic output and deployment coordination are recorded in [release integration](../release.md).
+
 ## Review evidence
 
 - [Current Delivery tab](current-delivery-tab.png) shows the actual built frontend served by an isolated backend.

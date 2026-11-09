@@ -8,6 +8,8 @@ The implementation review is recorded in `review/report.md`. Root reported prese
 
 `3c924ac` merges `origin/main` at `8a5717a`. The package inbox sender-proof changes and one-channel conversation records merged without conflicts. The built frontend passes TypeScript and Vite compilation. The attachment handoff fixture supplies an exact user-control execute scope. The browser fixtures wait for the loaded frame and the observer handshake before requesting its current location.
 
+The full local run exposed an ordinary-conversation regression: an unavailable classifier note was added to every user turn. The implementation now retains its internal failure code and reports it only when that turn attempts a package action. Ordinary conversation receives the same user text as before. The existing voice activity/socket tests exercise that behavior, and a targeted authority test ensures package mutation still receives `intent_unavailable` without running its handler.
+
 ## Runtime evidence and release gates
 
 The approved specification says: "For voice, use a separate bounded intent-classification pass through the existing brain provider, with a strict schema and a two-second deadline. A timeout leaves reading available and returns `intent_unavailable` for mutation."

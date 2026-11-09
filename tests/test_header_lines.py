@@ -384,8 +384,8 @@ EXEMPT = {
         "by test_voice_page_package_content.py and test_package_content.py"),
     "server._handle_utterance": (
         "the new classifier receives direct user words and host-owned view IDs; its validated result "
-        "can only supply a checked action scope. The added brain note contains an internal error code, "
-        "not provider text or roster fields. Classification isolation is driven by test_package_authority.py"),
+        "can only supply a checked action scope. An internal failure code is retained for attempted "
+        "package actions rather than appended to user words. Classification isolation is driven by test_package_authority.py"),
     "server.voice_handler": (
         "the package additions transport schema-checked frame observations to PackageViews and return "
         "structured protocol errors to the page; they do not interpolate DOM or roster text into a "

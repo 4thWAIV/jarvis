@@ -9,6 +9,7 @@ from jarvis.brain import BrainConfig
 from jarvis.brain_provider import TextDelta, TurnEnded
 from jarvis.package_authority import PackageAuthority
 from jarvis.package_content_contract import InspectionError, PackageRef
+from tests.test_brain_page_parity import wired  # noqa: F401
 
 @pytest.mark.asyncio
 async def test_one_fresh_provider_session_sees_only_the_direct_utterance_and_host_ids(tmp_path):
@@ -68,3 +69,13 @@ def test_end_of_turn_revokes_the_exact_package_operation_and_recipient():
     authority.end_turn()
     with pytest.raises(InspectionError):
         authority.require(scope, package=ref, operation='prepare_followup', recipient='recipient')
+
+
+def test_classifier_failure_reaches_only_attempted_package_actions(wired, monkeypatch):
+    from tests.test_brain_page_parity import _call
+    monkeypatch.setattr(wired.server, '_package_action_failure', 'intent_unavailable')
+    called = []
+    monkeypatch.setitem(wired.server.TOOL_HANDLERS, 'run_package_agent', lambda args: called.append(args))
+    result = _call(wired, 'run_package_agent', package='unavailable-package')
+    assert result['ok'] is False and 'intent_unavailable' in result['text']
+    assert not called

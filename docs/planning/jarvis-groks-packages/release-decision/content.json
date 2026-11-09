@@ -1,0 +1,33 @@
+{
+  "title": "Let package actions wait for the voice check",
+  "slides": [
+    {
+      "title": "The voice check expires before it can answer",
+      "say": "Before JARVIS can prepare a package action, a separate check must establish what you asked him to do. The approved design allows two seconds. The measured supported-model requests needed just over three seconds. JARVIS therefore refuses the action and leaves reading available. He has not sent a message or changed a package.",
+      "blocks": [
+        {"lead": "A request to ask the sender produces no draft when the check expires."},
+        {"points": ["Reading and discussion remain available.", "Measured checks completed after the current limit.", "No deadline or live model setting has been changed."]}
+      ]
+    },
+    {
+      "title": "A longer check still does not approve a message",
+      "say": "This decision changes how long JARVIS may wait to establish your request. A successful check can prepare a capture. You still hear or review the exact message and approve it for its recipient before it goes. If you permit the pause, we will retest with a supported configuration before release. This vote does not claim that trial has passed.",
+      "blocks": [
+        {"points": ["Your request permits preparation.", "Your separate approval permits sending.", "The configured model and the complete voice flow still need a runtime trial."]}
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "package-action-wait",
+      "short": "Voice wait",
+      "question": "May package actions pause briefly so the voice check can finish?",
+      "say": "I recommend allowing the short pause and retesting. The measured checks completed in about three seconds, while the current limit ends them at two. This authorizes a five-second maximum for this check, with no change to capture approval. Keeping the current limit leaves late checks unable to authorize package actions.",
+      "options": [
+        {"id": "allow-short-pause", "name": "Allow a short pause and retest", "says": "Allow up to five seconds for this check. Retest before release. Sending still needs my separate approval.", "picture": "allow-pause.svg", "recommended": true},
+        {"id": "keep-current-limit", "name": "Keep the current limit", "says": "Keep two seconds. Late checks refuse package actions. Hold release of voice package actions until a configuration meets that limit.", "picture": "keep-limit.svg"}
+      ],
+      "reason": "The measured supported-model checks completed after the current limit, so waiting briefly lets us test the intended voice flow."
+    }
+  ]
+}
