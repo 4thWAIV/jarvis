@@ -856,6 +856,15 @@ EXEMPT = {
     "server._proven_boards": (
         "it logs only the projects whose boards were held, file stems JARVIS reads from its "
         "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
+    "server._record_board": (
+        "it records a proven needs-board rewrite as one message in its writer's thread; it "
+        "says nothing, and the record's readers show it as text or wall it for the brain"),
+    "server._record_package": (
+        "it records a proven package arrival as one message in its thread; it says nothing, "
+        "and the record's readers show it as text or wall it for the brain"),
+    "server._record_work_decision": (
+        "it records a Work decision as one message in the item's thread; it says nothing, "
+        "and the record's readers show it as text or wall it for the brain"),
     "conversation_log.threads": (
         "it lists threads as records, the counterpart's name as its newest message named "
         "it; it says nothing, and every reader that shows a name walls it"),

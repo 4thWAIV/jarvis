@@ -204,7 +204,20 @@ record in their agent's thread). `conversation_log.inbound` is the one way
 a message to him is recorded and refuses one without proof (`Unproven`);
 `outbound`, `thread_of` and `threads` are its other half. An agent's answer
 (proof `watcher`) and a session message (its own proof) go through it
-(`server._record_inbound`).
+(`server._record_inbound`). Phase 2: every other channel does too, each
+as a `message_in` item whose `source_kind` is a `conversation_log.Source`:
+a proven needs-board rewrite in its writer's thread (`_record_board`, the
+transcript proof `_board_writer` kept per rewrite; source
+`<project>:<mtime>`), a workflow's and a Work item's decision in its
+thread (`_record_workflow_decision`, `_record_work_decision`: proof
+`access_key` only when its reporter is a key, `_reported_proof`; source
+`<id>:<key>`), a package once its sender is proven, at arrival or on
+re-proof (`_record_package`, counterpart the inbox row), and a person's
+message (`_attend_arrival`, proof `team_server`, ref their GitHub id; the
+body is on `Arrival.text` for this record only, never the attention
+item). `message_in` items are kept out of `page` and `thread` (the
+Conversation view, an agent's thread and the brain's recall) until the
+page's one list (phase 4) decides where they show.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
