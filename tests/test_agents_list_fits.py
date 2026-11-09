@@ -211,6 +211,9 @@ async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
         orbs = page.locator(".agents-list li .agent-orb")
+        # The renderer is transparent; measure its pixels against neutral black,
+        # not the coloured row underneath the canvas.
+        await page.add_style_tag(content=".agent-orb { background: #000; }")
         gray = await orbs.nth(0).screenshot()
         active = await orbs.nth(2).screenshot()
         assert _colourfulness(gray) <= 12, "an inactive agent's orb has colour"
