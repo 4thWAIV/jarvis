@@ -15,6 +15,7 @@ import pytest
 
 from jarvis import data_paths, team_api, team_client
 from jarvis.team_client import TeamConnection
+from tests.fixtures.waiting import until_async
 from tests.test_team_client import FakeServer, connect, public
 
 SELF_ID = "6f0c1d8e-3b7a-4f0e-9b1c-2a4d5e6f7a80"
@@ -300,19 +301,12 @@ def quick(monkeypatch):
     monkeypatch.setattr(team_client, "NETWORK_STARTUP_JITTER_SEC", 0.0)
 
 
-async def _until(test, timeout=5.0):
-    async def wait():
-        while not test():
-            await asyncio.sleep(0.01)
-    await asyncio.wait_for(wait(), timeout)
-
-
 @pytest.mark.asyncio
 async def test_the_loop_runs_with_no_page_open_and_hints_each_snapshot(conn, server, quick):
     await connect(conn, server)
     hints = []
     conn.start(node_update=conn._node_update, on_network=lambda: hints.append(1))
-    await _until(lambda: server.network_calls() >= 3)
+    assert await until_async(lambda: server.network_calls() >= 3), server.network_calls()
     assert len(hints) >= 3
     assert _status(conn)["snapshot"] is not None
     await conn.stop()
@@ -329,7 +323,7 @@ async def test_pairing_publishes_at_once(conn, server, quick, monkeypatch):
     await asyncio.sleep(0.05)
     assert server.network_calls() == 0                       # not paired: idle
     await connect(conn, server)
-    await _until(lambda: server.network_calls() == 1)
+    assert await until_async(lambda: server.network_calls() == 1), server.network_calls()
     await conn.stop()
 
 
@@ -337,14 +331,15 @@ async def test_pairing_publishes_at_once(conn, server, quick, monkeypatch):
 async def test_signing_out_stops_the_exchange_and_marks_the_values_stale(conn, server, quick):
     await connect(conn, server)
     conn.start(node_update=conn._node_update)
-    await _until(lambda: server.network_calls() >= 2)
+    assert await until_async(lambda: server.network_calls() >= 2), server.network_calls()
     server.valid_tokens.clear()
     await conn.poll_once()
     assert conn.snapshot()["state"] == "signed_out"
-    await asyncio.sleep(0.05)
+    # An exchange already past its signed-in check when the poll signed out
+    # may still land (at most one); no new one may start after it.
     calls = server.network_calls()
-    await asyncio.sleep(0.1)
-    assert server.network_calls() == calls
+    await asyncio.sleep(0.15)
+    assert server.network_calls() <= calls + 1, (calls, server.network_calls())
     status = _status(conn)
     assert status["stale"] is True and status["connection"] == "signed_out"
     await conn.stop()

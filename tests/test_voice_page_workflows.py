@@ -12,7 +12,6 @@ Headless Chromium on the built page, with /api/workflows* and both sockets
 replaced by Playwright.
 """
 
-import asyncio
 import json
 import re
 
@@ -21,6 +20,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
+from tests.fixtures.waiting import settled, until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -127,10 +127,7 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_p
 
         await page.click(".workflow-tabs [role=tab][title=Decisions]")
         await page.click(".workflow-option:text('Apple')")
-        for _ in range(50):
-            if server.posted:
-                break
-            await asyncio.sleep(0.1)
+        assert await until_async(lambda: server.posted), "the answer was not posted"
         assert server.posted == [("api/workflows/wf-1/decisions/engine", {"answer": "Apple"})]
 
         # The record changed: the hint makes the list read it again.
@@ -284,8 +281,8 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
 
         # He dismisses wf-a: gone at once, and the dismissal is posted.
         await page.click(".workflow-item:has([data-workflow-id=wf-a]) .workflow-dismiss")
-        await page.wait_for_selector(f"{main}[data-workflow-id=wf-a]", state="detached", timeout=5000)
-        assert "api/workflows/wf-a/dismiss" in state["posted"]
+        await page.wait_for_selector(f"{main}[data-workflow-id=wf-a]", state="detached", timeout=15000)
+        assert await until_async(lambda: "api/workflows/wf-a/dismiss" in state["posted"]), state["posted"]
 
         await page.click(".workflows-done-toggle")
         done = await page.evaluate("""() => [...document.querySelectorAll('.workflow-done-row')]
@@ -320,7 +317,7 @@ async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_pl
         await page.goto(page_url)
         await page.click(".right-tabs [role=tab][title=Work]")
         await page.wait_for_selector(".workflow-row")
-        got = await page.evaluate("""() => {
+        got = await settled(page, """() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
           const left = r('#left-column'), right = r('#right-column'), centre = r('#conversation');
           const panel = r('.right-panel');

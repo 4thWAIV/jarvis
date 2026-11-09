@@ -673,11 +673,14 @@ class CaptureMonitor:
                 "pipeline": pipeline(s)})
 
     async def incident(self, kind: str, text: str = "", lost_sec: Optional[float] = None) -> None:
-        """A failure, with the cause in force and the busiest processes."""
+        """A failure, with the cause in force and the busiest processes.
+        The cause and the time are taken first: listing the processes can
+        take a while on a busy machine, and a sample taken meanwhile would
+        put a later cause in place of the one this failure happened under."""
+        at, cause, said = time.time(), self.cause, self.cause_said
         top = await asyncio.to_thread(top_processes)
-        said = self.cause_said
-        event = Event(at=time.time(), kind=kind, capture=self._session, text=text or None,
-                      cause=self.cause or None, top_processes=top,
+        event = Event(at=at, kind=kind, capture=self._session, text=text or None,
+                      cause=cause or None, top_processes=top,
                       cause_code=said.code if said else None, cause_values=said.values if said else {},
                       lost_sec=lost_sec)
         await asyncio.to_thread(record_event, event)

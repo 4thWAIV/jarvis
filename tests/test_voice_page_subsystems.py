@@ -15,6 +15,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
+from tests.fixtures.waiting import until_async
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -285,6 +286,22 @@ async def _open_with_orbs(p, page_url):
     return browser, page
 
 
+async def _drawn_over(canvas, least: int) -> bool:
+    return await _drawn(canvas) > least
+
+
+async def _held(page, n: int) -> bool:
+    return (await page.evaluate(CONTEXTS))["held"] == n
+
+
+async def _at_least(locator, n: int) -> bool:
+    return await locator.count() >= n
+
+
+async def _cleared(canvas) -> bool:
+    return await _drawn(canvas) == 0
+
+
 async def _drawn(canvas) -> int:
     """Pixels a small orb has drawn on its own canvas (they are copied there
     from the shared renderer), read from the canvas itself."""
@@ -298,18 +315,17 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwri
     async with page_playwright as p:
         browser, page = await _open_with_orbs(p, page_url)
         agent_orbs = page.locator(".agents-list li .agent-orb")
-        assert await agent_orbs.count() >= 5, await agent_orbs.count()
-        assert await _drawn(agent_orbs.nth(1)) > 30, "an agent's orb is not drawn"
+        assert await until_async(lambda: _at_least(agent_orbs, 5)), await agent_orbs.count()
+        assert await until_async(lambda: _drawn_over(agent_orbs.nth(1), 30)), "an agent's orb is not drawn"
 
         await page.click(".right-tabs [role=tab][title=Work]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19]", timeout=10000)
         await page.click(".workflow-row[data-workflow-id=wf-0]")
         head = ".workflow-detail-head .workflow-orb canvas"
         await page.wait_for_selector(f"#workflow-detail {head}")
-        await page.wait_for_timeout(1000)
-        shown = await page.locator(".workflow-orb canvas").count()
-        assert shown >= 10, shown
-        assert await _drawn(page.locator(head)) > 30, "a workflow's orb is not drawn"
+        canvases = page.locator(".workflow-orb canvas")
+        assert await until_async(lambda: _at_least(canvases, 10)), await canvases.count()
+        assert await until_async(lambda: _drawn_over(page.locator(head), 30)), "a workflow's orb is not drawn"
 
         # Back and forth: small orbs made and dropped again and again.
         for _ in range(3):
@@ -317,8 +333,8 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwri
             await page.wait_for_selector(".agents-list li .agent-orb")
             await page.click(".right-tabs [role=tab][title=Work]")
             await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19]")
-        await page.wait_for_timeout(300)
-
+        # The views changed: their small orbs are let go as they unmount.
+        await until_async(lambda: _held(page, 2))
         contexts = await page.evaluate(CONTEXTS)
         assert contexts["held"] == 2 and contexts["mostHeld"] <= 2, contexts
         assert contexts["made"] == 2, "the shared renderer was made again as views changed"
@@ -338,14 +354,12 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_p
         await page.click(".workflow-row[data-workflow-id=wf-0]")
         orb = page.locator("#workflow-detail .workflow-detail-head .workflow-orb canvas")
         await orb.wait_for()
-        await page.wait_for_timeout(1000)
-        assert await _drawn(orb) > 30
+        assert await until_async(lambda: _drawn_over(orb, 30)), "the small orb is not drawn"
         await page.evaluate("""() => {
             const shared = window.__glContexts.find(m => m.canvas.id !== 'orb-canvas' && !m.context.isContextLost());
             window.__lose = shared.context.getExtension('WEBGL_lose_context');
             window.__lose.loseContext(); }""")
-        await page.wait_for_timeout(300)
-        assert await _drawn(orb) == 0, "a small orb still shows with its context gone"
+        assert await until_async(lambda: _cleared(orb)), "a small orb still shows with its context gone"
         await page.click(".right-tabs [aria-label='Diagnostics']")
         row = ".subsystem-row[data-subsystem='page']"
         await page.wait_for_selector(f"{row}.state-degraded")
@@ -353,6 +367,5 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_p
 
         await page.evaluate("() => window.__lose.restoreContext()")
         await page.wait_for_selector(f"{row}.state-ok")
-        await page.wait_for_timeout(1000)
-        assert await _drawn(orb) > 30, "the small orbs did not come back"
+        assert await until_async(lambda: _drawn_over(orb, 30)), "the small orbs did not come back"
         await browser.close()
