@@ -269,3 +269,16 @@ def test_the_brain_s_session_list_says_which_sessions_are_codex(server):
                               for s in (codex, claude)], (codex, claude))}
     assert lines["proteus"].endswith("a Codex session.")
     assert "Codex" not in lines["hammer"]
+
+
+def test_daemon_membership_does_not_hide_standalone_cli_children(tmp_path, monkeypatch):
+    home = _home(tmp_path, [{'id': T1, 'cwd': '/w/a'}, {'id': T2, 'cwd': '/w/b'}])
+    provider = cs.CodexSessions(home=home, processes=_procs(
+        cs.CodexProcess(5, NOW - 50, ['/x/codex', 'resume', T1], '/w/a')))
+    provider.runtime.snapshot = lambda: ({T2: {'status': 'idle', 'activity': {'state': 'idle', 'observed_at': NOW}}}, NOW, None)
+    monkeypatch.setattr(cs, 'child_sessions', lambda threads, roots: [
+        sw.SessionState(session_id='standalone-child', cwd='/w/a', project='a', state='working', provider='openai', parent_session_id=T1),
+        sw.SessionState(session_id='unloaded-daemon-child', cwd='/w/b', project='b', state='working', provider='openai', parent_session_id=T2),
+    ])
+    rows = provider.discover(NOW)
+    assert [a.agent_id for s in rows for a in s.subagents] == ['standalone-child']

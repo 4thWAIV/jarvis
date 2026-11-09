@@ -99,7 +99,7 @@ from jarvis import ui_control
 from jarvis import ui_contract
 from jarvis import brain_activity, tool_activity
 from jarvis import session_needs
-from jarvis import agent_directory
+from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
 from jarvis import work_api, work_store
@@ -3917,6 +3917,20 @@ async def ws_specs(ws: WebSocket):
         log.warning(f"/ws/specs error: {e}")
 
 
+def _worker_inventory() -> dict:
+    snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
+    return worker_inventory.build(snap, agent_directory.names_by_session(),
+                                  run_store.list_runs(status=["queued", "running"], limit=10000),
+                                  brain_activity.feed.since(), time.time(),
+                                  workflows=workflow_store.active(),
+                                  capacity=run_executor_instance.capacity())
+
+
+@app.get("/api/workers")
+async def api_workers():
+    return await asyncio.to_thread(_worker_inventory)
+
+
 @app.get("/api/sessions")
 async def api_list_sessions(state: str = ""):
     """Every Claude Code conversation on this machine. The snapshot is the
@@ -4095,6 +4109,7 @@ READ_BACK_TOOLS = {"steer_session", "answer_dialog", "run_command"}
 # after the handler returns rather than inside each handler, so a reader
 # added later cannot forget to do it — the data below is the whole decision.
 TAINTING_TOOLS = {
+    "list_workers": "worker names and descriptions from other sessions",
     # Repository files. A source comment or a README can carry an instruction
     # aimed squarely at the brain.
     "read_file": "a file in one of your projects",
@@ -11898,6 +11913,7 @@ def tool_rename_agent(args: dict) -> str:
 
 
 TOOL_HANDLERS.update({
+    "list_workers": lambda args: json.dumps(_worker_inventory()),
     "list_agents": tool_list_agents,
     "set_agent_active": tool_set_agent_active,
     "rename_agent": tool_rename_agent,

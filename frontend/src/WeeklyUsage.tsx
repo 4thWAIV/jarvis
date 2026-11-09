@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { WorkerTotal } from "./WorkerStatus";
 import { activeBrain, brains } from "./brains";
 import { formatDateTime, formatNumber, formatPercent, t as say, useT, type Translate } from "./locale";
 import { PROVIDERS, type ReportProvider } from "./providers";
@@ -123,7 +124,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
         {roleTag}
         <div className="account-rows">
           <div className="account-row available" ref={ui.part("remaining")}>
-            <span className="weekly-avatar" aria-hidden="true" />
+            <WorkerTotal provider={provider ?? week?.provider?.service} compact />
             <span className={`weekly-left ${cls}`}>—</span>
           </div>
           <div className="account-row pace" ref={ui.part("pace")}>
@@ -147,7 +148,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
       {roleTag}
       <div className="account-rows">
         <div className="account-row available" ref={ui.part("remaining")}>
-          <span className="weekly-avatar" aria-hidden="true" />
+          <WorkerTotal provider={provider ?? week?.provider?.service} compact />
           <span className={`weekly-left ${good ? "ahead" : "behind"}`}>
             <span className="weekly-group">
               <span className="weekly-figure">{Math.round(left)}</span>

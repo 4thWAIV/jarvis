@@ -30,9 +30,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from jarvis import session_steer
+from jarvis import session_steer, worker_activity
+from jarvis.codex_runtime import RuntimeObserver
 from jarvis.session_provider import Tracking
-from jarvis.session_watch import (Activity, session_status, SessionState,
+from jarvis.session_watch import (Activity, session_status, SessionState, Subagent,
                            _looks_like_a_question, objects_since, project_name,
                            tail_windows, TranscriptEntry, TRANSCRIPT_PAGE, lines_before,
                            tool_gist, _first_lines, _long)
@@ -391,14 +392,22 @@ class CodexSessions:
         self._home = home
         self._processes = processes
         self._codex = codex
+        self.runtime = RuntimeObserver(self.home)
 
     @property
     def home(self) -> Path:
         return self._home or codex_home()
 
+    def close(self):
+        self.runtime.close()
+
     def discover(self, now: float) -> list[SessionState]:
+        if self._processes is list_processes:
+            self.runtime.start()
+        runtime_rows, runtime_at, runtime_error = self.runtime.snapshot()
+        runtime_fresh = runtime_at > 0 and now - runtime_at < 10
         procs = self._processes()
-        if not procs:
+        if not procs and not runtime_fresh:
             return []
         threads = _threads(self.home)
         grouped: dict[str, list[CodexProcess]] = {}
@@ -406,35 +415,81 @@ class CodexSessions:
             thread = _thread_for(proc, threads)
             if thread:
                 grouped.setdefault(thread["id"], []).append(proc)
+        if runtime_fresh:
+            for tid in runtime_rows:
+                if tid in threads and threads[tid].get("thread_source") != "subagent":
+                    grouped.setdefault(tid, [])
         sessions = []
         for tid, group in grouped.items():
             thread = threads[tid]
-            first = min(group, key=lambda p: p.started)
-            r = recap(_tail(thread["rollout_path"])) if thread.get("rollout_path") else \
-                Recap(False, None, None, None, None, [])
+            first = min(group, key=lambda p: p.started, default=None)
+            objects = _tail(thread["rollout_path"]) if thread.get("rollout_path") else []
+            r = recap(objects)
             status = session_status(activity(r))
             sessions.append(SessionState(
                 session_id=tid,
+                worker_activity=worker_activity.observation(objects, NAME),
                 cwd=thread["cwd"],
                 project=project_name(thread["cwd"]),
                 state=status.state,
                 needs=status.needs,
                 between_turns=status.between_turns,
                 pids=[p.pid for p in group],
-                primary_pid=first.pid,
+                primary_pid=first.pid if first else None,
                 roster_name="",
                 title=(thread.get("title") or "").split("\n")[0][:120] or None,
                 last_prompt=r.last_prompt,
                 last_text=r.last_text,
                 recent_tools=r.recent_tools,
-                started=first.started,
-                since=status.since or (thread.get("updated_at_ms") or 0) / 1000 or first.started,
-                origin="terminal",
+                started=first.started if first else (thread.get("created_at_ms") or 0) / 1000,
+                since=status.since or (thread.get("updated_at_ms") or 0) / 1000 or (first.started if first else None),
+                origin="terminal" if first else "daemon",
                 provider=NAME,
                 # Codex's queue always takes a message; the session picks it
                 # up once it has loaded its conversation.
                 steerable=True,
             ))
+        children = child_sessions(threads, sessions)
+        if runtime_fresh:
+            parents = {child.session_id: child.parent_session_id for child in children}
+            def belongs_to_runtime(child):
+                root, seen = child.session_id, set()
+                while root in parents and root not in seen:
+                    seen.add(root)
+                    root = parents[root]
+                return root in runtime_rows
+            # Loaded membership is authoritative only for this daemon's
+            # families. A standalone CLI's children remain transcript-covered.
+            children = [child for child in children
+                        if child.session_id in runtime_rows or not belongs_to_runtime(child)]
+        for session in sessions + children:
+            runtime = runtime_rows.get(session.session_id) if runtime_fresh else None
+            session.runtime_status = {"status": runtime.get("status"), "observed_at": runtime_at} if runtime else {"status": "unknown", "error": runtime_error}
+            if runtime and runtime.get("activity"):
+                session.worker_activity = runtime["activity"]
+                session.state = "working" if runtime.get("status") == "active" else "idle"
+        parent_by_id = {child.session_id: child.parent_session_id for child in children}
+        roots = {session.session_id: session for session in sessions}
+        for child in children:
+            parent = child.parent_session_id
+            visited = set()
+            while parent in parent_by_id and parent not in visited:
+                visited.add(parent)
+                parent = parent_by_id[parent]
+            if parent not in roots:
+                continue
+            roots[parent].subagents.append(Subagent(
+                agent_id=child.session_id, description=child.given_name or child.title or child.session_id,
+                agent_type="codex-subagent", background=True, depth=len(visited) + 1,
+                state="finished" if child.worker_activity.get("state") == "idle" else "stale",
+                started=child.started, written=child.worker_activity.get("observed_at") or 0,
+                parent_agent_id=child.parent_session_id or "", worker_activity=child.worker_activity,
+                runtime_status=child.runtime_status))
+        for session in sessions:
+            session.agents_seen = len(session.subagents)
+            # Only stream evidence can contribute to the live inference count.
+            session.agents_active = sum(worker_activity.current(a.worker_activity, now)["generating"]
+                                        for a in session.subagents)
         return sessions
 
     def last_reply(self, session: SessionState) -> Optional[str]:
@@ -491,3 +546,55 @@ class CodexSessions:
             return session_steer.failed(f"codex queue exited {done.returncode}"
                                         + (f": {said[-280:]}" if said else ""))
         return session_steer.SENT
+
+
+# Metadata is immutable for a rollout; cache only identity, never activity.
+_PARENT_CACHE: dict[str, dict] = {}
+
+def thread_identity(path: str) -> dict:
+    if path in _PARENT_CACHE:
+        return _PARENT_CACHE[path]
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.loads(f.readline(2 * 1024 * 1024))
+        meta = obj.get("payload") or {}
+        spawn = ((meta.get("source") or {}).get("subagent") or {}).get("thread_spawn") or {} if isinstance(meta.get("source"), dict) else {}
+        identity = {"parent": meta.get("parent_thread_id") or spawn.get("parent_thread_id"),
+                    "name": meta.get("agent_path") or spawn.get("agent_path") or meta.get("agent_nickname") or ""}
+    except (OSError, ValueError, TypeError):
+        return {}
+    if len(_PARENT_CACHE) >= 4096:
+        _PARENT_CACHE.clear()
+    _PARENT_CACHE[path] = identity
+    return identity
+
+def child_sessions(threads: dict, parents: list[SessionState]) -> list[SessionState]:
+    """Discover descendants by recorded parent identity, never shared cwd.
+
+    A child can itself have children. A turn record does not establish that
+    its slot is still allocated: that uncertainty remains in the inventory.
+    """
+    known = {s.session_id for s in parents}
+    candidates = {}
+    for tid, thread in threads.items():
+        if tid not in known and thread.get("thread_source") == "subagent":
+            candidates[tid] = (thread, thread_identity(thread.get("rollout_path") or ""))
+    children = []
+    while candidates:
+        adopted = [tid for tid, (_, ident) in candidates.items() if ident.get("parent") in known]
+        if not adopted:
+            break
+        for tid in adopted:
+            thread, ident = candidates.pop(tid)
+            objects = _tail(thread.get("rollout_path") or "")
+            r = recap(objects)
+            status = session_status(activity(r))
+            children.append(SessionState(
+                session_id=tid, cwd=thread["cwd"], project=project_name(thread["cwd"]),
+                state=status.state, provider=NAME, origin="subagent",
+                parent_session_id=ident["parent"], given_name=ident.get("name", ""),
+                title=(thread.get("title") or "")[:120],
+                worker_activity=worker_activity.observation(objects, NAME),
+                since=status.since, between_turns=status.between_turns))
+            known.add(tid)
+    return children
