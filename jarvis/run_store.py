@@ -45,9 +45,13 @@ _UPDATABLE = frozenset({
 def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
     """A connection to JARVIS's database (`path` for a store given its own
     file), with the pragmas every one of its users needs."""
-    conn = sqlite3.connect(str(path or db_path()))
+    conn = sqlite3.connect(str(path or db_path()), timeout=15.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Switching to WAL takes an exclusive lock. Once a database is in WAL it
+    # stays there, so only switch when it is not: asking every connection to
+    # switch made a busy moment fail with "database is locked".
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
