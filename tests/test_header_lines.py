@@ -36,6 +36,7 @@ import importlib
 import re
 import sys
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -1909,7 +1910,8 @@ def _drive_package_inbox(server, session, monkeypatch):
                          {"answer": "electric", "choice": HOSTILE, "note": HOSTILE, "at": "",
                           "recommended": True}),
              pi.Question("blend", HOSTILE, "", [], "", "", False, None)]
-    monkeypatch.setattr(server, "_inbox_package", lambda entry: (object(), None))
+    monkeypatch.setattr(server, "_inbox_package", lambda entry: (
+        SimpleNamespace(manifest=SimpleNamespace(understanding=None)), None))
     monkeypatch.setattr(pi, "questions", lambda package: asked)
     return [server.tool_package_inbox({}), server.tool_package_inbox({"closed": True}),
             server.tool_package_inbox({"package": ids[0]}),

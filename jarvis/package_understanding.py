@@ -50,6 +50,17 @@ def markdown_text(folder, name) -> str:
     return text
 
 
+def author_texts(folder, manifest):
+    """The declared author view stays within the existing text-file read budget."""
+    total = 0
+    for name in documents(manifest):
+        text = markdown_text(folder, name)
+        total += len(("# " + name + "\n" + text + "\n\n").encode('utf-8'))
+        if total > repo_read.READ_MAX_FILE_BYTES:
+            raise ValueError('Authored understanding exceeds the existing 4 MiB text-read limit in total.')
+        yield name, text
+
+
 def validate(folder, manifest, members) -> None:
     """Check exact factory coverage and actual text, without certifying its meaning."""
     coverage = declaration(manifest.get('understanding'))
@@ -73,8 +84,8 @@ def validate(folder, manifest, members) -> None:
                          + '. Add member-to-Markdown entries in package.json understanding.')
     if not authored:
         raise ValueError('The package needs author-written Markdown understanding in brief, skill or understanding.')
-    for name in documents(manifest):
-        markdown_text(folder, name)
+    for _ in author_texts(folder, manifest):
+        pass
 
 
 def authored_picture_references(deck):

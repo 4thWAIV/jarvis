@@ -8084,8 +8084,8 @@ def _package_understanding_page(package, offset, prefix=""):
         return "understanding_offset must be a nonnegative integer."
     manifest = json.loads(package.manifest.as_json())
     try:
-        parts = [f"# {name}\n{package_understanding.markdown_text(package.folder, name)}"
-                 for name in package_understanding.documents(manifest)]
+        parts = [f"# {name}\n{text}"
+                 for name, text in package_understanding.author_texts(package.folder, manifest)]
     except ValueError as error:
         return _wrap_untrusted(_INBOX_WRAP_NAME, str(error))
     if not parts:

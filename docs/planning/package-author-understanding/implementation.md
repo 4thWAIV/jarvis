@@ -20,4 +20,10 @@ Existing installed manifests, story/navigation, answers, read-back approval, sen
 
 Focused tests exercise opaque source material with author Markdown, missing member coverage, missing/unreadable/empty/linked explanations, manifest preservation, complete multi-page access through the actual internal tool, delimiter safety, existing package modes and the ordinary factory. The isolated browser factory trial exercises the existing page and decision flow; it does not send to the live service.
 
-The fresh-author owner integrates before the normal creation/build calls. Final release requires CI and root-coordinated merge/deploy, including the primary checkout's existing capture-edit reconciliation. No deployment is claimed here.
+Universal fresh-author enforcement is deferred and is not part of this change. Final release requires CI and root-coordinated merge/deploy, including the primary checkout's existing capture-edit reconciliation. No deployment is claimed here.
+
+## Validation checkpoint
+
+The combined focused run exercised factory creation, existing package modes and the complete declared-author read path. The wrapper and argument-echo checks passed. Its header fixture failures used an opaque placeholder instead of a package manifest; the fixture now models the optional understanding field, and the full header suite passes. Final focused creation/declared-access/wrapper checks pass with the aggregate author-view bound enforced at creation and read time. The actual isolated factory browser trial passed with the existing decision/page controls.
+
+The complete declared author view uses the existing 4 MiB text-read budget in total, preventing a package from passing creation with authored material the read path cannot serve. This is a readability/access limit, not a semantic check. Required PR CI remains the release gate; no live service has been changed by this worker.

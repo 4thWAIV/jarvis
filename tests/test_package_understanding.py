@@ -151,3 +151,11 @@ def test_unexplained_factory_picture_requires_author_markdown_then_is_exposed(tm
     with zipfile.ZipFile(archive) as z:
         assert z.read('figure.md').decode().endswith('proposed review boundary.')
         assert json.loads(z.read('package.json'))['understanding']['pictures/figure.svg'] == 'figure.md'
+
+
+def test_creation_rejects_author_text_that_cannot_fit_the_existing_read_budget(tmp_path, monkeypatch):
+    folder = tmp_path / 'workflow'
+    authored(folder)
+    monkeypatch.setattr(understanding.repo_read, 'READ_MAX_FILE_BYTES', 100)
+    with pytest.raises(decision_package.Refused, match='in total'):
+        make_package.make_folder(folder, tmp_path / 'out')
