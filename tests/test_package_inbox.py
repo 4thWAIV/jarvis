@@ -461,8 +461,8 @@ def test_after_open_the_update_is_still_pending_and_reads_as_not_done(
     item = record.get("package", inbox_id)
     assert item.state == attention_store.PENDING and record.pending_count() == 1
     updates = _call(wired, "attention_updates")["text"]
-    assert '"pending": 1' in updates, "the brain's count is the page's count"
-    assert f'"id": {item.id}, "kind": "package", "event": "arrived", "state": "pending"' in updates
+    assert '"pending":1' in updates, "the brain's count is the page's count"
+    assert f'"id":{item.id},"kind":"package","event":"arrived","state":"pending"' in updates
     entry = package_inbox.get(inbox_id)
     assert entry.state == package_inbox.OPENED and entry.is_open
     listed = _call(wired, "package_inbox")["text"]
