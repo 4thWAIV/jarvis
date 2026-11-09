@@ -41,7 +41,7 @@ def subagent(wired, monkeypatch):
         sub = session_watch.Subagent(agent_id=AGENT, description="Release agent",
                                      agent_type="general-purpose", background=True, depth=1,
                                      state=agent["state"], started=None,
-                                     written=agent["written"], worker_activity={"state": "model_work" if agent["state"] == "working" else "unknown", "observed_at": agent["written"]})
+                                     written=agent["written"], worker_activity={"state": "model_work" if agent["state"] == "working" else "unknown", "observed_at": agent["written"], "turn_open": agent["state"] == "working"})
         session = session_watch.SessionState(session_id=SESSION, provider="anthropic", project="test", subagents=[sub],
                                   cwd="/Users/someone/code/jarvis",
                                   # Only the watcher's view of it: the agent directory

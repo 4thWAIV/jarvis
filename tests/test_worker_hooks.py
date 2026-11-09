@@ -44,7 +44,8 @@ def test_new_hook_child_is_visible_but_not_called_model_work(tmp_path):
     result=build(Snapshot([parent],now),now=now+.1,native_observations=rows)
     assert result['total']['workers']==2
     assert result['total']['model_work']==0
-    assert result['total']['unknown']==1
+    assert result['total']['unknown']==0
+    assert result['total']['active']==1  # SubagentStart opens a turn, not proof of model generation.
     assert result['workers'][-1]['parent_id']=='anthropic:root'
 
 

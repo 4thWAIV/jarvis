@@ -5,7 +5,7 @@ import { brains, activeBrain } from "./brains";
 import { useWorkers, findWorker, type WorkerCounts, type Inventory, type Worker } from "./workers";
 
 function words(t: Translate, c: WorkerCounts) {
-  return [t("left.workers.modelWork", {count: c.model_work}),
+  return [t("left.workers.active", {count: c.active ?? 0}),
     c.unknown ? t("left.workers.unconfirmed", {count: c.unknown}) : "",
     c.tool_wait ? t("left.workers.tools", {count: c.tool_wait}) : "",
     c.queued ? t("left.workers.queued", {count: c.queued}) : ""].filter(Boolean).join(" · ");
@@ -16,7 +16,7 @@ function WorkerTree({ worker, inventory, ancestors = [] }: { worker: Worker; inv
   const children = inventory.workers.filter(w => w.parent_id === worker.id);
   return <li>
     <div><strong>{worker.name}</strong> <small>{worker.provider} · {worker.kind}</small></div>
-    <div>{worker.activity.state.replace(/_/g, " ")} · {words(t, worker.counts)}</div>
+    <div>{worker.activity.orb_state ?? t("left.workers.unknown")} · {words(t, worker.counts)}</div>
     {worker.activity.state === "unknown" && worker.activity.last_phase && worker.activity.last_phase !== "unknown" && <small>{t("left.workers.lastPhase", {phase: worker.activity.last_phase.replace(/_/g, " ")})}</small>}
     {worker.activity.evidence_age_seconds != null && <small>{t("left.workers.lastEvidence", {count: Math.round(worker.activity.evidence_age_seconds)})}</small>}
     {worker.runtime?.status && <small>{t("left.workers.runtime", {status: worker.runtime.status, allocation: worker.allocation ?? t("left.workers.unknown")})}</small>}
@@ -39,7 +39,7 @@ export function WorkerTotal({ provider, compact = false }: { provider?: string; 
   const label = count ? words(t, count) : t("left.workers.unavailable");
   return <details className={`worker-total${compact ? " weekly-avatar worker-counter" : ""}`} title={error ?? label}>
     <summary aria-label={t("left.workers.label", {account: account ?? t("left.workers.all"), activity: label})}>
-      {compact ? <><span>{count?.model_work ?? "—"}</span>{!!count?.unknown && <small>+?</small>}</> : label}
+      {compact ? <><span>{count?.active ?? "—"}</span>{!!count?.unknown && <small>+?</small>}</> : label}
     </summary>
     <div className="worker-inventory">
       <h4>{t("left.workers.allWorkers")}</h4>
@@ -73,10 +73,10 @@ export function WorkOwnerActivity({owner}: {owner: {kind: string; ref: string | 
   const worker = findWorker(value, child[1] ?? owner.ref);
   const activity = owner.kind === "workflow" ? value?.workflow_counts?.[owner.ref] : worker?.activity;
   return <span data-worker-snapshot={value?.snapshot_id} title={value?.coverage}>
-    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: activity?.orb_state ?? "idle", gray: !activity}}
+    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: activity?.orb_state === "thinking" ? "thinking" : "idle", gray: !activity || activity.orb_state === "unknown"}}
       dataState={activity?.orb_state ?? "unknown"} className="workflow-orb" size={20} particles={120} />
     <small>{owner.kind === "workflow" && value?.workflow_counts?.[owner.ref]
-      ? words(t, value.workflow_counts[owner.ref]) : worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}</small>
+      ? words(t, value.workflow_counts[owner.ref]) : worker?.activity.orb_state ?? t("left.workers.unknown")}</small>
   </span>;
 }
 
@@ -84,5 +84,5 @@ export function WorkerPhase({sessionId}: {sessionId: string}) {
   const {value} = useWorkers();
   const t = useT();
   const worker = findWorker(value, sessionId);
-  return <span data-worker-snapshot={value?.snapshot_id}>{worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}</span>;
+  return <span data-worker-snapshot={value?.snapshot_id}>{worker?.activity.orb_state ?? t("left.workers.unknown")}</span>;
 }

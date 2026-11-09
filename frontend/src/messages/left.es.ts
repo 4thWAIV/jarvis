@@ -4,6 +4,7 @@ import type { CatalogOf } from "../locale";
 import type { leftEn } from "./left.en";
 
 export const leftEs: CatalogOf<typeof leftEn> = {
+  "left.workers.active": "{count} activos",
   "left.workers.modelWork": "{count} en trabajo del modelo",
   "left.workers.unconfirmed": "{count} sin confirmar",
   "left.workers.tools": "{count} en herramientas",

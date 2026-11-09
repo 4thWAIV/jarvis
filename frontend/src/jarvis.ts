@@ -79,7 +79,7 @@ export function startJarvis(orb: Orb): void {
     // Listening/speaking/compacting are conversation states. Model thinking
     // comes only from the same computed worker result as the account counter.
     const state = currentState === "thinking" || currentState === "idle"
-      ? brain?.activity.orb_state ?? "idle" : currentState;
+      ? brain?.activity.orb_state === "thinking" ? "thinking" : "idle" : currentState;
     orb.setState(state as OrbState);
   }
   subscribeWorkers(renderOrb);

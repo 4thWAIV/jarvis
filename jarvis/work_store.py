@@ -626,7 +626,7 @@ def subagent_of(person: Who) -> Optional[tuple[str, str]]:
     if person.kind != AGENT or not person.ref:
         return None
     if SUB not in person.ref:
-        return person.ref, ""
+        return None
     session, _, agent = person.ref.partition(SUB)
     return session, agent
 
@@ -658,6 +658,8 @@ def live_agent(person: Who) -> Optional[LiveAgent]:
     """The subagent `person` names, as it is now, or None (not a subagent,
     not found, or nothing to look it up with). Never raises."""
     found = subagent_of(person)
+    if found is None and person.kind == AGENT and person.ref:
+        found = person.ref, ""
     if found is None or _live_lookup is None:
         return None
     try:

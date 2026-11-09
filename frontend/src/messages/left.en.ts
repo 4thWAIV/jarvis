@@ -9,6 +9,7 @@
  */
 
 export const leftEn = {
+  "left.workers.active": "{count} active",
   "left.workers.modelWork": "{count} model work",
   "left.workers.unconfirmed": "{count} unconfirmed",
   "left.workers.tools": "{count} in tools",

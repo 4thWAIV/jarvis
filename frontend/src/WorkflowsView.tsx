@@ -236,7 +236,7 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
     <button type="button" data-subagent-key={a.key} data-state={a.state}
             className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
               selected ? " selected" : ""}`}
-            title={`${name}: ${worker?.activity.state.replace(/_/g, " ") ?? t("left.workers.unknown")}`}
+            title={`${name}: ${worker?.activity.orb_state ?? t("left.workers.unknown")}`}
             ref={(el) => { ui.whole(el); ui.part("row")(el); }}
             {...bindingProps(bind("subagent.open", { sessionId: a.session_id, agentId: a.id }))}>
       <WorkflowOrb workerId={a.id} state={look} size={30} />

@@ -221,7 +221,7 @@ def test_loaded_codex_child_remains_visible_without_its_parent(tmp_path):
 
 def test_activity_projection_is_shared_by_work_orb_and_counts(monkeypatch):
     from jarvis import server
-    worker = session('main', worker_activity={'state': 'model_work', 'observed_at': 100})
+    worker = session('main', worker_activity={'state': 'model_work', 'observed_at': 100, 'turn_open': True})
     published = build(Snapshot([worker], 100), now=101)
     monkeypatch.setattr(server, '_worker_inventory', lambda: published)
     row = published['workers'][0]
@@ -253,10 +253,53 @@ def test_snapshot_reader_publishes_one_result_for_all_consumers(monkeypatch):
 def test_workflow_aggregates_the_same_worker_rows_without_double_counting():
     from types import SimpleNamespace
     child = Subagent('child', 'Child', 'worker', False, 1, 'working', 99, 100,
-                     worker_activity={'state': 'model_work', 'observed_at': 100}, workflow_run='wf')
-    parent = session(subagents=[child], worker_activity={'state': 'tool_wait', 'observed_at': 100})
+                     worker_activity={'state': 'model_work', 'observed_at': 100, 'turn_open': True}, workflow_run='wf')
+    parent = session(subagents=[child], worker_activity={'state': 'tool_wait', 'observed_at': 100, 'turn_open': True})
     published = build(Snapshot([parent], 100), now=100,
                       workflows=[SimpleNamespace(id='wf', name='Workflow', agents=['parent', 'child'])])
     assert published['workflow_counts']['wf']['model_work'] == 1
     assert published['workflow_counts']['wf']['orb_state'] == 'thinking'
     assert published['total']['model_work'] == 1
+
+
+def test_whole_turn_orb_mapping_is_shared_through_tools_and_waits():
+    events = [
+        {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+        {'type': 'response_item', 'payload': {'type': 'function_call'}},
+        {'type': 'response_item', 'payload': {'type': 'function_call_output'}},
+        {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
+    ]
+    evidence = None
+    for index, event in enumerate(events):
+        event['timestamp'] = f'2026-01-01T00:00:0{index}Z'
+        evidence = activity.observation([event], 'openai', evidence)
+        now = evidence['observed_at']
+        published = build(Snapshot([session('main', 'openai', worker_activity=evidence)], now), now=now)
+        expected = index < 3
+        assert published['workers'][0]['activity']['active'] is expected
+        assert published['total']['active'] == int(expected)
+        assert published['providers']['openai']['orb_state'] == ('thinking' if expected else 'idle')
+
+
+def test_runtime_status_cannot_create_a_turn_but_cannot_erase_observed_start():
+    ev = {'state': 'awaiting_model', 'source': 'codex_runtime:thread/read', 'observed_at': 101}
+    activity.record_runtime('openai', 'joined', ev)
+    try:
+        unknown = build(Snapshot([session('joined', 'openai')], 101), now=101)
+        assert unknown['total']['active'] == 0 and unknown['total']['unknown'] == 1
+        known = build(Snapshot([session('joined', 'openai', worker_activity={
+            'state': 'awaiting_model', 'turn_open': True, 'observed_at': 100})], 101), now=101)
+        assert known['total']['active'] == 1
+    finally:
+        activity.forget_managed('openai', 'joined')
+
+
+def test_unavailable_database_source_is_a_coverage_gap_not_a_broken_status_read(wired, monkeypatch):
+    import sqlite3
+    server = wired.server
+    def unavailable(*args, **kwargs):
+        raise sqlite3.OperationalError('no such table: runs')
+    monkeypatch.setattr(server.run_store, 'list_runs', unavailable)
+    result = server._collect_worker_inventory()
+    assert 'Managed runs unavailable: OperationalError' in result['gaps']
+    assert result['snapshot_id']

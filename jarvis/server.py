@@ -3953,12 +3953,26 @@ def _collect_worker_inventory() -> dict:
     from jarvis import worker_hooks
     native, truncated = worker_hooks.observations(data_paths.data_dir(), time.time())
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
-    return worker_inventory.build(snap, agent_directory.names_by_session(),
-                                  run_store.list_runs(status=["queued", "running"], limit=10000),
-                                  brain_activity.feed.since(), time.time(),
-                                  workflows=workflow_store.active(),
-                                  capacity=run_executor_instance.capacity(),
-                                  native_observations=native, native_truncated=truncated)
+    # A missing source is a reported coverage gap, not a failed status read
+    # and not proof that there are no workers in that source.
+    import sqlite3
+    gaps = []
+    def read_source(name, read, missing):
+        try:
+            return read()
+        except (sqlite3.Error, OSError) as exc:
+            gaps.append(f'{name} unavailable: {type(exc).__name__}')
+            return missing
+    names = read_source('Agent names', run_store.agent_names, {})
+    runs = read_source('Managed runs', lambda: run_store.list_runs(status=["queued", "running"], limit=10000), [])
+    workflows = read_source('Workflows', workflow_store.active, [])
+    capacity = read_source('Worker capacity', run_executor_instance.capacity, None)
+    result = worker_inventory.build(snap, names, runs, brain_activity.feed.since(), time.time(),
+                                   workflows=workflows, capacity=capacity,
+                                   native_observations=native, native_truncated=truncated)
+    result['gaps'].extend(gaps)
+    return result
+
 
 
 @app.get("/api/workers")
@@ -3972,7 +3986,7 @@ def tool_list_workers(args: dict) -> str:
     # The normal counts question is answered before the worker detail. Each
     # invocation is a fresh observation, as with the other paged status reads.
     answer = {key: inventory[key] for key in
-              ("total", "providers", "capacity", "coverage", "gaps", "snapshot_id", "taken_at")
+              ("total", "providers", "snapshot_id", "taken_at", "capacity", "coverage", "gaps")
               if key in inventory}
     answer.update(inventory)
     head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
@@ -4016,7 +4030,7 @@ def _agents_for_page() -> list[dict]:
         worker = workers.get(worker_inventory.identity(agent.provider, agent.session_id))
         row['activity'] = worker['activity'] if worker else None
         row['snapshot_id'] = inventory.get('snapshot_id')
-        row['subagents_working'] = worker['descendant_counts']['model_work'] if worker else 0
+        row['subagents_working'] = worker['descendant_counts']['active'] if worker else 0
         row['subagents_capped'] = worker is None or bool(worker['descendant_counts']['unknown'])
         answer.append(row)
     return answer
@@ -12010,7 +12024,7 @@ def _agent_said(agent) -> str:
 def _worker_phase_words(provider, session_id):
     worker = next((row for row in _worker_inventory()['workers']
                    if row['id'] == worker_inventory.identity(provider, session_id)), None)
-    phase = worker['activity']['state'].replace('_', ' ') if worker else 'activity unknown'
+    phase = worker['activity']['orb_state'] if worker else 'activity unknown'
     return _plain_name(phase, 'activity unknown')
 
 
@@ -12050,7 +12064,7 @@ def tool_list_agents(args: dict) -> str:
         agents = [a for a in agents if a.active == (wanted == "active")]
     elif wanted == "working":
         workers = {row['id']: row for row in _worker_inventory()['workers']}
-        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('model_work')]
+        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('active')]
     elif wanted:
         agents = [a for a in agents if a.state == wanted]
     if not agents:

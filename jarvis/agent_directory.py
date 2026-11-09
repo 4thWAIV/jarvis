@@ -40,8 +40,8 @@ class Agent:
     state: str            # working, idle, needs_you, ...
     active: bool
     needs: int            # needs-board items
-    # Its subagents working now (session_watch.read_subagents); a floor when
-    # `subagents_capped`.
+    # Compatibility fields; the HTTP projection fills these from the
+    # canonical worker snapshot, never from directory/file recency.
     subagents_working: int = 0
     subagents_capped: bool = False
 

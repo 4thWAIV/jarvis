@@ -77,11 +77,11 @@ def worker_inventory_fixture(now, thinking=None):
         children = [Subagent(agent_id=({"s1": ["a1", "a2"], "s2": ["b1"]}[agent["session_id"]][i]), description="Child", agent_type="Explore", background=False, depth=1,
                              state="working", started=now - 5, written=now,
                              worker_activity={"state": "model_work", "observed_at": now,
-                                              "source": "native_request", "coverage": "request"})
+                                              "source": "native_request", "coverage": "request", "turn_open": True})
                     for i in range(count)]
         sessions.append(SessionState(session_id=agent["session_id"], cwd="/example", project="example-project",
                                      state="working" if agent["session_id"] == thinking else "idle", provider=agent["provider"], subagents=children,
-                                     worker_activity={"state": "model_work" if agent["session_id"] == thinking else "idle", "observed_at": now, "source": "turn_boundary"}))
+                                     worker_activity={"state": "model_work" if agent["session_id"] == thinking else "idle", "observed_at": now, "source": "turn_boundary", "turn_open": agent["session_id"] == thinking}))
     return build(SimpleNamespace(sessions=sessions, provider_errors=[], taken_at=now), now=now)
 
 
@@ -191,7 +191,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
           tab: document.querySelector('.centre-tabs [aria-selected=true]').textContent,
           entries: [...document.querySelectorAll('.subagent-detail .transcript-entry pre')].map(e => e.textContent)})""")
         assert detail["name"] == "Proofread the setup guide"
-        assert "model work" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
+        assert "thinking" in detail["pills"] and "Subagent of Documentation" in detail["pills"]
         assert detail["tab"] == "Subagent"
         assert "Drafted it; checking against the roadmap now." in detail["entries"]
 
@@ -246,9 +246,9 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
                                  && c.top >= box.top && c.bottom <= box.bottom)};
         })""")
         by_id = {r["id"]: r for r in rows}
-        assert by_id["s1"]["count"] == "2 model work"
-        assert by_id["s2"]["count"] == "1 model work"
-        assert by_id["s3"]["count"] == "0 model work"
+        assert by_id["s1"]["count"] == "2 active"
+        assert by_id["s2"]["count"] == "1 active"
+        assert by_id["s3"]["count"] == "0 active"
         assert len({r["height"] for r in rows}) == 1, rows
         assert all(r["inside"] for r in rows), rows
         assert await page.evaluate(FITS)
@@ -272,11 +272,11 @@ async def test_agent_orb_and_counter_follow_the_same_worker_snapshot(page_playwr
         browser, page, api = await _open(p, page_url)
         row = page.locator('.agents-list li[data-session-id=s1]')
         await row.locator('.agent-orb[data-orb-state=idle]').wait_for()
-        assert await row.locator('.agent-subagents').text_content() == '2 model work'
+        assert await row.locator('.agent-subagents').text_content() == '2 active'
         # The session's old 'working' status did not make its own orb think.
         # Its family count includes two children; its own activity is idle.
         result = worker_inventory_fixture(time.time(), thinking="s1")
         api.worker_response = result
         await row.locator('.agent-orb[data-orb-state=thinking]').wait_for()
-        assert await row.locator('.agent-subagents').text_content() == '3 model work'
+        assert await row.locator('.agent-subagents').text_content() == '3 active'
         await browser.close()

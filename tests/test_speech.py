@@ -75,6 +75,7 @@ class Harness:
     def __init__(self, **kw):
         from jarvis.speech import SpeechScheduler
         self.msgs = []
+        self.audio_ready = asyncio.Event()
         self.fail_texts = set()
         self.synth_calls = []          # every text actually sent to TTS
         kw.setdefault("end_of_turn", 0.2)
@@ -90,6 +91,8 @@ class Harness:
 
     async def emit(self, msg):
         self.msgs.append(msg)
+        if msg["type"] == "audio":
+            self.audio_ready.set()
         # Behave like the browser: `drop_queued` discards every chunk that has not
         # started playing (all unacked audio except the first); `stop` discards all.
         if msg["type"] in ("drop_queued", "stop"):
@@ -269,7 +272,7 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
 async def test_echo_classification(h):
     s = h.sched
     u = await s.say("All systems nominal, sir.")
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(h.audio_ready.wait(), timeout=2)
     assert s.classify("all systems nominal sir") == "echo"
     # Two matching words are an echo only while the audio is actually coming
     # out of the speaker -- and it IS. The chunk has been sent and nothing

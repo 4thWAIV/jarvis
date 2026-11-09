@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { createStore } from "./store";
 
-export interface WorkerCounts { orb_state?: "thinking" | "idle"; workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
+export interface WorkerCounts { orb_state?: "thinking" | "idle" | "unknown"; active: number; workers: number; model_work: number; generating: number; unknown: number; tool_wait: number; queued: number; runtime_active: number }
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
   native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { orb_state?: "thinking" | "idle"; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
+  activity: { orb_state?: "thinking" | "idle" | "unknown"; active?: boolean; turn_open?: boolean | null; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
   counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {
@@ -18,11 +18,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function counts(value: unknown): value is WorkerCounts {
-  return record(value) && ["workers", "model_work", "generating", "unknown", "tool_wait", "queued", "runtime_active"]
+  return record(value) && ["workers", "active", "model_work", "generating", "unknown", "tool_wait", "queued", "runtime_active"]
     .every(key => typeof value[key] === "number" && Number.isFinite(value[key]) && Number(value[key]) >= 0);
 }
 function inventory(value: unknown): value is Inventory {
-  if (!record(value) || !Array.isArray(value.workers) || !counts(value.total)
+  if (!record(value) || typeof value.snapshot_id !== "string" || !Array.isArray(value.workers) || !counts(value.total)
       || !record(value.providers) || !Object.values(value.providers).every(counts)
       || !record(value.projects) || !Object.values(value.projects).every(counts)
       || !Array.isArray(value.gaps) || !value.gaps.every(gap => typeof gap === "string")

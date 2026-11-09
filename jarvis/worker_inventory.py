@@ -26,13 +26,18 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         key = identity(provider, sid)
         streamed = worker_activity.managed(provider, sid)
         latest = max((streamed, evidence or {}), key=lambda e: e.get('observed_at') or 0)
+        # Joining an already open native turn may expose only runtime status.
+        # Keep an observed transcript turn start; runtime liveness alone
+        # still cannot create it. Explicit runtime terminal events win.
+        if latest.get('turn_open') is None and (evidence or {}).get('turn_open') is True:
+            latest = {**latest, 'turn_open': True}
         live = worker_activity.current(latest, now)
         if latest.get('coverage_gap'):
             gaps.append(latest['coverage_gap'])
         # Session completion/liveness beats any previously observed output.
         if (not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you')
                 and live['state'] != 'external_wait'):
-            live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False)
+            live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False, turn_open=False)
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,
                'project': project, 'parent_id': identity(provider, parent) if parent else None,
                'kind': kind, 'workflow_id': workflow, 'allocation': 'unknown' if kind == 'subagent' else 'observed',
@@ -120,11 +125,11 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
             state = 'tool_wait' if active_tools else 'model_work'
         row = add(provider, 'brain', 'JARVIS brain', '', {}, 'unknown', 'brain')
         row['activity'] = worker_activity.current({'state': state, 'observed_at': event.get('at'),
-                                                  'source': 'brain_stream', 'coverage': 'stream'}, now)
+                                                  'source': 'brain_stream', 'coverage': 'stream', 'turn_open': state != 'idle'}, now)
     if stale:
         for row in rows.values():
             if row['kind'] != 'brain' and not worker_activity.managed(row['provider'], row['session_id']):
-                row['activity'] = {**row['activity'], 'state': 'unknown', 'generating': False, 'model_work': False}
+                row['activity'] = {**row['activity'], 'state': 'unknown', 'generating': False, 'model_work': False, 'turn_open': None}
     for workflow in workflows:
         for sid in workflow.agents:
             found = [row for row in rows.values() if row['session_id'] == sid]
@@ -155,9 +160,11 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         row['activity'] = worker_activity.current(row['activity'], now)
     def counts(items):
         model_work = sum(r['activity']['model_work'] for r in items)
-        return {'orb_state': 'thinking' if model_work else 'idle',
+        active = sum(r['activity']['active'] for r in items)
+        unknown = sum(r['activity']['turn_open'] is None for r in items)
+        return {'active': active, 'orb_state': 'thinking' if active else 'unknown' if unknown else 'idle',
                 'workers': len(items), 'model_work': model_work, 'generating': sum(r['activity']['generating'] for r in items),
-                'unknown': sum(r['activity']['state'] in ('unknown', 'awaiting_model', 'recent_output', 'finishing') for r in items),
+                'unknown': unknown,
                 'tool_wait': sum(r['activity']['state'] == 'tool_wait' for r in items),
                 'runtime_active': sum(r['runtime'].get('status') == 'active' and 0 <= now - (r['runtime'].get('observed_at') or 0) <= 10 for r in items),
                 'queued': sum(r['activity']['state'] == 'queued' for r in items)}
@@ -185,7 +192,7 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     return {'snapshot_id': uuid.uuid4().hex, 'workflow_counts': workflow_counts, 'workers': workers, 'total': counts(workers), 'projects': projects, 'providers': providers,
             'capacity': capacity, 'taken_at': now, 'evidence_window_seconds': worker_activity.EVIDENCE_SECONDS,
             'generation': (brain_events or {}).get('generation'), 'gaps': gaps,
-            'coverage': 'Model work means an observed model-request phase, including possible provider wait; it is not continuous backend token generation. Tools and unconfirmed observations are counted separately. Native Claude delegation is unchanged.'}
+            'coverage': 'Active means an observed open turn, using the main orb thinking state through model work, tools and waits until the turn ends. It is not instantaneous token generation. Missing turn evidence is unknown. Internal model and tool phases remain available. Native Claude delegation is unchanged.'}
 
 
 class SnapshotReader:

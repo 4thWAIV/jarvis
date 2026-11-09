@@ -21,7 +21,7 @@ import { createOrb, type Orb, type OrbState } from "./orb";
 const AGENT_ORB_PARTICLES = 300;
 
 export function agentOrbLook(agent: AgentRow, worker?: Worker): { gray: boolean; state: OrbState } {
-  return { gray: !agent.active, state: worker?.activity.orb_state ?? "idle" };
+  return { gray: !agent.active || worker?.activity.orb_state === "unknown", state: worker?.activity.orb_state === "thinking" ? "thinking" : "idle" };
 }
 
 export function AgentOrb({ agent }: { agent: AgentRow }) {
