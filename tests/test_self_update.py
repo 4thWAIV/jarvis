@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jarvis import self_update, update as update_cli
+from tests.fixtures.waiting import until_async
 
 GITHUB_URL = "https://github.com/4thWAIV/jarvis.git"
 REAL_RUN = subprocess.run
@@ -723,7 +724,7 @@ def test_the_restart_execs_with_the_arguments_it_was_given(monkeypatch):
 
     async def go():
         server_module._restart_server("test")
-        await asyncio.sleep(0.05)
+        assert await until_async(lambda: execs), "never re-execed"
 
     asyncio.run(go())
     exe = server_module.sys.executable

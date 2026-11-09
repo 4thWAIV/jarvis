@@ -22,6 +22,7 @@ from tests.test_agents_list_fits import FITS, async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
 from tests.test_voice_page_workflows import _workflow
+from tests.fixtures.waiting import settled
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -65,6 +66,24 @@ def agents_with_counts():
         {"session_id": "s3", "name": "Review", "active": True, "state": "idle",
          "needs": 1, "provider": "openai"},
     ]}
+
+
+
+def worker_inventory_fixture(now):
+    from types import SimpleNamespace
+    from jarvis.worker_inventory import build
+    from jarvis.session_watch import SessionState, Subagent
+    sessions = []
+    for agent, count in zip(agents_with_counts()["agents"], (2, 1, 0)):
+        children = [Subagent(agent_id=f"{agent["session_id"]}-child-{i}", description="Child", agent_type="Explore", background=False, depth=1,
+                             state="working", started=now - 5, written=now,
+                             worker_activity={"state": "model_work", "observed_at": now,
+                                              "source": "native_request", "coverage": "request"})
+                    for i in range(count)]
+        sessions.append(SessionState(session_id=agent["session_id"], cwd="/example", project="example-project",
+                                     state="idle", provider=agent["provider"], subagents=children,
+                                     worker_activity={"state": "idle", "observed_at": now, "source": "turn_end"}))
+    return build(SimpleNamespace(sessions=sessions, provider_errors=[], taken_at=now), now=now)
 
 
 def subagent_transcript(now, description):
@@ -111,6 +130,8 @@ class _Api:
             return {"session_id": row["session_id"], "subagent": agent, "name": row["description"],
                     "state": row["state"], "session_name": row["session_name"],
                     "entries": subagent_transcript(now, row["description"]), "earlier": None}
+        if path == "/api/workers":
+            return worker_inventory_fixture(now)
         if path == "/api/agents":
             return agents_with_counts()
         if path == "/api/conversation":
@@ -144,7 +165,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
         await page.click(".right-tabs [role=tab][title=Work]")
         row = page.locator(".subagent-row[data-subagent-key='agent:s2/b1']")
         await row.wait_for(timeout=10000)
-        got = await page.evaluate("""() => {
+        got = await settled(page, """() => {
           const sub = document.querySelector('.subagent-row');
           const wf = document.querySelector('.workflow-row[data-workflow-id=wf-1]');
           return {name: sub.querySelector('.workflow-name').textContent,
@@ -215,7 +236,7 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
     async with page_playwright as p:
         browser, page, _api = await _open(p, page_url)
         await page.wait_for_selector(".agents-list li[data-session-id=s1] .agent-subagents")
-        rows = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {
+        rows = await settled(page, """() => [...document.querySelectorAll('.agents-list li')].map(li => {
           const count = li.querySelector('.agent-subagents');
           const box = li.querySelector('.agent-entry').getBoundingClientRect();
           const c = count && count.getBoundingClientRect();
@@ -225,10 +246,21 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
                                  && c.top >= box.top && c.bottom <= box.bottom)};
         })""")
         by_id = {r["id"]: r for r in rows}
-        assert by_id["s1"]["count"] == "2 working"
-        assert by_id["s2"]["count"] == "1 working"
-        assert by_id["s3"]["count"] is None
+        assert by_id["s1"]["count"] == "2 model work"
+        assert by_id["s2"]["count"] == "1 model work"
+        assert by_id["s3"]["count"] == "0 model work"
         assert len({r["height"] for r in rows}) == 1, rows
         assert all(r["inside"] for r in rows), rows
         assert await page.evaluate(FITS)
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_invalid_worker_response_keeps_the_page_usable(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, _api = await _open(p, page_url)
+        await page.route("**/api/workers", lambda route: route.fulfill(json={}))
+        await page.wait_for_function("() => [...document.querySelectorAll('.agent-subagents')].some(e => e.textContent === 'Activity unknown')")
+        await page.click(".right-tabs [data-ui-tab=workflows]")
+        await page.wait_for_selector(".workflow-row[data-workflow-id=wf-1]")
         await browser.close()

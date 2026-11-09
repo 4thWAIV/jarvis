@@ -13,12 +13,12 @@ Headless Chromium on the built page, with JARVIS's voice socket replaced by
 Playwright and the speech recognition by a stand-in (test_voice_page_captions).
 """
 
-import asyncio
 import json
 
 import pytest
 
 from tests.voice_page_input import start_listening
+from tests.fixtures.waiting import until_async
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION, _silence_wav
 
@@ -164,7 +164,7 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
     async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('tell hammer to ship it', true)")
-        await asyncio.sleep(0.2)
+        assert await until_async(lambda: [m for m in voice.got if m.get("type") == "transcript"]), voice.got
         heard = [m for m in voice.got if m.get("type") == "transcript"][-1]["id"]
         voice.send({"type": "capture", "id": 3, "state": "capturing",
                     "text": "Ship it.", "to": "hammer", "heard": [heard]})
@@ -188,7 +188,9 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         assert said[2] < sent[2], "what he said comes first, then the capture"
         assert said[1] == "rgb(167, 181, 198)", said                # readable secondary text
         assert sent[1].startswith("rgba(251, 191, 36"), sent          # the transmission's amber
-        await page.wait_for_timeout(400)           # the crossfade from his words
+        # Once the crossfade from his words is done.
+        await page.wait_for_function(
+            "document.querySelector('.capture-box .capture-body')?.textContent === 'Ship it.'", timeout=15000)
         text = await page.evaluate("document.querySelector('.capture-box .capture-body').textContent")
         assert text == "Ship it.", text
         # Before it is for an agent, it is not yet a transmission: plain and on the left.
@@ -458,7 +460,9 @@ async def test_disconnected_submission_preserves_draft_with_error(page_url):
         editor = page.get_by_role("textbox", name="Message JARVIS")
         await editor.fill("Keep this draft")
         await voice.ws.close()
-        await asyncio.sleep(0.1)
+        # Once the page knows it is not connected.
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'err-reconnecting'",
+                                     timeout=15000)
         await editor.press("Enter")
         assert await editor.input_value() == "Keep this draft"
         # Said in the conversation control: the title is the alert, the

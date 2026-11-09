@@ -10,7 +10,6 @@ recording transport; answers are written to the package's results as the
 page's save and scripts/decide.py write them."""
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
@@ -18,6 +17,7 @@ import pytest
 from jarvis import package_story, spoken_words, story_teller, work_packages
 from jarvis.package_story import StoryError
 from tests.test_package_modes import PAGE, unpacked
+from tests.fixtures.waiting import until_async
 from tests.test_package_story import Teller
 from tests.test_speech import Harness, h  # noqa: F401  (the fixture)
 from tests.test_work_packages import marks  # noqa: F401  (the fixture)
@@ -50,12 +50,12 @@ def quick(monkeypatch):
     monkeypatch.setattr(story_teller, "FLOOR_SETTLE_SEC", 0.02)
 
 
-async def until(t, check, rounds=150):
-    for _ in range(rounds):
-        await t.h.ack_all(rounds=1)
-        if check():
-            return
-    raise AssertionError(f"never happened; frames: {t.frames}")
+async def until(t, check):
+    """Play the story out until `check()` holds."""
+    try:
+        await t.h.ack_all(until=check)
+    except AssertionError:
+        raise AssertionError(f"never happened; frames: {t.frames}") from None
 
 
 def state(t):
@@ -104,8 +104,7 @@ async def test_it_waits_at_each_question_and_goes_on_only_once_answered(h, deck)
     await t.teller.tell(deck.id)
     await until(t, lambda: state(t) == ("waiting", 2, "tea"))
     assert said(t) == ["Two choices.", "Which tea?"]
-    for _ in range(20):                  # far longer than a beat: still waiting
-        await h.ack_all(rounds=1)
+    await t.play_for(0.6)                # far longer than a beat: still waiting
     assert state(t) == ("waiting", 2, "tea") and said(t) == ["Two choices.", "Which tea?"]
     assert t.teller.status()["question"] == "tea"
     answer(deck, "tea", "green")         # milk applies only to black tea: passed over
@@ -124,8 +123,7 @@ async def test_it_goes_on_only_once_the_floor_is_free(h, deck):
     await t.teller.tell(deck.id, 2)
     await until(t, lambda: state(t)[0] == "waiting")
     answer(deck, "tea", "green")
-    for _ in range(15):
-        await h.ack_all(rounds=1)
+    await t.play_for(0.45)
     assert "How many cups?" not in said(t), "his turn and the reply come first"
     free["now"] = True
     await until(t, lambda: state(t) == ("waiting", 4, "cups"))
@@ -138,8 +136,7 @@ async def test_going_back_asks_that_question_again_and_passes_over_the_answered(
     t = Teller(h)
     await t.teller.tell(deck.id, 2)
     await until(t, lambda: state(t) == ("waiting", 2, "tea"))
-    for _ in range(10):
-        await h.ack_all(rounds=1)
+    await t.play_for(0.3)
     assert state(t) == ("waiting", 2, "tea"), "an answer already there is not a new one"
     answer(deck, "tea", "black", at="2")
     await until(t, lambda: state(t) == ("waiting", 3, "milk"))
@@ -173,8 +170,7 @@ async def test_stop_while_waiting_ends_it_and_says_so_and_again_says_already(h, 
     assert stopped.package.id == deck.id and stopped.waiting == "tea"
     assert state(t) == ("stopped", 2, "tea") and t.teller.telling is None
     answer(deck, "tea", "green")
-    for _ in range(10):
-        await h.ack_all(rounds=1)
+    await t.play_for(0.3)
     assert said(t) == ["Which tea?"], "nothing more once stopped, answered or not"
     again = await t.teller.stop()
     assert again.already and again.ended.slide == 2 and again.ended.by == "by voice"
@@ -183,20 +179,22 @@ async def test_stop_while_waiting_ends_it_and_says_so_and_again_says_already(h, 
 @pytest.mark.asyncio
 async def test_stop_while_telling_withdraws_the_words_at_once(h, deck):
     t = Teller(h)
+    before = len(h.audio())
     await t.teller.tell(deck.id)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: len(h.audio()) > before), "the slide never sounded"
     await t.teller.stop()
     assert "stop" in h.types() and state(t)[0] == "stopped"
     heard = len(h.audio())
-    await h.ack_all(rounds=3)
+    await t.play_for(0.1)
     assert len(h.audio()) == heard
 
 
 @pytest.mark.asyncio
 async def test_his_speaking_pauses_a_slide_and_on_a_question_waits_for_his_answer(h, deck):
     t = Teller(h)
+    before = len(h.audio())
     await t.teller.tell(deck.id)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: len(h.audio()) > before), "the slide never sounded"
     await h.sched.barge_in(reason="he spoke")
     await until(t, lambda: state(t)[0] == "paused")
     assert t.teller.telling is not None and t.teller.status()["state"] == "paused", \
@@ -204,8 +202,9 @@ async def test_his_speaking_pauses_a_slide_and_on_a_question_waits_for_his_answe
     stopped = await t.teller.stop()
     assert stopped.package.id == deck.id and state(t)[0] == "stopped"
 
+    before = len(h.audio())
     await t.teller.tell(deck.id, 2)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: len(h.audio()) > before), "the question never sounded"
     await h.sched.barge_in(reason="he answers over it")
     await until(t, lambda: state(t) == ("waiting", 2, "tea"))
     answer(deck, "tea", "green")

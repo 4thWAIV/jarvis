@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.waiting import LIMIT_SEC
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from jarvis import screen as real_screen
@@ -142,7 +144,7 @@ def test_something_that_is_not_a_png_has_no_size():
 
 @pytest.mark.asyncio
 async def test_the_main_display_is_captured_silently_with_an_argument_list(runner):
-    await asyncio.wait_for(real_screen.capture_screen(), 5)
+    await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     cmd = runner.calls[0]
     assert cmd[0] == "screencapture"
     assert "-x" in cmd, "-x suppresses the shutter sound"
@@ -155,7 +157,7 @@ async def test_the_main_display_is_captured_silently_with_an_argument_list(runne
 async def test_a_retina_capture_is_shrunk_before_it_is_sent(runner):
     """Every pixel becomes tokens. A 1920- or 3024-wide capture is not
     something to put in the brain's context at full size."""
-    shot = await asyncio.wait_for(real_screen.capture_screen(), 5)
+    shot = await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     resize = [c for c in runner.calls if c[0] == "sips" and "-Z" in c][0]
     assert resize[resize.index("-Z") + 1] == str(real_screen.SHOT_MAX_EDGE)
     assert shot.width == 1280 and shot.height == 720
@@ -165,7 +167,7 @@ async def test_a_retina_capture_is_shrunk_before_it_is_sent(runner):
 @pytest.mark.asyncio
 async def test_a_screen_already_within_budget_is_not_resized(runner):
     runner.capture_png = _busy(1024, 640)
-    shot = await asyncio.wait_for(real_screen.capture_screen(), 5)
+    shot = await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert not [c for c in runner.calls if c[0] == "sips" and "-Z" in c
                 and "bmp" not in c]
     assert (shot.width, shot.height) == (1024, 640)
@@ -176,7 +178,7 @@ async def test_a_capture_that_cannot_be_shrunk_is_refused_not_sent_whole(runner)
     """Failing open here would quietly spend thousands of tokens on one turn."""
     runner.resize_rc = 1
     with pytest.raises(real_screen.ScreenError):
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
 
 
 @pytest.mark.asyncio
@@ -184,7 +186,7 @@ async def test_screencapture_failing_is_said_not_swallowed(runner):
     runner.capture_rc = 1
     runner.write_capture = False
     with pytest.raises(real_screen.ScreenError) as caught:
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert "screen" in str(caught.value).lower()
 
 
@@ -192,7 +194,7 @@ async def test_screencapture_failing_is_said_not_swallowed(runner):
 async def test_a_picture_too_big_for_the_tool_channel_is_refused(runner, monkeypatch):
     monkeypatch.setattr(real_screen, "MAX_SHOT_BYTES", 100)
     with pytest.raises(real_screen.ScreenError) as caught:
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert "large" in str(caught.value)
 
 
@@ -212,7 +214,7 @@ async def test_every_subprocess_is_time_boxed(runner):
     timed = _Timed()
     real_screen._run = timed
     try:
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     finally:
         real_screen._run = runner
     assert timed.timeouts and all(0 < t <= 10 for t in timed.timeouts)
@@ -222,7 +224,7 @@ async def test_every_subprocess_is_time_boxed(runner):
 async def test_a_stalled_subprocess_is_killed_and_reported():
     """The real `_run`, against a real process that will not finish."""
     rc, _out, err = await asyncio.wait_for(
-        real_screen._run("/bin/sleep", "30", timeout=0.2), 5)
+        real_screen._run("/bin/sleep", "30", timeout=0.2), LIMIT_SEC)
     assert rc == -1
     assert "timed out" in err
 
@@ -234,7 +236,7 @@ async def test_nothing_is_captured_at_all_without_screen_recording(runner,
                                                                   monkeypatch):
     monkeypatch.setattr(real_screen, "screen_recording_granted", lambda: False)
     with pytest.raises(real_screen.ScreenError) as caught:
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert "Screen Recording" in str(caught.value)
     assert runner.calls == [], "it ran screencapture anyway"
 
@@ -245,7 +247,7 @@ async def test_an_undeterminable_permission_still_tries(runner, monkeypatch):
     Refusing then would break seeing the screen on any Mac the probe cannot
     read — the blank-frame check below is the backstop."""
     monkeypatch.setattr(real_screen, "screen_recording_granted", lambda: None)
-    shot = await asyncio.wait_for(real_screen.capture_screen(), 5)
+    shot = await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert shot.png
 
 
@@ -257,7 +259,7 @@ async def test_a_blank_frame_is_refused_rather_than_described(runner):
     failure this project has hit all night."""
     runner.bmp = _bmp(bytes(32 * 32 * 3))          # every pixel black
     with pytest.raises(real_screen.ScreenError) as caught:
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     said = str(caught.value)
     assert "Screen Recording" in said
     assert "blank" in said or "empty" in said
@@ -267,7 +269,7 @@ async def test_a_blank_frame_is_refused_rather_than_described(runner):
 async def test_one_flat_colour_is_blank_too_not_just_black(runner):
     runner.bmp = _bmp(b"\x2c\x3e\x18" * (32 * 32))
     with pytest.raises(real_screen.ScreenError):
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
 
 
 def test_blankness_is_judged_per_channel_not_across_them():
@@ -297,7 +299,7 @@ async def test_a_blank_check_that_cannot_run_does_not_block_a_good_capture(
         return await runner(*args, timeout=timeout)
 
     monkeypatch.setattr(real_screen, "_run", _run)
-    shot = await asyncio.wait_for(real_screen.capture_screen(), 5)
+    shot = await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert shot.png
 
 
@@ -340,7 +342,7 @@ async def test_the_capture_is_deleted_the_moment_it_has_been_read(runner,
         return d
 
     monkeypatch.setattr(real_screen.tempfile, "mkdtemp", _spy)
-    shot = await asyncio.wait_for(real_screen.capture_screen(), 5)
+    shot = await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert shot.png
     assert seen and not seen[0].exists(), "the screenshot is still on disk"
 
@@ -359,7 +361,7 @@ async def test_the_capture_is_deleted_even_when_the_capture_fails(runner,
     monkeypatch.setattr(real_screen.tempfile, "mkdtemp", _spy)
     runner.bmp = _bmp(bytes(32 * 32 * 3))
     with pytest.raises(real_screen.ScreenError):
-        await asyncio.wait_for(real_screen.capture_screen(), 5)
+        await asyncio.wait_for(real_screen.capture_screen(), LIMIT_SEC)
     assert seen and not seen[0].exists()
 
 
@@ -374,7 +376,7 @@ async def test_the_window_list_names_the_app_the_title_and_which_is_front(
                    "Chrome|||Dashboard|||false\n"), ""
 
     monkeypatch.setattr(real_screen, "_run", _run)
-    windows = await asyncio.wait_for(real_screen.list_windows(), 5)
+    windows = await asyncio.wait_for(real_screen.list_windows(), LIMIT_SEC)
     assert [(w.app, w.title, w.frontmost) for w in windows] == [
         ("Ghostty", "jarvis — main", True),
         ("Chrome", "Dashboard", False)]
@@ -386,7 +388,7 @@ async def test_the_window_list_is_bounded(monkeypatch):
         return 0, "".join(f"App{i}|||Window {i}|||false\n" for i in range(200)), ""
 
     monkeypatch.setattr(real_screen, "_run", _run)
-    windows = await asyncio.wait_for(real_screen.list_windows(), 5)
+    windows = await asyncio.wait_for(real_screen.list_windows(), LIMIT_SEC)
     assert len(windows) == real_screen.MAX_WINDOWS
 
 
@@ -438,7 +440,7 @@ async def test_no_accessibility_is_said_plainly_not_reported_as_an_empty_desk(
 
     monkeypatch.setattr(real_screen, "_run", _run)
     with pytest.raises(real_screen.ScreenError) as caught:
-        await asyncio.wait_for(real_screen.list_windows(), 5)
+        await asyncio.wait_for(real_screen.list_windows(), LIMIT_SEC)
     assert "Accessibility" in str(caught.value)
 
 
@@ -453,7 +455,7 @@ async def test_the_window_list_is_time_boxed(monkeypatch):
         return 0, "", ""
 
     monkeypatch.setattr(real_screen, "_run", _run)
-    await asyncio.wait_for(real_screen.list_windows(), 5)
+    await asyncio.wait_for(real_screen.list_windows(), LIMIT_SEC)
     assert 0 < seen["timeout"] <= 10
 
 

@@ -25,6 +25,7 @@ pytestmark = pytest.mark.page
 
 from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import LIMIT_SEC, settled
 
 # Autoplay without a click, and Chromium's fake microphone (a tone) granted
 # without asking, so the page captures from the start as it does for him.
@@ -162,7 +163,12 @@ NOW = """() => { const w = document.querySelector('#caption-box .spoken-word.now
 async def test_always_four_lines_left_aligned_between_the_side_columns(page_playwright, page_url):
     async with page_playwright as p:
         browser, page = await _open(p, page_url)
-        box = await page.evaluate("""() => {
+        # The microphone's corner is drawn into after the page mounts, and
+        # its height moves the box: measure once it is there and still.
+        await page.wait_for_function("""() => document.getElementById('caption-box')
+          && parseFloat(getComputedStyle(document.documentElement)
+               .getPropertyValue('--centre-corner-height')) > 0""", timeout=15000)
+        box = await settled(page, """() => {
           const el = document.getElementById('caption-box');
           const b = el.getBoundingClientRect(), css = getComputedStyle(el);
           const scroll = el.querySelector('.caption-scroll'), sc = getComputedStyle(scroll);
@@ -197,7 +203,7 @@ async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_playw
         # The page passes on what is heard at most every so often, so wait.
         await page.wait_for_function(
             "document.querySelector('#caption-box').textContent === 'how are the agents'",
-            timeout=5000)
+            timeout=15000)
         assert (await page.evaluate(TURNS))[-1] == {
             "speaker": "user", "text": "how are the agents", "now": []}
         await page.evaluate("window.__hear('how are the agents doing', true)")
@@ -222,16 +228,21 @@ async def test_only_the_word_being_spoken_glows_and_it_moves_along(page_playwrig
         browser, page = await _open(p, page_url, _speaker([[sentence]], clip_seconds=3.0))
         await page.wait_for_function(
             "document.querySelector('#caption-box .spoken-word.now')", timeout=10000)
-        seen = []
-        for _ in range(12):
+        seen, dark = [], 0
+        # Watched until the sentence has been read (nothing glowing for a
+        # few looks): a fixed number of looks sees fewer words the slower
+        # the machine.
+        deadline = asyncio.get_running_loop().time() + LIMIT_SEC
+        while asyncio.get_running_loop().time() < deadline and dark < 3:
             now = await page.evaluate(NOW)
+            dark = 0 if now else dark + (1 if seen else 0)
             if now:
                 assert len(now["word"].split()) == 1, now
                 assert now["glow"] != "none", "the word does not glow"
                 assert now["background"] in ("rgba(0, 0, 0, 0)", "transparent"), now
                 if not seen or seen[-1] != now["word"]:
                     seen.append(now["word"])
-            await page.wait_for_timeout(250)
+            await page.wait_for_timeout(100)
         assert len(seen) >= 4, seen                       # it moved along the sentence
         assert seen == sorted(seen, key=sentence.split().index), seen   # in order
         await page.wait_for_function(
@@ -248,8 +259,7 @@ async def test_it_scrolls_to_what_is_being_said_now(page_playwright, page_url):
         await page.wait_for_function(
             "document.querySelector('#caption-box').textContent.includes('Sentence 3-2')",
             timeout=20000)
-        await page.wait_for_timeout(200)
-        view = await page.evaluate("""() => {
+        view = await settled(page, """() => {
           const box = document.querySelector('#caption-box .caption-scroll');
           const last = [...box.querySelectorAll('.caption-turn span')].pop().getBoundingClientRect();
           const b = box.getBoundingClientRect();

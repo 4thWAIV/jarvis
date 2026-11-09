@@ -144,6 +144,7 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "083a94de9e0316698de18329919d6218af17180909c7029cb9a4a3d70f3c0b2b",  # complete capture before read-back
     "25981ab1a51bf43caa7ccc2d4e713f5a824fa4494ea52f23b2f158e36c011f68",  # describe the current React workspace
     "fa669514729ae29315c5b40a29587cc48e0636bf88b2e1e466ad21f3cfa0398a",  # brain home under JARVIS_DATA_DIR
     "05e770673312b589529b570f63ec49167eb901d0363642040bef11411ed5ae43",  # announce what needs you now

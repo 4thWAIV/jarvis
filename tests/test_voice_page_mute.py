@@ -8,6 +8,8 @@ with Chromium's fake microphone, which plays a tone, so there is a level to
 see while unmuted.
 """
 
+import json
+
 import pytest
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
@@ -37,6 +39,20 @@ async def _peak_lit(page, ms: int) -> int:
       look(); }})""")
 
 
+async def _lights(page, why: str) -> None:
+    """Until the meter shows a level: the fake microphone's first audio
+    reaches it later the busier the machine."""
+    try:
+        await page.wait_for_function(f"{LIT} > 0", timeout=15000)
+    except Exception:
+        raise AssertionError(why) from None
+
+
+async def _says(page, silenced) -> None:
+    """Until the microphone's state line says `silenced` (None: nothing)."""
+    await page.wait_for_function(f"({SILENCED}) === {json.dumps(silenced)}", timeout=15000)
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_microphone(
         page_playwright, page_url):
@@ -52,17 +68,17 @@ async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_mic
         await page.goto(page_url)
         await start_listening(page)
 
-        assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
+        await _lights(page, "the fake microphone never registered")
         asks = await page.evaluate("window.__micAsks")
 
         await page.click("#btn-mute")
-        await page.wait_for_timeout(300)
-        assert await page.evaluate(SILENCED) == "Muted"
+        await _says(page, "Muted")
+        await page.wait_for_function(f"{LIT} === 0", timeout=15000)   # the level falls away
         assert await _peak_lit(page, 2000) == 0, "the meter still shows a level while muted"
 
         await page.click("#btn-mute")
-        assert await page.evaluate(SILENCED) is None
-        assert await _peak_lit(page, 4000) > 0, "the meter did not come back after unmuting"
+        await _says(page, None)
+        await _lights(page, "the meter did not come back after unmuting")
         assert await page.evaluate("window.__micAsks") == asks, "unmuting asked for the microphone again"
         await browser.close()
 
@@ -81,15 +97,15 @@ async def test_mic_off_releases_the_microphone_and_on_asks_for_it_again(page_pla
         await page.goto(page_url)
         await start_listening(page)
 
-        assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
+        await _lights(page, "the fake microphone never registered")
         asks = await page.evaluate("window.__micAsks")
 
         await page.click("#btn-mic-off")
-        await page.wait_for_timeout(300)
-        assert await page.evaluate(SILENCED) == "Mic off"
+        await _says(page, "Mic off")
+        await page.wait_for_function(f"{LIT} === 0", timeout=15000)   # the level falls away
         assert await _peak_lit(page, 2000) == 0, "the meter still shows a level with the mic off"
 
         await page.click("#btn-mic-off")
-        assert await _peak_lit(page, 4000) > 0, "the meter did not come back with the mic on"
+        await _lights(page, "the meter did not come back with the mic on")
         assert await page.evaluate("window.__micAsks") == asks + 1
         await browser.close()

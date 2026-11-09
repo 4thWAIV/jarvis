@@ -8,6 +8,35 @@ python -m jarvis.make_package <content.json | folder> --session <your session id
 
 Run it with JARVIS's own Python. The talk-to-jarvis skill gives the exact command for this Mac, which works from any folder. From inside the JARVIS checkout it is `.venv/bin/python -m jarvis.make_package`, and then give `--project <your project>` as well, since the project otherwise defaults to the name of the folder you run it from.
 
+## Author understanding
+
+Every package supplies Markdown explaining its human content and supporting files. The author supplies the meaning; the factory checks that the declared coverage exists and is readable. It does not infer or certify a PDF, diagram or page's meaning.
+
+A hand-made package uses the existing `brief` or `skill` path and an additive `understanding` map from each supplied member to its author-written Markdown:
+
+```json
+{
+  "purpose": "Explain the proposed workflow",
+  "runs": "page",
+  "entry": "index.html",
+  "brief": "overview.md",
+  "understanding": {
+    "index.html": "overview.md",
+    "app.js": "overview.md",
+    "style.css": "overview.md",
+    "workflow.pdf": "workflow.md"
+  }
+}
+```
+
+Several source members may share one explanation. Explain the human material with its reading order, headings, table relationships and diagram descriptions. Describe technical assets in that same brief where appropriate: for example, which script supplies controls and which stylesheet supplies layout. The package metadata and the declared Markdown explanations need no self-map. Results and other files already excluded by the shared zipper remain excluded.
+
+Creation checks the exact supplied file set, refuses uncovered or missing members, and reads the declared Markdown as ordinary UTF-8 text. Empty, binary, unreadable or linked explanations are refused before delivery. The complete declared author view must fit the existing 4 MiB text-read budget. These checks establish usable author text and file coverage; they do not establish semantic equivalence. No PDF/HTML/image parser or automatic translation is added.
+
+Factory rebuilds replace their generated output folder; author inputs must be kept outside it. For a factory deck, the existing structured slide/decision content and separately labeled narration are serialized to `UNDERSTANDING.md` (or an unused numbered name when the author already supplies that name), named by `brief`. The standard shared deck assets are covered there. Existing picture alt/caption text, decision context and an option's name/what it says are associated author text for their pictures. If a picture carries meaning beyond that text, supply a Markdown explanation and add a top-level `understanding` mapping to the deck JSON. The factory copies only those explicitly declared Markdown members.
+
+JARVIS receives the declared material through the existing package-open/inbox path. The existing `package_inbox` tool accepts `understanding_offset: 0`; continue at its returned `next_offset` until null to read all declared author Markdown within the existing tool-result limit. It reads no arbitrary source files and makes no claim that opening alone read everything.
+
 ## Which kind
 
 | You want Tim to | You write | He gets |

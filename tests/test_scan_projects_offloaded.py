@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from jarvis import server
+from tests.fixtures.waiting import until
 
 
 @pytest.fixture(autouse=True)
@@ -39,25 +40,24 @@ def test_a_slow_scan_does_not_freeze_the_event_loop(monkeypatch, tmp_path):
 
     real = server._scan_projects_blocking
 
-    def slow(deadline):
-        time.sleep(0.5)          # stands in for a very slow filesystem
+    beats = [0]
+
+    def slow(deadline):          # stands in for a very slow filesystem:
+        until(lambda: beats[0] > 5)   # it lasts until the loop has ticked
         return real(deadline)
 
     monkeypatch.setattr(server, "_scan_projects_blocking", slow)
 
     async def go():
-        ticks = 0
-
         async def heartbeat():
-            nonlocal ticks
             while True:
                 await asyncio.sleep(0.02)
-                ticks += 1
+                beats[0] += 1
 
         beat = asyncio.create_task(heartbeat())
         projects = await server.scan_projects()
         beat.cancel()
-        return projects, ticks
+        return projects, beats[0]
 
     projects, ticks = asyncio.run(go())
     assert [p["name"] for p in projects] == ["alpha"]

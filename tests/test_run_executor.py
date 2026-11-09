@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from jarvis import claude_provider
+from tests.fixtures.waiting import LIMIT_SEC, until_async
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -252,15 +253,13 @@ def _slow_claude(tmp_path: Path, name: str = "slow_claude.py",
 
 
 async def _await_status(store, run_id: str, status: str,
-                        timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+                        timeout: float = LIMIT_SEC) -> None:
+    def reached():
         run = store.get_run(run_id)
-        if run and run["status"] == status:
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError(
-        f"run never reached {status!r}; last={store.get_run(run_id)}")
+        return bool(run and run["status"] == status)
+    if not await until_async(reached, timeout=timeout):
+        raise AssertionError(
+            f"run never reached {status!r}; last={store.get_run(run_id)}")
 
 
 # -- CRITICAL 1: cancel() must record CANCELLED, not failed/-15 -------------
@@ -430,7 +429,9 @@ async def test_cancelling_a_queued_run_is_not_logged_as_an_error(env, caplog):
     with caplog.at_level(logging.INFO, logger="jarvis.run_executor"):
         assert await ex.cancel(queued) is True
         await ex.cancel(first)
-        await asyncio.sleep(0.3)
+        assert await until_async(lambda: any(
+            "cancelled while queued" in r.getMessage()
+            for r in caplog.records)), caplog.records
 
     errors = [r for r in caplog.records
               if r.levelno >= logging.ERROR and queued in r.getMessage()]
@@ -707,8 +708,7 @@ async def test_finished_runs_leave_the_task_table(env):
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id)
-    await asyncio.sleep(0.05)
-    assert run_id not in ex._tasks
+    assert await until_async(lambda: run_id not in ex._tasks), ex._tasks
     assert ex.active_count() == 0
 
 
@@ -954,14 +954,14 @@ def _eof_then_hang(tmp_path: Path, name: str = "eof_hang.py",
                    "time.sleep(%r)\n" % (str(FIXTURE), sleep_sec))
 
 
-async def _await_pid(store, run_id: str, timeout: float = 10.0) -> int:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+async def _await_pid(store, run_id: str, timeout: float = LIMIT_SEC) -> int:
+    def pid():
         run = store.get_run(run_id)
-        if run and run["pid"]:
-            return int(run["pid"])
-        await asyncio.sleep(0.01)
-    raise AssertionError(f"run {run_id} never recorded a pid")
+        return int(run["pid"]) if run and run["pid"] else 0
+    found = await until_async(pid, timeout=timeout)
+    if not found:
+        raise AssertionError(f"run {run_id} never recorded a pid")
+    return found
 
 
 def _alive(pid: int) -> bool:
@@ -1017,9 +1017,7 @@ async def test_cancel_during_the_post_eof_wait_actually_kills(env, tmp_path):
     pid = await _await_pid(store, run_id)
 
     # Wait until the one line has been consumed and stdout hit EOF.
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and store.count_events(run_id) < 1:
-        await asyncio.sleep(0.01)
+    assert await until_async(lambda: store.count_events(run_id) >= 1)
     await asyncio.sleep(0.3)
     assert _alive(pid), "the child died before the window under test"
 
@@ -1808,3 +1806,16 @@ async def test_an_error_on_the_second_result_is_still_an_error(env):
                             timeout=20)
     assert run["is_error"] == 1, run
     assert run["status"] == store.RunStatus.FAILED, run
+
+
+@pytest.mark.asyncio
+async def test_live_partial_chunks_do_not_duplicate_permanent_transcript(env):
+    store, mod, tmp = env
+    stream = tmp / 'partial.jsonl'
+    stream.write_text(json.dumps({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': 'partial'}}}) + '\n' + FIXTURE.read_text())
+    ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, stream))
+    run_id = await ex.spawn('do a thing', 'proj', str(tmp), 'api')
+    await ex.wait_for(run_id)
+    events = store.get_events(run_id, limit=100)
+    assert len(events) == 14
+    assert all(event['kind'] != 'stream_event' for event in events)

@@ -5,5 +5,12 @@
   "runs": "page",
   "entry": "index.html",
   "story": "story.json",
-  "returns": []
+  "returns": [],
+  "brief": "BRIEF.md",
+  "understanding": {
+    "deck.js": "BRIEF.md",
+    "index.html": "BRIEF.md",
+    "story.json": "BRIEF.md",
+    "style.css": "BRIEF.md"
+  }
 }

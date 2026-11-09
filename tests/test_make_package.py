@@ -43,7 +43,10 @@ def test_a_presentation_builds_without_votes(tmp_path, monkeypatch, capsys):
     package = json.loads(zipfile.ZipFile(archive).read("package.json"))
     assert package == {"name": "team-lunch-moved", "version": "1.0.0",
                        "purpose": "Team lunch moved", "runs": "page", "entry": "index.html",
-                       "story": "story.json", "returns": []}
+                       "story": "story.json", "returns": [], "brief": "UNDERSTANDING.md",
+                       "understanding": {"deck-data.js": "UNDERSTANDING.md", "deck.css": "UNDERSTANDING.md",
+                                         "deck.js": "UNDERSTANDING.md", "index.html": "UNDERSTANDING.md",
+                                         "story.json": "UNDERSTANDING.md"}}
     story = json.loads(zipfile.ZipFile(archive).read("story.json"))
     assert [s["title"] for s in story["slides"]] == ["What changed", "What you need to do"]
     assert len(seen) == 1 and len(delivery.calls) == 1
@@ -131,8 +134,10 @@ def page_folder(root: Path, **manifest) -> Path:
     (folder / "app.js").write_text("// app\n")
     (folder / "story.json").write_text(json.dumps(json.loads(
         (EXAMPLES / "story-deck" / "story.json").read_text())))
+    (folder / "explanation.md").write_text("# Globe numbers\nThe authored explanation of the numbers and story.")
     (folder / "package.json").write_text(json.dumps({"purpose": "Show the numbers.",
-                                                     **manifest}))
+        "understanding": {"index.html": "explanation.md", "app.js": "explanation.md", "story.json": "explanation.md"},
+        **manifest}))
     (folder / "results").mkdir()
     (folder / "results" / "old.json").write_text("{}")
     return folder
@@ -142,7 +147,9 @@ def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
     manifest = mp.manifest_of(page_folder(tmp_path))
     assert manifest == {"purpose": "Show the numbers.", "runs": "page", "entry": "index.html",
                         "story": "story.json", "name": "globe-numbers",
-                        "returns": ["results/**"], "version": "1.0.0"}
+                        "returns": ["results/**"], "version": "1.0.0", "brief": "explanation.md",
+                        "understanding": {"index.html": "explanation.md", "app.js": "explanation.md",
+                                          "story.json": "explanation.md"}}
 
 
 def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsys):

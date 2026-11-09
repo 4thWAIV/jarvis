@@ -10,6 +10,8 @@ import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from tests.fixtures.waiting import LIMIT_SEC, until_async
+
 
 def _split_all(text, **kw):
     from jarvis.speech import SentenceSplitter
@@ -112,14 +114,36 @@ class Harness:
                 m["_acked"] = True
         await self.sched.played(utt_id, idx)
 
-    async def ack_all(self, rounds=10):
-        """Ack every audio message the client would have played, in order."""
-        for _ in range(rounds):
-            await asyncio.sleep(0.03)
-            for m in list(self.msgs):
-                if m["type"] == "audio" and not m.get("_acked") and not m.get("_dropped"):
-                    await self.ack(m["utt"], m["idx"])
-                    await asyncio.sleep(0.03)
+    def unacked(self):
+        """Audio the client holds and has not finished playing."""
+        return [m for m in self.msgs if m["type"] == "audio"
+                and not m.get("_acked") and not m.get("_dropped")]
+
+    def settled(self) -> bool:
+        """Nothing current, paused or queued, nothing unplayed, and the last
+        status the client was sent (if any) says idle."""
+        if self.sched.has_speech_in_flight() or self.unacked():
+            return False
+        states = [m["state"] for m in self.msgs if m["type"] == "status"]
+        return not states or states[-1] == "idle"
+
+    async def sent(self, n=1):
+        """Wait until `n` audio chunks have gone out to the client."""
+        assert await until_async(lambda: len(self.audio()) >= n), self.audio()
+
+    async def ack_all(self, until=None):
+        """Play out: ack every audio message as the client would, in order,
+        as each arrives, until `until()` holds (by default until the
+        scheduler has settled). Waits for the audio it expects instead of
+        guessing how many rounds a busy machine needs."""
+        done = until or self.settled
+
+        async def played_out():
+            for m in self.unacked():
+                await self.ack(m["utt"], m["idx"])
+            return done()
+
+        assert await until_async(played_out), f"never played out: {self.types()}"
 
 
 @pytest_asyncio.fixture
@@ -137,7 +161,7 @@ async def test_turn_streams_in_order_with_prefetch_and_status(h):
     s.feed(u, "One. Two. Three. Fo")
     s.feed(u, "ur.")
     await s.end_turn(u)
-    await asyncio.sleep(0.15)
+    await h.sent(2)
     # prefetch=2: two chunks sent before any ack
     assert h.audio() == [(u.id, 0, "One."), (u.id, 1, "Two.")]
     assert h.types()[0] == "status" and h.msgs[0]["state"] == "speaking"
@@ -169,12 +193,11 @@ async def test_urgent_preempts_at_boundary_then_resumes_with_nothing_in_front(h)
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    await h.sent(2)
     await h.ack(u.id, 0)                      # chunk 0 heard, chunk 1 is playing
-    await asyncio.sleep(0.05)
+    await h.sent(3)                           # chunk 2 sent ahead
     urgent = await s.say("Hammer needs you.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.1)
-    assert "drop_queued" in h.types()
+    assert await until_async(lambda: "drop_queued" in h.types()), h.types()
     await h.ack_all()
     texts = [t for _, _, t in h.audio()]
     assert texts[:2] == ["Alpha one.", "Beta two."]
@@ -191,14 +214,12 @@ async def test_resume_is_dropped_when_user_spoke_meanwhile(h):
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    await h.sent(2)
     await h.ack(u.id, 0)
     await s.say("Urgent thing.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: "drop_queued" in h.types()), h.types()
     await s.user_final("okay thanks for that")   # two+ non-echo words -> barge-in
-    await asyncio.sleep(0.05)
-    assert "stop" in h.types()
-    assert u.cancelled
+    assert await until_async(lambda: "stop" in h.types() and u.cancelled), h.types()
 
 
 @pytest.mark.asyncio
@@ -208,10 +229,10 @@ async def test_resume_is_dropped_when_stale(h):
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    await h.sent(2)
     await h.ack(u.id, 0)
     urgent = await s.say("Urgent thing.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: "drop_queued" in h.types()), h.types()
     await h.ack(u.id, 1)                      # the playing chunk finishes
     await asyncio.sleep(0.7)                     # longer than stale_after
     await h.ack_all()
@@ -225,7 +246,7 @@ async def test_barge_in_on_urgent_speech_keeps_nothing_to_say_later(h):
     from jarvis.speech import Priority
     s = h.sched
     urgent = await s.say("Chitauri is waiting on you.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert h.audio()[0][2] == "Chitauri is waiting on you."
     assert await s.user_final("hang on a second there") == "speech"
     assert h.types()[-2:] == ["stop", "status"] and h.msgs[-1]["state"] == "idle"
@@ -240,12 +261,13 @@ async def test_barge_in_on_urgent_speech_keeps_nothing_to_say_later(h):
 async def test_no_proactive_speech_while_user_is_talking(h):
     from jarvis.speech import Priority
     s = h.sched
+    heard = time.monotonic()
     await s.user_interim("so I was thinking that we")
     u = await s.say("A session finished.", priority=Priority.URGENT)
     await asyncio.sleep(0.1)
-    assert h.audio() == []                       # held while the user talks
-    await asyncio.sleep(0.25)                    # silence >= pause_after
-    await h.ack_all(rounds=3)
+    if time.monotonic() - heard < s.pause_after:  # a stalled runner may be past it
+        assert h.audio() == []                   # held while the user talks
+    await h.ack_all()                            # once his silence >= pause_after
     assert h.audio()[0][2] == "A session finished." and u.done
 
 
@@ -255,13 +277,15 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
     (capped at pause_after, 0.2 s here), then starts without the longer
     pause announcements wait for. tests/test_turn_taking.py has the rest."""
     s = h.sched
+    heard = time.monotonic()
     await s.user_final("what time is it")
     u = s.begin_turn()
     s.feed(u, "Half past nine, sir.")
     await s.end_turn(u)
     await asyncio.sleep(0.1)
-    assert h.audio() == []
-    await asyncio.sleep(0.2)
+    if time.monotonic() - heard < s.end_of_turn:  # a stalled runner may be past it
+        assert h.audio() == []
+    await h.sent()
     assert h.audio() == [(u.id, 0, "Half past nine, sir.")]
 
 
@@ -269,7 +293,7 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
 async def test_echo_classification(h):
     s = h.sched
     u = await s.say("All systems nominal, sir.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.classify("all systems nominal sir") == "echo"
     # Two matching words are an echo only while the audio is actually coming
     # out of the speaker -- and it IS. The chunk has been sent and nothing
@@ -282,7 +306,7 @@ async def test_echo_classification(h):
     assert s.classify("") == "echo"
     assert await s.user_final("all systems nominal sir") == "echo"
     assert s.is_speaking                          # echo did not barge in
-    await h.ack_all(rounds=3)
+    await h.ack_all()
     await asyncio.sleep(0.6)                      # echo window expires after ack
     assert s.classify("all systems nominal sir") == "speech"
 
@@ -292,7 +316,7 @@ async def test_cancel_word_only_inside_cancel_window(h):
     s = h.sched
     assert s.classify("wait") == "speech"
     task = asyncio.create_task(s.open_cancel_window(1.0))
-    await asyncio.sleep(0.02)
+    assert await until_async(lambda: s._cancel_window_open)
     assert await s.user_final("wait") == "cancel"
     assert await task is True
     task = asyncio.create_task(s.open_cancel_window(0.1))
@@ -303,7 +327,7 @@ async def test_cancel_word_only_inside_cancel_window(h):
 async def test_single_word_during_speech_does_not_barge_in_but_cancel_word_does(h):
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert await s.user_final("yes") == "speech"
     assert s.is_speaking
     assert await s.user_final("stop") == "speech"
@@ -317,7 +341,7 @@ async def test_typed_words_are_never_echo_and_stop_him_mid_sentence(h):
     word is enough to stop him, where one heard word is not."""
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.classify("proceed with the migration now") == "echo"
     assert s.classify("proceed with the migration now", typed=True) == "speech"
     assert await s.user_final("yes", typed=True) == "speech"
@@ -354,12 +378,10 @@ async def test_replay_resends_identical_audio_with_no_new_synthesis(h):
     u = s.begin_turn()
     s.feed(u, "Half past nine, sir.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
     await h.ack_all()
     calls_before = len(h.synth_calls)
 
     replayed = await s.replay_last()
-    await asyncio.sleep(0.1)
     await h.ack_all()
 
     assert replayed is True
@@ -416,13 +438,11 @@ async def test_replay_resynthesizes_the_same_words_when_audio_is_gone(h):
     fresh, possibly different, brain-generated answer."""
     s = h.sched
     u = await s.say("The build is green.")
-    await asyncio.sleep(0.1)
     await h.ack_all()
     for c in u.chunks:
         c.audio = None                # simulate audio no longer held
 
     replayed = await s.replay_last()
-    await asyncio.sleep(0.1)
     await h.ack_all()
 
     assert replayed is True
@@ -437,7 +457,6 @@ async def test_replay_via_user_final_barges_in_current_speech(h):
     that utterance immediately rather than queuing the replay behind it."""
     s = h.sched
     old = await s.say("The first thing I said.")
-    await asyncio.sleep(0.1)
     await h.ack_all()
 
     new = s.begin_turn()
@@ -445,11 +464,7 @@ async def test_replay_via_user_final_barges_in_current_speech(h):
     await s.end_turn(new)
     # Speaking starts once the scheduler has picked it: on a busy machine
     # that can take longer than a tenth of a second.
-    for _ in range(250):
-        if s.is_speaking:
-            break
-        await asyncio.sleep(0.02)
-    assert s.is_speaking
+    assert await until_async(lambda: s.is_speaking)
 
     verdict = await s.user_final("say that again")
     assert verdict == "replay"
@@ -457,7 +472,6 @@ async def test_replay_via_user_final_barges_in_current_speech(h):
     assert new.cancelled
 
     replayed = await s.replay_last()
-    await asyncio.sleep(0.1)
     await h.ack_all()
     assert replayed is True
     # the REPLAYED utterance is the one that had already finished, not the
@@ -474,7 +488,6 @@ async def test_synth_failure_emits_text_and_continues(h):
     u = s.begin_turn()
     s.feed(u, "First one. Second one. Third one.")
     await s.end_turn(u)
-    await asyncio.sleep(0.15)
     await h.ack_all()
     assert [t for _, _, t in h.audio()] == ["First one.", "Third one."]
     assert {"type": "text", "text": "Second one.", "utt": u.id, "idx": 1} in h.msgs
@@ -486,7 +499,7 @@ async def test_feed_after_barge_in_is_ignored(h):
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. ")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.barge_in()
     s.feed(u, "Beta two. Gamma three.")
     await s.end_turn(u)
@@ -507,7 +520,7 @@ async def test_prepare_hook_is_applied_before_synthesis(h):
     s = SpeechScheduler(synth, h.emit, prepare=lambda t: t.replace("**", ""))
     await s.start()
     await s.say("**Bold** claim.")
-    await asyncio.sleep(0.1)
+    assert await until_async(lambda: seen), seen
     await s.stop()
     assert seen == ["Bold claim."]
 
@@ -553,15 +566,15 @@ async def test_resume_with_slow_synthesis_speaks_the_right_audio_and_reaches_idl
     s = slow.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Bee two. Cee three. ")
-    await asyncio.sleep(0.4)                     # those three are synthesised; 0 and 1 sent
+    await slow.sent(2)                           # 0 and 1 sent
     await slow.ack(u.id, 0)
-    await asyncio.sleep(0.05)                    # chunk 2 sent ahead
+    await slow.sent(3)                           # chunk 2 sent ahead
     s.feed(u, "Dee four. Eee five.")             # synthesis for 3 and 4 now in flight (0.15 s)
     await s.end_turn(u)
     urgent = await s.say("Hammer needs you.", priority=Priority.URGENT, immediate=True)
     await asyncio.sleep(0.02)                    # preempt + resume happen while 3/4 still synthesising
     await slow.ack(u.id, 1)
-    await slow.ack_all(rounds=30)
+    await slow.ack_all()
     _audio_matches_text(slow)                    # never the wrong audio for a chunk's text
     texts = [t for _, _, t in slow.audio()]
     # Depending on whether the preemption lands before or after chunk 1's ack,
@@ -583,14 +596,14 @@ async def test_dropped_chunks_do_not_pin_speaking_or_poison_echo(slow):
     u = s.begin_turn()
     s.feed(u, "Alpha one. Bee two. Gamma three. Delta four.")
     await s.end_turn(u)
-    await asyncio.sleep(0.4)
+    await slow.sent(2)
     await slow.ack(u.id, 0)
-    await asyncio.sleep(0.2)                     # chunk 2 gets sent ahead (prefetch)
+    await slow.sent(3)                           # chunk 2 gets sent ahead (prefetch)
     urgent = await s.say("Urgent thing.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: "drop_queued" in slow.types()), slow.types()
     await slow.ack(u.id, 1)
     await asyncio.sleep(0.7)                     # paused remainder goes stale
-    await slow.ack_all(rounds=15)
+    await slow.ack_all()
     assert urgent.done and u.cancelled
     assert slow.msgs[-1] == {"type": "status", "state": "idle"}
     assert not s.is_speaking
@@ -624,7 +637,8 @@ async def test_no_audio_is_emitted_after_stop():
         u = s.begin_turn()
         s.feed(u, "Alpha one. Beta two. Gamma three.")
         await s.end_turn(u)
-        await asyncio.sleep(0.1)                 # send loop is parked inside emit(audio 0)
+        # the send loop is parked inside emit(audio 0), holding the transport
+        assert await until_async(lambda: s._emit_lock.locked())
         # The barge-in's `stop` must queue behind the frame already being sent,
         # so barge_in() itself blocks until the transport frees up.
         stopping = asyncio.create_task(s.barge_in())
@@ -645,8 +659,7 @@ async def test_three_synth_failures_report_once(h):
     s = h.sched
     h.fail_texts.update({"One.", "Two.", "Three.", "Four."})
     u = await s.say("One. Two. Three. Four.")
-    await asyncio.sleep(0.2)
-    await h.ack_all(rounds=3)
+    await h.ack_all()
     assert h.msgs.count({"type": "text", "text": "My voice is failing, sir."}) == 1
     assert u.done
 
@@ -657,8 +670,7 @@ async def test_history_is_bounded(h):
     s = h.sched
     for i in range(UTTERANCE_HISTORY + 20):
         await s.say(f"Line {i}.")
-        await h.ack_all(rounds=1)
-    await h.ack_all(rounds=3)
+        await h.ack_all()
     assert len(s.utterances) <= UTTERANCE_HISTORY + 1
 
 
@@ -667,14 +679,14 @@ async def test_cancel_word_does_not_reraise_the_cancelled_announcement(h):
     from jarvis.speech import Priority
     s = h.sched
     u = await s.say("Deploying in five seconds. Say wait to cancel.", priority=Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.1)
+    await h.sent()
     task = asyncio.create_task(s.open_cancel_window(1.0))
-    await asyncio.sleep(0.02)
+    assert await until_async(lambda: s._cancel_window_open)
     assert await s.user_final("wait") == "cancel"
     assert await task is True
     assert u.cancelled and not s.is_speaking
     await asyncio.sleep(0.4)                     # a pause passes
-    await h.ack_all(rounds=3)
+    await h.ack_all()
     assert not any(t.startswith("Before I forget") for _, _, t in h.audio())
 
 
@@ -685,12 +697,13 @@ async def test_two_urgent_items_then_the_turn_resumes_once(h):
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    await h.sent(2)
     await h.ack(u.id, 0)
-    await asyncio.sleep(0.05)
+    await h.sent(3)
     a = await s.say("First urgent.", priority=Priority.URGENT, immediate=True)
     b = await s.say("Second urgent.", priority=Priority.URGENT, immediate=True)
-    await h.ack_all(rounds=15)
+    assert await until_async(lambda: "drop_queued" in h.types()), h.types()
+    await h.ack_all()
     texts = [t for _, _, t in h.audio()]
     i = texts.index("Second urgent.")
     assert texts[i + 1:] == ["Gamma three.", "Delta four."]
@@ -717,15 +730,14 @@ async def test_a_raising_transport_abandons_the_utterance_instead_of_wedging():
     await s.start()
     try:
         u = await s.say("Alpha one. Beta two. Gamma three.")
-        await asyncio.sleep(0.2)
-        assert u.cancelled and not s.is_speaking
+        assert await until_async(lambda: u.cancelled and not s.is_speaking)
         boom["on"] = -1                              # transport recovers
         later = await s.say("Later line.")
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: later.high_sent >= 0)
         await s.played(later.id, 0)
-        await asyncio.sleep(0.1)
+        assert await until_async(
+            lambda: later.done and msgs[-1] == {"type": "status", "state": "idle"}), msgs[-1]
         assert [m["text"] for m in msgs if m["type"] == "audio"][-1] == "Later line."
-        assert later.done and msgs[-1] == {"type": "status", "state": "idle"}
     finally:
         await s.stop()
 
@@ -735,8 +747,7 @@ async def test_voice_failing_notice_arrives_in_order(h):
     s = h.sched
     h.fail_texts.update({"One.", "Two.", "Three."})
     await s.say("One. Two. Three. Four.")
-    await asyncio.sleep(0.2)
-    await h.ack_all(rounds=3)
+    await h.ack_all()
     texts = [m.get("text") for m in h.msgs if m["type"] in ("text", "audio")]
     assert texts == ["One.", "Two.", "Three.", "My voice is failing, sir.", "Four."]
 
@@ -748,21 +759,25 @@ async def test_an_utterance_interrupted_too_often_is_dropped(h):
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four. Epsilon five. Zeta six.")
     await s.end_turn(u)
-    await asyncio.sleep(0.1)
+    await h.sent(2)
     await h.ack(u.id, 0)
-    await asyncio.sleep(0.05)
+    await h.sent(3)
     await h.ack(u.id, 1)
     for i in range(MAX_RESUMES + 1):
+        resumes = u.resumes
         urgent = await s.say(f"Urgent {i}.", priority=Priority.URGENT, immediate=True)
         # ack only the urgent item — never the turn's own sentences, so the
-        # turn keeps being interrupted mid-way
-        for _ in range(8):
-            await asyncio.sleep(0.03)
-            for m in list(h.msgs):
-                if (m["type"] == "audio" and not m.get("_acked") and not m.get("_dropped")
-                        and m["utt"] == urgent.id):
+        # turn keeps being interrupted mid-way — and wait for the turn to be
+        # resumed (or dropped) before interrupting it again
+        async def urgent_heard():
+            for m in h.unacked():
+                if m["utt"] == urgent.id:
                     await h.ack(m["utt"], m["idx"])
-    await h.ack_all(rounds=6)
+            return u.resumes > resumes or u.cancelled
+
+        assert await until_async(urgent_heard), u.resumes
+        assert urgent.done
+    await h.ack_all()
     assert u.cancelled and u.resumes <= MAX_RESUMES
     assert h.msgs[-1] == {"type": "status", "state": "idle"}
 
@@ -803,15 +818,15 @@ async def test_a_lost_ack_does_not_mute_jarvis_forever():
     await s.start()
     try:
         u = await s.say("Nobody will ack this.")
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: u.high_sent >= 0)
         assert s.is_speaking and any(m["type"] == "audio" for m in msgs)
-        await asyncio.sleep(0.5)                     # > ack_timeout, no ack ever arrives
-        assert u.cancelled and not s.is_speaking
+        # no ack ever arrives: the watchdog gives up once ack_timeout has passed
+        assert await until_async(lambda: u.cancelled and not s.is_speaking)
         later = await s.say("Second line.")
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: later.high_sent >= 0)
         await s.played(later.id, 0)
-        await asyncio.sleep(0.1)
-        assert later.done and [m["text"] for m in msgs if m["type"] == "audio"][-1] == "Second line."
+        assert await until_async(lambda: later.done)
+        assert [m["text"] for m in msgs if m["type"] == "audio"][-1] == "Second line."
     finally:
         await s.stop()
 
@@ -836,8 +851,8 @@ async def test_urgent_speech_with_nobody_listening_is_not_said_later():
     await s.start()
     try:
         u = await s.say("Hammer needs you.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.2)
-        assert u.cancelled and not any(m["type"] == "audio" for m in msgs)
+        assert await until_async(lambda: u.cancelled)
+        assert not any(m["type"] == "audio" for m in msgs)
         await asyncio.sleep(0.4)                     # pauses pass; still nobody listening
         assert not any(m["type"] == "audio" for m in msgs)
         listening["on"] = True                       # a client connects
@@ -875,7 +890,7 @@ def test_spec_defaults_are_the_spec_defaults():
 async def test_a_cancel_word_interrupts_him_mid_sentence(h, word):
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim(word)
     assert not s.is_speaking, f"{word!r} should have cut him off"
@@ -886,7 +901,7 @@ async def test_two_new_words_still_interrupt(h):
     """The general bar is unchanged."""
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("actually hold")
     assert not s.is_speaking
 
@@ -896,7 +911,7 @@ async def test_one_ordinary_word_still_does_not_interrupt(h):
     """A single stray word — a cough of a transcript — must not stop him."""
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("yes")
     assert s.is_speaking
 
@@ -907,7 +922,7 @@ async def test_hearing_himself_say_stop_does_not_interrupt_him(h):
     A cancel word he just said himself is an echo, not an instruction."""
     s = h.sched
     await s.say("Stop the migration, sir?")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim("stop")
     assert s.is_speaking, "that was his own word coming back at him"
@@ -937,7 +952,7 @@ async def test_hearing_himself_say_stop_does_not_interrupt_him(h):
 async def test_a_clipped_echo_of_his_own_word_does_not_interrupt(h, said, heard):
     s = h.sched
     await s.say(said)
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim(heard)
     assert s.is_speaking, (
@@ -950,7 +965,7 @@ async def test_a_real_cancel_word_still_interrupts_a_similar_sentence(h):
     saying stems to "stop", so "stop" is the user."""
     s = h.sched
     await s.say("Deploying the storefront to production now, sir.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("stop")
     assert not s.is_speaking
 
@@ -961,7 +976,7 @@ async def test_the_stem_rescue_does_not_reach_short_words(h):
     override a deliberate one-word interruption."""
     s = h.sched
     await s.say("Nothing outstanding, sir.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("no")
     assert not s.is_speaking
 
@@ -973,7 +988,7 @@ async def test_cancel_heard_while_he_says_can_interrupts(h):
     the Spanish fix ("espera" while he says "es")."""
     s = h.sched
     await s.say("I can deploy the storefront now, sir.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim("cancel")
     assert not s.is_speaking
@@ -985,7 +1000,7 @@ async def test_two_novel_words_are_unaffected_by_the_stem_rule(h):
     shares roots with what he is saying must still cut him off."""
     s = h.sched
     await s.say("Deleting the staging files now, sir.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("delete the file")
     assert not s.is_speaking
 
@@ -1142,7 +1157,7 @@ def test_with_nothing_sent_at_all_a_word_is_the_user():
 async def test_an_ack_beyond_what_was_sent_is_ignored(h, caplog):
     s = h.sched
     u = await s.say("Alpha one. Bravo two. Charlie three. Delta four. Echo five.")
-    await asyncio.sleep(0.15)
+    assert await until_async(lambda: u.sent == 1), u.sent
     assert len(u.chunks) == 5 and u.played == -1
     assert u.sent == 1, "prefetch=2 holds everything past chunk 1"
     sent_before = len(h.audio())
@@ -1188,12 +1203,14 @@ def test_mp3_seconds_reads_the_frame_header_and_nothing_else():
 async def test_the_watermark_cannot_be_walked_faster_than_the_audio_plays(h):
     s = h.sched
 
+    # A second of audio (0.9 s of floor): the walk below must land well
+    # inside chunk 0's floor even on a stalled runner.
     async def real_audio(text):
-        return _mp3(0.3)
+        return _mp3(1.0)
     s._synth = real_audio
     u = await s.say("Alpha one. Bravo two. Charlie three. Delta four. Echo five. Foxtrot six.")
-    await asyncio.sleep(0.15)
-    assert len(u.chunks) == 6 and u.sent == 1 and u.played == -1
+    assert await until_async(lambda: u.sent == 1), u.sent
+    assert len(u.chunks) == 6 and u.played == -1
 
     # The walk: ack whatever the bound allows, as fast as the socket carries it.
     for _ in range(3):
@@ -1207,9 +1224,9 @@ async def test_the_watermark_cannot_be_walked_faster_than_the_audio_plays(h):
     assert not await s.wait_for(u, timeout=0.05), "the read-back gate stays shut"
 
     # ...and the held ack lands by itself once the chunk could have played.
-    await asyncio.sleep(0.35)
-    assert u.played == 1, "the early ack was held, not lost"
-    assert u.sent == 3, "and it unlocked the next two chunks, as an ack does"
+    assert await until_async(lambda: u.played == 1), "the early ack was held, not lost"
+    assert await until_async(lambda: u.sent == 3), \
+        "and it unlocked the next two chunks, as an ack does"
 
 
 @pytest.mark.asyncio
@@ -1221,20 +1238,23 @@ async def test_a_failed_synthesis_does_not_break_the_chain(h):
     the page at all."""
     s = h.sched
 
+    # A second of audio (0.9 s of floor), so "still playing" stays true
+    # while a stalled runner gets round to looking.
     async def flaky(text):
-        return None if text.startswith("Bravo") else _mp3(0.4)
+        return None if text.startswith("Bravo") else _mp3(1.0)
     s._synth = flaky
     u = await s.say("Alpha one. Bravo two.")
     assert not await s.wait_for(u, timeout=0.15), "chunk 0 is still playing"
+    assert await until_async(lambda: u.held_ack == 1 or u.played >= 0)
     assert u.played == -1 and u.held_ack == 1
-    await asyncio.sleep(0.35)
-    assert u.played == 1 and u.done, "and it finishes on the audio's schedule"
+    assert await until_async(lambda: u.played == 1 and u.done), \
+        "and it finishes on the audio's schedule"
 
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)
+    assert await until_async(lambda: u.held_ack == 1 or u.played >= 0)
     assert u.sent == 1 and u.held_ack == 1, "the failed chunk waits its turn"
-    await asyncio.sleep(0.4)                  # chunk 0's floor lands, chunk 2 goes out
-    assert u.sent == 2
+    # chunk 0's floor lands, chunk 2 goes out
+    assert await until_async(lambda: u.sent == 2), u.sent
     assert u.chunks[2].earliest_ack >= u.chunks[0].earliest_ack + 0.3, \
         "chunk 2 cannot end before chunk 0 could, whatever happened to chunk 1"
 
@@ -1247,8 +1267,10 @@ async def test_a_hold_taken_while_paused_is_applied_before_the_resume():
     from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
+    # A second of audio for the turn (0.9 s of floor), so "still playing"
+    # stays true while a stalled runner gets round to looking.
     async def synth(text):
-        return _mp3(0.05) if text.startswith("Urgent") else _mp3(0.4)
+        return _mp3(0.05) if text.startswith("Urgent") else _mp3(1.0)
 
     async def emit(msg):
         msgs.append(msg)
@@ -1257,19 +1279,19 @@ async def test_a_hold_taken_while_paused_is_applied_before_the_resume():
     await s.start()
     try:
         u = await s.say("Alpha bravo. Charlie delta. Foxtrot golf.")
-        await asyncio.sleep(0.1)
-        assert u.sent == 1 and u.played == -1
+        assert await until_async(lambda: u.sent == 1), u.sent
+        assert u.played == -1
         v = await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.1)
-        assert s._paused is u, "the preemption happened"
-        await s.played(u.id, 0)                 # early: chunk 0 has 0.36s of floor
+        assert await until_async(lambda: s._paused is u), "the preemption happened"
+        await s.played(u.id, 0)                 # early: chunk 0 has 0.9s of floor
         assert u.held_ack == 0 and u.played == -1
+        assert await until_async(lambda: v.high_sent >= 0)
         await s.played(v.id, 0)                 # the urgent line finished (honestly)
         await asyncio.sleep(0.1)
         assert u.resumes == 0, "the resume waits while chunk 0 can still be playing"
-        await asyncio.sleep(0.4)                # the hold lands on chunk 0's floor
+        # the hold lands on chunk 0's floor
+        assert await until_async(lambda: u.resumes == 1), u.resumes
         assert u.played == 0 and u.held_ack == -1
-        assert u.resumes == 1
         assert [c.text for c in u.chunks] == ["Alpha bravo.", "Charlie delta.", "Foxtrot golf."], \
             "nothing was put in front of the resumption"
     finally:
@@ -1295,15 +1317,16 @@ async def test_a_resume_waits_for_the_kept_chunk():
     await s.start()
     try:
         u = await s.say("Alpha bravo. Charlie delta. Foxtrot golf.")
-        await asyncio.sleep(0.1)
-        assert u.sent == 1 and u.played == -1
-        await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.15)          # the urgent failed to synthesise: done at once
-        assert s._paused is u and u.resumes == 0, "no resume while chunk 0 can still be playing"
+        assert await until_async(lambda: u.sent == 1), u.sent
+        assert u.played == -1
+        v = await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
+        # the urgent failed to synthesise: done at once
+        assert await until_async(lambda: s._paused is u and v.done)
+        assert u.resumes == 0, "no resume while chunk 0 can still be playing"
         assert u.chunks[0].text == "Alpha bravo."
         await s.played(u.id, 0)            # the kept chunk finishes, honestly, under ITS index
-        await asyncio.sleep(0.4)
-        assert u.played == 0 and u.resumes == 1
+        assert await until_async(lambda: u.resumes == 1), u.resumes
+        assert u.played == 0
         assert [c.text for c in u.chunks] == ["Alpha bravo.", "Charlie delta.", "Foxtrot golf."]
         assert u.sent >= 1 and u.sent > u.played, "the resume goes on from chunk 1"
     finally:
@@ -1324,15 +1347,13 @@ async def test_a_resume_keeps_the_sent_bound_of_frames_already_out():
     await s.start()
     try:
         u = await s.say("Alpha bravo. Charlie delta. Foxtrot golf. Hotel india.")
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: u.high_sent >= 0)
         await s.played(u.id, 0)
-        await asyncio.sleep(0.1)
-        assert (u.sent, u.high_sent) == (2, 2)
+        assert await until_async(lambda: (u.sent, u.high_sent) == (2, 2)), (u.sent, u.high_sent)
         v = await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: v.high_sent >= 0)
         await s.played(v.id, 0)
-        await asyncio.sleep(0.1)
-        assert u.resumes == 1
+        assert await until_async(lambda: u.resumes == 1), u.resumes
         assert u.high_sent >= 2, "frames 1 and 2 went out; an ack in the air for them still counts"
     finally:
         await s.stop()
@@ -1346,7 +1367,9 @@ async def test_an_honest_ack_after_the_audio_played_is_immediate(h):
         return _mp3(0.1)
     s._synth = real_audio
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)     # longer than chunk 0's floor
+    # chunk 0 sent, and its floor passed
+    assert await until_async(
+        lambda: u.high_sent >= 0 and time.monotonic() >= u.chunks[0].earliest_ack)
     await s.played(u.id, 0)
     assert u.played == 0 and u.held_ack == -1
 
@@ -1358,15 +1381,16 @@ async def test_a_decode_failure_ack_does_not_wedge_the_mouth(h):
     length, never `stale_after`."""
     s = h.sched
 
+    # Half a second of audio (0.45 s of floor, still short of stale_after)
+    # so the ack lands inside the floor even on a stalled runner.
     async def real_audio(text):
-        return _mp3(0.2)
+        return _mp3(0.5)
     s._synth = real_audio
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)
+    assert await until_async(lambda: u.high_sent >= 0)
     await s.played(u.id, 0)                   # "failed to decode", at once
     assert u.played == -1 and u.held_ack == 0
-    await asyncio.sleep(0.25)
-    assert u.played == 0 and u.sent == 2
+    assert await until_async(lambda: u.played == 0 and u.sent == 2), (u.played, u.sent)
     assert not u.cancelled and not u.abandoned
 
 
@@ -1376,8 +1400,7 @@ async def test_an_ack_of_the_last_sent_chunk_is_still_an_ack(h):
     actually gone out is exactly the one the client is playing."""
     s = h.sched
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)
-    assert u.sent == 1
+    assert await until_async(lambda: u.sent == 1), u.sent
     await s.played(u.id, 1)
     assert u.played == 1
     assert all(sp.acked_at is not None for sp in s._recent)
@@ -1388,7 +1411,7 @@ async def test_out_of_order_and_duplicate_acks_are_still_ignored(h):
     """Unchanged behaviour, pinned so the new bound cannot regress it."""
     s = h.sched
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)
+    assert await until_async(lambda: u.sent == 1), u.sent
     await s.played(u.id, 1)
     await s.played(u.id, 0)          # late, lower
     await s.played(u.id, -5)         # nonsense, lower
@@ -1471,16 +1494,17 @@ async def test_a_dropped_preempted_chunk_does_not_poison_echo_for_two_minutes():
     await s.start()
     try:
         u = await s.say("Alpha bravo. Charlie delta echo. Foxtrot golf. Hotel india.")
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: u.high_sent >= 0)
         await s.played(u.id, 0)                 # chunk 0 is the only one ever acked
-        await asyncio.sleep(0.1)
-        assert u.sent == 2
+        assert await until_async(lambda: u.sent == 2), u.sent
         urgent = await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: urgent.high_sent >= 0)
         assert any(m["type"] == "drop_queued" for m in msgs), "the preemption must have happened"
+        await asyncio.sleep(0.1)                # past stale_after before the urgent one ends
         await s.played(urgent.id, 0)
-        await asyncio.sleep(0.25)               # past stale_after: the paused one is dropped
-        assert u.cancelled and s._paused is None and s._current is None
+        # the paused one is dropped
+        assert await until_async(
+            lambda: u.cancelled and s._paused is None and s._current is None)
         orphan = [sp for sp in s._recent if sp.utt == u.id and sp.acked_at is None]
         assert [sp.idx for sp in orphan] == [1], "chunk 1 was left unacked on purpose"
         assert s.classify("charlie delta echo") == "echo", "it may genuinely still be playing"
@@ -1536,12 +1560,11 @@ async def test_an_ack_in_flight_across_a_preemption_still_counts():
     await s.start()
     try:
         u = await s.say("Alpha bravo. Charlie delta. Foxtrot golf. Hotel india.")
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: u.high_sent >= 0)
         await s.played(u.id, 0)
-        await asyncio.sleep(0.1)
-        assert (u.sent, u.high_sent) == (2, 2)
+        assert await until_async(lambda: (u.sent, u.high_sent) == (2, 2)), (u.sent, u.high_sent)
         await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
-        await asyncio.sleep(0.15)
+        assert await until_async(lambda: s._paused is u)
         assert u.sent == 1 and u.high_sent == 2, "the preemption rolled `sent` back"
         await s.played(u.id, 2)                  # was in flight when the drop went out
         assert u.played == 2, "chunk 2 really was sent; that ack is genuine"
@@ -1561,7 +1584,7 @@ async def test_a_garbled_mis_hear_does_not_cut_him_off_mid_sentence(h):
     s = h.sched
     await s.say("Found it — chitauri is idle on project status "
                 "and deployment planning. Shall I tell it?")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
 
     await s.user_interim("found it guitar an")
@@ -1574,7 +1597,7 @@ async def test_a_cancel_word_still_interrupts_while_he_is_audible(h):
     """The bar rises for garbled echo, not for the user."""
     s = h.sched
     await s.say("Found it — chitauri is idle on project status.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("stop")
     assert not s.is_speaking
 
@@ -1584,7 +1607,7 @@ async def test_a_real_instruction_still_interrupts_while_he_is_audible(h):
     """Long enough that garbling is not a plausible explanation."""
     s = h.sched
     await s.say("Found it — chitauri is idle on project status.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("actually cancel that and check the other one")
     assert not s.is_speaking
 
@@ -1596,13 +1619,10 @@ async def test_the_quiet_room_bar_returns_once_his_audio_has_ended(h):
     s = h.sched
     await s.say("Found it.")
     await h.ack_all()
-    await asyncio.sleep(0.05)
     u = s.begin_turn()
     s.feed(u, "Shall I tell it?")
     await s.end_turn(u)
-    await asyncio.sleep(0.05)
     await h.ack_all()
-    await asyncio.sleep(0.05)
     assert not s.is_speaking
 
 
@@ -1613,9 +1633,9 @@ async def test_text_only_turn_emits_identified_text_and_returns_to_idle(h):
     h.sched.feed(u, "Text response.")
     await h.sched.end_turn(u)
     # Shown as text, so done; never heard, so not heard in full.
-    assert not await h.sched.wait_for(u, timeout=1)
+    assert not await h.sched.wait_for(u, timeout=LIMIT_SEC)
     assert u.done and u.outcomes() == ["failed"]
-    await asyncio.sleep(0.05)
+    assert await until_async(lambda: h.msgs[-1] == {"type": "status", "state": "idle"}), h.msgs
     text = next(m for m in h.msgs if m["type"] == "text")
     assert text["text"] == "Text response."
     assert text["utt"] == u.id and text["idx"] == 0
@@ -1628,8 +1648,7 @@ async def test_skip_reading_cancels_reading_without_faking_played_or_resuming(h)
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "First sentence. Second sentence. ")
-    await asyncio.sleep(0.15)
-    assert h.audio()
+    await h.sent()
     assert u.played == -1
     assert await s.skip_reading(u.id)
     assert u.cancelled and u.played == -1
@@ -1642,8 +1661,8 @@ async def test_skip_reading_cancels_reading_without_faking_played_or_resuming(h)
     assert not await s.wait_for(u, timeout=0.1)
     # A later independent reply must still work.
     next_reply = await s.say("Next reply.")
-    await asyncio.sleep(0.1)
-    assert any(utt == next_reply.id for utt, _, _ in h.audio())
+    assert await until_async(lambda: any(utt == next_reply.id for utt, _, _ in h.audio())), \
+        h.audio()
 
 
 @pytest.mark.asyncio
@@ -1662,9 +1681,9 @@ async def test_skip_reading_retires_its_pending_synthesis_only(h):
     s._synth = slow_synth
     u = s.begin_turn()
     s.feed(u, "Still generating audio. ")
-    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.wait_for(started.wait(), LIMIT_SEC)
     assert await s.skip_reading(u.id)
-    await asyncio.wait_for(cancelled.wait(), 1)
+    await asyncio.wait_for(cancelled.wait(), LIMIT_SEC)
     assert u.played == -1
     assert not h.audio()
 
@@ -1695,7 +1714,7 @@ async def test_skipping_a_pending_reply_leaves_another_utterance_playing(h):
     from jarvis.speech import Priority
     s = h.sched
     urgent = await s.say("An urgent announcement.", Priority.URGENT, immediate=True)
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s._current is urgent and s.is_speaking
     u = s.begin_turn()
     s.feed(u, "Pending reply. ")
@@ -1715,7 +1734,7 @@ async def test_skipping_a_pending_reply_leaves_another_utterance_playing(h):
 async def test_a_spanish_cancel_word_interrupts_him_mid_sentence(h, spanish, word):
     s = h.sched
     await s.say("Chitauri sigue con la migración ahora.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim(word)
     assert not s.is_speaking, f"{word!r} should have cut him off"
@@ -1728,7 +1747,7 @@ async def test_words_that_are_not_spanish_cancel_words_do_not_interrupt(h, spani
     English list."""
     s = h.sched
     await s.say("Chitauri sigue con la migración ahora.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim(word)
     assert s.is_speaking
 
@@ -1737,7 +1756,7 @@ async def test_words_that_are_not_spanish_cancel_words_do_not_interrupt(h, spani
 async def test_spanish_cancel_words_do_nothing_while_the_language_is_english(h):
     s = h.sched
     await s.say("Telling chitauri to proceed with the migration now.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim("espérate")
     assert s.is_speaking
 
@@ -1746,7 +1765,7 @@ async def test_spanish_cancel_words_do_nothing_while_the_language_is_english(h):
 async def test_a_spanish_cancel_word_cancels_inside_the_cancel_window(h, spanish):
     s = h.sched
     task = asyncio.create_task(s.open_cancel_window(1.0))
-    await asyncio.sleep(0.02)
+    assert await until_async(lambda: s._cancel_window_open)
     assert await s.user_final("¡Espérate!") == "cancel"
     assert await task is True
 
@@ -1762,7 +1781,7 @@ async def test_a_clipped_spanish_echo_of_his_own_word_does_not_interrupt(h, span
     "esperando" is him."""
     s = h.sched
     await s.say(said)
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.is_speaking
     await s.user_interim(heard)
     assert s.is_speaking, f"heard {heard!r} while saying {said!r}"
@@ -1779,7 +1798,7 @@ async def test_a_spanish_cancel_word_beginning_with_a_short_word_he_says_interru
     he is saying is no evidence that "espera" or "alto" is his echo."""
     s = h.sched
     await s.say(said)
-    await asyncio.sleep(0.1)
+    await h.sent()
     await s.user_interim(heard)
     assert not s.is_speaking
 
@@ -1790,7 +1809,7 @@ async def test_his_own_accented_words_come_back_as_echo(h, spanish):
     the microphone is recognised as his."""
     s = h.sched
     await s.say("Después de la reunión, señor.")
-    await asyncio.sleep(0.1)
+    await h.sent()
     assert s.classify("después de la reunión señor") == "echo"
     assert s.classify("despues de la reunion senor") == "echo"
 
@@ -1827,11 +1846,10 @@ async def test_an_announcement_waits_while_the_floor_is_held_and_a_reply_does_no
     reply = s.begin_turn()
     s.feed(reply, "Your answer.")
     await s.end_turn(reply)
-    await asyncio.sleep(0.3)
+    await h.sent()
     assert [t for _, _, t in h.audio()] == ["Your answer."]
-    await h.ack_all()
+    await h.ack_all(until=lambda: reply.done)    # the note still waits for the floor
     held[0] = False
-    await asyncio.sleep(0.6)
     await h.ack_all()
     assert [t for _, _, t in h.audio()] == ["Your answer.", "Routine update."]
     assert not note.cancelled
@@ -1844,7 +1862,10 @@ async def test_an_announcement_is_checked_again_before_its_first_audio():
     gate = asyncio.Event()
     harness = Harness()
 
+    entered = asyncio.Event()
+
     async def slow(text):
+        entered.set()
         await gate.wait()
         return b"A:" + text.encode()
 
@@ -1854,13 +1875,14 @@ async def test_an_announcement_is_checked_again_before_its_first_audio():
     await harness.sched.start()
     try:
         note = await harness.sched.say("Routine update.", label="announcement")
-        await asyncio.sleep(0.4)
+        await asyncio.wait_for(entered.wait(), LIMIT_SEC)   # synthesising...
+        assert await until_async(lambda: harness.sched._current is note)   # ...and picked
         held[0] = True                     # he starts again while it synthesises
         gate.set()
         await asyncio.sleep(0.4)
         assert harness.audio() == [] and not note.cancelled
         held[0] = False
-        await asyncio.sleep(0.6)
+        await harness.sent()
         assert [t for _, _, t in harness.audio()] == ["Routine update."]
     finally:
         await harness.sched.stop()
