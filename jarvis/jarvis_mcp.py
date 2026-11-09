@@ -439,8 +439,10 @@ TOOL_SPECS = [
     },
     {
         "name": "list_workers",
-        "description": "All discovered brain, CLI, subagent and workflow workers with parent identities, per-parent counts and a deduplicated total. Same JSON as the UI. Distinguishes recent stream generation, tool waiting, queued, idle and unknown telemetry. Unknown is not zero token use.",
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": "All discovered brain, CLI, subagent and workflow workers with parent identities, per-parent counts and a deduplicated total. The UI's current inventory as bounded JSON pages, with counts first. Call again with the indicated page for detail; each call is a fresh observation. Distinguishes recent stream generation, tool waiting, queued, idle and unknown telemetry. Unknown is not zero token use.",
+        "inputSchema": {"type": "object", "properties": {
+            "page": {"type": "integer", "minimum": 1,
+                     "description": "Page of the current inventory; defaults to 1."}}},
     },
     {
         "name": "list_agents",
