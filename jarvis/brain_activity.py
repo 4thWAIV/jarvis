@@ -147,15 +147,19 @@ class ActivityFeed:
     def since(self, seq: int = 0, kinds: Optional[Iterable[str]] = None) -> dict:
         """Every kept event after `seq` (of `kinds`, when given), oldest
         first, with the latest sequence number and the oldest one still kept
-        of any kind (None when empty)."""
+        of any kind (None when empty). Open turns come from the producer
+        registry, even when their events have left the bounded history."""
         wanted = None if kinds is None else frozenset(kinds)
         with self._lock:
             events = [dict(e) for e in self._events
                       if e["seq"] > seq and (wanted is None or e["kind"] in wanted)]
             oldest = self._events[0]["seq"] if self._events else None
             latest = self._seq
+            provider = self.provider
+            open_turns = [{"id": turn_id, "provider": t["provider"],
+                           "started_at": t["started_at"]} for turn_id, t in self._turns.items()]
         return {"generation": self.generation, "seq": latest,
-                "oldest": oldest, "events": events}
+                "oldest": oldest, "events": events, "open_turns": open_turns, "provider": provider}
 
     # ── turns ─────────────────────────────────────────────────────────
     def turn_started(self, origin: str, provider: Optional[str] = None) -> str:
@@ -166,7 +170,8 @@ class ActivityFeed:
             if provider:
                 self.provider = provider
             self._turns[turn_id] = {"began": now, "chars": 0, "first": None,
-                                    "last_at": now, "last_chars": 0}
+                                    "last_at": now, "last_chars": 0,
+                                    "provider": self.provider, "started_at": self._clock()}
             self._append(TURN, STARTED, {"id": turn_id, "origin": origin})
         return turn_id
 
@@ -184,7 +189,7 @@ class ActivityFeed:
                 t["first"] = now
                 t["last_at"], t["last_chars"] = now, t["chars"]
                 self._append(TURN, FIRST_OUTPUT, {
-                    "id": turn_id, "chars": t["chars"],
+                    "id": turn_id, "provider": t["provider"], "chars": t["chars"],
                     "duration_ms": _ms(now - t["began"])})
                 return
             span = now - t["last_at"]
@@ -193,7 +198,7 @@ class ActivityFeed:
             rate = (t["chars"] - t["last_chars"]) / span
             t["last_at"], t["last_chars"] = now, t["chars"]
             self._append(TURN, STREAMING, {
-                "id": turn_id, "chars": t["chars"],
+                "id": turn_id, "provider": t["provider"], "chars": t["chars"],
                 "chars_per_sec": round(rate, 1),
                 "duration_ms": _ms(now - t["began"])})
 
@@ -207,7 +212,7 @@ class ActivityFeed:
             if t is None:
                 return
             self._append(TURN, outcome, {
-                "id": turn_id, "chars": t["chars"],
+                "id": turn_id, "provider": t["provider"], "chars": t["chars"],
                 "duration_ms": _ms(now - t["began"])})
 
     # ── speech ────────────────────────────────────────────────────────

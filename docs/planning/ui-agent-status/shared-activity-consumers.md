@@ -31,6 +31,8 @@ Model-request phases, recent streamed output, tool activity and permission waits
 
 Work assignment status has a stricter existing rule. An open turn alone does not make its assignment Working. The owner orb shows the same whole-turn activity as other orbs, while assignment state remains unconfirmed unless exact-assignment generation is established. The pending `fix/work-generation` work at `84a3fb1` is not imported or replaced by this change.
 
+The brain feed includes the producer-owned open-turn registry alongside its bounded event history. Tool events can describe an open turn but cannot create one. The registry survives event eviction; each turn retains its original provider through output and completion. The tool-only API keeps its existing response shape.
+
 ## Removed duplicate derivations
 
 Agent orbs no longer interpret non-idle session status as thinking. Workflow orbs no longer interpret running business status as thinking. Conversation thinking uses the canonical brain row. Work's live lookup no longer reads transcripts separately. The directory no longer calculates a separate recent-file child count. Denice no longer independently discovers Codex activity or counts working sessions for its pulse input.

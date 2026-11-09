@@ -1,3 +1,5 @@
+import pytest
+
 from jarvis import worker_activity as activity
 from jarvis.worker_inventory import build
 from jarvis.session_watch import SessionState, Snapshot, Subagent
@@ -337,3 +339,68 @@ def test_first_tool_page_contains_snapshot_identity_and_complete_provider_counts
     chunk = _worker_page(_call(wired, 'list_workers')['text'])
     for key in ('snapshot_id', 'taken_at', 'total', 'providers'):
         assert json.dumps(key) + ':' + json.dumps(expected[key], separators=(',', ':')) in chunk
+
+
+@pytest.mark.parametrize('ending', ['completed', 'failed', 'cancelled'])
+def test_operator_tools_do_not_reopen_a_completed_brain_turn(ending):
+    from jarvis.brain_activity import ActivityFeed
+    feed = ActivityFeed(clock=lambda: 100)
+    turn = feed.turn_started('warmup', 'openai')
+    feed.turn_ended(turn, ending)
+    for stage in ('started', 'completed'):
+        feed.record('tool', stage, call_id='operator-call', tool='list_workers')
+        result = build(Snapshot([], 100), brain_events=feed.since(), now=100)
+        brain = next(row for row in result['workers'] if row['kind'] == 'brain')
+        assert brain['activity']['orb_state'] == 'idle'
+        assert result['total']['active'] == 0
+
+
+def test_tools_never_establish_a_turn_without_a_turn_boundary():
+    result = build(Snapshot([], 100), brain_events={'events': [
+        {'kind': 'tool', 'stage': 'started', 'provider': 'openai', 'at': 100}]}, now=100)
+    assert result['total']['active'] == 0
+
+
+def test_producer_retains_open_turn_through_tools_and_event_eviction():
+    from jarvis.brain_activity import ActivityFeed
+    feed = ActivityFeed(keep=1, clock=lambda: 100)
+    turn = feed.turn_started('user', 'openai')
+    feed.record('tool', 'started', call_id='real-tool')
+    result = build(Snapshot([], 100), brain_events=feed.since(), now=100)
+    assert result['total']['active'] == 1
+    assert result['workers'][0]['activity']['state'] == 'tool_wait'
+    feed.record('tool', 'completed', call_id='real-tool')
+    assert build(Snapshot([],100), brain_events=feed.since(), now=100)['total']['active'] == 1
+    feed.turn_ended(turn, 'completed')
+    feed.record('tool', 'completed', call_id='late-operator')
+    result = build(Snapshot([],100), brain_events=feed.since(), now=100)
+    assert result['total']['active'] == 0
+    assert result['workers'][0]['activity']['orb_state'] == 'idle'
+
+
+def test_overlapping_brain_turns_retain_their_original_provider():
+    from jarvis.brain_activity import ActivityFeed
+    feed = ActivityFeed(clock=lambda: 100)
+    first = feed.turn_started('user', 'anthropic')
+    second = feed.turn_started('user', 'openai')
+    feed.turn_output(first, 20)
+    feed.turn_ended(first, 'completed')
+    result = build(Snapshot([],100), brain_events=feed.since(), now=100)
+    assert result['providers']['anthropic']['active'] == 0
+    assert result['providers']['openai']['active'] == 1
+    feed.turn_ended(second, 'completed')
+    assert build(Snapshot([],100), brain_events=feed.since(), now=100)['total']['active'] == 0
+
+
+def test_completed_brain_remains_idle_when_all_turn_events_are_evicted():
+    from jarvis.brain_activity import ActivityFeed
+    feed = ActivityFeed(keep=1, clock=lambda: 100)
+    first = feed.turn_started('user', 'openai')
+    second = feed.turn_started('system', 'openai')
+    feed.turn_ended(first, 'completed')
+    assert build(Snapshot([],100), brain_events=feed.since(), now=100)['total']['active'] == 1
+    feed.turn_ended(second, 'completed')
+    feed.record('speech', 'started', id='speech')
+    result = build(Snapshot([],100), brain_events=feed.since(), now=100)
+    assert result['workers'][0]['activity']['orb_state'] == 'idle'
+    assert result['total']['active'] == 0
