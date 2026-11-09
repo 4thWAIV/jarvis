@@ -17,8 +17,9 @@ Every answer of his is also written for the agent that asked it, as one
 Markdown file in `data_paths.answers_dir()/<project>/<item>-<key>.md`
 (`write_answer`), so it is told without asking again.
 
-Reporters reach the two POSTs (and the answers read) with an access key in the `work` category
-(access_keys.py) through `work_report.py`; his answer needs the page's own
+Reporters reach the two POSTs (and the answers read) signed with their own
+onboarded key holding the `work` right (agent_rights.py), through
+`work_report.py`; his answer needs the page's own
 origin or the tool token, as every other change does (web_auth.py). Every
 committed change is told to `recorded`, which the server turns into the
 `work` hint on /ws/sessions and, for news, an attention item.
@@ -492,6 +493,15 @@ def _added_key(item_id: str) -> str:
     return ""
 
 
+def work_keys_json(item_id: str) -> list[dict]:
+    """The item's live work-item keys: each one's fingerprint, the agent
+    that issued it (by its one name) and when it ends."""
+    from jarvis import agent_key_store
+    return [{"fingerprint": k.fingerprint, "issued_by": reporters.shown(k.issued_by),
+             "expires_at": k.expires_at, "issued_at": k.submitted_at}
+            for k in agent_key_store.work_keys(item_id)]
+
+
 def answers_json(asked_by, since: float) -> list[dict]:
     """His answers to the decisions `asked_by` (one reporter as recorded,
     or every name it has gone by) asked, since `since`."""
@@ -507,6 +517,15 @@ def signed_off_without_answer(item_id: str, key: str) -> work_store.WorkItem:
     return work_store.record(work_store.WorkEvent(
         item_id, work_store.DECISION_SIGNED_OFF,
         f"Closed {key}: he signed off its package without an answer", {"key": key}))
+
+
+def _askers_on(item_id: str) -> list[str]:
+    """Everyone who asked a decision on the item."""
+    item = work_store.get(item_id)
+    if item is None:
+        return []
+    return list(dict.fromkeys(e.detail.get("asked_by", "") for e in work_store.events(
+        item_id, 0, {work_store.DECISION_NEEDED}) if e.detail.get("asked_by")))
 
 
 def mount(app: FastAPI, recorded: Recorded) -> None:
@@ -533,6 +552,14 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         if who is None:
             return JSONResponse({"error": "Answers are listed for the agent's key that asked "
                                           "the decisions."}, status_code=403)
+        if who.kept.startswith(reporters.WORK_KEY_PREFIX):
+            # A work-item key reads the answers to its one item's decisions.
+            from jarvis import agent_key_store
+            key = agent_key_store.get(who.kept[len(reporters.WORK_KEY_PREFIX):])
+            found = await asyncio.to_thread(lambda: [
+                a for a in answers_json(_askers_on(key.work_id), since)
+                if a["item_id"] == key.work_id]) if key else []
+            return {"answers": found}
         found = await asyncio.to_thread(answers_json, (who.kept, *who.aliases), since)
         return {"answers": found}
 
@@ -542,7 +569,8 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
             item = work_store.get(item_id)
             if item is None:
                 return None
-            return {"item": item_json(item), "packages": packages_json(item_id),
+            return {"item": {**item_json(item), "work_keys": work_keys_json(item_id)},
+                    "packages": packages_json(item_id),
                     "events": [event_json(e) for e in work_store.latest(item_id, EVENTS_SHOWN)]}
         found = await asyncio.to_thread(read)
         if found is None:
@@ -571,6 +599,8 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
         one is its asker's alone, never his."""
+        if req.kind in work_store.JARVIS_KINDS:
+            return refused(ValueError("Only JARVIS raises or clears an item's Error."))
         if req.kind in work_store.HIS_KINDS:
             return refused(ValueError("Only he answers a decision or reviews an item: done is "
                                       "his to give. Report it verifying, with what to check."))

@@ -42,7 +42,8 @@ def jarvis_app(monkeypatch, tmp_path):
     from jarvis import server
     importlib.reload(server)
     run_store.init_db()
-    from jarvis import attention_store, decision_stamp, make_package, work_packages, work_store
+    from jarvis import attention_store, make_package, package_signature, work_packages, work_store
+    from tests.agent_key_fixtures import onboarded_auth
     monkeypatch.setattr(work_packages, "unquarantine", lambda _folder: None)
     monkeypatch.setattr(server.agent_directory, "names_by_session", lambda: {"sess-1": "chitauri"})
     server.attention_record = attention_store.AttentionStore()
@@ -50,7 +51,8 @@ def jarvis_app(monkeypatch, tmp_path):
     shutil.copytree(EXAMPLES / "decision-deck", folder)
     raw, stamped = tmp_path / "raw.zip", tmp_path / "deck.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
-    decision_stamp.stamp(raw, stamped, data_paths.ensure_tool_token())
+    agent = onboarded_auth(session="sess-1").agent
+    package_signature.sign(raw, stamped, agent.private, agent.public, "sess-1", (package_signature.DECISION_CHECKED,))
     (tmp_path / "work").mkdir()
     item = work_store.create("Office tea service", "folder", str(tmp_path / "work"))
     from fastapi.testclient import TestClient
@@ -105,7 +107,7 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         # test is about the page, and the proof has its own tests
         # (test_package_inbox.py, "who sent it").
         from jarvis import session_message_sender
-        monkeypatch.setattr(server, "_package_sender", lambda claimed, source, reporter: (
+        monkeypatch.setattr(server, "_package_sender", lambda claimed, reporter: (
             session_message_sender.Sender(claimed, "chitauri", "test") if claimed else None))
 
         # It arrives before the page loads, as make_package sends it.

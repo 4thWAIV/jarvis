@@ -20,6 +20,8 @@ has one onboarded key: onboarding a new one revokes the old in the same
 transaction. Rights are rows of `agent_rights` (agent_rights.py judges
 them), kept by principal, so a session's rights outlive a key it replaces.
 `agent_key_events` keeps each change, with who did it and when.
+(`legacy_admissions` counts access-key use per day while the cut-over guard
+still accepts them, legacy_access.py.)
 
 Schema `agent_keys_schema`, through run_store.migrate. This module is the
 only writer of its tables, one transaction per change.
@@ -89,7 +91,48 @@ _SCHEMA = """
     );
 """
 
-_MIGRATIONS = {1: _SCHEMA}
+# 2: what is held because the key that signed it (or the session that
+# claimed it, unsigned) is not an onboarded agent's: the subject (`key:<fp>`
+# or `session:<id>`), what it was and where it is kept, the Work item it
+# was for, and how it was settled (released once the agent is onboarded,
+# refused once its key is refused). The error package that tells Tim is
+# kept per subject.
+_HELD = """
+    CREATE TABLE agent_key_held (
+        id             TEXT PRIMARY KEY,
+        subject        TEXT NOT NULL,
+        fingerprint    TEXT NOT NULL DEFAULT '',
+        session_id     TEXT NOT NULL DEFAULT '',
+        kind           TEXT NOT NULL,
+        what           TEXT NOT NULL,
+        path           TEXT NOT NULL DEFAULT '',
+        detail         TEXT NOT NULL DEFAULT '{}',
+        work_id        TEXT NOT NULL DEFAULT '',
+        held_at        REAL NOT NULL,
+        state          TEXT NOT NULL,
+        settled_at     REAL
+    );
+    CREATE INDEX agent_key_held_subject ON agent_key_held(subject, state);
+    CREATE TABLE agent_key_errors (
+        subject        TEXT PRIMARY KEY,
+        package_id     TEXT NOT NULL DEFAULT '',
+        inbox_id       TEXT NOT NULL DEFAULT '',
+        made_at        REAL NOT NULL
+    );
+"""
+
+# 3: a few named facts of the record's own: when the cut-over guard began
+# watching access-key use, and when access keys stopped being accepted
+# (legacy_access.py).
+_SETTINGS = """
+    CREATE TABLE agent_key_settings (
+        name   TEXT PRIMARY KEY,
+        value  TEXT NOT NULL,
+        at     REAL NOT NULL
+    );
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _HELD, 3: _SETTINGS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -383,7 +426,200 @@ def grants(principal: str) -> list[Grant]:
             for r in rows]
 
 
-# -- the access keys still in use, counted for the cut-over ------------------------------
+# -- what is held for a key not onboarded ------------------------------------------------
+
+HELD, RELEASED, REFUSED = "held", "released", "refused"
+
+
+@dataclass(frozen=True)
+class Held:
+    id: str
+    subject: str
+    fingerprint: str
+    session_id: str
+    kind: str              # package, message, board, request
+    what: str              # what it tried to send, in JARVIS's words with its title
+    path: str              # where the held thing is kept ("" for a request)
+    detail: dict
+    work_id: str
+    held_at: float
+    state: str
+    settled_at: Optional[float]
+
+
+def subject_of(fingerprint: str = "", session_id: str = "") -> str:
+    """Who tried: the key that signed it, else the session that claimed it."""
+    return f"key:{fingerprint}" if fingerprint else f"session:{session_id}"
+
+
+def _held(r) -> Held:
+    return Held(r["id"], r["subject"], r["fingerprint"], r["session_id"], r["kind"], r["what"],
+                r["path"], json.loads(r["detail"] or "{}"), r["work_id"], r["held_at"],
+                r["state"], r["settled_at"])
+
+
+def hold(kind: str, what: str, fingerprint: str = "", session_id: str = "", path: str = "",
+         detail: Optional[dict] = None, work_id: str = "",
+         now: Optional[float] = None) -> tuple[Held, bool]:
+    """Record one thing held. (the row, whether it is new): the same kind
+    and words from the same subject while one is still held is that row."""
+    import secrets as _secrets
+    now = time.time() if now is None else now
+    subject = subject_of(fingerprint, session_id)
+    with closing(_connect()) as conn, conn:
+        found = conn.execute("SELECT * FROM agent_key_held WHERE subject=? AND kind=? AND "
+                             "what=? AND state=?", (subject, kind, what, HELD)).fetchone()
+        if found is not None:
+            return _held(found), False
+        hid = "held-" + _secrets.token_hex(6)
+        conn.execute("INSERT INTO agent_key_held (id, subject, fingerprint, session_id, kind, "
+                     "what, path, detail, work_id, held_at, state) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     (hid, subject, fingerprint, session_id, kind, what[:300], path,
+                      json.dumps(detail or {}, sort_keys=True), work_id, now, HELD))
+        return _held(conn.execute("SELECT * FROM agent_key_held WHERE id=?",
+                                  (hid,)).fetchone()), True
+
+
+def held(subject: Optional[str] = None, state: str = HELD) -> list[Held]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=?" +
+                            (" AND subject=?" if subject else "") + " ORDER BY held_at",
+                            (state, subject) if subject else (state,)).fetchall()
+    return [_held(r) for r in rows]
+
+
+def held_for(fingerprint: str = "", session_id: str = "") -> list[Held]:
+    """Everything still held that this key signed or this session claimed."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=? AND ((fingerprint!='' "
+                            "AND fingerprint=?) OR (session_id!='' AND session_id=?)) ORDER BY "
+                            "held_at", (HELD, fingerprint, session_id)).fetchall()
+    return [_held(r) for r in rows]
+
+
+def settle(held_id: str, state: str, now: Optional[float] = None) -> bool:
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        return bool(conn.execute("UPDATE agent_key_held SET state=?, settled_at=? WHERE id=? AND "
+                                 "state=?", (state, now, held_id, HELD)).rowcount)
+
+
+def error_package(subject: str) -> Optional[dict]:
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT * FROM agent_key_errors WHERE subject=?", (subject,)).fetchone()
+    return dict(r) if r else None
+
+
+def error_subject(package_id: str) -> Optional[str]:
+    """The subject an error package JARVIS made is about, or None."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT subject FROM agent_key_errors WHERE package_id=?",
+                         (package_id,)).fetchone()
+    return r["subject"] if r else None
+
+
+def set_error_package(subject: str, package_id: str, inbox_id: str,
+                      now: Optional[float] = None) -> None:
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO agent_key_errors (subject, package_id, inbox_id, made_at) "
+                     "VALUES (?,?,?,?) ON CONFLICT(subject) DO UPDATE SET package_id=excluded."
+                     "package_id, inbox_id=excluded.inbox_id, made_at=excluded.made_at",
+                     (subject, package_id, inbox_id, now))
+
+
+def error_packages() -> list[dict]:
+    with closing(_connect()) as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM agent_key_errors")]
+
+
+# -- work-item keys ----------------------------------------------------------------------
+
+# How long a work-item key lives unless its issuer renews it.
+WORK_KEY_LIFE_SEC = 30 * 86400.0
+
+
+def work_principal(fingerprint: str) -> str:
+    return WORK_KEY + fingerprint
+
+
+def add_work_key(public_key: str, work_id: str, issued_by: str,
+                 now: Optional[float] = None) -> AgentKey:
+    """A key limited to one Work item, issued by an onboarded agent (its
+    principal): onboarded at once, since the agent that holds `work` vouches
+    for it, with agent_rights.WORK_KEY_RIGHTS scoped to `work:<id>` and an
+    expiry WORK_KEY_LIFE_SEC on. The same key again is that row."""
+    now = time.time() if now is None else now
+    try:
+        public = agent_keys.normalise(public_key)
+    except agent_keys.AgentKeyError as e:
+        raise KeyRefused(str(e))
+    fp = agent_keys.fingerprint(public)
+    with closing(_connect()) as conn, conn:
+        found = conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?", (fp,)).fetchone()
+        if found is not None:
+            if found["work_id"] != work_id or found["state"] == REVOKED:
+                raise KeyRefused("That key is already another's, or revoked.")
+            return _row(found)
+        principal = work_principal(fp)
+        conn.execute("INSERT INTO agent_keys (fingerprint, public_key, principal, state, "
+                     "submitted_at, onboarded_at, onboarded_by, work_id, issued_by, expires_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (fp, public, principal, ONBOARDED, now, now, issued_by, work_id, issued_by,
+                      now + WORK_KEY_LIFE_SEC))
+        _grant(conn, principal, agent_rights.WORK_KEY_RIGHTS,
+               agent_rights.WORK_SCOPE + work_id, issued_by, now)
+        _event(conn, fp, "issued", now, work=work_id, by=issued_by)
+        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
+                                 (fp,)).fetchone())
+
+
+def renew_work_key(fingerprint: str, by: str, now: Optional[float] = None
+                   ) -> Optional[AgentKey]:
+    """Another WORK_KEY_LIFE_SEC for a live work-item key, by its issuer
+    alone. None when it is not one, not live, or `by` did not issue it."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        moved = conn.execute("UPDATE agent_keys SET expires_at=? WHERE fingerprint=? AND "
+                             "state=? AND issued_by=? AND principal LIKE 'workkey:%'",
+                             (now + WORK_KEY_LIFE_SEC, fingerprint, ONBOARDED, by)).rowcount
+        if not moved:
+            return None
+        _event(conn, fingerprint, "renewed", now, by=by)
+        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
+                                 (fingerprint,)).fetchone())
+
+
+def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
+    """The live work-item keys, of one item or all."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM agent_keys WHERE principal LIKE 'workkey:%' AND "
+                            "state=?" + (" AND work_id=?" if work_id else "") +
+                            " ORDER BY submitted_at",
+                            (ONBOARDED, work_id) if work_id else (ONBOARDED,)).fetchall()
+    return [_row(r) for r in rows]
+
+
+# -- the cut-over guard's record (legacy_access.py) --------------------------------------
+
+def setting(name: str) -> Optional[tuple[str, float]]:
+    """(value, when it was set) of one named fact, or None."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT value, at FROM agent_key_settings WHERE name=?",
+                         (name,)).fetchone()
+    return (r["value"], r["at"]) if r else None
+
+
+def set_setting(name: str, value: str, now: Optional[float] = None,
+                keep: bool = False) -> None:
+    """Set one named fact (with `keep`, only if it is not set yet)."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO agent_key_settings (name, value, at) VALUES (?,?,?) "
+                     + ("ON CONFLICT(name) DO NOTHING" if keep else
+                        "ON CONFLICT(name) DO UPDATE SET value=excluded.value, at=excluded.at"),
+                     (name, value, now))
+
 
 def count_legacy(label: str, now: Optional[float] = None) -> None:
     """One request admitted on an access key, counted by day. Never raises."""
@@ -404,3 +640,21 @@ def legacy_counts(days: int = 7, now: Optional[float] = None) -> dict[str, int]:
         rows = conn.execute("SELECT label, SUM(count) AS n FROM legacy_admissions WHERE day>=? "
                             "GROUP BY label ORDER BY label", (since,)).fetchall()
     return {r["label"]: r["n"] for r in rows}
+
+
+def first_legacy_day() -> Optional[float]:
+    """The start of the first day an access-key admission was counted."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT MIN(day) AS d FROM legacy_admissions").fetchone()
+    if not r or not r["d"]:
+        return None
+    return time.mktime(time.strptime(r["d"], "%Y-%m-%d"))
+
+
+def last_legacy_day_end() -> Optional[float]:
+    """The end of the last day an access-key admission was counted."""
+    with closing(_connect()) as conn:
+        r = conn.execute("SELECT MAX(day) AS d FROM legacy_admissions").fetchone()
+    if not r or not r["d"]:
+        return None
+    return time.mktime(time.strptime(r["d"], "%Y-%m-%d")) + 86400

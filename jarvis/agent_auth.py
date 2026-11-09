@@ -83,7 +83,20 @@ def check(authorization: str, method: str, path: str, query: str, host: str, bod
         return Checked(refused=REPLAYED)
     if not key.admitted(now):
         return Checked(key=key, refused=not_onboarded(key))
+    if key.principal.startswith(agent_key_store.WORK_KEY) and not _item_open(key.work_id, now):
+        return Checked(key=key, refused="That key's Work item is closed; the key ended with it.")
     return Checked(key=key, principal=key.principal)
+
+
+def _item_open(work_id: str, now: float) -> bool:
+    """A work-item key lives only while its item is open and not in
+    History (closed, or done for DONE_LINGER_SEC)."""
+    from jarvis import work_store
+    try:
+        item = work_store.get(work_id)
+    except Exception:
+        return False
+    return item is not None and item.closed_at is None and not item.history
 
 
 def not_onboarded(key: agent_key_store.AgentKey) -> str:

@@ -4,6 +4,8 @@
     python -m jarvis.agent_key submit --session <your session id> --fingerprint <SHA256:...>
     python -m jarvis.agent_key sign <file> --session <your session id>
     python -m jarvis.agent_key status --session <your session id>
+    python -m jarvis.agent_key grant --work <item id> --into <folder> --session <your session id>
+    python -m jarvis.agent_key renew --work-key <SHA256:...> --session <your session id>
 
 `init` makes the agent's Ed25519 key pair (or finds the one there) in
 `<its config home>/jarvis/agent-keys/<session id>/` and prints its
@@ -13,8 +15,12 @@ session's own transcript for this command naming the session and the
 fingerprint (proof it was this session that ran it), and the key waits for
 Tim to switch the agent on, which onboards it. `sign` writes `<file>.sig`
 beside a message file or needs board, so JARVIS knows it is this agent's.
-`status` says where the key stands. Run every one of them yourself, in your
-own session: the proof is your own tool call.
+`status` says where the key stands. `grant` makes a key limited to one Work
+item in `<folder>/.jarvis/work-key` for whoever works there (as
+`make_package --work` puts one in an agent package) and has JARVIS record
+it, signed by your key; it ends when the item closes or after 30 days,
+which `renew` extends. Run every one of them yourself, in your own session:
+the proof is your own tool call.
 
 Standard library only (agent_keys.py and workflow_report's client), so it
 runs under whichever Python the session has.
@@ -102,6 +108,34 @@ def sign_file(path: Path, session_id: str) -> int:
     return 0
 
 
+def _signed_post(session_id: str, cert: Path | None, route: str, body: dict) -> dict:
+    private, public = _key(session_id)
+    data = json.dumps(body).encode()
+    with _Client(base_url(), "", cert, (private, public)) as client:
+        r = client.send_bytes("POST", client.base_url + route, data, "application/json")
+    if r.status_code != 200:
+        raise SystemExit(f"JARVIS refused it ({r.status_code}): {r.text}")
+    return r.json()
+
+
+def grant(work_id: str, into: Path, session_id: str, cert: Path | None) -> int:
+    folder = into.resolve().joinpath(agent_keys.WORK_KEY[0])
+    _private, public = agent_keys.make_pair(folder, f"jarvis-work {work_id}",
+                                            name=agent_keys.WORK_KEY[1])
+    answer = _signed_post(session_id, cert, SUBMIT_ROUTE + "/work-keys",
+                          {"work": work_id, "public_key": public})
+    print(f"A key for work item {work_id} is in {folder} ({answer['fingerprint']}). Whoever "
+          "works in that folder reports on that item with it, and on nothing else.")
+    return 0
+
+
+def renew(fingerprint: str, session_id: str, cert: Path | None) -> int:
+    answer = _signed_post(session_id, cert,
+                          SUBMIT_ROUTE + "/work-keys/" + fingerprint + "/renew", {})
+    print(f"Renewed {answer['fingerprint']} for another 30 days.")
+    return 0
+
+
 def status(session_id: str, cert: Path | None) -> int:
     found = agent_keys.session_key(session_id)
     if not found:
@@ -121,13 +155,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jarvis.agent_key")
     parser.add_argument("--cert", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "submit", "sign", "status"):
+    for name in ("init", "submit", "sign", "status", "grant", "renew"):
         p = sub.add_parser(name)
         if name == "sign":
             p.add_argument("file", type=Path)
         p.add_argument("--session", required=True)
         if name == "submit":
             p.add_argument("--fingerprint", required=True)
+        if name == "grant":
+            p.add_argument("--work", required=True)
+            p.add_argument("--into", type=Path, required=True)
+        if name == "renew":
+            p.add_argument("--work-key", dest="work_key", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -136,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
             return submit(args.session, args.fingerprint, args.cert)
         if args.command == "sign":
             return sign_file(args.file, args.session)
+        if args.command == "grant":
+            return grant(args.work, args.into, args.session, args.cert)
+        if args.command == "renew":
+            return renew(args.work_key, args.session, args.cert)
         return status(args.session, args.cert)
     except agent_keys.AgentKeyError as e:
         print(e, file=sys.stderr)
