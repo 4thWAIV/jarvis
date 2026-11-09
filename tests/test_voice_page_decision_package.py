@@ -101,7 +101,9 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert "Nothing is shown until he asks for it." in said
 
 
-def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, capsys):
+def test_the_command_checks_a_presentation_and_its_one_vote(tmp_path, stand_in, capsys):
+    """A presentation asks nothing of its own, so it ends with the standard
+    vote (Got it, or I have questions), checked as any deck's vote is."""
     from jarvis import make_package as mp
     reason = dashboard_page.why_unavailable()
     if reason:
@@ -119,13 +121,14 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
                       "the deck's own styles are in force", "slides fit"):
             assert any(f"ok: {size}: " in line and check in line for line in lines), \
                 (size, check, said)
+        assert any(f"ok: {size}: " in line and "every vote control is visible" in line
+                   for line in lines), (size, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
-        assert shots == ["01-s1.png", "02-s2.png"]
-    for check in ("the story went on to its end", "every beat told pointed"):
+        assert shots == ["01-s1.png", "02-s2.png", "03-d-understood.png", "04-answers.png"]
+    for check in ("the story went on to its end", "every beat told pointed",
+                  "the story waits at understood", "every question answered, in order (understood)",
+                  "stop by the page while waiting: stopped within 1s", "resume: answered understood first"):
         assert any(line.startswith("  ok: ") and check in line for line in lines), (check, said)
-    for absent in ("vote control", "stop ", "resume", "waits at"):
-        assert not any(absent in line for line in lines if line.startswith("  ok: ")), \
-            (absent, said)
     [(path, _, body)] = stand_in.posts
     assert path.partition("?")[0] == "/api/packages/inbox"
     assert body == (out / "team-lunch-moved-1.0.0.zip").read_bytes()
@@ -145,7 +148,14 @@ def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
     with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(bare, "w") as dst:
         for item in src.infolist():
             if item.filename.rsplit("/", 1)[-1] != "deck.css":
-                dst.writestr(item, src.read(item))
+                body = src.read(item)
+                if item.filename.rsplit("/", 1)[-1] == "package.json":
+                    manifest = json.loads(body)
+                    # Keep the declared member list valid so this test reaches
+                    # the browser's missing-styles check rather than ingestion.
+                    manifest["understanding"].pop("deck.css")
+                    body = json.dumps(manifest).encode()
+                dst.writestr(item, body)
     result = decision_check.check(bare, made.deck, tmp_path / "check")
     if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
         pytest.skip("no Playwright Chromium")

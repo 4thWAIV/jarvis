@@ -1808,3 +1808,16 @@ async def test_an_error_on_the_second_result_is_still_an_error(env):
                             timeout=20)
     assert run["is_error"] == 1, run
     assert run["status"] == store.RunStatus.FAILED, run
+
+
+@pytest.mark.asyncio
+async def test_live_partial_chunks_do_not_duplicate_permanent_transcript(env):
+    store, mod, tmp = env
+    stream = tmp / 'partial.jsonl'
+    stream.write_text(json.dumps({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': 'partial'}}}) + '\n' + FIXTURE.read_text())
+    ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, stream))
+    run_id = await ex.spawn('do a thing', 'proj', str(tmp), 'api')
+    await ex.wait_for(run_id)
+    events = store.get_events(run_id, limit=100)
+    assert len(events) == 14
+    assert all(event['kind'] != 'stream_event' for event in events)

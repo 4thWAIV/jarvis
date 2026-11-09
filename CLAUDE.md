@@ -191,6 +191,18 @@ follows on from where it stopped. The brain reads the record with
 (`answer_dialog`), Terminal commands and refused attempts that never formed a
 message (no session, no capture) stay in the `steers` table.
 
+## One channel (in progress)
+`docs/planning/one-channel/design.md` is the plan: every message to and from
+Tim in one record. Phase 1 is in: `conversation_log` keeps each item's
+counterpart (`Counterpart`: agent, person, workflow, work, package; its
+ref), and each message to him the proof that admitted it (`PROOFS`) and its
+source row (`conversation_schema` migration 2 put the items already on
+record in their agent's thread). `conversation_log.inbound` is the one way
+a message to him is recorded and refuses one without proof (`Unproven`);
+`outbound`, `thread_of` and `threads` are its other half. An agent's answer
+(proof `watcher`) and a session message (its own proof) go through it
+(`server._record_inbound`).
+
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
 message into `data/messages/<project>/` (`data_paths.session_messages_dir()`):

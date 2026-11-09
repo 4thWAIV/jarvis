@@ -46,7 +46,7 @@ USUAL_FILES = {"page": "index.html", "agent": "BRIEF.md", "conversation": "SKILL
 STORY_FILE = "story.json"
 DEFAULT_RETURNS = ["results/**"]
 MANIFEST_FIELDS = ("name", "version", "purpose", "runs", "skill", "brief", "entry", "story",
-                   "returns")
+                   "returns", "understanding")
 STORY_HELPER = "/api/packages/story.js"
 FIRST_VERSION = "1.0.0"
 
@@ -106,6 +106,12 @@ def deck_of(content: Path) -> dict:
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     problems = dp.problems_of(deck, content.parent)
+    if not problems:
+        from jarvis.package_understanding import validate_deck_inputs
+        try:
+            validate_deck_inputs(deck, dp.builder(), content.parent)
+        except ValueError as error:
+            problems.append(str(error))
     if problems:
         raise dp.Refused(problems)
     return deck
@@ -195,6 +201,15 @@ def manifest_of(folder: Path) -> dict:
         if manifest.get("story") and STORY_HELPER not in page:
             problems.append(f"{entry.name} does not load the story helper, so the story points "
                             f"at nothing: add <script src=\"{STORY_HELPER}\"></script>.")
+    if not problems:
+        from jarvis import package_understanding
+        try:
+            coverage = package_understanding.declaration(manifest.get("understanding"))
+            if runs == "page" and coverage and not manifest.get("brief"):
+                manifest["brief"] = next(iter(coverage.values()))
+            package_understanding.validate(folder, manifest, _zipper().files(folder))
+        except ValueError as error:
+            problems.append(str(error))
     if problems:
         raise dp.Refused(problems)
     if "version" not in manifest:
@@ -225,6 +240,13 @@ def _with_vote(built: Path, manifest: dict) -> None:
         raise dp.Refused([f"The vote could not be added to its story: {e}"])
     path.write_text(json.dumps(told, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest["story"] = path.name if not named else named
+    # A story made here is understood as the page it is told over is: the
+    # author's understanding names every member it holds.
+    understanding = manifest.get("understanding")
+    if isinstance(understanding, dict) and manifest["story"] not in understanding:
+        about = understanding.get(manifest.get("entry")) or manifest.get("brief")
+        if about:
+            manifest["understanding"] = {**understanding, manifest["story"]: about}
     if DEFAULT_RETURNS[0] not in manifest.get("returns", []) and \
             told["answers"] not in manifest.get("returns", []):
         manifest["returns"] = [*manifest.get("returns", []), told["answers"]]
@@ -234,6 +256,10 @@ def make_folder(folder: Path, out: Path) -> Made:
     """Copy the folder with its package.json in full, zip it, and read the
     zip back the way the receiver does: the zip's path."""
     from jarvis import bundle_archive, work_packages
+    if all((folder / mark).is_file() for mark in decision_stamp.MARKS):
+        raise dp.Refused([f"{folder} is a decision deck ({', '.join(decision_stamp.MARKS)}). "
+                          f"A deck is made from its content file, never from a folder: give "
+                          f"the command the deck's JSON."])
     manifest = manifest_of(folder)
     zipper = _zipper()
     built = out / manifest["name"]
@@ -244,6 +270,11 @@ def make_folder(folder: Path, out: Path) -> Made:
         _with_vote(built, manifest)
     (built / "package.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False)
                                         + "\n", encoding="utf-8")
+    from jarvis import package_understanding
+    try:
+        package_understanding.validate(built, manifest, zipper.files(built))
+    except ValueError as error:
+        raise dp.Refused([str(error)]) from None
     archive = out / f"{manifest['name']}-{manifest['version']}.zip"
     if zipper.main([str(built), str(archive)]) != 0:
         raise dp.Refused([f"It could not be zipped from {built}."])
@@ -254,10 +285,6 @@ def make_folder(folder: Path, out: Path) -> Made:
         raise dp.Refused([f"JARVIS would refuse the zip: {e}"])
     if recognised.manifest is None:
         raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
-    if decision_stamp.is_decision_package(archive):
-        raise dp.Refused([f"{folder} is a decision deck ({', '.join(decision_stamp.MARKS)}). "
-                          f"A deck is made from its content file, never from a folder: give "
-                          f"the command the deck's JSON."])
     title = manifest["name"].replace("-", " ")
     return Made(archive, title, f"{manifest['runs']} package", None)
 

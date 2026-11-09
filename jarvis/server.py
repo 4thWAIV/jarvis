@@ -99,7 +99,7 @@ from jarvis import ui_control
 from jarvis import ui_contract
 from jarvis import brain_activity, tool_activity
 from jarvis import session_needs
-from jarvis import agent_directory
+from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
 from jarvis import work_api, work_store
@@ -609,6 +609,19 @@ def _record(kind: str, text: str, **links) -> None:
         conversation_log.append(conversation_log.ConversationItem.new(kind, text, **links))
     except Exception as e:
         log.warning(f"conversation: a {kind} item was not recorded: {e}")
+
+
+def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
+                    **links) -> None:
+    """One message to him from a counterpart, on record in its thread with
+    its proof (conversation_log.inbound, which refuses one without), then the
+    pages are told. Never raises: one that cannot be written is logged."""
+    if not str(text or "").strip() or not ref:
+        return
+    try:
+        conversation_log.inbound(kind, counterpart, str(ref), name, text, evidence, **links)
+    except Exception as e:
+        log.warning(f"conversation: a {kind} from {counterpart} was not recorded: {e}")
 
 
 def _agent_links(event: dict) -> dict:
@@ -1916,7 +1929,14 @@ async def _attend_message(event: dict) -> None:
         _attention_resolved("agent_message", _message_number(message))
         return
     if kind == "answered" and message.get("reply"):
-        _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
+        # Read from the transcript of the session it was sent to: the
+        # watcher's proof of who answered.
+        links = _agent_links(event)
+        _record_inbound(conversation_log.ItemKind.ANSWER, conversation_log.Counterpart.AGENT,
+                        links.get("agent_session_id"), links.get("agent_name") or "",
+                        message["reply"], "watcher", source_kind="message",
+                        source_id=_message_number(message),
+                        message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
     words = _agent_words(session)
     if kind == "send_failed" and message.get("failure"):
@@ -2141,11 +2161,13 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
                           f"aside and will be recorded again")
         received = run_store.get_session_message(message_id)
         if received is not None:
-            # The thread it joins: its sender's, when it is known.
-            _record(conversation_log.ItemKind.FROM_AGENT,
-                    f"{received.subject}\n\n{received.body}".strip(),
-                    agent_session_id=sender.session_id,
-                    agent_name=received.agent_name, session_message_id=message_id)
+            # The thread it joins: its proven sender's.
+            _record_inbound(conversation_log.ItemKind.FROM_AGENT,
+                            conversation_log.Counterpart.AGENT, sender.session_id,
+                            received.agent_name,
+                            f"{received.subject}\n\n{received.body}".strip(), sender.evidence,
+                            source_kind="session_message", source_id=message_id,
+                            subagent=sender.subagent, session_message_id=message_id)
         taken.append(received)
     return [m for m in taken if m is not None]
 
@@ -3919,6 +3941,37 @@ async def ws_specs(ws: WebSocket):
         log.warning(f"/ws/specs error: {e}")
 
 
+def _worker_inventory() -> dict:
+    from jarvis import worker_hooks
+    native, truncated = worker_hooks.observations(data_paths.data_dir(), time.time())
+    snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
+    return worker_inventory.build(snap, agent_directory.names_by_session(),
+                                  run_store.list_runs(status=["queued", "running"], limit=10000),
+                                  brain_activity.feed.since(), time.time(),
+                                  workflows=workflow_store.active(),
+                                  capacity=run_executor_instance.capacity(),
+                                  native_observations=native, native_truncated=truncated)
+
+
+@app.get("/api/workers")
+async def api_workers():
+    return await asyncio.to_thread(_worker_inventory)
+
+
+def tool_list_workers(args: dict) -> str:
+    """The UI's current inventory, through the existing bounded JSON reader."""
+    inventory = _worker_inventory()
+    # The normal counts question is answered before the worker detail. Each
+    # invocation is a fresh observation, as with the other paged status reads.
+    answer = {key: inventory[key] for key in
+              ("total", "providers", "capacity", "coverage", "gaps", "taken_at")
+              if key in inventory}
+    answer.update(inventory)
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False), _page_arg(args),
+                         "The current worker inventory as JSON", "list_workers", exact=True)
+    return head if chunk is None else head + "\n" + _wrap_untrusted("workers", chunk)
+
+
 @app.get("/api/sessions")
 async def api_list_sessions(state: str = ""):
     """Every Claude Code conversation on this machine. The snapshot is the
@@ -4097,6 +4150,7 @@ READ_BACK_TOOLS = {"steer_session", "answer_dialog", "run_command"}
 # after the handler returns rather than inside each handler, so a reader
 # added later cannot forget to do it — the data below is the whole decision.
 TAINTING_TOOLS = {
+    "list_workers": "worker names and descriptions from other sessions",
     # Repository files. A source comment or a README can carry an instruction
     # aimed squarely at the brain.
     "read_file": "a file in one of your projects",
@@ -8055,9 +8109,42 @@ async def tool_open_package(args: dict) -> str:
         f"those files, then request_message_review."))
 
 
+def _package_understanding_page(package, offset, prefix=""):
+    """Page only the author's explicitly declared Markdown through the existing inbox read."""
+    from jarvis import package_understanding
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        return "understanding_offset must be a nonnegative integer."
+    manifest = json.loads(package.manifest.as_json())
+    try:
+        parts = [f"# {name}\n{text}"
+                 for name, text in package_understanding.author_texts(package.folder, manifest)]
+    except ValueError as error:
+        return _wrap_untrusted(_INBOX_WRAP_NAME, str(error))
+    if not parts:
+        return "This package declares no authored Markdown understanding."
+    text = "\n\n".join(parts)
+    if offset > len(text):
+        return "understanding_offset is beyond this package's declared understanding."
+    head = prefix + "Author-supplied understanding; continue package_inbox with understanding_offset until next_offset is null.\n"
+    take = min(800, len(text) - offset)
+    while True:
+        next_offset = offset + take if offset + take < len(text) else None
+        body = json.dumps({"package": package.id, "offset": offset, "next_offset": next_offset,
+                           "total_chars": len(text), "text": text[offset:offset + take]}, ensure_ascii=False)
+        wrapped = _wrap_untrusted(_INBOX_WRAP_NAME, body)
+        if len(body) <= _WRAP_CONTENT_CAP and len(head + wrapped) <= TOOL_RESULT_CAP:
+            return head + wrapped
+        if take <= 1:
+            return "The package understanding response cannot fit the existing tool limit."
+        take = max(1, take // 2)
+
+
 def _package_opened(package: "work_packages.Package", fresh: bool, what_next: str) -> str:
     """What the brain is told of a package just opened: where it is, what to
     do with it, its package.json and its skill or brief."""
+    if package.manifest.understanding:
+        return _package_understanding_page(package, 0,
+            prefix=f"Package {package.id} is open. " + what_next + "\n")
     try:
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
@@ -9191,6 +9278,18 @@ def tool_package_inbox(args: dict) -> str:
     """The packages agents have sent him: the open ones, the closed ones, or
     one in full with its questions."""
     reference = str(args.get("package") or "").strip()
+    if "understanding_offset" in args:
+        if not reference:
+            return "Name the package whose authored understanding to read."
+        entry = package_inbox.get(reference) or _inbox_one(reference)[0]
+        try:
+            package = work_packages.find(entry.package_id if entry else reference)
+        except work_packages.PackageError as error:
+            return _wrap_untrusted(_INBOX_WRAP_NAME, str(error))
+        offset = args["understanding_offset"]
+        if not isinstance(offset, int) or isinstance(offset, bool):
+            return "understanding_offset must be a nonnegative integer."
+        return _package_understanding_page(package, int(offset))
     if reference:
         entry, problem = _inbox_one(reference)
         if entry is None:
@@ -9200,7 +9299,9 @@ def tool_package_inbox(args: dict) -> str:
         body = _inbox_line(entry) + (f"\nPurpose: {entry.purpose}" if entry.purpose else "")
         if asked:
             body += "\n" + _inbox_questions(asked)
-        return ("One package in his inbox.\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
+        hint = (" Read its authored understanding with package_inbox understanding_offset=0."
+                if package and package.manifest.understanding else "")
+        return ("One package in his inbox." + hint + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
     rows = package_inbox.listing(closed=bool(args.get("closed")))
     if not rows:
         return ("No closed packages, sir." if args.get("closed")
@@ -9233,6 +9334,15 @@ async def tool_open_inbox_package(args: dict) -> str:
             what_next += ("When he says he is done with it, sign_off_package tells "
                           "the sender.")
         body = package.manifest.as_json() + ("\n" + _inbox_questions(asked) if asked else "")
+        if package.manifest.understanding:
+            head = what_next + " Read supplied understanding with package_inbox understanding_offset=0.\n"
+            # Keep the existing current-answer guidance first, without crowding it out with the coverage map.
+            body = _inbox_questions(asked) if asked else package.manifest.as_json()
+            response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body)
+            while len(response) > TOOL_RESULT_CAP:
+                body = body[:max(1, len(body) // 2)]
+                response = head + _wrap_untrusted(_INBOX_WRAP_NAME, body + "\n… (metadata truncated)")
+            return response
         return what_next + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body)
     return _package_opened(package, True, _PACKAGE_HOW[package.manifest.runs]
                            + " When he is done with it, sign_off_package tells the "
@@ -12043,6 +12153,7 @@ def tool_rename_agent(args: dict) -> str:
 
 
 TOOL_HANDLERS.update({
+    "list_workers": tool_list_workers,
     "list_agents": tool_list_agents,
     "set_agent_active": tool_set_agent_active,
     "rename_agent": tool_rename_agent,

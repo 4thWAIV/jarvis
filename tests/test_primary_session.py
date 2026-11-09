@@ -350,9 +350,8 @@ def test_the_sidecars_beside_the_transcripts_do_not_eat_the_cap(tmp_path):
     assert s.agents_capped is False
 
 
-def test_a_capped_agent_count_says_it_is_a_floor(tmp_path):
-    """A count that hit the cap is a lower bound. Reporting it as a total
-    would be a number we do not have."""
+def test_snapshot_discovers_children_beyond_the_detail_api_cap(tmp_path):
+    """The worker inventory must not omit children beyond the detail API cap."""
     root = tmp_path / ".claude"
     live(root, session_id="a", cwd="/p/one", name="one", active_ms=NOW_MS)
     for i in range(sw.MAX_AGENT_FILES + 5):
@@ -360,9 +359,9 @@ def test_a_capped_agent_count_says_it_is_a_floor(tmp_path):
 
     s = sw.build_snapshot(roots=[root], now=NOW).by_id("a")
 
-    assert s.agents_seen == sw.MAX_AGENT_FILES
-    assert s.agents_capped is True
-    assert sw.session_to_dict(s)["agents_capped"] is True
+    assert s.agents_seen == sw.MAX_AGENT_FILES + 5
+    assert s.agents_capped is False
+    assert sw.session_to_dict(s)["agents_capped"] is False
 
 
 def test_an_uncapped_agent_count_is_not_a_floor(tmp_path):

@@ -42,7 +42,14 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
     z = zipfile.ZipFile(archive)
     assert "scripts/decide.py" in z.namelist(), "the vote is answered as any deck's is"
     package = json.loads(z.read("package.json"))
-    assert package["purpose"] == "Team lunch moved" and package["runs"] == "page"
+    understood = {f: "UNDERSTANDING.md" for f in (
+        "SKILL.md", "deck-data.js", "deck.css", "deck.js", "index.html", "scripts/decide.py",
+        "story.json")}
+    assert package == {"name": "team-lunch-moved", "version": "1.0.0",
+                       "purpose": "Team lunch moved", "runs": "page", "entry": "index.html",
+                       "story": "story.json", "skill": "SKILL.md",
+                       "returns": ["results/decisions.json", "results/decisions.md"],
+                       "brief": "UNDERSTANDING.md", "understanding": understood}
     [vote] = seen[0]["decisions"]
     assert vote["id"] == package_inbox.UNDERSTOOD_ID
     assert [o["name"] for o in vote["options"]] == ["Got it", "I have questions"]
@@ -51,7 +58,7 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
     assert titles[:2] == ["What changed", "What you need to do"], "its own slides first"
     assert [s.get("waits") for s in story["slides"]].index("understood") == 2, \
         "the vote at the end, after every slide of its own"
-    assert len(delivery.calls) == 1
+    assert len(seen) == 1 and len(delivery.calls) == 1
     assert "Built a presentation" in capsys.readouterr().out
 
 
@@ -136,8 +143,10 @@ def page_folder(root: Path, **manifest) -> Path:
     (folder / "app.js").write_text("// app\n")
     (folder / "story.json").write_text(json.dumps(json.loads(
         (EXAMPLES / "story-deck" / "story.json").read_text())))
+    (folder / "explanation.md").write_text("# Globe numbers\nThe authored explanation of the numbers and story.")
     (folder / "package.json").write_text(json.dumps({"purpose": "Show the numbers.",
-                                                     **manifest}))
+        "understanding": {"index.html": "explanation.md", "app.js": "explanation.md", "story.json": "explanation.md"},
+        **manifest}))
     (folder / "results").mkdir()
     (folder / "results" / "old.json").write_text("{}")
     return folder
@@ -166,7 +175,9 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
     folder = tmp_path / "in" / "Plain Page"
     folder.mkdir(parents=True)
     (folder / "index.html").write_text("<p>Hello</p>")
-    (folder / "package.json").write_text(json.dumps({"purpose": "Say hello.", "returns": []}))
+    (folder / "about.md").write_text("# Hello\nA page that says hello.")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Say hello.", "returns": [],
+                                                     "understanding": {"index.html": "about.md"}}))
     out = tmp_path / "out"
     assert mp.main([str(folder), "--work", "work-1", "--out", str(out),
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
@@ -223,7 +234,9 @@ def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
     folder = tmp_path / "in" / "Plain Page"
     folder.mkdir(parents=True)
     (folder / "index.html").write_text("<p>Hola</p>")
-    (folder / "package.json").write_text(json.dumps({"purpose": "Saludar."}))
+    (folder / "about.md").write_text("# Hola\nUna página que saluda.")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Saludar.",
+                                                     "understanding": {"index.html": "about.md"}}))
     assert mp.main([str(folder), "--out", str(tmp_path / "a"),
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(tmp_path / "a")
@@ -255,7 +268,9 @@ def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
     manifest = mp.manifest_of(page_folder(tmp_path))
     assert manifest == {"purpose": "Show the numbers.", "runs": "page", "entry": "index.html",
                         "story": "story.json", "name": "globe-numbers",
-                        "returns": ["results/**"], "version": "1.0.0"}
+                        "returns": ["results/**"], "version": "1.0.0", "brief": "explanation.md",
+                        "understanding": {"index.html": "explanation.md", "app.js": "explanation.md",
+                                          "story.json": "explanation.md"}}
 
 
 def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsys):

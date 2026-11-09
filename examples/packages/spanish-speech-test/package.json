@@ -8,5 +8,12 @@
     "results/bench.json",
     "results/clips/*.wav",
     "results/clips/*.txt"
-  ]
+  ],
+  "understanding": {
+    "scripts/bench.py": "SKILL.md",
+    "scripts/fetch_model.py": "SKILL.md",
+    "scripts/record.js": "SKILL.md",
+    "scripts/record.sh": "SKILL.md",
+    "sentences.txt": "SKILL.md"
+  }
 }
