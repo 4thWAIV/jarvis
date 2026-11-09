@@ -4398,6 +4398,11 @@ export const UI_CONTRACT = {
         "fromSlide",
         "resume",
         "stop",
+        "vote",
+        "gotIt",
+        "questions",
+        "words",
+        "send",
         "source",
         "check",
         "readable"

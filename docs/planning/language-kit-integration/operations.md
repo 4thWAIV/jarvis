@@ -14,11 +14,11 @@ python -m pytest -m page tests/test_voice_page_language_documents.py
 python scripts/generate_ui_contract.py --check
 ```
 
-After package PR97 merges, reconcile onto its final main revision and pass the required PR and complete merged-main workflows. Root preserves the primary checkout's existing edits and uses the existing updater for the reviewed language version:
+After reconciling the package and application changes, pass the required PR and complete merged-main workflows. The release executor preserves the primary checkout and selects the final passed main revision containing the language integration. The updater accepts that full SHA; PR95's feature-branch merge is not a main release version. Set `passed_main_revision` to that reviewed SHA before running:
 
 ```
 .venv/bin/python -m jarvis.update --check
-.venv/bin/python -m jarvis.update --to 95
+.venv/bin/python -m jarvis.update --to "$passed_main_revision"
 ```
 
 ## Adopt and inspect the kit
@@ -38,6 +38,8 @@ Initial adoption is explicit. Starting the server alone performs no kit checks/d
 UI/agent HTTP uses POST `/api/language-documents`; the brain uses `language_document`. RequestBody is the shared schema. Concatenate `data` while following `next` through `continue` to recover the complete envelope. Draft validate takes source, Work ID, scope revision, author, coverage, optional document/parent revision and evidence. `readable_markdown` supplies the author understanding required for new publication. A correction proposes a child revision; it does not edit the original.
 
 Render/publish require document ID, canonical revision and expected source_revision. Publication uses the existing factory/receiver and retains source.yaml, check.json, canonical.json, index.html and UNDERSTANDING.md. The manifest brief and material-to-Markdown associations feed the minimal package creation check and existing authored-content reading path. No arbitrary source-format parser or PDF builder is needed.
+
+The existing factory also adds its standard review vote. The canonical gate accepts only the factory's exact generated vote bytes and includes them in its validation identity. It retains the canonical source, check, view and author bytes; additional narrative, altered answer targets, alternate story members and changed vote bytes are refused. The standard review acknowledgment does not change the canonical document's proposed status or implement the staged proposal-vote mapping.
 
 Ground takes package_id and optional inbox_id/declaration. It derives the checked canonical identity when first opening a package; supplied document/revision/source IDs are expected-value checks. It checks the fixed canonical files and declared author Markdown against the requested revision. It returns source/understanding plus followup_reference. Include that reference in the addressed text passed to the existing capture tool, then read_capture and the existing approval/steer_session flow. Approval binds the existing full capture wording and recipient. No new sender, classifier or package-history context is introduced.
 

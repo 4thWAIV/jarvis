@@ -70,13 +70,29 @@ def gate(read, communication: dict | None) -> None:
             readable_bytes.append(body)
     manifest_bytes = read("package.json")
     manifest = json.loads(manifest_bytes)
+    factory_bytes = []
     if readable and readable.get("member") == "UNDERSTANDING.md":
         expected = {member: "UNDERSTANDING.md" for member in ("source.yaml", "check.json", "canonical.json", "index.html")}
+        story = manifest.get("story")
+        if story:
+            from jarvis import make_package, package_inbox, package_story
+            if story != make_package.STORY_FILE:
+                raise docs.DocumentError("The canonical package review must be the unchanged factory-generated standard vote.")
+            vote_bytes = read(story)
+            try:
+                language = package_story.parse(vote_bytes).language
+                standard = package_story.encode(package_inbox.with_understood_slide(None, language))
+            except ValueError:
+                raise docs.DocumentError("The canonical package review must be the unchanged factory-generated standard vote.") from None
+            if vote_bytes != standard:
+                raise docs.DocumentError("The canonical package review must be the unchanged factory-generated standard vote.")
+            expected[story] = "UNDERSTANDING.md"
+            factory_bytes.append(vote_bytes)
         if (manifest.get("brief") != "UNDERSTANDING.md" or manifest.get("understanding") != expected
                 or manifest.get("entry") != "index.html" or manifest.get("runs") != "page"
-                or manifest.get("skill") or manifest.get("story")):
+                or manifest.get("skill")):
             raise docs.DocumentError("The package author-content declaration differs from this canonical projection.")
-    key = kit.sha256(b"\0".join((canonical_bytes, source, view, check_bytes, *readable_bytes, manifest_bytes, json.dumps(communication, sort_keys=True).encode())))
+    key = kit.sha256(b"\0".join((canonical_bytes, source, view, check_bytes, *readable_bytes, *factory_bytes, manifest_bytes, json.dumps(communication, sort_keys=True).encode())))
     with _gate_lock:
         if key in _checked_projections:
             _checked_projections.move_to_end(key)

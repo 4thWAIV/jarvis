@@ -75,7 +75,8 @@ class _Work:
     def items(self):
         now = self.start
         pieces = [
-            _piece("engine", "Wire the engine", "working", self.engine_quiet, self.engine_heard),
+            _piece("engine", "Wire the engine", "working", self.engine_quiet, self.engine_heard,
+                   who={"kind": "agent", "ref": "s1", "name": "Interface"}),
             _piece("docs", "Write the docs", "working", now - 1, now - 700),
             _piece("review", "Review it", "waiting_on_tim", note_at=now - 50,
                    after=["engine"], waits_for=["engine"]),
@@ -184,12 +185,17 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.route("**/api/work", work)
         await page.route("**/api/work/**", work)
         await page.route("**/api/workflows**", flow)
+        from tests.test_voice_page_subagents import worker_inventory_fixture
+        worker_snapshot = worker_inventory_fixture(time.time(), thinking="s1")
+        await page.route("**/api/workers", lambda route: route.fulfill(json=worker_snapshot))
         await page.goto(page_url)
 
         # ── the Work tab's rows ────────────────────────────────────────
         await page.click(".right-tabs [role=tab][title=Work]")
         row = ".work-row[data-work-id=work-1]"
         await page.locator(row).wait_for(timeout=10000)
+        await page.locator(row + ' canvas[data-orb-state="thinking"]').wait_for()
+        assert await page.locator(row + ' [data-worker-snapshot]').get_attribute('data-worker-snapshot') == worker_snapshot['snapshot_id']
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.work-row')]
             .map(r => [r.dataset.workId, r.dataset.activity ?? null]))""")
         assert looks == {"work-1": None, "work-2": None, "work-3": "done",

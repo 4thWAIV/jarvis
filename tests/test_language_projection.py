@@ -3,24 +3,55 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import decision_package, language_documents, language_projection, make_package, work_packages
+from jarvis import decision_package, language_documents, language_projection, make_package, package_inbox, package_story, work_packages
 from tests.test_language_documents import draft, installed_kit
 
 
-def test_factory_package_keeps_exact_source_check_and_render(draft):
+@pytest.mark.parametrize("language", ["en", "es"])
+def test_factory_package_keeps_exact_source_check_and_render(draft, monkeypatch, language):
+    monkeypatch.setattr(make_package, "built_language", lambda: language)
     service = language_documents.Documents()
     checked = service.validate(**draft)
     result = language_projection.publish(service, **{k: checked[k] for k in ("document_id", "revision", "source_revision")})
     package = work_packages.find(result["package_id"])
     assert package.manifest.communication["source_revision"] == checked["source_revision"]
     assert package.manifest.brief == "UNDERSTANDING.md"
-    assert set(package.manifest.understanding) == {"source.yaml", "check.json", "canonical.json", "index.html"}
+    assert set(package.manifest.understanding) == {"source.yaml", "check.json", "canonical.json", "index.html", make_package.STORY_FILE}
+    assert package.manifest.story == make_package.STORY_FILE
+    assert work_packages.page_file(package, make_package.STORY_FILE) == package_story.encode(package_inbox.with_understood_slide(None, language))
     assert work_packages.page_file(package, "UNDERSTANDING.md").decode() == draft["readable_markdown"]
     assert work_packages.page_file(package, "index.html") == Path(checked["references"]["view"]).read_bytes()
     assert work_packages.page_file(package, "source.yaml").decode() == draft["source"]
-    assert json.loads(work_packages.page_file(package, "check.json"))["ok"]
+    assert work_packages.page_file(package, "check.json") == Path(checked["references"]["check"]).read_bytes()
+    canonical = json.loads(work_packages.page_file(package, "canonical.json"))
+    assert canonical["revision"] == checked["revision"] and canonical["metadata"] == checked["metadata"]
     again = language_projection.publish(service, **{k: checked[k] for k in ("document_id", "revision", "source_revision")})
     assert again["package_id"] == result["package_id"]
+
+
+@pytest.mark.parametrize("change", ["narrative", "answers", "whitespace", "member"])
+def test_modified_factory_vote_cannot_reuse_a_checked_projection(draft, change):
+    service = language_documents.Documents()
+    checked = service.validate(**draft)
+    published = language_projection.publish(service, **{k: checked[k] for k in ("document_id", "revision", "source_revision")})
+    package = work_packages.find(published["package_id"])
+    language_projection.folder_gate(package.folder, package.manifest.communication)
+    path = package.folder / make_package.STORY_FILE
+    story = json.loads(path.read_bytes())
+    if change == "narrative":
+        story["slides"].insert(0, {"title": "Another claim", "beats": [{"say": "A competing architecture claim."}]})
+        path.write_bytes(package_story.encode(story))
+    elif change == "answers":
+        story["answers"] = "results/other.json"
+        path.write_bytes(package_story.encode(story))
+    elif change == "whitespace":
+        path.write_bytes(path.read_bytes() + b"\n")
+    else:
+        manifest = json.loads((package.folder / "package.json").read_bytes())
+        manifest["story"] = "other.json"
+        (package.folder / "package.json").write_text(json.dumps(manifest))
+    with pytest.raises(language_documents.DocumentError, match="unchanged factory-generated standard vote"):
+        language_projection.folder_gate(package.folder, package.manifest.communication)
 
 
 def test_unvalidated_architecture_cannot_bypass_the_factory(tmp_path):
