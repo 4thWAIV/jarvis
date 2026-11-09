@@ -13,6 +13,23 @@ export interface Inventory {
   projects: Record<string, WorkerCounts>; capacity?: { total: number; occupied: number; queued: number; free: number }; taken_at: number; coverage: string; gaps: string[];
 }
 const store = createStore<{ value: Inventory | null; error: string | null }>({ value: null, error: null });
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function counts(value: unknown): value is WorkerCounts {
+  return record(value) && ["workers", "model_work", "generating", "unknown", "tool_wait", "queued", "runtime_active"]
+    .every(key => typeof value[key] === "number" && Number.isFinite(value[key]) && Number(value[key]) >= 0);
+}
+function inventory(value: unknown): value is Inventory {
+  if (!record(value) || !Array.isArray(value.workers) || !counts(value.total)
+      || !record(value.providers) || !Object.values(value.providers).every(counts)
+      || !record(value.projects) || !Object.values(value.projects).every(counts)
+      || !Array.isArray(value.gaps) || !value.gaps.every(gap => typeof gap === "string")
+      || typeof value.coverage !== "string") return false;
+  return value.workers.every(worker => record(worker) && counts(worker.counts)
+    && ["id", "session_id", "provider", "name", "project", "kind"].every(key => typeof worker[key] === "string")
+    && record(worker.activity) && typeof worker.activity.state === "string");
+}
 let users = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let epoch = 0;
@@ -22,7 +39,8 @@ async function refresh(generation: number) {
   try {
     const res = await fetch("/api/workers", { signal: controller.signal });
     if (!res.ok) throw new Error(`Worker discovery: HTTP ${res.status}`);
-    const value = await res.json() as Inventory;
+    const value: unknown = await res.json();
+    if (!inventory(value)) throw new Error("Worker discovery: invalid inventory response");
     if (generation === epoch) store.set({ value, error: null });
   } catch (e) {
     if (generation === epoch) store.set({ value: null, error: String(e) });

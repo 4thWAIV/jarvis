@@ -67,6 +67,24 @@ def agents_with_counts():
     ]}
 
 
+
+def worker_inventory_fixture(now):
+    from types import SimpleNamespace
+    from jarvis.worker_inventory import build
+    from jarvis.session_watch import SessionState, Subagent
+    sessions = []
+    for agent, count in zip(agents_with_counts()["agents"], (2, 1, 0)):
+        children = [Subagent(agent_id=f"{agent["session_id"]}-child-{i}", description="Child", agent_type="Explore", background=False, depth=1,
+                             state="working", started=now - 5, written=now,
+                             worker_activity={"state": "model_work", "observed_at": now,
+                                              "source": "native_request", "coverage": "request"})
+                    for i in range(count)]
+        sessions.append(SessionState(session_id=agent["session_id"], cwd="/example", project="example-project",
+                                     state="idle", provider=agent["provider"], subagents=children,
+                                     worker_activity={"state": "idle", "observed_at": now, "source": "turn_end"}))
+    return build(SimpleNamespace(sessions=sessions, provider_errors=[], taken_at=now), now=now)
+
+
 def subagent_transcript(now, description):
     return [
         {"offset": 0, "at": now - 420, "role": "you", "tool": None,
@@ -111,6 +129,8 @@ class _Api:
             return {"session_id": row["session_id"], "subagent": agent, "name": row["description"],
                     "state": row["state"], "session_name": row["session_name"],
                     "entries": subagent_transcript(now, row["description"]), "earlier": None}
+        if path == "/api/workers":
+            return worker_inventory_fixture(now)
         if path == "/api/agents":
             return agents_with_counts()
         if path == "/api/conversation":
@@ -225,10 +245,21 @@ async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_pl
                                  && c.top >= box.top && c.bottom <= box.bottom)};
         })""")
         by_id = {r["id"]: r for r in rows}
-        assert by_id["s1"]["count"] == "2 working"
-        assert by_id["s2"]["count"] == "1 working"
-        assert by_id["s3"]["count"] is None
+        assert by_id["s1"]["count"] == "2 model work"
+        assert by_id["s2"]["count"] == "1 model work"
+        assert by_id["s3"]["count"] == "0 model work"
         assert len({r["height"] for r in rows}) == 1, rows
         assert all(r["inside"] for r in rows), rows
         assert await page.evaluate(FITS)
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_invalid_worker_response_keeps_the_page_usable(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, _api = await _open(p, page_url)
+        await page.route("**/api/workers", lambda route: route.fulfill(json={}))
+        await page.wait_for_function("() => [...document.querySelectorAll('.agent-subagents')].some(e => e.textContent === 'Activity unknown')")
+        await page.click(".right-tabs [data-ui-tab=workflows]")
+        await page.wait_for_selector(".workflow-row[data-workflow-id=wf-1]")
         await browser.close()

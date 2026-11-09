@@ -9,6 +9,9 @@ fixture), with /api/usage/week replaced by Playwright.
 """
 
 import json
+import time
+
+from tests.test_voice_page_subagents import worker_inventory_fixture
 
 import pytest
 
@@ -38,6 +41,7 @@ async def _shown(page_playwright, page_url, body, status=200, logo=True):
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
         await page.route("**/api/usage/week", lambda route: route.fulfill(
             status=status, content_type="application/json", body=json.dumps(body)))
+        await page.route("**/api/workers", lambda route: route.fulfill(json=worker_inventory_fixture(time.time())))
         # A stand-in logo file, or none (a 404) to see the slot stay empty.
         svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
         await page.route("**/providers/*.svg", lambda route: route.fulfill(
@@ -84,7 +88,7 @@ async def _shown(page_playwright, page_url, body, status=200, logo=True):
                             widths: [d, w].map(e => [e.scrollWidth, e.clientWidth]),
                             dateBottom: r('.weekly-reset').bottom,
                             dateSize: parseFloat(getComputedStyle(w).fontSize)}; })(),
-                  textNodes: [...view.querySelectorAll('.account-rows *')].filter(e =>
+                  textNodes: [...view.querySelectorAll('.account-rows *')].filter(e => e.checkVisibility() &&
                     [...e.childNodes].some(c => c.nodeType === 3 && c.textContent.trim()))
                     .map(e => e.textContent.trim()),
                   hover: view.title || n.title,
@@ -130,7 +134,7 @@ async def test_two_rows_of_the_same_height(page_playwright, page_url):
     shown = await _shown(page_playwright, page_url, _week(-88.8, 98.8))
     (available, pace) = shown["rows"]
     assert available["height"] == pace["height"] == 26, shown["rows"]
-    assert available["kids"] == ["weekly-avatar", "weekly-left"]
+    assert available["kids"] == ["worker-total", "weekly-left"]
     assert pace["kids"] == ["weekly-provider", "weekly-ahead"]
 
 
@@ -138,7 +142,7 @@ async def test_two_rows_of_the_same_height(page_playwright, page_url):
 async def test_the_first_row_shows_what_is_left_and_no_words(page_playwright, page_url):
     shown = await _shown(page_playwright, page_url, _week(10.0, 40.0))
     assert shown["left"] == "60%"
-    assert shown["textNodes"] == ["60", "%", "+", "10.0", "%"], "no words, only the two figures"
+    assert shown["textNodes"] == ["3", "60", "%", "+", "10.0", "%"], "model-work total and the two usage figures"
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -211,7 +215,7 @@ async def test_every_place_is_filled(page_playwright, page_url, ahead, shown_as)
 async def test_each_row_starts_with_its_icon_at_the_row_s_height(page_playwright, page_url):
     shown = await _shown(page_playwright, page_url, _week(5.2, 44.8))
     (avatar, provider) = shown["front"]
-    assert avatar[0] == "weekly-avatar" and avatar[4] == "50%"          # round
+    assert "weekly-avatar" in avatar[0].split() and avatar[4] == "50%"          # round
     assert provider[0] == "weekly-provider" and provider[1] == "anthropic"
     for _, _, w, h, _ in shown["front"]:
         assert abs(w - shown["numberHeight"]) < 0.5 and abs(h - shown["numberHeight"]) < 0.5
