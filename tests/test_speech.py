@@ -92,7 +92,6 @@ class Harness:
 
     async def emit(self, msg):
         self.msgs.append(msg)
-        if msg["type"] == "audio":
         # Behave like the browser: `drop_queued` discards every chunk that has not
         # started playing (all unacked audio except the first); `stop` discards all.
         if msg["type"] in ("drop_queued", "stop"):

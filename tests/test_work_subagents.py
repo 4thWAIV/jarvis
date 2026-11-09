@@ -197,7 +197,8 @@ def test_an_agent_named_by_id_is_found_whatever_the_cap(wired, real_session):
     listed, capped = session_watch.read_subagents(real_session, CWD, SESSION, time.time())
     assert capped and all(a.agent_id != "zlate0000000001" for a in listed)
     live = wired.server._subagent_now(SESSION, "zlate0000000001")
-    assert (live.name, live.state) == ("Agent zlate0000000001", "stale")
+    assert (live.name, live.state) == ("Agent zlate0000000001", "waiting")
+    assert not live.activity["active"]  # Timestamp-free prompt is no current turn evidence.
 
 
 def test_ended_its_turn_but_waiting_on_its_monitor_says_so(wired, real_session, item):

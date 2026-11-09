@@ -115,7 +115,7 @@ def current(evidence, now):
     if state in ('model_work', 'model_active') and (at is None or not 0 <= now - at <= MODEL_REQUEST_LEASE_SECONDS):
         state = 'unknown'
     model_work = state in ('model_work', 'model_active', 'generating')
-    turn_open = evidence.get('turn_open')
+    turn_open = evidence.get('turn_open') if at is not None else None
     if state in ('idle', 'offline', 'queued'):
         turn_open = False
     # The existing main orb stays thinking for the whole open turn.
