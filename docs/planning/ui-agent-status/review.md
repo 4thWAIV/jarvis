@@ -6,7 +6,7 @@ Work item: `work-6f00ebb716c2` (UI agent status).
 
 The proposal to replace native Claude delegation with hosted workers is withdrawn. The revised [native activity plan](native-activity-plan.md) preserves native terminal sessions and native subagents. It separates model-request work, tool execution, idle and unconfirmed observation, using request boundaries and native lifecycle hooks. It includes the observed premature-completion defect caused by thinking blocks carrying `end_turn`.
 
-The committed counters currently show recent generation evidence and unknown coverage. They have not yet been converted to the revised model-work phases. This branch remains an implementation in progress, not a complete live all-worker count. The native observer, phase reducer and revised count labels are the next work; no active sessions have been changed.
+The committed counters now show model-work phases, tool execution and unconfirmed coverage. Native hooks, request/response matching and completion-sidecar handling are implemented. Deployment and authenticated live validation remain; see deployment-handoff.md. No active sessions have been changed.
 
 ## Implemented
 
@@ -16,7 +16,7 @@ The committed counters currently show recent generation evidence and unknown cov
 - Claude managed runs request partial messages. Model deltas and thinking-token increments update the root worker. Task lifecycle and child messages create separate child records, preserve nested parents, exclude shell jobs, and never credit child output to the parent. Native child output remains lifecycle-only coverage. Process cleanup removes its in-memory observations.
 - Claude CLI roster and transcripts provide process, turn and tool phases; native children retain their parent metadata. No transcript write is treated as current token generation.
 - Managed run occupied, queued and free slot counts are independent of generation. External unreported slot reservations are unknown.
-- The empty `weekly-avatar` positions in the existing `WeeklyUsage` brain accounts now show each provider's generation count and missing coverage. Opening a count shows the combined total and project/parent hierarchy. Existing agent rows show family counts. The surrounding layout remains intact.
+- The empty `weekly-avatar` positions in the existing `WeeklyUsage` brain accounts now show each provider's model-work count and missing coverage. Opening a count shows the combined total and project/parent hierarchy. Existing agent rows show family counts. The surrounding layout remains intact.
 - Discovery failures, stale snapshots, absent workflow workers and malformed parent cycles surface as coverage gaps. Poll failure clears the visible count. A restart cannot recover an active claim from stored job status.
 
 ## Local review
@@ -34,4 +34,4 @@ Runtime/session/inventory/executor regression tests passed. The frontend product
 
 ## Handoff
 
-The inventory and runtime adapters are implemented in the isolated `feature/ui-agent-status` worktree. Planning owns delivery of the Work-linked decision package and any live deployment. The complete all-worker view remains unfinished until native observation and the revised phase reducer cover those workers. Do not mark this Work item complete because the inventory is present.
+The inventory and runtime adapters are implemented in the isolated `feature/ui-agent-status` worktree. Planning owns delivery of the Work-linked decision package and any live deployment. The implementation awaits release and live coverage validation, including an authenticated fresh Claude test. Do not mark this Work item complete because the inventory is present.

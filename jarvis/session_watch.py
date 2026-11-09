@@ -1222,9 +1222,9 @@ def _agent_facts(path: Path, st: os.stat_result) -> dict:
         hit = _AGENT_CACHE.get(str(path))
     if hit is not None and hit[0] == key:
         return hit[1]
-    from jarvis.worker_activity import observation
+    from jarvis.worker_activity import file_observation
     meta = read_agent_meta(path)
-    evidence = observation(tail_objects(path, _AGENT_TAIL_BYTES), PROVIDER)
+    evidence = file_observation(path, PROVIDER)
     finished = meta["native_finished"]
     if finished is None:
         finished = _finished(path)
@@ -1750,9 +1750,9 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         # both roots with its file under the second one read as `fresh` —
         # "not started" — which is the one state JARVIS never announces.
         roots_here = _roots_of(group, primary)
-        from jarvis.worker_activity import observation
-        activity_objects = next((tail_objects(p, _AGENT_TAIL_BYTES) for root in roots_here
-                                 if (p := transcript_path(root, primary.cwd, session_id)).exists()), [])
+        from jarvis.worker_activity import file_observation
+        activity_evidence = next((file_observation(p, PROVIDER) for root in roots_here
+                                 if (p := transcript_path(root, primary.cwd, session_id)).exists()), {})
         recap = _first_recap(roots_here, primary.cwd, session_id)
         subagents, agents_capped = read_subagents(roots_here, primary.cwd, session_id, at, limit=None)
         agents_active = working_agents(subagents)
@@ -1761,7 +1761,7 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         steerable_entry = next((e for e in live if e.steerable), None)
         sessions.append(SessionState(
             session_id=session_id,
-            worker_activity=observation(activity_objects, PROVIDER),
+            worker_activity=activity_evidence,
             runtime_status={"status": "active" if live and status.state == WORKING else "idle" if live else "offline",
                             "observed_at": at, "source": "claude_roster"},
             cwd=primary.cwd,

@@ -47,9 +47,10 @@ export function WorkerTotal({ provider, compact = false }: { provider?: string; 
     </div>
   </details>;
 }
-export function WorkerFamily({ sessionId }: { sessionId: string }) {
+export function WorkerFamily({ sessionId, provider }: { sessionId: string; provider?: string | null }) {
   const { value, error } = useWorkers();
-  const root = value?.workers.find(w => w.session_id === sessionId);
+  const matches = value?.workers.filter(w => w.session_id === sessionId && (!provider || w.provider === provider)) ?? [];
+  const root = matches.length === 1 ? matches[0] : undefined;
   return <span className="agent-subagents" title={error ?? value?.coverage}>
     {root ? words(root.counts) : "Activity unknown"}
   </span>;

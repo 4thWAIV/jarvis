@@ -226,7 +226,7 @@ function AgentItem({ agent, switchable, onToggle }: {
         {/* Its needs-board count, in the upper right, zero included. */}
         <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
         <AgentProvider provider={agent.provider} />
-        <WorkerFamily sessionId={agent.session_id} />
+        <WorkerFamily sessionId={agent.session_id} provider={agent.provider} />
       </button>
       {/* Only in the All view; in Active the agent's box takes the
           whole row. */}

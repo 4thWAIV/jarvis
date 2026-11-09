@@ -32,7 +32,9 @@ def record(root: Path, obj: dict, now=None):
     agent = obj.get('agent_id')
     event = {'kind': kind, 'session_id': sid[:128], 'agent_id': str(agent)[:128] if agent else None,
              'tool_use_id': str(obj.get('tool_use_id') or '')[:128],
-             'tool_name': str(obj.get('tool_name') or '')[:80], 'at': now}
+             'tool_name': str(obj.get('tool_name') or '')[:80], 'at': now,
+             'completed_tools': [str(call.get('tool_use_id'))[:128] for call in obj.get('tool_calls', [])[:1000]
+                                 if isinstance(call, dict) and call.get('tool_use_id')]}
     directory = root / 'worker-observations'
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / f'{time.time_ns()}-{uuid.uuid4().hex}.json'
@@ -68,16 +70,20 @@ def observations(root: Path, now: float):
                 continue
             sid = event.get('agent_id') or event['session_id']
             row = groups.setdefault(sid, {'session_id': sid, 'parent_id': event['session_id'] if event.get('agent_id') else None,
-                                         'tools': set(), 'coverage': 'native_hooks'})
+                                         'tools': set(), 'finished_tools': set(), 'coverage': 'native_hooks'})
             kind, tool = event['kind'], event.get('tool_use_id')
             phase = None
             if kind == 'PreToolUse':
+                if tool and tool in row['finished_tools']:
+                    continue  # An asynchronous start arrived after its completion.
                 if tool: row['tools'].add(tool)
                 phase = 'tool_wait'
             elif kind in ('PostToolUse', 'PostToolUseFailure'):
                 row['tools'].discard(tool)
+                if tool: row['finished_tools'].add(tool)
                 phase = 'tool_wait' if row['tools'] else 'awaiting_model'
             elif kind == 'PostToolBatch':
+                row['finished_tools'].update(event.get('completed_tools') or [])
                 row['tools'].clear()
                 phase = 'awaiting_model'
             elif kind == 'PermissionRequest': phase = 'human_wait'
@@ -104,7 +110,7 @@ def install(config: Path, data: Path):
             if not rule['hooks']:
                 rules.remove(rule)
         if not any(h.get('command') == command for rule in rules for h in rule.get('hooks', [])):
-            rules.append({'hooks': [{'type': 'command', 'command': command, 'timeout': 2}]})
+            rules.append({'hooks': [{'type': 'command', 'command': command, 'timeout': 2, 'async': True}]})
     config.parent.mkdir(parents=True, exist_ok=True)
     temporary = config.with_suffix('.worker-observer.tmp')
     temporary.write_text(json.dumps(body, indent=2) + '\n')

@@ -24,6 +24,8 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         streamed = worker_activity.managed(provider, sid)
         latest = max((streamed, evidence or {}), key=lambda e: e.get('observed_at') or 0)
         live = worker_activity.current(latest, now)
+        if latest.get('coverage_gap'):
+            gaps.append(latest['coverage_gap'])
         # Session completion/liveness beats any previously observed output.
         if not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished', 'needs_you'):
             live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False)
@@ -86,7 +88,7 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
             continue  # Old hooks do not resurrect an exited session.
         row['hook_observed_at'] = hook.get('observed_at')
         if (hook.get('observed_at') or 0) > (row['activity'].get('observed_at') or 0):
-            evidence = {k: v for k, v in hook.items() if k not in ('tools', 'parent_id', 'session_id')}
+            evidence = {k: v for k, v in hook.items() if k not in ('tools', 'finished_tools', 'parent_id', 'session_id')}
             if now - evidence['observed_at'] > worker_activity.MODEL_REQUEST_LEASE_SECONDS:
                 evidence.update(last_phase=evidence['state'], state='unknown')
             row['activity'] = worker_activity.current(evidence, now)

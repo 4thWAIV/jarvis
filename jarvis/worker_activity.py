@@ -209,3 +209,61 @@ class ManagedStream:
             for sid in self.children:
                 _children.pop(sid, None)
                 _managed.pop(('anthropic', sid), None)
+
+
+# Incremental native-transcript evidence. Completed message content is discarded
+# immediately after its lifecycle fields have been reduced. First observation is
+# bounded; an incomplete/oversized record produces a coverage gap, not activity.
+_file_cache = {}
+FILE_READ_BYTES = 4 * 1024 * 1024
+
+
+def file_observation(path, provider):
+    import json
+    from pathlib import Path
+    path = Path(path)
+    key = (provider, str(path))
+    try:
+        stat = path.stat()
+        with _lock:
+            saved = _file_cache.get(key)
+            if saved and saved['inode'] == stat.st_ino and saved['offset'] <= stat.st_size:
+                offset, previous = saved['offset'], saved['evidence']
+            else:
+                offset, previous = max(0, stat.st_size - FILE_READ_BYTES), None
+            if saved and offset == stat.st_size:
+                return dict(previous)
+            skipped = stat.st_size - offset > FILE_READ_BYTES
+            if skipped:
+                offset, previous = stat.st_size - FILE_READ_BYTES, None
+            with path.open('rb') as source:
+                source.seek(offset)
+                if previous is None and offset:
+                    source.readline(FILE_READ_BYTES)  # Initial seek may begin inside a record.
+                    offset = source.tell()
+                raw = source.read(FILE_READ_BYTES)
+            end = raw.rfind(b'\n')
+            if end < 0:
+                evidence = dict(previous or {'state': 'unknown', 'source': 'incomplete_transcript'})
+                if len(raw) == FILE_READ_BYTES:
+                    evidence = {'state': 'unknown', 'source': 'oversized_transcript_record',
+                                'coverage_gap': 'A transcript record exceeded the observation limit.'}
+                    offset = stat.st_size
+            else:
+                objects = []
+                for line in raw[:end].splitlines():
+                    try:
+                        obj = json.loads(line)
+                        if isinstance(obj, dict): objects.append(obj)
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                evidence = observation(objects, provider, previous)
+                offset += end + 1
+            if skipped:
+                evidence['coverage_gap'] = 'Transcript ingestion skipped a burst larger than its observation limit.'
+            _file_cache[key] = {'inode': stat.st_ino, 'offset': offset, 'evidence': evidence}
+            while len(_file_cache) > 4096:
+                _file_cache.pop(next(iter(_file_cache)))
+            return dict(evidence)
+    except OSError:
+        return {'state': 'unknown', 'source': 'transcript_unavailable'}
