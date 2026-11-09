@@ -16,6 +16,12 @@ from jarvis.bundle_contract import (Extent, RenderedPage, RenderedPageInfo,
 from jarvis.bundle_readers import Description, Detected, MemberSource, Reader, TextSlice, archive_reason
 
 
+def content_revision(rows) -> str:
+    """Canonical sorted checked member paths, byte lengths and digests."""
+    return hashlib.sha256(json.dumps({"version": 1, "members": sorted(rows)},
+        ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+
+
 class InspectionCore:
     def __init__(self, cache: DerivedCache):
         self.cache = cache

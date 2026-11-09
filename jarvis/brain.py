@@ -183,6 +183,9 @@ class BrainConfig:
     # (`address_rule`).
     honorific: str = ""
     mcp_config: Optional[Path] = None
+    # A separate direct-utterance classifier has no tools or project context.
+    classification_only: bool = False
+    provider_home: Optional[Path] = None
     # Names of the MCP servers the user declared for themselves, as accepted
     # by server.py's `declared_connections`. Empty on the ordinary install.
     connections: list[str] = field(default_factory=list)

@@ -78,6 +78,7 @@ class Telling:
     utterances: list = field(default_factory=list)
     task: Optional[asyncio.Task] = None
     stopped: bool = False
+    completed_through_beat: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,8 @@ class StoryTeller:
                 await self._announce(self._frame(t))
                 heard = await speech.wait_for(utt, timeout=SLIDE_TIMEOUT_SEC)
                 t.utterances = []
+                if heard:
+                    t.completed_through_beat = f"{number}.{len(slide.beats)}"
                 if t.stopped:
                     break
                 if slide.waits:
@@ -353,7 +356,9 @@ class StoryTeller:
     @staticmethod
     def _frame(t: Telling) -> dict:
         frame = {"type": "package_story", "package": t.package.id, "state": t.state,
-                 "slide": t.slide, "slides": len(t.story.slides)}
+                 "slide": t.slide, "slides": len(t.story.slides),
+                 "storyRevision": t.story.source_revision,
+                 "completedThroughBeat": t.completed_through_beat}
         if t.question:
             frame["question"] = t.question
         return frame

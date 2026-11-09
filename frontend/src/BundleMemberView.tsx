@@ -22,7 +22,8 @@
  * `bundle.member.close`, as the brain does.
  */
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { registerDocumentView } from "./packageViews";
 import type { Location, MemberInfo, Preview, TextChunk, TextPage } from "./bundleContract";
 import {
   bundleWords as W, cells, openBundleMember, PAGED_FORMATS, pageUrl, readPreview, readText,
@@ -120,6 +121,7 @@ registerCommand("bundle.member.more", {
 
 export function BundleMemberView({ member }: { member: MemberKey }) {
   useT();
+  const element = useRef<HTMLDivElement | null>(null);
   const { messageId, attachmentId, memberId } = member;
   useEffect(() => { readFirst({ messageId, attachmentId, memberId }); }, [messageId, attachmentId, memberId]);
   const now = useSyncExternalStore(shown.subscribe, shown.get);
@@ -130,6 +132,15 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
   const reading = current?.reading ?? true;
   const showText = current?.showText ?? false;
   const page = current?.page ?? 1;
+  useEffect(() => registerDocumentView((selection) => {
+    const root = element.current;
+    const rect = root?.getBoundingClientRect();
+    const selected = window.getSelection();
+    return {messageId, attachmentId, memberId, page, zoom: window.visualViewport?.scale ?? 1,
+      textMode: showText, visible: document.visibilityState === "visible" && !!rect?.width && !!rect?.height,
+      focused: document.hasFocus(), selectedText: selection && selected?.anchorNode && root?.contains(selected.anchorNode)
+        ? selected.toString().slice(0, 4000) : null};
+  }), [messageId, attachmentId, memberId, page, showText]);
   const view = (args: CommandArgs["bundle.member.view"]) => bindingProps(bind("bundle.member.view", args));
 
   const info: MemberInfo | undefined = pages[0]?.member ?? preview?.member;
@@ -149,7 +160,7 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
                 format={info?.format ?? "text"} />
   );
   return (
-    <div id="bundle-member-view" data-member-id={memberId} ref={ui.whole}>
+    <div id="bundle-member-view" data-member-id={memberId} ref={(el) => {element.current = el; ui.whole(el);}}>
       <section className="package-head" ref={ui.part("header")}>
         <div className="package-head-words">
           <h2>{info?.name ?? W.reading}</h2>

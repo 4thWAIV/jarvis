@@ -36,6 +36,8 @@ that destination.
 from __future__ import annotations
 
 import time
+import hashlib
+import json
 from typing import Callable, Optional, Protocol, runtime_checkable
 
 # How a send's record ends, whatever the destination keeps it in.
@@ -78,17 +80,33 @@ def recipient(capture: dict) -> Optional[str]:
     return session_recipient(session) if session else None
 
 
+# Configured by the package service; absent configuration fails closed for package messages.
+package_context_guard = lambda context, session: "Package evidence validation is unavailable."
+
+
+def package_binding(capture):
+    context = capture.get("package_context")
+    return hashlib.sha256(json.dumps(context, sort_keys=True, separators=(",", ":")).encode()).hexdigest() if context else None
+
+
+def package_refusal(capture):
+    context = capture.get("package_context")
+    return package_context_guard(context, capture.get("to_session")) if context else None
+
+
 def heard(capture: dict) -> bool:
     """Heard in full, or read on screen, naming the recipient it has now,
     since its text or its recipient last changed."""
     return (capture["read"] == capture["text"]
-            and capture.get("read_to") == recipient(capture))
+            and capture.get("read_to") == recipient(capture)
+            and capture.get("read_package_binding") == package_binding(capture))
 
 
 def accepted(capture: dict) -> bool:
     """Sendable: heard since it last changed, and that exact text approved
     by him since (his yes after the read-back, or his Send)."""
-    return heard(capture) and capture.get("approved") == capture["text"]
+    return (heard(capture) and capture.get("approved") == capture["text"]
+            and capture.get("approved_package_binding") == package_binding(capture))
 
 
 def awaiting_answer(capture: dict) -> bool:
@@ -101,6 +119,7 @@ def read_back(capture: dict, text: str) -> None:
     yes given before this read-back does not carry over to it."""
     capture["read"] = text
     capture["read_to"] = recipient(capture)
+    capture["read_package_binding"] = package_binding(capture)
     capture["approved"] = None
     capture["asking"] = True
 
@@ -116,6 +135,8 @@ def changed(capture: dict) -> None:
     approved again."""
     capture["read"] = None
     capture["read_to"] = None
+    capture["read_package_binding"] = None
+    capture["approved_package_binding"] = None
     capture["approved"] = None
     capture["asking"] = False
 
@@ -132,6 +153,7 @@ def said_yes(capture: dict) -> bool:
     if not heard(capture):
         return False
     capture["approved"] = capture["text"]
+    capture["approved_package_binding"] = package_binding(capture)
     return True
 
 
@@ -140,7 +162,9 @@ def approve(capture: dict) -> None:
     names, and approved at once."""
     capture["read"] = capture["text"]
     capture["read_to"] = recipient(capture)
+    capture["read_package_binding"] = package_binding(capture)
     capture["approved"] = capture["text"]
+    capture["approved_package_binding"] = package_binding(capture)
     capture["asking"] = False
 
 
@@ -219,6 +243,11 @@ def stage(recipient: Recipient, capture: dict, *, voice,
     """Record a capture as a message to `recipient` and stage it to send:
     (its record id, None), or (None, why it cannot go), recorded as failed.
     The caller has already checked `accepted`."""
+    problem = package_refusal(capture)
+    if problem:
+        changed(capture)
+        recipient.refuse("package_changed")
+        return None, problem
     refused = recipient.refusal()
     if refused:
         failure, sentence = refused

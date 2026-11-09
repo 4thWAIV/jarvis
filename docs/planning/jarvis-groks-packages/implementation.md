@@ -20,3 +20,11 @@ The implementation starts from `2784484`. The specification inspected `eaf3683`.
 ## Current state
 
 Source reconciliation is complete. Reader extraction is in progress. No release or deployment is part of this implementation.
+
+## Implementation checkpoint
+
+The package content service now includes immutable snapshots, source/results revisions, original-delivery source identities, local/team cache scopes, leases, opaque cursors, SQLite substring search, source citations, generated frontend contracts, revision-pinned asset routes, generic DOM observations, factory slide reporting, ordinary attachment viewer state, isolated HTML rendering, image result references, deliberate display capture, direct-user action scopes, capture preparation reuse, and evidence binding through staging and delivery.
+
+The existing attachment and capture contracts remain in use. New package follow-ups use `CapturePreparation`, `transmission`, and the existing `messages` rows. The current testing checkpoint includes the package content acceptance tests, reader tests, package modes/story tests, capture and transmission tests, and tool registration tests. The built frontend compiles.
+
+The isolated browser demonstration, expanded adversarial fixtures, and final review artifact are still in progress. No release, merge, deployment, or live service restart has occurred.

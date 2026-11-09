@@ -42,6 +42,8 @@ import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
 
 export interface PackageInfo {
+  snapshotId?: string;
+  contentRevision?: string;
   id: string;
   name: string;
   version: string;
@@ -251,7 +253,7 @@ export async function tellStory(id: string, action: "tell" | "resume" | "stop",
 /** Where its entry is served, to its frame. */
 export function entryUrl(info: PackageInfo): string {
   const path = (info.entry ?? "").split("/").map(encodeURIComponent).join("/");
-  return `${base(info.id)}/files/${path}`;
+  return `${base(info.id)}/files/${info.contentRevision ? `@snapshots/${encodeURIComponent(info.contentRevision)}/` : ""}${path}`;
 }
 
 /** Save `data` as results/<name> in the package's folder. */

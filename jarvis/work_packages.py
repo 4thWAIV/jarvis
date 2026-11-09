@@ -336,7 +336,8 @@ def _record(folder_name: str) -> Optional[dict]:
     return body if isinstance(body, dict) else None
 
 
-def _write_record(folder_name: str, sha256: str, attachment: str) -> None:
+def _write_record(folder_name: str, sha256: str, attachment: str,
+                  source_revision: Optional[str] = None) -> None:
     """Record that `attachment` (whose bytes hash to `sha256`) is this
     package, keeping the attachments recorded before it."""
     body = _record(folder_name) or {}
@@ -346,7 +347,8 @@ def _write_record(folder_name: str, sha256: str, attachment: str) -> None:
     path = _record_path(folder_name)
     path.parent.mkdir(mode=0o700, exist_ok=True)
     temp = path.with_name(f"{PARTIAL}{uuid.uuid4()}")
-    temp.write_text(json.dumps({"sha256": sha256, "attachments": attachments}),
+    temp.write_text(json.dumps({**body, "sha256": sha256, "attachments": attachments,
+                               **({"source_revision": source_revision} if source_revision else {})}),
                     encoding="utf-8")
     os.replace(temp, path)
 
@@ -356,6 +358,11 @@ def sha256_of(package: "Package") -> str:
     keeps it; "" for a folder from before records were kept."""
     recorded = (_record(package.folder.name) or {}).get("sha256")
     return recorded if isinstance(recorded, str) else ""
+
+
+def delivered_source_revision(package: "Package") -> Optional[str]:
+    value = (_record(package.id) or {}).get("source_revision")
+    return value if isinstance(value, str) else None
 
 
 def _unpacked_from(sha256: str) -> Optional[Path]:
@@ -418,6 +425,18 @@ def unpack(archive_path: Path, attachment_id: str,
                     _write_record(final.name, sha256, attachment)
                     return _load(final), False
                 final = data_paths.packages_dir() / _label(found.manifest, sha256[:16])
+            from jarvis.inspection_core import content_revision
+            delivered_members = []
+            prefix = found.root.rstrip("/") + "/" if found.root else ""
+            for member in listing.members:
+                if member.is_dir or not member.path.startswith(prefix):
+                    continue
+                relative = member.path[len(prefix):]
+                if relative.startswith("results/"):
+                    continue
+                delivered_members.append((relative, member.size,
+                    bundle_archive.digest(archive, member, bundle_archive.DEFAULT_BUDGETS)))
+            delivered_revision = content_revision(delivered_members)
             try:
                 bundle_archive.extract(archive, listing, final, folder=found.root,
                                        keep_modes=True)
@@ -425,7 +444,7 @@ def unpack(archive_path: Path, attachment_id: str,
                 return _load(final), False
     except bundle_archive.ArchiveError as e:
         raise PackageError(str(e)) from None
-    _write_record(final.name, sha256, attachment)
+    _write_record(final.name, sha256, attachment, delivered_revision)
     try:
         (clear_mark or unquarantine)(final)
     except (OSError, subprocess.SubprocessError) as e:

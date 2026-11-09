@@ -26,6 +26,7 @@ skipped, never run as anything else.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -82,6 +83,8 @@ class Story:
     language: str
     slides: tuple[Slide, ...]
     answers: Optional[str] = None               # results/<name>.json
+
+    source_revision: str = ""
 
     def asking(self, question: str) -> Optional[int]:
         """The slide (from 1) that asks `question`, or None."""
@@ -229,4 +232,4 @@ def parse(raw: bytes) -> Story:
             raise StoryError(f"Slide {n} asks only when {s.asks_when[0]} is answered, "
                              f"which no slide asks.")
     return Story(_text(body.get("title"), "The story's title", MAX_TITLE_CHARS), language,
-                 tuple(slides), answers)
+                 tuple(slides), answers, hashlib.sha256(raw).hexdigest())

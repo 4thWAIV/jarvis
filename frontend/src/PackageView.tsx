@@ -46,8 +46,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
     if (!frame.current) return undefined;
     return connectBridge(frame.current, info.id, {
       onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true),
-    });
-  }, [info.id]);
+    }, info.snapshotId);
+  }, [info.id, info.snapshotId]);
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <section className="package-head" ref={ui.part("header")}>

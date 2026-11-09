@@ -21,6 +21,7 @@ import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
 import { loadVoiceInputSettings } from "./voiceSettings";
+import { startPackageViews } from "./packageViews";
 import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
 import { audioNeedsClick } from "./conversation/controlState";
@@ -52,6 +53,7 @@ export function startJarvis(orb: Orb): void {
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
+  startPackageViews(socket);
   startSessionsSocket();
   // The interface's language: the one in force on the server (locale.ts).
   startLocale();

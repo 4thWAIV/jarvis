@@ -65,6 +65,7 @@ PARTIAL = ".partial-"
 SCRATCH = "scratch"
 # A scratch copy or partial file older than this was left by a crash.
 LEFTOVER_AFTER_SEC = 3600
+_SCOPE_LEASES: dict[str, dict[str, tuple[float, set[Path]]]] = {}
 
 
 @dataclass(frozen=True)
@@ -99,19 +100,21 @@ class DerivedCache:
     def __init__(self, root: Optional[Path] = None, max_bytes: int = CACHE_MAX_BYTES):
         self._root, self.max_bytes = root, max_bytes
         self._used: Optional[int] = None    # bytes held, counted once, then kept up to date
-        self._leases: dict[str, tuple[float, set[Path]]] = {}
+
 
     def lease(self, lease_id: str, keys, seconds: float = 300) -> None:
-        self._leases[lease_id] = (time.monotonic() + seconds,
-                                  {self.path_for(key) for key in keys})
+        leases = _SCOPE_LEASES.setdefault(str(self.root().resolve()), {})
+        leases[lease_id] = (time.monotonic() + seconds, {self.path_for(key) for key in keys})
 
     def release(self, lease_id: str) -> None:
-        self._leases.pop(lease_id, None)
+        _SCOPE_LEASES.setdefault(str(self.root().resolve()), {}).pop(lease_id, None)
 
     def _leased(self) -> set[Path]:
         now = time.monotonic()
-        self._leases = {k: v for k, v in self._leases.items() if v[0] > now}
-        return set().union(*(v[1] for v in self._leases.values())) if self._leases else set()
+        root = str(self.root().resolve())
+        leases = {k: v for k, v in _SCOPE_LEASES.setdefault(root, {}).items() if v[0] > now}
+        _SCOPE_LEASES[root] = leases
+        return set().union(*(v[1] for v in leases.values())) if leases else set()
 
     def root(self) -> Path:
         return self._root or data_paths.bundle_cache_dir()
@@ -165,10 +168,7 @@ class DerivedCache:
         except BaseException:
             partial.unlink(missing_ok=True)
             raise
-        if self._used is None:
-            self._used = sum(size for _, size, _ in self._files(self.root()))
-        else:
-            self._used += len(data) - previous
+        self._used = sum(size for _, size, _ in self._files(self.root()))
         if self._used > self.max_bytes:
             self.trim()
 

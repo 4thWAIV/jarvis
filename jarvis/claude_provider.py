@@ -276,6 +276,10 @@ ALLOWED_TOOLS = [
 # the intent in the one place a reader will look, and if the CLI ever enforces
 # `--tools` over MCP names again, a user's declared server keeps working
 # instead of going silently dead.
+from jarvis.package_content_tools import TOOL_MODELS as _PACKAGE_CONTENT_TOOLS
+ALLOWED_TOOLS.extend("mcp__jarvis__" + name for name in _PACKAGE_CONTENT_TOOLS)
+
+
 def granted_tools(connections: list[str]) -> list[str]:
     """ALLOWED_TOOLS plus one whole-server grant per declared connection."""
     return ALLOWED_TOOLS + [f"mcp__{name}" for name in connections]
@@ -382,7 +386,7 @@ class ClaudeSession:
             "--verbose", "--include-partial-messages",
             "--model", c.model, "--effort", c.effort, "--name", "jarvis",
             "--setting-sources", "project", "--strict-mcp-config",
-            "--tools", ",".join(granted_tools(c.connections)),
+            "--tools", "" if c.classification_only else ",".join(granted_tools(c.connections)),
             "--settings", json.dumps({"crossSessionInbound": "accept"}),
             "--dangerously-skip-permissions",
             "--append-system-prompt", instructions,

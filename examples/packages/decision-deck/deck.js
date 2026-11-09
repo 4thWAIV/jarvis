@@ -564,6 +564,7 @@
     if (jump.offsetLeft < strip.scrollLeft) strip.scrollLeft = jump.offsetLeft - 40;
     else if (jump.offsetLeft + jump.offsetWidth > strip.scrollLeft + strip.clientWidth)
       strip.scrollLeft = jump.offsetLeft + jump.offsetWidth - strip.clientWidth + 40;
+    if (window.jarvisPackageObserver) window.jarvisPackageObserver.location({slideId: slides[current].el.id});
     count.textContent = (current + 1) + " of " + slides.length;
     document.getElementById("prev").disabled = current === 0;
     document.getElementById("next").disabled = current === slides.length - 1;

@@ -42,6 +42,7 @@
  * has taken over, and does nothing else.
  */
 
+import { observeFrame } from "./packageViews";
 import { t, type Said } from "./locale";
 import { inputStatus } from "./mic";
 import { saveResult, storyCue, storyState } from "./packages";
@@ -77,7 +78,8 @@ function asBlob(data: unknown): Blob | null {
 
 /** Hear `frame`'s requests for package `packageId`; returns the way to stop. */
 export function connectBridge(frame: HTMLIFrameElement, packageId: string,
-                              events: BridgeEvents): () => void {
+                              events: BridgeEvents, snapshotId?: string): () => void {
+  const stopObserving = observeFrame(frame, packageId, snapshotId);
   let stopListening: (() => void) | null = null;
   const post = (message: Record<string, unknown>, transfer: Transferable[] = []) =>
     frame.contentWindow?.postMessage({ jarvis: BRIDGE, ...message }, "*", transfer);
@@ -178,5 +180,6 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     resized.disconnect();
     frame.removeEventListener("load", loaded);
     stopListening?.();
+    stopObserving();
   };
 }

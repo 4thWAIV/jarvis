@@ -5,6 +5,7 @@ transitions are persisted before they are announced.
 """
 
 import logging
+import json
 import re
 import sqlite3
 import time
@@ -248,6 +249,10 @@ def init_db() -> None:
             if column not in cols:
                 conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
                 conn.commit()
+        sent_columns = {r["name"] for r in conn.execute("PRAGMA table_info(messages)")}
+        if "package_context" not in sent_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN package_context TEXT")
+            conn.commit()
         message_cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_messages)")}
         for column in ("sender_session", "sender_evidence", "sender_subagent"):
             # Who sent it, and on what evidence (session_message_sender.py).
@@ -505,6 +510,7 @@ class Message:
     answered_at: Optional[float] = None
     reply: Optional[str] = None
     failure: Optional[str] = None
+    package_context: Optional[str] = None
 
     @property
     def body(self) -> str:
@@ -524,15 +530,15 @@ def _message(row) -> Message:
 def create_message(session_id: str, provider: str, agent_name: str,
                    project: str, text: str, capture_id: Optional[int] = None,
                    status: str = MessageStatus.STAGED,
-                   failure: Optional[str] = None) -> int:
+                   failure: Optional[str] = None, package_context: Optional[dict] = None) -> int:
     """Record a message before anything is done with it. Its id."""
     with closing(_connect()) as conn:
         cur = conn.execute(
             "INSERT INTO messages (session_id, provider, agent_name, project, "
-            "capture_id, text, status, staged_at, failure) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "capture_id, text, status, staged_at, failure, package_context) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, provider, agent_name, project, capture_id, text,
-             str(status), time.time(), failure))
+             str(status), time.time(), failure, json.dumps(package_context) if package_context else None))
         conn.commit()
         message_id = int(cur.lastrowid)
     _message_activity(message_id, str(status), session_id, agent_name)

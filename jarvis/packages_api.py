@@ -70,6 +70,9 @@ def his_click(request: Request) -> bool:
 _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg+xml")
 
 
+content_reference = lambda package: {}
+
+
 def describe(package: Package) -> dict:
     """A package as the page shows it; `story` is its story's outline, or
     None (no story, or one that can no longer be told); `layout` the room
@@ -79,7 +82,7 @@ def describe(package: Package) -> dict:
         story = package.story()
     except PackageError:
         story = None
-    return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
+    return {**content_reference(package), "id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
             "runs": m.runs, "entry": m.entry, "layout": m.layout, "source": package.source,
             "sources": list(package.sources),
             "story": story.outline() if story is not None else None}

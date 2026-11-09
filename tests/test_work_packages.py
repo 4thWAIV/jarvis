@@ -248,6 +248,10 @@ def test_opening_and_running_act_only_on_his_own_turn(wired, tmp_path, marks, to
 
 def test_run_package_command_runs_the_step_on_his_word(wired, tmp_path, marks, monkeypatch):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
+    from jarvis.package_content_contract import PackageRef
+    wired.server._package_action_scope = wired.server.package_authority.mint(
+        user_turn_id="test-direct-utterance", package=PackageRef(package_id=package.id),
+        operation="execute_package", utterance="Run this package command")
     got = _call(wired, "run_package_command", package=package.id,
                 command="echo done > ran; echo finished")
     assert got["text"].startswith("The step exited with code 0.") and "finished" in got["text"]

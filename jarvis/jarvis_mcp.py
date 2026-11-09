@@ -2745,6 +2745,15 @@ def _token() -> str:
 # of thousands. Only `text` goes through that cap.
 
 
+from jarvis.package_content_tools import tool_specs as _package_tool_specs
+TOOL_SPECS.extend(_package_tool_specs())
+from jarvis.package_content_contract import DocumentViewRequest as _DocumentViewRequest
+for _spec in TOOL_SPECS:
+    if _spec["name"] == "read_bundle_member":
+        _spec["inputSchema"]["properties"].update(_DocumentViewRequest.model_json_schema()["properties"])
+        _spec["description"] += " With current_view true, read the current page, zoom and requested selection from this turn's authenticated document viewer; source reading remains separate."
+
+
 def _image_block(raw) -> dict | None:
     """A well-formed MCP image content block from the server's `image` field.
 

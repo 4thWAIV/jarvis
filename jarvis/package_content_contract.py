@@ -138,16 +138,16 @@ class InspectionError(ValueError):
         super().__init__(explanation)
 
 class Rect(Shape):
-    x: float
-    y: float
-    width: float = Field(ge=0)
-    height: float = Field(ge=0)
+    x: float = Field(ge=-10000000, le=10000000)
+    y: float = Field(ge=-10000000, le=10000000)
+    width: float = Field(ge=0, le=10000000)
+    height: float = Field(ge=0, le=10000000)
 
 class Viewport(Shape):
-    width: float = Field(ge=0)
-    height: float = Field(ge=0)
-    scrollX: float
-    scrollY: float
+    width: float = Field(ge=0, le=10000000)
+    height: float = Field(ge=0, le=10000000)
+    scrollX: float = Field(ge=-10000000, le=10000000)
+    scrollY: float = Field(ge=-10000000, le=10000000)
 
 class PageLocator(Shape):
     slideId: str | None = Field(default=None, max_length=256)
@@ -181,7 +181,7 @@ class ObserveResponse(Shape):
     protocol: Literal[1]
     mountNonce: str = Field(max_length=128)
     requestId: str = Field(max_length=128)
-    sequence: int = Field(ge=0)
+    sequence: int = Field(ge=0, le=9007199254740991)
     observedAt: str = Field(max_length=64)
     locator: PageLocator
     viewport: Viewport
@@ -220,3 +220,44 @@ class PreparedFollowup(Shape):
     package: PackageRef
     evidence_ids: tuple[str, ...]
     state: Literal["capturing"] = "capturing"
+
+class DocumentViewState(Shape):
+    messageId: str = Field(max_length=64)
+    attachmentId: str = Field(max_length=64)
+    memberId: str = Field(max_length=256)
+    page: int = Field(ge=1, le=1000000)
+    zoom: float = Field(gt=0, le=100)
+    textMode: bool
+    visible: bool
+    focused: bool
+    selectedText: str | None = Field(default=None, max_length=4000)
+
+class DocumentViewRequest(Shape):
+    current_view: bool = False
+    client: str | None = None
+
+class DocumentImage(Shape):
+    kind: Literal['document'] = 'document'
+    mediaType: str
+    width: int
+    height: int
+    page: int
+    pageCount: int
+    imageRef: str
+
+class ScreenImage(Shape):
+    kind: Literal['screen'] = 'screen'
+    mediaType: Literal['image/png'] = 'image/png'
+    width: int
+    height: int
+    display: int
+    capturedAt: str
+    imageRef: str
+
+class VisualEvidence(Shape):
+    evidence: EvidenceRef
+    image: DocumentImage | ScreenImage
+    display: int | None = None
+    sequence_before: int | None = None
+    sequence_after: int | None = None
+    limits: tuple[str, ...] = ()

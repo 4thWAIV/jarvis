@@ -2061,7 +2061,10 @@ class SessionWatcher:
                 elif session.between_turns:
                     provider = next((p for p in self.providers if p.name == m.provider), None) \
                         or for_session(session, self.providers)
-                    outcome = provider.send(session, m.text) if provider is not None else "failed"
+                    from jarvis import transmission
+                    context_problem = (transmission.package_context_guard(json.loads(m.package_context), m.session_id)
+                                       if getattr(m, "package_context", None) else None)
+                    outcome = provider.send(session, m.text) if provider is not None and not context_problem else "failed"
                     fields = ({"status": "sent", "sent_at": now} if outcome == "sent"
                               else {"status": "failed", "failure": outcome})
                 if fields is None:

@@ -45,6 +45,7 @@ jarvis = [
     "ui_contract/*.json",
     "ui_contract/families/*.json",
     "package_story.js",
+    "package_observer.js",
     "jarvis_home/*",
     "skills/**/*",
     "session_skills/**/*",

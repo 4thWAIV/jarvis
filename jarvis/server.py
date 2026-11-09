@@ -3066,7 +3066,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     the socket loop keeps receiving `played` acks and interim text meanwhile.
     `heard` is the id the page gave this transcript; a capture made on this
     turn records it, so the page can move those words to the capture."""
-    global _turn_utt, _turn_heard, _turn_reads
+    global _turn_utt, _turn_heard, _turn_reads, _package_action_scope, _package_turn_view
     if brain_instance is None or speech is None:
         return
     t0 = time.monotonic()
@@ -3095,6 +3095,34 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     reply = _ReplyText(utt.id)
     reads: list = []
     _turn_utt, _turn_heard, _turn_reads = utt, heard, reads
+    _package_action_scope = None
+    bound_page, _ = ui_clients.bound_page(heard)
+    _package_turn_view = package_views.freeze_turn(bound_page.client_id) if bound_page else None
+    try:
+        intent = await package_authority.classify(text, {
+            "client_id": bound_page.client_id if bound_page else None,
+            "view": _package_turn_view.model_dump(mode="json") if _package_turn_view else None})
+        if intent.operation:
+            if intent.target:
+                entry, problem = _inbox_one(intent.target)
+                if entry is None:
+                    raise InspectionError("ambiguous_package", problem)
+                reference = PackageRef(package_id=entry.package_id, inbox_id=entry.id)
+            elif _package_turn_view:
+                reference = _package_turn_view.package
+            else:
+                raise InspectionError("ambiguous_package", "Choose the package for this action.")
+            recipient = None
+            if intent.recipient and intent.recipient.casefold() not in {"sender", "the sender"}:
+                recipients = agent_directory.find_sessions(intent.recipient)
+                if len(recipients) != 1:
+                    raise InspectionError("ambiguous_recipient", "Choose the exact live recipient session.")
+                recipient = recipients[0].session_id
+            _package_action_scope = package_authority.mint(user_turn_id=utt.id, package=reference,
+                operation=intent.operation, utterance=text, recipient=recipient,
+                decision=intent.decision, answer=intent.answer)
+    except InspectionError as error:
+        _notes_for_brain.append(f"Package action scope unavailable: {error.failure.code}. Reading is available; no package mutation is authorized by this scope.")
     try:
         try:
             try:
@@ -3122,6 +3150,9 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 raise
             finally:
                 reply.finish()  # an error also closes the live text stream, as failed
+                package_authority.end_turn()
+                _package_action_scope = None
+                _package_turn_view = None
                 _turn_utt, _turn_heard, _turn_reads = None, None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
@@ -3325,10 +3356,13 @@ async def lifespan(application: FastAPI):
     if os.getenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "").strip():
         log.info("JARVIS_ALLOW_UNTRUSTED_ACTIONS is obsolete and ignored; "
                  "the refusal is now opt-in via JARVIS_REFUSE_UNTRUSTED_ACTIONS.")
+    if _brain_autostart():
+        package_authority.warm()
     log.info("JARVIS server starting")
 
     yield
 
+    await package_authority.close()
     await _stop_messaging()
     await team_api.stop()
     await _stop_attention()
@@ -4442,7 +4476,7 @@ async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
         return (_tool_reply(False, "not_allowed_in_digest — no tools in a digest turn."),
                 tool_activity.REFUSED)
 
-    if tool in ACTING_TOOLS:
+    if tool in ACTING_TOOLS and (tool != "look_at_package_content" or args.get("evidence_kind") == "screen_capture"):
         origin = brain_instance.current_origin if brain_instance else None
         if origin != "user":
             return (_tool_reply(
@@ -4461,6 +4495,27 @@ async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
             log.warning("refused %s: %s was read in this %s", tool, source,
                         "session" if tool in MEMORY_WRITERS else "turn")
             return _tool_reply(False, refusal), tool_activity.REFUSED
+
+    package_operations = {"answer_package_decision": "answer_decision", "sign_off_package": "sign_off",
+                          "run_package_command": "execute_package", "run_package_agent": "execute_package"}
+    if tool in package_operations:
+        try:
+            reference = _package_action_ref(str(args.get("package") or ""))
+            package_authority.require(_package_action_scope, package=reference,
+                                      operation=package_operations[tool], recipient=None)
+            if tool == "answer_package_decision":
+                scope = _package_action_scope
+                entry, _ = _inbox_one(str(args.get("package") or ""))
+                package, _ = _inbox_package(entry)
+                questions = package_inbox.questions(package)
+                question = next((q for q in questions if q.id == str(args.get("decision") or "")), None)
+                if question is None or not scope.answer or (scope.decision and question.id != scope.decision):
+                    raise InspectionError("intent_mismatch", "The direct request did not supply this decision and answer.")
+                if _inbox_option(question, scope.answer) != _inbox_option(question, str(args.get("option") or "")):
+                    raise InspectionError("intent_mismatch", "The proposed option differs from the user's supplied answer.")
+        except (InspectionError, ValueError) as error:
+            code = error.failure.code if isinstance(error, InspectionError) else "package_not_found"
+            return _tool_reply(False, (str(error) if not isinstance(error, InspectionError) else code + " — the requested package action has no matching direct user scope.")), tool_activity.REFUSED
 
     try:
         result = handler(args)
@@ -5817,21 +5872,7 @@ def _set_capture(capture: dict, text: str, to: str, to_session: Optional[str]) -
     """Put `text` in a capture, addressed to `to` (its session) when given:
     a new text or a new recipient clears his approval, so it is read back
     naming who it is for and approved again. On record and on the page."""
-    readdressed = bool(to_session) and to_session != capture.get("to_session")
-    changed = capture["text"] != text
-    if changed or readdressed:
-        # A new text or a new recipient: heard and approved again, naming it.
-        transmission.changed(capture)
-    capture["text"] = text
-    if to_session:
-        capture["to"], capture["to_session"] = to, to_session
-    if readdressed:
-        capture.pop("for", None)        # whom it was for was the old recipient's
-    if _turn_heard is not None and _turn_heard not in capture["heard"]:
-        capture["heard"].append(_turn_heard)
-    if changed or readdressed:
-        _record_capture(capture, to_session)
-    _capture_show(capture, "capturing")
+    capture_preparation.set(capture, text, to, to_session)
 
 
 def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
@@ -5843,7 +5884,7 @@ def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> No
         agent_session_id = found[0].session_id if len(found) == 1 else None
     _record(conversation_log.ItemKind.CAPTURE, capture["text"], capture_id=capture["id"],
             agent_session_id=agent_session_id, agent_name=capture["to"] or None,
-            detail={"heard": list(capture["heard"])})
+            detail={"heard": list(capture["heard"]), **({"package_context": capture["package_context"]} if capture.get("package_context") else {})})
 
 
 def _record_capture_cleared(capture: dict, by: str, how: str = "cleared") -> None:
@@ -6220,6 +6261,8 @@ def _restore_capture(number: int, notice_id: Optional[int] = None,
                "state": "capturing"}
     if item.agent_name and item.agent_session_id:
         capture["to_session"] = item.agent_session_id
+    if item.detail.get("package_context"):
+        capture["package_context"] = item.detail["package_context"]
     _captures[new_number] = capture
     _record_capture(capture, item.agent_session_id)
     _record(conversation_log.ItemKind.NOTICE,
@@ -6438,6 +6481,7 @@ class _StagedSteer:
     # He asked for it to go now: it skips the queue and is sent even
     # mid-turn, so the session takes it into the turn it is in.
     priority: bool = False
+    package_context: Optional[dict] = None
 
 
 @dataclass
@@ -6560,6 +6604,8 @@ def _deliver(item: _StagedSteer, text: str) -> str:
     """Send through the session's own provider: Claude Code's inbox socket,
     or Codex's queue. A priority message interrupts the turn under way where
     the provider can. One of session_steer's outcomes."""
+    if item.package_context and transmission.package_context_guard(item.package_context, item.session_id):
+        return session_steer.FAILED
     provider = _session_provider_named(item.provider)
     if provider is None:
         return session_steer.FAILED
@@ -6582,7 +6628,7 @@ def _message_for(item: _StagedSteer) -> int:
     if item.message_id is None:
         item.message_id = run_store.create_message(
             item.session_id, item.provider, item.voice_name, item.project,
-            STEER_SIGNATURE + item.prompt, capture_id=item.capture_id)
+            STEER_SIGNATURE + item.prompt, capture_id=item.capture_id, package_context=item.package_context)
     return item.message_id
 
 
@@ -7124,10 +7170,12 @@ class _AgentRecipient:
         session = self.session
         message_id = run_store.create_message(
             session.session_id, session.provider, session.voice_name, session.project,
-            STEER_SIGNATURE + self.prompt, capture_id=self.capture_id)
+            STEER_SIGNATURE + self.prompt, capture_id=self.capture_id,
+            package_context=capture.get("package_context"))
         _record(conversation_log.ItemKind.TO_AGENT, self.prompt,
                 agent_session_id=session.session_id, agent_name=session.voice_name,
-                message_id=message_id, capture_id=self.capture_id)
+                message_id=message_id, capture_id=self.capture_id,
+                detail={"package_context": capture.get("package_context")} if capture.get("package_context") else {})
         return message_id, _StagedSteer(session_id=session.session_id,
                                         voice_name=session.voice_name,
                                         project=session.project,
@@ -7136,7 +7184,8 @@ class _AgentRecipient:
                                         capture_id=self.capture_id,
                                         provider=session.provider,
                                         message_id=message_id,
-                                        priority=self.priority)
+                                        priority=self.priority,
+                                        package_context=capture.get("package_context"))
 
 
 # --- Messages to people (message_approvals.py) ------------------------------
@@ -8254,6 +8303,10 @@ async def _open_package_page(reference: str
     if not voice_clients:
         return None, "No JARVIS page is open to show it on."
     global _package_shown
+    entries = package_inbox.for_package(package.id)
+    reference = PackageRef(package_id=package.id, inbox_id=entries[0].id if len(entries) == 1 else None)
+    overview = await package_inspection.inspect(owner=_package_owner(), package=reference)
+    _package_pinned[package.id] = overview.snapshot
     _package_shown = packages_api.describe(package)
     await _voice_emit({"type": "package_page", "package": _package_shown})
     return package, ""
@@ -8339,6 +8392,105 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
             f"from slide {told.slide} of {total}; it is being told.")
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
+
+# Package content uses the same readers/cache implementation as attachments.
+from jarvis import package_content_api
+from jarvis.bundle_cache import DerivedCache, LocalOwner
+from jarvis.package_snapshots import PackageSnapshots
+from jarvis.package_inspection import PackageInspection
+from jarvis.package_views import PackageViews
+from jarvis.package_content_contract import InspectionError, PackageRef, PackageLocation
+
+package_inspection = PackageInspection(PackageSnapshots(DerivedCache()))
+package_views = PackageViews(package_inspection, lambda ws, frame: _send_ui_frame(ws, frame),
+                             lambda: story_teller.status())
+_package_pinned = {}
+
+def _package_owner():
+    return LocalOwner(str(data_paths.data_dir().resolve()))
+
+def _package_content_ref(package):
+    snapshot = _package_pinned.get(package.id)
+    content = {"inspectionRef": {"package_id": package.id}}
+    if snapshot:
+        content.update({"snapshotId": snapshot.snapshot_id, "contentRevision": snapshot.content_revision})
+    return content
+
+packages_api.content_reference = _package_content_ref
+from jarvis.capture_service import CapturePreparation
+from jarvis.package_authority import PackageAuthority
+from jarvis.package_followups import PackageFollowups
+capture_preparation = CapturePreparation(_record_capture, _capture_show, lambda: _turn_heard)
+package_authority = PackageAuthority(enabled=_brain_autostart)
+_package_action_scope = None
+_package_turn_view = None
+package_followups = PackageFollowups(package_inspection, package_authority, lambda: _captures,
+                                     _new_capture, capture_preparation)
+package_followups.owner = _package_owner
+transmission.package_context_guard = package_followups.context_guard
+from jarvis.package_content_tools import PackageToolAdapter, TOOL_MODELS
+package_tools = PackageToolAdapter(package_inspection, package_views, _package_owner,
+    lambda text: _wrap_untrusted("package content", text), ToolImage, lambda: _package_turn_view)
+
+async def _package_tool(tool, args):
+    try:
+        return await asyncio.wait_for(package_tools.call(tool, args), 15)
+    except asyncio.TimeoutError:
+        return _wrap_untrusted("package content", '{"code":"indexing","retryable":true,"explanation":"The operation exceeded its request deadline; retry the exact reference."}')
+
+for _tool_name in TOOL_MODELS:
+    if _tool_name != "prepare_package_followup":
+        async def _content_handler(args, name=_tool_name):
+            return await _package_tool(name, args)
+        TOOL_HANDLERS[_tool_name] = _content_handler
+        TAINTING_TOOLS[_tool_name] = "package contents or its reported view, controlled by its sender"
+        UNTRUSTED_READING_TOOLS.add(_tool_name)
+ACTING_TOOLS.add("look_at_package_content")
+TAINT_EXEMPT_ACTING.add("look_at_package_content")
+
+def _package_action_ref(reference):
+    entry, _ = _inbox_one(reference)
+    if entry:
+        return PackageRef(package_id=entry.package_id, inbox_id=entry.id)
+    package = work_packages.find(reference)
+    return PackageRef(package_id=package.id)
+
+async def _prepare_package_followup_ui(package_id, body, request):
+    from jarvis.package_content_contract import FollowupRequest
+    ref = PackageRef(package_id=package_id, inbox_id=body.get("inbox_id"))
+    explicit = body.get("recipient")
+    scope = package_authority.mint(user_turn_id="ui-" + str(time.monotonic()), package=ref,
+        operation="prepare_followup", recipient=explicit, origin="user_control")
+    try:
+        result = await package_followups.prepare(owner=_package_owner(), authority=scope,
+            request=FollowupRequest(package=ref, explicit_recipient_session=explicit,
+                **{k: body[k] for k in ("request_key", "expected_content_revision", "expected_results_revision", "text", "evidence_ids")}))
+        return result.model_dump(mode="json")
+    finally:
+        package_authority._scopes.pop(scope.scope_id, None)
+
+async def _prepare_package_followup(args):
+    from jarvis.package_content_contract import FollowupRequest
+    try:
+        ref = package_tools.package_ref(str(args.get("package") or ""))
+        explicit = str(args.get("recipient") or "") or None
+        request = FollowupRequest(request_key=args.get("request_key"), package=ref,
+            expected_content_revision=args.get("expected_content_revision"),
+            expected_results_revision=args.get("expected_results_revision"), text=args.get("text"),
+            evidence_ids=tuple(args.get("evidence_ids") or ()), explicit_recipient_session=explicit)
+        result = await package_followups.prepare(owner=_package_owner(), request=request,
+                                                authority=_package_action_scope)
+        return _wrap_untrusted("package content", result.model_dump_json())
+    except (InspectionError, ValueError) as error:
+        return _wrap_untrusted("package content", error.failure.model_dump_json() if isinstance(error, InspectionError)
+                               else '{"code":"bad_request"}')
+
+TOOL_HANDLERS["prepare_package_followup"] = _prepare_package_followup
+ACTING_TOOLS.add("prepare_package_followup")
+TAINTING_TOOLS["prepare_package_followup"] = "an evidence-grounded message drafted from package content"
+
+package_content_api.mount(app, package_inspection, package_views, _package_owner,
+                          prepare_followup=_prepare_package_followup_ui)
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
@@ -9055,7 +9207,8 @@ def tool_package_inbox(args: dict) -> str:
         body = _inbox_line(entry) + (f"\nPurpose: {entry.purpose}" if entry.purpose else "")
         if asked:
             body += "\n" + _inbox_questions(asked)
-        return ("One package in his inbox.\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body))
+        return (f"One package in his inbox. Read its contents with inspect_package(package={entry.id}).\n"
+                + _wrap_untrusted(_INBOX_WRAP_NAME, body))
     rows = package_inbox.listing(closed=bool(args.get("closed")))
     if not rows:
         return ("No closed packages, sir." if args.get("closed")
@@ -9078,7 +9231,10 @@ async def tool_open_inbox_package(args: dict) -> str:
         return f"{problem} It was not opened."
     asked = package_inbox.questions(package)
     if package.manifest.runs == work_packages.PAGE:
-        what_next = f"{entry.id} is open in the centre of his screen, sir. "
+        content_ref = _package_pinned.get(package.id)
+        what_next = (f"{entry.id} is open in the centre of his screen, sir. "
+                     + f"Read its source and coverage with inspect_package(package={entry.id}). "
+                     + (f"Mounted snapshot: {content_ref.snapshot_id}. " if content_ref else ""))
         if asked:
             what_next += ("Read him the first open decision and its recommendation from the "
                           "list below. Record each answer he gives with answer_package_decision "
@@ -9238,6 +9394,23 @@ async def tool_read_bundle_member(args: dict) -> str:
         return _WHICH_FILE
     if not member:
         return _WHICH_MEMBER
+    if args.get("current_view") is True:
+        page, _ = ui_clients.bound_page(_turn_heard)
+        client_id = str(args.get("client") or "") or (page.client_id if page else None)
+        try:
+            state = await package_views.observe_document(client_id)
+            if (state.messageId, state.attachmentId, state.memberId) != (str(key.message_id), str(key.attachment_id), member):
+                raise InspectionError("view_mismatch", "The visible document is a different attachment or member.")
+            context = messaging.bundle_context() if messaging else None
+            if context is None:
+                return MESSAGING_OFF
+            info, _ = context.inspection._verified(context.owner, key)
+            payload = {"kind": "reported_dom", "client": client_id, "attachment_sha256": info.sha256,
+                       "observed_at": time.time(), "state": state.model_dump(mode="json")}
+            head, chunk = _paged(json.dumps(payload), _page_arg(args), "The document viewer", "read_bundle_member", exact=True)
+            return head + "\n" + _wrap_untrusted("file", chunk or "")
+        except InspectionError as error:
+            return _wrap_untrusted("file", error.failure.model_dump_json())
     got = await bundle_api.answer(_bundles.text(
         key, member, args.get("continuation") or None,
         _int_arg(args, "max_chars", TEXT_PAGE_DEFAULT_CHARS)))
@@ -14998,6 +15171,36 @@ async def voice_handler(ws: WebSocket):
             if kind == "ui_event":
                 ui_clients.event(ws, msg)
                 continue
+            if kind in {"document_view", "document_view_response"}:
+                page = next((p for p in ui_clients.pages() if p.ws is ws), None)
+                if page:
+                    try:
+                        package_views.document_update(ws, page.client_id, msg)
+                    except InspectionError:
+                        pass
+                continue
+            if kind == "package_view_mount":
+                page = next((p for p in ui_clients.pages() if p.ws is ws), None)
+                try:
+                    from urllib.parse import urlsplit
+                    origin_host = urlsplit(ws.headers.get("origin", "")).hostname
+                    local = bool(ws.client and ws.client.host in {"127.0.0.1", "::1"} and origin_host in {"localhost", "127.0.0.1", "::1"})
+                    bound = package_views.mount(ws, _package_owner(), page.client_id if page else None, msg, local=local)
+                    _enqueue(queue, bound)
+                except InspectionError as error:
+                    _enqueue(queue, {"type": "package_view_error", "error": error.failure.model_dump(mode="json")})
+                continue
+            if kind in {"package_view_state", "package_view_observation", "package_view_changed", "package_view_close"}:
+                try:
+                    if kind == "package_view_close":
+                        package_views.close(ws, msg.get("mountId"))
+                    elif kind == "package_view_changed":
+                        package_views.changed(ws, msg)
+                    else:
+                        package_views.update(ws, msg)
+                except InspectionError as error:
+                    _enqueue(queue, {"type": "package_view_error", "error": error.failure.model_dump(mode="json")})
+                continue
             if speech is None:
                 continue
             if kind == "skip_to_end":
@@ -15143,6 +15346,7 @@ async def voice_handler(ws: WebSocket):
         unsent = turns.close()
         if unsent:
             log.info("voice socket closed with words not sent: %r", unsent[:120])
+        package_views.close(ws)
         ui_clients.gone(ws)
         _drop_voice_client(ws)
 

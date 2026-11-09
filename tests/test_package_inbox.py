@@ -20,8 +20,20 @@ import pytest
 
 from jarvis import (access_keys, attention_store, data_paths, decision_stamp, make_package,
                     package_inbox, run_store, work_packages, workflow_store, work_store)
-from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
+from tests.test_brain_page_parity import _call as _raw_call, wired  # noqa: F401  (the fixture)
 from tests.test_work_packages import make_zip, marks, write_zip  # noqa: F401
+
+
+def _call(w, tool, origin="user", **arguments):
+    # These fixtures model direct user requests. Origin alone is insufficient.
+    operation = {"answer_package_decision": "answer_decision", "sign_off_package": "sign_off"}.get(tool)
+    if origin == "user" and operation:
+        reference = w.server._package_action_ref(arguments["package"])
+        w.server._package_action_scope = w.server.package_authority.mint(
+            user_turn_id="test-direct-request", package=reference, operation=operation,
+            utterance=" ".join(str(v) for v in arguments.values()),
+            decision=arguments.get("decision"), answer=arguments.get("option"))
+    return _raw_call(w, tool, origin=origin, **arguments)
 
 EXAMPLES = Path(__file__).parent.parent / "examples" / "packages"
 BROWSER = {"Origin": "http://localhost:5173"}

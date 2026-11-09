@@ -80,9 +80,9 @@ WEB_SEARCH_TOOL = "web_search"
 WINDOW_NAMES = {300: "five_hour", 10080: "seven_day"}
 
 
-def child_env() -> dict[str, str]:
+def child_env(home: Optional[Path] = None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
-    env["CODEX_HOME"] = str(data_paths.codex_home())
+    env["CODEX_HOME"] = str(home or data_paths.codex_home())
     return env
 
 
@@ -162,7 +162,7 @@ def _toml_key(key: str) -> str:
     return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
 
 
-def config_toml(mcp_servers: dict) -> str:
+def config_toml(mcp_servers: dict, *, classification_only: bool = False) -> str:
     """The Codex home's config.toml: the settings above, and the MCP servers
     out of the brain's mcp.json, each approved as a whole server (the
     equivalent of Claude's whole-server grant)."""
@@ -180,7 +180,7 @@ def config_toml(mcp_servers: dict) -> str:
         # the brain home its own root; the cap is raised for the persona.
         "project_root_markers = []",
         "project_doc_max_bytes = 131072",
-        'web_search = "live"',
+        'web_search = "disabled"' if classification_only else 'web_search = "live"',
     ]
     for name, spec in sorted(mcp_servers.items()):
         if not isinstance(spec, dict) or not spec.get("command"):
@@ -196,7 +196,7 @@ def config_toml(mcp_servers: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_config(mcp_config: Optional[Path]) -> Path:
+def write_config(mcp_config: Optional[Path], *, home: Optional[Path] = None, classification_only=False) -> Path:
     """Write the Codex home's config.toml, 0600: it holds a copy of every
     `env` block of the user's connections, as mcp.json does."""
     servers = {}
@@ -205,8 +205,8 @@ def write_config(mcp_config: Optional[Path]) -> Path:
             servers = json.loads(Path(mcp_config).read_text()).get("mcpServers") or {}
         except (OSError, ValueError) as e:
             log.warning(f"codex: could not read {mcp_config}: {e}")
-    path = data_paths.codex_home() / "config.toml"
-    path.write_text(config_toml(servers))
+    path = (home or data_paths.codex_home()) / "config.toml"
+    path.write_text(config_toml(servers, classification_only=classification_only))
     try:
         path.chmod(0o600)
     except OSError as e:                             # pragma: no cover
@@ -282,16 +282,16 @@ class CodexSession:
         return shlex.split(self.codex) + list(args)
 
     async def open(self, instructions: str) -> None:
-        home = data_paths.codex_home()
-        write_config(self.config.mcp_config)
+        home = self.config.provider_home or data_paths.codex_home()
+        write_config(self.config.mcp_config, home=home, classification_only=self.config.classification_only)
         listing = await asyncio.create_subprocess_exec(
-            *self._cmd("features", "list"), env=child_env(), cwd=str(self.config.home),
+            *self._cmd("features", "list"), env=child_env(home), cwd=str(self.config.home),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await listing.communicate()
         self.disabled = features_to_disable(out.decode(errors="replace"))
         argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
         self.proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(self.config.home), env=child_env(),
+            *argv, cwd=str(self.config.home), env=child_env(home),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
         self._reader = asyncio.create_task(self._read_stdout(self.proc))
