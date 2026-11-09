@@ -92,7 +92,7 @@ async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_playwr
     async with page_playwright as p:
         browser, page = await _open(p, page_url)
         assert (await page.evaluate("window.__starts[0]"))["diagnostics"] is True
-        await page.wait_for_function("window.__telemetry.length >= 3", timeout=8000)
+        await page.wait_for_function("window.__telemetry.length >= 3", timeout=15000)
         t = await page.evaluate("window.__telemetry[window.__telemetry.length - 1]")
         assert set(t) >= {"framesCaptured", "framesSent", "heldSec", "socketSec", "longTaskMs",
                           "longTasks", "tabHidden", "notices", "voiceMsgs", "sessionMsgs",
@@ -147,7 +147,7 @@ async def test_text_that_was_written_under_the_orb_goes_to_messages(page_playwri
         assert "A sentence I could not voice." in messages
         await page.wait_for_function(
             "window.__telemetry.some(t => t.messages.some(m => m.text === 'A sentence I could not voice.'))",
-            timeout=5000)
+            timeout=15000)
         await browser.close()
 
 
@@ -176,12 +176,12 @@ async def test_the_quiet_page_is_reported_in_telemetry(page_playwright, page_url
         await page.click(".voice-summary-open")
         await page.click(".voice-quiet-button")
         assert await page.get_attribute(".voice-quiet-button", "aria-pressed") == "true"
-        await page.wait_for_function("window.__telemetry.some(t => t.quiet === true)", timeout=5000)
+        await page.wait_for_function("window.__telemetry.some(t => t.quiet === true)", timeout=15000)
         await page.click(".voice-quiet-button")
         n = await page.evaluate("window.__telemetry.length")
         await page.wait_for_function(f"window.__telemetry.length > {n} && "
                                      "window.__telemetry[window.__telemetry.length - 1].quiet === false",
-                                     timeout=5000)
+                                     timeout=15000)
         await browser.close()
 
 

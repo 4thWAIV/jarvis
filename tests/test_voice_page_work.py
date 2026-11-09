@@ -22,7 +22,6 @@ Headless Chromium on the built page, with /api/work*, /api/workflows* and
 both sockets replaced by Playwright.
 """
 
-import asyncio
 import json
 import os
 import tempfile
@@ -33,6 +32,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
+from tests.fixtures.waiting import until_async
 from tests.test_voice_page_workflows import _Server as _Workflows
 from tests.test_voice_page_workflows import _Sessions
 
@@ -138,10 +138,7 @@ class _Work:
 
 
 async def _posted(work, count):
-    for _ in range(50):
-        if len(work.posted) >= count:
-            return
-        await asyncio.sleep(0.1)
+    await until_async(lambda: len(work.posted) >= count)
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -221,7 +218,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
 
         # The banner, on any tab, opens Decisions.
         await banner.click()
-        await page.locator("#work-detail .workflow-decision[data-key=engine]").wait_for(timeout=5000)
+        await page.locator("#work-detail .workflow-decision[data-key=engine]").wait_for(timeout=15000)
         assert await page.locator("#work-detail .work-tabs [aria-selected=true]").text_content() == "Decisions (1)"
         answered = await page.locator("#work-detail .work-answered-answer").all_text_contents()
         assert answered[0].startswith("Withdrawn by the agent that asked it: Asked before the designs.")
@@ -279,7 +276,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         # History: opened, its item still opens in full.
         await page.click(".work-panel .work-history .workflows-done-toggle")
         past = page.locator(".work-row[data-work-id=work-3]")
-        await past.wait_for(timeout=5000)
+        await past.wait_for(timeout=15000)
         await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-history.png"))
         await past.click()
         await async_api.expect(page.locator("#work-detail .work-detail-name")).to_have_text("Old logo",
@@ -371,7 +368,7 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         # Still working: no Approve. Ready for review and nothing in the way: Approve.
         await page.click(".work-row[data-work-id=work-w]")
         await async_api.expect(page.locator("#work-detail .work-detail-name")).to_have_text(LONG, timeout=10000)
-        await page.locator("#work-detail .work-review").wait_for(timeout=5000)
+        await page.locator("#work-detail .work-review").wait_for(timeout=15000)
         await async_api.expect(page.locator("#work-detail .work-approve")).to_have_count(0)
         await page.click(".work-row[data-work-id=work-r]")
         approve = page.locator("#work-detail .work-approve")

@@ -2,27 +2,16 @@ import asyncio
 import logging
 import os
 import threading
-import time
 
 import pytest
 
 from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
+from tests.fixtures.waiting import until_async
 
 
 def _watcher(root):
     return sw.SessionWatcher(roots=[root], interval=0.01)
-
-
-async def _wait_for(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool:
-    """Poll `predicate` for up to `timeout`s instead of one fixed sleep, so
-    tests driving the real event loop are neither flaky nor slow."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(interval)
-    return predicate()
 
 
 def test_the_first_poll_is_silent_no_matter_what_is_running(tmp_path):
@@ -222,8 +211,7 @@ async def test_the_watcher_loop_polls_and_stops_cleanly(tmp_path):
 
     await w.start()
     try:
-        await asyncio.sleep(0.05)
-        assert w.snapshot.sessions
+        assert await until_async(lambda: w.snapshot.sessions), w.snapshot
     finally:
         await w.stop()
     assert w._task is None
@@ -265,11 +253,11 @@ async def test_a_subscriber_that_schedules_a_task_succeeds_on_the_real_loop(tmp_
 
     await w.start()
     try:
-        assert await _wait_for(lambda: w.snapshot.sessions), "baseline poll happened"
+        assert await until_async(lambda: w.snapshot.sessions), "baseline poll happened"
 
         write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n",
                      status="waiting", waiting_for="permission prompt")
-        assert await _wait_for(lambda: received or errors), "the transition was observed"
+        assert await until_async(lambda: received or errors), "the transition was observed"
     finally:
         await w.stop()
 
@@ -294,11 +282,11 @@ async def test_subscriber_callback_runs_on_the_event_loop_thread(tmp_path):
 
     await w.start()
     try:
-        assert await _wait_for(lambda: w.snapshot.sessions), "baseline poll happened"
+        assert await until_async(lambda: w.snapshot.sessions), "baseline poll happened"
 
         write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n",
                      status="waiting", waiting_for="permission prompt")
-        assert await _wait_for(lambda: len(seen_threads) >= 1), "the transition was observed"
+        assert await until_async(lambda: len(seen_threads) >= 1), "the transition was observed"
     finally:
         await w.stop()
 

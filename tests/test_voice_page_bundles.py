@@ -272,7 +272,7 @@ async def test_an_html_preview_shows_with_no_script_running(page_playwright, pag
         assert await page.locator("#bundle-member-view .bundle-html .file-state").inner_text() \
             == "1 link not loaded"
         # Its text instead, as text.
-        await page.get_by_role("button", name="Text", exact=True).click()
+        await page.locator("#bundle-member-view").get_by_role("button", name="Text", exact=True).click()
         await async_api.expect(page.locator("#bundle-member-view iframe")).to_have_count(0)
         await async_api.expect(page.locator("#bundle-member-view .message-text")) \
             .to_have_text("Background: <b>not bold</b>\nClaims and evidence.")

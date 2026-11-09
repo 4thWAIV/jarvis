@@ -2,13 +2,13 @@
 folded into one summary per project and ordered by what deserves attention.
 """
 
-import time
 
 import pytest
 
 from jarvis import projects_view as pv
 from jarvis import run_store
 from jarvis import session_watch as sw
+from tests.fixtures.waiting import until
 
 
 def _session(session_id, project, cwd, state=sw.IDLE, since=None, started=None):
@@ -309,25 +309,24 @@ def test_the_list_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     import asyncio
     from jarvis import server
 
-    def slow():
-        time.sleep(0.5)          # stands in for a disk that has to spin up
+    beats = [0]
+
+    def slow():                  # stands in for a disk that has to spin up:
+        until(lambda: beats[0] > 5)   # it lasts until the loop has ticked
         return []
 
     monkeypatch.setattr(server, "_project_views", slow)
 
     async def go():
-        ticks = 0
-
         async def heartbeat():
-            nonlocal ticks
             while True:
                 await asyncio.sleep(0.02)
-                ticks += 1
+                beats[0] += 1
 
         beat = asyncio.create_task(heartbeat())
         body = await server.api_projects_view()
         beat.cancel()
-        return body, ticks
+        return body, beats[0]
 
     body, ticks = asyncio.run(go())
 
@@ -341,25 +340,24 @@ def test_the_detail_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     import asyncio
     from jarvis import server
 
+    beats = [0]
+
     def slow():
-        time.sleep(0.5)
+        until(lambda: beats[0] > 5)   # lasts until the loop has ticked
         return []
 
     monkeypatch.setattr(server, "_project_views", slow)
 
     async def go():
-        ticks = 0
-
         async def heartbeat():
-            nonlocal ticks
             while True:
                 await asyncio.sleep(0.02)
-                ticks += 1
+                beats[0] += 1
 
         beat = asyncio.create_task(heartbeat())
         response = await server.api_project_view_detail("nope")
         beat.cancel()
-        return response, ticks
+        return response, beats[0]
 
     response, ticks = asyncio.run(go())
 
@@ -374,26 +372,25 @@ def test_the_open_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     import asyncio
     from jarvis import server
 
+    beats = [0]
+
     def slow():
-        time.sleep(0.5)
+        until(lambda: beats[0] > 5)   # lasts until the loop has ticked
         return []
 
     monkeypatch.setattr(server, "_project_views", slow)
 
     async def go():
-        ticks = 0
-
         async def heartbeat():
-            nonlocal ticks
             while True:
                 await asyncio.sleep(0.02)
-                ticks += 1
+                beats[0] += 1
 
         beat = asyncio.create_task(heartbeat())
         response = await server.api_project_open(
             server.ProjectOpenRequest(name="nope", path="/nowhere", target="editor"))
         beat.cancel()
-        return response, ticks
+        return response, beats[0]
 
     response, ticks = asyncio.run(go())
 

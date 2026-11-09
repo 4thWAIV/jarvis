@@ -13,6 +13,7 @@ import pytest
 from jarvis import team_api, team_client, team_reminder
 from jarvis.attention_store import AttentionStore
 from jarvis.team_client import TeamConnection
+from tests.fixtures.waiting import until_async
 
 
 @pytest.fixture(autouse=True)
@@ -35,13 +36,6 @@ def _pending(store: AttentionStore) -> list[tuple[str, str, str]]:
     return [(i.kind, i.source_id, i.event) for i in store.items()]
 
 
-async def _settle(task: asyncio.Task) -> None:
-    for _ in range(50):
-        if task.done():
-            return
-        await asyncio.sleep(0.01)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["disconnected", "signed_out"])
 async def test_not_signed_in_is_recorded_once_per_process_and_resolved_on_sign_in(state):
@@ -49,14 +43,14 @@ async def test_not_signed_in_is_recorded_once_per_process_and_resolved_on_sign_i
     conn = _connection(state)
     first = asyncio.create_task(team_reminder.remind_once(store, conn.signed_in, settle_sec=0,
                                                           watch_sec=0.01))
-    await asyncio.sleep(0.05)
-    assert _pending(store) == [("sign_in", "team", "not_signed_in")]
+    assert await until_async(
+        lambda: _pending(store) == [("sign_in", "team", "not_signed_in")]), _pending(store)
     await team_reminder.remind_once(store, conn.signed_in, settle_sec=0)
     assert len(store.history(store.items()[0].id)) == 1, "once per process"
     conn.signed_out, conn.saved = False, {"server_url": "https://team.example",
                                          "server_id": "s",
                                          "last_contact_at": team_client._now()}
-    await _settle(first)
+    assert await until_async(first.done)
     assert first.done() and _pending(store) == [], "resolved once signed in"
 
 
@@ -77,8 +71,8 @@ async def test_signed_in_at_the_look_is_not_recorded_after_a_later_sign_out():
     conn.signed_out = True
     task = asyncio.create_task(team_reminder.remind_once(store, conn.signed_in, settle_sec=0,
                                                          watch_sec=0.01))
-    await asyncio.sleep(0.05)
-    assert _pending(store) == [("sign_in", "team", "not_signed_in")]
+    assert await until_async(
+        lambda: _pending(store) == [("sign_in", "team", "not_signed_in")]), _pending(store)
     task.cancel()
 
 
@@ -106,8 +100,8 @@ async def test_team_api_start_records_it_after_settling_and_stop_cancels(monkeyp
 
     monkeypatch.setattr(team_reminder, "SETTLE_SEC", 0.0)
     team_api.start(attention=store)
-    await asyncio.sleep(0.05)
-    assert _pending(store) == [("sign_in", "team", "not_signed_in")]
+    assert await until_async(
+        lambda: _pending(store) == [("sign_in", "team", "not_signed_in")]), _pending(store)
     await team_api.stop()
 
 

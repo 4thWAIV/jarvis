@@ -12,6 +12,8 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixtures.waiting import until_async
+
 ORIGIN = {"Origin": "http://localhost:5173"}
 
 
@@ -121,11 +123,8 @@ def test_quiet_is_recorded_once_and_again_only_after_it_reported(wired, monkeypa
     async def twice():
         # Several looks, however long the first takes on a busy machine.
         task = asyncio.create_task(server._watch_workflow_silence())
-        for _ in range(500):
-            await asyncio.sleep(0.01)
-            if _events(store):
-                break
-        await asyncio.sleep(0.05)
+        await until_async(lambda: _events(store))
+        await asyncio.sleep(0.05)             # more looks, which record nothing more
         task.cancel()
 
     monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)

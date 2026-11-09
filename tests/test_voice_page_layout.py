@@ -10,6 +10,7 @@ fixture), at several window sizes.
 import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.fixtures.waiting import settled
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -61,8 +62,13 @@ async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_playwrig
         page = await browser.new_page(viewport={"width": size[0], "height": size[1]})
         await page.goto(page_url + view)
         await page.get_by_role("button", name="All", exact=True).click()
-        await page.wait_for_timeout(1500)
-        geo = await page.evaluate(LAYOUT)
+        # Measured once the list has its rows and the microphone's corner
+        # its height (the Main view stops above it), and nothing moves.
+        await page.wait_for_function("document.querySelectorAll('.agents-list li').length > 0", timeout=15000)
+        if view:
+            await page.wait_for_function("""() => parseFloat(getComputedStyle(document.documentElement)
+              .getPropertyValue('--centre-corner-height')) > 0""", timeout=15000)
+        geo = await settled(page, LAYOUT)
         assert abs(geo["footerBottom"] - size[1]) < 0.5, geo
         assert abs(geo["footerWidth"] - size[0]) < 0.5, geo
         assert geo["over"] == [], geo["over"]
@@ -105,8 +111,8 @@ async def test_the_agents_list_fills_the_right_panel_and_both_columns_end_togeth
         page = await browser.new_page(viewport={"width": size[0], "height": size[1]})
         await page.goto(page_url)
         await page.get_by_role("button", name="All", exact=True).click()
-        await page.wait_for_timeout(1500)
-        geo = await page.evaluate("""() => ({
+        await page.wait_for_function("document.querySelectorAll('.agents-list li').length > 0", timeout=15000)
+        geo = await settled(page, """() => ({
           rows: document.querySelectorAll('.agents-list li').length,
           left: document.getElementById('left-column').getBoundingClientRect(),
           right: document.getElementById('right-column').getBoundingClientRect(),

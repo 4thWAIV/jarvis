@@ -9,6 +9,7 @@ import pytest
 from jarvis import knowledge_client as kc
 from jarvis import knowledge_runtime as kr
 from jarvis import subsystem_diagnostics as sd
+from tests.fixtures.waiting import until_async
 
 
 class Clock:
@@ -95,11 +96,13 @@ def test_the_runtime_starts_tells_the_pace_once_per_change_and_stops(monkeypatch
 
     async def scenario():
         task = asyncio.create_task(rt.run())
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: sup.paced == ["free"]), sup.paced
         busy["v"] = True
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: sup.paced == ["free", "hold"]), sup.paced
         busy["v"] = False
-        await asyncio.sleep(0.1)
+        assert await until_async(lambda: sup.paced == ["free", "hold", "free"]
+                                 and sup.ticks >= 2), (sup.paced, sup.ticks)
+        await asyncio.sleep(0.05)             # more looks: a pace unchanged is not told again
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await rt.stop()

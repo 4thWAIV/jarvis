@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import importlib
 import threading
-import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 from jarvis import ui_contract
+from tests.fixtures.waiting import until
 
 ALL = ["map", "navigate", "indicate", "clear", "journey"]
 CPU = {"region": "main", "view": "main.network", "kind": "node", "key": "n1", "part": "cpu"}
@@ -85,10 +85,7 @@ def _next(ws, kind, limit=40):
 def _says(c, server, ws, heard):
     """He types from this page; the turn that answers it is bound to it."""
     ws.send_json({"type": "transcript", "text": "show me", "isFinal": True, "typed": True, "id": heard})
-    deadline = time.time() + 5
-    while not any(heard in p.heard for p in server.ui_clients.pages()):
-        assert time.time() < deadline
-        time.sleep(0.01)
+    assert until(lambda: any(heard in p.heard for p in server.ui_clients.pages())), "the page never heard it"
     server._turn_heard = heard          # the turn answering those words
 
 
