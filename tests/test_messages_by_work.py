@@ -269,6 +269,36 @@ def test_the_read_routes_and_the_page_s_mark(wired):
                        headers=ORIGIN).status_code == 404
 
 
+def test_the_page_reads_true_counts_and_sources_and_hears_each_move(wired):
+    """Round 2's page: the general list's new count is every new one, not a
+    page's; a message names its source (a Work decision's "<item>:<key>",
+    which the Messages tab answers it by); and every message recorded or
+    moved is an `inbox` hint on /ws/sessions."""
+    server, hints, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    wid = _start_work(client, agent, folder)
+    diag = Agent(home, DIAG).onboarded()
+    before = len(hints)
+    first = _post(client, diag, {"says": "General one."}).json()["message"]
+    assert {"type": server.INBOX_HINT} in hints[before:], "a message arriving is a hint"
+    _post(client, diag, {"says": "General two."})
+    general = client.get(f"{MESSAGES}/general?before={first['id'] + 1}").json()
+    assert [m["says"] for m in general["messages"]] == ["General one."]
+    assert general["new"] == 2, "every new one is counted, not only the page's"
+    assert first["source"]["kind"] == "signed"
+    before = len(hints)
+    client.post(f"{MESSAGES}/{first['id']}/mark", json={"state": "read"}, headers=ORIGIN)
+    assert {"type": server.INBOX_HINT} in hints[before:], "a message moving is a hint"
+    assert client.get(f"{MESSAGES}/general").json()["new"] == 1
+    r = agent.post(client, f"/api/work/{wid}/events", {
+        "kind": "decision_needed", "summary": "Which database?",
+        "detail": {"key": "db", "options": ["sqlite", "postgres"]}})
+    assert r.status_code == 200, r.text
+    [m] = client.get(f"{MESSAGES}/work/{wid}").json()["messages"]
+    assert m["source"] == {"kind": "work_decision", "id": f"{wid}:db"}
+
+
 # -- every other channel writes messages too ---------------------------------------------
 
 def test_a_work_decision_is_a_message_about_its_item_answered_with_his_answer(wired):

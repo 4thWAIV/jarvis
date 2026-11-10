@@ -46,7 +46,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
-- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input (on every other centre view the one microphone control and health dot sit in the centre area's lower-right corner, `MicControl.tsx` `MicCorner`, contract view `main.corner`); Folders, Agents, Queue, Work, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input (on every other centre view the one microphone control and health dot sit in the centre area's lower-right corner, `MicControl.tsx` `MicCorner`, contract view `main.corner`); Folders, Agents, Inbox (the tab that was the Queue, id still `queue`), Work, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
 - **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
@@ -320,8 +320,9 @@ and for the brain. An update that is a message (`conversation_log.UPDATES`:
 each source's attention kind and event) names it as `message` in
 `/api/attention` and `attention_updates` (`conversation_log.message_for`,
 `server._update_message`; a keyed source's newest message, by the index of
-migration 3). Updates draws any such entry (but a package's reduced line)
-as one `MessageLine` with Read, Reply and Seen. Read (`POST
+migration 3). Read and Reply are on each message where the page shows it
+(`MessageCard.tsx`, round 2 below); Updates no longer lists messages one
+by one. Read (`POST
 /api/messages/{id}/read`, the brain's `read_aloud`, `server.read_aloud`)
 speaks that message only ("<agent> answers:", "<name> writes:", or its
 own words for a board, a decision or a package; a session's message is
@@ -369,8 +370,36 @@ keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
 answered once it goes (`_reply_went`, on `sent`); his answer to a Work
 decision marks it answered, and withdrawn or signed off done
 (`_decision_messages_settled`); a package closed marks its messages done
-(`_inbox_closed`). Round 2 shows them on the page; round 3 moves agents over
-and removes the old paths.
+(`_inbox_closed`). Round 3 moves agents over and removes the old paths.
+Round 2 shows them on the page (the design's "What he will see" 2-4). Every
+message is one `MessageCard.tsx` (who, its proven sender by its one name, a
+subagent as "name (parent)", or "You"; when; NEW; what it says, as text; the
+package it carries as a card with where it stands and Open, the inbox's one
+Open, his click only; Read, Reply and Mark read, by its id), read by
+`frontend/src/messagesToHim.ts` (`inboxMessages`: `/api/messages/work` and
+`/general`, whose `new` counts every new one, `conversation_log.new_general`;
+`readConversation`, `markMessage`, `messageAct`). A Work item opens on its
+Messages tab, its first (`WorkMessages.tsx`; `work.tab.select` and
+`work.open` take `messages`, and the Decisions tab is gone): the
+conversation oldest first, his replies in it; under a message carrying a
+package, what he chose in it ("You chose: ..."), read from the package's own
+record (the item's `packages`); a Work decision asked the old way answered
+where its message is (by its `source`, `<item>:<key>`, on every message's
+JSON) with the same card and call as before, and one asked before it had a
+message above the conversation. The tab counts its new messages and open
+decisions ("Messages (3)"); the banner and a decision need open it. A Work
+row counts its new messages beside its state (`messageCount`) and its update
+line is its first new message's first line. The right panel's Queue tab is
+the Inbox (`InboxMessages.tsx` above people's threads, signed in or not):
+each Work item with new messages as one line opening its Messages tab
+(`inboxWork`), then the messages with no item that are not done
+(`inboxMessage`); the Packages section is gone. Updates waiting
+(`UpdatesNotice.tsx`) lists only JARVIS's own facts: an update that is a
+message is counted in one line, "3 new messages" (agents' new messages and
+people's waiting unread), whose Open is `right.tab.select` to the Inbox; the
+Inbox tab is lit while any is new. Every message recorded or moved, and
+anything on a Work item's thread, is an `inbox` hint on /ws/sessions
+(`server.INBOX_HINT`, from `_hint_conversation`).
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -502,15 +531,15 @@ what it has: a commit, an absolute path or an http(s) URL, told apart by
 shape and never opened). The detail lists the pieces in dependency order,
 numbered, a URL as a link and a commit or path with Copy.
 The detail is tabbed (`work.tab.select`; `work.open` takes a `tab`):
-Overview (update, source, area, who), Decisions (open ones answered there,
-then the decided ones), Blocking (`blockers`, worked out at read time in
+Messages (first: the item's conversation, its decisions answered there; see
+"One channel"), Overview (update, source, area, who), Blocking (`blockers`, worked out at read time in
 `work_store.BLOCKER_KINDS` order: his decisions, the item blocked, blocked
 pieces, pieces waiting on him, pieces waiting on others), Pieces and
 Reports. While a decision is open a "Decision needed" banner above every
-tab opens Decisions, the Decisions tab is counted, and the list row counts
+tab opens Messages, the Messages tab is counted, and the list row counts
 the decisions beside its state; the row's third line is the first blocker
 that is not a decision, with how many more. A decision may name a page
-package (`decision --package <id or name>`); the Decisions tab's "Open the
+package (`decision --package <id or name>`); its card's "Open the
 package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
 as the brain's `open_package_page`, on his click. A decision is answered by
 Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
@@ -573,7 +602,7 @@ a decision or piece waits on him, else activity_unknown (a claim gone
 silent: the stalled flag builds on exactly this), blocked, or ready for
 review (only once he can approve it), in that order. Every item that
 needs him names each act and its place, the first first (`needs_you`,
-`work_api.needs_of`: his decisions on the Decisions tab, a package sent for
+`work_api.needs_of`: his decisions on the Messages tab, a package sent for
 it opened from the item, his review in its header, a piece waiting on
 something else); the page shows them at the top of the item with a way to
 each and the first in its row ("You: …"), and `work_status` says the same
@@ -1004,7 +1033,7 @@ once in his words (`server._inbox_questions_on_work`), and the capture
 names it. An agent package sent with `--work` carries its work-item key
 (see "Agent keys"), and its vote is asked on the item as it arrives: the
 standard question as the item's decision `understood-<inbox id>`, asked by
-its sending agent (`server._ask_understood_on_work`), on its Decisions tab.
+its sending agent (`server._ask_understood_on_work`), on its Messages tab.
 A conversation package cannot carry a vote, so one that names a work item
 is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
 the route, which checks the signature first and then refuses any other
@@ -1029,16 +1058,15 @@ counts, read again after the frame saves a result (`packages_api.mount`'s
 that is counted and listed but never spoken: `attention_store.SILENT_KINDS`
 keeps it out of every digest whatever a caller asks. Opening is not
 seeing: it moves the row to `opened` and leaves the item pending, so the
-update line stays, is counted, and `attention_updates` lists it; the Queue
+update stays, is counted, and `attention_updates` lists it; its card
 words `opened` "Opened, not done" with the same mark as `arrived`, and
 `package_inbox` says "opened, not done yet". Only his Seen on the line
 (seen) or his Done (`_sign_off_package`, resolved) takes it away; Dismiss
 and a supersede resolve it too.
-The page shows the backlog as the Packages section at the top of the Queue
-tab (`QueuePackages.tsx`, signed in or not, closed ones behind Closed) and
-each arrival as one reduced line in Updates waiting (`UpdatesNotice.tsx`
-`PackageLine`: who, title, decisions waiting, Open and Seen; never expands
-or plays). Open is `_open_inbox_package`, on his click only
+The page shows each package as the message that carries it (see "One
+channel"): in its Work item's Messages tab, or in the Inbox when it is for
+no item, counted in Updates waiting's one messages line; it never expands
+or plays by itself. Open is `_open_inbox_package`, on his click only
 (`packages_api.his_click`) or the acting `open_inbox_package`; a page package
 is shown in the centre, any other is in the brain's hands. His answers go
 through the package's own `scripts/decide.py`, run with a fixed argument
@@ -1046,8 +1074,7 @@ list and no shell (`_answer_inbox_decision`: the acting
 `answer_package_decision` and `POST .../answer`, which the Work tab uses).
 Signing a package off is one function, `_sign_off_package`, for every kind
 of package: the Done in the head of its view (`PackageView.tsx`, outside
-the frame), Done on its Queue row (`POST /api/packages/{package_id}/signoff`)
-and the acting `sign_off_package`. A package with no inbox row (unpacked
+the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_package`. A package with no inbox row (unpacked
 some other way, an older local one) is given one there and then
 (`package_inbox.adopt`). Whatever he answered goes back: each answered
 question as the workflow's own `decision_needed` then `decision_made`
@@ -1069,11 +1096,11 @@ page showing it closes it (`package_closed` on the voice socket).
 (`_attend_message`) and every direct send, gives a signed-off row the id
 of the message that carried it back once that has gone.
 `_close_inbox_package` (the acting `close_inbox_package`, `POST
-.../close`, the row's Dismiss) sets one aside with nothing sent back. `package_inbox`
+.../close`) sets one aside with nothing sent back. `package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
-shows its questions on that work item's Decisions tab (`work_api.packages_json`
-on `GET /api/work/{id}`, `package_questions` on every item; the
-`workPackageQuestion` target), answered there into the same record, and
+is a message on that work item's Messages tab, what he chose in it shown
+under it (`work_api.packages_json` on `GET /api/work/{id}`,
+`package_questions` on every item), answered in the package itself, and
 `work_status` lists them.
 
 ## Collaboration bundles
@@ -2273,11 +2300,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   expands, checks, builds and delivers a deck's content
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see
-  "The package inbox"); `frontend/src/packageInbox.ts` /
-  `QueuePackages.tsx` are the page's side
+  "The package inbox"); `frontend/src/packageInbox.ts` is the page's side
 - `messages_api.py` / `message.py` — Messages to him by Work item: the
   signed route, its checks, the reads by item and with none, his mark, and
-  the `python -m jarvis.message` command (see "One channel")
+  the `python -m jarvis.message` command (see "One channel");
+  `frontend/src/messagesToHim.ts`, `MessageCard.tsx`, `WorkMessages.tsx` and
+  `InboxMessages.tsx` are the page's side
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper
@@ -2295,7 +2323,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `CentreNotices.tsx` are the page's side
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,
   and the announcement lease
-- `frontend/src/QueuePanel.tsx` / `queue.ts` — The Queue tab, and the Queue's
+- `frontend/src/QueuePanel.tsx` / `queue.ts` — The Inbox tab (the Queue's
+  place: agents' messages, then people's), and the Queue's
   live state: its routes read into one record and the owner's commands
 - `folder_contract.py` — The folder catalog's words, budgets and one
   refusal (see "The folder catalog")

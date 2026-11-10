@@ -143,7 +143,8 @@ def message_json(item: conversation_log.ConversationItem) -> dict:
     out = {"id": item.id, "at": item.at, "kind": str(item.kind), "says": item.text,
            "about": item.about, "carries": item.carries, "state": item.state,
            "state_at": item.state_at, "message": item.is_message,
-           "counterpart": {"kind": item.counterpart_kind, "ref": item.counterpart_ref}}
+           "counterpart": {"kind": item.counterpart_kind, "ref": item.counterpart_ref},
+           "source": {"kind": item.source_kind, "id": item.source_id}}
     if item.carries:
         out["package"] = _carried(item.carries)
     if item.inbound:
@@ -203,7 +204,7 @@ def general_list(before: Optional[int] = None) -> dict:
     """The messages that belong to no Work item, newest first."""
     items = conversation_log.general(before)
     return {"messages": [message_json(i) for i in items],
-            "new": sum(i.state == conversation_log.MessageState.NEW for i in items),
+            "new": conversation_log.new_general(),
             "more": len(items) >= conversation_log.PAGE}
 
 

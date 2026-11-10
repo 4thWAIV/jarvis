@@ -30,10 +30,13 @@
      "actors": ["human", "brain"], "effects": []}
   ],
   "kinds": [
-    {"kind": "queuePanel", "entity": null, "label": "Queue", "parts": ["packages", "closedPackages", "waiting", "active", "history", "more", "new"],
+    {"kind": "queuePanel", "entity": null, "label": "Inbox", "parts": ["workMessages", "general", "waiting", "active", "history", "more", "new"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
-    {"kind": "inboxPackage", "entity": "inboxPackage", "label": "Package in the inbox: who sent it, its title and how many decisions wait",
-     "parts": ["row", "sender", "title", "progress", "unproven", "open", "done", "close"],
+    {"kind": "inboxWork", "entity": "workItem", "label": "A Work item with new messages, in the Inbox: opens its Messages tab",
+     "parts": ["row", "count"],
+     "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
+    {"kind": "inboxMessage", "entity": "toHim", "label": "A message to him that belongs to no Work item: who, when, what it says, Read, Reply and Open",
+     "parts": ["row", "sender", "says", "read", "reply", "open", "package"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
     {"kind": "queueThread", "entity": "thread", "label": "Queue item",
      "parts": ["row", "sender", "subject", "receipt", "turn", "header", "back", "next", "close", "composer", "request"],

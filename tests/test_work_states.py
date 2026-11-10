@@ -433,7 +433,7 @@ def test_each_act_he_is_needed_for_is_named_with_its_place_first_first(wired, it
     assert got["needs_you"] == [{"kind": "decision", "key": "switch-on",
                                  "text": "Switch the engine on?"}]
     said = _call(wired, "work_status", item=item.id)["text"]
-    assert 'Needs him: 1) Answer "Switch the engine on?" on the Decisions tab.' in said
+    assert 'Needs him: 1) Answer "Switch the engine on?" on the Messages tab.' in said
     assert got["stalled"] is False
 
 

@@ -593,9 +593,18 @@ _CONTENT_FRAMES = ("audio", "text")
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
+# The /ws/sessions hint that his messages moved (one arrived, its state
+# moved, or he answered one about a Work item): the Inbox, the Work rows'
+# counts and an open item's Messages tab read again (inboxMessages.ts).
+INBOX_HINT = "inbox"
+
+
 def _hint_conversation(_item=None) -> None:
     """Tell every voice page to read the conversation again: an item was
-    recorded, or a message's status moved. From any thread."""
+    recorded, or a message's status moved. From any thread. A message to
+    him, or anything on a Work item's thread, is an Inbox hint too."""
+    if _item is not None and (_item.is_message or _item.about):
+        _hint_from_any_thread({"type": INBOX_HINT})
     message = {"type": "conversation"}
     try:
         asyncio.get_running_loop()

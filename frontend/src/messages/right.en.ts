@@ -56,24 +56,17 @@ export const rightEn = {
 
   // The Queue tab (QueuePanel.tsx) and the words queueStore.ts gives it.
   "right.queue.notOffered": "Messaging is not available on this JARVIS.",
-  // The package inbox (QueuePackages.tsx): packages agents sent, at the top of the Queue.
-  "right.packages.heading": "Packages",
-  "right.packages.unreadable": "Could not read the package inbox ({error}).",
-  "right.packages.unknownSender": "An agent",
-  "right.packages.unprovenClaim": "Answers go nowhere: nothing proved the session it named sent it",
+  // The Inbox's messages from agents (InboxMessages.tsx), at the top of the Inbox tab.
+  "right.inbox.unreadable": "Could not read your messages ({error}); retrying.",
+  "right.inbox.byWork": "Work items",
+  "right.inbox.general": "Messages",
+  "right.inbox.new": { one: "{count} new", other: "{count} new" },
+  // Where a package a message carries stands.
   "right.packages.answered": "{answered} of {total} answered",
   "right.packages.state.arrived": "Not opened",
   "right.packages.state.opened": "Opened, not done",
   "right.packages.state.answering": "Being answered",
   "right.packages.state.answered": "Ready to send back",
-  "right.packages.closed.signed_off": "Signed off",
-  "right.packages.closed.dismissed": "Dismissed",
-  "right.packages.closed.superseded": "Replaced by a newer one",
-  "right.packages.open": "Open",
-  "right.packages.done": "Done",
-  "right.packages.doneTitle": "I'm done with it: sign it off and return it to whoever sent it",
-  "right.packages.dismiss": "Dismiss",
-  "right.packages.closedCount": { one: "Closed ({count})", other: "Closed ({count})" },
   "right.queue.availability.available": "Messaging is available.",
   "right.queue.availability.not_started": "Messaging could not start on this JARVIS; its log says why.",
   "right.queue.availability.not_paired": "Pair this JARVIS with the team server to send and receive messages.",
@@ -146,6 +139,7 @@ export const rightEn = {
   "right.work.area": "Area",
   "right.work.history": "History ({count})",
   "right.work.decisionCount": "Decisions needed: {count}",
+  "right.work.messageCount": { one: "{count} new message", other: "{count} new messages" },
   "right.work.more": "+{count} more",
   "right.work.mark.blocked": "Blocked",
   "right.work.mark.waiting": "Waiting on you",
