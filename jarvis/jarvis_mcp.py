@@ -906,20 +906,20 @@ TOOL_SPECS = [
     {
         "name": "usage_history",
         "description": (
-            "The long-term record of the subscription brains' usage readings: "
-            "for each brain and window (five-hour, seven-day), the percentage "
-            "used over time, the resets inside the range and the latest "
-            "reading. The same JSON the usage history view draws. Every "
-            "reading is kept for two weeks, then one summary per hour. A "
-            "point whose `used` is null was not measured, and a stretch with "
-            "no points has no readings: say so, never call it zero. Times are "
+            "One brain's long-term record of its usage readings: for each of "
+            "its windows (five-hour, seven-day), the percentage used over time "
+            "(what is left is 100 minus it), how long the window runs, the "
+            "resets inside the range and the latest reading. The same JSON "
+            "that brain's usage history view draws. Every reading is kept for "
+            "two weeks, then one summary per hour. A point whose `used` is "
+            "null was not measured: say so, never call it zero. Times are "
             "epoch seconds. For a range over two days ask for resolution "
             "'hour' (the default picks it); long answers come in pages."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "provider": {"type": "string", "enum": ["anthropic", "openai"],
-                             "description": "One brain; both when left out."},
+                             "description": "Which brain; the running brain when left out."},
                 "window": {"type": "string",
                            "description": "One window, e.g. five_hour or seven_day; all when left out."},
                 "since": {"type": "number",

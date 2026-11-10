@@ -189,8 +189,9 @@
       "id": "main.usage",
       "region": "main",
       "kind": "detail",
-      "label": "Usage history",
-      "tab": "usage"
+      "label": "One brain's usage history",
+      "tab": "usage",
+      "entity": "provider"
     },
     {
       "id": "main.settings",

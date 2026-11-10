@@ -15,8 +15,9 @@ per window, in JARVIS's database under its own schema version
                   Kept for good (four rows an hour, about 35,000 a year).
 
 The rule is usage_store's: absence is a state. A window not measured is
-NULL, never 0; an hour with no measured reading has NULL percentages; and a
-stretch with no readings at all is a gap, never a line drawn through zero.
+NULL, never 0, and an hour with no measured reading has NULL percentages.
+The page joins the measured points into one line and passes over the rest;
+nothing unmeasured is drawn as 0.
 
 `read` is the one reader: `GET /api/usage/history` and the brain's
 `usage_history` both return what it returns.
@@ -47,10 +48,10 @@ COMPACT_EVERY_SEC = HOUR_SEC
 # A range up to two days long is read reading by reading; a longer one by
 # the hour (a week is 168 points per window, not 10,080).
 RAW_RANGE_MAX_SEC = 2 * 24 * 3600
-# Two neighbouring points further apart than this have nothing measured
-# between them: the page draws a gap. The poll reads once a minute, so a
-# quarter of an hour missing is a real hole; by the hour, a missing hour.
-GAP_SEC = {"raw": 15 * 60, "hour": 2 * HOUR_SEC}
+# How long each window runs, so the page can draw its straight line from
+# all left at its start to none left at its reset, as the brain's box does
+# for the week (usage_store.week). A window not named here has none.
+WINDOW_SEC = {"five_hour": 5 * HOUR_SEC, "seven_day": 7 * 24 * HOUR_SEC}
 # Two reset times this close are the same reset (usage_store.SAME_WEEK_SEC:
 # Codex wobbles its reset time by a few seconds).
 SAME_RESET_SEC = 60.0
@@ -385,10 +386,11 @@ def read(provider: Optional[str] = None, window: Optional[str] = None,
                     points = _hour_points(conn, name, key, start, end)
                 series.append({
                     "provider": name, "window": key, "label": usage_store.window_label(key),
+                    "window_sec": WINDOW_SEC.get(key),
                     "points": points, "resets": _resets(points, start, end),
                     "latest": latest.get(key) or {"window": key, "used": None, "resets_at": None,
                                                   "observed_at": None, "status": ""}})
     finally:
         conn.close()
-    return {"since": start, "until": end, "resolution": how, "gap_sec": GAP_SEC[how],
+    return {"since": start, "until": end, "resolution": how,
             "raw_keep_sec": RAW_KEEP_SEC, "series": series}

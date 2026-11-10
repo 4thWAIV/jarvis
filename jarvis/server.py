@@ -3668,13 +3668,13 @@ async def api_usage_week(provider: Optional[str] = None):
 
 def _usage_history(provider=None, window=None, since=None, until=None, resolution=None) -> dict:
     """The usage history the page's view and the brain's usage_history both
-    read (usage_history.read): one brain provider's when `provider` is named
-    (only a known one), else every brain's."""
+    read (usage_history.read): always one brain's, `provider` (only a known
+    one), the running brain's when it is not named."""
     if provider not in (None, "") and provider not in brains_config.KNOWN:
         raise usage_history.Refused(f"there is no brain called {str(provider)[:40]!r}; "
                                     f"the brains are {', '.join(brains_config.KNOWN)}")
-    return usage_history.read(provider=provider or None, window=window or None, since=since,
-                              until=until, resolution=resolution)
+    return usage_history.read(provider=provider or _brain_provider().name, window=window or None,
+                              since=since, until=until, resolution=resolution)
 
 
 @app.get("/api/usage/history")

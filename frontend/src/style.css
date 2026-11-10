@@ -4334,9 +4334,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: none;
 }
 
-/* The brains' usage history (UsageHistoryView.tsx), laid out as Knowledge
-   is: one chart per brain and window, a single series each, in the accent;
-   the grid and axes recessive, each reset a dashed line, gaps left empty. */
+/* One brain's usage history (UsageHistoryView.tsx), laid out as Knowledge
+   is: one chart per window, drawn with the brain box's own burn-down classes
+   (.weekly-ideal, .weekly-actual, .weekly-gap: green ahead, red behind),
+   the grid and axes recessive, each reset an upright line. */
 #usage-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
@@ -4375,9 +4376,17 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .usage-chart svg { display: block; width: 100%; height: auto; max-height: 220px; touch-action: none; }
 .usage-grid line { stroke: rgba(var(--ui-text-rgb), 0.12); stroke-width: 1; }
 .usage-grid text, .usage-axis, .usage-empty { fill: var(--ui-muted); font-size: 11px; }
-.usage-line { fill: none; stroke: var(--ui-accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.usage-dot { fill: var(--ui-accent); }
-.usage-reset { stroke: var(--ui-secondary); stroke-width: 1; stroke-dasharray: 4 3; }
+.usage-line { stroke-linejoin: round; stroke-linecap: round; }
+/* The box's gap fill, softened so the grid and the line read through it on
+   a chart this size. */
+.usage-gap { opacity: 0.4; }
+.usage-dot.ahead { fill: #4ade80; }
+.usage-dot.behind { fill: #f87171; }
+.usage-reset { stroke: rgba(var(--ui-accent-rgb), 0.5); stroke-width: 1; }
+.usage-left { font-weight: 600; margin-right: 8px; }
+.usage-left.ahead, .usage-pace.ahead { color: #4ade80; }
+.usage-left.behind, .usage-pace.behind { color: #f87171; }
+.usage-pace { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
 .usage-hover line { stroke: rgba(var(--ui-text-rgb), 0.45); stroke-width: 1; }
 .usage-hover circle { fill: var(--ui-accent); stroke: var(--ui-ground); stroke-width: 2; }
 .usage-tooltip {

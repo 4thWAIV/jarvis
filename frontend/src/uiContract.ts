@@ -461,8 +461,9 @@ export const UI_CONTRACT = {
       "id": "main.usage",
       "region": "main",
       "kind": "detail",
-      "label": "Usage history",
-      "tab": "usage"
+      "label": "One brain's usage history",
+      "tab": "usage",
+      "entity": "provider"
     },
     {
       "id": "main.settings",
@@ -2622,10 +2623,17 @@ export const UI_CONTRACT = {
     },
     {
       "id": "usage.open",
-      "label": "Open the brains' usage history in the centre: a chart per brain and window, and each latest reading",
+      "label": "Open one brain's usage history in the centre: what is left of each of its windows over time, and its latest reading",
       "view": "main.usage",
-      "args": {},
-      "required": [],
+      "args": {
+        "provider": {
+          "type": "key",
+          "entity": "provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
       "actors": [
         "human",
         "brain"
@@ -2633,6 +2641,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
         },
         {
           "effect": "layout.restored"
@@ -2662,7 +2673,7 @@ export const UI_CONTRACT = {
     },
     {
       "id": "usage.range",
-      "label": "Show the usage history over the last day, week or month, or all of it",
+      "label": "Show the open usage history over the last day, week or month, or all of it",
       "view": "main.usage",
       "args": {
         "range": {
@@ -4722,8 +4733,8 @@ export const UI_CONTRACT = {
     },
     {
       "kind": "usageHistory",
-      "entity": null,
-      "label": "Usage history",
+      "entity": "provider",
+      "label": "One brain's usage history",
       "parts": [
         "header",
         "close",
@@ -4735,7 +4746,9 @@ export const UI_CONTRACT = {
           "view": "main.usage",
           "reveal": {
             "command": "usage.open",
-            "args": {}
+            "args": {
+              "provider": "$key"
+            }
           }
         }
       ],
@@ -4744,7 +4757,7 @@ export const UI_CONTRACT = {
     {
       "kind": "usageChart",
       "entity": "usageSeries",
-      "label": "One brain's usage of one window over time",
+      "label": "What is left of one brain's window over time",
       "parts": [
         "title",
         "latest",
@@ -4752,11 +4765,7 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "main.usage",
-          "reveal": {
-            "command": "usage.open",
-            "args": {}
-          }
+          "view": "main.usage"
         }
       ],
       "family": "usage"
@@ -5025,7 +5034,7 @@ export interface CommandArgs {
   "thread.open": { sessionId: string; };
   "updates.review": { open: boolean; };
   "usage.close": { };
-  "usage.open": { };
+  "usage.open": { provider: string; };
   "usage.range": { range: "day" | "week" | "month" | "all"; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };

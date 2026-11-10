@@ -533,19 +533,20 @@ function registerFolderRow(el: unknown) {
 
 {
   assert.equal((await dispatch("usage.close", {}, { actor: "brain" })).status, "unavailable");
-  assert.equal((await dispatch("usage.open", {}, { actor: "human" })).status, "completed");
+  // No view open: there is no range to choose.
+  assert.equal((await dispatch("usage.range", { range: "week" }, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("usage.open", { provider: "anthropic" }, { actor: "human" })).status, "completed");
   assert.equal(nav.mainView.get(), "usage");
-  assert.equal(usage.openUsage.get(), true);
+  assert.equal(usage.openUsage.get(), "anthropic");
   assert.equal((await dispatch("usage.range", { range: "week" }, { actor: "brain" })).status, "completed");
   assert.equal(usage.usageRange.get(), "week");
+  // One brain at a time: the other brain's view takes its place.
+  assert.equal((await dispatch("usage.open", { provider: "openai" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.openUsage.get(), "openai");
   assert.equal((await dispatch("usage.close", {}, { actor: "human" })).status, "completed");
   assert.equal(nav.mainView.get(), "conversation");
   assert.equal(usage.openUsage.get(), null);
-  // Choosing a range opens the view, as the brain's request would need.
-  assert.equal((await dispatch("usage.range", { range: "day" }, { actor: "brain" })).status, "completed");
-  assert.equal(nav.mainView.get(), "usage");
-  assert.equal((await dispatch("usage.close", {}, { actor: "brain" })).status, "completed");
-  passed.push("usage history: opened, its range chosen, closed back to Conversation");
+  passed.push("usage history: one brain's view opened, its range chosen, closed back to Conversation");
 }
 
 // ── takeover ────────────────────────────────────────────────────────────

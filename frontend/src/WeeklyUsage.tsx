@@ -13,8 +13,8 @@
  * Each box is a target the brain can point at (keyed by its provider, from
  * the left rail), with the provider, what remains, the pace and the reset as
  * parts. A box whose provider is not known yet is not one. A click (or Enter)
- * opens the brains' usage history in the centre (`usage.open`,
- * UsageHistoryView.tsx).
+ * opens that brain's own usage history in the centre (`usage.open
+ * {provider}`, UsageHistoryView.tsx), the same burn-down over time.
  */
 
 import { useEffect, useState, useSyncExternalStore, type KeyboardEvent } from "react";
@@ -28,9 +28,11 @@ import { useUiTarget } from "./uiRegistry";
 import { targetProblem } from "./uiValidate";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 
-/** What makes a box open the usage history: a click, or Enter or Space. */
-function opensHistory(label: string) {
-  const b = bind("usage.open", {});
+/** What makes a box open its own brain's usage history: a click, or Enter
+ *  or Space. Nothing while the box's brain is not known yet. */
+function opensHistory(provider: string | undefined, label: string) {
+  if (provider === undefined) return {};
+  const b = bind("usage.open", { provider });
   return {
     ...bindingProps(b),
     role: "button",
@@ -47,10 +49,13 @@ type PartRef = (el: Element | null) => void;
 /** This box as a target: keyed by the provider whose figures it shows (the
  *  one named, else the one the figures say, else the running brain), or
  *  none while that is not known. */
-function useAccountTarget(provider: string | undefined, week: Week | null) {
-  const t = useT();
+function useBrainKey(provider: string | undefined, week: Week | null): string | undefined {
   const live = useSyncExternalStore(brains.subscribe, brains.get);
-  const key = provider ?? week?.provider?.service ?? activeBrain(live.value) ?? undefined;
+  return provider ?? week?.provider?.service ?? activeBrain(live.value) ?? undefined;
+}
+
+function useAccountTarget(key: string | undefined) {
+  const t = useT();
   const ref: TargetRef = { region: "left", view: "left.fixed", kind: "brainAccount", key };
   const valid = key !== undefined && targetProblem(ref) === null;
   return useUiTarget(valid ? { ref, label: t("targets.account", { provider: PROVIDERS[key]?.name ?? key }),
@@ -125,7 +130,8 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
     const timer = setInterval(load, REFRESH_MS);
     return () => clearInterval(timer);
   }, [provider]);
-  const ui = useAccountTarget(provider, week);
+  const brain = useBrainKey(provider, week);
+  const ui = useAccountTarget(brain);
 
   const roleTag = role &&
     <span className={`weekly-role ${role}`}>{t(role === "brain" ? "left.usage.roleBrain" : "left.usage.roleStandby")}</span>;
@@ -138,7 +144,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
     const cls = failed ? "behind" : "none";
     return (
       <section className={box} title={why} data-provider={provider} ref={ui.whole}
-               {...opensHistory(t("left.usage.openHistory"))}>
+               {...opensHistory(brain, t("left.usage.openHistory"))}>
         {roleTag}
         <div className="account-rows">
           <div className="account-row available" ref={ui.part("remaining")}>
@@ -160,7 +166,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const left = Math.max(0, 100 - week.used!);
   return (
     <section className={box} data-provider={provider} ref={ui.whole}
-             {...opensHistory(t("left.usage.openHistory"))}
+             {...opensHistory(brain, t("left.usage.openHistory"))}
              title={t("left.usage.reading", { gone: formatPercent(Math.round(week.expected_used!) / 100),
                                              used: formatPercent(Math.round(week.used!) / 100),
                                              age: shortAgo(week.age_sec! * 1000, 90_000) })}>

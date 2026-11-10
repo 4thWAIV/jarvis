@@ -5,10 +5,17 @@
   "commands": [
     {
       "id": "usage.open",
-      "label": "Open the brains' usage history in the centre: a chart per brain and window, and each latest reading",
+      "label": "Open one brain's usage history in the centre: what is left of each of its windows over time, and its latest reading",
       "view": "main.usage",
-      "args": {},
-      "required": [],
+      "args": {
+        "provider": {
+          "type": "key",
+          "entity": "provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
       "actors": [
         "human",
         "brain"
@@ -16,6 +23,9 @@
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
         },
         {
           "effect": "layout.restored"
@@ -43,7 +53,7 @@
     },
     {
       "id": "usage.range",
-      "label": "Show the usage history over the last day, week or month, or all of it",
+      "label": "Show the open usage history over the last day, week or month, or all of it",
       "view": "main.usage",
       "args": {
         "range": {
@@ -73,8 +83,8 @@
   "kinds": [
     {
       "kind": "usageHistory",
-      "entity": null,
-      "label": "Usage history",
+      "entity": "provider",
+      "label": "One brain's usage history",
       "parts": [
         "header",
         "close",
@@ -86,7 +96,9 @@
           "view": "main.usage",
           "reveal": {
             "command": "usage.open",
-            "args": {}
+            "args": {
+              "provider": "$key"
+            }
           }
         }
       ]
@@ -94,7 +106,7 @@
     {
       "kind": "usageChart",
       "entity": "usageSeries",
-      "label": "One brain's usage of one window over time",
+      "label": "What is left of one brain's window over time",
       "parts": [
         "title",
         "latest",
@@ -102,11 +114,7 @@
       ],
       "presentations": [
         {
-          "view": "main.usage",
-          "reveal": {
-            "command": "usage.open",
-            "args": {}
-          }
+          "view": "main.usage"
         }
       ]
     }

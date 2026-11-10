@@ -1,11 +1,13 @@
 /**
- * The page's side of the usage history (usage_history.py): the centre view
- * opened from a brain's box in the left column (UsageHistoryView.tsx), and
- * the range it shows. Every read is `GET /api/usage/history`, the same call
- * the brain's usage_history makes.
+ * The page's side of the usage history (usage_history.py): one brain's
+ * history in the centre, opened from that brain's own box in the left column
+ * (UsageHistoryView.tsx), and the range it shows. Every read is
+ * `GET /api/usage/history?provider=`, the same call the brain's
+ * usage_history makes.
  *
- * `usage.open` and `usage.close` show and close the view; `usage.range`
- * picks the last day, week or month, or all of it.
+ * `usage.open {provider}` shows that brain's view (never two brains
+ * together) and `usage.close` closes it; `usage.range` picks the last day,
+ * week or month, or all of it, while a view is open.
  */
 
 import { createStore } from "./store";
@@ -45,6 +47,8 @@ export interface UsageSeries {
   provider: string;
   window: string;
   label: string;
+  /** How long the window runs, for its straight line; null when not known. */
+  window_sec: number | null;
   points: UsagePoint[];
   resets: number[];
   latest: UsageLatest;
@@ -54,39 +58,39 @@ export interface UsageHistory {
   since: number;
   until: number;
   resolution: "raw" | "hour";
-  gap_sec: number;
   raw_keep_sec: number;
   series: UsageSeries[];
 }
 
 export const usageRange = createStore<UsageRange>("day");
 
-export async function readUsageHistory(range: UsageRange, nowMs: number = Date.now()): Promise<UsageHistory> {
+export async function readUsageHistory(provider: string, range: UsageRange,
+                                       nowMs: number = Date.now()): Promise<UsageHistory> {
   const until = Math.floor(nowMs / 1000);
   const back = RANGE_SEC[range];
   const since = back === null ? 0 : until - back;
-  const res = await fetch(`/api/usage/history?since=${since}&until=${until}`);
+  const res = await fetch(`/api/usage/history?provider=${encodeURIComponent(provider)}&since=${since}&until=${until}`);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `/api/usage/history: ${res.status}`);
   return body as UsageHistory;
 }
 
-const usageSlot = detailSlot<true>("usage");
-/** Whether the usage history is open in the centre. Read-only: controls run the commands. */
+const usageSlot = detailSlot<string>("usage");
+/** The brain whose usage history is open in the centre, or null. Read-only:
+ *  controls run the commands. */
 export const openUsage = usageSlot.value;
 
 registerCommand("usage.open", {
   availability: () => ({ available: true }),
-  execute: () => ({ status: "completed", effects: usageSlot.show(true) }),
+  execute: ({ provider }) => ({ status: "completed", effects: usageSlot.show(provider) }),
 });
 
 registerClose("usage.close", usageSlot);
 
 registerCommand("usage.range", {
-  availability: () => ({ available: true }),
+  availability: () => (usageSlot.value.get() !== null ? { available: true } : { available: false, reason: "no-entity" }),
   execute: ({ range }) => {
-    const effects = usageSlot.show(true);
     usageRange.set(range);
-    return { status: "completed", effects: [...effects, "list.filtered"] };
+    return { status: "completed", effects: ["list.filtered"] };
   },
 });

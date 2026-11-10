@@ -39,7 +39,7 @@ EXPECTED = {
     "no declared command without a handler",
     "package and received file: opened by their commands, closed back to Conversation",
     "project: opened by its command, a missing one refused, closed back to Conversation",
-    "usage history: opened, its range chosen, closed back to Conversation",
+    "usage history: one brain's view opened, its range chosen, closed back to Conversation",
     "takeover: nothing to take over on Conversation",
     "takeover: the workflow shown takes over, and again changes nothing", "takeover: taking over twice",
     "takeover: restore", "takeover: another centre view restores it",

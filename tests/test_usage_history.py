@@ -155,15 +155,15 @@ def test_an_hour_with_no_measured_reading_has_no_percentage(store):
                                            "samples": 1}]
 
 
-def test_the_range_picks_the_resolution_and_the_gap(store):
+def test_the_range_picks_the_resolution_and_each_window_says_how_long_it_runs(store):
     _, usage_history = store
-    day = usage_history.read(since=T - 86400, until=T, now=T)
-    month = usage_history.read(since=T - 30 * 86400, until=T, now=T)
-    assert (day["resolution"], day["gap_sec"]) == ("raw", 15 * 60)
-    assert (month["resolution"], month["gap_sec"]) == ("hour", 2 * HOUR)
-    # Every brain and both windows, measured or not.
-    assert [(s["provider"], s["window"]) for s in day["series"]] == [("anthropic", "five_hour"),
-                                                                     ("anthropic", "seven_day")]
+    day = usage_history.read("anthropic", since=T - 86400, until=T, now=T)
+    month = usage_history.read("anthropic", since=T - 30 * 86400, until=T, now=T)
+    assert day["resolution"] == "raw" and month["resolution"] == "hour"
+    # Both windows of the one brain asked for, measured or not, each with
+    # its length for the straight line across it.
+    assert [(s["provider"], s["window"], s["window_sec"]) for s in day["series"]] == [
+        ("anthropic", "five_hour", 5 * HOUR), ("anthropic", "seven_day", 7 * 24 * HOUR)]
     assert day["series"][0]["points"] == [] and day["series"][0]["latest"]["used"] is None
 
 
@@ -244,6 +244,21 @@ def test_the_route_and_the_tool_return_the_same_history(wired):
             break
         n += 1
     assert json.loads(text) == page
+
+
+def test_the_route_and_the_tool_give_one_brain_never_both(wired):
+    server, usage_store = wired
+    usage_store.record(_event(five=0.1), now=T)
+    usage_store.record(_event(five=0.2), now=T + 60, provider={"service": "openai", "subscription": ""})
+    query = {"since": T - 60, "until": T + 3600}
+    client = TestClient(server.app)
+    running = server._brain_provider().name
+    for asked, expected in ((None, running), ("openai", "openai"), ("anthropic", "anthropic")):
+        params = dict(query, **({"provider": asked} if asked else {}))
+        page = client.get("/api/usage/history", params=params).json()
+        assert {s["provider"] for s in page["series"]} == {expected}
+        said = _tool(server, **params)
+        assert json.loads(said.partition("\n")[2]) == page
 
 
 def test_the_route_and_the_tool_refuse_alike(wired):
