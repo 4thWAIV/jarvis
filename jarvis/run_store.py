@@ -42,6 +42,26 @@ _UPDATABLE = frozenset({
 })
 
 
+WAL_WAIT_SEC = 15.0
+
+
+def _ensure_wal(conn: sqlite3.Connection, wait: float = WAL_WAIT_SEC) -> None:
+    """The database in WAL, or the error that stopped it."""
+    deadline = time.monotonic() + wait
+    while True:
+        if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal":
+            return
+        try:
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower()
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+            continue
+        if mode != "wal":
+            raise sqlite3.OperationalError(f"the database stayed in {mode} mode, not WAL")
+
+
 def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
     """A connection to JARVIS's database (`path` for a store given its own
     file), with the pragmas every one of its users needs."""
@@ -50,8 +70,12 @@ def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
     # Switching to WAL takes an exclusive lock. Once a database is in WAL it
     # stays there, so only switch when it is not: asking every connection to
     # switch made a busy moment fail with "database is locked".
-    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
-        conn.execute("PRAGMA journal_mode=WAL")
+    # SQLite refuses the switch at once (no busy wait) while another
+    # connection is open, which happens when two first connections race on a
+    # new database. Only that race is let through: the database must be seen
+    # in WAL (the other connection's switch landed) within the busy timeout,
+    # trying the switch again meanwhile; anything else is raised as it was.
+    _ensure_wal(conn)
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
