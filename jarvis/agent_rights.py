@@ -56,8 +56,9 @@ RIGHTS: dict[str, Right] = {
          ("GET", r"/api/work/answers"), ("POST", r"/api/agent-keys/work-keys"),
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
-        "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
-        (("POST", r"/api/packages/inbox"),)),
+        "Send Tim packages for his package inbox, and write canonical language documents "
+        "for them; nothing is shown until he asks for it.",
+        (("POST", r"/api/packages/inbox"), ("POST", r"/api/language-documents"))),
     "watch": Right(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),
