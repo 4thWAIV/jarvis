@@ -2138,6 +2138,15 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
+- `usage_history.py` — The long-term record of every reading `usage_store.record`
+  takes (schema `usage_history_schema`): `usage_readings` keeps each one for
+  `RAW_KEEP_SEC` (14 days) with its provider, account hash
+  (`brain_accounts.history_ref`, NULL while unknown), window, percentage
+  (NULL: not measured, never 0) and reset; after that `usage_hourly` keeps
+  one summary per hour for good. `read` is `GET /api/usage/history` and the
+  brain's `usage_history` alike; a brain's box in the left column opens it
+  as the centre's usage history (`usage.open`, `UsageHistoryView.tsx`,
+  `usage.ts`): a chart per brain and window, resets dashed, gaps left empty
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
   Accessibility, Fish key, cross-session steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
@@ -2409,7 +2418,8 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
 `test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
-`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`) are marked `page` and deselected too: they build
+`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`,
+`test_voice_page_usage_history.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

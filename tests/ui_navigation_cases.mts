@@ -76,6 +76,7 @@ const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
 await import("../frontend/src/knowledge.ts");
 const projects = await import("../frontend/src/projects.ts");
+const usage = await import("../frontend/src/usage.ts");
 const takeoverKey = await import("../frontend/src/takeoverKey.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
@@ -528,6 +529,23 @@ function registerFolderRow(el: unknown) {
   assert.equal((await dispatch("project.close", {}, { actor: "human" })).status, "completed");
   assert.equal(nav.mainView.get(), "conversation");
   passed.push("project: opened by its command, a missing one refused, closed back to Conversation");
+}
+
+{
+  assert.equal((await dispatch("usage.close", {}, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("usage.open", {}, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "usage");
+  assert.equal(usage.openUsage.get(), true);
+  assert.equal((await dispatch("usage.range", { range: "week" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.usageRange.get(), "week");
+  assert.equal((await dispatch("usage.close", {}, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "conversation");
+  assert.equal(usage.openUsage.get(), null);
+  // Choosing a range opens the view, as the brain's request would need.
+  assert.equal((await dispatch("usage.range", { range: "day" }, { actor: "brain" })).status, "completed");
+  assert.equal(nav.mainView.get(), "usage");
+  assert.equal((await dispatch("usage.close", {}, { actor: "brain" })).status, "completed");
+  passed.push("usage history: opened, its range chosen, closed back to Conversation");
 }
 
 // ── takeover ────────────────────────────────────────────────────────────

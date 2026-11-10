@@ -1,0 +1,114 @@
+{
+  "family": "usage",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [
+    {
+      "id": "usage.open",
+      "label": "Open the brains' usage history in the centre: a chart per brain and window, and each latest reading",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ]
+    },
+    {
+      "id": "usage.close",
+      "label": "Close the usage history",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ]
+    },
+    {
+      "id": "usage.range",
+      "label": "Show the usage history over the last day, week or month, or all of it",
+      "view": "main.usage",
+      "args": {
+        "range": {
+          "type": "enum",
+          "values": [
+            "day",
+            "week",
+            "month",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "range"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ]
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "usageHistory",
+      "entity": null,
+      "label": "Usage history",
+      "parts": [
+        "header",
+        "close",
+        "range",
+        "charts"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "usageChart",
+      "entity": "usageSeries",
+      "label": "One brain's usage of one window over time",
+      "parts": [
+        "title",
+        "latest",
+        "chart"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {}
+          }
+        }
+      ]
+    }
+  ]
+}

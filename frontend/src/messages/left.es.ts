@@ -157,6 +157,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.usage.reading": "{gone} de la semana transcurrido, {used} usado; leído {age}",
   "left.usage.burnDown": "Consumo de la semana",
   "left.usage.daysLeft": { one: "{count} día", other: "{count} días" },
+  "left.usage.openHistory": "Abre el historial de uso",
   "left.usage.resetDay": "{weekday}, {day} {month}",
 
   "left.tile.title": "SERVIDOR DEL EQUIPO",

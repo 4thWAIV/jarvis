@@ -10,12 +10,14 @@
  * the figures' colour. The server
  * works it out (usage_store.week); this only draws it. Details are on hover.
  *
- * Display only: each box is a target the brain can point at (keyed by its
- * provider, from the left rail), with the provider, what remains, the pace
- * and the reset as parts. A box whose provider is not known yet is not one.
+ * Each box is a target the brain can point at (keyed by its provider, from
+ * the left rail), with the provider, what remains, the pace and the reset as
+ * parts. A box whose provider is not known yet is not one. A click (or Enter)
+ * opens the brains' usage history in the centre (`usage.open`,
+ * UsageHistoryView.tsx).
  */
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { WorkerTotal } from "./WorkerStatus";
 import { activeBrain, brains } from "./brains";
 import { formatDateTime, formatNumber, formatPercent, t as say, useT, type Translate } from "./locale";
@@ -24,6 +26,21 @@ import { shortAgo } from "./timeFormat";
 import type { TargetRef } from "./uiContract";
 import { useUiTarget } from "./uiRegistry";
 import { targetProblem } from "./uiValidate";
+import { bind, bindingProps, runBinding } from "./uiNavigation";
+
+/** What makes a box open the usage history: a click, or Enter or Space. */
+function opensHistory(label: string) {
+  const b = bind("usage.open", {});
+  return {
+    ...bindingProps(b),
+    role: "button",
+    tabIndex: 0,
+    "aria-description": label,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); runBinding(b); }
+    },
+  };
+}
 
 type PartRef = (el: Element | null) => void;
 
@@ -120,7 +137,8 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
     const why = failed ? t("left.usage.failed", { error: failureWords(t, failed) }) : t("left.usage.notMeasured");
     const cls = failed ? "behind" : "none";
     return (
-      <section className={box} title={why} data-provider={provider} ref={ui.whole}>
+      <section className={box} title={why} data-provider={provider} ref={ui.whole}
+               {...opensHistory(t("left.usage.openHistory"))}>
         {roleTag}
         <div className="account-rows">
           <div className="account-row available" ref={ui.part("remaining")}>
@@ -142,6 +160,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const left = Math.max(0, 100 - week.used!);
   return (
     <section className={box} data-provider={provider} ref={ui.whole}
+             {...opensHistory(t("left.usage.openHistory"))}
              title={t("left.usage.reading", { gone: formatPercent(Math.round(week.expected_used!) / 100),
                                              used: formatPercent(Math.round(week.used!) / 100),
                                              age: shortAgo(week.age_sec! * 1000, 90_000) })}>

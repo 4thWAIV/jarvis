@@ -186,6 +186,13 @@
       "tab": "knowledge"
     },
     {
+      "id": "main.usage",
+      "region": "main",
+      "kind": "detail",
+      "label": "Usage history",
+      "tab": "usage"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -267,7 +274,8 @@
             "file",
             "settings",
             "knowledge",
-            "project"
+            "project",
+            "usage"
           ]
         }
       },

@@ -904,6 +904,35 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "usage_history",
+        "description": (
+            "The long-term record of the subscription brains' usage readings: "
+            "for each brain and window (five-hour, seven-day), the percentage "
+            "used over time, the resets inside the range and the latest "
+            "reading. The same JSON the usage history view draws. Every "
+            "reading is kept for two weeks, then one summary per hour. A "
+            "point whose `used` is null was not measured, and a stretch with "
+            "no points has no readings: say so, never call it zero. Times are "
+            "epoch seconds. For a range over two days ask for resolution "
+            "'hour' (the default picks it); long answers come in pages."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {"type": "string", "enum": ["anthropic", "openai"],
+                             "description": "One brain; both when left out."},
+                "window": {"type": "string",
+                           "description": "One window, e.g. five_hour or seven_day; all when left out."},
+                "since": {"type": "number",
+                          "description": "Start, epoch seconds; a day before `until` when left out."},
+                "until": {"type": "number", "description": "End, epoch seconds; now when left out."},
+                "resolution": {"type": "string", "enum": ["auto", "raw", "hour"],
+                               "description": "raw: every reading; hour: one point an hour (its "
+                                              "highest reading); auto: raw up to two days."},
+                "page": {"type": "integer", "minimum": 1, "description": "Which page; 1 first."},
+            },
+        },
+    },
+    {
         "name": "connections",
         "description": (
             "The services the user has connected you to, from what is actually "

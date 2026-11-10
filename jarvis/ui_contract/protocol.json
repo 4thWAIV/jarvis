@@ -87,6 +87,7 @@
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "usageSeries": "^[a-z0-9_-]{1,32}:[a-z0-9_]{1,32}$",
     "project": "^[0-9a-f-]{36}$",
     "projectCandidate": "^[0-9a-f-]{36}$",
     "accomplishment": "^[0-9a-f-]{36}$",
@@ -145,7 +146,7 @@
     "families/diagnostics.json",
     "families/folders.json",
     "families/conversation.json",
-    "families/packages.json", "families/knowledge.json", "families/projects.json",
+    "families/packages.json", "families/knowledge.json", "families/projects.json", "families/usage.json",
     "families/layout.json"
   ]
 }

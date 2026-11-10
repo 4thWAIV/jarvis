@@ -171,6 +171,7 @@ export const leftEn = {
   "left.usage.reading": "{gone} of the week gone, {used} used, reading {age}",
   "left.usage.burnDown": "Burn-down of the week",
   "left.usage.daysLeft": { one: "{count} day", other: "{count} days" },
+  "left.usage.openHistory": "Opens the usage history",
   "left.usage.resetDay": "{weekday} {day} {month}",
 
   // The Team Server tile (TeamServerTile.tsx).

@@ -156,6 +156,7 @@ export const UI_CONTRACT = {
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "usageSeries": "^[a-z0-9_-]{1,32}:[a-z0-9_]{1,32}$",
     "project": "^[0-9a-f-]{36}$",
     "projectCandidate": "^[0-9a-f-]{36}$",
     "accomplishment": "^[0-9a-f-]{36}$",
@@ -457,6 +458,13 @@ export const UI_CONTRACT = {
       "tab": "knowledge"
     },
     {
+      "id": "main.usage",
+      "region": "main",
+      "kind": "detail",
+      "label": "Usage history",
+      "tab": "usage"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -551,7 +559,8 @@ export const UI_CONTRACT = {
             "file",
             "settings",
             "knowledge",
-            "project"
+            "project",
+            "usage"
           ]
         }
       },
@@ -2612,6 +2621,75 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
+      "id": "usage.open",
+      "label": "Open the brains' usage history in the centre: a chart per brain and window, and each latest reading",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "usage"
+    },
+    {
+      "id": "usage.close",
+      "label": "Close the usage history",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "usage"
+    },
+    {
+      "id": "usage.range",
+      "label": "Show the usage history over the last day, week or month, or all of it",
+      "view": "main.usage",
+      "args": {
+        "range": {
+          "type": "enum",
+          "values": [
+            "day",
+            "week",
+            "month",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "range"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "usage"
+    },
+    {
       "id": "layout.takeover",
       "label": "Let the workflow, work item or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
       "view": "main.takeover",
@@ -4643,6 +4721,47 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
+      "kind": "usageHistory",
+      "entity": null,
+      "label": "Usage history",
+      "parts": [
+        "header",
+        "close",
+        "range",
+        "charts"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "usage"
+    },
+    {
+      "kind": "usageChart",
+      "entity": "usageSeries",
+      "label": "One brain's usage of one window over time",
+      "parts": [
+        "title",
+        "latest",
+        "chart"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "usage"
+    },
+    {
       "kind": "takeoverBar",
       "entity": null,
       "label": "Takeover bar",
@@ -4720,6 +4839,10 @@ export const UI_CONTRACT = {
     {
       "family": "projects",
       "owner": "coverage-right"
+    },
+    {
+      "family": "usage",
+      "owner": "coverage-main"
     },
     {
       "family": "layout",
@@ -4866,7 +4989,7 @@ export interface CommandArgs {
   "layout.restore": { };
   "layout.sheet": { shown: boolean; };
   "layout.takeover": { };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project" | "usage"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -4901,6 +5024,9 @@ export interface CommandArgs {
   "thread.earlier": { };
   "thread.open": { sessionId: string; };
   "updates.review": { open: boolean; };
+  "usage.close": { };
+  "usage.open": { };
+  "usage.range": { range: "day" | "week" | "month" | "all"; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
   "voice.quiet": { quiet: boolean; };

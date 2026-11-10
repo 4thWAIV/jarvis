@@ -23,6 +23,7 @@ export const shellEn = {
   "tabs.main.subsystem": "Subsystem",
   "tabs.main.knowledge": "Knowledge",
   "tabs.main.project": "Project",
+  "tabs.main.usage": "Usage history",
   "tabs.main.network": "Instance",
   "tabs.main.teamServer": "Team server",
   "tabs.main.queue": "Message",

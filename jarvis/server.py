@@ -136,7 +136,7 @@ from jarvis import usage_scan
 from jarvis import brain_provider
 from jarvis import brains_config
 from jarvis import codex_sessions
-from jarvis import usage_store
+from jarvis import usage_history, usage_store
 from jarvis import web_auth
 from jarvis.run_executor import RunExecutor
 from jarvis import dialog
@@ -3666,6 +3666,30 @@ async def api_usage_week(provider: Optional[str] = None):
     return usage_store.week(service=provider or _brain_provider().name)
 
 
+def _usage_history(provider=None, window=None, since=None, until=None, resolution=None) -> dict:
+    """The usage history the page's view and the brain's usage_history both
+    read (usage_history.read): one brain provider's when `provider` is named
+    (only a known one), else every brain's."""
+    if provider not in (None, "") and provider not in brains_config.KNOWN:
+        raise usage_history.Refused(f"there is no brain called {str(provider)[:40]!r}; "
+                                    f"the brains are {', '.join(brains_config.KNOWN)}")
+    return usage_history.read(provider=provider or None, window=window or None, since=since,
+                              until=until, resolution=resolution)
+
+
+@app.get("/api/usage/history")
+async def api_usage_history(provider: Optional[str] = None, window: Optional[str] = None,
+                            since: Optional[str] = None, until: Optional[str] = None,
+                            resolution: Optional[str] = None):
+    """The long-term record of each brain's usage readings, by window: every
+    reading for up to two days, one point an hour beyond that, the resets in
+    the range and the latest reading. Not measured is null, never 0."""
+    try:
+        return await asyncio.to_thread(_usage_history, provider, window, since, until, resolution)
+    except usage_history.Refused as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
 # --- The brains, for the Settings view's Brains section ----------------------
 #
 # Every brain provider JARVIS knows: whether it has been added (brains.json),
@@ -4660,6 +4684,10 @@ TAINT_EXEMPT_TOOLS = {
     "usage_status": (
         "it reports JARVIS's own subscription usage, computed here from "
         "his own store; there is no foreign text in it"),
+    "usage_history": (
+        "it reports JARVIS's own record of the subscription's usage "
+        "readings, numbers and window names it wrote itself; there is no "
+        "foreign text in it"),
     "connections": (
         "it reports the servers the USER declared in his own "
         "connections.json, which is his file and not a stranger's"),
@@ -15564,6 +15592,23 @@ def tool_usage_status(args: dict) -> str:
 
 
 TOOL_HANDLERS["usage_status"] = tool_usage_status
+
+
+def tool_usage_history(args: dict) -> str:
+    """The usage history, as the page's view reads it (`_usage_history`):
+    the route's own JSON, one page at a time."""
+    try:
+        body = _usage_history(args.get("provider"), args.get("window"), args.get("since"),
+                              args.get("until"), args.get("resolution"))
+    except usage_history.Refused as e:
+        return f"Refused: {e}."
+    head, chunk = _paged(json.dumps(body), _int_arg(args, "page", 1),
+                         "The usage history (JSON; used is a percentage, null not measured)",
+                         "usage_history", exact=True)
+    return head if chunk is None else head + "\n" + chunk
+
+
+TOOL_HANDLERS["usage_history"] = tool_usage_history
 # It reads a file and says what it found. "How much have I used" must not
 # depend on who is talking, so it is deliberately NOT an acting tool.
 
