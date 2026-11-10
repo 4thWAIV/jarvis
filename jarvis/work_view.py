@@ -56,9 +56,12 @@ FRAME_REMOVED = "work_item_removed"
 ITEMS, HISTORY = "items", "history"
 
 # What of a live owner is a change worth a frame: who it is, its state, what
-# it is doing now and when it last did something (which moves its quiet_at).
-LIVE_KEY = ("name", "state", "doing", "written")
-# The parts of a live owner that move on every look and say nothing new.
+# it is doing now and, while it is working, when it last did something (which
+# moves the piece's quiet_at). An idle or finished owner's observed time moves
+# on every look and changes nothing shown.
+LIVE_KEY = ("name", "state", "doing")
+# The parts of a live owner that move on every look and say nothing new; its
+# `written` too, unless it is working.
 _VOLATILE_LIVE = ("activity", "snapshot_id")
 # How often each source is looked at again (a stat each), in ticks of a second.
 SOURCE_EVERY_SEC = 30.0
@@ -74,7 +77,10 @@ def _who_key(person: work_store.Who) -> tuple:
 
 
 def _live_key(agent: Optional[work_store.LiveAgent]) -> Optional[tuple]:
-    return None if agent is None else tuple(getattr(agent, f) for f in LIVE_KEY)
+    if agent is None:
+        return None
+    working = agent.state == work_store.LIVE_WORKING
+    return (*(getattr(agent, f) for f in LIVE_KEY), agent.written if working else None)
 
 
 def _held_live(item: work_store.WorkItem) -> Live:
@@ -86,7 +92,11 @@ def _held_live(item: work_store.WorkItem) -> Live:
 def _settled(item_json: dict) -> dict:
     """The JSON without the parts of a live owner that move on every look."""
     def bare(live):
-        return live and {k: v for k, v in live.items() if k not in _VOLATILE_LIVE}
+        if not live:
+            return live
+        volatile = _VOLATILE_LIVE + (() if live.get("state") == work_store.LIVE_WORKING
+                                     else ("written",))
+        return {k: v for k, v in live.items() if k not in volatile}
     return {**item_json, "live": bare(item_json.get("live")),
             "pieces": [{**p, "live": bare(p.get("live"))} for p in item_json.get("pieces", [])]}
 
@@ -237,12 +247,15 @@ class WorkView:
                 from jarvis import wait_links
                 wait_links.sweep()          # tells work_store.on_changed what it moved
             fresh: dict[str, Live] = {}
+            seen: dict[tuple, Optional[work_store.LiveAgent]] = {}   # each owner looked up once
             for item_id, item in self._items.items():
                 if item.closed_at is not None or not item.pieces:
                     continue
-                seen = {_who_key(p.who): self._live(p.who) for p in item.pieces}
+                for p in item.pieces:
+                    if _who_key(p.who) not in seen:
+                        seen[_who_key(p.who)] = self._live(p.who)
                 if any(_live_key(seen[_who_key(p.who)]) != _live_key(p.live) for p in item.pieces):
-                    fresh[item_id] = (lambda s: lambda person: s.get(_who_key(person)))(seen)
+                    fresh[item_id] = lambda person: seen.get(_who_key(person))
             due = {i for i, at in self._due.items() if at is not None and at <= now}
             if now - self._sources_at >= SOURCE_EVERY_SEC:
                 self._sources_at = now

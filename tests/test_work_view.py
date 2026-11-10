@@ -148,3 +148,18 @@ def test_the_list_answers_from_what_is_held_without_reading(wired, folder, monke
     assert opened == []
     assert min(took) < 0.05, took
     assert r.json()["revision"] == server.work_held.revision
+
+
+def test_a_finished_owner_s_observed_time_moving_is_no_frame(view, folder, owners):
+    """An idle or finished owner is observed afresh on every look; that
+    changes nothing the page shows, so it is no frame and no work."""
+    item = work_store.create("Speech migration", "folder", folder)
+    work_store.record(work_store.WorkEvent(item.id, "piece", "On it.", {
+        "key": "build", "title": "Build", "state": "working", "who": {"kind": "agent", "ref": SESSION}}))
+    owners[SESSION] = _live(state="finished", doing="idle", written=1000.0)
+    view.tick()
+    view.frames.clear()
+    for n in range(3):
+        owners[SESSION] = _live(state="finished", doing="idle", written=1001.0 + n)
+        view.tick()
+    assert view.frames == []
