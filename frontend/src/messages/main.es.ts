@@ -138,6 +138,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.thread.keyOnboarded": "Aceptada {when} ({by})",
   "main.thread.keyRights": "Derechos: {rights}",
   "main.thread.keyRevoke": "Revocar",
+  "main.work.itemKey": "Llave del trabajo de {name}, vence el {when}",
+  "main.work.itemKeyNobody": "un agente que ya no está en la lista",
   "main.thread.keyBy.page": "en la página",
   "main.thread.keyBy.voice": "por voz",
   "main.thread.keyFailed": "No se pudo cambiar la llave ({error})",

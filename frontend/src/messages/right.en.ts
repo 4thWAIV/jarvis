@@ -134,6 +134,7 @@ export const rightEn = {
   "right.work.state.verifying": "Ready for review",
   "right.work.state.waiting_on_tim": "Waiting on you",
   "right.work.state.blocked": "Blocked",
+  "right.work.state.error": "Error",
   "right.work.state.done": "Done",
   "right.work.state.ready": "Ready",
   "right.work.state.stalled": "Stalled",

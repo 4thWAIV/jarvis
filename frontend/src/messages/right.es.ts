@@ -126,6 +126,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.state.verifying": "Lista para revisar",
   "right.work.state.waiting_on_tim": "Espera su respuesta",
   "right.work.state.blocked": "Bloqueado",
+  "right.work.state.error": "Con un error",
   "right.work.state.done": "Hecho",
   "right.work.state.ready": "Listo",
   "right.work.state.stalled": "Detenido",

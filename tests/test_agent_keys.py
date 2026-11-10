@@ -343,24 +343,23 @@ def test_rights_bound_what_a_key_opens(wired):
 
 
 def test_an_adopted_access_key_label_keeps_its_decisions_its_own(wired):
-    """Planning asked a decision on its access key; once its own key is
-    onboarded it withdraws it and reads his answers as before."""
-    from jarvis import access_keys, agent_key_store
+    """Planning asked decisions on its old access key, which admits nothing
+    any more; onboarded, its own key withdraws them and reads his answers."""
+    from jarvis import agent_key_store, data_paths, work_store
     server, _, _, folder, home = wired
     client = TestClient(server.app)
-    old = {"Authorization": f"Bearer {access_keys.create('Planning', ['work'])}"}
-    r = client.post("/api/work", json={"title": "Keys", "source": {"kind": "folder",
-                                                                    "path": folder}},
-                    headers=old)
-    wid = r.json()["id"]
+    data_paths.access_keys_path().write_text(json.dumps({"keys": [
+        {"label": "Planning", "categories": ["work"], "sha256": "x"}]}))
+    item = work_store.create("Keys", "folder", folder, reporter="key:Planning")
     for key in ("colour", "size"):
-        assert client.post(f"/api/work/{wid}/events", headers=old, json={
-            "kind": "decision_needed", "summary": f"Which {key}?",
-            "detail": {"key": key}}).status_code == 200
-    assert client.post(f"/api/work/{wid}/decisions/size", json={"answer": "big"},
+        work_store.record(work_store.WorkEvent(item.id, "decision_needed", f"Which {key}?",
+                                               {"key": key, "asked_by": "key:Planning"},
+                                               reporter="key:Planning"))
+    assert client.post(f"/api/work/{item.id}/decisions/size", json={"answer": "big"},
                        headers=ORIGIN).status_code == 200
-    assert agent_key_store.legacy_counts() == {"Planning": 3}, \
-        "access-key admissions are counted for the cut-over"
+    assert client.post("/api/work", json={}, headers={
+        "Authorization": "Bearer jarvis_key_whatever"}).status_code == 403, \
+        "an access key admits nothing"
 
     agent = Agent(home, PLAN)
     k = agent_key_store.submit(agent.public, PLAN)
@@ -369,7 +368,7 @@ def test_an_adopted_access_key_label_keeps_its_decisions_its_own(wired):
     assert agent_key_store.get(k.fingerprint).label == "Planning"
     r = agent.get(client, "/api/work/answers")
     assert [a["key"] for a in r.json()["answers"]] == ["size"]
-    r = agent.post(client, f"/api/work/{wid}/events", {
+    r = agent.post(client, f"/api/work/{item.id}/events", {
         "kind": "decision_withdrawn", "summary": "Too early.", "detail": {"key": "colour"}})
     assert r.status_code == 200, r.text
 
@@ -392,7 +391,6 @@ def test_the_report_commands_sign_with_the_session_s_key(wired, monkeypatch, cap
                                          r.headers.get("content-type", ""))
     monkeypatch.setattr(workflow_report._Client, "send_bytes", send)
     monkeypatch.setattr(workflow_report, "base_url", lambda: "http://testserver")
-    monkeypatch.delenv("JARVIS_ACCESS_KEY", raising=False)
     assert work_report.main(["work_report.py", "--as", PLAN, "start", "Keys",
                              "--folder", folder]) == 0
     wid = capsys.readouterr().out.strip()

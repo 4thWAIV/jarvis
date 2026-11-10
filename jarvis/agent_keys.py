@@ -249,12 +249,12 @@ def _check_private(private: Path) -> None:
         raise AgentKeyError(f"{private} can be read by others; it must be 0600.")
 
 
-def make_pair(folder: Path, comment: str) -> tuple[Path, str]:
+def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, str]:
     """(the private key's path, the public key) in `folder`: the pair there
     if there is one, else a new one made by ssh-keygen with no passphrase.
     Made 0600 inside a 0700 folder, never through a link."""
     _private_folder(folder)
-    private, public = folder / KEY_FILE, folder / (KEY_FILE + ".pub")
+    private, public = folder / name, folder / (name + ".pub")
     if not private.exists() and not private.is_symlink():
         done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(private)])
         if done.returncode != 0:

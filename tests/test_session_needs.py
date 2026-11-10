@@ -122,20 +122,19 @@ def wired(monkeypatch, tmp_path):
     return server_module, data_paths.needs_dir()
 
 
-def _wrote(tmp_path, session, path, project):
-    """`session`'s own transcript shows it writing `path`: the only proof of
-    who wrote a board."""
-    from jarvis import session_watch
-    t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / project), session)
-    t.parent.mkdir(parents=True, exist_ok=True)
-    with open(t, "a") as fh:
-        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
-                 f'"input":{{"file_path":"{path}"}}}}]}}}}\n')
+def _signed(path, session):
+    """`<board>.sig` by `session`'s onboarded agent's own key, as `python -m
+    jarvis.agent_key sign` writes it: the only proof of who wrote a board."""
+    from jarvis import agent_key, agent_keys
+    from tests.agent_key_fixtures import onboarded_auth
+    agent = onboarded_auth(session=session).agent
+    agent_key.sig_path(path).write_text(agent_keys.sign(
+        agent.private, agent_keys.MESSAGE, agent_key.message_text(path, path.read_bytes())))
 
 
 def _board(tmp_path, folder, name, text, session):
-    p = _write(folder, name, text)
-    _wrote(tmp_path, session, p, "jarvis" if session == DIAG else "agent-guard")
+    p = _write(folder, name, text, mtime=time.time() - 120)
+    _signed(p, session)
     return p
 
 
@@ -197,8 +196,8 @@ async def test_a_board_is_an_update_with_its_count(wired, monkeypatch, tmp_path)
 
 
 def test_a_board_goes_by_its_proven_writer_never_its_project_s_agents(wired, tmp_path):
-    """Two agents work in agent-guard: the board is the one whose transcript
-    wrote it, never "Agent Guard and Approval Authority"."""
+    """Two agents work in agent-guard: the board is the one whose key
+    signed it, never "Agent Guard and Approval Authority"."""
     server, folder = wired
     _board(tmp_path, folder, "agent-guard", BOARD, APPROVAL)
     out = server.tool_session_needs({})
@@ -206,11 +205,10 @@ def test_a_board_goes_by_its_proven_writer_never_its_project_s_agents(wired, tmp
     assert "Agent Guard" not in out and "# agent-guard" not in out
 
 
-def test_a_board_no_transcript_proves_is_held_never_shown(wired, tmp_path):
+def test_a_board_nothing_signed_is_held_never_shown(wired, tmp_path):
     from jarvis import subsystem_diagnostics
     server, folder = wired
-    _write(folder, "agent-guard", BOARD)                     # nobody's transcript wrote it
-    _wrote(tmp_path, GUARD, folder / "other.md", "agent-guard")
+    _write(folder, "agent-guard", BOARD, mtime=time.time() - 120)     # nobody signed it
 
     assert "No session has anything waiting" in server.tool_session_needs({})
     assert server._needs_by_session() == {}
@@ -220,8 +218,8 @@ def test_a_board_no_transcript_proves_is_held_never_shown(wired, tmp_path):
 
 
 def test_a_board_rewritten_is_proven_again(wired, tmp_path):
-    """The proof is kept for the file as it was: a rewrite by someone whose
-    transcript does not show it is held, whoever wrote it before."""
+    """The proof is kept for the file as it was: a rewrite its writer has
+    not signed again is not shown, whoever wrote it before."""
     server, folder = wired
     p = _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
     assert "# Agent Guard\n" in server.tool_session_needs({})
@@ -258,3 +256,19 @@ def test_read_file_may_read_the_needs_board_but_no_other_jarvis_data(
     for closed in ("data/tool-token", "data/jarvis/mcp.json"):
         with pytest.raises(repo_read.Refused):
             repo_read.resolve_within(project, closed)
+
+
+def test_a_board_a_subagent_wrote_is_shown_as_it_with_its_parent(wired, tmp_path):
+    """The parent's key signs the board; the subagent is named only because
+    its own file shows it writing the board."""
+    from jarvis import session_watch
+    server, folder = wired
+    p = _board(tmp_path, folder, "agent-guard", BOARD, GUARD)
+    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "agent-guard"))
+         / GUARD / "subagents")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "agent-a1.jsonl").write_text(
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write",'
+        f'"input":{{"file_path":"{p}"}}}}]}}}}\n')
+    (d / "agent-a1.meta.json").write_text('{"description":"Feynman"}')
+    assert f"# Feynman ({NAMES[GUARD]})\n" in server.tool_session_needs({})

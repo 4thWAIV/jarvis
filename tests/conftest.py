@@ -188,6 +188,22 @@ def _never_write_to_the_live_dotenv(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _agent_keys_never_touch_a_real_home(request, monkeypatch, tmp_path):
+    """Agents' keys (agent_keys.py) are made by a stand-in for ssh-keygen
+    (tests/agent_key_fixtures.FakeKeygen), except in a test marked
+    `ssh_keygen`, and kept under this test's own folder unless the test
+    names a CLAUDE_CONFIG_DIR itself: never in a real config home."""
+    from jarvis import agent_keys
+    from tests.agent_key_fixtures import FakeKeygen
+    if request.node.get_closest_marker("ssh_keygen") is None:
+        monkeypatch.setattr(agent_keys, "RUNNER", FakeKeygen())
+    real = agent_keys._claude_home
+    monkeypatch.setattr(agent_keys, "_claude_home", lambda: real()
+                        if os.environ.get("CLAUDE_CONFIG_DIR") else tmp_path / "agent-home")
+    monkeypatch.setattr(agent_keys, "_codex_home", lambda: tmp_path / "agent-codex-home")
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_the_real_keychain(monkeypatch):
     """The team connection's credential store is the login Keychain
     (team_client.KeychainStore, through `security`). Every test gets a fresh

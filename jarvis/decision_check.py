@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from jarvis import data_paths, decision_stamp, package_story
+from jarvis import agent_key_store, data_paths, package_signature, package_story
 
 FRONTEND = data_paths.SOURCE_ROOT / "frontend"
 # The two centre frame sizes, in a 1440 x 900 and a 1280 x 800 window: the
@@ -192,6 +192,9 @@ class Isolated:
                "JARVIS_STT_MODEL_DIR": str(folder / "models"),
                "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_FOLDER_DISCOVERY": "0",
                "JARVIS_REFUSE_UNTRUSTED_ACTIONS": "0", "JARVIS_TTS_PROVIDER": "fish",
+               # It is the check: a deck signed by the key it is seeded with
+               # unpacks without the statement that it passed (it has not yet).
+               "JARVIS_DECISION_CHECK_SERVER": "1",
                "FISH_API_KEY": STAND_IN_KEY,
                "PYTHONUNBUFFERED": "1"}
         with self.log.open("wb") as log:
@@ -914,14 +917,27 @@ async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, in
 
 # -- the whole check --------------------------------------------------------------------
 
-def check(archive: Path, deck: dict, folder: Path) -> Result:
+def check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
+          session: str) -> Result:
     """Check the zip in an isolated JARVIS; screenshots go under `folder`.
-    The Mac is kept awake while it runs (_awake)."""
+    It is signed with the agent's own key (`signer`, for `session`), which
+    the isolated JARVIS is seeded with as onboarded, so the same signature
+    that goes to the live JARVIS works there. The Mac is kept awake while
+    it runs (_awake)."""
     with _awake():
-        return _check(archive, deck, folder)
+        return _check(archive, deck, folder, signer, session)
 
 
-def _check(archive: Path, deck: dict, folder: Path) -> Result:
+def seed(data: Path, public_key: str, session: str) -> None:
+    """The agent's public key, onboarded in the isolated JARVIS's record."""
+    with _data_dir(data):
+        key = agent_key_store.submit(public_key, session)
+        agent_key_store.proven(key.fingerprint, "decision check")
+        agent_key_store.onboard(session, "decision check")
+
+
+def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
+           session: str) -> Result:
     from jarvis.decision_package import deliver
     result = Result()
     folder.mkdir(parents=True, exist_ok=True)
@@ -930,10 +946,11 @@ def _check(archive: Path, deck: dict, folder: Path) -> Result:
         dist = built_page()
         jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
                           deck.get("language", "en"), dist)
-        # Stamped for the isolated JARVIS, which, like the live one, unpacks
-        # a decision package only with a stamp for its own token.
+        # Signed by the agent's key, which the isolated JARVIS knows as an
+        # onboarded agent's, as the live one does.
         checked = folder / f"checked-{archive.name}"
-        decision_stamp.stamp(archive, checked, jarvis.token)
+        seed(jarvis.data, signer[1], session)
+        package_signature.sign(archive, checked, signer[0], signer[1], session)
         delivered = deliver(checked, jarvis.base, jarvis.token)
         package_id = delivered.package["id"]
         result.passed.append(f"unpacked in the isolated JARVIS as {package_id}")

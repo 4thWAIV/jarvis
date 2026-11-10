@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import itertools
 import json
 import os
 import subprocess
 import time
 from pathlib import Path
+
+import httpx
 
 from jarvis import agent_keys
 
@@ -105,6 +108,8 @@ class Agent:
         tests about what an onboarded key does."""
         from jarvis import agent_key_store
         key = agent_key_store.submit(self.public, self.session_id)
+        if key.state == agent_key_store.ONBOARDED:
+            return self
         agent_key_store.proven(key.fingerprint, "transcript")
         assert agent_key_store.onboard(self.session_id, by) is not None
         return self
@@ -116,3 +121,56 @@ class Agent:
             {"type": "tool_use", "name": "Bash", "input": {
                 "command": f"python -m jarvis.agent_key submit --session {self.session_id} "
                            f"--fingerprint {self.fingerprint}"}}]}}
+
+
+class AgentAuth(httpx.Auth):
+    """Signs every request a TestClient sends with one agent's key, as the
+    report commands do: `client.post(path, json=..., auth=AgentAuth(agent))`
+    or `TestClient(app, auth=...)`."""
+    requires_request_body = True
+
+    def __init__(self, agent: Agent):
+        self.agent = agent
+
+    def auth_flow(self, request):
+        request.headers["Authorization"] = agent_keys.request_header(
+            self.agent.private, self.agent.public, request.method, str(request.url),
+            request.content)
+        yield request
+
+
+_sessions = itertools.count()
+_granted: set[str] = set()
+
+
+def onboarded_auth(rights: tuple[str, ...] | None = None, session: str | None = None
+                   ) -> AgentAuth:
+    """A new onboarded agent's signing (the default rights, or exactly
+    `rights`), for a test about what a signed request does."""
+    from contextlib import closing
+    from jarvis import agent_key_store, agent_rights
+    from jarvis import run_store
+    session = session or f"sess-test-{next(_sessions):04d}"
+    run_store.init_db()
+    if session not in run_store.agent_names():
+        # An onboarded agent is one on the agents list (keys of agents
+        # dropped from it are revoked).
+        running = {r["session_id"]: (r["name"], r["state"]) for r in run_store.list_agents()
+                   if not r.get("ended_at")}
+        running[session] = (session.removeprefix("sess-"), "idle")
+        run_store.sync_agents(running)
+    agent = Agent(agent_keys.config_home(session), session).onboarded()
+    if rights is not None and agent.fingerprint not in _granted:
+        _granted.add(agent.fingerprint)
+        principal = agent_key_store.agent_principal(session)
+        with closing(agent_key_store._connect()) as conn, conn:
+            conn.execute("DELETE FROM agent_rights WHERE principal=?", (principal,))
+            agent_key_store._grant(conn, principal, rights, agent_rights.ANY_SCOPE, "test",
+                                   time.time())
+    return AgentAuth(agent)
+
+
+def signing(client, auth: AgentAuth):
+    """A client whose every request `auth` signs (the reporter's own)."""
+    client.auth = auth
+    return client

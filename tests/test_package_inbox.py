@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import (access_keys, attention_store, data_paths, decision_stamp, make_package,
+from jarvis import (attention_store, data_paths, make_package, package_signature,
                     package_inbox, run_store, work_packages, workflow_store, work_store)
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_work_packages import make_zip, marks, write_zip  # noqa: F401
@@ -34,22 +34,25 @@ def token() -> dict:
     return {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
 
 
-def deck_zip(tmp_path: Path, version: str = "1.0.0") -> bytes:
-    """The example decision deck, zipped as make_package zips it and stamped
-    for this JARVIS, as make_package stamps it once its check has passed."""
-    folder = tmp_path / f"deck-{version}"
-    stamped = tmp_path / f"deck-{version}.zip"
-    if stamped.is_file():
-        return stamped.read_bytes()
+def deck_zip(tmp_path: Path, version: str = "1.0.0", session: str = "sess-tea") -> bytes:
+    """The example decision deck, zipped as make_package zips it and signed
+    by `session`'s onboarded agent with the statement that it passed its
+    check, as make_package signs it once its check has passed."""
+    from tests.agent_key_fixtures import onboarded_auth
+    folder = tmp_path / f"deck-{version}-{session}"
+    signed = tmp_path / f"deck-{version}-{session}.zip"
+    if signed.is_file():
+        return signed.read_bytes()
     import shutil
     shutil.copytree(EXAMPLES / "decision-deck", folder)
     manifest = json.loads((folder / "package.json").read_text())
     manifest["version"] = version
     (folder / "package.json").write_text(json.dumps(manifest))
-    raw, stamped = tmp_path / f"raw-{version}.zip", tmp_path / f"deck-{version}.zip"
+    raw = tmp_path / f"raw-{version}-{session}.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
-    decision_stamp.stamp(raw, stamped, data_paths.ensure_tool_token())
-    return stamped.read_bytes()
+    agent = onboarded_auth(session=session).agent
+    package_signature.sign(raw, signed, agent.private, agent.public, session, (package_signature.DECISION_CHECKED,))
+    return signed.read_bytes()
 
 
 def page_zip(version: str = "1.0.0") -> bytes:
@@ -73,7 +76,7 @@ def claims_proven(request, monkeypatch):
     real = w.server._package_sender
     from jarvis import session_message_sender
 
-    def proven(claimed, source, reporter):
+    def proven(claimed, reporter):
         if not claimed:
             return None
         return session_message_sender.Sender(
@@ -112,7 +115,7 @@ def test_a_bad_zip_is_refused_with_its_reason_and_nothing_is_recorded(wired, sho
     assert package_inbox.listing() == [] and shown == [] and wired.hints == []
 
 
-def test_an_unstamped_decision_package_is_refused(wired, shown, marks, tmp_path):
+def test_an_unchecked_decision_package_is_refused(wired, shown, marks, tmp_path):
     folder = tmp_path / "deck"
     import shutil
     shutil.copytree(EXAMPLES / "decision-deck", folder)
@@ -128,7 +131,7 @@ def test_a_good_one_is_recorded_before_its_hint_and_shown_nowhere(
     real = wired.hints.append
     monkeypatch.setattr(wired.server, "_send_to_session_clients",
                         lambda m: (seen_at_hint.append(len(package_inbox.listing())), real(m)))
-    data = deck_zip(tmp_path)
+    data = deck_zip(tmp_path, session="sess-1")
     r = send(wired, data, project="tea", session="sess-1")
     assert r.status_code == 200, r.text
     got = r.json()
@@ -143,13 +146,14 @@ def test_a_good_one_is_recorded_before_its_hint_and_shown_nowhere(
     assert {"type": "packages"} in wired.hints and all(n == 1 for n in seen_at_hint)
     item = record.get("package", entry.id)
     assert item.state == attention_store.PENDING and not item.audible
-    assert item.untrusted == {"agent": "tea", "package": "Office tea: decisions"}
+    assert item.untrusted == {"agent": entry.from_agent, "package": "Office tea: decisions"}
+    assert entry.from_agent == run_store.agent_names()["sess-1"], "its signer's one name"
     assert item.facts["waiting"] == 2
     assert package_inbox.events(entry.id)[0]["kind"] == "arrived"
 
 
 def test_the_same_bytes_again_are_the_same_row(wired, shown, marks, tmp_path):
-    data = deck_zip(tmp_path)
+    data = deck_zip(tmp_path, session="s")
     first = send(wired, data, session="s").json()
     again = send(wired, data, session="s").json()
     assert again["arrived"] is False and again["inbox"]["id"] == first["inbox"]["id"]
@@ -158,9 +162,9 @@ def test_the_same_bytes_again_are_the_same_row(wired, shown, marks, tmp_path):
 
 def test_a_newer_version_from_the_same_sender_replaces_the_open_one(
         wired, shown, marks, record, tmp_path):
-    old = send(wired, deck_zip(tmp_path, "1.0.0"), session="s").json()["inbox"]["id"]
-    other = send(wired, deck_zip(tmp_path, "1.0.5"), session="t").json()["inbox"]["id"]
-    new = send(wired, deck_zip(tmp_path, "1.0.1"), session="s").json()
+    old = send(wired, deck_zip(tmp_path, "1.0.0", "s"), session="s").json()["inbox"]["id"]
+    other = send(wired, deck_zip(tmp_path, "1.0.5", "t"), session="t").json()["inbox"]["id"]
+    new = send(wired, deck_zip(tmp_path, "1.0.1", "s"), session="s").json()
     assert new["superseded"] == [old]
     assert package_inbox.get(old).closed_why == package_inbox.SUPERSEDED
     assert package_inbox.get(other).is_open, "another sender's is its own"
@@ -174,15 +178,16 @@ def test_a_package_for_a_missing_workflow_or_work_item_is_refused(wired, shown, 
     assert package_inbox.listing() == []
 
 
-def test_the_packages_access_key_opens_the_inbox_route_and_nothing_else(wired, shown, marks):
-    key = access_keys.create("sender", ["packages"])
-    auth = {"Authorization": f"Bearer {key}"}
-    r = send(wired, page_zip(), headers=auth)
+def test_the_packages_right_opens_the_inbox_route_and_nothing_else(wired, shown, marks):
+    from tests.agent_key_fixtures import onboarded_auth
+    auth = onboarded_auth(("packages",))
+    r = wired.client.post(INBOX, content=page_zip(), auth=auth,
+                          headers={"Content-Type": "application/zip"})
     assert r.status_code == 200, r.text
     inbox_id, package_id = r.json()["inbox"]["id"], r.json()["package"]["id"]
     for path in (f"{INBOX}/{inbox_id}/open", f"{INBOX}/{inbox_id}/close",
                  f"/api/packages/{package_id}/page", "/api/packages/local"):
-        assert wired.client.post(path, json={}, headers=auth).status_code == 403, path
+        assert wired.client.post(path, json={}, auth=auth).status_code == 403, path
     assert shown == []
 
 
@@ -248,14 +253,27 @@ def test_a_page_for_a_work_item_that_asks_nothing_is_refused(
     assert package_inbox.listing() == [] and record.pending_count() == 0 and shown == []
 
 
-def test_an_agent_package_for_a_work_item_is_refused(wired, shown, marks, record, work_item):
+def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
+        wired, shown, marks, record, work_item):
+    """It cannot carry the vote itself: the standard one is asked on the
+    work item as it arrives, on its Decisions tab."""
     agent = make_zip({"BRIEF.md": "Count the words."},
                      {"name": "count", "version": "1.0.0", "purpose": "Count.", "runs": "agent",
                       "brief": "BRIEF.md", "returns": ["results/**"]})
     r = send(wired, agent, work=work_item.id)
-    assert r.status_code == 409 and "an agent package cannot carry Tim's vote" in r.json()["error"]
-    assert package_inbox.listing() == []
-    assert send(wired, agent).status_code == 200, "with no Work item it is taken"
+    assert r.status_code == 200, r.text
+    inbox_id = r.json()["inbox"]["id"]
+    [decision] = work_store.get(work_item.id).decisions
+    assert decision.key == f"understood-{inbox_id}" and decision.options == [
+        "Got it", "I have questions"]
+    conversation = make_zip({"SKILL.md": "Say it."},
+                            {"name": "say", "version": "1.0.0", "purpose": "Say.",
+                             "runs": "conversation", "skill": "SKILL.md",
+                             "returns": ["results/**"]})
+    r = send(wired, conversation, work=work_item.id)
+    assert r.status_code == 409 and "a conversation package cannot carry Tim's vote" in \
+        r.json()["error"]
+    assert send(wired, conversation).status_code == 200, "with no Work item it is taken"
 
 
 def test_a_package_for_a_work_item_that_asks_is_taken(
@@ -274,14 +292,18 @@ def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
 
 
 def presentation_zip(tmp_path) -> bytes:
-    """A presentation as make_package builds it, with the vote added, stamped."""
+    """A presentation as make_package builds it, with the vote added, signed
+    as checked by an onboarded agent's key."""
     content = tmp_path / "presentation" / "content.json"
     content.parent.mkdir()
     content.write_text(json.dumps(make_package.PRESENTATION_EXAMPLE))
     out = tmp_path / "presentation" / "out"
     out.mkdir()
     made = make_package.make_deck(content, out)
-    decision_stamp.stamp(made.archive, made.archive, data_paths.ensure_tool_token())
+    from tests.agent_key_fixtures import onboarded_auth
+    agent = onboarded_auth(session="sess-1").agent
+    package_signature.sign(made.archive, made.archive, agent.private, agent.public, "sess-1",
+                           (package_signature.DECISION_CHECKED,))
     return made.archive.read_bytes()
 
 
@@ -499,7 +521,8 @@ def test_after_open_his_done_resolves_the_update(wired, shown, marks, record, tm
 # -- answering ---------------------------------------------------------------------------
 
 def opened_deck(w, tmp_path, **query) -> str:
-    inbox_id = send(w, deck_zip(tmp_path), **query).json()["inbox"]["id"]
+    inbox_id = send(w, deck_zip(tmp_path, session=query.get("session", "sess-tea")),
+                    **query).json()["inbox"]["id"]
     assert w.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER).status_code == 200
     return inbox_id
 
@@ -597,6 +620,7 @@ def test_a_message_before_he_signed_off_is_not_taken_for_his(wired, shown, marks
 
 def test_a_sender_that_is_gone_gets_no_message(wired, shown, marks, tmp_path):
     inbox_id = opened_deck(wired, tmp_path, session="gone")
+    run_store.sync_agents({})           # its agent has ended since
     r = signoff(wired, package_inbox.get(inbox_id).package_id)
     assert r.status_code == 200 and "not running" in r.json()["said"]
     assert package_inbox.get(inbox_id).closed_why == package_inbox.SIGNED_OFF
@@ -724,214 +748,49 @@ def test_every_inbox_act_acts_only_on_his_own_turn(wired, tool):
 # -- who sent it -----------------------------------------------------------------------
 
 @pytest.fixture
-def proof(wired, claims_proven, monkeypatch, tmp_path):
-    """The real proof, with chitauri (sess-1) and designer (sess-2) running
-    in /tmp/tea and their transcripts under tmp/claude."""
-    from types import SimpleNamespace
+def unproven(wired, claims_proven, monkeypatch):
+    """The real proof: only a signature (or the signed request) proves who
+    sent it (tests/test_agent_key_packages.py has the signatures)."""
     monkeypatch.setattr(wired.server, "_package_sender", claims_proven)
-    sessions = [SimpleNamespace(session_id=sid, cwd=str(tmp_path / "tea"), project="tea",
-                                provider="anthropic", voice_name=name, state="idle",
-                                agents_active=0, agents_capped=False)
-                for sid, name in (("sess-1", "chitauri"), ("sess-2", "designer"))]
-    monkeypatch.setattr(wired.server, "_snapshot_or_empty",
-                        lambda: SimpleNamespace(sessions=sessions))
-    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
-                        lambda: {"sess-1": "chitauri", "sess-2": "designer"})
-    monkeypatch.setattr(wired.server.session_watch, "config_roots", lambda: [tmp_path / "claude"])
-
-    def ran(session, command):
-        from jarvis import session_watch
-        t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / "tea"), session)
-        t.parent.mkdir(parents=True, exist_ok=True)
-        with open(t, "a") as fh:
-            fh.write(json.dumps({"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}) + "\n")
-    return ran
 
 
 def test_a_claimed_session_nothing_proves_gets_no_answers_and_the_row_says_so(
-        wired, shown, marks, proof):
+        wired, shown, marks, unproven):
     got = send(wired, page_zip(), session="sess-1", source="notes/").json()
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.claimed_session, entry.sender_evidence) == ("", "sess-1", "")
-    assert got["inbox"]["proof_pending"] is True, "looked for again: its output may prove it"
-    later = time.time() + wired.server.REPROVE_FOR_SEC + 1
-    [(entry, sender)] = wired.server._reprove_inbox_senders(now=later)
-    assert sender is None and entry.unproven_claim
+    assert got["inbox"]["proof_pending"] is False and entry.unproven_claim, \
+        "nothing proves it later: transcripts prove no package"
     assert "go nowhere" in _call(wired, "package_inbox")["text"]
     r = signoff(wired, got["package"]["id"])
     assert "not proven to have sent it" in r.json()["said"]
     assert not any(c.get("to_session") == "sess-1" for c in wired.server._captures.values())
 
 
-@pytest.mark.parametrize("command, source", [
-    ("python -m jarvis.make_package notes/ --session sess-1", "notes"),
-    ("python -m jarvis.make_package --handoff handoff.json --engine codex --session sess-1", "handoff.json"),
-    ("python -m jarvis.make_package --handoff handoff.json --engine claude --session sess-1", "handoff.json"),
-])
-def test_the_claimed_session_s_transcript_running_make_package_proves_it(
-        wired, shown, marks, proof, command, source):
-    proof("sess-1", command)
-    got = send(wired, page_zip(), session="sess-1", source=source).json()
+def test_the_signed_request_proves_its_own_agent_s_session_alone(wired, shown, marks, unproven):
+    from tests.agent_key_fixtures import onboarded_auth
+    auth = onboarded_auth(("packages",), "sess-1")
+    got = wired.client.post(INBOX, content=page_zip(), auth=auth, params={"session": "sess-1"},
+                            headers={"Content-Type": "application/zip"}).json()
     entry = package_inbox.get(got["inbox"]["id"])
-    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
-        "sess-1", "chitauri", "transcript")
-    assert got["inbox"]["unproven_claim"] is False
+    assert (entry.from_session, entry.sender_evidence) == ("sess-1", "agent_key")
+    other = wired.client.post(INBOX, content=page_zip("1.0.1"), auth=auth,
+                              params={"session": "sess-2"},
+                              headers={"Content-Type": "application/zip"}).json()
+    assert package_inbox.get(other["inbox"]["id"]).from_session == "", "not its own session"
 
 
-def test_another_session_s_transcript_proves_no_claim(wired, shown, marks, proof):
-    """designer ran it: a package claiming chitauri is not chitauri's."""
-    proof("sess-2", "python -m jarvis.make_package notes/ --session sess-1")
-    got = send(wired, page_zip(), session="sess-1", source="notes").json()
-    assert package_inbox.get(got["inbox"]["id"]).from_session == ""
-
-
-def test_a_key_proves_the_sessions_of_the_agent_its_label_names(wired, shown, marks, proof):
-    run_store.sync_agents({"sess-1": ("chitauri", "idle")})
-    auth = {"Authorization": f"Bearer {access_keys.create('chitauri', ['packages'])}"}
-    got = send(wired, page_zip(), headers=auth, session="sess-1").json()
-    entry = package_inbox.get(got["inbox"]["id"])
-    assert (entry.from_session, entry.sender_evidence) == ("sess-1", "access_key")
-    other = send(wired, page_zip("1.0.1"), headers=auth, session="sess-2").json()
-    assert package_inbox.get(other["inbox"]["id"]).from_session == "", "not its agent's session"
-
-
-# -- the packages delivered before their sender had to be proven ------------------------
-
-def _printed(tmp_path, session, text):
-    """`session`'s transcript holds a tool result printing `text`, as
-    make_package's output lands in the session that ran it."""
-    from jarvis import session_watch
-    t = session_watch.transcript_path(tmp_path / "claude", str(tmp_path / "tea"), session)
-    t.parent.mkdir(parents=True, exist_ok=True)
-    with open(t, "a") as fh:
-        fh.write(json.dumps({"type": "user", "message": {"content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": text}]}}) + "\n")
-
-
-# Days ago: a row older than every window.
-OLD = time.time() - 3 * 24 * 3600
-
-
-def _older(wired, version="1.0.0", session="sess-1"):
-    """A row as migration 3 left one delivered before it: its session only
-    a claim, and (migration 4) to be proven once again."""
-    got = wired.send_unproven(version, session)
-    with __import__("sqlite3").connect(data_paths.db_path()) as conn:
-        conn.execute("UPDATE package_inbox SET reprove=1, arrived_at=? WHERE id=?", (OLD, got))
-    return got
-
-
-@pytest.fixture
-def older(wired, shown, marks, proof):
-    def send_unproven(version, session):
-        return send(wired, page_zip(version), session=session).json()["inbox"]["id"]
-    wired.send_unproven = send_unproven
-    return wired
-
-
-def test_an_older_row_is_proven_by_its_session_s_own_record_of_delivering_it(older, tmp_path):
-    inbox_id = _older(older)
-    _printed(tmp_path, "sess-1", "Built a page package.\n" + make_package.ARRIVED_AS.format(
-        inbox_id=inbox_id) + " (package notes-page-1.0.0-x).")
-    import os
-    os.utime(next((tmp_path / "claude").rglob("sess-1.jsonl")), (OLD + 60, OLD + 60))
-    [(entry, sender)] = older.server._reprove_inbox_senders()
-    assert (entry.from_session, entry.from_agent, entry.sender_evidence, entry.reprove) == (
-        "sess-1", "chitauri", "transcript", 0)
-    assert package_inbox.events(inbox_id)[-1]["kind"] == package_inbox.SENDER_PROVEN
-    assert older.server._reprove_inbox_senders() == [], "once"
-    assert package_inbox.get(inbox_id).revision == entry.revision
-
-
-def test_an_older_row_nothing_proves_stays_unproven_and_says_why(older, tmp_path):
-    inbox_id = _older(older)
-    _printed(tmp_path, "sess-2", make_package.ARRIVED_AS.format(inbox_id=inbox_id))
-    [(entry, sender)] = older.server._reprove_inbox_senders()
-    assert sender is None and entry.from_session == "" and entry.reprove == 0
-    last = package_inbox.events(inbox_id)[-1]
-    assert (last["kind"], last["how"]) == (package_inbox.SENDER_NOT_PROVEN,
-                                           "no transcript of its session shows it delivered")
-    assert older.server._reprove_inbox_senders() == []
-
-
-def test_an_older_row_from_a_session_no_longer_listed_says_so(older, tmp_path):
-    inbox_id = _older(older, session="sess-gone")
-    [(entry, sender)] = older.server._reprove_inbox_senders()
-    assert sender is None and package_inbox.events(inbox_id)[-1]["how"] == \
-        "its session is not a listed agent running now"
-
-
-def test_a_new_arrival_is_proven_once_its_make_package_output_says_its_inbox_id(
-        older, tmp_path):
-    """The command line may name its source through a shell variable ($D):
-    unproven as it arrives, it is proven by make_package's own output, which
-    gives the inbox id JARVIS answered it alone."""
-    got = send(older, page_zip(), session="sess-1", source="/tmp/x/content.json").json()
-    inbox_id = got["inbox"]["id"]
-    assert got["inbox"]["proof_pending"] and not got["inbox"]["unproven_claim"]
-    assert older.server._reprove_inbox_senders() == [], "its output is not written yet"
-    _printed(tmp_path, "sess-1", make_package.ARRIVED_AS.format(inbox_id=inbox_id))
-    [(entry, _)] = older.server._reprove_inbox_senders()
-    assert (entry.from_session, entry.sender_evidence, entry.proof_pending) == (
-        "sess-1", "transcript", False)
-
-
-def _claude_subagent(tmp_path, session, agent_id, description, line):
-    from jarvis import session_watch
-    d = (tmp_path / "claude" / "projects" / session_watch.encode_cwd(str(tmp_path / "tea"))
-         / session / "subagents")
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"agent-{agent_id}.jsonl").write_text(json.dumps(line) + "\n")
-    (d / f"agent-{agent_id}.meta.json").write_text(json.dumps({"description": description}))
-
-
-def test_a_claude_subagent_of_the_claimed_session_proves_it_as_it_arrives(
-        wired, shown, marks, proof, tmp_path):
-    _claude_subagent(tmp_path, "sess-1", "a1b2c3", "Feynman", {
-        "type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash",
-            "input": {"command": "python -m jarvis.make_package notes/ --session sess-1"}}]}})
-    got = send(wired, page_zip(), session="sess-1", source="notes").json()
-    entry = package_inbox.get(got["inbox"]["id"])
-    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
-        "sess-1", "Feynman (chitauri)", "subagent:Feynman")
-
-
-def test_a_claude_subagent_s_output_proves_it_after(wired, shown, marks, proof, tmp_path):
-    got = send(wired, page_zip(), session="sess-1", source="$D/content.json").json()
-    _claude_subagent(tmp_path, "sess-1", "d4e5f6", "Review packages", {
-        "type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t",
-            "content": make_package.ARRIVED_AS.format(inbox_id=got["inbox"]["id"])}]}})
-    [(entry, _)] = wired.server._reprove_inbox_senders()
-    assert (entry.from_agent, entry.sender_evidence) == (
-        "Review packages (chitauri)", "subagent:Review packages")
-
-
-def test_a_codex_subagent_of_the_claimed_thread_proves_it(wired, shown, marks, proof, tmp_path,
-                                                         monkeypatch):
-    from types import SimpleNamespace
-    parent = "019a-codex-parent"
-    sessions = wired.server._snapshot_or_empty().sessions + [SimpleNamespace(
-        session_id=parent, cwd=str(tmp_path / "tea"), project="tea", provider="openai",
-        voice_name="Planning", state="idle", agents_active=0, agents_capped=False)]
-    monkeypatch.setattr(wired.server, "_snapshot_or_empty", lambda: SimpleNamespace(sessions=sessions))
-    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
-                        lambda: {"sess-1": "chitauri", parent: "Planning"})
-    own, sub = tmp_path / "codex" / "own.jsonl", tmp_path / "codex" / "sub.jsonl"
-    own.parent.mkdir(parents=True)
-    own.write_text(json.dumps({"type": "session_meta", "payload": {"source": "cli"}}) + "\n")
-    sub.write_text(json.dumps({"type": "session_meta", "payload": {"source": {"subagent": {
-        "thread_spawn": {"parent_thread_id": parent, "agent_nickname": "Hopper"}}}}}) + "\n"
-        + json.dumps({"type": "response_item", "payload": {"type": "function_call", "arguments":
-            json.dumps({"cmd": f"python -m jarvis.make_package notes/ --session {parent}"})}})
-        + "\n")
-    monkeypatch.setattr(wired.server.codex_sessions, "threads", lambda home: {
-        parent: {"rollout_path": str(own), "thread_source": "cli"},
-        "019b-child": {"rollout_path": str(sub), "thread_source": "subagent"}})
-    got = send(wired, page_zip(), session=parent, source="notes").json()
-    entry = package_inbox.get(got["inbox"]["id"])
-    assert (entry.from_session, entry.from_agent, entry.sender_evidence) == (
-        parent, "Hopper (Planning)", "subagent:Hopper")
+def test_migration_5_leaves_no_row_waiting_to_be_proven_again(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / "db.sqlite")
+    conn.row_factory = sqlite3.Row
+    run_store.migrate(conn, "package_inbox_schema",
+                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 4}, "inbox")
+    conn.execute("INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
+                 "purpose, runs, state, revision, arrived_at, claimed_session, reprove) VALUES "
+                 "('r', 'p', 'x', 'n', '1', 't', 'p', 'page', 'arrived', 1, 0, 's', 1)")
+    run_store.migrate(conn, "package_inbox_schema", package_inbox._MIGRATIONS, "inbox")
+    assert [r["reprove"] for r in conn.execute("SELECT reprove FROM package_inbox")] == [0]
 
 
 def test_migration_4_marks_only_the_open_claimed_unproven_rows(tmp_path):
@@ -946,6 +805,7 @@ def test_migration_4_marks_only_the_open_claimed_unproven_rows(tmp_path):
                      "purpose, runs, state, revision, arrived_at, claimed_session, from_session, "
                      "sender_evidence) VALUES (?, 'p', 'x', 'n', '1', 't', 'p', 'page', ?, 1, 0, "
                      "?, ?, ?)", (f"r{n}", state, claimed, proven, "transcript" if proven else ""))
-    run_store.migrate(conn, "package_inbox_schema", package_inbox._MIGRATIONS, "inbox")
+    run_store.migrate(conn, "package_inbox_schema",
+                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 4}, "inbox")
     marked = [r["id"] for r in conn.execute("SELECT id FROM package_inbox WHERE reprove=1")]
     assert marked == ["r0"]

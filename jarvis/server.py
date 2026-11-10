@@ -21,8 +21,10 @@ import hashlib
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import sqlite3
 import threading
 import time
@@ -115,7 +117,8 @@ from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import wait_links
 from jarvis import session_message_sender
-from jarvis import access_keys, agent_key_store, agent_keys
+from jarvis import agent_key_store, agent_keys, package_signature
+from jarvis import bundle_archive
 from jarvis import reporters
 from jarvis import make_package
 from jarvis import story_teller as story_teller_module
@@ -648,7 +651,7 @@ def _decision_message(where: str, question: str, options, recommendation) -> str
 def _record_board(board: "session_needs.Board") -> None:
     """One proven rewrite of a needs board, as one message in its writer's
     thread ("Planning's needs board: 3 items", then the board), with the
-    transcript proof that admitted it (`_board_writer`, kept per rewrite)."""
+    proof that admitted it (`_board_writer`, kept per rewrite)."""
     writer = _board_writer(board)
     if writer is None:
         return
@@ -691,8 +694,8 @@ def _record_work_decision(item, detail: Optional[dict]) -> None:
 
 def _record_package(entry, proven) -> None:
     """A package in his inbox, one message in its thread, once its sender
-    is proven (`_package_sender`: the caller's key or the transcript that ran
-    make_package); one not proven is recorded when it is."""
+    is proven (its signature's onboarded key, `_package_signer`, else the
+    caller's key, `_package_sender`); one not proven is not recorded."""
     if proven is None:
         return
     n = entry.decisions_total
@@ -752,6 +755,8 @@ def _hint_from_any_thread(message: dict) -> None:
     except RuntimeError:
         if _main_loop is not None:
             _main_loop.call_soon_threadsafe(lambda: _send_to_session_clients(message))
+        else:
+            _send_to_session_clients(message)   # no loop running yet: nothing to race
 
 
 def _attend(kind: str, source_id, event: str, *, facts: Optional[dict] = None,
@@ -2052,8 +2057,8 @@ BOARD_PROOF_RETRY_SEC = 60.0
 
 
 def _board_writer(board: session_needs.Board):
-    """Who wrote `board`, as it is now, proven by a transcript showing the
-    write (`_writer_of`), kept per (project, mtime) in run_store's
+    """Who wrote `board`, as it is now, proven by its `.sig` from an
+    onboarded agent's key (`_file_signer`), kept per (project, mtime) in run_store's
     needs_board_writers so it is proven once per rewrite. None: unproven."""
     kept = run_store.board_writer(board.project, board.mtime)
     if kept is not None:
@@ -2062,7 +2067,18 @@ def _board_writer(board: session_needs.Board):
     tried = (board.project, board.mtime)
     if tried in _board_unproven and time.time() - board.mtime > BOARD_PROOF_RETRY_SEC:
         return None
-    writer = _writer_of(board.path) if board.path is not None else None
+    signer, key, status, fingerprint = (_file_signer(board.path) if board.path is not None
+                                        else (None, None, _UNSIGNED, ""))
+    if status == _UNSIGNED and time.time() - board.mtime < SIG_GRACE_SEC:
+        return None                     # its .sig may still be on its way
+    if status != _GOOD_SIGNER:
+        # Unsigned, or signed by a key that is not an onboarded agent's: held
+        # (`_unrecognised_key`), never shown.
+        _board_unproven[tried] = time.time()
+        _unrecognised_key("board", f"the needs board for {board.project}",
+                          fingerprint=fingerprint, session=key.session_id if key else "")
+        return None
+    writer = _with_writing_subagent(key, board.path) if signer is not None else None
     if writer is None:
         _board_unproven[tried] = time.time()
         return None
@@ -2181,7 +2197,7 @@ _session_messages_task: Optional[asyncio.Task] = None
 
 
 def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool = False,
-           since: float = 0.0, key=None, own_only: bool = False
+           since: float = 0.0, key=None, own_only: bool = False, subagents_only: bool = False
            ) -> "Optional[session_message_sender.Sender]":
     """The listed agent, or a subagent of one, whose own transcript `shows`
     proves the act (session_message_sender.proven_by), from the sessions
@@ -2191,29 +2207,62 @@ def _prove(what: str, shows, claimed: Optional[str] = None, only_claimed: bool =
             shows, claimed, _snapshot_or_empty().sessions, session_watch.config_roots(),
             agent_directory.names_by_session(),
             codex_threads=lambda: codex_sessions.threads(codex_sessions.codex_home()),
-            only_claimed=only_claimed, since=since, key=key, own_only=own_only)
+            only_claimed=only_claimed, since=since, key=key, own_only=own_only,
+            subagents_only=subagents_only)
     except Exception:
         log.warning("%s: its sender was not worked out", what, exc_info=True)
         return None
 
 
-def _writer_of(path: Path, claimed: Optional[str] = None
-               ) -> "Optional[session_message_sender.Sender]":
-    """Who wrote the file at `path` (a session's message, a needs board),
-    proven by a transcript showing the write; a claim (a From: line) only
-    says whose to look in first."""
+def _file_signer(path: Path):
+    """(the proven sender or None, the key JARVIS holds or None, how, the
+    signing key's fingerprint) for a message file or needs board, from the
+    `<file>.sig` its agent wrote with `python -m jarvis.agent_key sign`:
+    good for an onboarded agent's key over the file as it is now; held for
+    a genuine signature by a key that is not an onboarded agent's; unsigned
+    with no signature, or one that no longer matches the file (it was
+    changed after it was signed, and may be signed again)."""
+    from jarvis import agent_key
+    sig = agent_key.sig_path(path)
     try:
-        written_at = path.lstat().st_mtime
-    except OSError:
-        return None
-    return _prove(path.name, lambda t: session_message_sender.wrote(t, path, written_at),
-                  claimed, since=written_at - session_message_sender.WROTE_SLACK_SEC,
-                  key=("wrote", str(path), written_at))
+        if sig.is_symlink() or not sig.is_file() or path.is_symlink():
+            return None, None, _UNSIGNED, ""
+        text, data = sig.read_text(encoding="ascii", errors="replace"), path.read_bytes()
+        public, namespace = agent_keys.signed_by(text)
+    except (OSError, agent_keys.AgentKeyError):
+        return None, None, _UNSIGNED, ""
+    if namespace != agent_keys.MESSAGE or not agent_keys.verify(
+            public, agent_keys.MESSAGE, agent_key.message_text(path, data), text):
+        return None, None, _UNSIGNED, ""
+    fingerprint = agent_keys.fingerprint(public)
+    key = agent_key_store.get(fingerprint)
+    if key is not None and key.admitted() and key.principal.startswith(agent_key_store.AGENT) \
+            and key.public_key == public:
+        return _signer_sender(key), key, _GOOD_SIGNER, fingerprint
+    return None, key, _HELD_SIGNER, fingerprint
 
 
 def _message_sender(dropped) -> "Optional[session_message_sender.Sender]":
-    """Who sent a dropped message (`_writer_of`). None: it is held."""
-    return _writer_of(dropped.path, dropped.claimed)
+    """Who sent a dropped message: the onboarded agent whose key signed it
+    (`_file_signer`). None: it is held."""
+    signer, key, status, _fp = _file_signer(dropped.path)
+    return _with_writing_subagent(key, dropped.path) if status == _GOOD_SIGNER else None
+
+
+def _with_writing_subagent(key, path: Path) -> "session_message_sender.Sender":
+    """The signing agent of a message file or needs board, named with the
+    subagent whose own transcript shows writing `path`, if one does."""
+    try:
+        written_at = path.lstat().st_mtime
+    except OSError:
+        return _signer_sender(key)
+    return _signer_sender(key, lambda t: session_message_sender.wrote(t, path, written_at),
+                          written_at - session_message_sender.WROTE_SLACK_SEC, path.name)
+
+
+# How long an unsigned message file or needs board is left for its `.sig`
+# (written by `agent_key sign` just after it) before it is held.
+SIG_GRACE_SEC = 60.0
 
 
 def _take_session_messages() -> list[run_store.SessionMessage]:
@@ -2222,18 +2271,31 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     and a file that will not delete after its record was written is moved
     aside as `.taken` so it is never recorded twice."""
     taken = []
+    from jarvis import agent_key
     for dropped in session_messages.collect(data_paths.session_messages_dir(),
                                             time.time()):
         sender = _message_sender(dropped)
         if sender is None:
-            # No sender he could reply to: it never reaches him as a message.
-            # Held where it was dropped (`.held`), so its session sees it was
-            # not taken, and counted in Diagnostics (session_messages.held).
+            _, key, status, fingerprint = _file_signer(dropped.path)
+            try:
+                young = time.time() - dropped.path.lstat().st_mtime < SIG_GRACE_SEC
+            except OSError:
+                young = False
+            if status == _UNSIGNED and young:
+                continue                # its .sig may still be on its way
+            # Unsigned, or signed by a key that is not an onboarded agent's:
+            # held where it was dropped (`.held`), so its session sees it was
+            # not taken, until he chooses (`_unrecognised_key`).
             _hold_session_message(dropped)
+            _unrecognised_key("message", f'the message "{dropped.subject}"',
+                              fingerprint=fingerprint,
+                              session=(key.session_id if key else "") or dropped.claimed or "",
+                              path=str(dropped.path.with_suffix(session_messages.HELD_SUFFIX)))
             continue
         message_id = run_store.create_session_message(
             dropped.project, sender.name, dropped.subject, dropped.body,
             sender.session_id, sender.evidence, sender.subagent)
+        agent_key.sig_path(dropped.path).unlink(missing_ok=True)
         try:
             dropped.path.unlink()
         except OSError as e:
@@ -2832,7 +2894,6 @@ async def start_session_watcher() -> None:
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
-    _spawn(_watch_inbox_proofs())
     _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
@@ -4234,16 +4295,13 @@ def _set_agent_active(session_id: str, active: bool, by: str):
 
 
 def _adopted_label(session_id: str) -> str:
-    """The label of an access key that names exactly this agent, else "":
-    kept on onboarding so the decisions it asked under that key stay its
-    own."""
-    try:
-        for k in access_keys.listing():
-            found = agent_directory.named(k["label"])
-            if [a.session_id for a in found] == [session_id]:
-                return k["label"]
-    except Exception:
-        log.warning("agent keys: the access keys were not read", exc_info=True)
+    """The label of an old access key (its record is only read, never
+    used to admit anything) that names exactly this agent, else "": kept on
+    onboarding so the decisions it asked under that key stay its own."""
+    for label in reporters.legacy_labels():
+        found = agent_directory.named(label)
+        if [a.session_id for a in found] == [session_id]:
+            return label
     return ""
 
 
@@ -4259,8 +4317,8 @@ def _onboard_agent(session_id: str, by: str):
 
 
 def _agent_key_onboarded(key) -> None:
-    """What waited for this key now goes on. Nothing waits yet; held
-    packages and messages do from phase 4."""
+    """What waited for this key now goes on (`_release_held`)."""
+    _release_held(key)
 
 
 def _revoke_agent_key(key, by: str, why: str):
@@ -4269,7 +4327,8 @@ def _revoke_agent_key(key, by: str, why: str):
     done = agent_key_store.revoke(key.fingerprint, by, why)
     if done is not None:
         _attention_resolved("agent_key", key.fingerprint)
-        _hint_agents_changed()
+        _refuse_held(key.fingerprint, key.session_id if key.state != "onboarded" else "")
+        _hint_from_any_thread({"type": "work" if key.work_id else "agents"})
     return done
 
 
@@ -4315,7 +4374,13 @@ def _look_after_agent_keys(now: Optional[float] = None) -> None:
             if k.state == agent_key_store.ONBOARDED and k.session_id not in listed]
     if gone:
         agent_key_store.revoke_where("jarvis", "its agent was dropped from the list", gone)
-        _hint_agents_changed()
+        _hint_from_any_thread({"type": "agents"})
+    for key in agent_key_store.work_keys():
+        item = work_store.get(key.work_id)
+        if item is None or item.closed_at is not None or item.history:
+            agent_key_store.revoke(key.fingerprint, "jarvis", "its work item ended")
+        elif not key.admitted(now):
+            agent_key_store.revoke(key.fingerprint, "jarvis", "its 30 days ran out")
 
 
 AGENT_KEYS_POLL_SEC = 5.0
@@ -4387,11 +4452,45 @@ async def api_agent_keys(session: str = ""):
         if session:
             key = agent_key_store.for_session(session)
             return {"key": _key_json(key) if key else None}
-        # Requests still admitted on access keys, by label, over a week: at
-        # none, the access keys can go (the cut-over).
+        from jarvis import legacy_access
+        # The cut-over guard: the access keys still used, by label, and when
+        # they stop being accepted at the earliest.
         return {"keys": [_key_json(k) for k in agent_key_store.listing()],
-                "access_key_admissions_7d": agent_key_store.legacy_counts()}
+                "access_keys": legacy_access.status()}
     return await asyncio.to_thread(read)
+
+
+class WorkKeyGrant(BaseModel):
+    work: str
+    public_key: str
+
+
+def _signed_key(request: Request):
+    principal = web_auth.principal(request.scope) or ""
+    return agent_key_store.for_session(principal[len(agent_key_store.AGENT):]) \
+        if principal.startswith(agent_key_store.AGENT) else None
+
+
+@app.post(web_auth.SUBMIT_PATH + "/work-keys")
+async def api_issue_work_key(req: WorkKeyGrant, request: Request):
+    """An onboarded agent issuing a key for one Work item
+    (`python -m jarvis.agent_key grant`)."""
+    issuer = await asyncio.to_thread(_signed_key, request)
+    key, why = await asyncio.to_thread(_issue_work_key, issuer, req.public_key, req.work)
+    if key is None:
+        return JSONResponse(status_code=409, content={"error": why})
+    return {"fingerprint": key.fingerprint, "work": key.work_id, "expires_at": key.expires_at}
+
+
+@app.post(web_auth.SUBMIT_PATH + "/work-keys/{fingerprint:path}/renew")
+async def api_renew_work_key(fingerprint: str, request: Request):
+    """The issuing agent giving its work-item key another 30 days."""
+    principal = web_auth.principal(request.scope) or ""
+    key = await asyncio.to_thread(agent_key_store.renew_work_key, fingerprint, principal)
+    if key is None:
+        return JSONResponse(status_code=409, content={
+            "error": "Only the agent that issued a live work-item key renews it."})
+    return {"fingerprint": key.fingerprint, "expires_at": key.expires_at}
 
 
 @app.post(web_auth.SUBMIT_PATH + "/{fingerprint:path}/revoke")
@@ -8531,6 +8630,17 @@ def _package_opened(package: "work_packages.Package", fresh: bool, what_next: st
             f"package.json:\n{package.manifest.as_json()}{files}")
 
 
+def _local_decision_problem(zip_path: Path) -> Optional[str]:
+    """`_decision_problem` for a zip on this Mac: its signature's key, if
+    onboarded."""
+    try:
+        signed = package_signature.read(zip_path)
+    except package_signature.SignatureError as e:
+        return str(e)
+    _, key, status = _package_signer(signed)
+    return _decision_problem(zip_path, signed, key if status == _GOOD_SIGNER else None)
+
+
 async def _open_local_package(path: str, show: bool
                               ) -> tuple[Optional["work_packages.Package"], bool, str]:
     """Open a package zip that is a file on this Mac: the brain's
@@ -8549,10 +8659,9 @@ async def _open_local_package(path: str, show: bool
     except draft_files.NotAttached as e:
         return None, False, str(e)
     try:
-        # A decision package only with its check's stamp (decision_stamp.py).
-        token = data_paths.ensure_tool_token()
-        package, fresh = await work_packages.unpack_held(
-            source.chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
+        # A decision package only with its check's statement, signed
+        # (`_decision_problem`).
+        package, fresh = await work_packages.unpack_held(source.chunks(), _local_decision_problem)
     except (draft_files.NotAttached, work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     finally:
@@ -8822,7 +8931,7 @@ TAINTING_TOOLS["language_document"] = "canonical source and its author's coverag
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
-                   saved=lambda package: _inbox_saved(package))
+                   saved=lambda package: (_inbox_saved(package), _key_error_act(package)))
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -8985,43 +9094,21 @@ def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
     return None
 
 
-# How long before a package arrives its make_package command may have been
-# run: the claimed session's transcript must have been written since.
+PROVEN_BY_KEY = "agent_key"
+# How long before a package arrives a subagent's make_package may have run:
+# its own transcript must have been written since (`_signer_sender`).
 MAKE_PACKAGE_WINDOW_SEC = 2 * 3600.0
-PROVEN_BY_KEY = "access_key"
 
 
-def _package_sender(claimed: str, source: str,
-                    reporter: "Optional[reporters.Reporter]",
-                    inbox_id: str = "", arrived_at: float = 0.0
+def _package_sender(claimed: str, reporter: "Optional[reporters.Reporter]"
                     ) -> "Optional[session_message_sender.Sender]":
-    """The session a package claims it came from (`?session=`), proven, or
-    None: a session the caller's access key owns (its label's agent), or one
-    whose own transcript, or the file of one of its subagents (a Claude
-    subagent's, or a Codex subagent rollout naming it as parent), shows
-    make_package delivering it: run on `source` lately, as it arrives, or,
-    for a row already in the inbox (`inbox_id`, arrived at `arrived_at`),
-    make_package's line saying JARVIS took it under that id
-    (make_package.ARRIVED_AS), which the command prints once it has posted
-    and which no other package has. Only the claimed session and its
-    subagents are looked in: a claim is proven or refused, never moved to
-    another."""
-    if not claimed:
-        return None
-    if reporter is not None and reporter.owns(claimed):
+    """The session an unsigned package claims it came from (`?session=`),
+    proven only by the signed request that brought it: a session the
+    calling agent's key is (its own). Anything else is not proven, and his
+    answers go nowhere."""
+    if claimed and reporter is not None and reporter.owns(claimed):
         return session_message_sender.Sender(claimed, reporter.name, PROVEN_BY_KEY)
-    whole = False
-    if inbox_id:
-        # Written after it arrived. Read whole only for a row older than the
-        # window, whose line may be far back in a long transcript.
-        words, since = (make_package.ARRIVED_AS.format(inbox_id=inbox_id),), arrived_at
-        whole = time.time() - arrived_at > MAKE_PACKAGE_WINDOW_SEC
-    elif source:
-        words, since = ("make_package", source), time.time() - MAKE_PACKAGE_WINDOW_SEC
-    else:
-        return None
-    return _prove("package inbox", lambda t: session_message_sender.ran(
-        t, words, since, whole=whole), claimed, only_claimed=True, since=since)
+    return None
 
 
 def _inbox_sender(project: str, claimed: str,
@@ -9038,108 +9125,481 @@ def _inbox_sender(project: str, claimed: str,
                                 how[:clip])
 
 
-# How long after it arrives a package whose claim was not proven on arrival
-# is looked for again: its make_package prints the inbox id it was given as
-# soon as it has posted, so the line lands in the transcript within moments.
-REPROVE_FOR_SEC = 10 * 60.0
-
-
-def _reprove_inbox_senders(now: Optional[float] = None) -> list[tuple]:
-    """For each open row whose claimed session is still to be proven (one
-    from before migration 4, or one whose claim was not proven as it
-    arrived): prove it from the transcripts by `_package_sender`'s rule for
-    a row already in the inbox, and record a proof with the row. A row not
-    proven is tried again until REPROVE_FOR_SEC after it arrived (once, for
-    one older than that), then recorded as not proven, with why. A proven
-    row is never touched. Blocking. (the row, its sender or None) each one
-    recorded."""
-    now = time.time() if now is None else now
-    done = []
-    for entry in package_inbox.to_reprove():
-        sender = _package_sender(entry.claimed_session, "", None, inbox_id=entry.id,
-                                 arrived_at=entry.arrived_at)
-        if sender is None and now - entry.arrived_at < REPROVE_FOR_SEC:
-            continue                    # its line may not be written yet
-        why = "" if sender else ("its session is not a listed agent running now"
-                                 if entry.claimed_session not in agent_directory.names_by_session()
-                                 else "no transcript of its session shows it delivered")
-        recorded = package_inbox.reproved(
-            entry.id, _inbox_sender(entry.from_project, entry.claimed_session, sender)
-            if sender else None, why)
-        if recorded is not None:
-            log.info("package inbox: %s's sender %s", entry.id,
-                     f"proven: {recorded.from_session}" if sender else f"not proven: {why}")
-            _record_package(recorded, sender)
-            done.append((recorded, sender))
-    if done:
-        _hint_inbox([e for e, _ in done])
-    return done
-
-
-# How long the re-proof waits for the session watcher's first look and the
-# agents list to follow it: the proof reads the sessions running.
-REPROVE_AFTER_SEC = 10.0
-# How often the rows waiting for their proof are looked at.
-REPROVE_POLL_SEC = 5.0
-
-
-async def _watch_inbox_proofs() -> None:
-    """Once the session watcher has looked, `_reprove_inbox_senders` every
-    REPROVE_POLL_SEC while any row waits for its proof. Never raises out."""
-    for _ in range(600):
-        if session_watcher is not None and session_watcher.polled:
-            break
-        await asyncio.sleep(1.0)
-    await asyncio.sleep(REPROVE_AFTER_SEC)
-
-    async def look() -> None:
-        if await asyncio.to_thread(package_inbox.to_reprove):
-            await asyncio.to_thread(_reprove_inbox_senders)
-
-    await _every(REPROVE_POLL_SEC, "package inbox proofs", look)
-
-
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
                                  work_id: str, source: str = "",
-                                 reporter: "Optional[reporters.Reporter]" = None):
-    """A package for his inbox, from its zip's bytes: checked and unpacked
-    exactly as a zip on this Mac is (a decision package only with its
-    check's stamp, decision_stamp.py), recorded with its sender as proven
-    (`_package_sender`; an unproven claim is kept as a claim and his answers
-    go nowhere), then its attention item and hints. Nothing is shown. (the
-    arrival, the package, "") or (None, None, why not)."""
+                                 reporter: "Optional[reporters.Reporter]" = None,
+                                 held_key: str = ""):
+    """A package for his inbox, from its zip's bytes: written to a private
+    file among the packages, then `_receive_package_zip`. (the arrival, the
+    package, "") or (None, None, why not)."""
     problem = await asyncio.to_thread(_check_inbox_links, workflow_id, work_id)
     if problem:
         return None, None, problem
-
-    async def chunks():
-        yield data
+    root = data_paths.packages_dir()
+    temp = root / f"{work_packages.PARTIAL}{uuid.uuid4()}.zip"
     try:
-        token = data_paths.ensure_tool_token()
-        package, fresh = await work_packages.unpack_held(
-            chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            await asyncio.to_thread(f.write, data)
+        return await asyncio.to_thread(_receive_package_zip, temp, sender, workflow_id, work_id,
+                                       source, reporter, held_key)
+    except OSError as e:
+        return None, None, str(e)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflow_id: str,
+                         work_id: str, source: str = "",
+                         reporter: "Optional[reporters.Reporter]" = None, held_key: str = ""):
+    """A package zip for his inbox, checked and unpacked exactly as a zip
+    on this Mac is, recorded with its sender as proven, then its attention
+    item and hints. Nothing is shown. Its sender is its signature's
+    (`_package_signer`: the onboarded agent whose key signed it); one
+    signed by a key not onboarded, or unsigned on a request signed by one,
+    is held (`_unrecognised_key`), never unpacked; an unsigned one by the
+    tool token keeps its claim unproven (`_package_sender`). A decision
+    package only with its check's statement (`_decision_problem`). Blocking. (the arrival, the
+    package, "") or (None, None, why not)."""
+    try:
+        signed = package_signature.read(zip_path)
+    except package_signature.SignatureError as e:
+        return None, None, str(e)
+    signer, key, status = _package_signer(signed)
+    if status == _UNSIGNED and held_key:
+        # Unsigned, sent on a request signed by a key not onboarded.
+        key, status = agent_key_store.get(held_key), _HELD_SIGNER
+    if status == _HELD_SIGNER:
+        why = _hold_package(zip_path, signed, key, sender, workflow_id, work_id, source)
+        return None, None, why
+    problem = _decision_problem(zip_path, signed, key if status == _GOOD_SIGNER else None)
+    if problem:
+        return None, None, problem
+    sha = _file_sha256(zip_path)
+    try:
+        package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
-    if work_id and not await asyncio.to_thread(package_inbox.asks_him, package):
-        # A package for a Work item carries his vote (package_inbox.no_vote).
+    if work_id and not package_inbox.asks_him(package) and \
+            package.manifest.runs != work_packages.AGENT:
+        # A package for a Work item carries his vote (package_inbox.no_vote);
+        # an agent package's is asked on the item as it arrives.
         return None, None, package_inbox.no_vote(work_id, package.manifest.runs)
-    proven = await asyncio.to_thread(_package_sender, sender.claimed, source, reporter)
-    sender = _inbox_sender(sender.project, sender.claimed, proven)
+    if status == _GOOD_SIGNER and signed.work_key:
+        _work_key_from_package(package, signed, key, work_id)
+    if signer is not None and source and key is not None and \
+            key.principal.startswith(agent_key_store.AGENT):
+        # Which of the agent's subagents ran make_package on it, if one did.
+        since = time.time() - MAKE_PACKAGE_WINDOW_SEC
+        signer = _signer_sender(key, lambda t: session_message_sender.ran(
+            t, ("make_package", source), since), since, "package inbox")
+    proven = signer if signer is not None else _package_sender(sender.claimed, reporter)
+    sender = _inbox_sender(sender.project, signer.session_id if signer else sender.claimed,
+                           proven)
     try:
-        arrival = await asyncio.to_thread(
-            package_inbox.arrive, package, hashlib.sha256(data).hexdigest(), sender,
-            workflow_id=workflow_id, work_id=work_id)
+        arrival = package_inbox.arrive(package, sha, sender, workflow_id=workflow_id,
+                                       work_id=work_id)
     except package_inbox.InboxRefused as e:
         return None, None, str(e)
     _inbox_closed(arrival.superseded)
-    await asyncio.to_thread(_record_package, arrival.entry, proven)
+    _record_package(arrival.entry, proven)
     if arrival.fresh:
         _inbox_attend(arrival.entry)
         _inbox_wait(arrival.entry, "wait_started")
+        if work_id and package.manifest.runs == work_packages.AGENT:
+            _ask_understood_on_work(arrival.entry, package, proven)
     _hint_inbox([arrival.entry, *arrival.superseded])
     log.info("package inbox: %s arrived as %s%s", package.id, arrival.entry.id,
              "" if arrival.fresh else " (already open)")
     return arrival, package, ""
+
+
+def _ask_understood_on_work(entry, package, proven) -> None:
+    """An agent package sent for a Work item cannot carry his vote itself,
+    so its vote is asked on the item as it arrives: the standard question
+    (package_inbox.understood: Got it / I have questions, in the language in
+    force) as the item's decision `understood-<inbox id>`, asked by the
+    agent that sent it, on its Decisions tab. Never raises."""
+    try:
+        vote = package_inbox.understood(spoken_words.active_language())
+        asker = agent_key_store.agent_principal(proven.session_id) if proven else "jarvis"
+        detail = {"key": f"{package_inbox.UNDERSTOOD_ID}-{entry.id}",
+                  "options": [o["name"] for o in vote["options"]],
+                  "recommendation": vote["options"][0]["name"], "package": package.id,
+                  "asked_by": asker}
+        item = work_store.record(work_store.WorkEvent(
+            entry.work_id, work_store.DECISION_NEEDED, vote["question"], detail,
+            reporter=asker))
+        _work_recorded(item, work_store.DECISION_NEEDED, detail)
+    except Exception:
+        log.warning("package inbox: %s's vote was not asked on its work item", entry.id,
+                    exc_info=True)
+
+
+def _issue_work_key(issuer, public_key: str, work_id: str):
+    """A key limited to one Work item, for whoever works in it, vouched for
+    by an onboarded agent that holds `work` there: `make_package --work`
+    (inside the package) and `python -m jarvis.agent_key grant` alike. (the
+    key, "") or (None, why not). Blocking."""
+    from jarvis import agent_rights
+    if issuer is None or not issuer.admitted() or \
+            not issuer.principal.startswith(agent_key_store.AGENT):
+        return None, "Only an onboarded agent issues a work-item key."
+    item = work_store.get(work_id) if work_id else None
+    if item is None or item.closed_at is not None or item.history:
+        return None, f"There is no open work item {work_id}."
+    if not agent_rights.allows(issuer.principal, "POST", f"/api/work/{work_id}/events"):
+        return None, "Your rights do not cover that work item."
+    try:
+        key = agent_key_store.add_work_key(public_key, work_id, issuer.principal)
+    except agent_key_store.KeyRefused as e:
+        return None, str(e)
+    _hint_from_any_thread({"type": "work"})
+    return key, ""
+
+
+def _work_key_from_package(package, signed, key, work_id: str) -> None:
+    """The work-item key a package carries (its grant in the signature, its
+    private half at .jarvis/work-key), recorded for the item it was sent
+    for, and its file made 0600 in the unpacked package. Never raises."""
+    grant = signed.work_key or {}
+    try:
+        if str(grant.get("work") or "") != work_id:
+            log.info("package %s: its work key names another item; not issued", package.id)
+            return
+        issued, why = _issue_work_key(key, str(grant.get("public_key") or ""), work_id)
+        if issued is None:
+            log.info("package %s: its work key was not issued: %s", package.id, why)
+            return
+        private = package.folder.joinpath(*agent_keys.WORK_KEY)
+        if private.is_file() and not private.is_symlink():
+            os.chmod(private, 0o600)
+    except Exception:
+        log.warning("package %s: its work key was not issued", package.id, exc_info=True)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+# What a signature makes of its sender (`_package_signer`, `_file_signer`).
+_UNSIGNED, _GOOD_SIGNER, _HELD_SIGNER = "unsigned", "good", "held"
+PROVEN_BY_SIGNATURE = "agent_signature"
+
+
+def _signer_sender(key, shows=None, since: float = 0.0, what: str = ""
+                   ) -> "session_message_sender.Sender":
+    """The onboarded agent a key is, as a proven sender, by its one name.
+    Its signature proves the agent; which of its subagents did it is proven
+    only by that subagent's own file showing the act (`shows`, since
+    `since`: session_message_sender.proven_by with `subagents_only`), never
+    by anything the agent says, and is then shown "<subagent> (<agent>)"
+    (Tim's rule: every sender identified, a subagent with its listed
+    parent). With no such proof, the agent alone."""
+    name = agent_directory.names_by_session().get(key.session_id, "") or key.session_id
+    if shows is not None:
+        sub = _prove(what or "a subagent", shows, key.session_id, only_claimed=True,
+                     since=since, subagents_only=True)
+        if sub is not None and sub.subagent:
+            return session_message_sender.Sender(key.session_id, f"{sub.subagent} ({name})",
+                                                 PROVEN_BY_SIGNATURE, sub.subagent, name)
+    return session_message_sender.Sender(key.session_id, name, PROVEN_BY_SIGNATURE, "", name)
+
+
+def _package_signer(signed):
+    """(the proven sender or None, the key JARVIS holds or None, how):
+    unsigned; good (an onboarded key's, and its files are the ones signed);
+    or held: signed by a key that is not an onboarded agent's (unknown,
+    pending, waiting, revoked) and genuinely that key's, or by a held key
+    whose signature does not check. A signature that does not check for
+    the key it names, by a key JARVIS does not hold, is treated as
+    unsigned: nothing proves anyone made it."""
+    if signed is None:
+        return None, None, _UNSIGNED
+    key = agent_key_store.get(signed.fingerprint)
+    if key is not None and key.admitted() and key.principal.startswith(agent_key_store.AGENT):
+        if signed.checks(key.public_key):
+            return _signer_sender(key), key, _GOOD_SIGNER
+        return None, key, _HELD_SIGNER
+    if key is not None and key.admitted() and key.principal.startswith(agent_key_store.WORK_KEY):
+        # A work-item key sends for the agent that issued it, on its item.
+        issuer = agent_key_store.for_session(key.issued_by[len(agent_key_store.AGENT):])
+        if signed.checks(key.public_key) and issuer is not None and issuer.admitted():
+            return _signer_sender(issuer), key, _GOOD_SIGNER
+        return None, key, _HELD_SIGNER
+    genuine = bool(signed.public_key) and \
+        agent_keys.fingerprint(signed.public_key) == signed.fingerprint and \
+        signed.checks(signed.public_key)
+    return None, key, (_HELD_SIGNER if genuine or key is not None else _UNSIGNED)
+
+
+def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
+    """Why this zip may not be unpacked here, or None: only a decision
+    package needs proof it passed its end-to-end check, which is its
+    onboarded signer's statement (package_signature.DECISION_CHECKED). An
+    isolated check JARVIS (decision_check_server) takes the signature of
+    the key it was seeded with alone, since it is the check."""
+    try:
+        if not decision_stamp.is_decision_package(zip_path):
+            return None
+    except (OSError, ValueError) as e:
+        return f"It could not be read: {e}"
+    if key is not None and signed is not None and (
+            package_signature.DECISION_CHECKED in signed.statements
+            or os.environ.get("JARVIS_DECISION_CHECK_SERVER") == "1"):
+        return None
+    return ("This is a decision package that has not passed its check: decision packages "
+            "reach him only through python -m jarvis.make_package, which checks them end to "
+            "end and then signs them with your key.")
+
+
+def _manifest_of_zip(zip_path: Path):
+    """The package.json a zip carries, or None."""
+    try:
+        with bundle_archive.open_archive(zip_path) as z:
+            return work_packages.recognise(z, bundle_archive.list_members(z)).manifest
+    except Exception:
+        return None
+
+
+def _hold_package(zip_path: Path, signed, key, sender, workflow_id: str, work_id: str,
+                  source: str) -> str:
+    """Keep a package signed by a key that is not an onboarded agent's until
+    he chooses (`_unrecognised_key`). What to tell the agent."""
+    manifest = _manifest_of_zip(zip_path)
+    what = (f"the package {manifest.name.replace('-', ' ')} ({manifest.name} "
+            f"{manifest.version})" if manifest else f"a package ({zip_path.name})")
+    folder = data_paths.held_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    kept = folder / f"{uuid.uuid4().hex}.zip"
+    shutil.copyfile(zip_path, kept)
+    os.chmod(kept, 0o600)
+    held = _unrecognised_key(
+        "package", what, fingerprint=(signed.fingerprint if signed else "")
+        or (key.fingerprint if key else ""),
+        session=(key.session_id if key else "") or (signed.session if signed else "")
+        or sender.claimed, work_id=work_id, path=str(kept),
+        detail={"project": sender.project, "claimed": sender.claimed, "workflow": workflow_id,
+                "work": work_id, "source": source})
+    if held.path != str(kept):
+        kept.unlink(missing_ok=True)        # the same package was already held
+    return ("Held: it is signed by a key JARVIS does not know as an onboarded agent's. "
+            "Tim has been told; it goes on once he switches your agent on "
+            "(python -m jarvis.agent_key status says where your key stands).")
+
+
+# ---------------------------------------------------------------------------
+# A key JARVIS does not know: held, the Work item in Error, an error package
+# ---------------------------------------------------------------------------
+
+def _unrecognised_key(kind: str, what: str, *, fingerprint: str = "", session: str = "",
+                      work_id: str = "", path: str = "", detail: Optional[dict] = None):
+    """THE one place (Tim's answer to Q3) for anything sent signed by a key
+    JARVIS does not know as an onboarded agent's (or, after the cut-over,
+    unsigned): it is held (agent_key_store.hold), the Work item it is for
+    goes to Error with the reason (work_store.ERROR), and JARVIS makes Tim
+    an error package, delivered unshown to his inbox like any package,
+    saying which session and key tried and what it tried to send, and
+    offering his two acts: switch the agent on (which accepts its key) or
+    refuse and revoke the key (`_key_error_act`). The same thing again
+    while it is held changes nothing. The held row. Blocking."""
+    held, fresh = agent_key_store.hold(kind, what, fingerprint=fingerprint, session_id=session,
+                                       path=path, detail=detail, work_id=work_id)
+    if not fresh:
+        return held
+    log.info("agent keys: held %s from %s: %s", kind, held.subject, what)
+    if work_id:
+        _raise_work_error(work_id, held)
+    try:
+        _make_key_error_package(held.subject)
+    except Exception:
+        log.warning("agent keys: the error package for %s was not made", held.subject,
+                    exc_info=True)
+    return held
+
+
+def _raise_work_error(work_id: str, held) -> None:
+    who = _held_who(held)
+    try:
+        item = work_store.record(work_store.WorkEvent(
+            work_id, work_store.ERROR_RAISED,
+            f"Error: JARVIS holds {held.what} from {who}, signed by a key it does not know "
+            f"as an onboarded agent's, until Tim switches that agent on or refuses its key.",
+            {"held": held.id}, reporter="jarvis"))
+    except work_store.WorkRefused as e:
+        log.info("agent keys: work item %s not put in Error (%s)", work_id, e)
+        return
+    _work_recorded(item, work_store.ERROR_RAISED, None)
+
+
+def _clear_work_errors(work_ids, how: str) -> None:
+    """The Error of each item whose holds are all settled goes."""
+    still = {h.work_id for h in agent_key_store.held()}
+    for work_id in sorted({w for w in work_ids if w} - still):
+        try:
+            item = work_store.record(work_store.WorkEvent(
+                work_id, work_store.ERROR_CLEARED, f"Error cleared: {how}.", {},
+                reporter="jarvis"))
+        except work_store.WorkRefused:
+            continue
+        _work_recorded(item, work_store.ERROR_CLEARED, None)
+
+
+def _held_who(held) -> str:
+    name = agent_directory.names_by_session().get(held.session_id, "")
+    return name or (f"session {held.session_id}" if held.session_id else "an unknown sender")
+
+
+def _make_key_error_package(subject: str) -> None:
+    """Make (or make again, replacing the last) the error package for one
+    subject, from everything it still has held, and deliver it to his
+    inbox unshown."""
+    from jarvis import key_error_package
+    holds = agent_key_store.held(subject)
+    if not holds:
+        return
+    first = holds[0]
+    key = agent_key_store.get(first.fingerprint) if first.fingerprint else None
+    state = (key.state if key else "unknown") if first.fingerprint else "unsigned"
+    if key is None and first.session_id:
+        waiting = agent_key_store.for_session(first.session_id)
+        if waiting is not None and not first.fingerprint:
+            state = waiting.state
+    work = next((h.work_id for h in holds if h.work_id), "")
+    item = work_store.get(work) if work else None
+    facts = key_error_package.Facts(
+        subject, agent_directory.names_by_session().get(first.session_id, ""), first.session_id,
+        first.fingerprint, state,
+        [key_error_package.Attempt(h.kind, h.what,
+                                   time.strftime("%d %B %H:%M", time.localtime(h.held_at)))
+         for h in holds],
+        f"{item.title} ({item.id})" if item else "")
+    name = key_error_package.name_for(subject)
+    with tempfile.TemporaryDirectory(prefix="jarvis-key-error-") as folder:
+        zip_path = key_error_package.build(facts, make_package.next_version(name), Path(folder))
+        sha = _file_sha256(zip_path)
+        package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
+    arrival = package_inbox.arrive(package, sha, package_inbox.Sender(
+        project="jarvis", agent="JARVIS", evidence="jarvis"), work_id=work)
+    agent_key_store.set_error_package(subject, package.id, arrival.entry.id)
+    _inbox_closed(arrival.superseded)
+    if arrival.fresh:
+        _inbox_attend(arrival.entry)
+    _hint_inbox([arrival.entry, *arrival.superseded])
+
+
+def _close_key_error_package(subject: str) -> None:
+    made = agent_key_store.error_package(subject)
+    if not made or not made["inbox_id"]:
+        return
+    try:
+        entry = package_inbox.close(made["inbox_id"], "jarvis")
+    except package_inbox.InboxRefused:
+        return
+    _inbox_closed([entry])
+    _hint_inbox([entry])
+
+
+def _release_held(key) -> None:
+    """The agent is onboarded: everything held from its key or its session
+    goes on as if it had just come. A package is received again from the
+    copy kept; a message file is put back to be taken; a needs board and a
+    report need nothing (the board is read again, the agent reports
+    again). Its error packages close and its Work items leave Error."""
+    holds = agent_key_store.held_for(key.fingerprint, key.session_id)
+    for h in holds:
+        if not agent_key_store.settle(h.id, agent_key_store.RELEASED):
+            continue
+        try:
+            if h.kind == "package" and h.path and Path(h.path).is_file():
+                d = h.detail
+                _receive_package_zip(Path(h.path), package_inbox.Sender(
+                    project=d.get("project", ""), claimed=d.get("claimed", "")),
+                    d.get("workflow", ""), d.get("work", ""), d.get("source", ""))
+                Path(h.path).unlink(missing_ok=True)
+            elif h.kind == "message" and h.path and Path(h.path).is_file():
+                Path(h.path).rename(Path(h.path).with_suffix(".md"))
+        except Exception:
+            log.warning("agent keys: held %s was not released", h.id, exc_info=True)
+    for subject in {h.subject for h in holds}:
+        _close_key_error_package(subject)
+    _clear_work_errors({h.work_id for h in holds}, "the agent was switched on and its key "
+                                                  "accepted")
+
+
+def _refuse_held(fingerprint: str, session: str) -> None:
+    """Its key is refused: everything held from it is dropped (a package's
+    kept copy deleted, a message left `.held`), its error packages close
+    and its Work items leave Error."""
+    holds = agent_key_store.held_for(fingerprint, session)
+    for h in holds:
+        if agent_key_store.settle(h.id, agent_key_store.REFUSED) and h.kind == "package" \
+                and h.path:
+            Path(h.path).unlink(missing_ok=True)
+    for subject in {h.subject for h in holds} | {agent_key_store.subject_of(fingerprint,
+                                                                            session)}:
+        _close_key_error_package(subject)
+    _clear_work_errors({h.work_id for h in holds}, "Tim refused its key")
+
+
+def _request_from_unrecognised(checked, method: str, path: str, query: str,
+                               body: bytes) -> None:
+    """The gate refused a report signed by a key JARVIS holds that is not an
+    onboarded agent's (web_auth.on_unrecognised): what it tried goes to
+    `_unrecognised_key`. A request signed by a fingerprint JARVIS holds no
+    key for proves nothing about anyone, so it is only refused."""
+    key = checked.key
+    if key is None or key.principal.startswith(agent_key_store.WORK_KEY):
+        return                          # a work key ends with its item: nothing to hold
+    said = ""
+    try:
+        sent = json.loads(body.decode("utf-8")) if body else {}
+        if isinstance(sent, dict):
+            said = " ".join(str(sent.get("summary") or sent.get("title") or
+                                sent.get("name") or "").split())[:120]
+    except (ValueError, UnicodeDecodeError):
+        pass
+    m = re.fullmatch(r"/api/work/([^/]+)/events", path)
+    work_id = m.group(1) if m else ""
+    if path == "/api/packages/inbox":
+        return                          # the package itself is held, by its own signature
+    what = f"{method} {path}" + (f": {said}" if said else "")
+    _unrecognised_key("request", what, fingerprint=key.fingerprint, session=key.session_id,
+                      work_id=work_id if work_id and work_store.get(work_id) else "")
+
+
+web_auth.on_unrecognised = _request_from_unrecognised
+
+
+def _key_error_act(package) -> None:
+    """His click in an error package (its act.json, saved through the
+    frame's bridge): switch the agent on, or refuse and revoke its key.
+    Only for an error package JARVIS made. Never raises."""
+    from jarvis import key_error_package
+    try:
+        subject = agent_key_store.error_subject(package.id)
+        if subject is None:
+            return
+        saved = package.folder / work_packages.RESULTS / key_error_package.ACT_FILE
+        act = key_error_package.act_of(saved.read_bytes()) if saved.is_file() else ""
+        holds = agent_key_store.held(subject)
+        if not act or not holds:
+            return
+        fingerprint, session = holds[0].fingerprint, holds[0].session_id
+        if act == key_error_package.ONBOARD and session:
+            _set_agent_active(session, True, agent_key_store.ON_THE_PAGE)
+        elif act == key_error_package.REFUSE:
+            key = agent_key_store.get(fingerprint) if fingerprint else None
+            if key is not None:
+                _revoke_agent_key(key, agent_key_store.ON_THE_PAGE, "refused by Tim")
+            else:
+                _refuse_held(fingerprint, session)
+    except Exception:
+        log.warning("agent keys: an error package's act was not done", exc_info=True)
 
 
 def _inbox_one(reference: str):
@@ -12122,8 +12582,10 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
     _send_to_session_clients({"type": "work"})
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
     if kind == work_store.CLOSED:
-        # Closed for good: nothing it said is news any longer.
+        # Closed for good: nothing it said is news any longer, and its
+        # work-item keys end with it.
         _attention_resolved("work", item.id)
+        agent_key_store.revoke_where("jarvis", "its work item was closed", work_ids=[item.id])
     elif kind == work_store.DECISION_NEEDED:
         _record_work_decision(item, detail)
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
@@ -12549,15 +13011,25 @@ def tool_agent_keys(args: dict) -> str:
         return (_key_line(key, names) if key else
                 f"{_agent_said(agent)} has submitted no key, sir.")
     keys = agent_key_store.listing()
-    legacy = agent_key_store.legacy_counts()
-    tail = ([f"Access keys still used this week: {sum(legacy.values())} requests "
-             f"({len(legacy)} key{'s' if len(legacy) != 1 else ''})."] if legacy else
-            ["No access key was used this week."])
+    tail = [_cutover_line()]
     if not keys:
         return "\n".join(["No agent has submitted a key, sir.", *tail])
     return "\n".join([f"{_say_number(len(keys)).capitalize()} agent key"
                       f"{'s' if len(keys) != 1 else ''}:"] + [_key_line(k, names) for k in keys]
                      + tail)
+
+
+def _cutover_line() -> str:
+    """Where the cut-over from access keys stands (legacy_access.status)."""
+    from jarvis import legacy_access
+    st = legacy_access.status()
+    if st["cut_over_at"] is not None:
+        return "Access keys admit nothing any more."
+    used = sum(st["used"].values())
+    when = time.strftime("%d %B", time.localtime(st["stops_after"]))
+    return (f"Access keys are still accepted: {_say_number(used)} request"
+            f"{'s' if used != 1 else ''} on them this week. They stop once none is used for "
+            f"seven days, {when} at the earliest.")
 
 
 def tool_revoke_agent_key(args: dict) -> str:
