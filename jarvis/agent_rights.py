@@ -49,8 +49,10 @@ RIGHTS: dict[str, Right] = {
         "Start workflows and report their steps to the Workflows view.",
         (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
     "work": Right(
-        "Track work items and report who is on each piece to the Work tab.",
+        "Track work items and report who is on each piece to the Work tab, and send Tim "
+        "messages about them (or about nothing in particular).",
         (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"),
+         ("POST", r"/api/messages"),
          ("GET", r"/api/work/answers"), ("POST", r"/api/agent-keys/work-keys"),
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
@@ -68,7 +70,8 @@ RIGHTS: dict[str, Right] = {
 DEFAULT_RIGHTS: tuple[str, ...] = ("work", "workflows", "packages", "watch")
 
 # What a work-item key may reach, scoped to its one item: reports on it,
-# answers to its decisions, and packages sent for it. Never `POST /api/work`.
+# answers to its decisions, packages sent for it and messages about it
+# (`?work=` its own item). Never `POST /api/work`.
 WORK_KEY_RIGHTS: tuple[str, ...] = ("work", "packages")
 
 
@@ -78,7 +81,7 @@ def _work_target(method: str, path: str, query: str) -> str:
     if m:
         return urllib.parse.unquote(m.group(1))
     params = urllib.parse.parse_qs(query or "")
-    if path == "/api/packages/inbox":
+    if path in ("/api/packages/inbox", "/api/messages"):
         return (params.get("work") or [""])[0]
     if path == "/api/work/answers":
         return (params.get("item") or [""])[0]

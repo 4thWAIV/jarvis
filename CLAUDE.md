@@ -334,6 +334,43 @@ session, or to the one listed agent a decision's access key names, read
 back and sent only on his yes; a person's message is a draft in their
 thread, reviewed with `request_message_review` (`_person_reply`). The old
 per-kind Read and Reply routes and tools are gone. A decision keeps its own Answer.
+Messages by Work item (`docs/planning/one-channel/messages-by-work-item.md`,
+one PR in three rounds; round 1 is in): every message to him is one thing on
+the same record, `conversation_log` migration 4: from (`sender`, the proven
+sender as a principal, `agent:<session>`, `person:<id>`, `key:<label>`,
+`workkey:<fp>`, and `sender_name`), about (`about`, its Work item or none),
+says (`text`), carries (`carries`, a package inbox row) and state (`state`,
+`MessageState`: new, read, answered, done; `mark` is its only writer and only
+moves it forward). `inbound` writes every message new; items from before
+have no state and are no message. Every channel writes them: a session
+message, a proven board rewrite, a workflow's and a Work item's decision
+(`about` its item; a reporter that signed with an agent's key or a work-item
+key is proof `agent_signature`, `_reported_proof`), a package (`about` its
+`--work` item, `carries` itself), an agent's answer (`about` what his
+message was about) and a person's message. An agent sends one with `POST
+/api/messages?work=<id>` (`messages_api.py`, `server._send_message`; the
+`work` right, so a work-item key only about its own item; the command is
+`python -m jarvis.message --work <id> "<text>" [--package <zip>] [--as
+<session id>]`): `{"says", "package"?}` (base64 zip, received through
+`_receive_inbox_package` with `carried`, so the message is the package's one
+message). A request that asks something (a decision field, `decision`,
+`question`, `options`, `recommendation`, or a sentence ending in "?") without
+a package is refused (`messages_api.asks`); one with no `work` from an agent
+with a piece not done on an open item is refused naming the item(s)
+(`work_store.open_items_of`); a page or the tool token is refused (403). A
+message with no package is an attention item (`message`, `arrived`). The
+reads are `GET /api/messages/work` (each item with messages: new, total,
+first new), `/work/{id}` (its conversation, oldest first, his replies in it)
+and `/general` (no item, newest first, no person's), and `POST
+/api/messages/{id}/mark` (`read` or `done`, `server._mark_message`); the
+brain's `messages_to_him` (walled) and acting `mark_message` call the same
+functions. Read heard in full marks it read; his reply (`_reply_capture`
+keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
+answered once it goes (`_reply_went`, on `sent`); his answer to a Work
+decision marks it answered, and withdrawn or signed off done
+(`_decision_messages_settled`); a package closed marks its messages done
+(`_inbox_closed`). Round 2 shows them on the page; round 3 moves agents over
+and removes the old paths.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -2238,6 +2275,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   record, a deck's questions and answers read as data, and its routes (see
   "The package inbox"); `frontend/src/packageInbox.ts` /
   `QueuePackages.tsx` are the page's side
+- `messages_api.py` / `message.py` — Messages to him by Work item: the
+  signed route, its checks, the reads by item and with none, his mark, and
+  the `python -m jarvis.message` command (see "One channel")
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper

@@ -358,7 +358,8 @@ def test_a_package_is_recorded_once_its_sender_is_proven(server):
     srv, _, _ = server
     from types import SimpleNamespace
     from jarvis import session_message_sender
-    entry = SimpleNamespace(id="inbox-1", title="Ports", purpose="Pick one.", decisions_total=2)
+    entry = SimpleNamespace(id="inbox-1", title="Ports", purpose="Pick one.", decisions_total=2,
+                            work_id=None)
     srv._record_package(entry, None)
     assert _messages_in(cl.Counterpart.PACKAGE, "inbox-1") == []
     srv._record_package(entry, session_message_sender.Sender("s1", "Planning", "access_key"))

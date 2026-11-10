@@ -1107,6 +1107,7 @@ export const mainEn = {
   "main.updates.event.agent_message.answered": "{name} answered your message",
   "main.updates.event.agent_message.answered_empty": "{name} ended its turn on your message without a word",
   "main.updates.event.session_message.arrived": "{name} sent you a message",
+  "main.updates.event.message.arrived": "{name} sent you a message",
   "main.updates.read": "Read",
   "main.updates.reading": "Reading it to you now",
   "main.updates.reply": "Reply",

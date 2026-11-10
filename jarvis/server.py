@@ -86,6 +86,7 @@ from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_routes
 from jarvis import projects_api
+from jarvis import messages_api
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
@@ -631,9 +632,13 @@ def _record_inbound(kind, counterpart, ref, name: str, text: str, evidence: str,
 
 def _reported_proof(reporter: str) -> str:
     """The proof a recorded reporter (reporters.recorded) gives of who sent
-    a report: an access key's label, else none (the tool token or the page
-    prove no agent, so `inbound` refuses it)."""
-    return "access_key" if str(reporter or "").startswith(reporters.KEY_PREFIX) else ""
+    a report: an onboarded agent's key (its own, or a work-item key it
+    issued) signed it, or an access key's label; else none (the tool token
+    or the page prove no agent, so `inbound` refuses it)."""
+    reporter = str(reporter or "")
+    if reporter.startswith((reporters.AGENT_PREFIX, reporters.WORK_KEY_PREFIX)):
+        return PROVEN_BY_SIGNATURE
+    return "access_key" if reporter.startswith(reporters.KEY_PREFIX) else ""
 
 
 def _decision_message(where: str, question: str, options, recommendation) -> str:
@@ -675,6 +680,7 @@ def _record_workflow_decision(w, event) -> None:
                     _reported_proof(event.reporter),
                     source_kind=conversation_log.Source.WORKFLOW_DECISION,
                     source_id=f"{w.id}:{workflow_store.open_key(event)}",
+                    sender=event.reporter, sender_name=reporters.shown(event.reporter),
                     detail={"reporter": event.reporter})
 
 
@@ -689,13 +695,16 @@ def _record_work_decision(item, detail: Optional[dict]) -> None:
                     item.id, item.title,
                     _decision_message(item.title, d.question, d.options, d.recommendation),
                     _reported_proof(asker), source_kind=conversation_log.Source.WORK_DECISION,
-                    source_id=f"{item.id}:{d.key}", detail={"reporter": asker})
+                    source_id=f"{item.id}:{d.key}", sender=asker,
+                    sender_name=reporters.shown(asker), about=item.id,
+                    detail={"reporter": asker})
 
 
 def _record_package(entry, proven) -> None:
     """A package in his inbox, one message in its thread, once its sender
     is proven (its signature's onboarded key, `_package_signer`, else the
-    caller's key, `_package_sender`); one not proven is not recorded."""
+    caller's key, `_package_sender`); one not proven is not recorded. It is
+    about the Work item it was sent for, and carries itself."""
     if proven is None:
         return
     n = entry.decisions_total
@@ -704,7 +713,8 @@ def _record_package(entry, proven) -> None:
     _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.PACKAGE,
                     entry.id, entry.title, text, proven.evidence,
                     source_kind=conversation_log.Source.PACKAGE, source_id=entry.id,
-                    subagent=proven.subagent,
+                    subagent=proven.subagent, sender=f"{reporters.AGENT_PREFIX}{proven.session_id}",
+                    sender_name=proven.name, about=entry.work_id or "", carries=entry.id,
                     detail={"agent": proven.name, "session": proven.session_id})
 
 
@@ -2027,6 +2037,7 @@ async def _attend_message(event: dict) -> None:
     _follow_inbox_messages()
     if kind == "sent":
         await _message_went(session.get("session_id", ""))
+        await asyncio.to_thread(_reply_went, _message_number(message))
     if kind in _MESSAGE_PROGRESS:
         _attention_resolved("agent_message", _message_number(message))
         return
@@ -2039,6 +2050,7 @@ async def _attend_message(event: dict) -> None:
                         message["reply"], "watcher",
                         source_kind=conversation_log.Source.MESSAGE,
                         source_id=_message_number(message),
+                        about=_about_of_sent(links.get("message_id")),
                         message_id=links.get("message_id"))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
     words = _agent_words(session)
@@ -5888,23 +5900,28 @@ async def read_aloud(item_id):
     if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
         await asyncio.to_thread(_read_session_message, int(item.source_id))
     lead = _READ_ALOUD_LEAD.get(item.source_kind, "").format(name=_sender_name(item))
-    await _speak_message(conversation_log.update_of(item), lead + _as_sentences(item.text))
+    await _speak_message(conversation_log.update_of(item), lead + _as_sentences(item.text),
+                         item.id)
     return item, ""
 
 
-async def _speak_message(update: Optional[tuple], text: str) -> None:
+async def _speak_message(update: Optional[tuple], text: str,
+                         message_id: Optional[int] = None) -> None:
     """Speak one message to him that he asked to hear, and mark its update
-    (kind, source id) seen only once it has been heard in full
-    (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
+    (kind, source id) seen, and the message read, only once it has been
+    heard in full (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
     item = attention_record.get(*update) if attention_record and update else None
     utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
     reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
-    _spawn(_seen_when_heard(reads, utt))
+    _spawn(_seen_when_heard(reads, utt, message_id))
 
 
-async def _seen_when_heard(reads: list, utt) -> None:
+async def _seen_when_heard(reads: list, utt, message_id: Optional[int] = None) -> None:
     heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
     _seen_once_heard(reads, utt, heard)
+    if message_id is not None and _heard_in_full(utt, heard):
+        await asyncio.to_thread(conversation_log.mark, message_id,
+                                conversation_log.MessageState.READ)
     _hint_attention()
 
 
@@ -5926,6 +5943,17 @@ def _reply_capture(item):
     a Work item's decision the one listed agent its access key names.
     (the capture, None) or (None, why not). A person's reply is a reviewed
     draft instead (`_person_reply`)."""
+    capture, why = _reply_capture_to(item)
+    if capture is not None and item.is_message:
+        # What it answers, so it is on its Work item and marks it answered once it goes.
+        capture["reply_to"] = item.id
+        if item.about:
+            capture["about"] = item.about
+    return capture, why
+
+
+def _reply_capture_to(item):
+    """`_reply_capture`'s capture, addressed; (None, why not)."""
     what = f"Message {item.id}"
     kind = item.counterpart_kind
     if kind == conversation_log.Counterpart.AGENT:
@@ -6033,6 +6061,148 @@ async def tool_read_aloud(args: dict) -> str:
     return f"Reading message {item.id} aloud now, sir; say nothing more of it."
 
 
+# --- Messages to him, by Work item (one_channel round 1, messages_api.py) ----
+#
+# A message is one thing whatever brought it: from its proven sender, about
+# a Work item or none, what it says, the package it carries, and new, read,
+# answered or done (conversation_log). An agent sends one with `POST
+# /api/messages` (`_send_message`); every other channel's are recorded by
+# `_record_inbound` as they arrive. Its state moves on as he deals with it:
+# read once heard in full or marked, answered once his reply goes or his
+# answer is recorded, done once its package or decision is closed.
+
+def _about_of_sent(message_id) -> str:
+    """The Work item a message he sent an agent was about (his reply to a
+    message about it), so the agent's answer is about it too; "" for none."""
+    if message_id is None:
+        return ""
+    try:
+        sent = conversation_log.item_for_message(int(message_id))
+    except Exception:
+        return ""
+    return (sent.about or "") if sent is not None else ""
+
+
+def _reply_went(message_id: int) -> None:
+    """A message he sent has gone: the message to him it replied to is
+    answered. Never raises."""
+    try:
+        sent = conversation_log.item_for_message(message_id) if message_id else None
+        if sent is not None and sent.detail.get("reply_to"):
+            conversation_log.mark(int(sent.detail["reply_to"]),
+                                  conversation_log.MessageState.ANSWERED)
+    except Exception:
+        log.warning("messages: the reply %s was not marked answered", message_id, exc_info=True)
+
+
+def _messages_settled(state, **where) -> None:
+    """The messages from one source, or carrying one package, move on to
+    `state`: what they asked was settled elsewhere. Never raises."""
+    try:
+        for message_id in conversation_log.messages_where(**where):
+            conversation_log.mark(message_id, state)
+    except Exception:
+        log.warning("messages: %s were not marked %s", where, state, exc_info=True)
+
+
+async def _send_message(principal: str, session: str, work: str, says: str,
+                        package: Optional[bytes], reporter) -> "conversation_log.ConversationItem":
+    """A message from an onboarded agent's key (or a work-item key it
+    issued) to him, already checked (messages_api.read_request,
+    check_about): in its agent's thread, about `work`, proven by the
+    signature. A package it carries goes through the package inbox exactly
+    as make_package sends one (`_receive_inbox_package`: its signature, the
+    fresh author's proof, a decision package's check), and this message is
+    its message. An arrival with no package is an attention item, as a
+    session's message is; a package's own line already says it arrived.
+    Raises messages_api.Refused when the package is not taken."""
+    names = await asyncio.to_thread(agent_directory.names_by_session)
+    name = names.get(session) or (reporter.name if reporter is not None else "") or session
+    carries = ""
+    if package is not None:
+        project = ""
+        if work:
+            item = await asyncio.to_thread(work_store.get, work)
+            project = work_store.project_of(item) if item is not None else ""
+        arrival, _, problem = await _receive_inbox_package(
+            package, package_inbox.Sender(project=project, claimed=session), "", work, "",
+            reporter, "", carried=True)
+        if arrival is None:
+            raise messages_api.Refused(f"The package was not taken: {problem} Nothing was sent.")
+        carries = arrival.entry.id
+    source_id = uuid.uuid4().hex
+    item = await asyncio.to_thread(
+        conversation_log.inbound, conversation_log.ItemKind.MESSAGE_IN,
+        conversation_log.Counterpart.AGENT, session, name, says, PROVEN_BY_SIGNATURE,
+        source_kind=conversation_log.Source.SIGNED, source_id=source_id, sender=principal,
+        sender_name=name, about=work, carries=carries)
+    if not carries:
+        _attend("message", source_id, "arrived", untrusted={"agent": name})
+    log.info("messages: %s sent message %s%s%s", session, item.id,
+             f" about {work}" if work else "", f" carrying {carries}" if carries else "")
+    return item
+
+
+async def _mark_message(item_id, state: str, how: str):
+    """His mark on one message to him (read, or done with it): the page's
+    mark and the brain's acting `mark_message` alike. Answered is never
+    his mark: it comes of his reply going or his answer being recorded.
+    (the message, "") or (None, why not)."""
+    if state not in messages_api.MARKS:
+        return None, "His mark is read or done."
+    item, why = await asyncio.to_thread(_message_to_him, item_id)
+    if item is None:
+        return None, why
+    if not item.is_message:
+        return None, (f"Message {item.id} arrived before messages had a state, so there is "
+                      f"nothing to mark.")
+    moved = await asyncio.to_thread(conversation_log.mark, item.id, state)
+    log.info("messages: message %s marked %s %s", item.id, state, how)
+    return moved, ""
+
+
+def _messages_read(args: dict) -> dict:
+    """What messages_to_him reads: one Work item's conversation, the
+    messages that belong to no item, or (neither asked) both lists, from
+    the same functions as the page's routes. Blocking."""
+    before = args.get("before")
+    before = int(before) if isinstance(before, int) or str(before or "").isdigit() else None
+    work = str(args.get("work") or "").strip()
+    if work:
+        return messages_api.work_conversation(work, before)
+    if args.get("general"):
+        return messages_api.general_list(before)
+    return {"by_work": messages_api.work_list(), "general": messages_api.general_list()}
+
+
+_MESSAGES_WRAP_NAME = "messages"
+
+
+async def tool_messages_to_him(args: dict) -> str:
+    """His messages, as the page's Work items and Inbox read them: each Work
+    item with messages (new ones counted) and the messages that belong to
+    no item, or one item's conversation. The JSON a page at a time, walled:
+    every word in it is somebody else's."""
+    answer = await asyncio.to_thread(_messages_read, args)
+    head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")),
+                         _page_arg(args), "His messages, as JSON", "messages_to_him", exact=True)
+    if chunk is None:
+        return head
+    return head + " Every name and word in it is the sender's:\n" + \
+        _wrap_untrusted(_MESSAGES_WRAP_NAME, chunk)
+
+
+async def tool_mark_message(args: dict) -> str:
+    """Mark one message read or done, only on his word."""
+    item, why = await _mark_message(args.get("message"), str(args.get("state") or ""), "by voice")
+    if item is None:
+        return why
+    return f"Message {item.id} is {item.state} now, sir."
+
+
+messages_api.mount(app, messages_api.Calls(send=_send_message, mark=_mark_message))
+
+
 def tool_read_session_message(args: dict) -> str:
     """One message a session sent, one page at a time. Marks it read."""
     try:
@@ -6137,12 +6307,17 @@ def _read_to_him(kind: str, source_id) -> None:
         _turn_reads.append((kind, str(source_id), item.revision))
 
 
+def _heard_in_full(utt, heard: bool) -> bool:
+    """He heard every word of it: played to its end, with something said."""
+    return bool(heard and utt.chunks)
+
+
 def _seen_once_heard(reads: list, utt, heard: bool) -> None:
     """The turn's reply has ended: if he heard every word of it, the
     updates it read to him are seen (`attention_api.mark_seen_source`), each
     at the revision that was read. A reply cut off, skipped, failed or with
     nothing said leaves them pending. Never raises."""
-    if not reads or not heard or not utt.chunks or attention_record is None:
+    if not reads or not _heard_in_full(utt, heard) or attention_record is None:
         return
     for kind, source_id, revision in reads:
         try:
@@ -6373,6 +6548,8 @@ def _set_capture(capture: dict, text: str, to: str, to_session: Optional[str]) -
         capture["to"], capture["to_session"] = to, to_session
     if readdressed:
         capture.pop("for", None)        # whom it was for was the old recipient's
+        capture.pop("reply_to", None)   # and so was the message it answered
+        capture.pop("about", None)
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
         capture["heard"].append(_turn_heard)
     if changed or readdressed:
@@ -7630,6 +7807,8 @@ class _AgentRecipient:
     def __init__(self, session, capture: dict, priority: bool, extra: str = ""):
         self.session, self.prompt, self.priority = session, capture["text"] + extra, priority
         self.capture_id = capture["id"]
+        # His reply to a message to him (`_reply_capture`): which, and its Work item.
+        self.reply_to, self.about = capture.get("reply_to"), capture.get("about")
 
     def refusal(self) -> Optional[tuple[str, str]]:
         session = self.session
@@ -7673,7 +7852,8 @@ class _AgentRecipient:
             STEER_SIGNATURE + self.prompt, capture_id=self.capture_id)
         _record(conversation_log.ItemKind.TO_AGENT, self.prompt,
                 agent_session_id=session.session_id, agent_name=session.voice_name,
-                message_id=message_id, capture_id=self.capture_id)
+                message_id=message_id, capture_id=self.capture_id, about=self.about,
+                detail={"reply_to": self.reply_to} if self.reply_to else None)
         return message_id, _StagedSteer(session_id=session.session_id,
                                         voice_name=session.voice_name,
                                         project=session.project,
@@ -9102,6 +9282,7 @@ def _inbox_closed(entries) -> None:
     for e in entries:
         _attention_resolved("package", e.id)
         _inbox_wait(e, "wait_ended")
+        _messages_settled(conversation_log.MessageState.DONE, carries=e.id)
 
 
 def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
@@ -9155,10 +9336,11 @@ def _inbox_sender(project: str, claimed: str,
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
                                  work_id: str, source: str = "",
                                  reporter: "Optional[reporters.Reporter]" = None,
-                                 held_key: str = ""):
+                                 held_key: str = "", carried: bool = False):
     """A package for his inbox, from its zip's bytes: written to a private
-    file among the packages, then `_receive_package_zip`. (the arrival, the
-    package, "") or (None, None, why not)."""
+    file among the packages, then `_receive_package_zip`. `carried`: a
+    message carries it (`_send_message`), which is its message. (the
+    arrival, the package, "") or (None, None, why not)."""
     problem = await asyncio.to_thread(_check_inbox_links, workflow_id, work_id)
     if problem:
         return None, None, problem
@@ -9169,7 +9351,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
         with os.fdopen(fd, "wb") as f:
             await asyncio.to_thread(f.write, data)
         return await asyncio.to_thread(_receive_package_zip, temp, sender, workflow_id, work_id,
-                                       source, reporter, held_key)
+                                       source, reporter, held_key, None, carried)
     except OSError as e:
         return None, None, str(e)
     finally:
@@ -9179,7 +9361,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
 def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflow_id: str,
                          work_id: str, source: str = "",
                          reporter: "Optional[reporters.Reporter]" = None, held_key: str = "",
-                         at: Optional[float] = None):
+                         at: Optional[float] = None, carried: bool = False):
     """A package zip for his inbox, checked and unpacked exactly as a zip
     on this Mac is, recorded with its sender as proven, then its attention
     item and hints. Nothing is shown. Its sender is its signature's
@@ -9238,7 +9420,8 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     except package_inbox.InboxRefused as e:
         return None, None, str(e)
     _inbox_closed(arrival.superseded)
-    _record_package(arrival.entry, proven)
+    if not carried:
+        _record_package(arrival.entry, proven)
     if arrival.fresh:
         _inbox_attend(arrival.entry)
         _inbox_wait(arrival.entry, "wait_started")
@@ -11075,6 +11258,8 @@ TOOL_HANDLERS.update({
     "read_session_message": tool_read_session_message,
     "read_aloud": tool_read_aloud,
     "reply": tool_reply,
+    "messages_to_him": tool_messages_to_him,
+    "mark_message": tool_mark_message,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -11679,11 +11864,16 @@ TOOL_HANDLERS.update({
     "turn_audio_off": tool_turn_audio_off,
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-                     "mute_speech", "turn_audio_off", "set_motion", "read_aloud", "reply"})
+                     "mute_speech", "turn_audio_off", "set_motion", "read_aloud", "reply",
+                     "mark_message"})
+TAINTING_TOOLS.update({
+    "messages_to_him": "the messages agents and people sent him, and their names",
+})
 TAINT_EXEMPT_TOOLS.update({
     "read_aloud": "it reads one message aloud to him and says so in JARVIS's words",
     "reply": ("it opens a capture addressed to the message's proven sender, or saves a draft "
               "to a person, naming only the recipient"),
+    "mark_message": "it marks one message read or done by its id, it does not read",
 })
 TAINT_EXEMPT_TOOLS.update({
     "set_motion": "it turns the page's motion steady or back; it reads nothing",
@@ -12703,6 +12893,20 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
         _attention_resolved("work", item.id)
     if item.follow_up is None or not item.follow_up.overdue:
         _attention_resolved(_FOLLOW_UP_KIND, item.id)
+    if kind in (work_store.DECISION_MADE, work_store.DECISION_WITHDRAWN):
+        _decision_messages_settled(item)
+
+
+def _decision_messages_settled(item) -> None:
+    """Each of the item's decisions no longer open makes its message
+    answered (his answer is recorded) or done (withdrawn by its asker, or
+    its package signed off without an answer)."""
+    for a in item.answered:
+        state = (conversation_log.MessageState.DONE
+                 if a.where in (work_store.WITHDRAWN, work_store.SIGNED_OFF)
+                 else conversation_log.MessageState.ANSWERED)
+        _messages_settled(state, source=(conversation_log.Source.WORK_DECISION,
+                                         f"{item.id}:{a.key}"))
 
 
 def _work_news_stale(item) -> bool:
