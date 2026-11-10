@@ -50,8 +50,16 @@ def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
     # Switching to WAL takes an exclusive lock. Once a database is in WAL it
     # stays there, so only switch when it is not: asking every connection to
     # switch made a busy moment fail with "database is locked".
+    # SQLite refuses the switch at once (no busy wait) while another
+    # connection is open, which happens when two first connections race on a
+    # new database. The other one is making the same switch, so carry on:
+    # every later connection finds the database already in WAL.
     if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e):
+                raise
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
