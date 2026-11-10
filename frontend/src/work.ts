@@ -25,7 +25,7 @@ import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
 /** "working" only ever on live evidence: a subagent on the piece writing now. */
-export type WorkState = "planned" | "ready" | "working" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+export type WorkState = "planned" | "ready" | "working" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done" | "error";
 
 /** A subagent on a piece (agent:<session>/sub:<agent id>), as its own files
  *  show it now. `doing` is its last tool or line: its own words. */
@@ -191,6 +191,9 @@ export interface WorkItem {
   /** Whether he can approve it now: no decision open, no piece waiting,
    *  blocked or still working (work_store.approvable). */
   approvable: boolean;
+  /** Its live work-item keys (agent_key_store.work_keys), on the detail
+   *  only: who issued each and when it ends. */
+  work_keys?: { fingerprint: string; issued_by: string; expires_at: number; issued_at: number }[];
   /** His words when he said it is not done yet. */
   review_note: string;
   review_note_at: number | null;
@@ -223,7 +226,8 @@ export function pieceMark(piece: WorkPiece): WorkMark {
 
 /** An item's mark: itself or any of its pieces blocked, else waiting on him. */
 export function itemMark(item: WorkItem): WorkMark {
-  if (item.state === "blocked" || item.blocked_pieces > 0) return "blocked";
+  // JARVIS holds something sent for it (work_store.ERROR): red, as blocked.
+  if (item.state === "error" || item.state === "blocked" || item.blocked_pieces > 0) return "blocked";
   if (item.state === "waiting_on_tim" || item.waiting_pieces > 0) return "waiting";
   return null;
 }
@@ -243,7 +247,7 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "ready", "working", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "ready", "working", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done", "error"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
@@ -254,7 +258,7 @@ export function safeWorkState(state: string, evidenced = false): WorkState {
   // the piece writing now); any other "working", from an older server or a
   // report, reads activity_unknown.
   if (state === "working") return evidenced ? "working" : "activity_unknown";
-  const allowed = ["planned", "ready", "verifying", "waiting_on_tim", "blocked", "done"];
+  const allowed = ["planned", "ready", "verifying", "waiting_on_tim", "blocked", "done", "error"];
   return allowed.includes(state) ? state as WorkState : "activity_unknown";
 }
 const liveNow = (p: WorkPiece) => p.live?.state === "working";

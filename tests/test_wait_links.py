@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from jarvis import (access_keys, attention_store, package_inbox, run_store, wait_links,
+from jarvis import (attention_store, package_inbox, run_store, wait_links,
                     workflow_store, work_store)
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_inbox import (BROWSER, deck_zip, marks,  # noqa: F401
@@ -23,7 +23,10 @@ DAY = wait_links.UNLINKED_AFTER_SEC
 
 
 def _key(label="asker"):
-    return {"Authorization": f"Bearer {access_keys.create(label, ['work', 'workflows'])}"}
+    """An onboarded agent (by its label's session) holding work and
+    workflows, signing every request."""
+    from tests.agent_key_fixtures import onboarded_auth
+    return onboarded_auth(("work", "workflows"), f"sess-{label}")
 
 
 @pytest.fixture
@@ -34,7 +37,7 @@ def item(wired, tmp_path):
 
 
 def _report(w, item_id, kind, summary, auth=None, **detail):
-    r = w.client.post(f"/api/work/{item_id}/events", headers=auth or _key(),
+    r = w.client.post(f"/api/work/{item_id}/events", auth=auth or _key(),
                       json={"kind": kind, "summary": summary, "detail": detail})
     assert r.status_code == 200, r.text
     return r.json()["item"]
@@ -115,7 +118,7 @@ def test_his_answer_by_voice_ends_it_too(wired):
 
 def test_a_reporter_cannot_answer_for_him(wired):
     wid = _waiting_workflow()
-    r = wired.client.post(f"/api/workflows/{wid}/events", headers=_key(),
+    r = wired.client.post(f"/api/workflows/{wid}/events", auth=_key(),
                           json={"kind": "decision_made", "summary": "Decided.",
                                 "detail": {"key": "pr-74", "answer": "yes", "by": "user"}})
     assert r.status_code == 200
@@ -172,7 +175,7 @@ def test_his_answer_by_voice_moves_it_to_its_next_state(wired, item):
 
 
 def test_a_piece_waits_only_on_a_decision_its_item_asked(wired, item):
-    r = wired.client.post(f"/api/work/{item.id}/events", headers=_key(), json={
+    r = wired.client.post(f"/api/work/{item.id}/events", auth=_key(), json={
         "kind": "piece", "summary": "Waiting.",
         "detail": {"key": "land", "who": {"kind": "tim"}, "state": "waiting_on_tim",
                    "until": "decision:nope"}})
@@ -415,14 +418,14 @@ def test_his_answer_is_written_for_the_asker_and_listed_by_its_key(wired, item):
     written = data_paths.answers_dir() / "speech" / f"{item.id}-build.md"
     text = written.read_text()
     assert "His answer: Build it" in text and "Decision: build" in text and item.id in text
-    got = wired.client.get("/api/work/answers", params={"since": before}, headers=key)
+    got = wired.client.get("/api/work/answers", params={"since": before}, auth=key)
     assert got.status_code == 200, got.text
     [a] = got.json()["answers"]
     assert (a["item_id"], a["key"], a["answer"]) == (item.id, "build", "Build it")
-    other = wired.client.get("/api/work/answers", headers=_key("someone-else")).json()
+    other = wired.client.get("/api/work/answers", auth=_key("someone-else")).json()
     assert other["answers"] == [], "only the asker's own questions"
     assert wired.client.get("/api/work/answers").status_code == 403
-    later = wired.client.get("/api/work/answers", params={"since": time.time() + 5}, headers=key)
+    later = wired.client.get("/api/work/answers", params={"since": time.time() + 5}, auth=key)
     assert later.json()["answers"] == []
 
 

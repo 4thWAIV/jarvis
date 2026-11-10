@@ -245,7 +245,9 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
 
     assert sink.calls == [], f"a routine producer reached the voice: {sink.calls}"
     kinds = {kind for kind, _, _ in recorded(attention)}
-    assert kinds == {"agent_message", "needs_you", "session_finished", "run", "package_run",
+    # "package": a signed package now arrives in his inbox here (agent keys),
+    # recorded as a silent arrival like every other kind in this set.
+    assert kinds == {"agent_message", "needs_you", "session_finished", "run", "package_run", "package",
                      "needs_board", "session_message", "workflow", "sign_in"}
     assert ("run", "r3", "cancelled") not in recorded(attention)
     queued = attention.get("agent_message", "11")

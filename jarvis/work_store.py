@@ -76,6 +76,12 @@ from jarvis import run_store, wait_links
 PLANNED, READY, WORKING, VERIFYING, WAITING, BLOCKED, DONE = (
     "planned", "ready", "working", "verifying", "waiting_on_tim", "blocked", "done")
 STATES = (PLANNED, READY, WORKING, VERIFYING, WAITING, BLOCKED, DONE)
+# Error: JARVIS holds something sent for the item (a package or a report
+# signed by a key it does not know as an onboarded agent's), with why. Set
+# and cleared only by JARVIS itself (ERROR_RAISED, ERROR_CLEARED), never a
+# reporter; it is the item's state, ahead of everything but done, until the
+# hold is settled (the agent onboarded, or its key refused).
+ERROR = "error"
 # Held: it cannot go on until what it names is answered or cleared, so it is
 # reported only with what holds it (`until`), and no report moves it on.
 HELD = (WAITING, BLOCKED)
@@ -85,7 +91,8 @@ ACTIVE = (VERIFYING,)
 # supplies exact assignment-bound, current token-generation evidence. Fail closed.
 ACTIVITY_UNKNOWN = "activity_unknown"
 # WORKING is shown only on live evidence (a subagent on the piece writing now).
-PUBLIC_STATES = (PLANNED, READY, WORKING, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE)
+PUBLIC_STATES = (PLANNED, READY, WORKING, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE,
+                 ERROR)
 ACTIVITY_REASON = ("The agent says it is working on this; JARVIS cannot see that work "
                    "happening, so it does not say it is.")
 
@@ -138,6 +145,10 @@ REVIEW_NOTED = "review_noted"
 NO_VERDICT, NOT_APPLIED = "no_verdict", "not_applied"
 # Everything only he does: never a reporter's to send.
 HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS + (REVIEW_NOTED,)
+# JARVIS's own: the item's Error, raised and cleared (see ERROR). Never a
+# reporter's, never his.
+ERROR_RAISED, ERROR_CLEARED = "error_raised", "error_cleared"
+JARVIS_KINDS = (ERROR_RAISED, ERROR_CLEARED)
 # His review acts, as the item shows the latest of them.
 _REVIEW_ACTS = REVIEW_KINDS + (REVIEW_NOTED,)
 CREATED = "created"
@@ -327,8 +338,14 @@ _REPORTERS = """
         WHERE kind = 'decision_needed' AND json_extract(detail, '$.asked_by') LIKE 'key:%';
 """
 
+# 7: the item's Error (ERROR), JARVIS's own, with why and since when.
+_ERROR = """
+    ALTER TABLE work_items ADD COLUMN error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_items ADD COLUMN error_at REAL;
+"""
+
 _MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF, 5: _WAIT_LINKS,
-               6: _REPORTERS}
+               6: _REPORTERS, 7: _ERROR}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -729,7 +746,7 @@ def record(event: WorkEvent) -> WorkItem:
     summary = _one_line(event.summary, SUMMARY_MAX)
     if not summary:
         raise WorkRefused("Every report needs a one-sentence summary.")
-    if event.kind not in REPORTED_KINDS + HIS_KINDS:
+    if event.kind not in REPORTED_KINDS + HIS_KINDS + JARVIS_KINDS:
         raise WorkRefused("Kinds are: " + ", ".join(REPORTED_KINDS) + ".")
     detail = event.detail if isinstance(event.detail, dict) else {}
     now = time.time()
@@ -738,7 +755,8 @@ def record(event: WorkEvent) -> WorkItem:
         if row is None:
             raise WorkRefused("There is no work item with that id.")
         if row["closed_at"] is not None and event.kind not in (DECISION_MADE,
-                                                                DECISION_SIGNED_OFF):
+                                                                DECISION_SIGNED_OFF,
+                                                                ERROR_CLEARED):
             # A closed item takes nothing more, his review included; only a
             # late answer to a decision it asked.
             raise WorkRefused("That work item is closed; it is kept in History. Start a new one.")
@@ -931,6 +949,13 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
     if kind == CLOSED:
         conn.execute("UPDATE work_items SET closed_at=? WHERE id=?", (now, item_id))
         return {}
+    if kind == ERROR_RAISED:
+        conn.execute("UPDATE work_items SET error=?, error_at=? WHERE id=?",
+                     (summary, now, item_id))
+        return {"held": _one_line(detail.get("held"), SUMMARY_MAX)}
+    if kind == ERROR_CLEARED:
+        conn.execute("UPDATE work_items SET error='', error_at=NULL WHERE id=?", (item_id,))
+        return {"held": _one_line(detail.get("held"), SUMMARY_MAX)}
     if kind == DECISION_NEEDED:
         key = _slug(detail.get("key"), "The decision's key")
         options = detail.get("options") or []
@@ -1325,7 +1350,8 @@ def _item(conn, row, now: float) -> WorkItem:
         state=state, reported_state=reported,
         quiet=_quiet(state, row, pieces, now),
         latest_update=row["latest_update"],
-        headline=decisions[0].question if state == WAITING and decisions else row["latest_update"],
+        headline=(row["error"] if state == ERROR else
+                  decisions[0].question if state == WAITING and decisions else row["latest_update"]),
         revision=row["revision"], created_at=row["created_at"], updated_at=row["updated_at"],
         area=area, grouped_by=BY_AREA if area else BY_FOLDER,
         group=area or _source_folder(row["source_kind"], row["source_path"]),
@@ -1399,6 +1425,8 @@ def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -
     report as activity_unknown)."""
     if row["state"] == DONE:
         return DONE
+    if row["error"]:
+        return ERROR
     if not pieces:
         return WAITING if decisions else public_state(row["state"])
     live = {p.state for p in pieces if p.state != DONE}
