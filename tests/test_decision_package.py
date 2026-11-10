@@ -128,8 +128,8 @@ class _Delivery:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, url, token, body, timeout=60):
-        self.calls.append((url, token, body))
+    def __call__(self, url, token, body, timeout=60, signer=None):
+        self.calls.append((url, signer, body))
         return {"package": {"id": "lunch-decisions-1.0.0-local1"}, "arrived": True,
                 "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
 
@@ -151,15 +151,33 @@ def test_a_failed_check_delivers_nothing(tmp_path, monkeypatch, capsys):
     failed = decision_check.Result(passed=["one"], failures=["809x589 slide 2: too tall"],
                                    screenshots=[tmp_path / "shot.png"])
     monkeypatch.setattr(decision_check, "check", lambda *a: failed)
+    _key()
     assert dp.main([str(write(tmp_path / "in", small_deck())),
-                    "--out", str(tmp_path / "out")]) == 1
+                    "--out", str(tmp_path / "out"), "--session", "abc"]) == 1
     said = capsys.readouterr().out
     assert "Not delivered" in said and "too tall" in said and "shot.png" in said
     assert delivery.calls == []
 
 
-def test_a_passed_check_delivers_once_with_the_token(tmp_path, monkeypatch, capsys):
-    from jarvis import data_paths
+def _key(session="abc"):
+    """The session's own key, made as `agent_key init` makes it."""
+    from jarvis import agent_keys
+    return agent_keys.make_pair(agent_keys.key_folder(session), f"jarvis-agent {session}")
+
+
+def test_nothing_is_delivered_without_the_session_s_own_key(tmp_path, monkeypatch, capsys):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
+    assert dp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+                    "--session", "nokey"]) == 1
+    assert "no key to sign it with" in capsys.readouterr().out and delivery.calls == []
+
+
+def test_a_passed_check_delivers_once_signed_with_the_session_s_key(tmp_path, monkeypatch,
+                                                                   capsys):
+    from jarvis import package_signature
+    private, public = _key()
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     monkeypatch.setattr(decision_check, "check",
@@ -167,13 +185,15 @@ def test_a_passed_check_delivers_once_with_the_token(tmp_path, monkeypatch, caps
     assert dp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [(url, token, body)] = delivery.calls
-    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc"
-                          "&source="), "the source it was run on: what proves the session ran it"
-    assert token == data_paths.ensure_tool_token()
-    assert body == (tmp_path / "out" / "lunch-decisions-1.0.0.zip").read_bytes()
+    [(url, signer, body)] = delivery.calls
+    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc")
+    assert signer == (private, public), "the request is signed with the session's own key"
+    archive = tmp_path / "out" / "lunch-decisions-1.0.0.zip"
+    assert body == archive.read_bytes()
+    signed = package_signature.read(archive)
+    assert signed.session == "abc" and signed.checks(public)
+    assert package_signature.DECISION_CHECKED in signed.statements
     said = capsys.readouterr().out
-    assert token not in said
     assert "lunch-decisions-1.0.0-local1" in said and "pkg-0123456789ab" in said
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
     assert record["project"] == "lunch" and record["session"] == "abc"
@@ -273,10 +293,11 @@ def test_the_printed_example_is_itself_a_valid_deck(tmp_path, capsys):
 def test_a_short_form_builds_and_delivers_end_to_end(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check",
-                        lambda archive, deck, out: decision_check.Result(passed=[deck["name"]]))
+    monkeypatch.setattr(decision_check, "check", lambda archive, deck, out, signer, session:
+                        decision_check.Result(passed=[deck["name"]]))
+    _key()
     assert dp.main([str(write(tmp_path / "in", brief())), "--out", str(tmp_path / "out"),
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+                    "--session", "abc", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     archive = tmp_path / "out" / "team-lunch-1.0.0.zip"
     package = json.loads(zipfile.ZipFile(archive).read("package.json"))
     assert package["name"] == "team-lunch" and package["runs"] == "page"
@@ -296,33 +317,34 @@ def test_every_option_is_pictured_unless_the_decision_says_why_not(tmp_path):
     assert problems(tmp_path, deck) == []
 
 
-def test_only_a_stamped_decision_package_unpacks_and_only_for_its_token(tmp_path):
-    from jarvis import decision_stamp
+def test_a_signature_covers_every_file_and_names_what_it_vouches_for(tmp_path):
+    from jarvis import agent_keys, decision_stamp, package_signature
     out = tmp_path / "out"
     deck = dp.validate(write(tmp_path / "in", small_deck()))
     archive = dp.build(tmp_path / "in" / "content.json", out, deck)
     assert decision_stamp.is_decision_package(archive)
-    assert "has not passed its check" in decision_stamp.problem(archive, "token-a")
-    stamped = tmp_path / "stamped.zip"
-    decision_stamp.stamp(archive, stamped, "token-a")
-    assert decision_stamp.problem(stamped, "token-a") is None
-    assert "not checked for this JARVIS" in decision_stamp.problem(stamped, "token-b")
-    decision_stamp.stamp(stamped, stamped, "token-b")       # stamped again in place
-    assert decision_stamp.problem(stamped, "token-b") is None
-    with zipfile.ZipFile(archive) as a, zipfile.ZipFile(stamped) as b:
-        names = [n for n in b.namelist() if not n.endswith(decision_stamp.STAMP)]
+    assert package_signature.read(archive) is None, "unsigned until it is checked"
+    private, public = _key()
+    signed_zip = tmp_path / "signed.zip"
+    package_signature.sign(archive, signed_zip, private, public, "abc", (package_signature.DECISION_CHECKED,))
+    signed = package_signature.read(signed_zip)
+    assert signed.fingerprint == agent_keys.fingerprint(public) and signed.checks(public)
+    other = agent_keys.make_pair(tmp_path / "other", "x")[1]
+    assert not signed.checks(other), "only the key that signed it"
+    with zipfile.ZipFile(archive) as a, zipfile.ZipFile(signed_zip) as b:
+        names = [n for n in b.namelist() if not n.endswith(package_signature.FILE)]
         assert sorted(names) == sorted(a.namelist())
         assert all(a.read(n) == b.read(n) for n in names), "the files checked are the files sent"
     changed = tmp_path / "changed.zip"
-    with zipfile.ZipFile(stamped) as b, zipfile.ZipFile(changed, "w") as c:
+    with zipfile.ZipFile(signed_zip) as b, zipfile.ZipFile(changed, "w") as c:
         for info in b.infolist():
             data = b.read(info)
             c.writestr(info, data + b"// changed" if info.filename.endswith("deck.js") else data)
-    assert "changed after its check" in decision_stamp.problem(changed, "token-b")
+    assert not package_signature.read(changed).checks(public), "changed after it was signed"
     plain = tmp_path / "plain.zip"
     with zipfile.ZipFile(plain, "w") as z:
         z.writestr("package.json", "{}")
-    assert decision_stamp.problem(plain, "token-a") is None, "only decision packages"
+    assert not decision_stamp.is_decision_package(plain), "only decision packages"
 
 
 def test_installed_checker_uses_shipped_page_without_node(tmp_path, monkeypatch):

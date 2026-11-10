@@ -1335,6 +1335,20 @@ EXEMPT = {
         "a route answering the signing agent with its own key's fingerprint and state as JSON; no header the brain reads"),
     "server.tool_agent_keys": (
         "every line comes from _key_line (the agent's name through the voice-name wall) or fixed words with counts. Driven by tests/test_agent_keys.py"),
+    "server._board_writer": (
+        "it returns the proven writer of a needs board (a Sender record) and records a hold; the board's text reaches the brain only inside session_needs' untrusted block"),
+    "server._held_who": (
+        "it names who tried to send a held thing for the Work item's Error line and the error package, which the page shows as text and the brain reads only through work_status's wall"),
+    "server._hold_package": (
+        "it keeps a package's zip and records the hold; its words (the package's name and version) go to the error package as escaped text and to the agent's refusal, never a brain header"),
+    "server._make_key_error_package": (
+        "it builds the error package from the holds; every word of the agent's is escaped into its page (key_error_package._e) and the inbox row reaches the brain only walled"),
+    "server._request_from_unrecognised": (
+        "it records a refused report's method, path and summary as a hold for the error package, escaped there; nothing reaches the brain's headers"),
+    "server._signer_sender": (
+        "it builds the proven sender record of a signed package or message from JARVIS's own agent directory; names reach the brain only through _said_name or a walled block"),
+    "server._ask_understood_on_work": (
+        "it records the standard vote, JARVIS's own fixed words, as a Work decision; the agent's session id goes into the record as its asker, never into a line the brain reads"),
     "server.tool_revoke_agent_key": (
         "its answers are fixed sentences, and the agent's name only through _agent_said, the voice-name wall. Driven by tests/test_agent_keys.py"),
 }

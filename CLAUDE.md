@@ -70,15 +70,21 @@ this presents as "the UI is up but nothing works" rather than as an error.
   CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
   and then needs `JARVIS_ALLOWED_ORIGINS`.
   An onboarded agent signs each request with its own key instead (see
-  "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights. Until
-  the cut-over an agent may still carry an access key (`access_keys.py`):
-  it opens only the routes of its categories (the rights, defined in
-  `agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
+  "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
+  (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
   `packages`, `watch`), never the voice socket, settings or
-  `/internal/tool`. `python -m jarvis.access_keys create <label>
-  <category>...` prints the key once; only its digest is stored. The one
-  route open with no credential is `POST /api/agent-keys`, a new agent's
-  key submission, which only records a pending key.
+  `/internal/tool`. Access keys, which agents carried before
+  (`access_keys.py` is gone), are accepted only while the cut-over guard
+  waits (`legacy_access.py`): until none in `access-keys.json` has been
+  used for seven days (counted per day and label in `legacy_admissions`,
+  watched for at least seven days), each still opens its categories'
+  routes as `BY_ACCESS_KEY`, recorded as `key:<label>`; the first look
+  that finds the guard satisfied records the cut-over
+  (`agent_key_settings`), for good. `agent_keys` and `GET /api/agent-keys`
+  say where it stands. The one route open with
+  no credential is `POST /api/agent-keys`, a new agent's key submission,
+  which only records a pending key; a key JARVIS holds but has not
+  onboarded may reach `POST /api/packages/inbox` alone, to be held.
 
 ## Product direction
 
@@ -91,7 +97,8 @@ Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
 file in `<its config home>/jarvis/agent-keys/<session id>/` and never
 leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
 only public keys (`agent_key_store.py`, schema `agent_keys_schema`: keys,
-`agent_rights`, `agent_key_events`, `legacy_admissions`). `python -m
+`agent_rights`, `agent_key_events`, the held things and error packages;
+`legacy_admissions` counted access-key use until the cut-over). `python -m
 jarvis.agent_key init` makes it and `submit` posts it to `POST
 /api/agent-keys`, signed by itself (`jarvis-key-submit@v1`); a key is
 `pending` until its claimed session's own transcript (never a subagent's,
@@ -121,14 +128,53 @@ key JARVIS holds goes on (`agent_key status` reads `GET
 `web_auth.principal`, recorded by `reporters.recorded` and shown by its one
 name; old `key:<label>` records stay readable. `work_report.py` and
 `workflow_report.py` sign with `--as <session id>` (or
-`JARVIS_AGENT_SESSION`), else send `JARVIS_ACCESS_KEY`. The agent's thread
+`JARVIS_AGENT_SESSION`), else a work-item key in the folder or above. The agent's thread
 shows its key, when and how it was onboarded, its rights and Revoke
 (`POST /api/agent-keys/<fingerprint>/revoke`, the brain's acting
-`revoke_agent_key`); `agent_keys` reads them all, with the access-key
-admissions of the last week. Keys of agents dropped from the list are
+`revoke_agent_key`); `agent_keys` reads them all. Keys of agents dropped from the list are
 revoked. `agent-keys` and `work-key` are sensitive names to every folder
-reader. The design and its progress are
-`docs/planning/agent-keys/design.md`.
+reader.
+Everything an agent sends is signed: a package carries
+`agent-signature.json` (`package_signature.py`, `jarvis-package@v1`: the
+SHA-256 of every other file, the key, its session, `statements` such as
+`DECISION_CHECKED`, an optional `work_key` grant), made by `make_package`, which delivers nothing without the
+session's key (`agent_keys.signer_for`); a message file or needs board
+carries `<file>.sig` (`agent_key sign`, `jarvis-message@v1`). A signature
+counts only for a key JARVIS holds as onboarded, never one the file names.
+Anything signed by a key that is not an onboarded agent's (unknown,
+pending, waiting, revoked, or a held key's signature that does not check),
+and after the cut-over anything unsigned, goes to ONE function,
+`server._unrecognised_key` (Tim's answer, Q3): held (`agent_key_held`,
+migration 2; a package's zip kept in `data_paths.held_dir()`, a message
+left `.held`, a report refused), the Work item it is for put in Error
+(`work_store.ERROR`, raised and cleared only by JARVIS, `JARVIS_KINDS`,
+red on the page), and an error package made for Tim (`key_error_package.py`,
+from JARVIS, delivered unshown to his inbox, one per subject `key:<fp>` or
+`session:<id>`, made again as holds are added) saying which session and key
+tried, what it tried to send and when, and offering his two acts: switch
+the agent on (only while its key waits) or refuse and revoke the key. The
+page's buttons save `results/act.json` through the frame's bridge, and
+`_key_error_act` does it as his click (only for an error package JARVIS
+made, `agent_key_errors`); by voice they are `set_agent_active` and
+`revoke_agent_key`. Onboarding releases the holds (`_release_held`: the
+package received again, the message put back), refusing drops them
+(`_refuse_held`); either way the error package closes and the Work item
+leaves Error. A request signed by a fingerprint JARVIS holds no key for is
+only refused: it proves nothing about anyone.
+A work-item key (`workkey:<fingerprint>`, `agent_key_store.add_work_key`)
+is made by `make_package --work <id>` for an agent package (its private
+half at `.jarvis/work-key` in the zip, made 0600 when unpacked, its grant
+in the signature) or `python -m jarvis.agent_key grant --work <id> --into
+<folder>` (`POST /api/agent-keys/work-keys`), both through
+`server._issue_work_key`: issued by an onboarded agent holding `work` on
+that open item, with `agent_rights.WORK_KEY_RIGHTS` scoped `work:<id>`
+(reports on that item, its answers, packages for it; never `POST
+/api/work`). It reports for its issuer, lives while the item is open and
+not in History (`agent_auth`), is revoked when the item closes and on the
+look after it leaves, and ends after `WORK_KEY_LIFE_SEC` (30 days) unless
+its issuer renews it (`agent_key renew`). The item's Overview lists its
+keys with Revoke (`work_api.work_keys_json`). The design and its progress
+are `docs/planning/agent-keys/design.md`.
 
 ## Clearing the conversation
 JARVIS never clears, rotates or replaces its conversation without the user's
@@ -258,7 +304,7 @@ a message to him is recorded and refuses one without proof (`Unproven`);
 (`server._record_inbound`). Phase 2: every other channel does too, each
 as a `message_in` item whose `source_kind` is a `conversation_log.Source`:
 a proven needs-board rewrite in its writer's thread (`_record_board`, the
-transcript proof `_board_writer` kept per rewrite; source
+signature proof `_board_writer` kept per rewrite; source
 `<project>:<mtime>`), a workflow's and a Work item's decision in its
 thread (`_record_workflow_decision`, `_record_work_decision`: proof
 `access_key` only when its reporter is a key, `_reported_proof`; source
@@ -287,10 +333,7 @@ parent, "To Planning, for Feynman."), to a package's proven sending
 session, or to the one listed agent a decision's access key names, read
 back and sent only on his yes; a person's message is a draft in their
 thread, reviewed with `request_message_review` (`_person_reply`). The old
-per-kind routes (`/api/session-messages/{id}/read|reply`,
-`/api/agent-messages/{id}/read|reply`) and tools (`read_session_message_aloud`,
-`reply_to_session_message`, `read_message_reply_aloud`, `reply_to_message`)
-are gone. A decision keeps its own Answer.
+per-kind Read and Reply routes and tools are gone. A decision keeps its own Answer.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -301,24 +344,27 @@ symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
 session's sign it was picked up), then records an attention item naming the
 agent and nothing of its text. The agent is its real sender
-(`server._writer_of`, `session_message_sender.proven_by`, stored as `sender_session`,
-`sender_evidence` and `sender_subagent`), proven only by a transcript
-showing the write (the file's path in it, written since the file): a
-listed agent's own Claude Code transcript (`transcript`), one of its Claude
-subagents' files (`subagent_transcript`, named by its meta description),
-its Codex rollout (`codex_rollout`), or the rollout of a Codex subagent
-whose `session_meta.source.subagent.thread_spawn.parent_thread_id` is it
-(`codex_subagent_rollout`, named by `agent_nickname`). Its `From: <session
-id>` line (the skill's second line) only says whose to look in first. A
-subagent shows as "<its name> (<listed parent>)", and a reply to it goes to
+(`server._message_sender`, stored as `sender_session`, `sender_evidence`
+`agent_signature` and `sender_subagent`), proven only by `<file>.sig`
+beside it: `python -m jarvis.agent_key sign` by an onboarded agent's key
+over the file's name and bytes as they are now (`server._file_signer`).
+The signature proves the listed agent; a subagent of it is named ("<its
+name> (<listed parent>)", Tim's rule: every sender identified, no
+backdoor) only when that subagent's own file shows it writing the message
+(`server._signer_sender`, `session_message_sender.proven_by` with
+`subagents_only`: a Claude subagent's file named by its meta description,
+or a Codex subagent rollout naming its parent), never from anything the
+agent or the file says; with no such proof, the parent alone. Its `From:
+<session id>` line proves nothing. A reply to a subagent's message goes to
 the parent's session, read back "To Planning, for Feynman." (the capture's
-`for`, dropped once it is addressed elsewhere). The writer must be, or be a
-subagent of, an agent the directory lists. A message with no such proof is
-never shown as a message: it is held where it was dropped (`<name>.held`,
-`server._hold_session_message`; its session sees it was not taken) and only
-counted in Diagnostics (`incomingHeld`), since a message he cannot answer
-must not reach him as one. Its Updates entry has Seen, Read and Reply,
-the same as every message to him (see "One channel").
+`for`, dropped once it is addressed elsewhere). An unsigned file
+is left `SIG_GRACE_SEC` (60 s) for its `.sig`; then it, and one signed by a
+key that is not an onboarded agent's, is never shown as a message: it is
+held where it was dropped (`<name>.held`, `server._hold_session_message`;
+its session sees it was not taken), counted in Diagnostics
+(`incomingHeld`), and told to Tim (`_unrecognised_key`, see "Agent keys");
+put back to be taken once he onboards its agent. Its Updates entry has
+Seen, Read and Reply, the same as every message to him (see "One channel").
 Every message to Tim can be replied to: a session's message (Reply); an
 agent's answer to a message and a session needing him (a capture to that
 agent, `capture` with `to`, then `steer_session`); a person's message (the
@@ -337,12 +383,12 @@ update), never on the needs board; the board is only for needs tied to no
 item. The skill says so, and the brain, asked what needs him, reads the
 work items' open decisions and blockers first, then the needs board.
 A needs board is shown as its writer's, proven the same way
-(`server._proven_boards`, `_board_writer`): the listed agent, or its
-subagent, whose own transcript shows writing that file as it is now, kept
-per file version in run_store's `needs_board_writers`, never every agent in
-its project. A board no transcript proves is held: not shown, listed,
-counted on any agent or announced, only counted in Diagnostics
-(`needsHeld`). An agent's needs count is the boards it is proven to have
+(`server._proven_boards`, `_board_writer`): the onboarded agent whose key
+signed `<board>.sig` over that file as it is now, kept per file version in
+run_store's `needs_board_writers`, never every agent in its project. A
+board nothing signs is held: not shown, listed, counted on any agent or
+announced, counted in Diagnostics (`needsHeld`) and told to Tim
+(`_unrecognised_key`). An agent's needs count is the boards it is proven to have
 written (`server._needs_by_session`, by session id).
 `python -m jarvis.session_skill install` renders it with this install's data paths
 into every Claude Code config root and the user's Codex home; preflight's
@@ -356,17 +402,17 @@ tasks, and its open waits, decisions and blockers are updated in the same
 transaction as each event, by `record`, the only writer. Going quiet
 (running, with no event for `SILENT_AFTER_SEC`; a workflow that has said it
 is waiting is waiting, not quiet) is worked out when it is read, never
-stored. Sessions report with `workflow_report.py` and an access key in the
-`workflows` category (the talk-to-jarvis skill teaches them);
+stored. Sessions report with `workflow_report.py --as <session id>`, signed
+with their own key holding the `workflows` right (the talk-to-jarvis skill
+teaches them);
 `POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the
 page reads `GET /api/workflows*`, and a `workflows` hint on `/ws/sessions`
 says when to read again. Who reports is the route's to record, never the
-report's (`reporters.py`): an access key's label means an agent, the listed
-agent the directory names by it (`agent_directory.named`), else the label
-itself, proven by the key; `reporters.recorded` keeps it as `key:<label>`
-on the workflow and every event (`reporter`), and the page and brain show
-it by name (`reporter_name`, `reporters.shown`). An `agent_attached`
-session must be one of the key's own agent's sessions
+report's (`reporters.py`): the signing key's principal,
+`agent:<session id>`, kept by `reporters.recorded` on the workflow and
+every event (`reporter`; an old `key:<label>` record stays readable), and
+the page and brain show it by name (`reporter_name`, `reporters.shown`).
+An `agent_attached` session must be the key's own agent's session
 (`server._attach_refused`); any other is refused. A new phase, a decision needed, a blocker, a finish
 and going quiet are each an attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; open decisions are added to the
@@ -432,7 +478,9 @@ package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
 as the brain's `open_package_page`, on his click. A decision is answered by
 Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
 <key> "<reason>"`, kind `decision_withdrawn`): the route records the asker
-as its access key's label (`work_api.asker`, `reporters.recorded`),
+as its signing key's principal (`work_api.asker`, `reporters.recorded`;
+withdrawals and `answers` also accept an access-key label the agent was
+onboarded under, `reporters.aliases`),
 never what the report says (every report keeps its reporter the same way:
 `work_events.reporter` and each piece's latest, `work_pieces.reporter`,
 migration 6, shown as "reported by <name>" on pieces and events), refuses a page's withdrawal, and a decision
@@ -564,7 +612,8 @@ shown by its one name from the agent directory, `run:<id>`,
 An open decision reads as waiting on Tim only while nothing else can go on
 (see above), and a working or verifying item
 silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
-with `work_report.py` and an access key in the `work` category (the
+with `work_report.py --as <session id>`, signed with their own key holding
+the `work` right, or with a work-item key (see "Agent keys") (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`. The
 view is held (`work_view.py`, `server.work_held`): built at startup, each
 item worked out again only when it changes (a write, `work_store.on_changed`;
@@ -574,7 +623,8 @@ or agents' names), and each change is one `work_item`,
 `work_item_history` or `work_item_removed` frame on `/ws/sessions`, after
 the write, with the view's revision. `/api/work` returns the held view and
 reads nothing; the page (`work.ts` `applyWorkFrame`) replaces one item by
-id and reads the list in full only on a reconnect or a revision gap; a
+id and reads the list in full only on a reconnect or a revision gap (a
+`work` hint now only re-reads the open item's events, packages and keys); a
 decision, blocked and done are attention items, each resolved once it is no
 longer so (no decision open, no longer blocked or done:
 `server._work_news_stale`). A decision's key is asked once: an answered key
@@ -750,7 +800,7 @@ followed, a received file's size limit), copied privately and unpacked by
 once when he asked. A package reaches his screen only on his own act: his
 click on a page JARVIS serves (`packages_api.his_click`: admitted by its
 `Origin`, `web_auth.BY_ORIGIN`) or a brain tool on a turn he drove (the
-ACTING_TOOLS). A caller on the tool token or an access key may unpack a
+ACTING_TOOLS). A caller on the tool token or an agent's key may unpack a
 package but never show it: `POST /api/packages/local` unpacks and answers
 `packages_api.NOT_HIS_ACT` as its `problem` (`_open_local_package(path,
 show)`), and `POST /api/packages/<id>/page` and a story told (`POST
@@ -834,42 +884,40 @@ JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
 sizes and the story told to the end; for a decision package also voting,
 the story waiting at every question as a first-time user answers by click
 and by decide.py, Stop within 1 s from the page and the tool, and resume).
-Only then is it delivered unshown through `POST /api/packages/local`, a
-decision package stamped for the live JARVIS first, with a message to Tim.
-`_open_local_package` refuses a decision package (`deck-data.js` and
-`scripts/decide.py`, the shared deck's) without a matching stamp for its
-own tool token (`decision_stamp.py`), so no other way delivers one.
+The isolated JARVIS is seeded with the agent's public key
+(`decision_check.seed`, `JARVIS_DECISION_CHECK_SERVER`), so the deck signed
+by that key unpacks there. Only then is it signed for the live JARVIS, a
+decision package with the statement that it passed
+(`package_signature.DECISION_CHECKED`), and delivered unshown to his
+package inbox. Every unpack (`server._decision_problem`) refuses a decision
+package (`deck-data.js` and `scripts/decide.py`, the shared deck's,
+`decision_stamp.MARKS`) without that statement signed by an onboarded
+agent's key, so no other way delivers one.
 `python -m jarvis.decision_package` is the command's old name.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
 jarvis.make_package` checks and builds it, then posts the zip's bytes to
 `POST /api/packages/inbox?project=&session=&source=&workflow=&work=`
-(`decision_package.deliver`, the tool token, which the decision stamp needs
-anyway; the `packages` access-key category opens that one route and
-nothing else). `session` is only a claim (`claimed_session`): his answers
-go to it (`from_session`, with `sender_evidence`) only once
-`server._package_sender` proves it, by a session the caller's access key
-owns or by the claimed session's own transcript (or its subagent's) showing
-make_package run on `source` within `MAKE_PACKAGE_WINDOW_SEC`; unproven, the
-answers go nowhere and the row says so (`unproven_claim`, the Queue's
-"Answers go nowhere", the sign-off's note). Rows from before migration 3
-are claims; migration 4 marks each open one (`reprove`), as does every
-arrival whose claim is not proven as it comes in (its command may name the
-source through a shell variable). `server._watch_inbox_proofs`, once the
-session watcher has looked, has `_reprove_inbox_senders` prove each by the
-same `_package_sender`: the claimed session's own transcript, or a file of
-one of its subagents (a Claude subagent's, or a Codex subagent rollout
-naming it as parent), holding make_package's line that JARVIS took it under
-that inbox id (`make_package.ARRIVED_AS`, the id JARVIS answered the poster
-alone), read whole for a row older than the window. It records
-`sender_proven` (a subagent's as `subagent:<name>`, shown "name (parent)")
-or, `REPROVE_FOR_SEC` after arrival (at once for an older row),
-`sender_not_proven` with why. While it is looked for the row is
-`proof_pending`, not yet `unproven_claim`. `package_inbox_api.py` hands it to `server._receive_inbox_package`:
+(`decision_package.deliver`, signed with the sending session's key; the
+`packages` right opens that one route and nothing else). Its sender is its
+signature's (`agent-signature.json`, `package_signature.py`;
+`server._package_signer`): the onboarded agent whose key signed it, its
+answers going to that session (`from_session`, `sender_evidence`
+`agent_signature`; a subagent named only when its own file shows it
+running make_package on that `source`, `subagent:<name>`, shown "name
+(parent)"). One signed by a key that is not an onboarded
+agent's, or sent unsigned on a request signed by one, is held
+(`_unrecognised_key`), never unpacked, until he onboards it. One unsigned
+on the tool token keeps `?session=` as a claim that only the signed request
+proves (`server._package_sender`: the calling agent's own session);
+unproven, the answers go nowhere and the row says so (`unproven_claim`, the
+Queue's "Answers go nowhere", the sign-off's note). Nothing is proven from
+transcripts any more (migration 5 leaves no row `reprove`). `package_inbox_api.py` hands it to `server._receive_inbox_package`:
 the workflow or work item it names must exist and be open, the bytes are
-unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
-package only with its stamp), and `package_inbox.arrive` records it. Every
+unpacked by `work_packages.unpack` exactly as a local zip (a decision
+package only signed as checked, `_receive_package_zip`), and
+`package_inbox.arrive` records it. Every
 package carries his vote: `make_package` gives a deck or page that asks
 nothing the standard one, `package_inbox.understood` (`understood`:
 `got-it` Got it, `questions` I have questions with his words; Entendido and
@@ -892,11 +940,15 @@ decide.py), so the Work tab, voice and the sign-off capture treat it as a
 deck's. At sign-off an I have questions on a package sent with `--work`
 is also that item's decision `understood-<inbox id>`, asked and answered at
 once in his words (`server._inbox_questions_on_work`), and the capture
-names it. An agent or conversation package cannot carry a vote, so one that
-names a work item is refused (`package_inbox.no_vote`) by
-`make_package.check_vote` and by the route, which also refuses any package
-for a work item that asks nothing (`asks_him`). One that names no work item
-may ask nothing. Nothing
+names it. An agent package sent with `--work` carries its work-item key
+(see "Agent keys"), and its vote is asked on the item as it arrives: the
+standard question as the item's decision `understood-<inbox id>`, asked by
+its sending agent (`server._ask_understood_on_work`), on its Decisions tab.
+A conversation package cannot carry a vote, so one that names a work item
+is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
+the route, which checks the signature first and then refuses any other
+package for a work item that asks nothing (`asks_him`). One that names no
+work item may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema
@@ -2032,13 +2084,16 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   record, its routes and shared calls, and the command agents report with
   (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and
   `WorkDetail.tsx` are the page's side
-- `access_keys.py` — Access keys by category, for agents the user lets
-  reach some of JARVIS's routes without the tool token, until the cut-over
 - `agent_keys.py` / `agent_key.py` / `agent_key_store.py` /
   `agent_rights.py` / `agent_auth.py` — Agents' own keys: the ssh-keygen
   seam and signing, the agent's command, the record of keys and rights,
   the rights and their one check, and checking a signed request (see
   "Agent keys")
+- `legacy_access.py` — The cut-over guard: old access keys accepted until
+  none has been used for seven days, then never again
+- `package_signature.py` / `key_error_package.py` — A package's signature
+  (who sent it, what it vouches for, a work-item key grant), and the error
+  package for something a key JARVIS does not know sent
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   about the needs board and session messages
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending

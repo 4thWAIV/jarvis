@@ -142,17 +142,17 @@ async def test_send_on_screen_during_a_turn_waits_then_approves_through_the_guar
 
 
 @pytest.mark.asyncio
-async def test_an_agent_s_access_key_cannot_approve_a_person_s_message(server, tim):
-    """A `captures` key opens the capture routes for an agent, but Accept and
-    Send on a person's message are his yes alone: 403, and nothing staged,
-    accepted or approved."""
+async def test_an_agent_s_own_key_cannot_approve_a_person_s_message(server, tim):
+    """The `captures` right opens the capture routes for an agent, but Accept
+    and Send on a person's message are his yes alone: 403, and nothing
+    staged, accepted or approved."""
     from fastapi.testclient import TestClient
-    from jarvis import access_keys
-    key = access_keys.create("some-agent", ["captures"])
+    from tests.agent_key_fixtures import onboarded_auth
+    key = onboarded_auth(("captures",))
     draft, n = _reviewed(tim)
     page = TestClient(server.app)
     for action in ("send", "accept"):
-        r = page.post(f"/api/capture/{n}/{action}", headers={"Authorization": f"Bearer {key}"})
+        r = page.post(f"/api/capture/{n}/{action}", auth=key)
         assert (r.status_code, r.json()["detail"]) == (
             403, "Only he can approve a message to a person."), action
     await server._perform_staged_steers()

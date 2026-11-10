@@ -5,7 +5,7 @@
 Run only by `decision_check`, in a child process whose environment already
 points every path at a temporary folder (JARVIS_DATA_DIR, JARVIS_ENV_FILE,
 JARVIS_STT_MODEL_DIR) with JARVIS_BRAIN_AUTOSTART=0. It is JARVIS's real
-server, `jarvis.server:app`, on loopback over plain HTTP, with six things
+server, `jarvis.server:app`, on loopback over plain HTTP, with seven things
 changed for a check and nothing else:
 
 - The voice page it serves is the one built for the check (`--page`), so
@@ -23,6 +23,10 @@ changed for a check and nothing else:
 - The language in force is the deck's, so its story is told; no speech
   model is loaded for it.
 - Nothing listens beyond 127.0.0.1.
+- A decision package signed by the agent's key it was seeded with
+  (decision_check.seed) unpacks without the signed statement that it passed
+  its check, since this is the check (JARVIS_DECISION_CHECK_SERVER, set by
+  decision_check; server._decision_problem).
 """
 from __future__ import annotations
 

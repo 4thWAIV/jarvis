@@ -44,6 +44,7 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { DecisionCard } from "./DecisionCard";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
+import { revokeAgentKey } from "./agents";
 import { answerInbox, inboxProgress, openInbox, optionFor, type InboxDetail,
          type InboxQuestion } from "./packageInbox";
 import { openPackagePage } from "./packages";
@@ -75,8 +76,9 @@ export function WorkDetail({ id }: { id: string }) {
   // the server sends for it (work.ts), with no read.
   const live = useLiveRead(() => getWorkItem(id), [workChanged]);
   const framed = useFramedItem(id, live.value, live.refresh);
+  // The keys are the detail's alone (not in the list's item): kept from the read.
   const item = framed && (!live.value || framed.revision > live.value.revision)
-    ? framed.item : live.value?.item;
+    ? { ...framed.item, work_keys: live.value?.item.work_keys } : live.value?.item;
   const events = live.value?.events ?? [];
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
   const shownTab = useSyncExternalStore(workTab.subscribe, workTab.get);
@@ -300,12 +302,36 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
           ))}
         </p>
       )}
+      {(item.work_keys ?? []).length > 0 && (
+        <ul className="work-item-keys" ref={part("itemKeys")}>
+          {item.work_keys!.map((k) => <ItemKey key={k.fingerprint} itemKey={k} />)}
+        </ul>
+      )}
       <section ref={part("who")}>
         <h3 className="work-section-head">{t("main.work.who")}</h3>
         {who.length === 0 ? <p className="workflow-empty">{t("main.work.noPieces")}</p>
           : <ul className="work-who">{who.map((w) => <li key={w}>{w}</li>)}</ul>}
       </section>
     </>
+  );
+}
+
+/** One work-item key (made by `make_package --work` or `agent_key grant`):
+ *  who issued it, when it ends, and his Revoke. The detail is read again
+ *  on the "work" hint every key change sends. */
+function ItemKey({ itemKey }: { itemKey: NonNullable<WorkItem["work_keys"]>[number] }) {
+  const t = useT();
+  const [failed, setFailed] = useState<string | null>(null);
+  return (
+    <li>
+      {t("main.work.itemKey", { name: itemKey.issued_by || t("main.work.itemKeyNobody"),
+                                 when: formatDateTime(itemKey.expires_at * 1000, { dateStyle: "medium" }) })}{" "}
+      <code className="work-path">{itemKey.fingerprint}</code>{" "}
+      <button data-ui-action="domain" type="button" className="thread-key-revoke"
+              onClick={() => { setFailed(null); revokeAgentKey(itemKey.fingerprint).catch((e: Error) => setFailed(e.message)); }}>
+        {t("main.thread.keyRevoke")}</button>
+      {failed && <span className="read-failure"> {t("main.thread.keyFailed", { error: failed })}</span>}
+    </li>
   );
 }
 

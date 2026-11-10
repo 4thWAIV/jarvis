@@ -530,7 +530,9 @@ def usage_path(service: str = "anthropic") -> Path:
 
 
 def access_keys_path() -> Path:
-    """The digests of the access keys, by label and category (access_keys.py)."""
+    """The old access keys' record, by label and category: read only, for
+    the labels an onboarded agent adopts (reporters.legacy_labels). Access
+    keys admit nothing any more (agent keys replaced them)."""
     return data_dir() / "access-keys.json"
 
 
@@ -570,6 +572,12 @@ def packages_dir() -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+
+
+def held_dir() -> Path:
+    """What is held until Tim onboards the agent that sent it (a package's
+    zip, by its held id): server._unrecognised_key."""
+    return data_dir() / "held"
 
 def team_connection_path() -> Path:
     """The saved team-server connection (team_client.py): server URL, pinned

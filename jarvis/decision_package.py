@@ -471,13 +471,19 @@ def _context(url: str) -> ssl.SSLContext | None:
     return context
 
 
-def post(url: str, token: str, body: dict | bytes, timeout: float = 60) -> dict:
-    """One POST with the tool token, of JSON or of a zip's bytes; the
+def post(url: str, token: str, body: dict | bytes, timeout: float = 60,
+         signer: tuple[Path, str] | None = None) -> dict:
+    """One POST, of JSON or of a zip's bytes, signed by the agent's key
+    (`signer`, agent_keys.request_header) or with the tool token; the
     answer, or OSError saying why."""
+    from jarvis import agent_keys
     raw = isinstance(body, bytes)
+    data = body if raw else json.dumps(body).encode()
+    authorization = (agent_keys.request_header(signer[0], signer[1], "POST", url, data)
+                     if signer else f"Bearer {token}")
     request = urllib.request.Request(
-        url, data=body if raw else json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {token}",
+        url, data=data, method="POST",
+        headers={"Authorization": authorization,
                  "Content-Type": "application/zip" if raw else "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=_context(url)) as r:
@@ -490,7 +496,8 @@ def post(url: str, token: str, body: dict | bytes, timeout: float = 60) -> dict:
 
 
 def deliver(archive: Path, base: str, token: str, project: str = "", session: str = "",
-            workflow: str = "", work: str = "", source: str = "") -> Delivered:
+            workflow: str = "", work: str = "", source: str = "",
+            signer: tuple[Path, str] | None = None) -> Delivered:
     """Send the zip to the package inbox of the JARVIS at `base`: checked,
     unpacked and recorded there, never shown (package_inbox.py). `session`
     is who the answers go back to, once JARVIS has proven it ran the
@@ -501,7 +508,7 @@ def deliver(archive: Path, base: str, token: str, project: str = "", session: st
         ("project", project), ("session", session), ("source", source),
         ("workflow", workflow), ("work", work)) if v})
     url = base.rstrip("/") + INBOX_ROUTE + (f"?{query}" if query else "")
-    answer = post(url, token, archive.read_bytes())
+    answer = post(url, token, archive.read_bytes(), signer=signer)
     if "package" not in answer or "inbox" not in answer:
         raise OSError(f"JARVIS did not take it: {answer.get('error') or answer}")
     return Delivered(answer["package"], bool(answer.get("arrived")), answer["inbox"])

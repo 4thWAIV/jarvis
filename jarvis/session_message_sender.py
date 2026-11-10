@@ -224,7 +224,7 @@ def _showed(key, path: Path, st, shows: Callable[[Path], bool]) -> bool:
 def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: Iterable,
               roots: Iterable[Path], names: dict, codex_threads: Callable[[], dict] = dict,
               only_claimed: bool = False, since: float = 0.0, key=None,
-              own_only: bool = False) -> Optional[Sender]:
+              own_only: bool = False, subagents_only: bool = False) -> Optional[Sender]:
     """The listed agent (or its subagent) whose own transcript `shows`
     proves the act, or None. With `only_claimed`, the claimed session alone
     is looked in: a claim is proven or refused, never moved to another.
@@ -233,7 +233,10 @@ def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: I
     in an older one) are read, the claimed session's first and then the
     newest, at most PROOF_FILES_MAX; with a `key` naming what is asked, each
     file's answer is kept until the file changes. With `own_only`, a
-    subagent's file never proves it: only the session's own transcript."""
+    subagent's file never proves it: only the session's own transcript.
+    With `subagents_only`, only a subagent's own file does: which of a
+    session's subagents did it, once the session itself is proven another
+    way (its key's signature)."""
     roots = list(roots)
     listed = [s for s in sessions if s.session_id in names]
     if only_claimed:
@@ -248,6 +251,8 @@ def proven_by(shows: Callable[[Path], bool], claimed: Optional[str], sessions: I
             candidates = _claude_candidates(s, roots)
         for path, evidence, extra in candidates:
             if own_only and evidence not in (TRANSCRIPT, CODEX_ROLLOUT):
+                continue
+            if subagents_only and evidence in (TRANSCRIPT, CODEX_ROLLOUT):
                 continue
             try:
                 st = path.lstat()

@@ -9,7 +9,8 @@
  *   - "work_item", "work_item_history", "work_item_removed": one changed
  *     Work item, applied by id to the Work list and the open item
  *     (work.ts `applyWorkFrame`); every (re)connect reads the list again
- *     (`workResync`);
+ *     (`workResync`); "work" (an item's keys changed) re-reads only the
+ *     open item's detail (`workChanged`);
  *   - "voice": the voice record's views read again (voiceHealth.ts);
  *   - "subsystems": a subsystem's state moved; the Diagnostics tab's list
  *     reads again (subsystems.ts), which also hears whether this socket is
@@ -51,7 +52,7 @@ import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
 import { presentHumanTransfer } from "./transfers";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
-import { applyWorkFrame, WORK_FRAMES, workResync, type WorkFrame } from "./work";
+import { applyWorkFrame, WORK_FRAMES, workChanged, workResync, type WorkFrame } from "./work";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
 import { VOICE_INPUT_SETTINGS_FRAME } from "./voiceControl";
@@ -75,6 +76,8 @@ export function startSessionsSocket(): void {
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
     if (snapshot) bump(workResync);
+    // An item's keys changed: only the open item's detail reads again.
+    if (msg.type === "work") bump(workChanged);
     if (WORK_FRAMES.includes(msg.type as WorkFrame["type"])) applyWorkFrame(msg as unknown as WorkFrame);
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);

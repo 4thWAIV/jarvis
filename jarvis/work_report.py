@@ -5,9 +5,7 @@ An agent tracking work on a ZIP work package or a folder calls this, so the
 one durable record (work_store.py) always says what state it is in and
 exactly who is on each piece. Every request is signed with the agent's own
 onboarded key (`--as <session id>`, or JARVIS_AGENT_SESSION), else a
-work-item key found in this folder or above (`.jarvis/work-key`), else,
-while they are still accepted, carries an access key in the `work` category
-in JARVIS_ACCESS_KEY. It finds JARVIS and trusts its certificate the same way as
+work-item key found in this folder or above (`.jarvis/work-key`). It finds JARVIS and trusts its certificate the same way as
 workflow_report.py, whose standard-library client it uses.
 
     python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>] [--area <area>]

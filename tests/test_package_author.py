@@ -50,7 +50,18 @@ def only_engine(request, tmp_path, monkeypatch):
     return engine
 
 
-def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, tmp_path, monkeypatch):
+@pytest.fixture
+def origin_key(only_engine):
+    """The originating session's own key, which its delivery is signed with
+    (agent keys: nothing is delivered unsigned), made once the engine's
+    homes are set."""
+    from jarvis import agent_keys
+    return agent_keys.make_pair(agent_keys.key_folder('origin-session'),
+                                'jarvis-agent origin-session')
+
+
+def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, origin_key, tmp_path,
+                                                                   monkeypatch):
     delivery = _Delivery()
     monkeypatch.setattr(dp, 'post', delivery)
     passing_check(monkeypatch)

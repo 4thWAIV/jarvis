@@ -60,6 +60,7 @@ PROOFS = frozenset({
     "codex_subagent_rollout",  # a Codex subagent naming it as parent did
     "watcher",               # read from the session's own transcript by the watcher
     "access_key",            # an access key whose label is the agent
+    "agent_signature",       # an onboarded agent's key signed it (server.PROVEN_BY_SIGNATURE)
     "team_server",           # the team server's signed-in member
 })
 
