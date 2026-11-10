@@ -285,6 +285,28 @@ def test_a_done_item_never_shows_review_closed_without_a_verdict(wired, marks, t
     assert got.state == "done" and got.package_review is None
 
 
+def test_approve_in_the_package_after_approving_in_the_header_is_no_failure(
+        wired, marks, tmp_path, item):
+    """Approved in the item's header, then Approve in its review package:
+    the same act twice, so nothing is noted and nothing says "not applied"."""
+    inbox_id = _sent(wired, tmp_path, item)
+    _review(wired, item.id, "approve")
+    _answer_by_page(wired, inbox_id, "approve")
+    got = work_store.get(item.id)
+    assert got.state == "done" and got.package_review is None
+    assert not [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]
+
+
+def test_a_done_item_never_shows_not_applied(wired, marks, tmp_path, item):
+    """A not-applied line written before the fix stays off a done item."""
+    from jarvis import work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    _review(wired, item.id, "approve")
+    work_api._note_review(item.id, work_store.NOT_APPLIED, {"package": inbox_id, "answered_at": "x"},
+                          "His approve in the package was not applied.", "It is not ready")
+    assert work_store.get(item.id).package_review is None
+
+
 def test_not_done_yet_shows_his_note_once(wired, marks, tmp_path, item):
     got = _review(wired, item.id, "not_done", "The empty state is missing.")["item"]
     assert got["review_note"] == "The empty state is missing."

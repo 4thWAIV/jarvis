@@ -307,6 +307,8 @@ def review_from_package(entry, package) -> Optional[work_store.WorkItem]:
     if any(work_store.reviewed(entry.work_id, {**source, "package": row.id})
            for row in package_inbox.rows_for_package(entry.package_id)):
         return None             # this answer is on record, through any row of the package
+    if action == APPROVE and _approved_already(entry.work_id):
+        return None             # he approved it done another way: the same act, on record
     try:
         return review(entry.work_id, action, asked.answer.get("note") or "", IN_A_PACKAGE,
                       source)
@@ -314,6 +316,12 @@ def review_from_package(entry, package) -> Optional[work_store.WorkItem]:
         return _note_review(entry.work_id, work_store.NOT_APPLIED, source,
                             f"His {asked.answer.get('answer')} in the package was not applied: {e}",
                             str(e))
+
+
+def _approved_already(item_id: str) -> bool:
+    """He has approved the item done (its header, by voice, another package)."""
+    item = work_store.get(item_id)
+    return item is not None and item.state == work_store.DONE and bool(item.approved_at)
 
 
 def _note_review(item_id: str, outcome: str, source: dict, summary: str,
