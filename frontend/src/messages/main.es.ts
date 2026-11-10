@@ -1060,6 +1060,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.agent_message.answered": "{name} respondió a su mensaje",
   "main.updates.event.agent_message.answered_empty": "{name} terminó su turno sobre su mensaje sin decir nada",
   "main.updates.event.session_message.arrived": "{name} le envió un mensaje",
+  "main.updates.event.message.arrived": "{name} le envió un mensaje",
   "main.updates.read": "Leer",
   "main.updates.reading": "Se lo estoy leyendo ahora",
   "main.updates.reply": "Responder",

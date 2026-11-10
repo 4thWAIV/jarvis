@@ -207,6 +207,35 @@ TOOL_SPECS = [
                         "required": ["message"]},
     },
     {
+        "name": "messages_to_him",
+        "description": (
+            "His messages as one kind of thing, each on its Work item first: with no "
+            "arguments, each Work item with messages (how many are new, its first new one) "
+            "and the messages that belong to no item, newest first; with work, that item's "
+            "whole conversation, oldest first, his replies in it; with general, only the "
+            "messages that belong to no item. Each message has from, about (its Work item), "
+            "says, carries (a package inbox row) and state (new, read, answered, done). "
+            "Use it when he asks what is new or what an item's messages are. The JSON comes "
+            "a page at a time: read every page before answering."),
+        "inputSchema": {"type": "object", "properties": {
+            "work": {"type": "string", "description": "A Work item's id: its conversation."},
+            "general": {"type": "boolean",
+                        "description": "Only the messages that belong to no item."},
+            "before": {"type": "integer",
+                       "description": "Page back: messages before this id."},
+            "page": {"type": "integer", "minimum": 1}}},
+    },
+    {
+        "name": "mark_message",
+        "description": (
+            "Mark one message to him read or done, only when he says so (its id from "
+            "messages_to_him). Answered is never marked: it comes of his reply going."),
+        "inputSchema": {"type": "object", "properties": {
+            "message": {"type": "integer"},
+            "state": {"type": "string", "enum": ["read", "done"]}},
+            "required": ["message", "state"]},
+    },
+    {
         "name": "session_needs",
         "description": (
             "What every Claude Code session has written down as needing the user: "

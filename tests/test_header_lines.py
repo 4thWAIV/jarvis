@@ -901,6 +901,22 @@ EXEMPT = {
     "server._record_work_decision": (
         "it records a Work decision as one message in the item's thread; it says nothing, "
         "and the record's readers show it as text or wall it for the brain"),
+    "conversation_log.mark": (
+        "it moves one message's state on and returns the record; it says nothing, and the "
+        "record's readers show it as text or wall it for the brain"),
+    "conversation_log.messages_where": (
+        "it returns message ids for a source or a carried package; no words leave it"),
+    "conversation_log.work_threads": (
+        "it counts each Work item's messages and returns records; it says nothing, and "
+        "messages_api's readers show them as text or wall them for the brain"),
+    "messages_api.mount": (
+        "its routes answer the page and the sending agent with JSON; the brain reads the "
+        "same JSON only through messages_to_him, inside its wall"),
+    "message.main": (
+        "the sending agent's own command prints the message id or JARVIS's refusal to that "
+        "agent's terminal; nothing reaches the brain or the voice"),
+    "server.tool_mark_message": (
+        "it says only the message's number and its fixed state word, never its words"),
     "conversation_log.threads": (
         "it lists threads as records, the counterpart's name as its newest message named "
         "it; it says nothing, and every reader that shows a name walls it"),
