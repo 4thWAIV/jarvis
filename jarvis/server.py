@@ -3671,7 +3671,7 @@ def _usage_history(provider=None, window=None, since=None, until=None, resolutio
     read (usage_history.read): always one brain's, `provider` (only a known
     one), the running brain's when it is not named."""
     if provider not in (None, "") and provider not in brains_config.KNOWN:
-        raise usage_history.Refused(f"there is no brain called {str(provider)[:40]!r}; "
+        raise usage_history.Refused(f"that is not a brain JARVIS knows; "
                                     f"the brains are {', '.join(brains_config.KNOWN)}")
     return usage_history.read(provider=provider or _brain_provider().name, window=window or None,
                               since=since, until=until, resolution=resolution)

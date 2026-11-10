@@ -264,7 +264,8 @@ def test_the_route_and_the_tool_give_one_brain_never_both(wired):
 def test_the_route_and_the_tool_refuse_alike(wired):
     server, _ = wired
     r = TestClient(server.app).get("/api/usage/history", params={"provider": "gemini"})
-    assert r.status_code == 400 and "no brain called" in r.json()["error"]
-    assert _tool(server, provider="gemini").startswith("Refused: there is no brain called")
+    assert r.status_code == 400 and "not a brain JARVIS knows" in r.json()["error"]
+    said = _tool(server, provider="gemini")
+    assert said.startswith("Refused: that is not a brain JARVIS knows") and "gemini" not in said
     r = TestClient(server.app).get("/api/usage/history", params={"since": "soon"})
     assert r.status_code == 400
