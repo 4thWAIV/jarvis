@@ -9,6 +9,12 @@ same answer with the same validation.
   POST /api/attention/seen       mark items seen ({"ids": [...]}, or every
                                  pending one when ids is absent)
 
+An update that is a message to him (an agent's answer, a session's
+message, a needs board, a decision, a package, a person's message) names
+its message in the conversation record as `message`, the id the one Read
+and Reply take (`/api/messages/{id}/read|reply`, the brain's read_aloud and
+reply); any other update has none.
+
 The brain's attention_updates gives `for_brain`, the same items briefer and
 in pages; its reading tools mark a source's update seen through
 `mark_seen_source` once the reply that read it to him was heard in full.
@@ -47,23 +53,31 @@ class Unavailable(Exception):
 
 
 Running = Callable[[], tuple[Optional[AttentionStore], Optional[Admission]]]
+# The conversation record's message an update is about, by its id, or None.
+MessageOf = Callable[[attention_store.Item], Optional[int]]
+
+
+def _no_message(item: attention_store.Item) -> Optional[int]:
+    return None
 
 
 def _overview(store: AttentionStore, admission: Optional[Admission],
-              shape: Callable[[attention_store.Item], dict]) -> dict:
+              shape: Callable[[attention_store.Item], dict], message_of: MessageOf) -> dict:
     """The count, his availability and the settings, then the items (pending
-    first, then the last ones seen or resolved), each in `shape`."""
+    first, then the last ones seen or resolved), each in `shape` with the
+    message it is about."""
     pending = store.items((attention_store.PENDING,))
     done = store.items((attention_store.SEEN, attention_store.RESOLVED), limit=RECENT_DONE)
     return {"pending": len(pending),
             "availability": admission.availability() if admission else "unknown",
             "settings": asdict(attention_store.settings()),
-            "items": [shape(i) for i in pending + done]}
+            "items": [{**shape(i), "message": message_of(i)} for i in pending + done]}
 
 
-def overview(store: AttentionStore, admission: Optional[Admission]) -> dict:
+def overview(store: AttentionStore, admission: Optional[Admission],
+             message_of: MessageOf = _no_message) -> dict:
     """What the page's Review updates reads."""
-    return _overview(store, admission, lambda i: i.public())
+    return _overview(store, admission, lambda i: i.public(), message_of)
 
 
 def brief(item: attention_store.Item, now: float) -> dict:
@@ -79,10 +93,11 @@ def brief(item: attention_store.Item, now: float) -> dict:
     return out
 
 
-def for_brain(store: AttentionStore, admission: Optional[Admission], now: float) -> dict:
+def for_brain(store: AttentionStore, admission: Optional[Admission], now: float,
+              message_of: MessageOf = _no_message) -> dict:
     """The overview with each item brief: the same items, in the same order,
     as the page's, and the count and settings ahead of them."""
-    return _overview(store, admission, lambda i: brief(i, now))
+    return _overview(store, admission, lambda i: brief(i, now), message_of)
 
 
 def mark_seen_source(store: AttentionStore, kind: str, source_id: str,
@@ -107,9 +122,11 @@ def change_settings(changes: dict, on_change: Callable[[], None]) -> dict:
     return saved
 
 
-def mount(app: FastAPI, running: Running, on_change: Callable[[], None]) -> None:
+def mount(app: FastAPI, running: Running, on_change: Callable[[], None],
+          message_of: MessageOf = _no_message) -> None:
     """`running` gives the server's store and admission, or Nones;
-    `on_change` is told after a settings change (the pages' hint)."""
+    `on_change` is told after a settings change (the pages' hint);
+    `message_of` names each update's message."""
 
     def store() -> AttentionStore:
         current, _ = running()
@@ -134,7 +151,7 @@ def mount(app: FastAPI, running: Running, on_change: Callable[[], None]) -> None
         return value if isinstance(value, dict) else {}
 
     async def get_overview():
-        return await answer(lambda: overview(store(), running()[1]))
+        return await answer(lambda: overview(store(), running()[1], message_of))
 
     async def post_seen(request: Request):
         ids = (await body(request)).get("ids")

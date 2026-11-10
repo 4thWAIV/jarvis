@@ -182,43 +182,24 @@ TOOL_SPECS = [
         },
     },
     {
-        "name": "read_session_message_aloud",
+        "name": "read_aloud",
         "description": (
-            "Read one message a session sent him aloud, that message only (its sender, "
-            "subject and body), as the Updates entry's Read does, only when he asks. Its "
-            "update counts as seen only once he has heard it in full."),
+            "Read one message to him aloud, that message only, whatever it came by (an "
+            "agent's answer, a session's message, a needs board, a decision, a package, a "
+            "person's message), as the Updates entry's Read does, only when he asks. "
+            "attention_updates gives each message update's `message` id. Its update counts "
+            "as seen only once he has heard it in full."),
         "inputSchema": {"type": "object",
                         "properties": {"message": {"type": "integer"}},
                         "required": ["message"]},
     },
     {
-        "name": "reply_to_session_message",
+        "name": "reply",
         "description": (
-            "His reply to a message a session sent: a capture addressed to the session that "
-            "sent it, holding his words when given. Read it back with read_capture; it goes "
-            "only on his yes, as every message to a session does."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"},
-                                       "text": {"type": "string",
-                                                "description": "His reply, in his words."}},
-                        "required": ["message"]},
-    },
-    {
-        "name": "read_message_reply_aloud",
-        "description": (
-            "Read an agent's answer to one of his messages aloud, that answer only, as the "
-            "Updates entry's Read does, only when he asks. Its update counts as seen only "
-            "once he has heard it in full."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"}},
-                        "required": ["message"]},
-    },
-    {
-        "name": "reply_to_message",
-        "description": (
-            "His reply to an agent's answer to his message: a capture addressed to the "
-            "session that answered, holding his words when given. Read it back with "
-            "read_capture; it goes only on his yes, as every message to a session does."),
+            "His reply to one message to him (its `message` id from attention_updates): a "
+            "capture addressed to its proven sender, holding his words when given; read it "
+            "back with read_capture, and it goes only on his yes. For a person's message it "
+            "is a draft in their thread instead, reviewed with request_message_review."),
         "inputSchema": {"type": "object",
                         "properties": {"message": {"type": "integer"},
                                        "text": {"type": "string",

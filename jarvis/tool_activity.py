@@ -77,7 +77,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
     COMMUNICATION: (
         "session_detail", "read_session_reply", "list_messages",
         "read_message_reply", "session_messages", "read_session_message",
-        "read_session_message_aloud", "reply_to_session_message", "read_message_reply_aloud", "reply_to_message",
+        "read_aloud", "reply",
         "session_needs", "capture", "read_capture", "list_captures",
         "restore_capture", "clear_capture", "merge_captures",
         "steer_session", "answer_dialog", "enable_session_inbox",

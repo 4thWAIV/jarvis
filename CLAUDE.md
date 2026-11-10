@@ -269,6 +269,28 @@ body is on `Arrival.text` for this record only, never the attention
 item). `message_in` items are kept out of `page` and `thread` (the
 Conversation view, an agent's thread and the brain's recall) until the
 page's one list (phase 4) decides where they show.
+Phase 3: one Read and one Reply for every message to him, on the page
+and for the brain. An update that is a message (`conversation_log.UPDATES`:
+each source's attention kind and event) names it as `message` in
+`/api/attention` and `attention_updates` (`conversation_log.message_for`,
+`server._update_message`; a keyed source's newest message, by the index of
+migration 3). Updates draws any such entry (but a package's reduced line)
+as one `MessageLine` with Read, Reply and Seen. Read (`POST
+/api/messages/{id}/read`, the brain's `read_aloud`, `server.read_aloud`)
+speaks that message only ("<agent> answers:", "<name> writes:", or its
+own words for a board, a decision or a package; a session's message is
+marked read) and its update is seen only once heard in full
+(`_speak_message`, the approved speech entry point). Reply (`POST
+.../reply`, the brain's `reply`) goes to the proven sender
+(`_reply_capture`): a capture to the agent (a subagent's through its
+parent, "To Planning, for Feynman."), to a package's proven sending
+session, or to the one listed agent a decision's access key names, read
+back and sent only on his yes; a person's message is a draft in their
+thread, reviewed with `request_message_review` (`_person_reply`). The old
+per-kind routes (`/api/session-messages/{id}/read|reply`,
+`/api/agent-messages/{id}/read|reply`) and tools (`read_session_message_aloud`,
+`reply_to_session_message`, `read_message_reply_aloud`, `reply_to_message`)
+are gone. A decision keeps its own Answer.
 
 ## Messages from sessions
 A session starts a conversation with the user by dropping one Markdown file per
@@ -295,20 +317,8 @@ subagent of, an agent the directory lists. A message with no such proof is
 never shown as a message: it is held where it was dropped (`<name>.held`,
 `server._hold_session_message`; its session sees it was not taken) and only
 counted in Diagnostics (`incomingHeld`), since a message he cannot answer
-must not reach him as one. Its Updates entry has Seen, Read and Reply:
-Read (`POST /api/session-messages/{id}/read`) has JARVIS read that one
-message aloud (`_read_message_aloud`, an approved speech entry point; the
-brain's `read_session_message_aloud` too), seen only once heard in full
-(`_seen_once_heard`'s rule); Reply (`POST .../reply`, the brain's
-`reply_to_session_message`, `_reply_capture`) opens a capture addressed to
-its sender, read back and sent on his yes through `steer_session`.
-An agent's answer to one of his messages (`agent_message`, `answered`)
-has the same Read, Reply and Seen on its Updates entry: Read (`POST
-/api/agent-messages/{id}/read`, the brain's `read_message_reply_aloud`,
-`_read_answer_aloud`) speaks "<agent> answers: <reply>", seen once heard
-(`_speak_message`, shared with a session message's Read); Reply (`POST
-.../reply`, the brain's `reply_to_message`) opens a capture to the session
-that answered (`_capture_to_sender`, shared with `_reply_capture`).
+must not reach him as one. Its Updates entry has Seen, Read and Reply,
+the same as every message to him (see "One channel").
 Every message to Tim can be replied to: a session's message (Reply); an
 agent's answer to a message and a session needing him (a capture to that
 agent, `capture` with `to`, then `steer_session`); a person's message (the

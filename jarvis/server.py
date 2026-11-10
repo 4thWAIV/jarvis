@@ -3506,7 +3506,8 @@ voice_control.mount(app, publish=_voice_input_settings_changed)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
-attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention)
+attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention,
+                    lambda item: _update_message(item))
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
 projects_api.mount(app, lambda: projects, on_change=_hint_projects)
 
@@ -5698,41 +5699,84 @@ def _read_session_message(number: int):
 READ_ALOUD_TIMEOUT = 300.0
 
 
-async def _read_message_aloud(number: int):
-    """JARVIS reads one message a session sent aloud, that message only (its
-    sender, subject and body), as he asked: the Updates entry's Read and the
-    brain's read_session_message_aloud alike. It is marked read; its update
-    is seen only once it has been heard in full (`_seen_once_heard`'s rule),
-    so cut off or skipped it stays. The message, or None."""
-    m = await asyncio.to_thread(_read_session_message, number)
-    if m is None or speech is None:
-        return m
-    await _speak_message("session_message", number,
-                         f"{_said_name({'voice_name': m.agent_name}, 'A session')} writes: "
-                         + (f"{m.subject}. " if m.subject else "") + (m.body or ""))
-    return m
+# How each source's message is said when he asks to hear it: who sent it
+# first. A needs board, a decision and a package already say what they are.
+_READ_ALOUD_LEAD = {
+    conversation_log.Source.MESSAGE: "{name} answers: ",
+    conversation_log.Source.SESSION_MESSAGE: "{name} writes: ",
+    conversation_log.Source.PERSON_MESSAGE: "{name} writes: ",
+}
 
 
-async def _read_answer_aloud(number: int):
-    """JARVIS reads an agent's answer to one of his messages aloud, that
-    answer only, as he asked: the Updates entry's Read and the brain's
-    read_message_reply_aloud alike; seen once heard in full. The message
-    (answered, with its reply), or None."""
-    m = await asyncio.to_thread(run_store.get_message, number)
-    if m is None or not m.reply or speech is None:
-        return m if m is not None and m.reply else None
-    name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "The agent")
-    await _speak_message("agent_message", number, f"{name} answers: {m.reply}")
-    return m
+def _update_message(item) -> Optional[int]:
+    """The message in the conversation record an attention update is about
+    (conversation_log.message_for), by id, or None: what the page's Read and
+    Reply and the brain's read_aloud and reply take. Never raises."""
+    try:
+        found = conversation_log.message_for(item.kind, item.source_id, item.event)
+    except Exception:
+        log.warning("attention: the message of update %s was not read", item.id, exc_info=True)
+        return None
+    return found.id if found is not None else None
 
 
-async def _speak_message(kind: str, number: int, text: str) -> None:
+def _message_to_him(item_id) -> tuple:
+    """(the message to him that conversation item `item_id` is, "") or
+    (None, why not). Blocking."""
+    try:
+        number = int(item_id)
+    except (TypeError, ValueError):
+        return None, "Give the message's id; attention_updates names each update's message."
+    item = conversation_log.get(number)
+    if item is None or not item.inbound:
+        return None, (f"There is no message {number} to him on record; attention_updates "
+                      f"names each update's message.")
+    return item, ""
+
+
+def _sender_name(item) -> str:
+    """Who a message to him is from, as it may be said: an agent by its one
+    name now, anyone else by the name its message came under."""
+    if item.counterpart_kind == conversation_log.Counterpart.AGENT:
+        name = _name_of(item.agent_session_id, item.agent_name)
+    else:
+        name = item.detail.get("name") or ""
+    return _said_name({"voice_name": name}, "Someone")
+
+
+def _as_sentences(text: str) -> str:
+    """A message's paragraphs (a subject, then its body) as sentences to be
+    said one after another: "Status. All good."."""
+    parts = [p.strip() for p in str(text).split("\n\n") if p.strip()]
+    return " ".join(p if i == len(parts) - 1 or p[-1] in ".!?:;…" else p + "."
+                    for i, p in enumerate(parts))
+
+
+async def read_aloud(item_id):
+    """JARVIS reads one message to him aloud, that message only, as he asked,
+    whatever channel it came by: the page's Read and the brain's read_aloud
+    alike. A session's message is marked read; its update is seen only once
+    it has been heard in full (`_speak_message`), so cut off or skipped it
+    stays. (the message, "") or (None, why not)."""
+    item, why = await asyncio.to_thread(_message_to_him, item_id)
+    if item is None:
+        return None, why
+    if speech is None:
+        return None, "I have no voice to read it with."
+    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
+        await asyncio.to_thread(_read_session_message, int(item.source_id))
+    lead = _READ_ALOUD_LEAD.get(item.source_kind, "").format(name=_sender_name(item))
+    await _speak_message(conversation_log.update_of(item), lead + _as_sentences(item.text))
+    return item, ""
+
+
+async def _speak_message(update: Optional[tuple], text: str) -> None:
     """Speak one message to him that he asked to hear, and mark its update
-    (`kind`, `number`) seen only once it has been heard in full
+    (kind, source id) seen only once it has been heard in full
     (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
-    item = attention_record.get(kind, str(number)) if attention_record else None
+    item = attention_record.get(*update) if attention_record and update else None
     utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
-    reads = [(kind, str(number), item.revision)] if item is not None else []
+    reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
     _spawn(_seen_when_heard(reads, utt))
 
 
@@ -5742,36 +5786,47 @@ async def _seen_when_heard(reads: list, utt) -> None:
     _hint_attention()
 
 
-@app.post("/api/session-messages/{number}/read")
-async def api_read_session_message(number: int):
-    """His Read on a session message's Updates entry: JARVIS reads it aloud
-    (`_read_message_aloud`); the entry stays until it has been heard."""
-    if speech is None:
-        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
-    m = await _read_message_aloud(number)
-    if m is None:
-        raise HTTPException(status_code=404, detail="No such message")
-    return {"id": m.id, "reading": True}
+@app.post("/api/messages/{item_id}/read")
+async def api_read_message(item_id: int):
+    """His Read on a message's Updates entry, whatever channel it came by:
+    JARVIS reads it aloud (`read_aloud`); the entry stays until heard."""
+    item, why = await read_aloud(item_id)
+    if item is None:
+        raise HTTPException(status_code=409 if speech is None else 404, detail=why)
+    return {"id": item.id, "reading": True}
 
 
-def _reply_capture(number: int):
-    """A capture addressed to the session that sent message `number`, for
-    his reply: read back naming it and sent only on his yes, as every
-    message to a session is. (the capture, None) or (None, why not)."""
-    m = run_store.get_session_message(number)
-    if m is None:
-        return None, f"There is no message {number} from a session."
-    return _capture_to_sender(m.sender_session, f"Message {number}", m.sender_subagent)
+def _reply_capture(item):
+    """A capture for his reply to a message to him, addressed to its proven
+    sender, read back naming it and sent only on his yes as every message
+    to a session is: an agent's own session (a subagent's through its
+    parent's), a package's proven sending session, and for a workflow's or
+    a Work item's decision the one listed agent its access key names.
+    (the capture, None) or (None, why not). A person's reply is a reviewed
+    draft instead (`_person_reply`)."""
+    what = f"Message {item.id}"
+    kind = item.counterpart_kind
+    if kind == conversation_log.Counterpart.AGENT:
+        return _capture_to_sender(item.counterpart_ref, what, item.sender_subagent)
+    if kind == conversation_log.Counterpart.PACKAGE:
+        return _capture_to_sender(item.detail.get("session"), what, item.sender_subagent)
+    if kind in (conversation_log.Counterpart.WORKFLOW, conversation_log.Counterpart.WORK):
+        kept = str(item.detail.get("reporter") or "")
+        sessions = (reporters.of_label(kept[len(reporters.KEY_PREFIX):]).sessions
+                    if kept.startswith(reporters.KEY_PREFIX) else ())
+        if len(sessions) > 1:
+            return None, (f"{what} came on an access key that names more than one agent, so "
+                          f"there is no one sender to reply to; capture to the agent he means.")
+        return _capture_to_sender(sessions[0] if sessions else None, what)
+    return None, f"{what} is from a person: the reply is a draft to review."
 
 
-def _answer_reply_capture(number: int):
-    """A capture addressed to the session that answered his message
-    `number`, for his reply to its answer. (the capture, None) or (None, why
-    not)."""
-    m = run_store.get_message(number)
-    if m is None or not m.reply:
-        return None, f"Message {number} has no answer to reply to; list_messages has them."
-    return _capture_to_sender(m.session_id, f"The answer to message {number}")
+def _person_reply(item) -> str:
+    """How his reply to a person's message goes: a draft in its thread,
+    reviewed (its read-back) and sent only on his yes or Send."""
+    return (f"Message {item.id} is from a person: draft his reply with draft_message, reply_to "
+            f"{item.source_id}, holding his words, then request_message_review; it goes only "
+            f"on his yes.")
 
 
 def _capture_to_sender(session_id: Optional[str], what: str, subagent: Optional[str] = None):
@@ -5789,30 +5844,18 @@ def _capture_to_sender(session_id: Optional[str], what: str, subagent: Optional[
     return capture, None
 
 
-@app.post("/api/session-messages/{number}/reply")
-async def api_reply_session_message(number: int):
-    """His Reply on a session message's Updates entry: a capture addressed
-    to its sender, for what he says or types next."""
-    return _replying(*_reply_capture(number), f"message {number}")
-
-
-@app.post("/api/agent-messages/{number}/read")
-async def api_read_answer(number: int):
-    """His Read on an agent's answer's Updates entry: JARVIS reads the
-    answer aloud (`_read_answer_aloud`); the entry stays until heard."""
-    if speech is None:
-        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
-    m = await _read_answer_aloud(number)
-    if m is None:
-        raise HTTPException(status_code=404, detail="No answer to that message")
-    return {"id": m.id, "reading": True}
-
-
-@app.post("/api/agent-messages/{number}/reply")
-async def api_reply_answer(number: int):
-    """His Reply on an agent's answer's Updates entry: a capture addressed
-    to the session that answered, for what he says or types next."""
-    return _replying(*_answer_reply_capture(number), f"the answer to message {number}")
+@app.post("/api/messages/{item_id}/reply")
+async def api_reply_message(item_id: int):
+    """His Reply on a message's Updates entry: a capture addressed to its
+    proven sender for what he says or types next (`_reply_capture`), or for
+    a person's message the brain told to draft it for review."""
+    item, why = await asyncio.to_thread(_message_to_him, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=why)
+    if item.counterpart_kind == conversation_log.Counterpart.PERSON:
+        _notes_for_brain.append(f"He pressed Reply. {_person_reply(item)}")
+        return {"capture": None, "to": item.detail.get("name") or ""}
+    return _replying(*_reply_capture(item), f"message {item.id}")
 
 
 def _replying(capture, why, what: str) -> dict:
@@ -5827,28 +5870,27 @@ def _replying(capture, why, what: str) -> dict:
     return {"capture": capture["id"], "to": capture["to"]}
 
 
-def tool_reply_to_session_message(args: dict) -> str:
-    """His reply to a session's message: a capture addressed to its sender."""
-    try:
-        number = int(args.get("message"))
-    except (TypeError, ValueError):
-        return "Give the message's number; session_messages has them."
-    return _reply_said(*_reply_capture(number), args)
-
-
-def tool_reply_to_message(args: dict) -> str:
-    """His reply to an agent's answer: a capture addressed to the session
-    that answered."""
-    try:
-        number = int(args.get("message"))
-    except (TypeError, ValueError):
-        return "Give the message's number; list_messages has them."
-    return _reply_said(*_answer_reply_capture(number), args)
+async def tool_reply(args: dict) -> str:
+    """His reply to any message to him: a capture to its proven sender, or
+    for a person's message a draft in its thread to review."""
+    item, why = await asyncio.to_thread(_message_to_him, args.get("message"))
+    if item is None:
+        return why + " Nothing was captured."
+    if item.counterpart_kind == conversation_log.Counterpart.PERSON:
+        text = str(args.get("text") or "").strip()
+        if messaging is None or not text:
+            return _person_reply(item)
+        # draft_message answers with the draft's id, its recipient's label and
+        # its revision; it never says the text back.
+        drafted = await messaging.tools.draft_message({"reply_to": item.source_id, "text": text})
+        return drafted
+    # On the loop: a new capture is told to the pages from here.
+    return _reply_said(*_reply_capture(item), args)
 
 
 def _reply_said(capture, why, args: dict) -> str:
-    """The brain's reply tools: the capture opened, holding his words when
-    given, or why not."""
+    """The brain's reply: the capture opened, holding his words when given,
+    or why not."""
     if capture is None:
         return why + " Nothing was captured."
     text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
@@ -5861,32 +5903,12 @@ def _reply_said(capture, why, args: dict) -> str:
             f" for his reply: put his words in it with capture, then read it back.")
 
 
-async def tool_read_session_message_aloud(args: dict) -> str:
-    """Read one session message aloud, as the Updates entry's Read does."""
-    try:
-        number = int(args.get("message"))
-    except (TypeError, ValueError):
-        return "Give the message's number; session_messages has them."
-    if speech is None:
-        return "I have no voice to read it with."
-    m = await _read_message_aloud(number)
-    if m is None:
-        return f"There is no message {number} from a session; session_messages has them."
-    return f"Reading message {number} aloud now, sir; say nothing more of it."
-
-
-async def tool_read_message_reply_aloud(args: dict) -> str:
-    """Read an agent's answer to his message aloud, as the Updates entry's Read does."""
-    try:
-        number = int(args.get("message"))
-    except (TypeError, ValueError):
-        return "Give the message's number; list_messages has them."
-    if speech is None:
-        return "I have no voice to read it with."
-    m = await _read_answer_aloud(number)
-    if m is None:
-        return f"Message {number} has no answer to read; list_messages has them."
-    return f"Reading the answer to message {number} aloud now, sir; say nothing more of it."
+async def tool_read_aloud(args: dict) -> str:
+    """Read one message to him aloud, as the Updates entry's Read does."""
+    item, why = await read_aloud(args.get("message"))
+    if item is None:
+        return why
+    return f"Reading message {item.id} aloud now, sir; say nothing more of it."
 
 
 def tool_read_session_message(args: dict) -> str:
@@ -10483,10 +10505,8 @@ TOOL_HANDLERS.update({
     "session_needs": tool_session_needs,
     "session_messages": tool_session_messages,
     "read_session_message": tool_read_session_message,
-    "read_session_message_aloud": tool_read_session_message_aloud,
-    "reply_to_session_message": tool_reply_to_session_message,
-    "read_message_reply_aloud": tool_read_message_reply_aloud,
-    "reply_to_message": tool_reply_to_message,
+    "read_aloud": tool_read_aloud,
+    "reply": tool_reply,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -11091,14 +11111,11 @@ TOOL_HANDLERS.update({
     "turn_audio_off": tool_turn_audio_off,
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-                     "mute_speech", "turn_audio_off", "set_motion",
-                     "read_session_message_aloud", "reply_to_session_message",
-                     "read_message_reply_aloud", "reply_to_message"})
+                     "mute_speech", "turn_audio_off", "set_motion", "read_aloud", "reply"})
 TAINT_EXEMPT_TOOLS.update({
-    "read_session_message_aloud": "it reads one message aloud and says so in JARVIS's words",
-    "reply_to_session_message": "it opens a capture addressed to the message's sender",
-    "read_message_reply_aloud": "it reads one answer aloud and says so in JARVIS's words",
-    "reply_to_message": "it opens a capture addressed to the session that answered",
+    "read_aloud": "it reads one message aloud to him and says so in JARVIS's words",
+    "reply": ("it opens a capture addressed to the message's proven sender, or saves a draft "
+              "to a person, naming only the recipient"),
 })
 TAINT_EXEMPT_TOOLS.update({
     "set_motion": "it turns the page's motion steady or back; it reads nothing",
@@ -11131,7 +11148,7 @@ async def tool_attention_updates(args: dict) -> str:
     try:
         answer = await asyncio.to_thread(
             lambda: attention_api.for_brain(_attention_running(), attention_admission,
-                                            time.time()))
+                                            time.time(), _update_message))
     except attention_api.Unavailable:
         return "The updates record is not running, sir."
     head, chunk = _paged(json.dumps(answer, ensure_ascii=False, separators=(",", ":")), _page_arg(args),
