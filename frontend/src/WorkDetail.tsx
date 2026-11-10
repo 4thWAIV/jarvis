@@ -38,8 +38,7 @@ import { WorkOwnerActivity } from "./WorkerStatus";
  * drawn as plain text.
  */
 
-import { workerChanges } from "./workers";
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copyPath } from "./attachmentLocation";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { DecisionCard } from "./DecisionCard";
@@ -55,7 +54,7 @@ import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
 import { answerWorkDecision, blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
          rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
-         workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
+         workChanged, workItemFrame, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
          workStanding, type Activity } from "./nodeActivity";
@@ -71,8 +70,13 @@ type Part = (name: string) => (el: Element | null) => void;
 
 export function WorkDetail({ id }: { id: string }) {
   const t = useT();
-  const live = useLiveRead(() => getWorkItem(id), [workChanged, workerChanges]);
-  const item = live.value?.item;
+  // The item, its events and its packages, read once and again only when
+  // its record or its packages change; the item itself from every frame
+  // the server sends for it (work.ts), with no read.
+  const live = useLiveRead(() => getWorkItem(id), [workChanged]);
+  const framed = useFramedItem(id, live.value, live.refresh);
+  const item = framed && (!live.value || framed.revision > live.value.revision)
+    ? framed.item : live.value?.item;
   const events = live.value?.events ?? [];
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
   const shownTab = useSyncExternalStore(workTab.subscribe, workTab.get);
@@ -139,6 +143,29 @@ export function WorkDetail({ id }: { id: string }) {
     </div>
     </ShownSince.Provider>
   );
+}
+
+/** The latest frame for this item, while it is newer than what was read.
+ *  A frame that moves its record (its revision) or its packages' questions
+ *  reads its events and packages again; a change of its live owners alone
+ *  reads nothing. */
+function useFramedItem(id: string, read: { item: WorkItem; revision: number } | null,
+                       readAgain: () => void) {
+  const [framed, setFramed] = useState<{ item: WorkItem; revision: number } | null>(null);
+  const shown = useRef<WorkItem | null>(null);
+  shown.current = framed && (!read || framed.revision > read.revision) ? framed.item : read?.item ?? null;
+  useEffect(() => {
+    setFramed(null);
+    return workItemFrame.subscribe(() => {
+      const frame = workItemFrame.get();
+      if (!frame || frame.item.id !== id) return;
+      const before = shown.current;
+      setFramed(frame);
+      if (!before || before.revision !== frame.item.revision
+          || before.package_questions !== frame.item.package_questions) readAgain();
+    });
+  }, [id, readAgain]);
+  return framed?.item.id === id ? framed : null;
 }
 
 /** Each tab's button as the item's `tab.<id>` part, found by the command

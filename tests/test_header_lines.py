@@ -926,6 +926,12 @@ EXEMPT = {
     "package_inbox._refs": (
         "it gathers the names a wait may give a package by (ids JARVIS assigned, and the "
         "package's own name and version) for matching links; it prints nothing"),
+    "work_store.id": (
+        "it is a held item record's id (`ItemRecord.id`), the id JARVIS assigned when it "
+        "created the item; it prints nothing"),
+    "work_store.records": (
+        "it reads items' rows into records for the held Work view, keyed by the ids JARVIS "
+        "assigned; it prints nothing, and every reader shows the words as text or walled"),
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),

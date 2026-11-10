@@ -5,8 +5,8 @@ work is happening, all from the record: working (in a working state and its
 `quiet_at` still ahead) has a glow travelling along its edge; paused (its
 `quiet_at` passed) is dimmed and still and marked "Paused"; blocked is still
 red, waiting on him still amber, done still with a check. Each report that
-arrives while he looks, read after a `work` or `workflows` hint, flashes its
-node once; nothing flashes for what was already there. A working node goes
+arrives while he looks, a Work item's frame or a read after a `workflows`
+hint, flashes its node once; nothing flashes for what was already there. A working node goes
 paused at its `quiet_at` with no hint. The "waits for" line of a piece flows
 while the piece it waits for is working. Reduced motion and Steady keep the
 looks and drop the motion and the flash.
@@ -91,6 +91,15 @@ class _Work:
             _item("work-4", "Release", "blocked"),
             _item("work-5", "Pricing", "waiting_on_tim"),
         ]
+
+    def frame(self):
+        """The server's frame for work-1 as it is now, the next revision."""
+        self.revision = getattr(self, "revision", 0) + 1
+        items = self.items()
+        return {"type": "work_item", "revision": self.revision, "item": items[0], "list": "items",
+                "order": {"items": [i["id"] for i in items], "history": []},
+                "groups": [{"grouped_by": "area", "name": "Voice", "label": "Voice",
+                            "ids": [i["id"] for i in items]}]}
 
     async def __call__(self, route):
         path = route.request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
@@ -229,7 +238,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         # ── a report arrives: one flash, on its piece and its row ──────
         work.engine_heard = time.time()
         work.engine_quiet = time.time() + 2.5
-        sessions.ws.send(json.dumps({"type": "work"}))
+        sessions.ws.send(json.dumps(work.frame()))
         try:
             await page.wait_for_function("() => window.__flashes.length >= 2", timeout=10000)
         except Exception:
@@ -243,7 +252,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
             capture = asyncio.create_task(_frames(page, "#work-detail .work-pieces", "flash", seconds=2.4))
             await asyncio.sleep(1.0)
             work.engine_heard = time.time()
-            sessions.ws.send(json.dumps({"type": "work"}))
+            sessions.ws.send(json.dumps(work.frame()))
             await capture
 
         # ── nothing more reported: it goes paused by itself, no hint ───
@@ -257,7 +266,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         work.engine_quiet = time.time() + 600
         work.engine_heard = time.time()
         await page.evaluate("document.documentElement.dataset.motion = 'steady'; window.__flashes = []")
-        sessions.ws.send(json.dumps({"type": "work"}))
+        sessions.ws.send(json.dumps(work.frame()))
         await page.wait_for_function(
             f"() => document.querySelector('{piece.format('engine')}').dataset.activity === undefined",
             timeout=10000)
@@ -280,7 +289,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.locator("#work-detail .work-latest").wait_for(timeout=10000)
         await page.evaluate("window.__flashes = []")
         work.engine_heard = time.time()
-        sessions.ws.send(json.dumps({"type": "work"}))
+        sessions.ws.send(json.dumps(work.frame()))
         await page.wait_for_function("() => window.__flashes.includes('work-latest')", timeout=10000)
 
         # ── a workflow's phases and tasks ──────────────────────────────
