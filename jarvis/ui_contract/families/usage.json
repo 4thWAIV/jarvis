@@ -5,7 +5,7 @@
   "commands": [
     {
       "id": "usage.open",
-      "label": "Open one brain's usage history in the centre: what is left of each of its windows over time, and its latest reading",
+      "label": "Open one brain's weekly usage history in the centre: this week's burn-down first, earlier weeks one at a time",
       "view": "main.usage",
       "args": {
         "provider": {
@@ -52,22 +52,21 @@
       ]
     },
     {
-      "id": "usage.range",
-      "label": "Show the open usage history over the last day, week or month, or all of it",
+      "id": "usage.week",
+      "label": "Show the open usage history's earlier or later week, or this week again",
       "view": "main.usage",
       "args": {
-        "range": {
+        "to": {
           "type": "enum",
           "values": [
-            "day",
-            "week",
-            "month",
-            "all"
+            "earlier",
+            "later",
+            "current"
           ]
         }
       },
       "required": [
-        "range"
+        "to"
       ],
       "actors": [
         "human",
@@ -75,7 +74,7 @@
       ],
       "effects": [
         {
-          "effect": "list.filtered"
+          "effect": "list.paged"
         }
       ]
     }
@@ -84,12 +83,13 @@
     {
       "kind": "usageHistory",
       "entity": "provider",
-      "label": "One brain's usage history",
+      "label": "One brain's weekly usage history",
       "parts": [
         "header",
         "close",
-        "range",
-        "charts"
+        "weeks",
+        "chart",
+        "latest"
       ],
       "presentations": [
         {
@@ -100,21 +100,6 @@
               "provider": "$key"
             }
           }
-        }
-      ]
-    },
-    {
-      "kind": "usageChart",
-      "entity": "usageSeries",
-      "label": "What is left of one brain's window over time",
-      "parts": [
-        "title",
-        "latest",
-        "chart"
-      ],
-      "presentations": [
-        {
-          "view": "main.usage"
         }
       ]
     }

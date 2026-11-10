@@ -2138,18 +2138,21 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
-- `usage_history.py` — The long-term record of every reading `usage_store.record`
-  takes (schema `usage_history_schema`): `usage_readings` keeps each one for
-  `RAW_KEEP_SEC` (14 days) with its provider, account hash
-  (`brain_accounts.history_ref`, NULL while unknown), window, percentage
-  (NULL: not measured, never 0) and reset; after that `usage_hourly` keeps
-  one summary per hour for good. `read` is `GET /api/usage/history` and the
-  brain's `usage_history` alike, always one brain's (the running brain's
-  when none is named); each brain's own box in the left column opens that
-  brain's view alone (`usage.open {provider}`, `UsageHistoryView.tsx`,
-  `usage.ts`): per window the box's own burn-down over time (what is left,
-  the dashed straight line, green ahead, red behind), the readings joined
-  as one line across stretches without one, each reset marked
+- `usage_history.py` — The long-term record of the week: every seven-day
+  reading `usage_store.record` takes (schema `usage_history_schema`; the
+  five-hour window is never kept, Tim's word, and migration 2 dropped it):
+  `usage_readings` keeps each one for `RAW_KEEP_SEC` (14 days) with its
+  provider, account hash (`brain_accounts.history_ref`, NULL while unknown),
+  percentage (NULL: not measured, never 0) and reset; after that
+  `usage_hourly` keeps one summary per hour for good. `read` is
+  `GET /api/usage/history` and the brain's `usage_history` alike: one
+  brain's weeks (the running brain's when none is named), newest first,
+  each its reset, start and readings. Each brain's own box in the left
+  column opens that brain's view alone (`usage.open {provider}`,
+  `UsageHistoryView.tsx`, `usage.ts`): one week's burn-down at a time,
+  drawn as the box draws it (what is left, the dashed straight line, green
+  ahead, red behind), this week first, Earlier week / Later week / This
+  week (`usage.week`), the readings joined as one line, the reset marked
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
   Accessibility, Fish key, cross-session steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,

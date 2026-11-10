@@ -3666,26 +3666,26 @@ async def api_usage_week(provider: Optional[str] = None):
     return usage_store.week(service=provider or _brain_provider().name)
 
 
-def _usage_history(provider=None, window=None, since=None, until=None, resolution=None) -> dict:
-    """The usage history the page's view and the brain's usage_history both
-    read (usage_history.read): always one brain's, `provider` (only a known
-    one), the running brain's when it is not named."""
+def _usage_history(provider=None, since=None, until=None, resolution=None) -> dict:
+    """The weekly usage history the page's view and the brain's
+    usage_history both read (usage_history.read): always one brain's,
+    `provider` (only a known one), the running brain's when it is not named."""
     if provider not in (None, "") and provider not in brains_config.KNOWN:
         raise usage_history.Refused(f"that is not a brain JARVIS knows; "
                                     f"the brains are {', '.join(brains_config.KNOWN)}")
-    return usage_history.read(provider=provider or _brain_provider().name, window=window or None,
+    return usage_history.read(provider=provider or _brain_provider().name,
                               since=since, until=until, resolution=resolution)
 
 
 @app.get("/api/usage/history")
-async def api_usage_history(provider: Optional[str] = None, window: Optional[str] = None,
+async def api_usage_history(provider: Optional[str] = None,
                             since: Optional[str] = None, until: Optional[str] = None,
                             resolution: Optional[str] = None):
-    """The long-term record of each brain's usage readings, by window: every
-    reading for up to two days, one point an hour beyond that, the resets in
-    the range and the latest reading. Not measured is null, never 0."""
+    """One brain's weekly usage history: its seven-day readings by week,
+    newest first (every reading over up to two days, one point an hour
+    beyond that) and its latest reading. Not measured is null, never 0."""
     try:
-        return await asyncio.to_thread(_usage_history, provider, window, since, until, resolution)
+        return await asyncio.to_thread(_usage_history, provider, since, until, resolution)
     except usage_history.Refused as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -15598,7 +15598,7 @@ def tool_usage_history(args: dict) -> str:
     """The usage history, as the page's view reads it (`_usage_history`):
     the route's own JSON, one page at a time."""
     try:
-        body = _usage_history(args.get("provider"), args.get("window"), args.get("since"),
+        body = _usage_history(args.get("provider"), args.get("since"),
                               args.get("until"), args.get("resolution"))
     except usage_history.Refused as e:
         return f"Refused: {e}."

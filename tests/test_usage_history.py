@@ -1,9 +1,10 @@
-"""usage_history: the long-term record of the brains' usage readings.
+"""usage_history: the long-term record of the brains' weekly usage.
 
-usage_store keeps the latest reading; every reading it takes is also kept
-here. The rule is the same: absence is a state. A window a reading did not
-measure is NULL, an hour with no measured reading has no percentage, and
-nothing unmeasured ever reads as 0.
+usage_store keeps the latest reading; every reading of the seven-day window
+it takes is also kept here, and nothing of the five-hour window (Tim: its
+history has no value). The rule is usage_store's: absence is a state. A
+week a reading did not measure is NULL, an hour with no measured reading has
+no percentage, and nothing unmeasured ever reads as 0.
 """
 
 import base64
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 
 T = 1_800_000_000.0           # a fixed moment, on an hour boundary
 HOUR = 3600
+WEEK = 7 * 24 * HOUR
 
 
 @pytest.fixture
@@ -31,12 +33,12 @@ def store(monkeypatch, tmp_path):
     return usage_store, usage_history
 
 
-def _event(five=None, seven=None, status="allowed"):
+def _event(five=None, seven=None, status="allowed", resets=T + WEEK):
     windows = {}
     if five is not None:
         windows["five_hour"] = {"utilization": five, "resetsAt": T + 5 * HOUR}
     if seven is not None:
-        windows["seven_day"] = {"utilization": seven, "resetsAt": T + 7 * 24 * HOUR}
+        windows["seven_day"] = {"utilization": seven, "resetsAt": resets}
     return {"status": status, "unifiedWindows": windows}
 
 
@@ -49,7 +51,7 @@ def _rows(data_dir):
         conn.close()
 
 
-def test_every_reading_record_takes_is_appended(store, tmp_path):
+def test_every_weekly_reading_is_appended_and_no_five_hour_one(store, tmp_path):
     usage_store, _ = store
     usage_store.record(_event(five=0.25, seven=0.5), now=T)
     usage_store.record(_event(five=0.30), now=T + 60)
@@ -57,19 +59,19 @@ def test_every_reading_record_takes_is_appended(store, tmp_path):
                        provider={"service": "openai", "subscription": "plus"})
     rows = _rows(tmp_path)
     assert [(r[0], r[1], r[3], r[4]) for r in rows] == [
-        (T, "anthropic", "five_hour", 25.0), (T, "anthropic", "seven_day", 50.0),
-        (T + 60, "anthropic", "five_hour", 30.0),
-        (T + 120, "openai", "five_hour", 40.0), (T + 120, "openai", "seven_day", 55.0)]
-    assert rows[0][5] == T + 5 * HOUR and rows[0][6] == "allowed"
+        (T, "anthropic", "seven_day", 50.0), (T + 120, "openai", "seven_day", 55.0)]
+    assert rows[0][5] == T + WEEK and rows[0][6] == "allowed"
+    # The latest reading still keeps the five-hour window: only the history drops it.
+    assert usage_store.latest()["windows"]["five_hour"]["utilization"] == 30.0
 
 
-def test_a_window_not_measured_is_kept_as_null_never_zero(store, tmp_path):
+def test_a_week_not_measured_is_kept_as_null_never_zero(store, tmp_path):
     usage_store, usage_history = store
-    # A rejection naming its window with no utilisation at all.
-    usage_store.record({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": T + HOUR}, now=T)
+    # A rejection naming the week with no utilisation at all.
+    usage_store.record({"status": "rejected", "rateLimitType": "seven_day", "resetsAt": T + WEEK}, now=T)
     rows = _rows(tmp_path)
-    assert rows == [(T, "anthropic", None, "five_hour", None, T + HOUR, "rejected")]
-    point = usage_history.read("anthropic", "five_hour", T - 10, T + 10, now=T + 10)["series"][0]["points"][0]
+    assert rows == [(T, "anthropic", None, "seven_day", None, T + WEEK, "rejected")]
+    point = usage_history.read("anthropic", T - 10, T + 10, now=T + 10)["weeks"][0]["points"][0]
     assert point["used"] is None and point["low"] is None and point["high"] is None
 
 
@@ -80,7 +82,7 @@ def test_the_history_carries_the_account_reference_the_network_view_shows(store,
     key = base64.urlsafe_b64encode(b"k" * 32).rstrip(b"=").decode()
     brain_accounts._accounts["anthropic"] = Account(True, "max", "", email="Tim@Example.com", org_id="org")
     brain_accounts.brains(key)
-    usage_store.record(_event(five=0.1), now=T)
+    usage_store.record(_event(seven=0.1), now=T)
     expected = brain_accounts.account_ref(b"k" * 32, "anthropic", "tim@example.com", "org")
     assert _rows(tmp_path)[0][2] == expected
     assert "Tim@Example.com" not in json.dumps(_rows(tmp_path))
@@ -88,11 +90,11 @@ def test_the_history_carries_the_account_reference_the_network_view_shows(store,
 
 def test_no_account_is_named_without_the_team_key(store, tmp_path):
     usage_store, _ = store
-    usage_store.record(_event(five=0.1), now=T)
+    usage_store.record(_event(seven=0.1), now=T)
     assert _rows(tmp_path)[0][2] is None
 
 
-def test_the_latest_stored_readings_are_backfilled_once(store, tmp_path):
+def test_the_latest_stored_weekly_readings_are_backfilled_once(store, tmp_path):
     usage_store, usage_history = store
     from jarvis import data_paths
     data_paths.usage_path().write_text(json.dumps({
@@ -102,24 +104,46 @@ def test_the_latest_stored_readings_are_backfilled_once(store, tmp_path):
                     "seven_day": {"utilization": 40.0, "resets_at": T + 86400, "status": "allowed",
                                   "observed_at": T}},
         "week_resets_at": T + 86400, "week_history": [[T - 7200, 30.0], [T - 3600, 35.0], [T, 40.0]]}))
-    usage_store.record(_event(five=0.2), now=T + 60)
+    usage_store.record(_event(seven=0.42, resets=T + 86400), now=T + 60)
     rows = sorted((r[0], r[3], r[4]) for r in _rows(tmp_path))
     assert rows == [(T - 7200, "seven_day", 30.0), (T - 3600, "seven_day", 35.0),
-                    (T, "five_hour", 12.0), (T, "seven_day", 40.0),
-                    (T + 60, "five_hour", 20.0)]
+                    (T, "seven_day", 40.0), (T + 60, "seven_day", 42.0)]
     # Never again: a second database connection does not add them twice.
     usage_history._migrated.clear()
-    usage_store.record(_event(five=0.21), now=T + 120)
-    assert len(_rows(tmp_path)) == 6
+    usage_store.record(_event(seven=0.43, resets=T + 86400), now=T + 120)
+    assert len(_rows(tmp_path)) == 5
+
+
+def test_migration_2_drops_the_five_hour_history_already_kept(store, tmp_path):
+    _, usage_history = store
+    from jarvis import run_store
+    conn = sqlite3.connect(str(tmp_path / "jarvis.db"))
+    run_store.migrate(conn, "usage_history_schema", {1: usage_history._MIGRATIONS[1]}, "usage history")
+    conn.executemany(
+        "INSERT INTO usage_readings (at, provider, account, window, utilization, resets_at, status)"
+        " VALUES (?, 'anthropic', NULL, ?, 10.0, ?, '')",
+        [(T, "five_hour", T + HOUR), (T, "seven_day", T + WEEK)])
+    conn.execute("INSERT INTO usage_hourly (hour, provider, account, window, samples, measured, low, high,"
+                 " last, last_at, resets_at) VALUES (?, 'anthropic', '', 'five_hour', 1, 1, 5, 5, 5, ?, ?)",
+                 (T - WEEK, T - WEEK, T - WEEK + HOUR))
+    conn.commit()
+    conn.close()
+    usage_history._migrated.clear()
+    usage_history.read("anthropic", now=T)
+    assert [r[3] for r in _rows(tmp_path)] == ["seven_day"]
+    conn = sqlite3.connect(str(tmp_path / "jarvis.db"))
+    assert conn.execute("SELECT COUNT(*) FROM usage_hourly").fetchone()[0] == 0
+    assert conn.execute("SELECT version FROM usage_history_schema").fetchone()[0] == 2
+    conn.close()
 
 
 def test_old_readings_fold_into_hourly_summaries(store, tmp_path):
     usage_store, usage_history = store
-    usage_store.record(_event(five=0.10), now=T + 60)
-    usage_store.record(_event(five=0.30), now=T + 120)
-    usage_store.record({"status": "rejected", "rateLimitType": "five_hour"}, now=T + 180)
-    usage_store.record(_event(five=0.20), now=T + 240)
-    usage_store.record(_event(five=0.50), now=T + HOUR + 60)       # the next hour
+    usage_store.record(_event(seven=0.10), now=T + 60)
+    usage_store.record(_event(seven=0.30), now=T + 120)
+    usage_store.record({"status": "rejected", "rateLimitType": "seven_day", "resetsAt": T + WEEK}, now=T + 180)
+    usage_store.record(_event(seven=0.20), now=T + 240)
+    usage_store.record(_event(seven=0.50), now=T + HOUR + 60)       # the next hour
     later = T + usage_history.RAW_KEEP_SEC + 2 * HOUR
     folded = usage_history.compact(now=later)
     assert folded == 5 and _rows(tmp_path) == []
@@ -127,55 +151,50 @@ def test_old_readings_fold_into_hourly_summaries(store, tmp_path):
     hours = conn.execute("SELECT hour, window, samples, measured, low, high, last FROM usage_hourly"
                          " ORDER BY hour").fetchall()
     conn.close()
-    assert hours == [(T, "five_hour", 4, 3, 10.0, 30.0, 20.0),
-                     (T + HOUR, "five_hour", 1, 1, 50.0, 50.0, 50.0)]
-    got = usage_history.read("anthropic", "five_hour", T, T + 2 * HOUR, "hour", now=later)
-    points = got["series"][0]["points"]
+    assert hours == [(T, "seven_day", 4, 3, 10.0, 30.0, 20.0),
+                     (T + HOUR, "seven_day", 1, 1, 50.0, 50.0, 50.0)]
+    got = usage_history.read("anthropic", T, T + 2 * HOUR, "hour", now=later)
+    points = got["weeks"][0]["points"]
     assert [(p["at"], p["used"], p["low"], p["samples"]) for p in points] == [
         (T, 30.0, 10.0, 4), (T + HOUR, 50.0, 50.0, 1)]
     # Read reading by reading, the folded range comes back by the hour.
-    raw = usage_history.read("anthropic", "five_hour", T, T + 2 * HOUR, "raw", now=later)
-    assert [p["at"] for p in raw["series"][0]["points"]] == [T, T + HOUR]
+    raw = usage_history.read("anthropic", T, T + 2 * HOUR, "raw", now=later)
+    assert [p["at"] for p in raw["weeks"][0]["points"]] == [T, T + HOUR]
 
 
 def test_readings_within_the_two_weeks_are_kept_as_they_were(store, tmp_path):
     usage_store, usage_history = store
-    usage_store.record(_event(five=0.10), now=T)
+    usage_store.record(_event(seven=0.10), now=T)
     assert usage_history.compact(now=T + usage_history.RAW_KEEP_SEC - HOUR) == 0
     assert len(_rows(tmp_path)) == 1
 
 
-def test_an_hour_with_no_measured_reading_has_no_percentage(store):
+def test_the_readings_come_back_week_by_week_newest_first(store):
     usage_store, usage_history = store
-    usage_store.record({"status": "rejected", "rateLimitType": "five_hour"}, now=T + 60)
-    got = usage_history.read("anthropic", "five_hour", T - 3 * 86400, T + HOUR, now=T + HOUR)
-    assert got["resolution"] == "hour"
-    assert got["series"][0]["points"] == [{"at": T, "used": None, "low": None, "high": None,
-                                           "resets_at": None, "status": "", "account": None,
-                                           "samples": 1}]
+    first, second = T + 86400, T + 86400 + WEEK
+    usage_store.record(_event(seven=0.20, resets=first), now=T)
+    usage_store.record(_event(seven=0.60, resets=first), now=T + 3600)
+    # Codex's wobble: a reset a few seconds off is the same week.
+    usage_store.record(_event(seven=0.70, resets=first + 5), now=T + 7200)
+    usage_store.record(_event(seven=0.05, resets=second), now=first + 600)
+    usage_store.record(_event(seven=0.15, resets=second), now=first + 7200)
+    got = usage_history.read("anthropic", now=first + 7200)
+    assert got["window"] == "seven_day" and got["week_sec"] == WEEK
+    assert got["resolution"] == "hour"            # the whole record is read by the hour
+    assert [(w["resets_at"], w["start"], w["measured"]) for w in got["weeks"]] == [
+        (second, second - WEEK, 2), (first, first - WEEK, 3)]
+    assert [p["used"] for p in got["weeks"][1]["points"]] == [20.0, 60.0, 70.0]
+    assert got["latest"] == {"used": 15.0, "resets_at": second, "observed_at": first + 7200,
+                             "status": "allowed"}
 
 
-def test_the_range_picks_the_resolution_and_each_window_says_how_long_it_runs(store):
+def test_a_reading_naming_no_reset_goes_in_the_week_that_holds_it(store):
     _, usage_history = store
-    day = usage_history.read("anthropic", since=T - 86400, until=T, now=T)
-    month = usage_history.read("anthropic", since=T - 30 * 86400, until=T, now=T)
-    assert day["resolution"] == "raw" and month["resolution"] == "hour"
-    # Both windows of the one brain asked for, measured or not, each with
-    # its length for the straight line across it.
-    assert [(s["provider"], s["window"], s["window_sec"]) for s in day["series"]] == [
-        ("anthropic", "five_hour", 5 * HOUR), ("anthropic", "seven_day", 7 * 24 * HOUR)]
-    assert day["series"][0]["points"] == [] and day["series"][0]["latest"]["used"] is None
-
-
-def test_resets_inside_the_range_are_marked_once(store):
-    usage_store, usage_history = store
-    for i, reset in enumerate((T + 100, T + 130, T + 5000)):
-        usage_store.record({"status": "allowed", "unifiedWindows": {
-            "five_hour": {"utilization": 0.1, "resetsAt": reset}}}, now=T + i * 60)
-    got = usage_history.read("anthropic", "five_hour", T, T + 1000, now=T + 1000)["series"][0]
-    assert got["resets"] == [T + 100]
-    assert got["latest"] == {"window": "five_hour", "used": 10.0, "resets_at": T + 5000,
-                             "observed_at": T + 120, "status": "allowed"}
+    weeks = usage_history.weeks_of([
+        {"at": T, "used": 10.0, "resets_at": T + 86400},
+        {"at": T + 60, "used": 11.0, "resets_at": None},
+        {"at": T - 2 * WEEK, "used": 5.0, "resets_at": None}])      # no week holds it
+    assert [len(w["points"]) for w in weeks] == [2]
 
 
 def test_a_request_that_is_not_one_is_refused(store):
@@ -194,8 +213,8 @@ def test_a_failing_history_never_loses_the_reading(store, monkeypatch):
     def broken(*a, **k):
         raise sqlite3.OperationalError("disk I/O error")
     monkeypatch.setattr(usage_history, "_connect", broken)
-    usage_store.record(_event(five=0.4), now=T)
-    assert usage_store.latest()["windows"]["five_hour"]["utilization"] == 40.0
+    usage_store.record(_event(seven=0.4), now=T)
+    assert usage_store.latest()["windows"]["seven_day"]["utilization"] == 40.0
 
 
 # ── the route and the brain's tool give the same answer ──────────────────
@@ -228,10 +247,11 @@ def _tool(server, **arguments) -> str:
 def test_the_route_and_the_tool_return_the_same_history(wired):
     server, usage_store = wired
     for i in range(30):
-        usage_store.record(_event(five=i / 100, seven=0.5 if i % 3 else None), now=T + i * 60)
+        usage_store.record(_event(five=0.5, seven=i / 100 if i % 3 else None), now=T + i * 60)
     query = {"since": T - 60, "until": T + 3600}
     page = TestClient(server.app).get("/api/usage/history", params=query).json()
-    assert page["resolution"] == "raw" and len(page["series"][0]["points"]) == 30
+    assert page["resolution"] == "raw" and len(page["weeks"]) == 1
+    assert len(page["weeks"][0]["points"]) == 20 and "window" not in query
     # The tool gives the route's JSON, a page at a time; joined, it is the same.
     text, pages, n = "", None, 1
     while True:
@@ -248,15 +268,17 @@ def test_the_route_and_the_tool_return_the_same_history(wired):
 
 def test_the_route_and_the_tool_give_one_brain_never_both(wired):
     server, usage_store = wired
-    usage_store.record(_event(five=0.1), now=T)
-    usage_store.record(_event(five=0.2), now=T + 60, provider={"service": "openai", "subscription": ""})
+    usage_store.record(_event(seven=0.1), now=T)
+    usage_store.record(_event(seven=0.2), now=T + 60, provider={"service": "openai", "subscription": ""})
     query = {"since": T - 60, "until": T + 3600}
     client = TestClient(server.app)
     running = server._brain_provider().name
-    for asked, expected in ((None, running), ("openai", "openai"), ("anthropic", "anthropic")):
+    for asked, expected, used in ((None, running, 10.0), ("openai", "openai", 20.0),
+                                  ("anthropic", "anthropic", 10.0)):
         params = dict(query, **({"provider": asked} if asked else {}))
         page = client.get("/api/usage/history", params=params).json()
-        assert {s["provider"] for s in page["series"]} == {expected}
+        assert page["provider"] == expected
+        assert [p["used"] for w in page["weeks"] for p in w["points"]] == [used]
         said = _tool(server, **params)
         assert json.loads(said.partition("\n")[2]) == page
 
@@ -268,4 +290,4 @@ def test_the_route_and_the_tool_refuse_alike(wired):
     said = _tool(server, provider="gemini")
     assert said.startswith("Refused: that is not a brain JARVIS knows") and "gemini" not in said
     r = TestClient(server.app).get("/api/usage/history", params={"since": "soon"})
-    assert r.status_code == 400
+    assert r.status_code == 400 and "soon" not in r.json()["error"]

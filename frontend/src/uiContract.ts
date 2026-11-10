@@ -156,7 +156,6 @@ export const UI_CONTRACT = {
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
-    "usageSeries": "^[a-z0-9_-]{1,32}:[a-z0-9_]{1,32}$",
     "project": "^[0-9a-f-]{36}$",
     "projectCandidate": "^[0-9a-f-]{36}$",
     "accomplishment": "^[0-9a-f-]{36}$",
@@ -2623,7 +2622,7 @@ export const UI_CONTRACT = {
     },
     {
       "id": "usage.open",
-      "label": "Open one brain's usage history in the centre: what is left of each of its windows over time, and its latest reading",
+      "label": "Open one brain's weekly usage history in the centre: this week's burn-down first, earlier weeks one at a time",
       "view": "main.usage",
       "args": {
         "provider": {
@@ -2672,22 +2671,21 @@ export const UI_CONTRACT = {
       "family": "usage"
     },
     {
-      "id": "usage.range",
-      "label": "Show the open usage history over the last day, week or month, or all of it",
+      "id": "usage.week",
+      "label": "Show the open usage history's earlier or later week, or this week again",
       "view": "main.usage",
       "args": {
-        "range": {
+        "to": {
           "type": "enum",
           "values": [
-            "day",
-            "week",
-            "month",
-            "all"
+            "earlier",
+            "later",
+            "current"
           ]
         }
       },
       "required": [
-        "range"
+        "to"
       ],
       "actors": [
         "human",
@@ -2695,7 +2693,7 @@ export const UI_CONTRACT = {
       ],
       "effects": [
         {
-          "effect": "list.filtered"
+          "effect": "list.paged"
         }
       ],
       "family": "usage"
@@ -4734,12 +4732,13 @@ export const UI_CONTRACT = {
     {
       "kind": "usageHistory",
       "entity": "provider",
-      "label": "One brain's usage history",
+      "label": "One brain's weekly usage history",
       "parts": [
         "header",
         "close",
-        "range",
-        "charts"
+        "weeks",
+        "chart",
+        "latest"
       ],
       "presentations": [
         {
@@ -4750,22 +4749,6 @@ export const UI_CONTRACT = {
               "provider": "$key"
             }
           }
-        }
-      ],
-      "family": "usage"
-    },
-    {
-      "kind": "usageChart",
-      "entity": "usageSeries",
-      "label": "What is left of one brain's window over time",
-      "parts": [
-        "title",
-        "latest",
-        "chart"
-      ],
-      "presentations": [
-        {
-          "view": "main.usage"
         }
       ],
       "family": "usage"
@@ -5035,7 +5018,7 @@ export interface CommandArgs {
   "updates.review": { open: boolean; };
   "usage.close": { };
   "usage.open": { provider: string; };
-  "usage.range": { range: "day" | "week" | "month" | "all"; };
+  "usage.week": { to: "earlier" | "later" | "current"; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
   "voice.quiet": { quiet: boolean; };

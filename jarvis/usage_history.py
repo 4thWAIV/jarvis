@@ -1,9 +1,11 @@
-"""The long-term record of the subscription brains' usage readings.
+"""The long-term record of the subscription brains' weekly usage.
 
-usage_store keeps only the latest reading per brain provider. Every
-observation it takes (`usage_store.record`) is also appended here, one row
-per window, in JARVIS's database under its own schema version
-(`usage_history_schema`, run_store.migrate):
+usage_store keeps only the latest reading per brain provider. Every reading
+of the seven-day window it takes (`usage_store.record`) is also appended
+here, in JARVIS's database under its own schema version
+(`usage_history_schema`, run_store.migrate). Only the week is kept: Tim's
+word, the five-hour window's history has no value, so its readings are
+never written and migration 2 dropped the ones written before.
 
   usage_readings  every reading as it came: when, provider, account hash,
                   window, utilization (a percentage, NULL when the reading
@@ -20,7 +22,9 @@ The page joins the measured points into one line and passes over the rest;
 nothing unmeasured is drawn as 0.
 
 `read` is the one reader: `GET /api/usage/history` and the brain's
-`usage_history` both return what it returns.
+`usage_history` both return what it returns: one brain's weeks, newest
+first, each with its readings, for the page to draw each week's burn-down
+the way the brain's box draws this one.
 
 The account is brain_accounts' keyed hash of the signed-in subscription
 (`brain_accounts.history_ref`), the same reference the Network view shows;
@@ -32,7 +36,7 @@ import logging
 import sqlite3
 import threading
 import time
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from jarvis import data_paths, run_store
 
@@ -48,10 +52,11 @@ COMPACT_EVERY_SEC = HOUR_SEC
 # A range up to two days long is read reading by reading; a longer one by
 # the hour (a week is 168 points per window, not 10,080).
 RAW_RANGE_MAX_SEC = 2 * 24 * 3600
-# How long each window runs, so the page can draw its straight line from
-# all left at its start to none left at its reset, as the brain's box does
-# for the week (usage_store.week). A window not named here has none.
-WINDOW_SEC = {"five_hour": 5 * HOUR_SEC, "seven_day": 7 * 24 * HOUR_SEC}
+# The one window kept, and how long it runs: the page draws each week's
+# straight line from all left at its start to none left at its reset, as the
+# brain's box does (usage_store.week).
+WINDOW = "seven_day"
+WEEK_SEC = 7 * 24 * HOUR_SEC
 # Two reset times this close are the same reset (usage_store.SAME_WEEK_SEC:
 # Codex wobbles its reset time by a few seconds).
 SAME_RESET_SEC = 60.0
@@ -87,7 +92,15 @@ _SCHEMA = """
 """
 
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA}
+_MIGRATIONS = {
+    1: _SCHEMA,
+    # Only the week is kept (Tim, 2026-11-10): the five-hour window's
+    # readings, and any other window's, are dropped.
+    2: """
+        DELETE FROM usage_readings WHERE window <> 'seven_day';
+        DELETE FROM usage_hourly WHERE window <> 'seven_day';
+    """,
+}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -114,8 +127,8 @@ def _connect() -> sqlite3.Connection:
 
 
 def _backfill(conn: sqlite3.Connection) -> None:
-    """Once, as the tables are made: the readings usage_store already holds,
-    each window's latest and the seven-day window's burn-down history."""
+    """Once, as the tables are made: the seven-day readings usage_store
+    already holds, its latest and its burn-down history."""
     from jarvis import usage_store
     for service in _stored_services():
         stored = usage_store.latest(service)
@@ -129,7 +142,7 @@ def _backfill(conn: sqlite3.Connection) -> None:
                 rows.append((when, service, None, "seven_day",
                              usage_store._stored_percent(used), week_resets, ""))
         for key, raw in (stored.get("windows") or {}).items():
-            if not isinstance(key, str) or not isinstance(raw, dict):
+            if key != WINDOW or not isinstance(raw, dict):
                 continue
             when = usage_store._epoch(raw.get("observed_at"))
             if when is None or any(r[0] == when and r[3] == key for r in rows):
@@ -155,13 +168,14 @@ def _stored_services() -> list[str]:
 
 def append(service: str, windows: dict[str, dict], *, account: Optional[str] = None,
            now: Optional[float] = None) -> int:
-    """Append one observation's windows (usage_store's normalised shape:
-    utilization as a percentage or None, resets_at, status, observed_at).
-    Returns how many rows went in. Never raises: losing a history row must
-    not lose the reading."""
+    """Append one observation's seven-day window (usage_store's normalised
+    shape: utilization as a percentage or None, resets_at, status,
+    observed_at); any other window it names is not kept. Returns how many
+    rows went in. Never raises: losing a history row must not lose the
+    reading."""
     rows = [(float(w.get("observed_at") or now or time.time()), service, account, key,
              w.get("utilization"), w.get("resets_at"), str(w.get("status") or ""))
-            for key, w in windows.items() if isinstance(key, str) and isinstance(w, dict)]
+            for key, w in windows.items() if key == WINDOW and isinstance(w, dict)]
     if not rows:
         return 0
     try:
@@ -251,49 +265,37 @@ def _number(raw: Any, what: str) -> Optional[float]:
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        raise Refused(f"{what} must be a time in epoch seconds, not {str(raw)[:40]!r}") from None
+        raise Refused(f"{what} must be a time in epoch seconds") from None
     if value != value or value < 0 or value in (float("inf"),):
         raise Refused(f"{what} must be a time in epoch seconds")
     return value
 
 
-def _resets(points: Iterable[dict], since: float, until: float) -> list[float]:
-    """The reset times that fell inside the range, each once."""
-    out: list[float] = []
-    for p in points:
-        r = p.get("resets_at")
-        if r is None or not since <= r <= until:
-            continue
-        if not any(abs(r - seen) <= SAME_RESET_SEC for seen in out):
-            out.append(r)
-    return sorted(out)
-
-
-def _raw_points(conn, provider: str, window: str, since: float, until: float) -> list[dict]:
+def _raw_points(conn, provider: str, since: float, until: float) -> list[dict]:
     rows = conn.execute(
         "SELECT at, account, utilization, resets_at, status FROM usage_readings"
         " WHERE provider = ? AND window = ? AND at >= ? AND at <= ? ORDER BY at, id",
-        (provider, window, since, until)).fetchall()
+        (provider, WINDOW, since, until)).fetchall()
     return [{"at": r["at"], "used": r["utilization"], "low": r["utilization"], "high": r["utilization"],
              "resets_at": r["resets_at"], "status": r["status"], "account": r["account"], "samples": 1}
             for r in rows]
 
 
-def _hour_points(conn, provider: str, window: str, since: float, until: float,
+def _hour_points(conn, provider: str, since: float, until: float,
                  *, readings: bool = True) -> list[dict]:
     """By the hour: the kept summaries, and (with `readings`) the readings
     not yet folded, summarised the same way. An hour's `used` is its highest
-    reading."""
+    reading: the least left in it."""
     hours: dict[tuple, dict] = {}
     for r in conn.execute(
             "SELECT * FROM usage_hourly WHERE provider = ? AND window = ? AND hour >= ? AND hour <= ?",
-            (provider, window, _hour(since), until)).fetchall():
+            (provider, WINDOW, _hour(since), until)).fetchall():
         hours[(r["hour"], r["account"])] = dict(r)
     raw: dict[tuple, list] = {}
     for r in conn.execute(
             "SELECT at, account, utilization, resets_at FROM usage_readings"
             " WHERE provider = ? AND window = ? AND at >= ? AND at <= ? ORDER BY at, id",
-            (provider, window, _hour(since), until)).fetchall() if readings else []:
+            (provider, WINDOW, _hour(since), until)).fetchall() if readings else []:
         raw.setdefault((_hour(r["at"]), r["account"] or ""), []).append(r)
     for key, rows in raw.items():
         have = hours.get(key)
@@ -307,61 +309,59 @@ def _hour_points(conn, provider: str, window: str, since: float, until: float,
     return sorted(out, key=lambda p: (p["at"], p["account"] or ""))
 
 
-def _providers(conn, provider: Optional[str]) -> list[str]:
-    if provider:
-        return [provider]
-    from jarvis import brains_config
-    found = list(brains_config.load()["brains"])
-    for r in conn.execute("SELECT DISTINCT provider FROM usage_readings UNION"
-                          " SELECT DISTINCT provider FROM usage_hourly").fetchall():
-        if r[0] not in found:
-            found.append(r[0])
-    return found
-
-
-def _windows(conn, provider: str, window: Optional[str]) -> list[str]:
-    from jarvis import usage_store
-    if window:
-        return [window]
-    found = list(usage_store.KNOWN_WINDOWS)
-    for r in conn.execute("SELECT DISTINCT window FROM usage_readings WHERE provider = ? UNION"
-                          " SELECT DISTINCT window FROM usage_hourly WHERE provider = ?",
-                          (provider, provider)).fetchall():
-        if r[0] not in found:
-            found.append(r[0])
-    return found
-
-
-def _latest(provider: str) -> list[dict]:
-    """usage_store's stored reading per window, as facts only (no age)."""
+def _latest(provider: str) -> dict:
+    """usage_store's stored seven-day reading, as facts only (no age)."""
     from jarvis import usage_store
     stored = usage_store.latest(provider) or {}
     windows = stored.get("windows") if isinstance(stored.get("windows"), dict) else {}
-    out = []
-    for key in list(usage_store.KNOWN_WINDOWS) + [k for k in windows if k not in usage_store.KNOWN_WINDOWS]:
-        raw = windows.get(key) if isinstance(windows.get(key), dict) else {}
-        out.append({"window": key,
-                    "used": usage_store._stored_percent(raw.get("utilization")),
-                    "resets_at": usage_store._epoch(raw.get("resets_at")),
-                    "observed_at": usage_store._epoch(raw.get("observed_at")),
-                    "status": usage_store._text(raw.get("status"))})
-    return out
+    raw = windows.get(WINDOW) if isinstance(windows.get(WINDOW), dict) else {}
+    return {"used": usage_store._stored_percent(raw.get("utilization")),
+            "resets_at": usage_store._epoch(raw.get("resets_at")),
+            "observed_at": usage_store._epoch(raw.get("observed_at")),
+            "status": usage_store._text(raw.get("status"))}
 
 
-def read(provider: Optional[str] = None, window: Optional[str] = None,
-         since: Any = None, until: Any = None, resolution: Optional[str] = None,
-         *, now: Optional[float] = None) -> dict:
-    """The history: one series per brain provider and window, each with its
-    points (`used` a percentage or None: not measured), the resets inside the
-    range and the latest stored reading. `since` defaults to a day before
-    `until`, `until` to now. `resolution` is "raw" (every reading), "hour"
-    (one point per hour, its highest reading) or "auto" (raw up to two days,
-    else by the hour)."""
+def weeks_of(points: list[dict]) -> list[dict]:
+    """The readings by the week they belong to, newest week first: a week is
+    its reset time (two within SAME_RESET_SEC are one) and starts WEEK_SEC
+    before it. A reading that names no reset goes in the week whose span
+    holds it; one no week holds is left out, since it cannot be placed on a
+    burn-down."""
+    weeks: list[dict] = []
+    for p in points:
+        r = p.get("resets_at")
+        if r is None:
+            continue
+        week = next((w for w in weeks if abs(w["resets_at"] - r) <= SAME_RESET_SEC), None)
+        if week is None:
+            weeks.append({"resets_at": r, "start": r - WEEK_SEC, "points": []})
+    for p in points:
+        r = p.get("resets_at")
+        if r is not None:
+            week = next(w for w in weeks if abs(w["resets_at"] - r) <= SAME_RESET_SEC)
+        else:
+            week = next((w for w in weeks if w["start"] <= p["at"] <= w["resets_at"]), None)
+        if week is not None:
+            week["points"].append(p)
+    for w in weeks:
+        w["points"].sort(key=lambda p: p["at"])
+        w["measured"] = sum(1 for p in w["points"] if p["used"] is not None)
+    return sorted(weeks, key=lambda w: w["resets_at"], reverse=True)
+
+
+def read(provider: Optional[str] = None, since: Any = None, until: Any = None,
+         resolution: Optional[str] = None, *, now: Optional[float] = None) -> dict:
+    """One brain's weekly history: its seven-day readings from `since`
+    (the start of the record when left out) to `until` (now), grouped into
+    weeks, newest first, each with its reset time, its start and its points
+    (`used` a percentage or None: not measured), and the latest reading.
+    `resolution` is "raw" (every reading), "hour" (one point per hour, its
+    highest reading) or "auto" (raw up to two days, else by the hour)."""
     at = time.time() if now is None else float(now)
     end = _number(until, "until")
     end = at if end is None else end
     start = _number(since, "since")
-    start = end - 24 * 3600 if start is None else start
+    start = 0.0 if start is None else start
     if start > end:
         raise Refused("since must be before until")
     how = (resolution or "auto").strip().lower()
@@ -369,28 +369,21 @@ def read(provider: Optional[str] = None, window: Optional[str] = None,
         raise Refused(f"resolution must be one of {', '.join(RESOLUTIONS)}")
     if how == "auto":
         how = "raw" if end - start <= RAW_RANGE_MAX_SEC else "hour"
-    from jarvis import usage_store
+    name = (provider or "").strip()
+    if not name:
+        from jarvis import usage_store
+        name = usage_store.PROVIDER
     conn = _connect()
     try:
-        series = []
-        for name in _providers(conn, (provider or "").strip() or None):
-            latest = {w["window"]: w for w in _latest(name)}
-            for key in _windows(conn, name, (window or "").strip() or None):
-                if how == "raw":
-                    points = _raw_points(conn, name, key, start, end)
-                    # Readings already folded into hours (older than two
-                    # weeks) are read by the hour.
-                    folded = _hour_points(conn, name, key, start, end, readings=False)
-                    points = [p for p in folded if p["at"] >= start] + points
-                else:
-                    points = _hour_points(conn, name, key, start, end)
-                series.append({
-                    "provider": name, "window": key, "label": usage_store.window_label(key),
-                    "window_sec": WINDOW_SEC.get(key),
-                    "points": points, "resets": _resets(points, start, end),
-                    "latest": latest.get(key) or {"window": key, "used": None, "resets_at": None,
-                                                  "observed_at": None, "status": ""}})
+        if how == "raw":
+            # Readings already folded into hours (older than two weeks) are
+            # read by the hour.
+            folded = _hour_points(conn, name, start, end, readings=False)
+            points = [p for p in folded if p["at"] >= start] + _raw_points(conn, name, start, end)
+        else:
+            points = _hour_points(conn, name, start, end)
     finally:
         conn.close()
-    return {"since": start, "until": end, "resolution": how,
-            "raw_keep_sec": RAW_KEEP_SEC, "series": series}
+    return {"provider": name, "window": WINDOW, "week_sec": WEEK_SEC,
+            "since": start, "until": end, "resolution": how, "raw_keep_sec": RAW_KEEP_SEC,
+            "latest": _latest(name), "weeks": weeks_of(points)}
