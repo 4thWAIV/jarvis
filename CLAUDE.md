@@ -894,6 +894,25 @@ package (`deck-data.js` and `scripts/decide.py`, the shared deck's,
 `decision_stamp.MARKS`) without that statement signed by an onboarded
 agent's key, so no other way delivers one.
 `python -m jarvis.decision_package` is the command's old name.
+An agent's package proves a fresh author wrote it (Tim's decision
+`receiver-check`, `author_proof.py`): make_package's fresh author
+(`package_author.py`) ends with its own `--check-only`, which prints the
+source's digest (`author_proof.MARK`); the factory puts that source in the
+zip (`.jarvis/author/`) and the signature names the claim (`author`:
+engine, author session, digest), checked first by make_package itself
+(`make_package.with_author`). `server._admit_agent_package` is the one
+admission check for an onboarded agent's signed package, on every route
+that admits one (the inbox, a held package released or looked at again,
+a zip on this Mac through `_local_package_problem`): the digest
+recomputed from the zip's own bytes, the author session's own transcript
+(Claude Code's `projects/*/<id>.jsonl` or Codex's rollout, no link
+followed, its end read) begun with the author prompt
+(`author_proof.PROMPT_HEAD`), not the sender, and its own check-only call
+printing exactly that digest within `WINDOW_SEC` (6 h) before arrival; one
+author session vouches for one package's bytes
+(`agent_key_store.bind_author`, migration 4), so a new revision needs a new
+author. A person's package, JARVIS's own, the same bytes already here and
+the isolated check JARVIS are not asked.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
@@ -908,7 +927,12 @@ answers going to that session (`from_session`, `sender_evidence`
 running make_package on that `source`, `subagent:<name>`, shown "name
 (parent)"). One signed by a key that is not an onboarded
 agent's, or sent unsigned on a request signed by one, is held
-(`_unrecognised_key`), never unpacked, until he onboards it. One unsigned
+(`_unrecognised_key`), never unpacked, until he onboards it; one an
+onboarded agent signed without a fresh author's proof
+(`_admit_agent_package`) is held the same way, its reason in the hold and
+on the error package, released once the proof checks within
+`author_proof.RECHECK_SEC` (`_recheck_author_holds`) or dropped by his Drop
+(`key_error_package.DROP`, the key kept). One unsigned
 on the tool token keeps `?session=` as a claim that only the signed request
 proves (`server._package_sender`: the calling agent's own session);
 unproven, the answers go nowhere and the row says so (`unproven_claim`, the
@@ -2092,8 +2116,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `legacy_access.py` — The cut-over guard: old access keys accepted until
   none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature
-  (who sent it, what it vouches for, a work-item key grant), and the error
-  package for something a key JARVIS does not know sent
+  (who sent it, what it vouches for, a work-item key grant, its fresh
+  author), and the error package for something held
+- `author_proof.py` — Proof that a fresh author session wrote an agent's
+  package: the source digest, the claim and the author's own transcript
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   about the needs board and session messages
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending

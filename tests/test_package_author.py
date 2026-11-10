@@ -27,13 +27,32 @@ def only_engine(request, tmp_path, monkeypatch):
     folder.mkdir()
     original = (FIXTURES / ('fake_brain.py' if engine == 'claude' else 'fake_codex.py')).read_text()
     start = 'def reply(text):' if engine == 'claude' else 'def turn(rid, text):'
-    action = '''
+    session = 'SESSION_ID' if engine == 'claude' else '"thread-1"'
+    # The author writes its source, then (as the real one is told to) checks
+    # it last with --check-only, which its own transcript records.
+    action = f'''
     with open('received-prompt.txt', 'w') as output:
         output.write(text)
     mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
-    if mode == 'source':
+    if mode in ('source', 'edited-after-check'):
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
+        from jarvis import author_proof as _ap, session_watch as _sw
+        from tests.author_fixtures import write_transcript as _write
         with open('content.json', 'w') as output:
             output.write(os.environ['AUTHOR_TEST_CONTENT'])
+        _digest = _ap.source_digest(_Path('content.json').resolve())
+        if {engine!r} == 'claude':
+            _at = (_Path(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
+                   / _sw.encode_cwd(os.getcwd()) / ({session} + '.jsonl'))
+        else:
+            _at = (_Path(os.environ['JARVIS_CODEX_SESSIONS_HOME']) / 'sessions' / '2026' / '11'
+                   / '09' / ('rollout-2026-11-09T00-00-00-' + {session} + '.jsonl'))
+        _write({engine!r}, {session}, _digest, path=_at)
+        if mode == 'edited-after-check':
+            with open('content.json', 'a') as output:
+                output.write(' ')
     elif mode == 'blocked':
         with open('author-blocked.md', 'w') as output:
             output.write('Missing release receipt.')
@@ -47,6 +66,8 @@ def only_engine(request, tmp_path, monkeypatch):
     monkeypatch.setenv('AUTHOR_TEST_CONTENT', json.dumps(presentation()))
     monkeypatch.setenv('FAKE_CODEX_LOG', str(tmp_path / 'codex.log'))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'caller-codex-home'))
+    from jarvis import session_watch
+    monkeypatch.setenv('AUTHOR_TEST_CLAUDE_ROOT', str(session_watch.config_roots()[0]))
     return engine
 
 
@@ -88,6 +109,49 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
         thread = next(row['thread'] for row in log if 'thread' in row)
         assert thread['sandbox'] == 'workspace-write'
         assert 'resume' not in thread
+
+
+def test_the_signature_names_the_fresh_author_and_carries_its_source(only_engine, origin_key,
+                                                                    tmp_path, monkeypatch):
+    """The delivered zip carries the authored source under .jarvis/author/
+    and its signature the claim: the engine, the fresh author session and
+    that source's digest, which the receiver recomputes from the zip."""
+    from jarvis import author_proof, package_signature
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, 'post', delivery)
+    passing_check(monkeypatch)
+    out = tmp_path / 'out'
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(out),
+                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
+    [(_, _, body)] = delivery.calls
+    sent = tmp_path / 'sent.zip'
+    sent.write_bytes(body)
+    signed = package_signature.read(sent)
+    [receipt] = out.glob('author/*/author-receipt.json')
+    receipt = json.loads(receipt.read_text())
+    assert signed.author == {'engine': only_engine, 'session': receipt['author_session'],
+                             'source': author_proof.digest_in_zip(sent)}
+    assert signed.session == 'origin-session' != signed.author['session']
+    assert author_proof.problem(signed.author, 'origin-session', sent, __import__('time').time()) is None
+
+
+def test_a_source_changed_after_the_author_s_last_check_is_never_delivered(
+        only_engine, origin_key, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('AUTHOR_TEST_MODE', 'edited-after-check')
+    monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('changed source delivered'))
+    passing_check(monkeypatch)
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(tmp_path / 'out')]) == 1
+    assert 'does not show it checking exactly this source' in capsys.readouterr().out
+
+
+def test_check_only_prints_the_digest_the_author_proof_names(tmp_path, capsys):
+    from jarvis import author_proof
+    source = tmp_path / 'content.json'
+    source.write_text(json.dumps(presentation()))
+    assert mp.main([str(source), '--check-only']) == 0
+    assert author_proof.MARK + author_proof.source_digest(source) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('mode', ['missing', 'blocked'])

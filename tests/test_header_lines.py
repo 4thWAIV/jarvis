@@ -355,6 +355,13 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "author_proof.transcript": (
+        "it returns the path of the author session's own transcript, found by an id checked against "
+        "a fixed pattern; nothing it reads is printed, said or put in a header"),
+    "package_author.claim_of": (
+        "it builds the author claim from the receipt's engine and session id, both checked by "
+        "author_proof.Claim.of against fixed values and a fixed pattern; its refusal names only "
+        "the source's path, printed to the agent running make_package, never a brain header"),
     "package_author.author": (
         "it records provider model/session metadata and raw author text in local source/provenance "
         "files for the originating factory command. It does not create a trusted JARVIS header or "

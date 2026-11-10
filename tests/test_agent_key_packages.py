@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import agent_keys, package_signature
 from tests.agent_key_fixtures import Agent
+from tests.author_fixtures import sign_authored
 from tests.test_agent_keys import DIAG, ORIGIN, PLAN, keygen, wired  # noqa: F401
 from tests.test_work_packages import make_zip, marks  # noqa: F401
 
@@ -27,7 +28,7 @@ def signed_zip(tmp_path: Path, agent: Agent, manifest=SKILL, statements=(),
                files=None) -> bytes:
     raw = tmp_path / f"raw-{manifest['name']}-{manifest['version']}.zip"
     raw.write_bytes(make_zip(files or {"SKILL.md": "Say the notes."}, manifest))
-    package_signature.sign(raw, raw, agent.private, agent.public, agent.session_id, statements)
+    sign_authored(raw, raw, agent, agent.session_id, statements)
     return raw.read_bytes()
 
 
@@ -305,7 +306,7 @@ def test_a_work_key_in_an_agent_package_reports_on_its_item_alone_and_ends_with_
     raw = tmp_path / "agent.zip"
     raw.write_bytes(make_zip({"BRIEF.md": "Build it."}, AGENT_PKG))
     grant = make_package.add_work_key(raw, wid)
-    make_package.sign(raw, (agent.private, agent.public), PLAN, (), grant)
+    sign_authored(raw, raw, agent, PLAN, work_key=grant)
     r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
     assert r.status_code == 200, r.text
     package = work_packages.find(r.json()["package"]["id"])

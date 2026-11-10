@@ -12,7 +12,7 @@ import time
 import tempfile
 from pathlib import Path
 
-from jarvis import brain_provider, data_paths, session_skill
+from jarvis import author_proof, brain_provider, data_paths, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
 
@@ -83,8 +83,8 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
             done.set_exception(OSError(f"Author engine exited before finishing (exit {code})."))
 
     child = provider.session(config, event, exited)
-    prompt = ("Use the human-package-author skill for this authorized source-only assignment. "
-              "You are the fresh author; do not launch another author. Read " + str(SKILL)
+    prompt = (author_proof.PROMPT_HEAD + " You are the fresh author; do not launch another "
+              "author. Read " + str(SKILL)
               + " and the production guide " + str(GUIDE) + ". Independently research the "
               "handoff evidence and answer its audience's questions. The handoff is at "
               + str(handoff) + "; resolve its relative evidence paths from " + str(handoff.parent)
@@ -92,6 +92,8 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               "package under package/ with package.json. Put supporting assets alongside that "
               "source, and your evidence/review notes in evidence.md. Validate with this installation’s "
               "exact command: " + session_skill._make_package() + " <source> --check-only. "
+              "Run that check yourself last, after your final change: JARVIS admits the "
+              "package only when your own final check printed exactly the source delivered. "
               "The supplied skill, guide and command are sufficient even if no user skill copy "
               "has been installed. Do not deliver, invoke creation without "
               "--check-only, modify application code or send messages. The originating command "
@@ -129,6 +131,25 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         await child.close(5)
         receipt["finished_at"] = time.time()
         (folder / "author-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+def claim_of(source: Path) -> author_proof.Claim:
+    """The author claim the signature carries: the engine and fresh session
+    its receipt names (beside the source) and the source's digest now."""
+    try:
+        receipt = json.loads((source.parent / "author-receipt.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        receipt = {}
+    try:
+        digest = author_proof.source_digest(source)
+    except (OSError, ValueError) as e:
+        raise Refused([f"The authored source cannot be read: {e}"]) from None
+    claim = author_proof.Claim.of({"engine": receipt.get("engine"),
+                                   "session": receipt.get("author_session"), "source": digest})
+    if claim is None or receipt.get("status") != "authored":
+        raise Refused([f"No fresh author receipt for {source}: the package was not authored "
+                       f"by this command's fresh author."])
+    return claim
 
 
 def prepare(handoff: Path | None, engine: str | None, out: Path, **kwargs) -> Path:

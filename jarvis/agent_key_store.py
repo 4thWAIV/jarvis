@@ -132,7 +132,18 @@ _SETTINGS = """
     );
 """
 
-_MIGRATIONS = {1: _SCHEMA, 2: _HELD, 3: _SETTINGS}
+# 4: which package each fresh author session vouched for (author_proof.py):
+# one author, one package's bytes, so a new revision cannot reuse old
+# evidence.
+_AUTHORS = """
+    CREATE TABLE agent_author_proofs (
+        author       TEXT PRIMARY KEY,
+        package_sha  TEXT NOT NULL,
+        bound_at     REAL NOT NULL
+    );
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _HELD, 3: _SETTINGS, 4: _AUTHORS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -598,6 +609,19 @@ def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
                             " ORDER BY submitted_at",
                             (ONBOARDED, work_id) if work_id else (ONBOARDED,)).fetchall()
     return [_row(r) for r in rows]
+
+
+# -- fresh authors (author_proof.py) -----------------------------------------------------
+
+def bind_author(author: str, package_sha: str, now: Optional[float] = None) -> str:
+    """Bind one author session to one package's bytes, the first time it
+    vouches; the SHA-256 it is bound to (this one, or the earlier package's)."""
+    now = time.time() if now is None else now
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO agent_author_proofs (author, package_sha, bound_at) VALUES "
+                     "(?,?,?) ON CONFLICT(author) DO NOTHING", (author, package_sha, now))
+        return conn.execute("SELECT package_sha FROM agent_author_proofs WHERE author=?",
+                            (author,)).fetchone()["package_sha"]
 
 
 # -- the cut-over guard's record (legacy_access.py) --------------------------------------
