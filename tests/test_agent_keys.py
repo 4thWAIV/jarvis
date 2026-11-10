@@ -342,6 +342,19 @@ def test_rights_bound_what_a_key_opens(wired):
     assert not agent_rights.allows("agent:nobody", "POST", "/api/work")
 
 
+def test_the_packages_right_opens_the_canonical_language_route(wired):
+    """An agent writes the architecture documents its packages carry with its
+    own key (packages, a default right), never with the tool token."""
+    server, _, _, _, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    r = agent.post(client, "/api/language-documents", {"operation": "capabilities"})
+    assert r.status_code == 200, r.text
+    from jarvis import agent_rights
+    assert agent_rights.allows(f"agent:{PLAN}", "POST", "/api/language-documents")
+    assert not agent_rights.allows("agent:nobody", "POST", "/api/language-documents")
+
+
 def test_an_adopted_access_key_label_keeps_its_decisions_its_own(wired):
     """Planning asked decisions on its old access key, which admits nothing
     any more; onboarded, its own key withdraws them and reads his answers."""
