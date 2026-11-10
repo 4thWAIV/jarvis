@@ -39,7 +39,7 @@ import time
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from jarvis import reporters
@@ -85,24 +85,42 @@ class ReviewRequest(BaseModel):
 # ── who, by name ────────────────────────────────────────────────────────
 
 class WhoNames:
-    """The one name of the record each piece names, for one read: the agent
-    directory is built at most once however many pieces name agents."""
+    """The one name of the record each piece names, for as long as this
+    instance is kept: the agent directory is built at most once however many
+    pieces name agents, and each run's and workflow's name is read once.
+    A live owner's name is its own, given by `live` (by default looked up
+    now, work_store.live_agent)."""
 
-    def __init__(self) -> None:
+    def __init__(self, live: Optional[Callable[[work_store.Who], object]] = None,
+                 agents: Optional[Callable[[], dict[str, str]]] = None,
+                 records: Optional[dict[tuple, Optional[str]]] = None) -> None:
+        """`agents` gives the agent directory's names when first wanted
+        (by default read then); `records` keeps each run's and workflow's
+        name, and may be shared by a caller that keeps them longer."""
         self._agents: Optional[dict[str, str]] = None
+        self._read_agents = agents or agent_directory.names_by_session
+        self._records: dict[tuple, Optional[str]] = {} if records is None else records
+        self._live = live or work_store.live_agent
 
     def __call__(self, person: work_store.Who) -> Optional[str]:
         """The name, or None when JARVIS has no such record (or for Tim,
         whom each side words itself)."""
-        live = work_store.live_agent(person)
+        live = self._live(person)
         if live is not None:
             return live.name
         if work_store.subagent_of(person) is not None:
             return None               # a subagent JARVIS cannot find
         if person.kind == work_store.AGENT:
             if self._agents is None:
-                self._agents = agent_directory.names_by_session()
+                self._agents = self._read_agents()
             return self._agents.get(person.ref)
+        key = (person.kind, person.ref)
+        if key not in self._records:
+            self._records[key] = self._record_name(person)
+        return self._records[key]
+
+    @staticmethod
+    def _record_name(person: work_store.Who) -> Optional[str]:
         if person.kind == work_store.RUN:
             run = run_store.get_run(person.ref)
             return run["project_name"] if run else None
@@ -131,11 +149,13 @@ def asker(scope: dict) -> str:
 
 
 def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
-              package_questions: Optional[dict[str, int]] = None) -> dict:
+              package_questions: Optional[dict[str, int]] = None,
+              projects: Optional[list[dict]] = None) -> dict:
     """An item as the page shows it, with `package_questions`: how many
     questions the packages sent for it still wait on him for (package_inbox
     rows' counts, `package_inbox.waiting_by_work`, read once per listing),
-    and `projects`: the projects holding its source (`projects_for_path`)."""
+    and `projects`: the projects holding its source (`projects_for_path`,
+    unless the caller already has them)."""
     names = names or WhoNames()
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
@@ -144,7 +164,7 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
     out["package_questions"] = waiting.get(item.id, 0)
     out["approvable"] = can_approve(item, waiting)
-    out["projects"] = projects_for_path(item.source_path)
+    out["projects"] = projects_for_path(item.source_path) if projects is None else projects
     if out["state"] == work_store.VERIFYING and not out["approvable"]:
         # Ready for review only when he can approve it: what keeps Approve
         # back here is a package's question, which waits on him.
@@ -528,20 +548,22 @@ def _askers_on(item_id: str) -> list[str]:
         item_id, 0, {work_store.DECISION_NEEDED}) if e.detail.get("asked_by")))
 
 
-def mount(app: FastAPI, recorded: Recorded) -> None:
+def mount(app: FastAPI, recorded: Recorded, view) -> None:
+    """The routes, over `view` (work_view.WorkView): the list and each
+    item's JSON are the held view's, worked out when they changed."""
     def refused(e: Exception) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=409)
 
+    def shown(item: work_store.WorkItem) -> dict:
+        """The item as the view holds it now (a write has just refreshed it)."""
+        return view.item(item.id) or item_json(item)
+
     @app.get("/api/work")
     async def list_work():
-        def read():
-            names, waiting = WhoNames(), package_inbox.waiting_by_work()
-            items = work_store.listing()
-            return {"items": [item_json(i, names, waiting) for i in items],
-                    "groups": [group_json(g) for g in work_store.grouped(items)],
-                    "history": [item_json(i, names, waiting)
-                                for i in work_store.listing(history=True)]}
-        return await asyncio.to_thread(read)
+        """The held view (work_view.py): the open items, their groups,
+        History and the view's revision. Reads nothing."""
+        return Response(content=await asyncio.to_thread(view.body),
+                        media_type="application/json")
 
     @app.get("/api/work/answers")
     async def given_answers(request: Request, since: float = 0.0):
@@ -565,12 +587,18 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
 
     @app.get("/api/work/{item_id}")
     async def one_item(item_id: str):
+        """One item as the view holds it (with the view's revision then),
+        its open packages and its latest events. An item past the list's
+        reach is worked out here."""
         def read():
-            item = work_store.get(item_id)
-            if item is None:
-                return None
-            return {"item": {**item_json(item), "work_keys": work_keys_json(item_id)},
-                    "packages": packages_json(item_id),
+            held, revision = view.held(item_id)
+            if held is None:
+                item = work_store.get(item_id)
+                if item is None:
+                    return None
+                held = item_json(item)
+            return {"item": {**held, "work_keys": work_keys_json(item_id)},
+                    "packages": packages_json(item_id), "revision": revision,
                     "events": [event_json(e) for e in work_store.latest(item_id, EVENTS_SHOWN)]}
         found = await asyncio.to_thread(read)
         if found is None:
@@ -592,7 +620,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.CREATED, None)
-        return {"id": item.id, "item": item_json(item)}
+        return {"id": item.id, "item": shown(item)}
 
     @app.post("/api/work/{item_id}/events")
     async def report(item_id: str, req: EventRequest, request: Request):
@@ -628,7 +656,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, req.kind, detail)
-        return {"item": item_json(item)}
+        return {"item": shown(item)}
 
     @app.post("/api/work/{item_id}/decisions/{key}")
     async def answer(item_id: str, key: str, req: AnswerRequest):
@@ -638,7 +666,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.DECISION_MADE, None)
-        return {"item": item_json(item)}
+        return {"item": shown(item)}
 
     @app.post("/api/work/{item_id}/review")
     async def review_item(item_id: str, req: ReviewRequest):
@@ -648,4 +676,4 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, REVIEW_ACTIONS[req.action], None)
-        return {"item": item_json(item)}
+        return {"item": shown(item)}

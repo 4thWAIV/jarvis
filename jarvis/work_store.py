@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import re
 import secrets
@@ -69,6 +70,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from jarvis import run_store, wait_links
+
+log = logging.getLogger(__name__)
 
 # An item's and a piece's state. VERIFYING sits between working and done:
 # the work is in, being checked. READY: nothing holds it up any more (what
@@ -527,6 +530,64 @@ class WorkGroup:
     items: list[WorkItem]
 
 
+@dataclass(frozen=True)
+class ItemRecord:
+    """One item as its rows hold it, read in one transaction (`load`):
+    everything `compose` needs besides the clock and the live owners, so an
+    item is worked out again for either without touching the database. The
+    source's stat is taken when it is read (`with_source` takes it again)."""
+    row: sqlite3.Row
+    piece_rows: tuple
+    decisions: tuple
+    answered: tuple
+    last_answer: Optional[sqlite3.Row]     # his latest answer, for `follow_up`
+    package_review: Optional[PackageReview]
+    source: str
+
+    @property
+    def id(self) -> str:
+        return self.row["id"]
+
+    def with_source(self) -> "ItemRecord":
+        """The same record with its source's stat taken again."""
+        return dataclasses.replace(self, source=check_source(self.row["source_kind"],
+                                                             self.row["source_path"]))
+
+
+# ── after each commit ───────────────────────────────────────────────────
+#
+# Whoever holds items worked out (work_view.py) is told which changed, after
+# the commit: by `create` and `record`, the only writers, and by every wait
+# an answer ended (wait_links.tell). By the listener's module and name, so a
+# module loaded again replaces its own.
+
+_changed_listeners: dict[str, Callable[[set], None]] = {}
+
+
+def on_changed(listener: Callable[[set], None]) -> None:
+    """Call `listener` with the ids of the items each committed change moved."""
+    _changed_listeners[f"{listener.__module__}.{listener.__qualname__}"] = listener
+
+
+def _tell_changed(ids) -> None:
+    """Tell the listeners, after the commit. Never raises."""
+    ids = set(ids)
+    if not ids:
+        return
+    for listener in list(_changed_listeners.values()):
+        try:
+            listener(ids)
+        except Exception:
+            log.warning("work: a change listener failed", exc_info=True)
+
+
+def _waits_ended(moved: "wait_links.Settled") -> None:
+    _tell_changed(moved.work)
+
+
+wait_links.on_settled(_waits_ended)
+
+
 def _connect() -> sqlite3.Connection:
     conn = run_store._connect()
     path = conn.execute("PRAGMA database_list").fetchone()["file"]
@@ -736,6 +797,7 @@ def create(title: str, source_kind: str, path: str, state: str = PLANNED,
                       {"source_kind": source_kind, "source_path": kept, "state": state,
                        "area": area}, now, reporter)
         conn.commit()
+    _tell_changed({item_id})
     return get(item_id)
 
 
@@ -774,6 +836,7 @@ def record(event: WorkEvent) -> WorkItem:
         _insert_event(conn, event.item_id, event.kind, summary, kept, now, event.reporter)
         conn.commit()
     wait_links.tell(moved)
+    _tell_changed({event.item_id})
     return get(event.item_id)
 
 
@@ -1267,30 +1330,29 @@ def _unlinked(row, now: float) -> bool:
             and now - since > wait_links.UNLINKED_AFTER_SEC)
 
 
-def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
-    now = time.time() if now is None else now
-    rows = conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
-                        (item_id,)).fetchall()
+def _pieces(rows, now: float, live: Callable[[Who], Optional[LiveAgent]]) -> list[Piece]:
+    """The pieces from their rows, as they are at `now` with each owner's
+    live state as `live` gives it."""
     states = {r["key"]: r["state"] for r in rows}
     pieces = []
     for r in rows:
         after = json.loads(r["after_keys"])
         person = Who(r["who_kind"], r["who_ref"])
-        live = live_agent(person)
+        agent = live(person)
         # Working is shown only on live evidence: a subagent on the piece
         # writing now. Any other working report reads activity_unknown.
-        evidenced = r["state"] == WORKING and live is not None and live.state == LIVE_WORKING
+        evidenced = r["state"] == WORKING and agent is not None and agent.state == LIVE_WORKING
         shown = WORKING if evidenced else public_state(r["state"])
         reason = ""
         if shown == ACTIVITY_UNKNOWN:
-            reason = _LIVE_REASON.get(live.state, ACTIVITY_REASON) if live else ACTIVITY_REASON
+            reason = _LIVE_REASON.get(agent.state, ACTIVITY_REASON) if agent else ACTIVITY_REASON
         pieces.append(Piece(
             r["key"], r["title"], person, shown,
             note=r["note"], note_at=r["note_at"], worker=r["worker"], reporter=r["reporter"],
             after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
             evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
-            quiet_at=(live.written + live.active_within if evidenced
+            quiet_at=(agent.written + agent.active_within if evidenced
                       else quiet_at(shown, r["note_at"])),
             until=holds_of(r["until"]),
             then=r["then_state"], waiting_since=r["waiting_since"],
@@ -1298,7 +1360,7 @@ def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
             activity_reason=reason,
             stalled=(r["state"] == WORKING and not evidenced and r["note_at"] is not None
                      and now - r["note_at"] > STALLED_PIECE_AFTER_SEC),
-            live=live))
+            live=agent))
     return _in_order(pieces)
 
 
@@ -1326,27 +1388,47 @@ def project_of(item: WorkItem) -> str:
     return os.path.basename(_source_folder(item.source_kind, item.source_path).rstrip("/"))
 
 
-def _item(conn, row, now: float) -> WorkItem:
+def load(conn, row) -> ItemRecord:
+    """An item's rows, read in the caller's connection, and its source's stat."""
     item_id = row["id"]
-    pieces = _pieces(conn, item_id, now)
-    decisions = [Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
-                          r["opened_at"], r["package"])
-                 for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
-                                       "IS NULL AND withdrawn_at IS NULL AND signed_off_at IS NULL "
-                                       "ORDER BY opened_at",
-                                       (item_id,))]
-    answered = [Answered(r["key"], r["question"], *_closed_how(r), r["package"])
-                for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND (answer "
-                                      "IS NOT NULL OR withdrawn_at IS NOT NULL OR signed_off_at IS "
-                                      "NOT NULL) ORDER BY COALESCE(answered_at, withdrawn_at, "
-                                      "signed_off_at) DESC LIMIT ?", (item_id, ANSWERED_SHOWN))]
+    pieces = tuple(conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
+                                (item_id,)).fetchall())
+    decisions = tuple(
+        Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
+                 r["opened_at"], r["package"])
+        for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
+                              "IS NULL AND withdrawn_at IS NULL AND signed_off_at IS NULL "
+                              "ORDER BY opened_at", (item_id,)))
+    answered = tuple(
+        Answered(r["key"], r["question"], *_closed_how(r), r["package"])
+        for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND (answer "
+                              "IS NOT NULL OR withdrawn_at IS NOT NULL OR signed_off_at IS "
+                              "NOT NULL) ORDER BY COALESCE(answered_at, withdrawn_at, "
+                              "signed_off_at) DESC LIMIT ?", (item_id, ANSWERED_SHOWN)))
+    last = conn.execute("SELECT key, question, asked_by, answered_at FROM work_decisions WHERE "
+                        "item_id=? AND answer IS NOT NULL ORDER BY answered_at DESC LIMIT 1",
+                        (item_id,)).fetchone()
+    return ItemRecord(row, pieces, decisions, answered, last, _package_review(conn, item_id),
+                      check_source(row["source_kind"], row["source_path"]))
+
+
+def compose(rec: ItemRecord, now: float,
+            live: Optional[Callable[[Who], Optional[LiveAgent]]] = None) -> WorkItem:
+    """The item as it is at `now`, from its record and each piece owner's
+    live state (`live`; by default looked up now, `live_agent`). Reads
+    nothing: everything it works out is from `rec`, the clock and `live`."""
+    row = rec.row
+    item_id = row["id"]
+    pieces = _pieces(rec.piece_rows, now, live or live_agent)
+    decisions = list(rec.decisions)
     reported = row["state"]
     state = _computed(row, pieces, decisions, now)
     area = row["area"]
-    follow_up = _follow_up(conn, row, pieces, decisions, now)
+    follow_up = _follow_up(rec.last_answer, row, pieces, decisions, now)
+    item_live = _item_live(pieces)
     return WorkItem(
         id=item_id, title=row["title"], source_kind=row["source_kind"],
-        source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
+        source_path=row["source_path"], source=rec.source,
         state=state, reported_state=reported,
         quiet=_quiet(state, row, pieces, now),
         latest_update=row["latest_update"],
@@ -1358,22 +1440,49 @@ def _item(conn, row, now: float) -> WorkItem:
         blocked_pieces=sum(p.state == BLOCKED for p in pieces),
         waiting_pieces=sum(p.state == WAITING for p in pieces),
         closed_at=row["closed_at"], history=_in_history(row, now),
-        pieces=pieces, decisions=decisions, answered=answered,
+        pieces=pieces, decisions=decisions, answered=list(rec.answered),
         blockers=_blockers(row, pieces, decisions, follow_up, now),
         quiet_at=(None if row["closed_at"] is not None
                   else max((p.quiet_at for p in pieces if p.state == WORKING and p.quiet_at),
                            default=None) if state == WORKING
                   else quiet_at(state, row["updated_at"])),
-        follow_up=follow_up, package_review=_shown_review(row, _package_review(conn, item_id)),
+        follow_up=follow_up, package_review=_shown_review(row, rec.package_review),
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
         approvable=approvable(row, state, pieces, decisions),
         review_note_at=row["review_note_at"],
-        activity_reason=_item_reason(state, _item_live(pieces)),
-        live=_item_live(pieces),
+        activity_reason=_item_reason(state, item_live),
+        live=item_live,
         unmoved=(not any(_moving(p, now) for p in pieces)
                  and now - (row["reported_at"] or row["created_at"]) > QUIET_AFTER_SEC))
+
+
+def next_change(rec: ItemRecord, now: float) -> Optional[float]:
+    """The soonest time after `now` at which the clock alone may change what
+    `compose` works out for this record (going quiet, stalled, unlinked,
+    overdue, into History), or None when nothing waits on the clock. Every
+    threshold the read-time rules above measure is listed; one that turns
+    out to change nothing only costs composing the item again."""
+    row = rec.row
+    if row["closed_at"] is not None:
+        return None
+    times = [row["updated_at"] + QUIET_AFTER_SEC, row["updated_at"] + DONE_LINGER_SEC,
+             (row["reported_at"] or row["created_at"]) + QUIET_AFTER_SEC]
+    if row["waiting_since"] is not None:
+        times.append(row["waiting_since"] + wait_links.UNLINKED_AFTER_SEC)
+    if rec.last_answer is not None:
+        times.append(rec.last_answer["answered_at"] + FOLLOW_UP_AFTER_SEC)
+    for r in rec.piece_rows:
+        if r["note_at"] is not None:
+            times += [r["note_at"] + QUIET_AFTER_SEC, r["note_at"] + STALLED_PIECE_AFTER_SEC]
+        if r["waiting_since"] is not None:
+            times.append(r["waiting_since"] + wait_links.UNLINKED_AFTER_SEC)
+    return min((t for t in times if t > now), default=None)
+
+
+def _item(conn, row, now: float) -> WorkItem:
+    return compose(load(conn, row), now)
 
 
 def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
@@ -1467,16 +1576,13 @@ def asker_label(asked_by: str) -> str:
     return ""
 
 
-def _follow_up(conn, row, pieces: list[Piece], decisions: list[Decision],
+def _follow_up(last, row, pieces: list[Piece], decisions: list[Decision],
                now: float) -> Optional[FollowUp]:
-    """His latest answer, when nothing has been reported since and no piece
-    is working: the item waits for the decision's asker to start."""
+    """His latest answer (`last`), when nothing has been reported since and
+    no piece is working: the item waits for the decision's asker to start."""
     if (decisions or row["closed_at"] is not None or row["state"] == DONE
             or any(p.state in (WORKING, ACTIVITY_UNKNOWN, VERIFYING) for p in pieces)):
         return None
-    last = conn.execute("SELECT key, question, asked_by, answered_at FROM work_decisions WHERE "
-                        "item_id=? AND answer IS NOT NULL ORDER BY answered_at DESC LIMIT 1",
-                        (row["id"],)).fetchone()
     if last is None or (row["reported_at"] or 0) >= last["answered_at"]:
         return None
     return FollowUp(last["key"], last["question"], asker_label(last["asked_by"]),
@@ -1545,6 +1651,19 @@ def listing(limit: int = LIST_MAX, history: bool = False) -> list[WorkItem]:
     wait_links.sweep()
     with closing(_connect()) as conn:
         return [_item(conn, r, now) for r in conn.execute(sql, args).fetchall()]
+
+
+def records(item_ids=None) -> dict[str, ItemRecord]:
+    """Every item's record (or those of `item_ids`), read in one
+    connection: what work_view.py holds. An id with no item is left out."""
+    with closing(_connect()) as conn:
+        if item_ids is None:
+            rows = conn.execute("SELECT * FROM work_items").fetchall()
+        else:
+            ids = list(item_ids)
+            rows = conn.execute(f"SELECT * FROM work_items WHERE id IN ({','.join('?' * len(ids))})",
+                                ids).fetchall() if ids else []
+        return {r["id"]: load(conn, r) for r in rows}
 
 
 def grouped(items: list[WorkItem]) -> list[WorkGroup]:

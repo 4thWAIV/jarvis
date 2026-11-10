@@ -25,7 +25,7 @@ import { WorkOwnerActivity } from "./WorkerStatus";
  * Work tracker grows.
  */
 
-import { useEffect, useSyncExternalStore } from "react";
+import { memo, useEffect, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
 import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
@@ -99,7 +99,9 @@ function Group({ group, items, open }: { group: WorkGroup; items: WorkItem[]; op
   );
 }
 
-function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
+/** One row. Drawn again only when its own item or selection changes: a
+ *  frame replaces one item by id and keeps every other the same object. */
+const WorkRow = memo(function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "right", view: "right.workflows", kind: "workItem", key: item.id },
                            label: item.title, socket: RIGHT_SOCKET });
@@ -153,7 +155,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
       </button>
     </li>
   );
-}
+});
 
 /** The mark an item or a piece carries while it is blocked (red) or waiting
  *  on him (amber): a dot before its title, worded for a screen reader and on

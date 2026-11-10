@@ -489,6 +489,7 @@ def test_answer_work_decision_is_the_work_detail_s_answer(wired):
     from jarvis import work_store as ws
     folder = wired.tmp / "speech"
     folder.mkdir()
+    wired.server.work_held.load()     # what the server builds at startup
     item = ws.create("Speech migration", "folder", str(folder))
     ws.record(ws.WorkEvent(item.id, "decision_needed", HOSTILE, {"key": "engine"}))
     read = _call(wired, "work_status")
@@ -498,7 +499,8 @@ def test_answer_work_decision_is_the_work_detail_s_answer(wired):
     assert got["ok"] and got["text"].startswith("Recorded his answer")
     made = ws.events(item.id, kinds={"decision_made"})[-1].detail
     assert made == {"key": "engine", "answer": "kroko", "where": "voice"}
-    assert {"type": "work"} in wired.hints
+    assert any(h["type"] == "work_item" and h["item"]["id"] == item.id and not h["item"]["decisions"]
+               for h in wired.hints)
 
 
 def test_dismiss_workflow_is_the_page_s_dismiss(wired):

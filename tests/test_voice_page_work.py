@@ -4,8 +4,10 @@ The right panel's Work tab (the tab that was Workflows) lists each work
 item with its title, its state and one useful update, an open decision's
 question first. Clicking a row opens the item in the centre area while the
 list stays in view; its pieces say exactly who is on each; a decision is
-answered by posting the option clicked; a "work" hint makes the list read
-the record again; Close goes back to Conversation. The Workflows view is
+answered by posting the option clicked; a changed item arrives as one
+frame, which the page applies in place with no read (only that row is drawn
+again), reading the list in full only on a reconnect or when a frame's
+revision shows one was missed; Close goes back to Conversation. The Workflows view is
 still there, under the Work list, and still opens a workflow.
 
 Items are listed under their area, or their source folder's name; an item
@@ -22,6 +24,7 @@ Headless Chromium on the built page, with /api/work*, /api/workflows* and
 both sockets replaced by Playwright.
 """
 
+import asyncio
 import json
 import os
 import tempfile
@@ -109,6 +112,14 @@ def _list(deciding, quiet):
             "history": [_past()]}
 
 
+def _frame(item, revision, kind="work_item"):
+    """The server's frame for one changed item (work_view.py)."""
+    listed = _list(True, False)
+    return {"type": kind, "revision": revision, "item": item, "list": "items",
+            "order": {"items": ["work-1", "work-2"], "history": ["work-3"]},
+            "groups": listed["groups"]}
+
+
 class _Work:
     """The Work and package routes, faked: what the page asked for and posted."""
 
@@ -129,7 +140,8 @@ class _Work:
                 await route.fulfill(json={"item": _item(self.deciding)})
         elif path == "api/work":
             self.lists += 1
-            await route.fulfill(json=_list(self.deciding, self.quiet))
+            await route.fulfill(json={**_list(self.deciding, self.quiet),
+                                      "revision": getattr(self, "revision", 0)})
         else:
             item = _past() if path.endswith("work-3") else _item(self.deciding)
             await route.fulfill(json={"item": item, "events": [
@@ -254,24 +266,48 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         await async_api.expect(page.locator("#work-detail .work-evidence-copy")).to_have_count(1)
         await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-pieces.png"))
 
-        # The record changed: the hint makes the list read it again; no decision, no banner.
+        # The record changed: its frame changes its row in place, with no read;
+        # the other row is not drawn again; no decision, no banner.
         work.deciding = False
         before = work.lists
-        sessions.ws.send(json.dumps({"type": "work"}))
+        row_before = await page.query_selector(".work-row[data-work-id=work-1]")
+        await page.evaluate("""() => {
+          window.__otherRow = 0;
+          new MutationObserver((m) => { window.__otherRow += m.length; }).observe(
+            document.querySelector('.work-row[data-work-id=work-2]'),
+            {subtree: true, childList: true, attributes: true, characterData: true});
+        }""")
+        sessions.ws.send(json.dumps(_frame(_item(False, False), 1)))
         await page.wait_for_function(
             "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'activity_unknown'",
             timeout=10000)
-        assert work.lists > before
+        assert work.lists == before, "a frame is applied without reading the list"
+        assert await row_before.evaluate("el => el.isConnected"), "the row changed in place"
+        assert await page.evaluate("window.__otherRow") == 0, "only the changed row is drawn again"
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "Engine wired.")
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-decision-count")).to_have_count(0)
         await async_api.expect(page.locator("#work-detail .work-decision-banner")).to_have_count(0)
         # Gone quiet: the pill still says its state, and the update says it is quiet.
         work.quiet = True
-        sessions.ws.send(json.dumps({"type": "work"}))
+        sessions.ws.send(json.dumps(_frame(_item(False, True), 2)))
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "No recent update", timeout=10000)
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Activity unconfirmed")
+        assert work.lists == before
+        # A frame from before the page's revision changes nothing.
+        sessions.ws.send(json.dumps(_frame(_item(True, False), 2)))
+        await asyncio.sleep(0.3)
+        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
+            "No recent update")
+        # A frame whose revision shows one was missed: the list is read in full.
+        work.revision = 9                 # the server's view, as a read now finds it
+        sessions.ws.send(json.dumps(_frame(_item(False, True), 9)))
+        await until_async(lambda: work.lists > before)
+        # A reconnect (the server's snapshot on every connect): read in full again.
+        read = work.lists
+        sessions.ws.send(json.dumps({"type": "snapshot"}))
+        await until_async(lambda: work.lists > read)
 
         # History: opened, its item still opens in full.
         await page.click(".work-panel .work-history .workflows-done-toggle")

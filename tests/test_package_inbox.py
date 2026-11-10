@@ -707,8 +707,10 @@ def test_a_package_for_a_work_item_shows_its_questions_there(wired, shown, marks
     folder = tmp_path / "work"
     folder.mkdir()
     item = work_store.create("Tea service", "folder", str(folder))
+    wired.client.get("/api/work")     # the held view, as a page loads it
     inbox_id = send(wired, deck_zip(tmp_path), work=item.id).json()["inbox"]["id"]
-    assert {"type": "work"} in wired.hints
+    sent = [h for h in wired.hints if h["type"] == "work_item" and h["item"]["id"] == item.id]
+    assert sent and sent[-1]["item"]["package_questions"] == 2
     got = wired.client.get(f"/api/work/{item.id}").json()
     assert got["item"]["package_questions"] == 2
     [package] = got["packages"]

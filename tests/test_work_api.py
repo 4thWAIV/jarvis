@@ -64,8 +64,9 @@ def test_a_work_key_tracks_and_reports_and_opens_nothing_else(wired):
     server, hints, _, folder = wired
     client = TestClient(server.app)
     key = _key()
+    server.work_held.load()           # what the server builds at startup
     wid = _start(client, key, folder)
-    assert {"type": "work"} in hints
+    assert [h["item"]["id"] for h in hints if h["type"] == "work_item"] == [wid]
     r = client.post(f"/api/work/{wid}/events", auth=key,
                     json={"kind": "update", "summary": "Engine wired.", "detail": {"state": "working"}})
     assert r.status_code == 200 and r.json()["item"]["headline"] == "Engine wired."
@@ -163,7 +164,7 @@ def test_news_is_resolved_once_it_is_no_longer_so_and_only_then(wired):
     assert news().state == "pending"
 
 
-def test_a_list_reads_the_agent_directory_once(wired, monkeypatch):
+def test_a_list_reads_the_agent_directory_once_when_built_and_never_on_a_read(wired, monkeypatch):
     server, _, _, folder = wired
     client = TestClient(server.app)
     key = _key()
@@ -177,9 +178,11 @@ def test_a_list_reads_the_agent_directory_once(wired, monkeypatch):
             work_store.record(work_store.WorkEvent(
                 wid, "piece", "On it.", {"key": f"p{n}", "who": {"kind": "agent", "ref": session}}))
     reads.clear()
+    server.work_held.load()           # what the server builds at startup
+    assert len(reads) == 1
     items = client.get("/api/work").json()["items"]
     assert {p["who"]["name"] for i in items for p in i["pieces"]} == {"Builder", "Tester"}
-    assert len(reads) == 1
+    assert len(reads) == 1            # the held view answers: nothing is read again
 
 
 def test_the_page_reads_the_list_and_one_item_with_its_events(wired):
@@ -196,6 +199,7 @@ def test_the_page_reads_the_list_and_one_item_with_its_events(wired):
 def test_the_brain_reads_the_record_walled_and_answers_through_the_page_s_call(wired):
     server, hints, _, folder = wired
     from jarvis import work_store as ws
+    server.work_held.load()           # what the server builds at startup
     item = ws.create("Speech migration", "folder", folder)
     ws.record(ws.WorkEvent(item.id, "decision_needed", HOSTILE, {"key": "engine",
                                                                   "recommendation": "kroko"}))
@@ -210,7 +214,8 @@ def test_the_brain_reads_the_record_walled_and_answers_through_the_page_s_call(w
     said = asyncio.run(server.tool_answer_work_decision({"item": item.id, "answer": "Kroko"}))
     assert said.startswith("Recorded his answer")
     assert ws.events(item.id, kinds={"decision_made"})[-1].detail["where"] == "voice"
-    assert {"type": "work"} in hints
+    sent = [h for h in hints if h["type"] == "work_item"]
+    assert sent[-1]["item"]["id"] == item.id and sent[-1]["item"]["decisions"] == []
     assert "No work item" in server.tool_work_status({"item": "rebrand"})
 
 

@@ -262,13 +262,17 @@ def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monke
     assert workflow_store.snapshot(wid).open_waits == []
 
 
-def test_reading_the_record_sweeps_it(wired, item, monkeypatch):
+def test_the_work_view_s_tick_sweeps_the_record(wired, item, monkeypatch):
+    """The list is read from the held view, which reads nothing; the sweep
+    a read of the list used to make is the view's tick's, every
+    work_view.SWEEP_EVERY_SEC."""
     _waiting_piece(wired, item)
     with monkeypatch.context() as m:
         m.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
         m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
         wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
                           json={"answer": "yes"})
+    wired.server.work_held.tick()
     listed = wired.client.get("/api/work").json()["items"]
     [land] = [p for p in listed[0]["pieces"] if p["key"] == "land"]
     assert land["state"] == "ready"
@@ -312,6 +316,8 @@ def test_a_waiting_piece_with_no_link_is_flagged_after_a_day(wired, item):
     _age("UPDATE work_pieces SET waiting_since=?", time.time() - DAY - 60)
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "piece_waiting"]
     assert b.unlinked
+    # Rows written past the writers are only ever from before: read at start.
+    wired.server.work_held.load()
     blocking = wired.client.get(f"/api/work/{item.id}").json()["item"]["blockers"]
     assert any(x["kind"] == "piece_waiting" and x["unlinked"] for x in blocking)
     assert "waiting, no link to an answer" in _call(wired, "work_status", item=item.id)["text"]

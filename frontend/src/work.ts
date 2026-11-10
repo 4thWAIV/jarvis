@@ -1,8 +1,14 @@
 /**
  * The Work tracker, from its one durable record (server: work_store.py,
- * /api/work). The page keeps no account of its own: /ws/sessions says
- * "work" when an item changes (sessionsSocket.ts moves `workChanged`), and
- * every view reads the record again.
+ * held worked out by work_view.py). The page reads the whole list once, on
+ * load and on every (re)connect of /ws/sessions (`workResync`), and then
+ * takes each change as it comes: the server sends one frame per changed
+ * item (`work_item`, `work_item_history`, `work_item_removed`) with the
+ * view's revision, and `applyWorkFrame` replaces that one item by id and
+ * places it as the frame's order says, every other item kept as it was (so
+ * only its row draws again). A frame whose revision is not the next one
+ * means one was missed: the list is read again in full. The open item's
+ * detail takes the same frames for its own item (`workItemFrame`).
  *
  * One item is open in the centre at a time, in the `work` detail slot,
  * through `work.open` and `work.close` (uiNavigation.ts): a click and the
@@ -15,7 +21,6 @@
 
 import { getJson, postAnswer } from "./fetchJson";
 import type { InboxDetail } from "./packageInbox";
-import { workerChanges } from "./workers";
 import { liveRead } from "./liveRead";
 import { formatDateTime, t, wordsOf } from "./locale";
 import { createStore } from "./store";
@@ -215,7 +220,33 @@ export interface WorkList {
   groups: WorkGroup[];
   /** Closed, or done a while; the most recently closed or finished first. */
   history: WorkItem[];
+  /** The server's view revision this list is as of; each frame moves it by one. */
+  revision: number;
 }
+
+/** The order of both lists after a change, by id. */
+export interface WorkOrder {
+  items: string[];
+  history: string[];
+}
+
+/** One change of the held view (server: work_view.py): an item changed in
+ *  place or newly listed (`work_item`), moved to History
+ *  (`work_item_history`), or gone from the list (`work_item_removed`). */
+export interface WorkFrame {
+  type: "work_item" | "work_item_history" | "work_item_removed";
+  revision: number;
+  /** The item's whole JSON, exactly as /api/work lists it (not on a removal). */
+  item?: WorkItem;
+  /** The removed item's id. */
+  id?: string;
+  /** The list it is in now; null past the listing's reach. */
+  list?: "items" | "history" | null;
+  order: WorkOrder;
+  groups: WorkGroup[];
+}
+
+export const WORK_FRAMES: readonly WorkFrame["type"][] = ["work_item", "work_item_history", "work_item_removed"];
 
 /** Which mark an item or a piece carries, if any: blocked before waiting on him. */
 export type WorkMark = "blocked" | "waiting" | null;
@@ -243,8 +274,17 @@ export interface WorkEvent {
   reporter_name?: string;
 }
 
-/** Moves on every "work" hint, and on every (re)connect of /ws/sessions. */
+/** Moves when the open item's events, packages and keys are to be read
+ *  again (an answer given here, a package of it answered, a "work" hint
+ *  that its keys changed). Never a read of the list. */
 export const workChanged = createStore(0);
+
+/** Moves when the whole list is to be read again: every (re)connect of
+ *  /ws/sessions, and a frame whose revision shows one was missed. */
+export const workResync = createStore(0);
+
+/** The latest frame that carried an item, for the open item's detail. */
+export const workItemFrame = createStore<{ item: WorkItem; revision: number } | null>(null);
 
 export const STATE_WORDS = wordsOf<WorkState>(
   ["planned", "ready", "working", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done", "error"],
@@ -266,17 +306,63 @@ export function safeWorkItem(item: WorkItem): WorkItem {
   return {...item, state: safeWorkState(item.state, item.pieces.some(liveNow)),
     pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state, liveNow(p))}))};
 }
+
+// The frames lately come, in the order they came: a full read applies those
+// newer than it, so nothing that arrived while it was on its way is lost.
+const RECENT_FRAMES = 200;
+const recent: WorkFrame[] = [];
+
+/** The list with one frame applied: its item replaced (or dropped) by id,
+ *  both lists and the groups as the frame orders them, every other item the
+ *  same object as before. */
+export function appliedFrame(list: WorkList, frame: WorkFrame): WorkList {
+  const known = new Map([...list.items, ...list.history].map((i) => [i.id, i]));
+  if (frame.item) known.set(frame.item.id, safeWorkItem(frame.item));
+  if (frame.type === "work_item_removed" && frame.id) known.delete(frame.id);
+  const pick = (ids: string[]) => ids.flatMap((id) => known.get(id) ?? []);
+  return { items: pick(frame.order.items), history: pick(frame.order.history),
+           groups: frame.groups, revision: frame.revision };
+}
+
+const resync = () => workResync.set(workResync.get() + 1);
+
+/** A full read with the frames that came since it was taken applied; a
+ *  gap among them asks for another read. */
+function caughtUp(list: WorkList): WorkList {
+  let out = list;
+  for (const frame of recent) {
+    if (frame.revision <= out.revision) continue;
+    if (frame.revision !== out.revision + 1) { resync(); break; }
+    out = appliedFrame(out, frame);
+  }
+  return out;
+}
+
 export const workList = liveRead(async () => {
   const result = await getJson<WorkList>("/api/work");
-  return {...result, items: result.items.map(safeWorkItem), history: (result.history ?? []).map(safeWorkItem)};
-}, [workChanged, workerChanges]);
+  return caughtUp({...result, revision: result.revision ?? 0, items: result.items.map(safeWorkItem),
+                   history: (result.history ?? []).map(safeWorkItem)});
+}, [workResync]);
+
+/** One frame from /ws/sessions: applied to the list in place when it is the
+ *  next revision, kept for the read under way when there is no list yet,
+ *  and a full read when one was missed. Never fetches otherwise. */
+export function applyWorkFrame(frame: WorkFrame): void {
+  recent.push(frame);
+  if (recent.length > RECENT_FRAMES) recent.shift();
+  if (frame.item) workItemFrame.set({ item: safeWorkItem(frame.item), revision: frame.revision });
+  const now = workList.get();
+  if (!now.value || frame.revision <= now.value.revision) return;
+  if (frame.revision !== now.value.revision + 1) { resync(); return; }
+  workList.set({ value: appliedFrame(now.value, frame), error: now.error });
+}
 
 /** One item in full: with its latest events and the open packages sent for
  *  it (`make_package --work`), each with its questions. */
 export const getWorkItem = async (id: string) => {
-  const result = await getJson<{ item: WorkItem; events: WorkEvent[]; packages: InboxDetail[] }>(
-    `/api/work/${encodeURIComponent(id)}`);
-  return {...result, item: safeWorkItem(result.item)};
+  const result = await getJson<{ item: WorkItem; events: WorkEvent[]; packages: InboxDetail[];
+                                 revision?: number }>(`/api/work/${encodeURIComponent(id)}`);
+  return {...result, revision: result.revision ?? 0, item: safeWorkItem(result.item)};
 };
 
 /** One blocker in a line: what holds it, and the piece's or item's note. */

@@ -6,7 +6,11 @@
  *   - "agents" and "snapshot" (every (re)connect): the agents list reads
  *     /api/agents again (`agentsChanged`);
  *   - "workflows": the workflow views read again (workflows.ts);
- *   - "work": the Work tab and the open work item read again (work.ts);
+ *   - "work_item", "work_item_history", "work_item_removed": one changed
+ *     Work item, applied by id to the Work list and the open item
+ *     (work.ts `applyWorkFrame`); every (re)connect reads the list again
+ *     (`workResync`); "work" (an item's keys changed) re-reads only the
+ *     open item's detail (`workChanged`);
  *   - "voice": the voice record's views read again (voiceHealth.ts);
  *   - "subsystems": a subsystem's state moved; the Diagnostics tab's list
  *     reads again (subsystems.ts), which also hears whether this socket is
@@ -30,8 +34,7 @@
  *   - "attention" (and every (re)connect): the attention record changed;
  *     updates waiting read again (attention.ts).
  *   - "projects" (and every (re)connect): a project record changed; the
- *     Projects list and the open project read again (projects.ts), and the
- *     Work tab, whose rows name their projects.
+ *     Projects list and the open project read again (projects.ts).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
@@ -49,7 +52,7 @@ import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
 import { presentHumanTransfer } from "./transfers";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
-import { workChanged } from "./work";
+import { applyWorkFrame, WORK_FRAMES, workChanged, workResync, type WorkFrame } from "./work";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
 import { VOICE_INPUT_SETTINGS_FRAME } from "./voiceControl";
@@ -72,13 +75,14 @@ export function startSessionsSocket(): void {
     if (msg.type === "subsystems" || snapshot) bump(subsystemsChanged);
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
-    if (msg.type === "work" || snapshot) bump(workChanged);
+    if (snapshot) bump(workResync);
+    // An item's keys changed: only the open item's detail reads again.
+    if (msg.type === "work") bump(workChanged);
+    if (WORK_FRAMES.includes(msg.type as WorkFrame["type"])) applyWorkFrame(msg as unknown as WorkFrame);
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === "knowledge" || snapshot) bump(knowledgeChanged);
     if (msg.type === "projects" || snapshot) bump(projectsChanged);
-    // A work item's project chip is worked out from the project records.
-    if (msg.type === "projects") bump(workChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "packages" || snapshot) bump(packagesChanged);
     if (msg.type === "attention" || snapshot) bump(attentionChanged);

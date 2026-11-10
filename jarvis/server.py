@@ -105,7 +105,7 @@ from jarvis import session_needs
 from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
-from jarvis import work_api, work_store
+from jarvis import work_api, work_store, work_view
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -744,6 +744,22 @@ DIGEST_PLAY_WAIT_SEC = 120.0
 def _hint_attention() -> None:
     """Tell every open page the attention record changed. From any thread."""
     _hint_from_any_thread({"type": "attention"})
+
+
+def _off_loop(work, *args) -> None:
+    """Run `work(*args)` off the event loop: in a worker thread when called
+    on the loop, else here, in the caller's own thread. Never raises."""
+    def run() -> None:
+        try:
+            work(*args)
+        except Exception:
+            log.warning("%s failed", getattr(work, "__qualname__", work), exc_info=True)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        run()
+        return
+    _spawn(asyncio.to_thread(run))
 
 
 def _hint_from_any_thread(message: dict) -> None:
@@ -2505,6 +2521,8 @@ def _hint_agents_changed() -> None:
     other hints: the page refetches /api/agents. The dashboard's sessions
     client ignores a message type it does not know."""
     _send_to_session_clients({"type": "agents"})
+    # The names on the Work pieces come from the agents list.
+    _off_loop(work_held.names_changed)
 
 
 # --- The subscription's limits, every minute -------------------------------
@@ -2567,6 +2585,7 @@ async def _poll_usage() -> None:
 # brings its name and activation back.
 AGENTS_POLL_SEC = 1.0
 _agents_task: Optional[asyncio.Task] = None
+_work_task: Optional[asyncio.Task] = None
 
 
 def _running_agents() -> dict[str, tuple[str, str]]:
@@ -2756,6 +2775,8 @@ projects: Optional["project_service.ProjectService"] = None
 
 def _hint_projects() -> None:
     _send_to_session_clients({"type": "projects"})
+    # A work item's projects are worked out from the project records.
+    _off_loop(work_held.projects_changed)
 
 
 def _offer_project_candidates(found: list) -> None:
@@ -2889,11 +2910,12 @@ async def start_session_watcher() -> None:
     await session_watcher.start()
     log.info("session watcher started")
     global _needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task
-    global _subsystems_task
+    global _subsystems_task, _work_task
     _needs_task = _spawn(_watch_needs_board())
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
+    _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
@@ -2902,13 +2924,13 @@ async def start_session_watcher() -> None:
 
 async def stop_session_watcher() -> None:
     global session_watcher, _needs_task, _agents_task, _usage_task
-    global _session_messages_task, _workflow_task, _subsystems_task
+    global _session_messages_task, _workflow_task, _subsystems_task, _work_task
     for task in (_needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task,
-                 _subsystems_task):
+                 _subsystems_task, _work_task):
         if task is not None:
             task.cancel()
     _needs_task = _agents_task = _usage_task = _session_messages_task = _workflow_task = None
-    _subsystems_task = None
+    _subsystems_task = _work_task = None
     if session_watcher is not None:
         try:
             await session_watcher.stop()
@@ -9034,11 +9056,11 @@ DECIDE_TIMEOUT_SEC = 30
 
 
 def _hint_inbox(entries) -> None:
-    """The pages read the inbox again (the `packages` hint); a work item
-    whose packages changed is read again too (`work`). From any thread."""
+    """The pages read the inbox again (the `packages` hint); the held Work
+    view works out again each item whose packages changed, and sends it
+    (work_view.py). From any thread."""
     _hint_from_any_thread({"type": "packages"})
-    if any(e.work_id for e in entries):
-        _hint_from_any_thread({"type": "work"})
+    _off_loop(work_held.packages_changed, {e.work_id for e in entries if e.work_id})
 
 
 def _inbox_attend(entry) -> None:
@@ -9653,9 +9675,7 @@ def _review_from_package(entry, package, signed_off: bool = False):
     except Exception:
         log.warning("package inbox: %s's review was not read", entry.id, exc_info=True)
         return None
-    if item is not None:
-        _hint_from_any_thread({"type": "work"})
-    return item
+    return item          # the record told the held Work view (work_store.on_changed)
 
 
 def _apply_package_reviews() -> None:
@@ -9711,8 +9731,7 @@ def _waits_settled(moved) -> None:
     any thread."""
     if moved.workflows:
         _hint_from_any_thread({"type": "workflows"})
-    if moved.work:
-        _hint_from_any_thread({"type": "work"})
+    # The Work items it moved are sent by the held Work view (work_store.on_changed).
 
 
 wait_links.on_settled(_waits_settled)
@@ -12575,11 +12594,11 @@ def _attend_unfollowed(items) -> None:
 
 
 def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
-    """After every change: the pages read the record again; a decision
-    needed, or a report that the item is blocked or done, is an attention
-    item, which is resolved once what it says is no longer so (the decision
-    answered with none left open, the item no longer blocked or done)."""
-    _send_to_session_clients({"type": "work"})
+    """After every change (the held Work view has already sent the item:
+    work_store.on_changed): a decision needed, or a report that the item is
+    blocked or done, is an attention item, which is resolved once what it
+    says is no longer so (the decision answered with none left open, the
+    item no longer blocked or done)."""
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
     if kind == work_store.CLOSED:
         # Closed for good: nothing it said is news any longer, and its
@@ -12611,7 +12630,35 @@ def _work_news_stale(item) -> bool:
     return holds is not None and not holds(item)
 
 
-work_api.mount(app, _work_recorded)
+def _publish_work_frame(frame: dict) -> None:
+    """One frame of the held Work view to every page, in the order sent:
+    always through the loop's queue once there is one, from the loop's own
+    thread too, so a frame from a worker thread is never overtaken."""
+    if _main_loop is not None and not _main_loop.is_closed():
+        _main_loop.call_soon_threadsafe(_send_to_session_clients, frame)
+    else:
+        _send_to_session_clients(frame)
+
+
+# The Work view, held (work_view.py): built at startup, each item worked out
+# again only when it changes, and sent as one frame; /api/work returns it.
+work_held = work_view.WorkView(_publish_work_frame)
+work_store.on_changed(work_held.refresh)
+WORK_TICK_SEC = 1.0
+
+
+async def _watch_work() -> None:
+    """Build the held Work view, then once a second bring its items' live
+    owners, clocks and sources up to date (work_view.WorkView.tick), off the
+    loop. Never raises out but for cancellation."""
+    await asyncio.to_thread(work_held.load)
+
+    async def look() -> None:
+        await asyncio.to_thread(work_held.tick)
+    await _every(WORK_TICK_SEC, "work view", look)
+
+
+work_api.mount(app, _work_recorded, work_held)
 
 
 def _work_who(piece, names: work_api.WhoNames) -> str:

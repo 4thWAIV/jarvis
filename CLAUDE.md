@@ -614,8 +614,17 @@ An open decision reads as waiting on Tim only while nothing else can go on
 silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
 with `work_report.py --as <session id>`, signed with their own key holding
 the `work` right, or with a work-item key (see "Agent keys") (the
-talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
-every change is a `work` hint on `/ws/sessions`, after the write; a
+talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`. The
+view is held (`work_view.py`, `server.work_held`): built at startup, each
+item worked out again only when it changes (a write, `work_store.on_changed`;
+its live owners, its clock thresholds (`work_store.next_change`) and its
+source on the one-second `tick`, never on a request; its packages, projects
+or agents' names), and each change is one `work_item`,
+`work_item_history` or `work_item_removed` frame on `/ws/sessions`, after
+the write, with the view's revision. `/api/work` returns the held view and
+reads nothing; the page (`work.ts` `applyWorkFrame`) replaces one item by
+id and reads the list in full only on a reconnect or a revision gap (a
+`work` hint now only re-reads the open item's events, packages and keys); a
 decision, blocked and done are attention items, each resolved once it is no
 longer so (no decision open, no longer blocked or done:
 `server._work_news_stale`). A decision's key is asked once: an answered key
