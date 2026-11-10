@@ -43,7 +43,7 @@ Beside the state, the item also says:
 | Try to move a held piece on | Agent | Waiting on you or Blocked | unchanged | Nothing: refused, naming what holds it. |
 | Clear a blocker | Agent (`--cleared`) | Blocked | the state given | Red goes; the new state shows. |
 | Report done | Agent | any | unchanged | Nothing: refused. Done is his alone. |
-| Ask a decision | Agent (`work_report.py decision`) | any | Waiting on you (if nothing else can go on) or unchanged with "1 decision also waits on you" | Banner "Decision needed", Decisions tab counted. |
+| Ask a decision | Agent (a decision package sent with `make_package --work`; `work_report.py decision` is gone) | any | Waiting on you (if nothing else can go on) or unchanged with "1 decision also waits on you" | Banner "Decision needed", Decisions tab counted. |
 | Answer a decision | Tim: Decisions tab, or by voice | Waiting on you | Ready (the pieces that waited on it) | Banner goes; pieces that waited read Ready; "Answered — waiting for *agent* to start". |
 | Withdraw a decision | Agent that asked it | Waiting on you | Ready | It moves to the answered list as withdrawn; pieces that waited read Ready. |
 | Approve | Tim: header, or by voice (`review_work`) | Ready for review | Done | Green "Done", "You approved it: done, *time*". |

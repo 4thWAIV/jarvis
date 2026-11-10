@@ -769,21 +769,6 @@ EXEMPT = {
         "it compares the capture's text with what was read, to decide whether "
         "it was heard unchanged, and prints neither: its note to the brain "
         "carries only the capture's number"),
-    "server._board_owner": (
-        "it returns the listed names of the agents in a board's project, "
-        "joined, and says nothing itself: its one speaking caller, "
-        "_announce_board, passes the whole result through `_said_name` "
-        "(driven below), and `_board_under_owner` puts it in board text that "
-        "only ever reaches the brain inside `_one_page`'s untrusted block"),
-    "server._take_session_messages": (
-        "it records each dropped message and deletes its file; the only text "
-        "it builds is log lines naming the file, which never reach the brain "
-        "or the speaker, and what it returns are records, whose every printer "
-        "is driven below"),
-    "server._board_under_owner": (
-        "it returns a board's own text under its owner's name, and that text "
-        "is a note a session wrote: its only caller, tool_session_needs, "
-        "hands all of it to `_one_page`, which wraps every page as untrusted"),
     "run_store.update_message": (
         "it builds SQL out of column names checked against a fixed list "
         "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
@@ -852,10 +837,6 @@ EXEMPT = {
     "workflow_store._apply": (
         "it writes the record and prints nothing but its refusals, whose only "
         "values are slugs it has already checked against `SLUG`"),
-    "workflow_store.with_decisions": (
-        "it adds workflow decisions to the needs boards, which are already "
-        "another session's words: every reader of a board shows it inside an "
-        "untrusted block (`session_needs` through `_one_page`)"),
     "work_store._apply": (
         "it writes the Work record and prints nothing but its refusals, whose only "
         "values are keys it has already checked against `SLUG` and fixed states"),
@@ -889,12 +870,6 @@ EXEMPT = {
     "server._recipient_name": (
         "it names a capture's recipient by the agent directory's one name through "
         "_said_name, which refuses anything but a plain name with spaces"),
-    "server._proven_boards": (
-        "it logs only the projects whose boards were held, file stems JARVIS reads from its "
-        "own folder; the boards' words go nowhere but the needs-board tool's untrusted wall"),
-    "server._record_board": (
-        "it records a proven needs-board rewrite as one message in its writer's thread; it "
-        "says nothing, and the record's readers show it as text or wall it for the brain"),
     "server._record_package": (
         "it records a proven package arrival as one message in its thread; it says nothing, "
         "and the record's readers show it as text or wall it for the brain"),
@@ -909,6 +884,16 @@ EXEMPT = {
     "conversation_log.work_threads": (
         "it counts each Work item's messages and returns records; it says nothing, and "
         "messages_api's readers show them as text or wall them for the brain"),
+    "messages_api._held_session": (
+        "it returns the session id a key JARVIS holds names, from its own record; the "
+        "route uses it only to hold that key's message, and nothing reaches the brain"),
+    "server._send_message": (
+        "it records a message to him (through the one writer, `_record_message`) and raises "
+        "the package inbox's refusal to the sending agent's command; nothing it builds is "
+        "said, and the brain reads the record only inside messages_to_him's wall"),
+    "server.api_start_workflow": (
+        "it answers the reporting agent's command with the workflow's id or a refusal "
+        "naming the Work item id it gave; nothing reaches the brain or the voice"),
     "messages_api.mount": (
         "its routes answer the page and the sending agent with JSON; the brain reads the "
         "same JSON only through messages_to_him, inside its wall"),
@@ -1358,8 +1343,6 @@ EXEMPT = {
         "a route answering the signing agent with its own key's fingerprint and state as JSON; no header the brain reads"),
     "server.tool_agent_keys": (
         "every line comes from _key_line (the agent's name through the voice-name wall) or fixed words with counts. Driven by tests/test_agent_keys.py"),
-    "server._board_writer": (
-        "it returns the proven writer of a needs board (a Sender record) and records a hold; the board's text reaches the brain only inside session_needs' untrusted block"),
     "server._held_who": (
         "it names who tried to send a held thing for the Work item's Error line and the error package, which the page shows as text and the brain reads only through work_status's wall"),
     "server._hold_package": (
@@ -1827,65 +1810,6 @@ DRIVERS["server.tool_list_messages"] = _drive_list_messages
 DRIVERS["server.tool_read_message_reply"] = _drive_read_message_reply
 
 
-def _drive_attend_board(server, session, monkeypatch):
-    """A board's project is a FILE NAME a session chose: what the brain
-    would be handed of its attention item."""
-    from jarvis import session_needs
-
-    view = _attended(server, monkeypatch)
-    monkeypatch.setattr(server, "_notes_for_brain", [])
-    board = session_needs.Board(project=str(session.voice_name or ""),
-                                text="- " + str(session.title or ""), mtime=1.0)
-    server._attend_board(board)
-    return view() + [server._with_notes_for_brain("")]
-
-
-DRIVERS["server._attend_board"] = _drive_attend_board
-
-
-def _stored_session_message(server, session):
-    """A message a session sent: its folder, subject and body are the
-    session's own words, and its agent name a listed name made from them."""
-    return server.run_store.create_session_message(
-        str(session.project or ""), str(session.voice_name or ""),
-        str(session.title or ""), " ".join([str(session.last_text or "")] * 40))
-
-
-def _drive_attend_session_messages(server, session, monkeypatch):
-    """One message and several: what the brain would be handed of them."""
-    view = _attended(server, monkeypatch)
-    monkeypatch.setattr(server, "_notes_for_brain", [])
-    for n in (1, 3):
-        messages = [server.run_store.get_session_message(
-            _stored_session_message(server, session)) for _ in range(n)]
-        server._attend_session_messages(messages)
-    return view() + [server._with_notes_for_brain("")]
-
-
-def _drive_session_messages(server, session, monkeypatch):
-    """Listed in full, by name, unread only, and by a name not running."""
-    _stored_session_message(server, session)
-    monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda name: (session, None, None))
-    out = [server.tool_session_messages({}),
-           server.tool_session_messages({"name": "hammer"}),
-           server.tool_session_messages({"unread_only": True})]
-    monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda name: (None, "I don't see a session by that name.", "unresolved"))
-    out.append(server.tool_session_messages({"name": str(session.voice_name or "")}))
-    return out
-
-
-def _drive_read_session_message(server, session, monkeypatch):
-    """Every page and a page out of range."""
-    mid = _stored_session_message(server, session)
-    m = server.run_store.get_session_message(mid)
-    pages = len(server._pages(f"Subject: {m.subject}\n\n{m.body}", server.REPLY_PAGE_CHARS))
-    return [server.tool_read_session_message({"message": mid}),
-            server.tool_read_session_message({"message": mid, "page": pages}),
-            server.tool_read_session_message({"message": mid, "page": pages + 1})]
-
-
 # --- Workflows ---------------------------------------------------------------
 # A workflow's name, summaries and titles are written by the session running
 # it. The driver puts the payload in every one of them.
@@ -2037,10 +1961,6 @@ for _name in ("server.tool_package_inbox", "server._inbox_line", "server._inbox_
 DRIVERS["server._watch_workflow_silence"] = _drive_workflow_silence
 DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
 
-DRIVERS["server._attend_session_messages"] = _drive_attend_session_messages
-DRIVERS["server.tool_session_messages"] = _drive_session_messages
-DRIVERS["server.tool_read_session_message"] = _drive_read_session_message
-
 
 def _drive_where_line(server, session, monkeypatch):
     """A received file's place, through the one tool that prints it,
@@ -2148,7 +2068,6 @@ DRIVERS["server.tool_rename_agent"] = _drive_rename_agent
 DRIVERS["server.tool_list_agents"] = _drive_list_agents_by_row
 DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
 DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
-
 
 
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------

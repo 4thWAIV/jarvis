@@ -632,8 +632,9 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
 
 def _check_session_skill_sync() -> Check:
     """Report -- never install -- whether the user's sessions have the
-    talk-to-jarvis skill. Without it no session knows the needs board or
-    session messages exist, so nothing it has for the user reaches JARVIS."""
+    talk-to-jarvis skill. Without it no session knows how to send the user
+    a message (`python -m jarvis.message`) or a package, so nothing it has
+    for the user reaches JARVIS."""
     from jarvis import session_skill
     found = session_skill.status()
     if not found:

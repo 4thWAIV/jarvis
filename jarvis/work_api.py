@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from jarvis import reporters
+from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
                     web_auth, work_packages, workflow_store, work_store)
 
@@ -640,19 +641,12 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         if req.kind in work_store.HIS_KINDS:
             return refused(ValueError("Only he answers a decision or reviews an item: done is "
                                       "his to give. Report it verifying, with what to check."))
+        if req.kind in (work_store.DECISION_NEEDED, work_store.DECISION_WITHDRAWN):
+            # A decision reaches him only as a package with its background,
+            # carried by a message (one channel round 3).
+            return refused(ValueError(ASK_WITH_A_PACKAGE))
         by = asker(request.scope)
-        if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:
-            return refused(ValueError("Only the agent that asked a decision withdraws it; "
-                                      "he answers it."))
-        # Who asked or withdraws is the route's to say, never the report's.
         detail = {k: v for k, v in req.detail.items() if k not in ("asked_by", "by", "by_any")}
-        if req.kind == work_store.DECISION_NEEDED:
-            detail["asked_by"] = by
-        elif req.kind == work_store.DECISION_WITHDRAWN:
-            detail["by"] = by
-            # Every name its earlier asks may be under (an onboarded agent's
-            # adopted access-key label): those decisions stay its own.
-            detail["by_any"] = list(reporters.aliases(request.scope))
 
         def write():
             if req.kind == work_store.PIECE:

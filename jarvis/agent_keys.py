@@ -37,7 +37,6 @@ from typing import Callable, Optional
 # What each signature is for. A signature checks only under its own.
 REQUEST = "jarvis-request@v1"
 PACKAGE = "jarvis-package@v1"
-MESSAGE = "jarvis-message@v1"
 SUBMIT = "jarvis-key-submit@v1"
 
 # The scheme of a signed request's Authorization header.

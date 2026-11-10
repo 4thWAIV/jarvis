@@ -200,9 +200,9 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
             CREATE INDEX IF NOT EXISTS idx_messages_staged ON messages(staged_at DESC);
 
-            -- One row per message a session sent Tim (session_messages.py):
-            -- written when its file is picked up, before the file is deleted
-            -- and before anything is said about it.
+            -- One row per message a session sent Tim as a file, before every
+            -- message came by the signed route (messages_api.py): kept so
+            -- the ones on record stay readable. Nothing writes it now.
             CREATE TABLE IF NOT EXISTS session_messages (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 project      TEXT NOT NULL,     -- the folder it was dropped in
@@ -214,18 +214,6 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_session_messages_received
                 ON session_messages(received_at DESC);
-
-            -- Who wrote each project's needs board, proven by a transcript
-            -- showing the write (server._board_writer), for the file as it
-            -- was at `mtime`: a board rewritten is proven again.
-            CREATE TABLE IF NOT EXISTS needs_board_writers (
-                project      TEXT PRIMARY KEY,  -- the board's file stem
-                mtime        REAL NOT NULL,
-                session_id   TEXT NOT NULL,     -- the listed agent's session
-                name         TEXT NOT NULL,     -- as shown: "Feynman (Planning)" for a subagent
-                evidence     TEXT NOT NULL,
-                subagent     TEXT NOT NULL DEFAULT ''
-            );
 
             -- Every Claude Code session running now or stopped lately, by
             -- name, its state as the session watcher derives it, and whether
@@ -675,7 +663,7 @@ def sweep_staged_messages() -> int:
     return count
 
 
-# --- Messages from sessions --------------------------------------------------
+# --- Messages from sessions (as files, before the signed route; read only) ----
 
 @dataclass(frozen=True)
 class SessionMessage:
@@ -692,73 +680,11 @@ class SessionMessage:
     sender_subagent: Optional[str] = None   # the subagent that wrote it, under its listed parent
 
 
-def board_writer(project: str, mtime: float) -> Optional[dict]:
-    """The proven writer of `project`'s needs board as it was at `mtime`,
-    or None (never proven, or rewritten since)."""
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM needs_board_writers WHERE project=? AND mtime=?",
-                           (project, mtime)).fetchone()
-    return dict(row) if row else None
-
-
-def set_board_writer(project: str, mtime: float, session_id: str, name: str,
-                     evidence: str, subagent: str = "") -> None:
-    with closing(_connect()) as conn:
-        conn.execute("INSERT OR REPLACE INTO needs_board_writers (project, mtime, session_id, "
-                     "name, evidence, subagent) VALUES (?, ?, ?, ?, ?, ?)",
-                     (project, mtime, session_id, name, evidence, subagent or ""))
-        conn.commit()
-
-
-def create_session_message(project: str, agent_name: str, subject: str,
-                           body: str, sender_session: Optional[str] = None,
-                           sender_evidence: Optional[str] = None,
-                           sender_subagent: Optional[str] = None) -> int:
-    """Record a message a session sent, with who sent it and on what
-    evidence (session_message_sender.py). Its id."""
-    with closing(_connect()) as conn:
-        cur = conn.execute(
-            "INSERT INTO session_messages (project, agent_name, subject, body, "
-            "received_at, sender_session, sender_evidence, sender_subagent) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (project, agent_name, subject, body, time.time(), sender_session,
-             sender_evidence, sender_subagent or None))
-        conn.commit()
-        message_id = int(cur.lastrowid)
-    # Its arrival on the brain activity feed: who sent it, never what.
-    brain_activity.note(brain_activity.SESSION_MESSAGE, brain_activity.ARRIVED,
-                        id=str(message_id), counterpart=agent_name)
-    return message_id
-
-
 def get_session_message(message_id: int) -> Optional[SessionMessage]:
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM session_messages WHERE id=?",
                            (message_id,)).fetchone()
     return SessionMessage(**dict(row)) if row else None
-
-
-def list_session_messages(agent_name: Optional[str] = None,
-                          project: Optional[str] = None,
-                          unread_only: bool = False,
-                          limit: int = 20) -> list[SessionMessage]:
-    """Most recent first. `agent_name` and `project` are matched without
-    regard to case, since names are spoken."""
-    sql = "SELECT * FROM session_messages WHERE 1=1"
-    params: list = []
-    if agent_name is not None:
-        sql += " AND lower(agent_name) = lower(?)"
-        params.append(agent_name)
-    if project is not None:
-        sql += " AND lower(project) = lower(?)"
-        params.append(project)
-    if unread_only:
-        sql += " AND read_at IS NULL"
-    sql += " ORDER BY received_at DESC, id DESC LIMIT ?"
-    params.append(limit)
-    with closing(_connect()) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [SessionMessage(**dict(r)) for r in rows]
 
 
 def mark_session_message_read(message_id: int) -> None:

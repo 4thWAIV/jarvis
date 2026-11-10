@@ -8,16 +8,21 @@ or done. Every channel's messages are recorded so (the server's
 `_record_inbound`); this module is how an agent sends one, and how the page
 and the brain read and mark them.
 
-  POST /api/messages?work=<item id>
+  POST /api/messages?work=<item id>[&project=&workflow=&source=]
         {"says": "...", "package": "<the zip, base64>"?}: a message from the
         signing agent (its own key, or a work-item key for its own item
         only, agent_rights `work`). `work` is in the query so the right's
-        scope sees it. A decision is only ever inside a carried package: a
+        scope sees it. The ONE way an agent reaches him: `python -m
+        jarvis.message`, and `make_package`, whose package is always a
+        message. A decision is only ever inside a carried package: a
         request that asks one without a package is refused (`asks`). A
         message with no `work` from an agent with a piece on an open item is
         refused, naming the item(s). The package goes through the package
-        inbox exactly as `make_package` sends one (its signature, the fresh
-        author's proof and every other check), and the message carries it.
+        inbox (its signature, the fresh author's proof and every other
+        check; `project`, `workflow` and `source` as make_package gives
+        them), and the message carries it. Signed by a key JARVIS holds but
+        has not onboarded, it is held (the one route such a key reaches,
+        web_auth.HOLDING_PATH) until he switches its agent on.
   GET  /api/messages/work           each Work item with messages, the one
                                     with the newest first: its new count,
                                     its total and its first new message
@@ -29,7 +34,8 @@ and the brain read and mark them.
 
 The reads and the mark are the brain's `messages_to_him` and `mark_message`
 too, through the same functions (`work_list`, `work_conversation`,
-`general_list`, the server's `_mark_message`). Every read carries other
+`general_list`, the server's `_mark_message`); "What's new?" reads
+`whats_new`, the Inbox's order. Every read carries other
 people's words: the brain gets it walled.
 """
 from __future__ import annotations
@@ -45,8 +51,8 @@ from typing import Awaitable, Callable, Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from jarvis import (agent_rights, conversation_log, package_inbox, package_inbox_api, reporters,
-                    web_auth, work_store)
+from jarvis import (agent_rights, conversation_log, package_inbox, package_inbox_api,
+                    packages_api, reporters, web_auth, work_store)
 
 MESSAGES_PATH = "/api/messages"
 # A message says something short; anything longer is a package's.
@@ -101,6 +107,13 @@ def read_request(body) -> tuple[str, Optional[bytes]]:
                       "him what he needs to decide (make it with python -m jarvis.make_package "
                       "and carry it with --package). Nothing was sent.")
     return says, package
+
+
+def _held_session(fingerprint: str) -> str:
+    """The session a key JARVIS holds (not onboarded) names, or ""."""
+    from jarvis import agent_key_store
+    key = agent_key_store.get(fingerprint) if fingerprint else None
+    return key.session_id if key is not None else ""
 
 
 def sender_session(principal: str) -> str:
@@ -208,15 +221,41 @@ def general_list(before: Optional[int] = None) -> dict:
             "more": len(items) >= conversation_log.PAGE}
 
 
+def whats_new() -> list[dict]:
+    """His new messages in the one order "What's new?" reads them, as the
+    Inbox lists them: each Work item with new messages, the one with the
+    newest message first, its new ones oldest first, each with its item's
+    title (`about_title`); then the new ones that belong to no item, newest
+    first."""
+    new = conversation_log.new_messages()
+    order = [t.work for t in conversation_log.work_threads()]
+    titles = _titles(order)
+    rank = {w: i for i, w in enumerate(order)}
+    on_items = sorted((m for m in new if m.about),
+                      key=lambda m: (rank.get(m.about, len(rank)), m.id))
+    general = sorted((m for m in new if not m.about), key=lambda m: -m.id)
+    return [{**message_json(m), "about_title": titles.get(m.about, "")} for m in on_items] + \
+        [message_json(m) for m in general]
+
+
 # --- the routes --------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Links:
+    """What a carried package is for, as make_package gives it, and the key
+    a request was signed by when JARVIS holds it but has not onboarded it."""
+    project: str = ""
+    workflow: str = ""
+    source: str = ""
+    held_key: str = ""
+
 
 @dataclass(frozen=True)
 class Calls:
     """The server's functions, shared with the brain's tools."""
     # (principal, session, work, says, the package's bytes, the request's
-    # reporter) -> the message
-    send: Callable[[str, str, str, str, Optional[bytes], Optional[reporters.Reporter]],
-                   Awaitable[conversation_log.ConversationItem]]
+    # reporter, links) -> (the message, the package's arrival, the package)
+    send: Callable[..., Awaitable[tuple]]
     # (item id, state, how) -> (the message, "") or (None, why not)
     mark: Callable[[int, str, str], Awaitable[tuple]]
 
@@ -234,10 +273,13 @@ def _before(before) -> Optional[int]:
 
 def mount(app: FastAPI, calls: Calls) -> None:
 
-    async def send(request: Request, work: str = ""):
+    async def send(request: Request, work: str = "", project: str = "", workflow: str = "",
+                   source: str = ""):
         principal = web_auth.principal(request.scope) or ""
-        session = await asyncio.to_thread(sender_session, principal)
-        if not session:
+        held_key = "" if principal else (request.scope.get(web_auth.SIGNED_KEY) or "")
+        session = await asyncio.to_thread(sender_session, principal) if principal else \
+            await asyncio.to_thread(_held_session, held_key)
+        if not session and not held_key:
             return _refused("A message to Tim is signed by its sender's own key "
                             "(python -m jarvis.message --as <session id>).", 403)
         try:
@@ -247,17 +289,26 @@ def mount(app: FastAPI, calls: Calls) -> None:
                             "carries one.", 400)
         try:
             says, package = read_request(body)
-            if package is not None and not await asyncio.to_thread(
+            if principal and package is not None and not await asyncio.to_thread(
                     agent_rights.allows, principal, "POST", package_inbox_api.INBOX_PATH,
                     urllib.parse.urlencode({"work": work.strip()})):
                 raise Refused("Carrying a package needs the packages right, which this "
                               "key does not hold. Nothing was sent.", 403)
-            await asyncio.to_thread(check_about, session, work.strip())
-            item = await calls.send(principal, session, work.strip(), says, package,
-                                    reporters.of_scope(request.scope))
+            if principal:
+                await asyncio.to_thread(check_about, session, work.strip())
+            item, arrival, package = await calls.send(
+                principal, session, work.strip(), says, package,
+                reporters.of_scope(request.scope),
+                Links(project.strip(), workflow.strip(), source, held_key))
         except Refused as e:
             return _refused(str(e), e.status)
-        return {"message": message_json(item)}
+        out = {"message": message_json(item)}
+        if arrival is not None:
+            out.update({"inbox": package_inbox_api.entry_json(arrival.entry),
+                        "arrived": arrival.fresh,
+                        "superseded": [e.id for e in arrival.superseded],
+                        "package": packages_api.describe(package)})
+        return out
 
     async def by_work():
         return await asyncio.to_thread(work_list)

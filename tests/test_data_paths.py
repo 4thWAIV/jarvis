@@ -40,7 +40,6 @@ def test_messaging_files_are_private_folders_under_data_dir(monkeypatch, tmp_pat
     importlib.reload(data_paths)
     assert data_paths.messaging_snapshots_dir() == tmp_path / "messaging" / "snapshots"
     assert data_paths.messaging_downloads_dir() == tmp_path / "messaging" / "downloads"
-    assert data_paths.messaging_snapshots_dir() != data_paths.session_messages_dir()
     assert not (tmp_path / "messaging").exists(), "the files service creates them, privately"
 
 

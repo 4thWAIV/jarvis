@@ -8,6 +8,7 @@ never the live one, and the stand-in sees exactly one delivery to its package in
 token, of the bytes of the zip that was checked."""
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler
@@ -26,8 +27,9 @@ pytestmark = [pytest.mark.page, pytest.mark.ssh_keygen]
 
 
 class _StandIn:
-    """POST /api/packages/inbox as JARVIS answers it, recorded: the zip's
-    bytes in, the package and its inbox row out (package_inbox_api.py)."""
+    """POST /api/messages as JARVIS answers a message carrying a package,
+    recorded: the request in, the message, the package and its inbox row out
+    (messages_api.py)."""
 
     def __init__(self):
         self.posts: list[tuple[str, str, bytes]] = []
@@ -40,7 +42,8 @@ class _StandIn:
             def do_POST(self):                     # noqa: N802 (stdlib contract)
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 stand_in.posts.append((self.path, self.headers.get("Authorization", ""), body))
-                answer = json.dumps({"package": {"id": "team-lunch-local1"}, "arrived": True,
+                answer = json.dumps({"message": {"id": 41}, "package": {"id": "team-lunch-local1"},
+                                     "arrived": True,
                                      "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -96,13 +99,16 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
     assert "list_packages found it by its title's words" in said
 
     [(path, authorization, body)] = stand_in.posts
-    assert path.partition("?")[0] == "/api/packages/inbox"
+    assert path.partition("?")[0] == "/api/messages", "a package is a message carrying it"
     assert authorization.startswith(agent_keys.SCHEME), "signed with the session's own key"
-    assert body == (out / "lunch-decisions-1.0.0.zip").read_bytes()
+    sent = json.loads(body)
+    assert base64.b64decode(sent["package"]) == (out / "lunch-decisions-1.0.0.zip").read_bytes()
+    assert sent["says"].startswith("Decision package: ")
     signed = package_signature.read(out / "lunch-decisions-1.0.0.zip")
     assert signed.checks(public) and package_signature.DECISION_CHECKED in signed.statements, \
         "signed as checked, once the isolated JARVIS seeded with its key passed it"
-    assert "Arrived in Tim's package inbox as pkg-0123456789ab" in said
+    assert "Sent to Tim as message 41, carrying it; in his package inbox as pkg-0123456789ab" \
+        in said
     assert "Nothing is shown until he asks for it." in said
 
 
@@ -139,8 +145,9 @@ def test_the_command_checks_a_presentation_and_its_one_vote(
                   "stop by the page while waiting: stopped within 1s", "resume: answered understood first"):
         assert any(line.startswith("  ok: ") and check in line for line in lines), (check, said)
     [(path, _, body)] = stand_in.posts
-    assert path.partition("?")[0] == "/api/packages/inbox"
-    assert body == (out / "team-lunch-moved-1.0.0.zip").read_bytes()
+    assert path.partition("?")[0] == "/api/messages"
+    assert base64.b64decode(json.loads(body)["package"]) == \
+        (out / "team-lunch-moved-1.0.0.zip").read_bytes()
 
 
 def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):

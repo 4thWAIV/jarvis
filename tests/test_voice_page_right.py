@@ -308,7 +308,7 @@ def _subsystems_said():
     voiced.note(True, now=now - 10)
     contact = datetime.fromtimestamp(now - 20, timezone.utc).isoformat()
     rows = [
-        sd.communications(None, [], {}, 2, now, now - 600),
+        sd.communications(None, [], now, now - 600),
         # Falling behind: the longest state word ("Con problemas") beside
         # one of the longest names ("Entrada de voz").
         sd.voice_input({"state": "decoder-slow", "cause": "Machine busy",

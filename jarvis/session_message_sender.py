@@ -1,12 +1,13 @@
-"""Who sent a message a session dropped in `data/messages/<project>/`, who
-wrote a needs board, and which session ran make_package for a package.
+"""Which session did an act its own transcript shows: ran make_package for
+a package (`ran`), or called a command naming itself (`called`, an agent
+key's submission). A signature proves the listed agent; only this proves
+which of its subagents acted.
 
-A file in a project folder carries no proof of who wrote it, and any process
-can write any `From:` line, so the only proof is a transcript showing the
-write: the file's full path in the writer's own record of its tool calls.
-No session can write into another's transcript. In the order they are
-checked (the `From:` line, when it names one, only says which to check
-first):
+A request or a file carries no proof of which session or subagent made it,
+so the only proof is a transcript showing the act in the actor's own record
+of its tool calls. No session can write into another's transcript. In the
+order they are checked (the claimed session, when there is one, only says
+which to check first):
 
 - `transcript`: a Claude Code session's own transcript;
 - `subagent_transcript`: a Claude Code subagent's own file
@@ -19,7 +20,7 @@ first):
 The sender must be, or be a subagent of, a listed agent (the agent
 directory): a subagent shows as "<its name> (<listed parent>)" and is
 replied to through its parent's session. No proof, or no listed agent, and
-`proven_by` gives None: the message is held, never shown (server.py).
+`proven_by` gives None (server.py then names the signing agent alone).
 """
 from __future__ import annotations
 
@@ -35,11 +36,6 @@ CODEX_ROLLOUT, CODEX_SUBAGENT_ROLLOUT = "codex_rollout", "codex_subagent_rollout
 CODEX = "openai"
 # How much of a transcript's end is searched for the file's path.
 TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
-# A transcript last written this long before the message file cannot have
-# written it (the writer's record is written at or after the file).
-WROTE_SLACK_SEC = 5.0
-
-
 @dataclass(frozen=True)
 class Sender:
     session_id: str           # the listed agent's session: where a reply goes
@@ -58,26 +54,6 @@ def _tail(path: Path, nbytes: int) -> str:
             return fh.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
-
-
-def wrote(transcript: Path, file_path: Path, written_at: float = 0.0) -> bool:
-    """Whether this transcript's end shows its writer writing `file_path`
-    (its full path in its own lines), and it was written since the file."""
-    try:
-        st = transcript.lstat()
-    except OSError:
-        return False
-    if not transcript.is_file() or transcript.is_symlink() or \
-            st.st_mtime < written_at - WROTE_SLACK_SEC:
-        return False
-    text = _tail(transcript, TRANSCRIPT_TAIL_BYTES)
-    if not text:
-        return False
-    try:
-        real = str(file_path.resolve())
-    except OSError:
-        real = str(file_path)
-    return str(file_path) in text or real in text
 
 
 def _first_object(path: Path) -> dict:

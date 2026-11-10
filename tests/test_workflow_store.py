@@ -6,7 +6,6 @@ import importlib
 
 import pytest
 
-from jarvis import session_needs
 from jarvis import workflow_store as ws
 from jarvis.workflow_store import WorkflowEvent
 
@@ -181,18 +180,6 @@ def test_a_workflow_is_found_by_its_name_as_said():
     assert [w.id for w in ws.find("speech migration")] == [wid]
     assert [w.id for w in ws.find(wid)] == [wid]
     assert ws.find("rebrand") == []
-
-
-def test_open_decisions_appear_on_the_needs_board_without_writing_it(tmp_path):
-    wid = ws.start("Speech migration", "jarvis", [])
-    ws.record(_ev(wid, "decision_needed", "Which engine?", key="engine"))
-    own = session_needs.Board("jarvis", "# jarvis\n\n## Decisions\n- one: x", 0.0,
-                              session="s1", owner="Diagnostics")
-    boards = ws.with_decisions([own])
-    assert boards[0] is own, "the session's own board is never changed or added to"
-    assert boards[1].items == 1 and boards[1].owner == "", "a workflow no key reported"
-    assert "Speech migration needs a decision (engine): Which engine?" in boards[1].text
-    assert ws.with_decisions([])[0].project == "jarvis"
 
 
 def test_a_workflow_that_said_it_is_waiting_is_not_called_quiet(monkeypatch):

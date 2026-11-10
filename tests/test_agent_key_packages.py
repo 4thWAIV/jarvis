@@ -1,8 +1,9 @@
-"""Agent keys, phase 4: a package carries its sender's signature, and a
-message file or needs board its `.sig`; anything signed by a key JARVIS
-does not know as an onboarded agent's is held, its Work item goes to
-Error, and JARVIS makes Tim an error package offering his two acts."""
+"""Agent keys, phase 4: a package carries its sender's signature, sent as a
+message carrying it (one channel, round 3); anything signed by a key JARVIS
+does not know as an onboarded agent's is held, its Work item goes to Error,
+and JARVIS makes Tim an error package offering his two acts."""
 
+import base64
 import json
 import time
 from pathlib import Path
@@ -16,7 +17,8 @@ from tests.author_fixtures import sign_authored
 from tests.test_agent_keys import DIAG, ORIGIN, PLAN, keygen, wired  # noqa: F401
 from tests.test_work_packages import make_zip, marks  # noqa: F401
 
-INBOX = "/api/packages/inbox"
+# Every package an agent sends is a message carrying it (one channel, round 3).
+MESSAGES = "/api/messages"
 # An agent package (for a Work item, its vote is asked on the item).
 NOTES_AGENT = {"name": "notes-agent", "version": "1.0.0", "purpose": "Note it.",
                "runs": "agent", "brief": "BRIEF.md", "returns": ["results/**"]}
@@ -56,10 +58,14 @@ def subagent_ran(tmp_path, session, description, command):
     (d / "agent-a1b2c3.meta.json").write_text(json.dumps({"description": description}))
 
 
-def send(client, agent: Agent, data: bytes, **query):
-    path = INBOX + ("?" + "&".join(f"{k}={v}" for k, v in query.items()) if query else "")
-    return client.post(path, content=data, headers={
-        **agent.headers("POST", path, data), "Content-Type": "application/zip"})
+def send(client, agent: Agent, data: bytes, says: str = "A package.", **query):
+    """`data` sent as make_package sends it: a message carrying it, signed
+    by `agent`'s key. (`session` is no longer asked: the signature says it.)"""
+    query.pop("session", None)
+    path = MESSAGES + ("?" + "&".join(f"{k}={v}" for k, v in query.items()) if query else "")
+    body = json.dumps({"says": says, "package": base64.b64encode(data).decode()}).encode()
+    return client.post(path, content=body, headers={
+        **agent.headers("POST", path, body), "Content-Type": "application/json"})
 
 
 def _start_work(client, agent, folder):
@@ -223,61 +229,48 @@ def test_a_decision_package_needs_its_signed_check_statement(wired, marks, tmp_p
     assert send(client, agent, ok, session=PLAN).status_code == 200
 
 
-def _message(folder: Path, name: str, text: str) -> Path:
-    path = folder / name
-    path.write_text(text)
-    old = time.time() - 60
-    import os
-    os.utime(path, (old, old))
-    return path
-
-
-def test_a_signed_message_is_its_agent_s_and_one_from_a_waiting_key_waits_for_him(
+def test_a_message_from_a_waiting_key_is_held_with_its_words_until_he_switches_it_on(
         wired, monkeypatch):
-    from jarvis import agent_key, agent_key_store, data_paths, run_store
-    server, *_, home = wired
-    folder = data_paths.session_messages_dir() / "jarvis"
-    folder.mkdir(parents=True, exist_ok=True)
-    planner = Agent(home, PLAN).onboarded()
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
-    path = _message(folder, "done.md", "# Phase one is in\n\nAll green.\n")
-    assert agent_key.main(["sign", str(path), "--session", PLAN]) == 0
-    [taken] = server._take_session_messages()
-    assert (taken.agent_name, taken.sender_session) == ("Planning", PLAN)
-    assert taken.sender_evidence == "agent_signature"
-    assert not path.exists() and not agent_key.sig_path(path).exists()
-
+    """Round 3: a message is the one route a key JARVIS holds but has not
+    onboarded reaches (web_auth.HOLDING_PATH). Its words are held, never
+    shown; once he switches its agent on they are its message to him."""
+    from jarvis import agent_key_store, conversation_log as cl
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    reporter = Agent(home, PLAN).onboarded()
+    wid = _start_work(client, reporter, folder)
     diag = Agent(home / "d", DIAG)
     k = agent_key_store.submit(diag.public, DIAG)
     agent_key_store.proven(k.fingerprint, "transcript")
-    path = _message(folder, "later.md", "# Tests are flaky\n\nLook.\n")
-    agent_key.sig_path(path).write_text(agent_keys.sign(
-        diag.private, agent_keys.MESSAGE, agent_key.message_text(path, path.read_bytes())))
-    assert server._take_session_messages() == []
-    assert (folder / "later.held").exists()
+    r = diag.post(client, f"/api/messages?work={wid}", {"says": "Tests are flaky."})
+    assert r.status_code == 409 and "Held" in r.json()["error"], r.text
     [held] = agent_key_store.held()
-    assert held.kind == "message" and "Tests are flaky" in held.what
+    assert (held.kind, held.work_id, held.detail["says"]) == ("message", wid, "Tests are flaky.")
+    assert "Tests are flaky" in held.what
+    assert cl.work_threads() == [], "never shown while held"
     server._set_agent_active(DIAG, True, "voice")
-    assert (folder / "later.md").exists(), "released: put back to be taken"
-    import os
-    os.utime(folder / "later.md", (time.time() - 60, time.time() - 60))
-    [taken] = server._take_session_messages()
-    assert taken.sender_session == DIAG
-    assert run_store.get_session_message(taken.id).sender_evidence == "agent_signature"
+    assert agent_key_store.held() == []
+    [m] = cl.work_thread(wid)
+    assert (m.text, m.sender, m.counterpart_ref, m.state) == (
+        "Tests are flaky.", f"agent:{DIAG}", DIAG, "new"), "its message once onboarded"
+    stranger = Agent(home / "x", "sess-stranger")
+    assert stranger.post(client, "/api/messages", {"says": "x"}).status_code == 403
+    assert agent_key_store.held() == [], "a key JARVIS does not hold proves nothing"
 
 
-def test_a_message_changed_after_it_was_signed_is_unsigned_not_forged(wired, monkeypatch):
-    from jarvis import agent_key, data_paths
+def test_the_inbox_route_takes_no_agent_s_package(wired, marks, tmp_path):
+    """A package from an agent is always a message (round 3): the inbox
+    route is JARVIS's own path, and refuses a request an agent's key signed."""
+    from jarvis import package_inbox_api
     server, *_, home = wired
-    Agent(home, PLAN).onboarded()
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
-    folder = data_paths.session_messages_dir() / "jarvis"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = _message(folder, "x.md", "# One\n\nTwo.\n")
-    agent_key.main(["sign", str(path), "--session", PLAN])
-    path.write_text("# One\n\nThree.\n")
-    signer, key, status, _ = server._file_signer(path)
-    assert (signer, status) == (None, "unsigned")
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    data = signed_zip(tmp_path, agent)
+    path = "/api/packages/inbox"
+    r = client.post(path, content=data, headers={**agent.headers("POST", path, data),
+                                                 "Content-Type": "application/zip"})
+    assert r.status_code == 403 and r.json()["error"] == package_inbox_api.SEND_AS_MESSAGE
+    assert send(client, agent, data).status_code == 200, "as a message it goes"
 
 
 # -- phase 5: work-item keys --------------------------------------------------------------

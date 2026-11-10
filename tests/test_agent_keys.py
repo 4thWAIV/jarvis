@@ -118,10 +118,10 @@ def test_the_real_ssh_keygen_makes_signs_and_checks(tmp_path, monkeypatch):
     listed = subprocess.run(["ssh-keygen", "-lf", str(private) + ".pub"], capture_output=True,
                             text=True).stdout
     assert agent_keys.fingerprint(public) in listed, "the fingerprint is ssh-keygen's own"
-    sig = agent_keys.sign(private, agent_keys.MESSAGE, b"a message")
-    assert agent_keys.signed_by(sig) == (public, agent_keys.MESSAGE)
-    assert agent_keys.verify(public, agent_keys.MESSAGE, b"a message", sig)
-    assert not agent_keys.verify(public, agent_keys.MESSAGE, b"another", sig)
+    sig = agent_keys.sign(private, agent_keys.PACKAGE, b"a package")
+    assert agent_keys.signed_by(sig) == (public, agent_keys.PACKAGE)
+    assert agent_keys.verify(public, agent_keys.PACKAGE, b"a package", sig)
+    assert not agent_keys.verify(public, agent_keys.PACKAGE, b"another", sig)
     assert not agent_keys.verify(public, agent_keys.REQUEST, b"a message", sig)
 
 
@@ -344,7 +344,8 @@ def test_rights_bound_what_a_key_opens(wired):
 
 def test_an_adopted_access_key_label_keeps_its_decisions_its_own(wired):
     """Planning asked decisions on its old access key, which admits nothing
-    any more; onboarded, its own key withdraws them and reads his answers."""
+    any more; onboarded, its own key reads his answers to them. (No key
+    withdraws a decision any more: round 3.)"""
     from jarvis import agent_key_store, data_paths, work_store
     server, _, _, folder, home = wired
     client = TestClient(server.app)
@@ -368,9 +369,6 @@ def test_an_adopted_access_key_label_keeps_its_decisions_its_own(wired):
     assert agent_key_store.get(k.fingerprint).label == "Planning"
     r = agent.get(client, "/api/work/answers")
     assert [a["key"] for a in r.json()["answers"]] == ["size"]
-    r = agent.post(client, f"/api/work/{item.id}/events", {
-        "kind": "decision_withdrawn", "summary": "Too early.", "detail": {"key": "colour"}})
-    assert r.status_code == 200, r.text
 
 
 def test_the_report_commands_sign_with_the_session_s_key(wired, monkeypatch, capsys):

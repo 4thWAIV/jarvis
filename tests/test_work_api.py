@@ -55,6 +55,17 @@ def _start(client, headers, folder):
     return r.json()["id"]
 
 
+def _asked(server, wid, auth, summary, **detail):
+    """A decision on record as the route recorded one before round 3 (no
+    reporter asks one now), with its news and message."""
+    from tests.decision_fixtures import asker_of, on_record
+    from jarvis import work_store
+    got = on_record(wid, work_store.DECISION_NEEDED, summary, asker_of(auth), **detail)
+    server._work_recorded(work_store.get(wid), work_store.DECISION_NEEDED,
+                          {**detail, "asked_by": asker_of(auth)})
+    return got
+
+
 def _events(store):
     return [(i.kind, h["event"]) for i in store.items(("pending", "seen", "resolved"))
             for h in store.history(i.id)]
@@ -114,9 +125,7 @@ def test_a_decision_is_news_his_answer_resolves_it_and_only_he_answers(wired):
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key, folder)
-    client.post(f"/api/work/{wid}/events", auth=key,
-                json={"kind": "decision_needed", "summary": "Which engine?",
-                      "detail": {"key": "engine", "options": ["Kroko", "Apple"]}})
+    _asked(server, wid, key, "Which engine?", key="engine", options=["Kroko", "Apple"])
     assert _events(store) == [("work", "decision_needed")]
     r = client.post(f"/api/work/{wid}/events", auth=key,
                     json={"kind": "decision_made", "summary": "Me.",
@@ -152,8 +161,8 @@ def test_news_is_resolved_once_it_is_no_longer_so_and_only_then(wired):
     report("update", "CI is green.", state="working", cleared=True)
     assert news().state == "resolved", "no longer blocked"
 
-    report("decision_needed", "Tag it?", key="tag")
-    report("decision_needed", "Announce it?", key="announce")
+    _asked(server, wid, key, "Tag it?", key="tag")
+    _asked(server, wid, key, "Announce it?", key="announce")
     client.post(f"/api/work/{wid}/decisions/tag", json={"answer": "Yes"}, headers=ORIGIN)
     assert news().state == "pending", "another decision is still open"
     client.post(f"/api/work/{wid}/decisions/announce", json={"answer": "No"}, headers=ORIGIN)
@@ -242,8 +251,10 @@ def test_the_reporter_starts_reports_and_reads_his_answer(wired, monkeypatch, ca
                              "--who", "tim", "--state", "working"]) == 0
     assert capsys.readouterr().out.strip() == f"{wid} activity_unknown (copy: tim)"
     assert work_report.main(["work_report.py", "decision", wid, "tone", "Which tone?",
-                             "--option", "dry", "--option", "warm"]) == 0
+                             "--option", "dry", "--option", "warm"]) == 2, \
+        "a decision is a package now (round 3)"
     capsys.readouterr()
+    _asked(server, wid, key, "Which tone?", key="tone", options=["dry", "warm"])
     assert work_report.main(["work_report.py", "answer", wid, "tone"]) == work_report.NOT_ANSWERED
     TestClient(server.app).post(f"/api/work/{wid}/decisions/tone", json={"answer": "dry"},
                                 headers=ORIGIN)
@@ -349,34 +360,25 @@ def test_the_reporter_sends_area_worker_order_and_evidence(wired, monkeypatch, c
         ("commit", "abc1234"), ("path", str(tmp_path / "logo.svg")), ("url", "https://x.example/pr/1")]
 
 
-def test_only_the_asking_key_withdraws_and_only_he_answers(wired):
+def test_no_one_but_he_settles_a_decision_on_record(wired):
+    """Round 3: no reporter asks or withdraws a decision (both are refused
+    with the way that replaced them); one on record is his to answer."""
+    from jarvis.message import ASK_WITH_A_PACKAGE
     server, _, store, folder = wired
     client = TestClient(server.app)
     asker = _key()
-    other = _key()
     wid = _start(client, asker, folder)
-    r = client.post(f"/api/work/{wid}/events", auth=asker, json={
-        "kind": "decision_needed", "summary": "Which colour?",
-        "detail": {"key": "colour", "asked_by": "key:other-reporter", "package": "colour-deck"}})
-    assert r.status_code == 200 and r.json()["item"]["decisions"][0]["package"] == "colour-deck"
+    got = _asked(server, wid, asker, "Which colour?", key="colour", package="colour-deck")
+    assert got["item"]["decisions"][0]["package"] == "colour-deck"
     assert _events(store) == [("work", "decision_needed")]
-
-    def withdraw(headers):
-        signed = {"headers": headers} if isinstance(headers, dict) else {"auth": headers}
-        return client.post(f"/api/work/{wid}/events", **signed, json={
-            "kind": "decision_withdrawn", "summary": "Asked too early.", "detail": {"key": "colour"}})
-    r = withdraw(other)
-    assert r.status_code == 409 and "Only the agent that asked" in r.json()["error"], \
-        "a reporter's own asked_by is never believed"
-    r = withdraw(ORIGIN)
-    assert r.status_code == 409 and "he answers it" in r.json()["error"]
-    r = withdraw(asker)
-    assert r.status_code == 200, r.text
-    item = r.json()["item"]
-    assert item["decisions"] == [] and item["answered"][0]["where"] == "withdrawn"
-    assert store.get("work", wid).state == "resolved", "no decision is needed any more"
+    for signed in ({"auth": asker}, {"headers": ORIGIN}):
+        r = client.post(f"/api/work/{wid}/events", **signed, json={
+            "kind": "decision_withdrawn", "summary": "Asked too early.",
+            "detail": {"key": "colour"}})
+        assert r.status_code == 409 and r.json()["error"] == ASK_WITH_A_PACKAGE
     r = client.post(f"/api/work/{wid}/decisions/colour", json={"answer": "blue"}, headers=ORIGIN)
-    assert r.status_code == 409
+    assert r.status_code == 200
+    assert store.get("work", wid).state == "resolved", "no decision is needed any more"
 
 
 def test_the_list_keeps_history_apart_and_the_brain_reads_it_all(wired, monkeypatch):
@@ -385,13 +387,12 @@ def test_the_list_keeps_history_apart_and_the_brain_reads_it_all(wired, monkeypa
     key = _key()
     from jarvis import work_store as ws
     open_id, closed_id = _start(client, key, folder), _start(client, key, folder)
-    for kind, summary, detail in (
-            ("piece", "Stuck.", {"key": "fonts", "who": {"kind": "tim"}, "state": "blocked",
-                                 "until": "the font licence"}),
-            ("decision_needed", HOSTILE, {"key": "logo", "package": "logo-deck"}),
-            ("decision_needed", "Tone?", {"key": "tone"})):
-        assert client.post(f"/api/work/{open_id}/events", auth=key, json={
-            "kind": kind, "summary": summary, "detail": detail}).status_code == 200
+    assert client.post(f"/api/work/{open_id}/events", auth=key, json={
+        "kind": "piece", "summary": "Stuck.", "detail": {
+            "key": "fonts", "who": {"kind": "tim"}, "state": "blocked",
+            "until": "the font licence"}}).status_code == 200
+    _asked(server, open_id, key, HOSTILE, key="logo", package="logo-deck")
+    _asked(server, open_id, key, "Tone?", key="tone")
     client.post(f"/api/work/{open_id}/decisions/tone", json={"answer": "dry"}, headers=ORIGIN)
     assert client.post(f"/api/work/{closed_id}/events", auth=key, json={
         "kind": "closed", "summary": "Not needed.", "detail": {}}).status_code == 200
@@ -410,7 +411,7 @@ def test_the_list_keeps_history_apart_and_the_brain_reads_it_all(wired, monkeypa
     assert "in History" in server.tool_work_status({"item": closed_id}).split("\n")[0]
 
 
-def test_the_reporter_withdraws_closes_and_links_a_package(wired, monkeypatch, capsys):
+def test_the_reporter_closes_and_asks_no_decision(wired, monkeypatch, capsys):
     server, _, _, folder = wired
     key = _key()
     from jarvis import work_report, work_store
@@ -418,10 +419,10 @@ def test_the_reporter_withdraws_closes_and_links_a_package(wired, monkeypatch, c
     assert work_report.main(["work_report.py", "start", "Rebrand", "--folder", folder]) == 0
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "decision", wid, "logo", "Which logo?",
-                             "--package", "logo-deck"]) == 0
-    assert work_store.get(wid).decisions[0].package == "logo-deck"
-    assert work_report.main(["work_report.py", "withdraw", wid, "logo", "Asked too early."]) == 0
-    assert work_store.get(wid).answered[0].answer == "Asked too early."
+                             "--package", "logo-deck"]) == 2
+    assert work_report.main(["work_report.py", "withdraw", wid, "logo", "Asked too early."]) == 2
+    assert "make_package" in capsys.readouterr().err
+    assert work_store.get(wid).decisions == []
     assert work_report.main(["work_report.py", "close", wid]) == 0
     assert work_store.get(wid).history
 

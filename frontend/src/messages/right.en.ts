@@ -255,8 +255,6 @@ export const rightEn = {
   "right.subsystem.name.watcher": "Session watcher",
   "right.subsystem.name.outgoing": "Messages to agents",
   "right.subsystem.name.queued": "Queued messages",
-  "right.subsystem.name.incoming": "Messages from agents",
-  "right.subsystem.name.needs": "Needs board",
   "right.subsystem.name.mic": "Microphone",
   "right.subsystem.name.browser": "Page",
   "right.subsystem.name.connection": "Connection",
@@ -314,15 +312,6 @@ export const rightEn = {
     other: "{count} messages waiting for their turn, the oldest {age}" },
   "right.subsystem.said.queuedHeld": "A message to {agent} has waited {age} for its turn",
   "right.subsystem.said.queuedHeldSeen": "A message to {agent} has waited {age} for its turn; JARVIS sees it as {state}",
-  "right.subsystem.said.incomingWaiting": {
-    one: "{count} message waiting over {age} to be picked up",
-    other: "{count} messages waiting over {age} to be picked up" },
-  "right.subsystem.said.needsHeld": {
-    one: "{count} needs board held: no transcript shows who wrote it",
-    other: "{count} needs boards held: no transcript shows who wrote them" },
-  "right.subsystem.said.incomingHeld": {
-    one: "{count} message held: it named no sender he could reply to",
-    other: "{count} messages held: they named no sender he could reply to" },
   "right.subsystem.said.voiceIdle": "Not listening",
   "right.subsystem.said.voiceDropping": "Dropping speech",
   "right.subsystem.said.voiceDroppingCause": "Dropping speech: {cause}",

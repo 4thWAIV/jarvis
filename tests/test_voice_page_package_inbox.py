@@ -1,5 +1,5 @@
 """A package on the page, in a real browser: a decision deck sent the way
-make_package sends it (POST /api/packages/inbox, for a work item, from a
+make_package sends it (as a message carrying it; here through JARVIS's own inbox path, for a work item, from a
 session) shows nowhere on arrival; it is a message on its Work item, so
 Updates waiting counts it in its one line, whose Open goes to the Inbox,
 where the item is one line that opens its Messages tab; there the message

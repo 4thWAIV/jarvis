@@ -718,3 +718,26 @@ def item_for_message(message_id: int) -> ConversationItem | None:
         row = conn.execute("SELECT * FROM conversation_items WHERE kind=? AND message_id=?",
                            (str(ItemKind.TO_AGENT), int(message_id))).fetchone()
     return _item(row) if row else None
+
+
+def new_by_agent() -> dict[str, int]:
+    """Each agent's new messages to him, by its session id: what its box
+    counts (agent_directory's `needs`). Those signed by its own key
+    (`agent:<session id>`)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT sender, COUNT(*) FROM conversation_items WHERE state = ? AND sender LIKE ? "
+            "GROUP BY sender", (str(MessageState.NEW), SENDER_AGENT + "%")).fetchall()
+    return {str(r[0])[len(SENDER_AGENT):]: int(r[1]) for r in rows}
+
+
+def new_messages() -> list[ConversationItem]:
+    """Every new message to him, oldest first: those about a Work item and
+    those about none (a person's with no item are in their own threads, so
+    not here, as `new_general` counts)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM conversation_items WHERE state = ? AND "
+            "(about IS NOT NULL OR counterpart_kind IS NOT ?) ORDER BY id",
+            (str(MessageState.NEW), str(Counterpart.PERSON))).fetchall()
+    return [_item(r) for r in rows]
