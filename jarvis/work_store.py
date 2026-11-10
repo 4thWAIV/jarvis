@@ -1872,9 +1872,11 @@ def _package_review(conn, item_id: str) -> "Optional[PackageReview]":
 
 
 def _shown_review(row, review: "Optional[PackageReview]") -> "Optional[PackageReview]":
-    """What the item shows of his package act: never "without a verdict" on
-    an item he has approved done."""
-    if review is not None and review.outcome == NO_VERDICT and row["state"] == DONE:
+    """What the item shows of his package act: never "without a verdict" or
+    "not applied" on an item he has approved done (his Approve in the
+    package after his Approve in the header was the same act twice)."""
+    if (review is not None and review.outcome in (NO_VERDICT, NOT_APPLIED)
+            and row["state"] == DONE):
         return None
     return review
 
