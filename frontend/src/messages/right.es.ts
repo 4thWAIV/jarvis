@@ -242,8 +242,6 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.name.watcher": "Vigilante de sesiones",
   "right.subsystem.name.outgoing": "Mensajes a agentes",
   "right.subsystem.name.queued": "Mensajes en cola",
-  "right.subsystem.name.incoming": "Mensajes de agentes",
-  "right.subsystem.name.needs": "Tablero de pendientes",
   "right.subsystem.name.mic": "Micrófono",
   "right.subsystem.name.browser": "Página",
   "right.subsystem.name.connection": "Conexión",
@@ -301,15 +299,6 @@ export const rightEs: CatalogOf<typeof rightEn> = {
     other: "{count} mensajes esperan su turno, el más antiguo desde hace {age}" },
   "right.subsystem.said.queuedHeld": "Un mensaje a {agent} lleva {age} esperando su turno",
   "right.subsystem.said.queuedHeldSeen": "Un mensaje a {agent} lleva {age} esperando su turno; JARVIS lo ve como {state}",
-  "right.subsystem.said.incomingWaiting": {
-    one: "{count} mensaje lleva más de {age} sin recogerse",
-    other: "{count} mensajes llevan más de {age} sin recogerse" },
-  "right.subsystem.said.needsHeld": {
-    one: "{count} tablero de necesidades retenido: ninguna transcripción muestra quién lo escribió",
-    other: "{count} tableros de necesidades retenidos: ninguna transcripción muestra quién los escribió" },
-  "right.subsystem.said.incomingHeld": {
-    one: "{count} mensaje retenido: no nombra un remitente al que se pueda responder",
-    other: "{count} mensajes retenidos: no nombran un remitente al que se pueda responder" },
   "right.subsystem.said.voiceIdle": "Sin escuchar",
   "right.subsystem.said.voiceDropping": "Perdiendo voz",
   "right.subsystem.said.voiceDroppingCause": "Perdiendo voz: {cause}",

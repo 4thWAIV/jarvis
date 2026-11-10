@@ -15,6 +15,7 @@ import pytest
 
 from jarvis import (attention_store, package_inbox, run_store, wait_links,
                     workflow_store, work_store)
+from tests.decision_fixtures import DECISION_KINDS, asker_of, on_record
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_inbox import (BROWSER, deck_zip, marks,  # noqa: F401
                                       opened_deck, shown)
@@ -37,6 +38,9 @@ def item(wired, tmp_path):
 
 
 def _report(w, item_id, kind, summary, auth=None, **detail):
+    if kind in DECISION_KINDS:
+        # No reporter asks a decision any more (round 3): one on record.
+        return on_record(item_id, kind, summary, asker_of(auth or _key()), **detail)["item"]
     r = w.client.post(f"/api/work/{item_id}/events", auth=auth or _key(),
                       json={"kind": kind, "summary": summary, "detail": detail})
     assert r.status_code == 200, r.text
@@ -433,9 +437,3 @@ def test_his_answer_is_written_for_the_asker_and_listed_by_its_key(wired, item):
     assert wired.client.get("/api/work/answers").status_code == 403
     later = wired.client.get("/api/work/answers", params={"since": time.time() + 5}, auth=key)
     assert later.json()["answers"] == []
-
-
-def test_the_answers_folder_is_not_the_inbound_one(wired):
-    from jarvis import data_paths
-    assert data_paths.answers_dir() != data_paths.session_messages_dir()
-    assert data_paths.session_messages_dir() not in data_paths.answers_dir().parents

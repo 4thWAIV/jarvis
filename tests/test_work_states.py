@@ -10,6 +10,7 @@ import time
 import pytest
 
 from jarvis import data_paths, run_store, work_store
+from tests.decision_fixtures import DECISION_KINDS, asker_of, on_record
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 
 BROWSER = {"Origin": "http://localhost:5173"}
@@ -30,6 +31,13 @@ def item(wired, tmp_path):
 
 
 def _report(w, item_id, kind, summary, auth=None, ok=True, **detail):
+    if kind in DECISION_KINDS:
+        # No reporter asks a decision any more (round 3): one on record.
+        try:
+            return on_record(item_id, kind, summary, asker_of(auth or _key()), **detail)
+        except work_store.WorkRefused:
+            assert not ok
+            return None
     r = w.client.post(f"/api/work/{item_id}/events", auth=auth or _key(),
                       json={"kind": kind, "summary": summary, "detail": detail})
     assert (r.status_code == 200) == ok, r.text

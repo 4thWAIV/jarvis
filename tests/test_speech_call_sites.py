@@ -209,7 +209,7 @@ def _session_event(kind, **message):
 @pytest.mark.asyncio
 async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
     server, sink, attention = wired
-    from jarvis import session_needs, team_reminder, transmission
+    from jarvis import team_reminder, transmission
     monkeypatch.setattr(team_reminder, "_said", False)
     monkeypatch.setattr(server, "_message_went", lambda *a: asyncio.sleep(0))
 
@@ -221,8 +221,11 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
             "id": f"r{n}", "project_name": "jarvis", "status": status, "origin": "voice"}})
     server._on_run_event({"type": "run_finished", "run": {
         "id": "p1", "project_name": "pkg", "status": "succeeded", "package_id": "gone"}})
-    server._attend_board(session_needs.Board(project="jarvis", text="- one\n- two", mtime=1))
-    server._attend_session_messages([SimpleNamespace(id=4, agent_name="hammer")])
+    # An agent's message to him (the signed route's one writer), and a
+    # workflow's blocker, which is one too (round 3).
+    server._record_message("agent:s1", "s1", "hammer", "", "Phase two is done.")
+    server._workflow_message(SimpleNamespace(id="wf-0", name="build", work=""), SimpleNamespace(
+        kind="blocker_raised", summary="The machine is down.", reporter="agent:s1"))
     w = SimpleNamespace(id="wf-1", name="build", state="succeeded")
     for kind in ("phase_started", "decision_needed", "blocker_raised", "workflow_finished",
                  "task_started"):
@@ -245,10 +248,8 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
 
     assert sink.calls == [], f"a routine producer reached the voice: {sink.calls}"
     kinds = {kind for kind, _, _ in recorded(attention)}
-    # "package": a signed package now arrives in his inbox here (agent keys),
-    # recorded as a silent arrival like every other kind in this set.
-    assert kinds == {"agent_message", "needs_you", "session_finished", "run", "package_run", "package",
-                     "needs_board", "session_message", "workflow", "sign_in"}
+    assert kinds == {"agent_message", "needs_you", "session_finished", "run", "package_run",
+                     "message", "workflow", "sign_in"}
     assert ("run", "r3", "cancelled") not in recorded(attention)
     queued = attention.get("agent_message", "11")
     assert [h["event"] for h in attention.history(queued.id)] == ["not_live"], \

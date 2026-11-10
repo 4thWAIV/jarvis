@@ -236,6 +236,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "240b1c6a02c8a862914353f7d053b8abae90d1b23f193a99b5dd7f4821c9c2e1",  # agent keys: switching an agent on onboards its key
     "2c9ccefba59069d51e83d3971bb0882d935aba4757919c4d77f69b3c9a254d0d",  # agent keys, merged with main after PR 92
     "f6d1e190f9b8a76b7358754a0b4fda8e520f9bffbb3a0ef129e84dfdc68bbae1",  # opening is not seeing, merged with main after PR 87
+    "dc64d47bec3216e801f53a788a7f6f25e1c689ef112635b5406c2f9439ad4e14",  # one channel: what's new, read it, open it, reply
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -428,23 +429,6 @@ def embedding_models_dir() -> Path:
     """Where the knowledge engine's embedding models are installed, one
     folder per model (embedding_models.py): `<data>/models/embedding`."""
     return models_dir() / "embedding"
-
-
-def needs_dir() -> Path:
-    """Where sessions write what they need from the user, one file per
-    project (see session_needs.py). Created so a session can always write."""
-    path = data_dir() / "needs"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def session_messages_dir() -> Path:
-    """Where sessions drop the messages they send the user, one folder per project
-    and one file per message (see session_messages.py). Created so a session
-    can always write."""
-    path = data_dir() / "messages"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def answers_dir() -> Path:

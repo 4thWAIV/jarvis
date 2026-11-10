@@ -147,64 +147,30 @@ TOOL_SPECS = [
         },
     },
     {
-        "name": "session_messages",
-        "description": (
-            "The messages sessions have sent him of their own accord, most recent "
-            "first: each one's number, the agent it came from, when, whether it has "
-            "been read to him, and its subject. Use it whenever he asks what the "
-            "sessions have sent him or whether anything came in. For the messages "
-            "you sent, use list_messages."),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string",
-                         "description": "Only messages from this agent, as he refers to it. Omit for all."},
-                "unread_only": {"type": "boolean",
-                                "description": "Only messages not yet read to him."},
-            },
-        },
-    },
-    {
-        "name": "read_session_message",
-        "description": (
-            "One message a session sent him, by its number, one page at a time: "
-            "its subject and everything it says. Each page says how many there "
-            "are; read every page before you tell him what it said or asked."),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "message": {"type": "integer",
-                            "description": "The message's number, from session_messages or the announcement."},
-                "page": {"type": "integer",
-                         "description": "Which page, starting at 1. Omit for the first."},
-            },
-            "required": ["message"],
-        },
-    },
-    {
         "name": "read_aloud",
         "description": (
             "Read one message to him aloud, that message only, whatever it came by (an "
-            "agent's answer, a session's message, a needs board, a decision, a package, a "
-            "person's message), as the Updates entry's Read does, only when he asks. "
-            "attention_updates gives each message update's `message` id. Its update counts "
-            "as seen only once he has heard it in full."),
+            "agent's message or answer, a package's, a decision, a person's message), as the "
+            "Read button does, only when he asks. With no message it reads the one he is on "
+            "(\"read it\"): the first that messages_to_him new listed, or the last he heard, "
+            "opened or replied to; with next, the next new one in that order (\"next\"). It "
+            "is read, and its update seen, only once he has heard it in full."),
         "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"}},
-                        "required": ["message"]},
+                        "properties": {"message": {"type": "integer"},
+                                       "next": {"type": "boolean",
+                                                "description": "The next new message."}}},
     },
     {
         "name": "reply",
         "description": (
-            "His reply to one message to him (its `message` id from attention_updates): a "
-            "capture addressed to its proven sender, holding his words when given; read it "
+            "His reply to one message to him (its id, else the one he is on: \"reply\"): "
+            "a capture addressed to its proven sender, holding his words when given; read it "
             "back with read_capture, and it goes only on his yes. For a person's message it "
             "is a draft in their thread instead, reviewed with request_message_review."),
         "inputSchema": {"type": "object",
                         "properties": {"message": {"type": "integer"},
                                        "text": {"type": "string",
-                                                "description": "His reply, in his words."}},
-                        "required": ["message"]},
+                                                "description": "His reply, in his words."}}},
     },
     {
         "name": "messages_to_him",
@@ -215,9 +181,14 @@ TOOL_SPECS = [
             "whole conversation, oldest first, his replies in it; with general, only the "
             "messages that belong to no item. Each message has from, about (its Work item), "
             "says, carries (a package inbox row) and state (new, read, answered, done). "
-            "Use it when he asks what is new or what an item's messages are. The JSON comes "
-            "a page at a time: read every page before answering."),
+            "When he asks what is new, give new: every new message in the Inbox's order "
+            "(each Work item with new messages, then the general ones), which puts him on "
+            "the first; tell him each item's in a sentence (from, about, what it says, a "
+            "package it carries), then read_aloud, open_inbox_package and reply act on the "
+            "one he is on. The JSON comes a page at a time: read every page before answering."),
         "inputSchema": {"type": "object", "properties": {
+            "new": {"type": "boolean",
+                    "description": "\"What's new?\": every new message, in the Inbox's order."},
             "work": {"type": "string", "description": "A Work item's id: its conversation."},
             "general": {"type": "boolean",
                         "description": "Only the messages that belong to no item."},
@@ -234,22 +205,6 @@ TOOL_SPECS = [
             "message": {"type": "integer"},
             "state": {"type": "string", "enum": ["read", "done"]}},
             "required": ["message", "state"]},
-    },
-    {
-        "name": "session_needs",
-        "description": (
-            "What every Claude Code session has written down as needing the user: "
-            "its open decisions, questions and blockers, each with the session's "
-            "recommendation, grouped by project. Use it whenever the user asks what "
-            "is waiting on him or what the sessions need. Read every page, then give "
-            "him each item in a sentence with its recommendation, so he can decide."),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "page": {"type": "integer",
-                         "description": "Which page, starting at 1. Omit for the first."},
-            },
-        },
     },
     {
         "name": "capture",
@@ -2623,15 +2578,18 @@ TOOL_SPECS = [
     {
         "name": "open_inbox_package",
         "description": (
-            "Open one package from his inbox, only when he asks for it: a page package (a "
-            "decision deck, a presentation) is shown in the centre of his screen; any other "
-            "is unpacked for you to follow with him. Gives its package.json and, for a "
-            "decision package, every question to read him one at a time."),
+            "Open one package from his inbox, only when he asks for it: the one he names, or "
+            "the one a message carries (message, else the message he is on: \"open it\"). A "
+            "page package (a decision deck, a presentation) is shown in the centre of his "
+            "screen, and one with a story has it told, waiting at each question for his "
+            "answer; any other is unpacked for you to follow with him. Gives its package.json "
+            "and, for a decision package, every question to read him one at a time."),
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string",
-                                       "description": "Its id, or its title or sender as he said it."}},
-            "required": ["package"],
+                                       "description": "Its id, or its title or sender as he said it."},
+                           "message": {"type": "integer",
+                                       "description": "A message carrying it."}},
         },
     },
     {

@@ -1,12 +1,13 @@
 """Shared skills for the user's Claude Code and Codex sessions.
 
-JARVIS reads two folders sessions write to: the needs board
-(`data_paths.needs_dir()`) and session messages
-(`data_paths.session_messages_dir()`). A session only knows they exist if
-something tells it, so the repo ships the templates under `session_skills/`
-and this installs them into every Claude Code config root and the user's Codex
-home. The data folder is configurable, so the installed copy is the template
-rendered with this install's real paths, not a link to it.
+A session reaches the user through JARVIS's one signed route (`python -m
+jarvis.message`, every decision a package made with `python -m
+jarvis.make_package`) and reports its work with `work_report.py` and
+`workflow_report.py`. A session only knows how if something tells it, so the
+repo ships the templates under `session_skills/` and this installs them into
+every Claude Code config root and the user's Codex home. The data folder and
+the certificate are this install's, so the installed copy is the template
+rendered with its real paths and commands, not a link to it.
 
 Nothing here runs on its own: `python -m jarvis.session_skill install` writes it, and
 preflight only reports `status()`.
@@ -36,34 +37,28 @@ def _reporter(script: str) -> str:
         data_paths.PACKAGE_DIR / script, "--cert", data_paths.CONFIG_DIR / "cert.pem"))
 
 
-def _make_package() -> str:
-    """The package command with the Python this install runs on, quoted for a
-    shell. It runs from any folder (so the project defaults to the session's
-    own), finding JARVIS by PYTHONPATH; -P keeps the session's folder off
-    sys.path, so nothing there is imported in JARVIS's place."""
+def _module(name: str, cert: bool = True) -> str:
+    """A JARVIS command (`python -m jarvis.<name>`) with the Python this
+    install runs on, quoted for a shell, with this install's certificate
+    when it takes one. It runs from any folder (so a package's project
+    defaults to the session's own), finding JARVIS by PYTHONPATH; -P keeps
+    the session's folder off sys.path, so nothing there is imported in
+    JARVIS's place."""
     return (f"PYTHONPATH={shlex.quote(str(data_paths.PACKAGE_DIR.parent))} "
-            f"{shlex.quote(sys.executable)} -P -m jarvis.make_package")
-
-
-def _agent_key() -> str:
-    """The agent key command, run the way the package command is, with this
-    install's certificate."""
-    return (f"PYTHONPATH={shlex.quote(str(data_paths.PACKAGE_DIR.parent))} "
-            f"{shlex.quote(sys.executable)} -P -m jarvis.agent_key --cert "
-            f"{shlex.quote(str(data_paths.CONFIG_DIR / 'cert.pem'))}")
+            f"{shlex.quote(sys.executable)} -P -m jarvis.{name}"
+            + (f" --cert {shlex.quote(str(data_paths.CONFIG_DIR / 'cert.pem'))}" if cert else ""))
 
 
 def render(name: str = NAME, relative: str = "SKILL.md") -> str:
     """The skill with this install's folders filled in."""
     from jarvis.language_documents import authoring_contract
     return ((TEMPLATE.parent.parent / name / relative).read_text(encoding="utf-8")
-            .replace("{{needs_dir}}", str(data_paths.needs_dir()))
-            .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
             .replace("{{answers_dir}}", str(data_paths.answers_dir()))
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
-            .replace("{{make_package}}", _make_package())
-            .replace("{{agent_key}}", _agent_key())
+            .replace("{{message}}", _module("message"))
+            .replace("{{make_package}}", _module("make_package", cert=False))
+            .replace("{{agent_key}}", _module("agent_key"))
             .replace("{{making_a_package}}",
                      str(data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"))
             + "\n\n" + authoring_contract() + "\n")

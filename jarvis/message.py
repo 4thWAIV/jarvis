@@ -33,6 +33,18 @@ from jarvis.workflow_report import _post, signed_client  # noqa: E402
 
 ROUTE = "/api/messages"
 
+# What every old way of asking him a decision now answers (work_report.py's
+# decision and withdraw, workflow_report.py's decision_needed, and their
+# routes): a decision reaches him only as a package showing its background.
+ASK_WITH_A_PACKAGE = (
+    "Decisions are no longer asked here. Every decision goes to Tim as a decision package "
+    "showing him what he needs to decide: python -m jarvis.make_package --handoff <handoff.json> "
+    "--engine <claude|codex> --session <your session id> --work <item id> "
+    "(docs/making-a-package.md). It arrives as a message on that item, and his answers come "
+    "back to your session. To take one back, send a newer package of the same name (it "
+    "replaces the open one) or a message saying so: python -m jarvis.message --work <item id> "
+    "\"<what changed>\". Nothing was sent.")
+
 
 def body(says: str, package: Path | None) -> dict:
     """The request's body: what it says, and the package's bytes in base64."""

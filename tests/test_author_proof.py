@@ -24,7 +24,6 @@ from tests.author_fixtures import new_session, sign_authored, write_transcript
 from tests.test_agent_keys import DIAG, PLAN, keygen, wired  # noqa: F401
 from tests.test_work_packages import make_zip, marks  # noqa: F401
 
-INBOX = "/api/packages/inbox"
 SKILL = {"name": "notes-skill", "version": "1.0.0", "purpose": "Say the notes.",
          "runs": "conversation", "skill": "SKILL.md", "returns": ["results/**"]}
 AGENT_PKG = {"name": "notes-agent", "version": "1.0.0", "purpose": "Note it.",
@@ -37,10 +36,7 @@ def raw_zip(tmp_path: Path, manifest=SKILL, files=None) -> Path:
     return raw
 
 
-def send(client, agent: Agent, data: bytes, **query):
-    path = INBOX + ("?" + "&".join(f"{k}={v}" for k, v in query.items()) if query else "")
-    return client.post(path, content=data, headers={
-        **agent.headers("POST", path, data), "Content-Type": "application/zip"})
+from tests.test_agent_key_packages import send  # noqa: E402  (a message carrying it)
 
 
 def held_reasons():
@@ -80,7 +76,7 @@ def test_a_signed_package_with_no_author_is_held_and_tim_told_why(wired, marks, 
     raw = raw_zip(tmp_path, AGENT_PKG, {"BRIEF.md": "Note it."})
     package_signature.sign(raw, raw, agent.private, agent.public, PLAN)
     r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
-    assert r.status_code == 409 and r.json()["error"].startswith("Held: It carries no proof")
+    assert r.status_code == 409 and "Held: It carries no proof" in r.json()["error"]
     [held] = agent_key_store.held()
     assert held.kind == "package" and held.detail["reason"] == author_proof.NO_CLAIM
     assert Path(held.path).is_file() and held.fingerprint == agent.fingerprint

@@ -174,6 +174,7 @@ class WorkflowSnapshot:
     dismissed: bool = False           # he dismissed it, or it lingered its LINGER_SEC
     dismiss_at: float | None = None   # when a finished one still in view dismisses itself
     reporter: str = ""                # who started it, as the route proved it (reporters.recorded)
+    work: str = ""                    # the Work item it is for: its messages go there
 
 
 _SCHEMA = """
@@ -225,7 +226,8 @@ _SCHEMA = """
 
 _LATER_COLUMNS = (("workflows", "finished_at", "REAL"), ("workflows", "dismissed_at", "REAL"),
                   ("workflows", "reporter", "TEXT NOT NULL DEFAULT ''"),
-                  ("workflow_events", "reporter", "TEXT NOT NULL DEFAULT ''"))
+                  ("workflow_events", "reporter", "TEXT NOT NULL DEFAULT ''"),
+                  ("workflows", "work", "TEXT NOT NULL DEFAULT ''"))
 
 
 def _connect() -> sqlite3.Connection:
@@ -276,9 +278,12 @@ def _check_slug(value, what: str) -> str:
     return slug
 
 
-def start(name: str, project: str, phases: list[str], reporter: str = "") -> str:
+def start(name: str, project: str, phases: list[str], reporter: str = "",
+          work: str = "") -> str:
     """Begin recording a workflow; its phases, in order, as slugs or titles;
-    `reporter` who started it, as the route proved it. Returns its id."""
+    `reporter` who started it, as the route proved it; `work` the Work item
+    it is for (checked open by the route), where its messages to him go.
+    Returns its id."""
     name = _one_line(name, NAME_MAX)
     project = _one_line(project, NAME_MAX)
     if not name or not project:
@@ -294,8 +299,9 @@ def start(name: str, project: str, phases: list[str], reporter: str = "") -> str
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO workflows (id, name, project, state, started_at, last_event_at, "
-            "reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (workflow_id, name, project, WorkflowState.running.value, now, now, reporter))
+            "reporter, work) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (workflow_id, name, project, WorkflowState.running.value, now, now, reporter,
+             work))
         conn.executemany(
             "INSERT INTO workflow_items (workflow_id, slug, kind, title, state, position) "
             "VALUES (?, ?, 'phase', ?, ?, ?)",
@@ -686,7 +692,7 @@ def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
         dismissed=_dismissed(row, now),
         dismiss_at=(row["finished_at"] + LINGER_SEC
                     if row["finished_at"] is not None and not _dismissed(row, now) else None),
-        items=items, open=open_items, reporter=row["reporter"])
+        items=items, open=open_items, reporter=row["reporter"], work=row["work"])
 
 
 def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
@@ -761,27 +767,3 @@ def find(reference: str) -> list[WorkflowSnapshot]:
     # Of a name used twice, the one still running is the one he means.
     running = [w for w in matches if w.state not in {s.value for s in FINISHED}]
     return running if len(running) == 1 else matches
-
-
-def with_decisions(boards: list) -> list:
-    """The needs boards (session_needs.Board) and, beside them, one board
-    of the open decisions of the running workflows per project and
-    reporter, owned by that reporter (its key's agent, else the key's
-    label; reporters.shown), never added to a session's own board, whose
-    writer is someone else. The board files are the sessions' own; this
-    never writes them."""
-    from jarvis import reporters, session_needs
-    lines: dict[tuple[str, str], list[str]] = {}
-    for w in active():
-        for o in w.open:
-            if o.kind == "decision":
-                lines.setdefault((w.project, w.reporter), []).append(
-                    f"- {w.name} needs a decision ({o.key}): {o.summary}")
-    out = list(boards)
-    for (project, reporter), extra in lines.items():
-        who = reporters.of_kept(reporter)
-        out.append(session_needs.Board(project, "## Workflow decisions\n" + "\n".join(extra),
-                                       time.time(), session=who.sessions[0] if who and
-                                       who.sessions else "",
-                                       owner=who.name if who else ""))
-    return out

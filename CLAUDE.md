@@ -84,7 +84,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
   say where it stands. The one route open with
   no credential is `POST /api/agent-keys`, a new agent's key submission,
   which only records a pending key; a key JARVIS holds but has not
-  onboarded may reach `POST /api/packages/inbox` alone, to be held.
+  onboarded may reach `POST /api/messages` alone, to be held.
 
 ## Product direction
 
@@ -121,7 +121,7 @@ JARVIS-Signature key=, created=, nonce=, body=, sig=` over
 `jarvis-request@v1`, method, path, query, Host, created, nonce and body
 digest) are checked by `agent_auth.check` from the gate
 (`web_auth._signed`): within `FRESH_SEC` (60 s), a nonce not seen in 120 s,
-the whole body (at most 32 MB) matching its digest before the route runs,
+the whole body (at most 34 MB, a 25 MB package in base64) matching its digest before the route runs,
 the key onboarded and live, then `agent_rights.allows`. A signed read by a
 key JARVIS holds goes on (`agent_key status` reads `GET
 /api/agent-keys/mine`). The principal (`agent:<session id>`) is
@@ -138,15 +138,15 @@ Everything an agent sends is signed: a package carries
 `agent-signature.json` (`package_signature.py`, `jarvis-package@v1`: the
 SHA-256 of every other file, the key, its session, `statements` such as
 `DECISION_CHECKED`, an optional `work_key` grant), made by `make_package`, which delivers nothing without the
-session's key (`agent_keys.signer_for`); a message file or needs board
-carries `<file>.sig` (`agent_key sign`, `jarvis-message@v1`). A signature
-counts only for a key JARVIS holds as onboarded, never one the file names.
+session's key (`agent_keys.signer_for`); a message is its signed
+request (`POST /api/messages`). A signature counts only for a key JARVIS
+holds as onboarded, never one the file names.
 Anything signed by a key that is not an onboarded agent's (unknown,
 pending, waiting, revoked, or a held key's signature that does not check),
 and after the cut-over anything unsigned, goes to ONE function,
 `server._unrecognised_key` (Tim's answer, Q3): held (`agent_key_held`,
-migration 2; a package's zip kept in `data_paths.held_dir()`, a message
-left `.held`, a report refused), the Work item it is for put in Error
+migration 2; a package's zip kept in `data_paths.held_dir()`, a message's
+words in the hold, a report refused), the Work item it is for put in Error
 (`work_store.ERROR`, raised and cleared only by JARVIS, `JARVIS_KINDS`,
 red on the page), and an error package made for Tim (`key_error_package.py`,
 from JARVIS, delivered unshown to his inbox, one per subject `key:<fp>` or
@@ -157,7 +157,7 @@ page's buttons save `results/act.json` through the frame's bridge, and
 `_key_error_act` does it as his click (only for an error package JARVIS
 made, `agent_key_errors`); by voice they are `set_agent_active` and
 `revoke_agent_key`. Onboarding releases the holds (`_release_held`: the
-package received again, the message put back), refusing drops them
+package received again, the message recorded as sent, `_record_message`), refusing drops them
 (`_refuse_held`); either way the error package closes and the Work item
 leaves Error. A request signed by a fingerprint JARVIS holds no key for is
 only refused: it proves nothing about anyone.
@@ -291,7 +291,7 @@ follows on from where it stopped. The brain reads the record with
 (`answer_dialog`), Terminal commands and refused attempts that never formed a
 message (no session, no capture) stay in the `steers` table.
 
-## One channel (in progress)
+## One channel
 `docs/planning/one-channel/design.md` is the plan: every message to and from
 Tim in one record. Phase 1 is in: `conversation_log` keeps each item's
 counterpart (`Counterpart`: agent, person, workflow, work, package; its
@@ -303,12 +303,10 @@ a message to him is recorded and refuses one without proof (`Unproven`);
 (proof `watcher`) and a session message (its own proof) go through it
 (`server._record_inbound`). Phase 2: every other channel does too, each
 as a `message_in` item whose `source_kind` is a `conversation_log.Source`:
-a proven needs-board rewrite in its writer's thread (`_record_board`, the
-signature proof `_board_writer` kept per rewrite; source
-`<project>:<mtime>`), a workflow's and a Work item's decision in its
-thread (`_record_workflow_decision`, `_record_work_decision`: proof
-`access_key` only when its reporter is a key, `_reported_proof`; source
-`<id>:<key>`), a package once its sender is proven, at arrival or on
+a proven needs-board rewrite in its writer's thread (until round 3; source
+`<project>:<mtime>`), a workflow's (until round 3) and a Work item's
+decision in its thread (`_record_work_decision`: proof `access_key` only
+when its reporter is a key, `_reported_proof`; source `<id>:<key>`), a package once its sender is proven, at arrival or on
 re-proof (`_record_package`, counterpart the inbox row), and a person's
 message (`_attend_arrival`, proof `team_server`, ref their GitHub id; the
 body is on `Arrival.text` for this record only, never the attention
@@ -370,7 +368,7 @@ keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
 answered once it goes (`_reply_went`, on `sent`); his answer to a Work
 decision marks it answered, and withdrawn or signed off done
 (`_decision_messages_settled`); a package closed marks its messages done
-(`_inbox_closed`). Round 3 moves agents over and removes the old paths.
+(`_inbox_closed`).
 Round 2 shows them on the page (the design's "What he will see" 2-4). Every
 message is one `MessageCard.tsx` (who, its proven sender by its one name, a
 subagent as "name (parent)", or "You"; when; NEW; what it says, as text; the
@@ -399,66 +397,61 @@ message is counted in one line, "3 new messages" (agents' new messages and
 people's waiting unread), whose Open is `right.tab.select` to the Inbox; the
 Inbox tab is lit while any is new. Every message recorded or moved, and
 anything on a Work item's thread, is an `inbox` hint on /ws/sessions
-(`server.INBOX_HINT`, from `_hint_conversation`).
+(`server.INBOX_HINT`, from `_hint_conversation`), and a message an `agents`
+hint: an agent's box counts its new messages (`needs`,
+`conversation_log.new_by_agent`, `server._new_by_agent`).
+Round 3 moved agents over. `/api/messages` is the one route an agent
+reaches him by: `make_package` posts there (`decision_package.deliver`: JSON
+`says`, `--says` or the package's kind and title, and the zip in base64;
+`work`, `project`, `workflow`, `source` in the query, `messages_api.Links`),
+and `POST /api/packages/inbox` refuses an agent's signed request
+(`SEND_AS_MESSAGE`), kept as JARVIS's own path. It is the one route a key
+held but not onboarded reaches (`web_auth.HOLDING_PATH`): a package it
+carries is held by its signature, a message's words in the hold
+(`_hold_message`), recorded on onboarding by `_record_message`, the one
+writer of an agent's message (the route, a released hold, a workflow's
+blocker). A decision is only a package: `work_report.py decision` and
+`withdraw` print `message.ASK_WITH_A_PACKAGE` and exit 2, and the Work and
+workflow event routes refuse `decision_needed` (and `decision_withdrawn`)
+from any reporter in the same words; JARVIS's own (a package's
+`understood-` vote) are recorded in-process. By voice, "What's new?" is
+`messages_to_him` with `new` (`messages_api.whats_new`: each Work item with
+new messages in the Inbox's order, its new ones oldest first, then the
+general ones newest first), which puts him on the first; the message he is
+on (`server._message_on`, also set by Read, Reply and opening by message, on
+the page or by voice) is what `read_aloud` ("read it", `next` for "next"),
+`open_inbox_package` ("open it": the package it carries, a page package's
+story told at once through `_package_story`, waiting at each question) and
+`reply` act on when no message is named.
 
 ## Messages from sessions
-A session starts a conversation with the user by dropping one Markdown file per
-message into `data/messages/<project>/` (`data_paths.session_messages_dir()`):
-first line `# <subject>`, the rest the message. `session_messages.collect`
-takes each file once it has not changed for `SETTLE_SEC`, never through a
-symlink. The server (`_watch_session_messages`) writes it to the
-`session_messages` table in `run_store.py`, THEN deletes the file (the
-session's sign it was picked up), then records an attention item naming the
-agent and nothing of its text. The agent is its real sender
-(`server._message_sender`, stored as `sender_session`, `sender_evidence`
-`agent_signature` and `sender_subagent`), proven only by `<file>.sig`
-beside it: `python -m jarvis.agent_key sign` by an onboarded agent's key
-over the file's name and bytes as they are now (`server._file_signer`).
-The signature proves the listed agent; a subagent of it is named ("<its
-name> (<listed parent>)", Tim's rule: every sender identified, no
-backdoor) only when that subagent's own file shows it writing the message
-(`server._signer_sender`, `session_message_sender.proven_by` with
-`subagents_only`: a Claude subagent's file named by its meta description,
-or a Codex subagent rollout naming its parent), never from anything the
-agent or the file says; with no such proof, the parent alone. Its `From:
-<session id>` line proves nothing. A reply to a subagent's message goes to
-the parent's session, read back "To Planning, for Feynman." (the capture's
-`for`, dropped once it is addressed elsewhere). An unsigned file
-is left `SIG_GRACE_SEC` (60 s) for its `.sig`; then it, and one signed by a
-key that is not an onboarded agent's, is never shown as a message: it is
-held where it was dropped (`<name>.held`, `server._hold_session_message`;
-its session sees it was not taken), counted in Diagnostics
-(`incomingHeld`), and told to Tim (`_unrecognised_key`, see "Agent keys");
-put back to be taken once he onboards its agent. Its Updates entry has
-Seen, Read and Reply, the same as every message to him (see "One channel").
-Every message to Tim can be replied to: a session's message (Reply); an
-agent's answer to a message and a session needing him (a capture to that
-agent, `capture` with `to`, then `steer_session`); a person's message (the
-Queue's reply, `draft_message`); a package (its answers go back on sign-off,
-`sign_off_package`); a Work item's or workflow's decision (answered there,
-`answer_work_decision`, `answer_workflow_decision`). The rest of Updates
-(runs, workflow news, follow-ups, stalled work, the digest) is JARVIS's own
-facts, not anyone's words to answer. The brain reads the record
-with `session_messages` and one message with `read_session_message`, which
-marks it read; both taint the turn. Sessions learn both folders from the
-talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside
-`skills/` because that folder is copied into the brain's own home).
-A need tied to a work item (a decision, a blocker or a question about it)
-goes on that work item (`work_report.py decision`, a blocked piece or
-update), never on the needs board; the board is only for needs tied to no
-item. The skill says so, and the brain, asked what needs him, reads the
-work items' open decisions and blockers first, then the needs board.
-A needs board is shown as its writer's, proven the same way
-(`server._proven_boards`, `_board_writer`): the onboarded agent whose key
-signed `<board>.sig` over that file as it is now, kept per file version in
-run_store's `needs_board_writers`, never every agent in its project. A
-board nothing signs is held: not shown, listed, counted on any agent or
-announced, counted in Diagnostics (`needsHeld`) and told to Tim
-(`_unrecognised_key`). An agent's needs count is the boards it is proven to have
-written (`server._needs_by_session`, by session id).
-`python -m jarvis.session_skill install` renders it with this install's data paths
-into every Claude Code config root and the user's Codex home; preflight's
-`session_skill` check only reports whether it is there and current.
+An agent reaches Tim one way: a signed message, `python -m jarvis.message
+--work <id> "<text>" [--package <zip>] --as <session id>` (`POST
+/api/messages`, see "One channel"), on the Work item it is about, else his
+Inbox. Every decision is a package with its background, made and sent with
+`make_package --work <id>`, which posts it as a message carrying it; a bare
+question is refused. Session message files (`data/messages/`), needs
+boards (`data/needs/`), their watchers, `.sig` files and `agent_key sign`
+are gone (one channel, round 3); what came by them stays on record
+(run_store's `session_messages` rows, read aloud as before, and the
+conversation record's items, read by `messages_to_him`, `read_aloud` and
+`conversation_history`). The brain's `session_messages`,
+`read_session_message` and `session_needs` are gone with them.
+Every message to Tim can be replied to: an agent's message or answer and a
+package's (Reply, `reply`, a capture to its proven sender); a session
+needing him (`capture` with `to`, then `steer_session`); a person's message
+(the Queue's reply, `draft_message`); a package (its answers go back on
+sign-off, `sign_off_package`). The rest of Updates (runs, workflow news,
+follow-ups, stalled work, the digest) is JARVIS's own facts.
+Sessions learn the route from the talk-to-jarvis skill
+(`session_skills/talk-to-jarvis/SKILL.md`, outside `skills/` because that
+folder is copied into the brain's own home), which teaches the one command,
+every decision as a package and no folder.
+`python -m jarvis.session_skill install` renders it with this install's
+commands and paths (`{{message}}`, `{{make_package}}`, `{{agent_key}}`,
+the reporters) into every Claude Code config root and the user's Codex home;
+an agent must reinstall it to learn the route. Preflight's `session_skill`
+check only reports whether it is there and current.
 
 ## The workflow monitor
 A long workflow (a phased build, a run of several agents) reports every
@@ -479,13 +472,18 @@ report's (`reporters.py`): the signing key's principal,
 every event (`reporter`; an old `key:<label>` record stays readable), and
 the page and brain show it by name (`reporter_name`, `reporters.shown`).
 An `agent_attached` session must be the key's own agent's session
-(`server._attach_refused`); any other is refused. A new phase, a decision needed, a blocker, a finish
-and going quiet are each an attention item on the workflow's one item. The brain answers anything
-about a workflow from `workflow_status`; open decisions are added to the
-needs board (`with_decisions`) as a board of their own per project and
-reporter, owned by that reporter, never added to a session's board, and
-without writing the sessions' board files,
-and he answers them on the Workflows view or by voice: the page's answer and
+(`server._attach_refused`); any other is refused. A workflow is started for
+one Work item (`start --work <id>`, `workflows.work`, refused unless open),
+and what needs him is a message there (his Inbox with none), never on the
+Workflows view, which keeps phases and progress: a reporter's
+`decision_needed` is refused (a decision is a package, `make_package
+--workflow <id> --work <item>`, whose answers come back as the workflow's
+decisions on sign-off), and a `blocker_raised` stays its state and is also a
+message from its reporter about its item (`server._workflow_message`, an
+agent key's report only). A new phase, a finish and going quiet are each an
+attention item on the workflow's one item. The brain answers anything
+about a workflow from `workflow_status`; a decision asked before round 3 is
+still answered on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
@@ -538,21 +536,23 @@ pieces, pieces waiting on him, pieces waiting on others), Pieces and
 Reports. While a decision is open a "Decision needed" banner above every
 tab opens Messages, the Messages tab is counted, and the list row counts
 the decisions beside its state; the row's third line is the first blocker
-that is not a decision, with how many more. A decision may name a page
-package (`decision --package <id or name>`); its card's "Open the
-package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
-as the brain's `open_package_page`, on his click. A decision is answered by
-Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
-<key> "<reason>"`, kind `decision_withdrawn`): the route records the asker
-as its signing key's principal (`work_api.asker`, `reporters.recorded`;
-withdrawals and `answers` also accept an access-key label the agent was
-onboarded under, `reporters.aliases`),
-never what the report says (every report keeps its reporter the same way:
-`work_events.reporter` and each piece's latest, `work_pieces.reporter`,
-migration 6, shown as "reported by <name>" on pieces and events), refuses a page's withdrawal, and a decision
-asked before askers were recorded may be withdrawn by any reporter. A
-withdrawn decision is no longer open or counted, and is kept beside the
-answered ones (`answered`, `where` = `withdrawn`). An item closed
+that is not a decision, with how many more. No reporter asks or withdraws
+a decision any more (round 3: a decision is a package sent with `--work`,
+a message on the item; the route refuses `decision_needed` and
+`decision_withdrawn`, `message.ASK_WITH_A_PACKAGE`): the decision record
+stays the answers' store, for JARVIS's own (`understood-<inbox id>`), the
+ones asked before, which he still answers, and a package's answers. A
+decision asked before may name a page package (`detail.package`); its
+card's "Open the package" posts to `/api/packages/<id>/page`, the same
+`_open_package_page` as the brain's `open_package_page`, on his click. A
+decision is answered by Tim alone. The route records the asker of every
+report as its signing key's principal (`work_api.asker`,
+`reporters.recorded`; `answers` also accepts an access-key label the agent
+was onboarded under, `reporters.aliases`), never what the report says
+(`work_events.reporter` and each piece's latest, `work_pieces.reporter`,
+migration 6, shown as "reported by <name>" on pieces and events). A
+withdrawn decision (from before) is no longer open or counted, and is kept
+beside the answered ones (`answered`, `where` = `withdrawn`). An item closed
 (`work_report.py close`, kind `closed`, `closed_at`; nothing more is
 reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
 minutes) moves to History: `GET /api/work`'s `history`, newest first, under
@@ -982,10 +982,13 @@ the isolated check JARVIS are not asked.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
-jarvis.make_package` checks and builds it, then posts the zip's bytes to
-`POST /api/packages/inbox?project=&session=&source=&workflow=&work=`
-(`decision_package.deliver`, signed with the sending session's key; the
-`packages` right opens that one route and nothing else). Its sender is its
+jarvis.make_package` checks and builds it, then sends it as a message
+carrying it, `POST /api/messages?work=&project=&workflow=&source=`
+(`decision_package.deliver`, signed with the sending session's key; see
+"One channel"), whose route hands the bytes to `_receive_inbox_package`;
+the `packages` right is what lets a key carry one. `POST
+/api/packages/inbox` is JARVIS's own path (the tool token) and refuses an
+agent's signed request. Its sender is its
 signature's (`agent-signature.json`, `package_signature.py`;
 `server._package_signer`): the onboarded agent whose key signed it, its
 answers going to that session (`from_session`, `sender_evidence`
@@ -1401,8 +1404,7 @@ synthesis and each `/internal/tool` request, and a heartbeat per `_every`
 loop). Communications are down when the session watcher is not running, has
 not finished a poll for a minute or has failed three in a row; when the
 messages sent last, back to the last one that arrived, were lost on their way
-to two or more different sessions; or when the loop taking session messages
-or reading the needs board has stopped. A message held in the queue for its session's turn over ten minutes makes them degraded, naming the agent and what JARVIS takes its session to be doing. `GET /api/diagnostics/subsystems`
+to two or more different sessions. A message held in the queue for its session's turn over ten minutes makes them degraded, naming the agent and what JARVIS takes its session to be doing. `GET /api/diagnostics/subsystems`
 reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 (one row in full on request, voice input with `voice_diagnostics.summary`'s
 figures); `_watch_subsystems` looks every five seconds, sends a
@@ -1701,8 +1703,8 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
-not picked up, answered or not sent; a session's message,
-needs board or needs-you; a session finishing; a run or package run ending;
+not picked up, answered or not sent; an agent's message;
+a session needing him; a session finishing; a run or package run ending;
 a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its
 sign-in or at its usage limit; a shell command's or keypress's outcome after
@@ -2161,8 +2163,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   session brings back its name and activation (`run_store.sync_agents`)
 - `session_steer.py` — Sends a message into a running session's inbox socket;
   holds the signature every message starts with
-- `session_messages.py` — Reads the messages sessions drop for Tim in
-  `data/messages/<project>/` (see "Messages from sessions")
+- `messages_api.py` / `message.py` — Messages to Tim: the one signed
+  route agents send by, its reads, "What's new?" (`whats_new`), and the
+  command (see "One channel")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
 - `wait_links.py` — What a wait on him waits for (its link), which answer
@@ -2185,7 +2188,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `author_proof.py` — Proof that a fresh author session wrote an agent's
   package: the source digest, the claim and the author's own transcript
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
-  about the needs board and session messages
+  the one way to reach Tim (a signed message, every decision a package)
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
   it a keystroke (needs Accessibility)
 - `notifier.py` — macOS notification fallback when no browser tab is

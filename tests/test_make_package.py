@@ -5,6 +5,7 @@ the package sent to Tim's package inbox with who sent it. Content checks shared 
 tests/test_decision_package.py; the isolated JARVIS here is a stand-in."""
 from __future__ import annotations
 
+import base64
 import json
 import zipfile
 from pathlib import Path
@@ -96,17 +97,28 @@ def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, c
                     "--project", "lunch", "--session", "sess-1", "--workflow", "wf-1",
                     "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, body)] = delivery.calls
-    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?")
-    assert "project=lunch" in url and "session=sess-1" in url and "workflow=wf-1" in url \
-        and "work=work-1" in url
-    assert isinstance(body, bytes) and body[:2] == b"PK", "the zip's own bytes"
+    assert url.startswith("http://127.0.0.1:19999/api/messages?"), "a message carrying it"
+    assert "project=lunch" in url and "workflow=wf-1" in url and "work=work-1" in url
+    assert base64.b64decode(body["package"])[:2] == b"PK", "the zip's own bytes"
+    assert body["says"].startswith("Decision package: "), "its kind and title by default"
     out = capsys.readouterr().out
-    assert "Arrived in Tim's package inbox as pkg-0123456789ab" in out
+    assert "Sent to Tim as message 41, carrying it; in his package inbox as " \
+        "pkg-0123456789ab" in out
     assert "Nothing is shown until he asks for it" in out
-    assert not list(data_paths.session_messages_dir().glob("*/*.md")), \
-        "no message: the inbox tells him"
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
-    assert record["inbox"] == "pkg-0123456789ab" and record["session"] == "sess-1"
+    assert (record["inbox"], record["message"], record["session"]) == (
+        "pkg-0123456789ab", 41, "sess-1")
+
+
+def test_says_is_the_message_s_words(tmp_path, monkeypatch):
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    passing_check(monkeypatch)
+    assert mp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+                    "--session", "sess-1", "--says", "Two choices on the lunch.",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    [(_url, _token, body)] = delivery.calls
+    assert body["says"] == "Two choices on the lunch."
 
 
 def test_the_version_follows_the_highest_already_delivered(tmp_path, monkeypatch):
@@ -316,7 +328,7 @@ def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsy
     assert "app.js" in names and "story.json" in names and "results/old.json" not in names
     assert len(delivery.calls) == 1
     out = capsys.readouterr().out
-    assert "Built a page package" in out and "Arrived in Tim's package inbox" in out
+    assert "Built a page package" in out and "in his package inbox" in out
 
 
 @pytest.mark.parametrize("change, said", [

@@ -228,7 +228,7 @@ function AgentItem({ agent, switchable, onToggle }: {
       <button type="button" className="agent-entry" disabled ref={entry}>
         <AgentOrb agent={agent} />
         <span className="agent-name" ref={ui.part("name")}>{agentName(agent)}</span>
-        {/* Its needs-board count, in the upper right, zero included. */}
+        {/* Its new messages to him, in the upper right, zero included. */}
         <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
         <AgentProvider provider={agent.provider} />
         {agent.key === "waiting" && (

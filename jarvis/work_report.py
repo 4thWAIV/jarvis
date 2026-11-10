@@ -13,12 +13,13 @@ workflow_report.py, whose standard-library client it uses.
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
                           [--until <hold> ...] [--then <state>] [--cleared]
-    python work_report.py decision <id> <key> <question> [--option <option> ...] [--recommendation <text>]
-                          [--package <package id or name>]
     python work_report.py answer <id> <key>
     python work_report.py answers [--since <epoch seconds or ISO time>]
-    python work_report.py withdraw <id> <key> <reason>
     python work_report.py close <id> [<summary>]
+
+`decision` and `withdraw` are gone: every decision goes to Tim as a decision
+package carried by a message on the item (`python -m jarvis.make_package
+--work <id>`), and both now refuse, saying so (message.ASK_WITH_A_PACKAGE).
 
 A reported state is planned, ready, working, verifying, waiting_on_tim or
 blocked (done is his approval). A working report is intent only: the public
@@ -38,25 +39,23 @@ A piece that waits on the user (`--state waiting_on_tim`) or is blocked
 (repeat it for several): `decision:<key>` (one of this item's open
 decisions), `work:<item id>:<key>`, `workflow:<workflow id>:<key>` or
 `package:<id or name>[:<decision id>]`; a blocker may instead be words.
-Once every one is answered (or its package signed off, or its decision
-withdrawn), JARVIS moves the piece on to `--then` (ready by default)
+Once every one is answered (or its package signed off), JARVIS moves the
+piece on to `--then` (ready by default)
 itself. Nothing else moves a held piece on: a report that would is refused,
 naming what holds it, so work that can go on meanwhile is a piece of its
 own. A blocker given in words is cleared by reporting the piece's next
 state with `--cleared`. An item with pieces takes its state from them and
 is never reported waiting or blocked itself (an item with none follows the
-same rules as a piece). A decision's `--package` names
-a page package (by id or name) the user can open from the decision. `withdraw`
-takes back a decision you asked, with why (only its asker can; the user's
-answer is never yours to give). `close`
+same rules as a piece). `close`
 moves the item to History for good (nothing is deleted, and nothing more
 can be reported to it); a done item moves there by itself after a few
 minutes. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
 he has not; it exits 4 when the decision was closed without an answer
 because the user signed off the package it names without answering it.
-`answers` prints every answer he has given to the decisions your access
-key asked, since the time given (all of them without one), one per line:
+`answers` prints every answer he has given to the decisions asked for your
+key (a package's questions on a Work item), since the time given (all of
+them without one), one per line:
 item, key, when and his answer. JARVIS also writes each answer to
 `<data>/answers/<project>/<item>-<key>.md` the moment he gives it.
 """
@@ -150,17 +149,9 @@ def main(argv: list[str]) -> int:
     piece.add_argument("--until", action="append")
     piece.add_argument("--then")
     piece.add_argument("--cleared", action="store_true")
-    decision = sub.add_parser("decision")
-    decision.add_argument("id")
-    decision.add_argument("key")
-    decision.add_argument("question")
-    decision.add_argument("--option", action="append", default=[])
-    decision.add_argument("--recommendation")
-    decision.add_argument("--package")
-    withdraw = sub.add_parser("withdraw")
-    withdraw.add_argument("id")
-    withdraw.add_argument("key")
-    withdraw.add_argument("reason")
+    # The old ways of asking a decision, kept only to say the new one.
+    for gone in ("decision", "withdraw"):
+        sub.add_parser(gone).add_argument("rest", nargs=argparse.REMAINDER)
     close = sub.add_parser("close")
     close.add_argument("id")
     close.add_argument("summary", nargs="?", default="Closed.")
@@ -170,6 +161,10 @@ def main(argv: list[str]) -> int:
     answers = sub.add_parser("answers")
     answers.add_argument("--since")
     args = parser.parse_args(argv[1:])
+    if args.command in ("decision", "withdraw"):
+        from jarvis.message import ASK_WITH_A_PACKAGE
+        print(ASK_WITH_A_PACKAGE, file=sys.stderr)
+        return 2
 
     with _client(args.cert, args.as_session) as client:
         if args.command == "start":
@@ -214,9 +209,7 @@ def main(argv: list[str]) -> int:
                 detail["cleared"] = True
         elif args.command == "close":
             kind, detail = "closed", {}
-        elif args.command == "withdraw":
-            kind, detail = "decision_withdrawn", {"key": args.key}
-        elif args.command == "piece":
+        else:
             kind, detail = "piece", {"key": args.key}
             for name in ("title", "state", "until", "then"):
                 if getattr(args, name):
@@ -231,16 +224,8 @@ def main(argv: list[str]) -> int:
                 detail["evidence"] = [_evidence(e) for e in args.evidence]
             if args.cleared:
                 detail["cleared"] = True
-        else:
-            kind, detail = "decision_needed", {"key": args.key, "options": args.option}
-            if args.recommendation:
-                detail["recommendation"] = args.recommendation
-            if args.package:
-                detail["package"] = args.package
-        summary = (args.question if args.command == "decision"
-                   else args.reason if args.command == "withdraw" else args.summary)
         item = _post(client, f"/api/work/{args.id}/events",
-                     {"kind": kind, "summary": summary, "detail": detail})["item"]
+                     {"kind": kind, "summary": args.summary, "detail": detail})["item"]
         print(_line(item))
         return 0
 

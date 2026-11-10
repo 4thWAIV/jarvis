@@ -291,25 +291,28 @@ def test_the_page_reads_true_counts_and_sources_and_hears_each_move(wired):
     client.post(f"{MESSAGES}/{first['id']}/mark", json={"state": "read"}, headers=ORIGIN)
     assert {"type": server.INBOX_HINT} in hints[before:], "a message moving is a hint"
     assert client.get(f"{MESSAGES}/general").json()["new"] == 1
-    r = agent.post(client, f"/api/work/{wid}/events", {
-        "kind": "decision_needed", "summary": "Which database?",
-        "detail": {"key": "db", "options": ["sqlite", "postgres"]}})
-    assert r.status_code == 200, r.text
+    _decision_on_record(server, wid)
     [m] = client.get(f"{MESSAGES}/work/{wid}").json()["messages"]
     assert m["source"] == {"kind": "work_decision", "id": f"{wid}:db"}
 
 
 # -- every other channel writes messages too ---------------------------------------------
 
+def _decision_on_record(server, wid, asker=f"agent:{PLAN}"):
+    """A Work decision asked before round 3 (no reporter asks one now),
+    recorded as the route recorded it, its message with it."""
+    from jarvis import work_store
+    detail = {"key": "db", "options": ["sqlite", "postgres"], "asked_by": asker}
+    item = work_store.record(work_store.WorkEvent(wid, work_store.DECISION_NEEDED,
+                                                  "Which database?", detail, reporter=asker))
+    server._work_recorded(item, work_store.DECISION_NEEDED, detail)
+
 def test_a_work_decision_is_a_message_about_its_item_answered_with_his_answer(wired):
     server, *_, folder, home = wired
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
     wid = _start_work(client, agent, folder)
-    r = agent.post(client, f"/api/work/{wid}/events", {
-        "kind": "decision_needed", "summary": "Which database?",
-        "detail": {"key": "db", "options": ["sqlite", "postgres"]}})
-    assert r.status_code == 200, r.text
+    _decision_on_record(server, wid)
     [m] = cl.work_thread(wid)
     assert (m.about, m.sender, m.sender_evidence, m.state) == (
         wid, f"agent:{PLAN}", "agent_signature", "new"), "a signed asker is proof"
@@ -331,7 +334,7 @@ def test_a_package_for_a_work_item_is_a_message_about_it_carrying_it_done_once_c
     r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
     assert r.status_code == 200, r.text
     inbox = r.json()["inbox"]["id"]
-    [m] = [i for i in cl.work_thread(wid) if i.source_kind == cl.Source.PACKAGE]
+    [m] = [i for i in cl.work_thread(wid) if i.carries == inbox]
     assert (m.carries, m.sender, m.state) == (inbox, f"agent:{PLAN}", "new")
     assert client.post(f"/api/packages/inbox/{inbox}/close", headers=ORIGIN).status_code == 200
     assert cl.get(m.id).state == "done"
