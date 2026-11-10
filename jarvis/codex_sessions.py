@@ -484,7 +484,13 @@ class CodexSessions:
                 agent_id=child.session_id, description=child.given_name or child.title or child.session_id,
                 agent_type="codex-subagent", background=True, depth=len(visited) + 1,
                 state="finished" if child.worker_activity.get("state") == "idle" else "stale",
-                started=child.started, written=child.worker_activity.get("observed_at") or 0,
+                # When it last did something: a finished child's own last turn,
+                # never when the runtime was last asked about it, which moves on
+                # every poll and kept finished subagents popping back up.
+                started=child.started,
+                written=(child.worker_activity.get("observed_at") or 0
+                         if child.worker_activity.get("state") != "idle"
+                         else child.since or child.started or 0),
                 parent_agent_id=child.parent_session_id or "", worker_activity=child.worker_activity,
                 runtime_status=child.runtime_status))
         sessions.extend(orphans)
@@ -598,6 +604,7 @@ def child_sessions(threads: dict, parents: list[SessionState], include=()) -> li
                 parent_session_id=ident.get("parent"), given_name=ident.get("name", ""),
                 title=(thread.get("title") or "")[:120],
                 worker_activity=worker_activity.observation(objects, NAME),
-                since=status.since, between_turns=status.between_turns))
+                since=status.since or (thread.get("updated_at_ms") or 0) / 1000 or None,
+                between_turns=status.between_turns))
             known.add(tid)
     return children
