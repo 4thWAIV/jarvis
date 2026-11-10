@@ -289,3 +289,42 @@ def test_existing_database_without_folder_id_still_opens(monkeypatch, tmp_path):
     run_store.init_db()          # repeatable
 
     assert run_store.get_run("old-run")["folder_id"] is None
+
+
+def test_a_wal_switch_that_loses_a_race_waits_for_the_other_and_carries_on(tmp_path, monkeypatch):
+    """Two first connections to a new database: the one whose switch to WAL is
+    refused ('locked') carries on once it sees the database in WAL."""
+    import sqlite3
+    from jarvis import run_store
+    path = tmp_path / "race.db"
+    holder = sqlite3.connect(str(path), check_same_thread=False)
+    holder.execute("create table t (x)")
+    holder.execute("begin")
+    holder.execute("insert into t values (1)")     # holds a lock: the switch is refused
+    import threading
+    def finish():
+        holder.commit()
+        holder.execute("PRAGMA journal_mode=WAL")  # the other connection's switch lands
+        holder.close()
+    threading.Timer(0.3, finish).start()
+    conn = run_store._connect(path)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    conn.close()
+
+
+def test_a_lock_that_never_ends_is_raised_not_hidden(tmp_path):
+    """An unrelated lock that outlasts the wait is the error it was."""
+    import sqlite3
+    import pytest
+    from jarvis import run_store
+    path = tmp_path / "stuck.db"
+    holder = sqlite3.connect(str(path))
+    holder.execute("create table t (x)")
+    holder.execute("begin")
+    holder.execute("insert into t values (1)")
+    conn = sqlite3.connect(str(path), timeout=0.1)
+    with pytest.raises(sqlite3.OperationalError):
+        run_store._ensure_wal(conn, wait=0.5)
+    holder.rollback()
+    holder.close()
+    conn.close()
