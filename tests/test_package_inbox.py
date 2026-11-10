@@ -51,7 +51,8 @@ def deck_zip(tmp_path: Path, version: str = "1.0.0", session: str = "sess-tea") 
     raw = tmp_path / f"raw-{version}-{session}.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     agent = onboarded_auth(session=session).agent
-    package_signature.sign(raw, signed, agent.private, agent.public, session, (package_signature.DECISION_CHECKED,))
+    from tests.author_fixtures import sign_authored
+    sign_authored(raw, signed, agent, session, (package_signature.DECISION_CHECKED,))
     return signed.read_bytes()
 
 
@@ -302,7 +303,8 @@ def presentation_zip(tmp_path) -> bytes:
     made = make_package.make_deck(content, out)
     from tests.agent_key_fixtures import onboarded_auth
     agent = onboarded_auth(session="sess-1").agent
-    package_signature.sign(made.archive, made.archive, agent.private, agent.public, "sess-1",
+    from tests.author_fixtures import sign_authored
+    sign_authored(made.archive, made.archive, agent, "sess-1",
                            (package_signature.DECISION_CHECKED,))
     return made.archive.read_bytes()
 

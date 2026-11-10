@@ -554,7 +554,14 @@ def authored_package_source(monkeypatch):
     """Exercise factory rendering/delivery after authorship in existing tests.
 
     test_package_author separately exercises the mandatory gate and both real
-    provider adapters. This fixture is opt-in, never a global author bypass.
+    provider adapters. This fixture is opt-in, never a global author bypass:
+    the source is left as a fresh author leaves it, its receipt beside it
+    and its own transcript showing its last check (tests/author_fixtures).
     """
     from jarvis import package_author
-    monkeypatch.setattr(package_author, "prepare", lambda handoff, engine, out, **kw: kw["source"])
+    from tests.author_fixtures import authored
+
+    def prepare(handoff, engine, out, **kw):
+        authored(kw["source"], engine or "claude")
+        return kw["source"]
+    monkeypatch.setattr(package_author, "prepare", prepare)

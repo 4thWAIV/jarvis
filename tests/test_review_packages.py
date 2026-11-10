@@ -55,7 +55,8 @@ def review_zip(tmp_path: Path, also_ask: bool = False) -> bytes:
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     from tests.agent_key_fixtures import onboarded_auth
     agent = onboarded_auth(session="gone").agent
-    package_signature.sign(raw, signed, agent.private, agent.public, "gone", (package_signature.DECISION_CHECKED,))
+    from tests.author_fixtures import sign_authored
+    sign_authored(raw, signed, agent, "gone", (package_signature.DECISION_CHECKED,))
     return signed.read_bytes()
 
 

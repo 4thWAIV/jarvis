@@ -40,7 +40,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import data_paths, decision_package as dp, decision_stamp, package_signature
+from jarvis import (author_proof, data_paths, decision_package as dp, decision_stamp,
+                    package_signature)
 
 # The file each way of running needs, by its usual name: a folder holding
 # exactly one of them runs that way.
@@ -297,10 +298,29 @@ def make_folder(folder: Path, out: Path) -> Made:
 # -- signing --------------------------------------------------------------------------
 
 def sign(archive: Path, signer: tuple[Path, str], session: str,
-         statements: tuple[str, ...] = (), work_key: dict | None = None) -> None:
+         statements: tuple[str, ...] = (), work_key: dict | None = None,
+         author: dict | None = None) -> None:
     """Sign the zip in place with the session's own key (package_signature)."""
     package_signature.sign(archive, archive, signer[0], signer[1], session, statements,
-                           work_key)
+                           work_key, author)
+
+
+def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
+    """The fresh author's claim for this package: its authored source put in
+    the zip (`.jarvis/author/`), and the claim checked here first exactly as
+    the receiving JARVIS checks it (author_proof.problem), so a source
+    changed after the author's own last check is never delivered."""
+    import time
+    from jarvis import package_author
+    claim = package_author.claim_of(source)
+    try:
+        author_proof.attach(made.archive, source)
+    except (OSError, ValueError) as e:
+        raise dp.Refused([f"The authored source could not be added: {e}"]) from None
+    why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
+    if why:
+        raise dp.Refused([why])
+    return claim
 
 
 def add_work_key(archive: Path, work_id: str) -> dict:
@@ -417,6 +437,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         else f"{len(deck.get('decisions') or [])} decision(s)")
                 print(f"The content is right: a {kind}, {asks}, "
                       f"package {deck['name']}-{deck['version']}.")
+            # What a fresh author's own last check shows (author_proof.MARK).
+            print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
@@ -425,6 +447,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                                         session=args.session, work=args.work, workflow=args.workflow)
         check_vote(source, args.work)
         made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
+        author = with_author(made, source, args.session)
     except dp.Refused as e:
         print("Not built. These need changing:")
         for line in e.problems:
@@ -450,7 +473,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
         sign(made.archive, signer, args.session,
-             (package_signature.DECISION_CHECKED,) if decision else (), grant)
+             (package_signature.DECISION_CHECKED,) if decision else (), grant,
+             author.as_dict())
         delivered = dp.deliver(made.archive, args.deliver_to, "", project=args.project,
                                session=args.session, workflow=args.workflow, work=args.work,
                                source=str(args.handoff or args.source), signer=signer)

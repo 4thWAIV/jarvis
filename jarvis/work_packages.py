@@ -402,6 +402,11 @@ def _unpacked_from(sha256: str) -> Optional[Path]:
     return None
 
 
+def already_here(archive_path: Path) -> bool:
+    """Whether a package was already unpacked here from these exact bytes."""
+    return _unpacked_from(_sha256(archive_path)) is not None
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as f:
