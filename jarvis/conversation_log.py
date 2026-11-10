@@ -702,6 +702,16 @@ def general(before: int | None = None, limit: int = PAGE) -> list[ConversationIt
     return [_item(r) for r in rows]
 
 
+def new_general() -> int:
+    """How many messages that belong to no Work item are new (a person's
+    are counted in their own threads, so not here)."""
+    with closing(_connect()) as conn:
+        return int(conn.execute(
+            f"SELECT COUNT(*) FROM conversation_items WHERE about IS NULL AND state = ? "
+            f"AND counterpart_kind IS NOT ?",
+            (str(MessageState.NEW), str(Counterpart.PERSON))).fetchone()[0])
+
+
 def item_for_message(message_id: int) -> ConversationItem | None:
     """The item recording a message he sent an agent (TO_AGENT), or None."""
     with closing(_connect()) as conn:

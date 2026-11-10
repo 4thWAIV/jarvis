@@ -188,7 +188,7 @@ DECISION_NEED, PACKAGE_NEED, REVIEW_PACKAGE_NEED, REVIEW_NEED, PIECE_NEED = (
 def needs_of(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None,
              approvable: Optional[bool] = None) -> list[dict]:
     """Each act he is needed for on this item, in the order to do them:
-    its open decisions (on the Decisions tab), the packages sent for it that
+    its open decisions (on the Messages tab), the packages sent for it that
     still ask him something (opened from the item), its review (in its
     header) and a piece waiting on him for something else (what it names)."""
     if item.closed_at is not None or item.state == work_store.DONE:
@@ -227,7 +227,7 @@ def need_words(need: dict) -> str:
     need in its language, main.work.need.*)."""
     kind = need["kind"]
     if kind == DECISION_NEED:
-        return f'Answer "{need["text"]}" on the Decisions tab'
+        return f'Answer "{need["text"]}" on the Messages tab'
     if kind == PACKAGE_NEED:
         return f"Open the {need['text']} package and answer its questions"
     if kind == REVIEW_PACKAGE_NEED:

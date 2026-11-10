@@ -1,7 +1,9 @@
 /**
- * The right panel's Queue: at its top the Packages agents sent him
- * (QueuePackages.tsx, shown signed in or not), then one owner's work,
- * newest arrival first. Waiting
+ * The right panel's Inbox (the tab that was the Queue, id still `queue`):
+ * at its top the messages agents sent him (InboxMessages.tsx, shown signed
+ * in or not): each Work item with new messages, then the messages that
+ * belong to no item. Then people's messages, one owner's work, newest
+ * arrival first. Waiting
  * at the top (what has come in and not been taken up), Active under it
  * (opened work, outgoing exchanges and whatever is on its way out, kept
  * together), and the dismissed items behind a collapsed Dismissed, read a
@@ -40,7 +42,7 @@ import {
   directory, historyError, NEW, openQueue, pendingCommands, queue, queueReadError, readHistory, restore,
 } from "./queue";
 import { Cue, DELIVERY_CUE, QueueIcon } from "./QueueIcons";
-import { QueuePackages } from "./QueuePackages";
+import { InboxMessages } from "./InboxMessages";
 import {
   active, cues, DELIVERY_WORDS, dismissed, jarvisLabel, latestFrom, messagesOf, personName, previewOf,
   sendWords, subjectOf, turnWords, unsentDrafts, waiting, type Directory, type ItemRecord,
@@ -134,11 +136,11 @@ export function QueuePanel() {
   useTick(30000);
   useLayoutEffect(() => { queueLaidOut.set(queueLaidOut.get() + 1); });
 
-  const packages = <QueuePackages part={ui.part("packages")} closedPart={ui.part("closedPackages")} />;
+  const fromAgents = <InboxMessages workPart={ui.part("workMessages")} generalPart={ui.part("general")} />;
   if (!state.offered) {
     return (
       <div className="right-view queue-view" ref={ui.whole}>
-        {packages}
+        {fromAgents}
         <p className="queue-notice">{t("right.queue.notOffered")}</p>
       </div>
     );
@@ -148,7 +150,7 @@ export function QueuePanel() {
   const unsent = unsentDrafts(state);
   return (
     <div className="right-view queue-view" ref={ui.whole}>
-      {packages}
+      {fromAgents}
       {state.availability && state.availability !== "available" && (
         <p className="queue-notice" data-availability={state.availability}>
           {t(`right.queue.availability.${state.availability}`)}

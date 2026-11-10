@@ -5,7 +5,7 @@
   "commands": [
     {"id": "work.open", "label": "Open one work item's detail in the centre, on its first tab or the one named; the Work list stays in view",
      "view": "main.work", "args": {"itemId": {"type": "key", "entity": "workItem"},
-                                   "tab": {"type": "enum", "values": ["overview", "decisions", "blocking", "pieces", "reports"]}},
+                                   "tab": {"type": "enum", "values": ["messages", "overview", "blocking", "pieces", "reports"]}},
      "required": ["itemId"], "actors": ["human", "brain"],
      "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}, {"effect": "layout.restored"}]},
     {"id": "work.close", "label": "Close the work item's detail",

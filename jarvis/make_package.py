@@ -404,8 +404,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="the workflow it is for: it waits on his answers, which come "
                              "back as its decisions")
     parser.add_argument("--work", default="",
-                        help="the work item it is for: its questions show on that item's "
-                             "Decisions tab")
+                        help="the work item it is for: it is a message in that item's "
+                             "Messages tab")
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the screenshots go "
                              "(default: a new temporary folder)")

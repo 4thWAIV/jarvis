@@ -1,7 +1,7 @@
 /**
  * The right-hand display, mirroring the left column: six labelled tabs
  * along the top in two rows of three, one per thing Tim can see (Folders,
- * Agents, Queue; Work, Network, Diagnostics; Work is the tab that was
+ * Agents, Inbox (the tab that was the Queue, id still `queue`); Work, Network, Diagnostics; Work is the tab that was
  * Workflows, and keeps the Workflows view under its list), and the view for the
  * selected one below. Agents is selected to begin with.
  *
@@ -17,6 +17,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { FoldersPanel } from "./FoldersPanel";
+import { inboxMessages, newMessages } from "./messagesToHim";
 import { NetworkPanel } from "./NetworkPanel";
 import { queue } from "./queue";
 import { QueueIcon } from "./QueueIcons";
@@ -130,8 +131,11 @@ export function RightPanel() {
   const selected = useSyncExternalStore(rightTab.subscribe, rightTab.get);
   const panel = useUiBox("right.panel");
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
-  // Something waiting and unread lights the Queue tab while another is open.
-  const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
+  // Something waiting and unread, from a person or an agent, lights the
+  // Inbox tab while another is open.
+  const people = attention(useSyncExternalStore(queue.subscribe, queue.get));
+  const agents = newMessages(useSyncExternalStore(inboxMessages.subscribe, inboxMessages.get).value);
+  const unread = people || agents > 0;
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
   const tab = laidOut.find((v) => v.id === selected)!;

@@ -262,7 +262,7 @@ async def test_pointing_at_a_queue_row_never_opens_activates_or_reads_it(page_ur
     async with async_api.async_playwright() as p:
         browser, page, ui, routes = await _open(p, page_url, queue_world=world)
         try:
-            await _tab(page, "Queue")
+            await _tab(page, "Inbox")
             await page.wait_for_selector('.queue-list[data-list="waiting"] > li')
             waiting = await page.evaluate(
                 """() => document.querySelector('.queue-list[data-list="waiting"] > li').dataset.threadId""")

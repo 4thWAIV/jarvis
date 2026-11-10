@@ -54,7 +54,7 @@ QUEUE_MARKUP = """(thread) => {
   const tabs = document.querySelector('.right-tabs');
   const tab = document.createElement('button');
   tab.className = 'control-button right-tab';
-  tab.setAttribute('aria-label', 'Queue');
+  tab.setAttribute('aria-label', 'Inbox');
   tab.textContent = 'Q';
   tabs.appendChild(tab);
   if (thread) {
@@ -105,7 +105,7 @@ def _centre(page, selector):
 
 
 ROW = f"[data-transfer-endpoint='{THREAD}']"
-QUEUE_TAB = ".right-tabs [aria-label='Queue']"
+QUEUE_TAB = ".right-tabs [aria-label='Inbox']"
 GROUPS = """() => [...document.querySelectorAll('#ray-lane .ray')].map(g => ({
   id: g.dataset.rayTo, direction: g.dataset.direction, motion: g.dataset.motion,
   pulses: g.querySelectorAll('.ray-pulse').length,

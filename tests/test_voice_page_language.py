@@ -22,8 +22,8 @@ from tests.test_voice_page_settings import _Server, _open_settings
 pytestmark = pytest.mark.page
 
 TABS = """() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.getAttribute('aria-label'))"""
-ENGLISH_TABS = ["Folders", "Agents", "Queue", "Work", "Network", "Diagnostics"]
-SPANISH_TABS = ["Carpetas", "Agentes", "Cola", "Trabajo", "Red", "Diagnóstico"]
+ENGLISH_TABS = ["Folders", "Agents", "Inbox", "Work", "Network", "Diagnostics"]
+SPANISH_TABS = ["Carpetas", "Agentes", "Recibidos", "Trabajo", "Red", "Diagnóstico"]
 
 
 class _Sessions:
