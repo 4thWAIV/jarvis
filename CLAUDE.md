@@ -896,7 +896,13 @@ counts, read again after the frame saves a result (`packages_api.mount`'s
 `saved`) and after each answer. Arrival is an attention item of kind
 `package` (`untrusted`: the agent, the title; `facts`: decisions waiting)
 that is counted and listed but never spoken: `attention_store.SILENT_KINDS`
-keeps it out of every digest whatever a caller asks. Opening resolves it.
+keeps it out of every digest whatever a caller asks. Opening is not
+seeing: it moves the row to `opened` and leaves the item pending, so the
+update line stays, is counted, and `attention_updates` lists it; the Queue
+words `opened` "Opened, not done" with the same mark as `arrived`, and
+`package_inbox` says "opened, not done yet". Only his Seen on the line
+(seen) or his Done (`_sign_off_package`, resolved) takes it away; Dismiss
+and a supersede resolve it too.
 The page shows the backlog as the Packages section at the top of the Queue
 tab (`QueuePackages.tsx`, signed in or not, closed ones behind Closed) and
 each arrival as one reduced line in Updates waiting (`UpdatesNotice.tsx`

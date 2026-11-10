@@ -63,7 +63,7 @@ export const rightEn = {
   "right.packages.unprovenClaim": "Answers go nowhere: nothing proved the session it named sent it",
   "right.packages.answered": "{answered} of {total} answered",
   "right.packages.state.arrived": "Not opened",
-  "right.packages.state.opened": "Opened",
+  "right.packages.state.opened": "Opened, not done",
   "right.packages.state.answering": "Being answered",
   "right.packages.state.answered": "Ready to send back",
   "right.packages.closed.signed_off": "Signed off",

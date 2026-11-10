@@ -409,7 +409,8 @@ def test_open_is_his_click_or_his_asking(wired, shown, marks, record, tmp_path):
     assert r.status_code == 200, r.text
     assert shown[-1]["type"] == "package_page"
     assert package_inbox.get(inbox_id).state == package_inbox.OPENED
-    assert record.get("package", inbox_id).state == attention_store.RESOLVED
+    assert record.get("package", inbox_id).state == attention_store.PENDING, \
+        "opening is not seeing: the update stays until his Seen or Done"
     said = _call(wired, "open_inbox_package", package="the tea one")["text"]
     assert said.startswith(f"{inbox_id} is open in the centre of his screen")
     assert "decision kettle-kind:" in said and len(shown) == 2
@@ -419,6 +420,80 @@ def test_open_by_a_stranger_s_turn_is_refused(wired, shown, marks, tmp_path):
     send(wired, deck_zip(tmp_path))
     refused = _call(wired, "open_inbox_package", origin="event", package="tea")
     assert not refused["ok"] and shown == []
+
+
+# -- opening leaves it unread ------------------------------------------------------------
+# Open (his click, or asking JARVIS) shows the package and nothing more: its
+# update line stays pending, the Queue says "opened, not done", and only his
+# Seen on the line or his Done takes the update away.
+
+def open_by(w, how: str, inbox_id: str) -> None:
+    if how == "page":
+        r = w.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
+        assert r.status_code == 200 and not r.json().get("problem"), r.text
+    else:
+        said = _call(w, "open_inbox_package", package=inbox_id)["text"]
+        assert said.startswith(f"{inbox_id} is open in the centre of his screen"), said
+
+
+def seen_by(w, how: str, item_id: int) -> None:
+    if how == "page":
+        r = w.client.post("/api/attention/seen", headers=BROWSER, json={"ids": [item_id]})
+        assert r.status_code == 200, r.text
+    else:
+        assert json.loads(_call(w, "mark_updates_seen", ids=[item_id])["text"])["marked"] == 1
+
+
+def done_by(w, how: str, inbox_id: str) -> None:
+    if how == "page":
+        r = signoff(w, package_inbox.get(inbox_id).package_id)
+        assert r.status_code == 200, r.text
+    else:
+        assert _call(w, "sign_off_package", package=inbox_id)["text"].startswith("Signed off")
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_after_open_the_update_is_still_pending_and_reads_as_not_done(
+        wired, shown, marks, record, tmp_path, how):
+    inbox_id = send(wired, deck_zip(tmp_path)).json()["inbox"]["id"]
+    open_by(wired, how, inbox_id)
+    assert shown[-1]["type"] == "package_page"
+    item = record.get("package", inbox_id)
+    assert item.state == attention_store.PENDING and record.pending_count() == 1
+    updates = _call(wired, "attention_updates")["text"]
+    assert '"pending":1' in updates, "the brain's count is the page's count"
+    assert f'"id":{item.id},"kind":"package","event":"arrived","state":"pending"' in updates
+    entry = package_inbox.get(inbox_id)
+    assert entry.state == package_inbox.OPENED and entry.is_open
+    listed = _call(wired, "package_inbox")["text"]
+    assert "opened, not done yet" in listed, listed
+    page = wired.client.get(INBOX, headers=BROWSER).json()
+    row = next(e for e in page["packages"] if e["id"] == inbox_id)
+    assert row["state"] == "opened", "the Queue words it \"Opened, not done\" and keeps its mark"
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_after_open_his_seen_takes_the_update_away(wired, shown, marks, record, tmp_path, how):
+    inbox_id = send(wired, deck_zip(tmp_path)).json()["inbox"]["id"]
+    open_by(wired, how, inbox_id)
+    item = record.get("package", inbox_id)
+    assert item.state == attention_store.PENDING
+    seen_by(wired, how, item.id)
+    assert record.get("package", inbox_id).state == attention_store.SEEN
+    assert record.pending_count() == 0
+    assert package_inbox.get(inbox_id).is_open, "Seen is his updates only; the package is not done"
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_after_open_his_done_resolves_the_update(wired, shown, marks, record, tmp_path, how):
+    inbox_id = send(wired, deck_zip(tmp_path)).json()["inbox"]["id"]
+    open_by(wired, how, inbox_id)
+    assert record.get("package", inbox_id).state == attention_store.PENDING
+    done_by(wired, how, inbox_id)
+    assert record.get("package", inbox_id).state == attention_store.RESOLVED
+    assert record.pending_count() == 0
+    entry = package_inbox.get(inbox_id)
+    assert (entry.state, entry.closed_why) == (package_inbox.CLOSED, package_inbox.SIGNED_OFF)
 
 
 # -- answering ---------------------------------------------------------------------------
