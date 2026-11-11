@@ -84,6 +84,7 @@ from jarvis import actions
 from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
+from jarvis import knowledge_client
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import builds
@@ -2836,9 +2837,11 @@ async def stop_folders() -> None:
 
 # --- The knowledge engine ----------------------------------------------------
 #
-# Off unless JARVIS_KNOWLEDGE is on (knowledge_client.enabled). Started after
-# startup settles and paced by the conversation floor and the machine's CPU
-# (knowledge_runtime.py); nothing on the voice path waits on it.
+# Always up unless JARVIS_ENGINE_AUTOSTART is off: started first thing in
+# `lifespan`, which waits for its health before serving the page, and kept up
+# by the supervisor. JARVIS_KNOWLEDGE (knowledge_client.enabled) governs only
+# ingest, embedding and the knowledge tools. Its background lane is paced by
+# the conversation floor and the machine's CPU (knowledge_runtime.py).
 
 knowledge: Optional["knowledge_runtime.KnowledgeRuntime"] = None
 _knowledge_task: Optional[asyncio.Task] = None
@@ -2875,19 +2878,34 @@ def _offer_knowledge_seeds() -> None:
         log.warning("knowledge seeds could not be offered", exc_info=True)
 
 
-def start_knowledge() -> None:
-    global knowledge, _knowledge_task
-    from jarvis import knowledge_client, knowledge_runtime
-    if not knowledge_client.enabled():
+async def start_knowledge_engine() -> None:
+    """The engine first, before the rest of startup: started, and waited for
+    up to knowledge_client.READY_WAIT_SEC, off the event loop's thread. Past
+    that, startup goes on and Diagnostics shows the engine down."""
+    global knowledge
+    from jarvis import knowledge_runtime
+    if not knowledge_client.autostart():
         return
     knowledge = knowledge_runtime.KnowledgeRuntime(
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    if await knowledge.start_engine():
+        log.info("knowledge engine: up")
+    else:
+        log.warning("knowledge engine: not answering after %.0f s; starting without it",
+                    knowledge_client.READY_WAIT_SEC)
+
+
+def start_knowledge() -> None:
+    """The runtime's watch, once the records it reports to are open."""
+    global _knowledge_task
+    if knowledge is None:
+        return
     knowledge.proposal_listeners.append(_on_knowledge_proposals)
-    _offer_knowledge_seeds()
+    if knowledge_client.enabled():
+        _offer_knowledge_seeds()
     knowledge.change_listeners.append(lambda: _send_to_session_clients({"type": "knowledge"}))
     _knowledge_task = _spawn(knowledge.run())
-    log.info("knowledge engine: starting after startup settles")
 
 
 async def stop_knowledge() -> None:
@@ -3467,6 +3485,8 @@ async def lifespan(application: FastAPI):
     server_address.record()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    # The knowledge engine before anything else; the page waits for it.
+    await start_knowledge_engine()
 
     run_store.init_db()
     try:
@@ -11761,7 +11781,7 @@ async def tool_set_attention_settings(args: dict) -> str:
 
 _KNOWLEDGE_WRAP_NAME = "knowledge"
 knowledge_calls = knowledge_api.Context(
-    lambda: knowledge,
+    lambda: knowledge if knowledge_client.enabled() else None,
     resolved=lambda pid: _attention_resolved("knowledge_proposal", pid),
     seed_resolved=lambda sid: _attention_resolved("knowledge_seed", sid))
 

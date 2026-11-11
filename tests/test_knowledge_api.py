@@ -50,6 +50,7 @@ def knowing(wired, monkeypatch, tmp_path):  # noqa: F811
     monkeypatch.setattr(Engine, "compact_in_child", False)
     engine = Engine.open(tmp_path / "engine")
     runtime = FakeRuntime(engine)
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
     monkeypatch.setattr(wired.server, "knowledge", runtime)
     kl.create_topic("Denice", status="planned", ambiguous=["Denise"], pinned=True)
     note = __import__("jarvis").data_paths.brain_home() / "memory" / "orbs.md"
@@ -161,6 +162,14 @@ def test_status_and_maintenance(knowing):
     assert forgot["documents"] >= 1
     hits = w.client.post("/api/knowledge/search", json={"text": "invoice"}, headers=ORIGIN).json()["hits"]
     assert hits == []
+
+
+def test_with_knowledge_off_the_running_engine_still_answers_as_off(knowing, monkeypatch):
+    w, runtime, engine = knowing
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    assert w.server.knowledge is runtime                      # the engine is up
+    assert w.client.get("/api/knowledge/health", headers=ORIGIN).json() == {"enabled": False, "state": "off"}
+    assert "switched off" in _call(w, "knowledge_search", query="orbs")["text"]
 
 
 def test_switched_off_reads_say_so_and_topics_still_work(wired, monkeypatch):  # noqa: F811

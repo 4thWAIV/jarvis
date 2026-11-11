@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional, Protocol
 
+from jarvis.knowledge import lanes
 from jarvis.knowledge import manifest as mf
 from jarvis.knowledge import wal as wal_mod
 from jarvis.knowledge.segment import (BlockPool, Segment, SegmentCorrupt, Version,
@@ -308,6 +309,7 @@ class Store:
         for listener in self.listeners:
             listener(lsn, ops)
 
+    @lanes.foreground()
     def commit(self, ops: list[Op]) -> int:
         """Write one transaction; returns its LSN once it is durable against
         a crash of the process and visible to reads."""
@@ -410,7 +412,7 @@ class Store:
         there was nothing to write."""
         if not self.writable or self.wal is None:
             return None
-        with self._flush_lock:
+        with lanes.foreground(), self._flush_lock:
             with self.wal.exclusive():
                 with self._lock:
                     if not self.mem.versions:
@@ -517,7 +519,7 @@ class Store:
         """Merge `gens` (or a tier) into one new generation; `purge` drops
         every version of the given keys, whatever pins them."""
         with self._compact_lock:
-            with self._lock:
+            with lanes.foreground(), self._lock:
                 gens = gens if gens is not None else self.pick_tier()
                 if not gens:
                     return None
@@ -533,7 +535,7 @@ class Store:
                         "drop_tombstones": oldest_gen in gens,
                         "purge": {str(f): sorted(k.hex() for k in keys) for f, keys in (purge or {}).items()}}
             entries = self._run_compaction(plan)
-            with self._lock:
+            with lanes.foreground(), self._lock:
                 kept = [e for e in self.manifest.segments if int(e["gen"]) not in gens]
                 new = mf.Manifest(number=self.manifest.number + 1,
                                   checkpoint_lsn=self.manifest.checkpoint_lsn,

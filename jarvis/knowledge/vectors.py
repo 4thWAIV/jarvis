@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
 from jarvis.knowledge import embedder as emb
-from jarvis.knowledge import kinds, vecmath
+from jarvis.knowledge import kinds, lanes, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
 from jarvis.knowledge.store import DOCS, Store, newest_only
@@ -449,6 +449,7 @@ class VectorIndex:
         return len(self._todo)
 
     def _embed_loop(self) -> None:
+        lanes.background()
         while True:
             with self._todo_cond:
                 while not self._stop and (self.paused or not self._todo):

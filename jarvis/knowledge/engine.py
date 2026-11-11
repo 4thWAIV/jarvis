@@ -16,6 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from jarvis.knowledge import lanes
+
 log = logging.getLogger("jarvis.knowledge.engine")
 
 CARDS_REFRESH_SEC = 600.0
@@ -154,8 +156,9 @@ class Engine:
                                extra=lambda pending: self.graph.ops(edges, edge_deletes, pending) + mark_ops)
 
     def link(self) -> dict:
-        """Run the linker over every topic; one run at a time."""
-        with self._link_lock:
+        """Run the linker over every topic; one run at a time, in the
+        background lane (lanes.py)."""
+        with lanes.lowered(), self._link_lock:
             return self.linker.run()
 
     RESOLVE_KINDS = ("topic", "project", "work", "folder", "person", "agent", "workflow", "document")
@@ -193,8 +196,8 @@ class Engine:
         return {v.key.decode()[3:]: json.loads(v.value) for v in self.store.prefix(META, b"wm:")}
 
     def maintain(self) -> None:
-        """One maintenance step, run by the engine's own timer while the
-        floor is free: flush on the time rule, then compact a full tier."""
+        """One maintenance step, run by the engine's own timer in the
+        background lane (serve._maintenance) while the floor is free: flush on the time rule, then compact a full tier."""
         if self.pace == "hold" or self.store is None or not self.store.writable:
             return
         self.store.maybe_flush()

@@ -273,7 +273,7 @@ def test_the_scheduler_runs_when_free_stops_and_continues_with_the_pace(monkeypa
     def spawn():
         procs.append(FakeProc(json.dumps({"documents": 3, "chunks": 9, "more": False, "errors": []}).encode()))
         return procs[-1]
-    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0])
+    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
     s("hold")
     assert procs == []                                   # never starts while held
     s("free")
@@ -296,7 +296,8 @@ def test_the_scheduler_never_hands_the_token_to_an_engine_not_its_own():
     from jarvis.knowledge import address as ea
     ea.record(ea.EngineAddress("http", "127.0.0.1", 4100, 555, "b"))
     procs = []
-    s = kr.IngestScheduler(Sup(777), spawn=lambda: procs.append(FakeProc()) or procs[-1])
+    s = kr.IngestScheduler(Sup(777), spawn=lambda: procs.append(FakeProc()) or procs[-1],
+                           enabled=lambda: True)
     s("free")
     assert procs == []
 
@@ -310,7 +311,7 @@ def test_a_pass_that_left_more_runs_again_soon():
     def spawn():
         procs.append(FakeProc(json.dumps({"more": True, "errors": []}).encode()))
         return procs[-1]
-    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0])
+    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
     s("free")
     procs[0].returncode = 0
     s("free")

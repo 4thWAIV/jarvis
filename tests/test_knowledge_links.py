@@ -186,7 +186,7 @@ def test_the_linker_removes_only_its_own_mentions(engine):
 def test_the_runtime_tells_new_and_gone_proposals_once():
     seen = []
     rt = kr.KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: None,
-                             supervisor=kc.Supervisor(spawn=lambda: None, budget_mb=10), start_after=0)
+                             supervisor=kc.Supervisor(spawn=lambda: None, budget_mb=10))
     rt.proposal_listeners.append(lambda new, gone: seen.append(([p["id"] for p in new], gone)))
     rt.take_proposals([{"id": "a"}, {"id": "b"}])
     rt.take_proposals([{"id": "a"}, {"id": "b"}])

@@ -8,10 +8,12 @@ Routes are one table, `ROUTES`, and `dispatch` is the one way into them, so
 the in-process test transport (`knowledge_client.InProcessTransport`) runs
 exactly what the HTTP handler runs, minus the gate.
 
-`run()` is `python -m jarvis.knowledge serve`: lower its priority, open the
-engine (taking the writer lock), listen, write the address record, and exit
-cleanly when its stdin pipe closes, which is how the server that started it
-ends it, even across the server's own `os.execv`.
+`run()` is `python -m jarvis.knowledge serve`: open the engine (taking the
+writer lock), listen, write the address record, and exit cleanly when its
+stdin pipe closes, which is how the server that started it ends it, even
+across the server's own `os.execv`. The process runs at normal priority, so
+record reads and writes are never slowed; the maintenance thread, the
+linker and a requested compaction run in the background lane (lanes.py).
 """
 from __future__ import annotations
 
@@ -28,12 +30,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from jarvis.knowledge import address as engine_address
 from jarvis.knowledge import auth
+from jarvis.knowledge import lanes
 from jarvis.knowledge.engine import Engine, EngineLocked, open_engine
 
 log = logging.getLogger("jarvis.knowledge.serve")
 
 BODY_MAX_BYTES = 64 << 20
-ENGINE_NICE = 10
 
 
 class Request(NamedTuple):
@@ -113,8 +115,9 @@ def _snapshot(engine: Engine, request: Request) -> Answer:
 
 @route("POST", "/v1/compact")
 def _compact(engine: Engine, request: Request) -> Answer:
-    engine.store.flush()
-    gen = engine.store.compact((request.body or {}).get("generations"))
+    with lanes.lowered():
+        engine.store.flush()
+        gen = engine.store.compact((request.body or {}).get("generations"))
     return Answer(200, {"generation": gen})
 
 
@@ -350,14 +353,6 @@ class EngineHTTPServer(ThreadingHTTPServer):
         super().__init__((host, port), _HTTPHandler)
 
 
-def _lower_priority() -> None:
-    """Below the voice path, never above it (I4)."""
-    try:
-        os.nice(ENGINE_NICE)
-    except OSError as e:
-        log.warning("could not lower the engine's priority (%s)", e)
-
-
 def _watch_stdin(on_close: Callable[[], None]) -> threading.Thread:
     """End the engine when the pipe from the server that started it closes."""
     def watch() -> None:
@@ -378,6 +373,7 @@ MAINTAIN_EVERY_SEC = 5.0
 
 def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
     def loop() -> None:
+        lanes.background()
         while not stopping.wait(MAINTAIN_EVERY_SEC):
             try:
                 engine.maintain()
@@ -390,7 +386,6 @@ def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
 
 def run(*, watch_stdin: bool = True) -> int:
     from jarvis import data_paths
-    _lower_priority()
     try:
         engine = open_engine()
     except EngineLocked as e:
