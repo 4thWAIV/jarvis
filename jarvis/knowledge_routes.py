@@ -49,7 +49,7 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             result = await asyncio.to_thread(work)
         except ka.Refused as e:
             return JSONResponse({"error": "refused", "message": str(e)}, status_code=400)
-        except ka.Unavailable as e:
+        except (ka.Unavailable, ka.knowledge_client.EngineUnavailable) as e:
             return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
         if changes:
             on_change()
@@ -156,7 +156,7 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
     async def install_embedder():
         try:
             return JSONResponse(ka.install_embedding_model(ctx))
-        except ka.Unavailable as e:
+        except (ka.Unavailable, ka.knowledge_client.EngineUnavailable) as e:
             return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
 
     app.add_api_route(f"{PREFIX}/embedder", embedder, methods=["GET"])

@@ -11,12 +11,6 @@
  */
 
 export const mainEn = {
-  "left.settings.section.knowledge": "Knowledge",
-  "settings.knowledge.folders": "Open folders and indexing counts",
-  "settings.knowledge.enable": "Index registered folders",
-  "settings.knowledge.help": "Indexing lets JARVIS search your registered folders. Pausing keeps stored knowledge and JARVIS records available. Changes apply without restarting.",
-  "settings.knowledge.engine": "Storage engine: {state}",
-  "settings.knowledge.details": "Open knowledge search and index controls",
 
   // Shared by several centre views.
   "main.common.close": "Close",

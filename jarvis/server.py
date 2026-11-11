@@ -11883,7 +11883,7 @@ knowledge_routes.mount(app, knowledge_calls, on_change=_hint_knowledge)
 async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) -> str:
     try:
         answer = await asyncio.to_thread(work)
-    except knowledge_api.Unavailable as e:
+    except (knowledge_api.Unavailable, knowledge_client.EngineUnavailable) as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
         # The engine's refusal can name what the call was given (a key, a

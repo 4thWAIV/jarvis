@@ -49,7 +49,7 @@ def test_engine_reads_same_saved_setting_and_reopens(tmp_path, monkeypatch):
         engine.close()
 
 
-def test_settings_pause_stops_both_indexing_workers(monkeypatch):
+def test_settings_save_wakes_scheduler_without_waiting_for_worker_shutdown(monkeypatch):
     events = []
     client = SimpleNamespace(pace=lambda mode: events.append(('pace', mode)))
     runtime = SimpleNamespace(
@@ -59,7 +59,31 @@ def test_settings_pause_stops_both_indexing_workers(monkeypatch):
     ctx = api.Context(lambda: runtime)
     monkeypatch.setattr(api, 'status', lambda _: {'state': 'running'})
     assert api.change_settings(ctx, False)['enabled'] is False
-    assert events == ['ingest stopped', 'content stopped', ('pace', 'free')]
+    assert events == ['wake']
     events.clear()
     assert api.change_settings(ctx, True)['enabled'] is True
-    assert events == ['wake', ('pace', 'free')]
+    assert events == ['wake']
+
+
+@pytest.mark.asyncio
+async def test_runtime_setting_read_and_shutdown_do_not_block_event_loop():
+    import asyncio
+    import threading
+    from jarvis.knowledge_runtime import KnowledgeRuntime
+    entered = threading.Event()
+    release = threading.Event()
+    def slow_setting():
+        entered.set()
+        release.wait(3)
+        return False
+    runtime = KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: 0,
+        supervisor=SimpleNamespace(pid=lambda: None), enabled=slow_setting)
+    runtime.pace_listeners.clear()
+    task = asyncio.create_task(runtime.look_pace())
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        # This coroutine can run while the settings read is still blocked.
+        assert not task.done()
+    finally:
+        release.set()
+        await task

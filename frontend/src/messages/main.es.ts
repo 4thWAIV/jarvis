@@ -4,12 +4,6 @@ import type { CatalogOf } from "../locale";
 import type { mainEn } from "./main.en";
 
 export const mainEs: CatalogOf<typeof mainEn> = {
-  "left.settings.section.knowledge": "Conocimiento",
-  "settings.knowledge.folders": "Abrir carpetas y recuentos de indexación",
-  "settings.knowledge.enable": "Indexar carpetas registradas",
-  "settings.knowledge.help": "La indexación permite a JARVIS buscar en tus carpetas registradas. Al pausarla se conservan el conocimiento y los registros. Los cambios se aplican sin reiniciar.",
-  "settings.knowledge.engine": "Motor de almacenamiento: {state}",
-  "settings.knowledge.details": "Abrir búsqueda y controles de índices",
 
   "main.common.close": "Cerrar",
   "main.common.cancel": "Cancelar",
@@ -635,7 +629,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.knowledge.open": "Abrir Conocimiento",
   "main.knowledge.reading": "Leyendo…",
   "main.knowledge.unreadable": "No se pudo leer el motor de conocimiento: {error}",
-  "main.knowledge.off": "La indexación está pausada. El conocimiento guardado sigue disponible. Actívala en Ajustes → Conocimiento.",
+  "main.knowledge.off": "La indexación está pausada. El conocimiento guardado sigue disponible. Actívela en Ajustes → Conocimiento.",
   "main.knowledge.status": "{chunks} fragmentos leídos; {proposals} propuestas de enlace esperan su sí.",
   "main.knowledge.noVectors": "La búsqueda usa palabras y enlaces; los vectores están apagados.",
   "main.knowledge.searchTitle": "Buscar en lo que JARVIS ha leído",

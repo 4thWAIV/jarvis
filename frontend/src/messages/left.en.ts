@@ -9,6 +9,13 @@
  */
 
 export const leftEn = {
+  "left.settings.section.knowledge": "Knowledge",
+  "left.settings.knowledge.folders": "Open folders and indexing counts",
+  "left.settings.knowledge.enable": "Index registered folders",
+  "left.settings.knowledge.help": "Indexing lets JARVIS search your registered folders. Pausing keeps stored knowledge and JARVIS records available. Changes apply without restarting.",
+  "left.settings.knowledge.engine": "Storage engine: {state}",
+  "left.settings.knowledge.details": "Open knowledge search and index controls",
+
   "left.workers.active": "{count} working",
   "left.workers.tools": "{count} in tools",
   "left.workers.queued": "{count} queued",

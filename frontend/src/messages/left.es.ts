@@ -4,6 +4,13 @@ import type { CatalogOf } from "../locale";
 import type { leftEn } from "./left.en";
 
 export const leftEs: CatalogOf<typeof leftEn> = {
+  "left.settings.section.knowledge": "Conocimiento",
+  "left.settings.knowledge.folders": "Abrir carpetas y recuentos de indexación",
+  "left.settings.knowledge.enable": "Indexar carpetas registradas",
+  "left.settings.knowledge.help": "La indexación permite a JARVIS buscar en sus carpetas registradas. Al pausarla se conservan el conocimiento y los registros. Los cambios se aplican sin reiniciar.",
+  "left.settings.knowledge.engine": "Motor de almacenamiento: {state}",
+  "left.settings.knowledge.details": "Abrir búsqueda y controles de índices",
+
   "left.workers.active": "{count} trabajando",
   "left.workers.tools": "{count} en herramientas",
   "left.workers.queued": "{count} en cola",

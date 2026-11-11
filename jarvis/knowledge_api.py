@@ -102,15 +102,10 @@ def change_settings(ctx: Context, enabled: bool) -> dict:
         knowledge_settings.change(enabled)
     except ValueError as e:
         raise Refused(str(e)) from e
-    rt = ctx.runtime
-    if rt is not None:
-        if enabled:
-            rt.ingest.wake()
-        else:
-            rt.ingest.stop()
-            rt.content.stop()
-        # Applying the existing pace also reapplies the indexing gate.
-        ctx.client().pace(rt.pace.mode)
+    # The existing runtime applies the saved choice on its next tick. Worker
+    # shutdown can take seconds; it must not hold the save request open or
+    # race a second stop against the runtime's own scheduler.
+    ctx.wake_ingest()
     return settings(ctx)
 
 
