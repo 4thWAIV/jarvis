@@ -190,3 +190,114 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             await voice.speech.stop()
         await browser.close()
     (out / "trace.json").write_text(json.dumps(trace, indent=2))
+
+
+# A page shaped as the kit's renderer contract settles it: a section.d-decl
+# per declaration with data-declaration, data-part sections inside, a member
+# table whose data row carries data-member and is followed by its note row.
+# One declaration id is drawn twice, to be reported as ambiguous.
+KIT_SHAPED = """<!doctype html><html><head><meta charset="utf-8"><title>Surface</title>
+<style>section{margin:12px;padding:8px;border:1px solid #888}</style></head><body>
+<section class="d-decl" data-declaration="IGrantStore"><h2>IGrantStore</h2>
+ <div data-part="members"><table><tbody>
+  <tr id="declare[0].constant.value.members[0]" class="r-marked teal" data-member="GetActiveGrantsAsync"><td data-col="name">GetActiveGrantsAsync</td></tr>
+  <tr class="r-note"><td>Answers with Loaded.</td></tr>
+ </tbody></table></div></section>
+<section class="d-decl" data-declaration="IWindowsHelloNativeOps"><h2>IWindowsHelloNativeOps</h2>
+ <div data-part="members"><table><tbody>
+  <tr data-member="BeginAvailabilityCheck"><td data-col="name">BeginAvailabilityCheck</td></tr>
+  <tr data-member="BeginVerification"><td data-col="name">BeginVerification</td></tr>
+  <tr class="r-note"><td>The native cause path.</td></tr>
+ </tbody></table></div></section>
+<section class="d-decl" data-declaration="Loaded"><h2>Loaded</h2></section>
+<section class="d-decl" data-declaration="Loaded"><h2>Loaded again</h2></section>
+<script src="/api/packages/story.js"></script></body></html>"""
+PRECISE = {"title": "Surface", "slides": [{"title": "Targets", "beats": [
+    {"say": "The grant store's members.",
+     "targets": ['[data-declaration="IGrantStore"] [data-part="members"]']},
+    {"say": "Begin verification.",
+     "targets": ['[data-declaration="IWindowsHelloNativeOps"] [data-member="BeginVerification"]']},
+    {"say": "Loaded is drawn twice on this page, so pointing at it would be a guess, and JARVIS does not guess.", "targets": ['[data-declaration="Loaded"]']},
+    {"say": "This declaration is not on the page at all, so there is nothing here to point at for it.",
+     "targets": ['[data-declaration="IWarningSink"]']}]}]}
+
+
+@pytest.fixture
+def kit_shaped(jarvis_app, tmp_path):
+    server, client, _deck = jarvis_app
+    from jarvis import data_paths, make_package, work_packages
+    folder = tmp_path / "surface"
+    folder.mkdir()
+    (folder / "index.html").write_text(KIT_SHAPED)
+    (folder / "story.json").write_bytes(
+        package_story.compose(package_story.authored(json.dumps(PRECISE).encode()), "en"))
+    (folder / "UNDERSTANDING.md").write_text("# Surface\n\nA page shaped as the kit's.\n")
+    (folder / "package.json").write_text(json.dumps({
+        "name": "kit-shaped-surface", "purpose": "Point at exact declarations and members.",
+        "runs": "page", "entry": "index.html", "story": "story.json", "brief": "UNDERSTANDING.md",
+        "understanding": {"index.html": "UNDERSTANDING.md", "story.json": "UNDERSTANDING.md"}}))
+    made = make_package.make_folder(folder, tmp_path / "built")
+    r = client.post("/api/packages/inbox", content=made.archive.read_bytes(),
+                    headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}",
+                             "Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text
+    return server, client, work_packages.find(r.json()["package"]["id"])
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_precise_target_rings_exactly_one_element_or_is_reported(
+        page_playwright, page_url, kit_shaped, voice, tmp_path):
+    from jarvis import packages_api
+    server, client, package = kit_shaped
+    out = Path(os.getenv("JARVIS_LANGUAGE_REVIEW_DIR", str(tmp_path / "review"))) / "precise"
+    out.mkdir(parents=True, exist_ok=True)
+    async with page_playwright as p:
+        browser = await p.chromium.launch(headless=True, args=STORY_BROWSER_ARGS)
+        page = await browser.new_page(viewport={"width": 1440, "height": 813})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.add_init_script(RECORD)
+        reports: list[dict] = []
+        await page.expose_function("__report", lambda m: reports.append(m))
+        await page.add_init_script("""window.addEventListener('message', (e) => {
+            const m = e.data; if (window === window.top && m && m.jarvis === 'package'
+              && (m.type === 'story.missing' || m.type === 'story.ambiguous')) window.__report(m); });""")
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route_web_socket("**/ws/sessions", lambda ws: None)
+        await page.route("**/api/packages/**", _through(server, client))
+        await page.goto(page_url)
+        await start_listening(page)
+        await voice.speech.start()
+        try:
+            voice.ws.send(json.dumps({"type": "package_page",
+                                      "package": packages_api.describe(package)}))
+            await page.locator("#package-view iframe").wait_for()
+            await page.locator("#package-view .package-story button").first.click()
+            # While Loaded's beat plays, its ring is drawn nowhere.
+            hidden = await _inner(page).wait_for_function(
+                """(t) => { const r = [...document.querySelectorAll('.jarvis-story-ring')]
+                             .find((e) => e.dataset.target === t);
+                           return r ? r.style.display : null; }""",
+                arg='[data-declaration="Loaded"]', timeout=60000)
+            assert await hidden.json_value() == "none", "an ambiguous target is never widened"
+            await _state(page, "Waiting for your answer on slide 2 of 2.")
+            await asyncio.sleep(1.0)            # the helper's settle before it reports
+            rings = await _inner(page).evaluate("""window.__rings.map((r) => ({...r,
+                count: document.querySelectorAll(r.target).length,
+                tag: (document.querySelector(r.target) || {}).tagName,
+                note: (document.querySelector(r.target) || {classList: {contains: () => false}})
+                      .classList.contains('r-note')}))""")
+            await page.screenshot(path=str(out / "precise-targets.png"))
+        finally:
+            await voice.speech.stop()
+        await browser.close()
+    shown = {r["target"]: r for r in rings}
+    members = '[data-declaration="IGrantStore"] [data-part="members"]'
+    member = '[data-declaration="IWindowsHelloNativeOps"] [data-member="BeginVerification"]'
+    assert shown[members]["shown"] and shown[members]["count"] == 1
+    assert shown[member]["shown"] and shown[member]["tag"] == "TR" and not shown[member]["note"]
+    # Matching several or none, nothing is drawn for it: each is reported.
+    ambiguous = [m for m in reports if m["type"] == "story.ambiguous"]
+    missing = [m for m in reports if m["type"] == "story.missing"]
+    assert [t for m in ambiguous for t in m["targets"]] == ['[data-declaration="Loaded"]']
+    assert [t for m in missing for t in m["targets"]] == ['[data-declaration="IWarningSink"]']
+    (out / "trace.json").write_text(json.dumps({"rings": rings, "reports": reports}, indent=2))

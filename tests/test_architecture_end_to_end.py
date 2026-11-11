@@ -97,7 +97,10 @@ def world(tmp_path):
         home, extra = Path.home() / ".claude", {}
         env.pop("CLAUDE_CONFIG_DIR", None)
         if ENGINE == "codex":
-            codex_home = {}
+            # The real Codex author's rollout is in this Mac's own Codex home,
+            # which the suite otherwise points at a folder of each test's own.
+            codex_home = {"JARVIS_CODEX_SESSIONS_HOME": str(Path.home() / ".codex")}
+            env.update(codex_home)
     else:
         session, home = SESSION, tmp_path / "agent-home"
         extra = {"JARVIS_CLAUDE_CONFIG_DIRS": str(transcripts)}
