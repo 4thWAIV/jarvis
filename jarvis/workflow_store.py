@@ -559,8 +559,7 @@ def _end_answered(unit, answered, now: float) -> set:
     for, in `unit`: the workflows the engine finds with a linked wait, and
     those this unit has changed. The workflows it moved."""
     paths = {r.path for r in unit.scan(ROOT, types=[TYPE], where=[["linked", "=", True]])}
-    paths |= {p for p in record_cells.touched(unit)
-              if p.startswith(ROOT + "/") and p.endswith("." + TYPE)}
+    paths |= record_cells.touched(unit, ROOT, TYPE)
     moved = set()
     for path in sorted(paths):
         doc = record_cells.take(unit, path)

@@ -557,6 +557,13 @@ def _take(unit, inbox_id: str) -> dict:
     return doc
 
 
+def _still_open(doc: dict, already: str) -> None:
+    """Refused for an entry already closed, saying why it closed."""
+    entry = _entry(doc)
+    if not entry.is_open:
+        raise InboxRefused(f"{entry.id} is {already}closed ({entry.closed_why}).")
+
+
 def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = "",
            work_id: str = "", now: Optional[float] = None) -> Arrival:
     """Record a package that has just been unpacked here, unshown. The same
@@ -692,8 +699,7 @@ def opened(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
 
     def write(unit) -> Entry:
         doc = _take(unit, inbox_id)
-        if doc["state"] == CLOSED:
-            raise InboxRefused(f"{doc['id']} is closed ({doc['closed_why']}).")
+        _still_open(doc, "")
         fields = {"opened_at": doc["opened_at"] or now}
         if doc["state"] == ARRIVED:
             fields["state"] = OPENED
@@ -741,8 +747,7 @@ def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
 
     def write(unit) -> tuple[Entry, "wait_links.Settled"]:
         doc = _take(unit, inbox_id)
-        if doc["state"] == CLOSED:
-            raise InboxRefused(f"{doc['id']} is already closed ({doc['closed_why']}).")
+        _still_open(doc, "already ")
         entry = _change(unit, doc, "signed_off", how, now, state=CLOSED, closed_at=now,
                         closed_why=SIGNED_OFF, signed_off_at=now, capture_id=capture_id,
                         return_asked_at=now)
@@ -861,8 +866,7 @@ def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
 
     def write(unit) -> Entry:
         doc = _take(unit, inbox_id)
-        if doc["state"] == CLOSED:
-            raise InboxRefused(f"{doc['id']} is already closed ({doc['closed_why']}).")
+        _still_open(doc, "already ")
         return _change(unit, doc, "closed", how, now, state=CLOSED, closed_at=now,
                        closed_why=DISMISSED)
 

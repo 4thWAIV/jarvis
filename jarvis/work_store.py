@@ -1699,8 +1699,7 @@ def _held_docs(unit):
     """The documents with a hold an answer may end, read through `unit`:
     those the engine finds held, and those this unit has changed."""
     paths = {r.path for r in unit.scan(ROOT, types=[TYPE], where=[["held", "=", True]])}
-    paths |= {p for p in record_cells.touched(unit)
-              if p.startswith(ROOT + "/") and p.endswith("." + TYPE)}
+    paths |= record_cells.touched(unit, ROOT, TYPE)
     for path in sorted(paths):
         doc = record_cells.take(unit, path)
         if _is_item(doc) and doc.get("closed_at") is None:

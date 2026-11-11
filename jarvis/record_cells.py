@@ -115,9 +115,11 @@ def resolve_seqs(events: list[dict], key: str = "seq") -> None:
         events[i][key] = top
 
 
-def touched(unit) -> set:
-    """The paths this unit has taken or staged through `take` and `stage`."""
-    return set(_taken.get(unit, ()))
+def touched(unit, under: str, of_type: str) -> set:
+    """The paths of type `of_type` under `under` this unit has taken or
+    staged through `take` and `stage`."""
+    return {p for p in _taken.get(unit, ()) if p.startswith(under.rstrip("/") + "/")
+            and p.endswith("." + of_type)}
 
 
 # ── the move (knowledge_move) ────────────────────────────────────────────
