@@ -610,6 +610,12 @@ EXEMPT = {
         "memory block (`_wrap_untrusted(_MEMORY_WRAP_NAME, ...)`); the header "
         "line says only the project, through `_plain_name`. Driven by "
         "tests/test_memory_tools.py"),
+    "server.start_knowledge_engine": (
+        "it logs and raises, at startup, the supervisor's own state words and "
+        "the end of the knowledge engine's own log (JARVIS's process, its "
+        "own lines); nothing of it reaches the brain, the voice or a page, "
+        "only the server's log and the exception that stops startup. Driven "
+        "by tests/test_knowledge_runtime.py"),
     "server.tool_voice_turn": (
         "it checks `action` against TURN_ACTIONS before acting and answers only "
         "with the fixed sentences of _TURN_SAID or a fixed refusal; neither the "

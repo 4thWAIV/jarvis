@@ -24,11 +24,13 @@ import re
 import signal
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import time
+from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable, NamedTuple, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from jarvis.knowledge import address as engine_address
+from jarvis.loopback_http import LoopbackThreadingHTTPServer
 from jarvis.knowledge import auth
 from jarvis.knowledge import lanes
 from jarvis.knowledge.engine import Engine, EngineLocked, open_engine
@@ -466,8 +468,10 @@ class _HTTPHandler(BaseHTTPRequestHandler):
         self._handle("DELETE")
 
 
-class EngineHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
+class EngineHTTPServer(LoopbackThreadingHTTPServer):
+    """The engine's loopback server: bound without a reverse name lookup
+    (loopback_http), which on the macOS CI runner kept the engine from
+    listening for about 35 seconds."""
     allow_reuse_address = False
 
     def __init__(self, engine: Engine, token: str, host: str = "127.0.0.1", port: int = 0) -> None:
@@ -509,12 +513,15 @@ def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
 
 def run(*, watch_stdin: bool = True) -> int:
     from jarvis import data_paths
+    began = time.monotonic()
+    log.info("knowledge engine starting (pid %s, Python %s)", os.getpid(), sys.version.split()[0])
     try:
         engine = open_engine()
     except EngineLocked as e:
         log.error("%s", e)
         print(str(e), file=sys.stderr)
         return 3
+    log.info("knowledge engine opened %s in %.2f s", engine.directory, time.monotonic() - began)
     token = data_paths.ensure_knowledge_token()
     server = EngineHTTPServer(engine, token)
     host, port = server.server_address[:2]
@@ -532,7 +539,8 @@ def run(*, watch_stdin: bool = True) -> int:
     _maintenance(engine, stopping)
     engine_address.record(engine_address.EngineAddress(
         scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id))
-    log.info("knowledge engine listening on %s:%s (pid %s)", host, port, os.getpid())
+    log.info("knowledge engine listening on %s:%s (pid %s), %.2f s after it started", host, port,
+             os.getpid(), time.monotonic() - began)
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

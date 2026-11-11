@@ -827,6 +827,13 @@ def knowledge_address_path() -> Path:
     return data_dir() / "knowledge-address.json"
 
 
+def knowledge_engine_log_path() -> Path:
+    """The knowledge engine's own log (its stderr), kept from its last few
+    starts, so a server that cannot reach it can say why
+    (knowledge_client.engine_log_tail)."""
+    return data_dir() / "knowledge-engine.log"
+
+
 def knowledge_token_path() -> Path:
     """The knowledge engine's bearer token, separate from the tool token so
     leaking one opens nothing of the other. Only the server holds it."""

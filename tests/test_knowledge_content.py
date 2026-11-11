@@ -332,6 +332,25 @@ def test_a_log_file_is_read_only_once_its_writer_has_closed_it(engine, tmp_path)
     assert indexer.counters.indexed == 2
 
 
+def test_a_file_wanted_twice_for_one_change_is_read_once(engine, folder):
+    """A scan and an event for the same change (FSEvents' timing on a busy
+    machine decides their order): the second never puts the file read
+    meanwhile back to pending, and wanting it again reads nothing."""
+    _, uds = engine
+    indexer = kc.Indexer(uds)
+    root = _root(folder)
+    assert "readme.txt" in indexer.scan(root)
+    stale = indexer.known(root)["readme.txt"]               # pending, as the event saw it
+    assert indexer.extract(root, "readme.txt") == "indexed"
+    stat = fs_watch.stat_of(folder / "readme.txt")
+    version = uds.get(TIM, "/folders/f-1/readme.txt").version
+    assert indexer.note(root, "readme.txt", stat, stale) is True        # still wanted...
+    assert uds.get(TIM, "/folders/f-1/readme.txt", ALL).data["state"] == "indexed"   # ...nothing written
+    assert uds.get(TIM, "/folders/f-1/readme.txt").version == version
+    assert indexer.extract(root, "readme.txt") == "current"             # and nothing read
+    assert (indexer.counters.indexed, indexer.counters.unchanged) == (1, 0)
+
+
 def test_voice_files_are_indexed_once_closed_samples_as_summary_fields_only(engine):
     """The voice record's root: an events file is text with vectors; a
     samples file only its summary fields, no text and so no vector."""

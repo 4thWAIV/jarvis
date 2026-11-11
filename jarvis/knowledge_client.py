@@ -43,7 +43,8 @@ PING_EVERY_SEC = 5.0
 PING_FAILURES_MAX = 2
 RESTART_BACKOFF_SEC = (0.0, 1.0, 2.0, 5.0)
 STABLE_AFTER_SEC = 60.0
-READY_WAIT_SEC = 30.0
+READY_WAIT_SEC = 60.0
+ENGINE_LOG_KEEP_BYTES = 1 << 20     # past this the engine's log keeps only its last quarter
 PREVIOUS_EXIT_WAIT_SEC = 10.0
 TERM_GRACE_SEC = 5.0
 DEFAULT_DEADLINE_SEC = 0.5
@@ -374,10 +375,44 @@ class Supervisor:
 
 
 def _spawn_engine() -> subprocess.Popen:
+    """The engine, its stderr appended to its own log
+    (`data_paths.knowledge_engine_log_path`), so a server that cannot reach
+    it can say what it last said (`engine_log_tail`)."""
     env = dict(os.environ)
-    return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
-                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                            stderr=None, env=env, close_fds=True)
+    path = data_paths.knowledge_engine_log_path()
+    _trim_log(path)
+    with open(path, "ab") as engine_log:
+        return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                stderr=engine_log, env=env, close_fds=True)
+
+
+def _trim_log(path) -> None:
+    """Keep the engine's log small: past ENGINE_LOG_KEEP_BYTES, its last
+    quarter only."""
+    try:
+        if path.stat().st_size <= ENGINE_LOG_KEEP_BYTES:
+            return
+        with open(path, "rb") as f:
+            f.seek(-(ENGINE_LOG_KEEP_BYTES // 4), os.SEEK_END)
+            kept = f.read()
+        path.write_bytes(kept[kept.find(b"\n") + 1:])
+    except OSError:
+        pass
+
+
+def engine_log_tail(lines: int = 40) -> str:
+    """The last lines the engine wrote, for a failure that must say why."""
+    try:
+        text = data_paths.knowledge_engine_log_path().read_text(errors="replace")
+    except OSError:
+        return "(the knowledge engine wrote no log)"
+    return "\n".join(text.splitlines()[-lines:]) or "(the knowledge engine's log is empty)"
+
+
+class EngineNotUp(RuntimeError):
+    """The engine did not answer at startup. JARVIS's records live there, so
+    the server does not start without it."""
 
 
 def _end_process(proc: subprocess.Popen) -> None:

@@ -224,7 +224,7 @@ class Isolated:
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise CheckFailed(f"The isolated JARVIS stopped at startup; see {self.log}. "
-                                  f"Its last lines:\n{self._log_tail()}")
+                                  f"Its last lines:\n{self._log_tail()}{self._engine_tail()}")
             try:
                 with urllib.request.urlopen(self.base + "/api/packages", timeout=2):
                     if (self.data / "jarvis" / "tool-token").is_file():
@@ -233,7 +233,7 @@ class Isolated:
                 pass
             time.sleep(0.5)
         raise CheckFailed(f"The isolated JARVIS did not start in {READY_SEC}s; see {self.log}. "
-                          f"Its last lines:\n{self._log_tail()}")
+                          f"Its last lines:\n{self._log_tail()}{self._engine_tail()}")
 
     def _log_tail(self, lines: int = 40) -> str:
         """The end of the isolated JARVIS's own log, so a failure names its
@@ -242,6 +242,12 @@ class Isolated:
             return "\n".join(self.log.read_text(errors="replace").splitlines()[-lines:])
         except OSError:
             return "(its log could not be read)"
+
+    def _engine_tail(self) -> str:
+        """The end of its knowledge engine's own log, where its records live."""
+        with _data_dir(self.data):
+            from jarvis import knowledge_client
+            return f"\nIts knowledge engine's log ends:\n{knowledge_client.engine_log_tail()}"
 
     def tool(self, tool: str, /, **arguments) -> tuple[bool, str]:
         """One brain tool through this JARVIS's /internal/tool: (ok, its text)."""

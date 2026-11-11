@@ -310,12 +310,15 @@ class Indexer:
     def note(self, root: Root, rel: str, stat: fs_watch.Stat, held: Optional[dict] = None,
              tx: Optional[Transaction] = None) -> bool:
         """The file as it is now, recorded at once as its path entry (`state:
-        pending` until it is read again). False when nothing changed."""
+        pending` until it is read again). Whether it waits to be read: a
+        file already recorded as it is now is not written again (pending,
+        it still waits; else it was read), so an event and a scan for one
+        change never put a file read meanwhile back to pending."""
         path = item_path(root, rel)
         if path is None:
             return False
-        if held is not None and _known_stat(held) == stat and held.get("state") != "pending":
-            return False
+        if held is not None and _known_stat(held) == stat:
+            return held.get("state") == "pending"
         own = tx is None
         tx = tx if tx is not None else Transaction()
         if held is None:
@@ -401,6 +404,12 @@ class Indexer:
             return "skipped"
         started = time.monotonic()
         item = self.uds.get(WRITER, path, {Stream.DATA})
+        held = (item.data or {}) if item is not None else {}
+        if held.get("state") not in (None, "pending") and \
+                _known_stat(held) == fs_watch.stat_of(os.path.join(root.path, rel)):
+            # Wanted twice (a scan and an event for one change) and read
+            # already: nothing to read again.
+            return "current"
         try:
             data, info = read_file(root, rel)
         except (folder_readers.FolderError, OSError):
@@ -412,7 +421,6 @@ class Indexer:
         import hashlib
         stat = fs_watch.Stat(info.st_size, info.st_mtime_ns, info.st_ino)
         sha = hashlib.sha256(data).hexdigest()
-        held = (item.data or {}) if item is not None else {}
         base = {"file": rel, "source": root.area, "trust": root.trust, **_stat_fields(stat), "sha256": sha}
         expect = item.version if item is not None else 0
         tx = Transaction()
