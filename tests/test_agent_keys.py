@@ -437,3 +437,17 @@ def test_the_agent_key_command_inits_and_submits(wired, monkeypatch, capsys, tmp
     assert agent_key.main(["submit", "--session", PLAN, "--fingerprint", fingerprint]) == 0
     from jarvis import agent_key_store
     assert agent_key_store.get(fingerprint).state == "waiting"
+
+
+def test_packages_key_can_reach_retrieval_but_not_reveal(wired):
+    server, _, _, _, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    # Invalid UUIDs reach validation only after the signature/rights gate.
+    for path in ('/api/team/messages/not-uuid/files/not-uuid/location',
+                 '/api/team/messages/not-uuid/files/not-uuid/download',
+                 '/api/team/messages/not-uuid/attachments/not-uuid/bundle'):
+        response = agent.post(client, path, {})
+        assert response.status_code == 422, response.text
+    response = agent.post(client, '/api/team/messages/not-uuid/files/not-uuid/reveal', {})
+    assert response.status_code == 403 and 'rights' in response.json()['error']
