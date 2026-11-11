@@ -65,8 +65,9 @@ EDGES_IN = 4
 META = 6          # ingest watermarks, written with the documents they describe
 CONTENT = 7       # an item's content stream: its text, sections and file reference
 FEED = 8          # the change feed: one record per item transaction, keyed by its LSN
+RIGHTS = 9        # AccessRights: the grants set on a path, keyed by the path
 FAMILY_EXT = {DOCS: "docs", FIELDS: "dict", EDGES_OUT: "eout", EDGES_IN: "ein", META: "meta",
-              CONTENT: "cont", FEED: "feed"}
+              CONTENT: "cont", FEED: "feed", RIGHTS: "rght"}
 HISTORY_FAMILIES = (DOCS, CONTENT)
 
 MEMTABLE_MAX_BYTES = 32 << 20

@@ -40,7 +40,8 @@ from jarvis.jarvis_memory import _STOP_WORDS
 from jarvis.knowledge import postings
 from jarvis.knowledge.documents import DOC_HEAD, MEM, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
-from jarvis.knowledge.store import DOCS, Store
+from jarvis.knowledge.kinds import ITEM
+from jarvis.knowledge.store import CONTENT, DOCS, Store
 from jarvis.knowledge.wal import Op
 
 LEX = 11
@@ -67,6 +68,33 @@ def _chunk_terms(doc: dict) -> Optional[Counter]:
     return Counter(terms(str(doc.get(TEXT) or "")))
 
 
+def content_terms(content: dict) -> Counter:
+    """An item's terms: every section's heading and text."""
+    found: Counter = Counter()
+    for s in content.get("sections") or []:
+        found.update(terms(str(s.get("heading") or "")))
+        found.update(terms(str(s.get("text") or "")))
+    return found
+
+
+def _item_terms(doc: dict, content: Optional[bytes]) -> Optional[Counter]:
+    """An item's terms when it has content (its content stream, written in
+    the same transaction as its document), else None."""
+    if doc.get("_kind") != ITEM or not doc.get("_content") or content is None:
+        return None
+    return content_terms(json.loads(content))
+
+
+def _terms_of(doc: dict, content: Optional[bytes]) -> Optional[Counter]:
+    found = _chunk_terms(doc)
+    return found if found is not None else _item_terms(doc, content)
+
+
+def is_item_ordinal(docs: DocumentStore, o: int) -> bool:
+    key = docs.columns.key(o)
+    return key is not None and key[:1] == b"/"
+
+
 class LexicalPart:
     name = "keyword_index"
     families = {LEX: "lex"}
@@ -76,11 +104,22 @@ class LexicalPart:
               read_family: Callable[[int], Iterator[Version]]) -> None:
         table: dict[str, list[tuple[int, int]]] = {}
         lengths: list[tuple[int, int]] = []
+        contents = newest(CONTENT)
+        held = next(contents, None)
         for v in newest(DOCS):
             if v.value is None:
                 continue
             o, doc = decode_doc(v.value)
-            counts = _chunk_terms(doc)
+            content = None
+            if doc.get("_kind") == ITEM:
+                # Both families arrive in key order; an item's content is
+                # always written with its document, so it is in this
+                # generation beside it.
+                while held is not None and held.key < v.key:
+                    held = next(contents, None)
+                if held is not None and held.key == v.key:
+                    content = held.value
+            counts = _terms_of(doc, content)
             if counts is None:
                 continue
             lengths.append((o, sum(counts.values())))
@@ -143,11 +182,15 @@ class Lexical:
                     continue
                 o, doc = decode_doc(v.value)
                 if src[o] == MEM and self.docs.columns.lsn[o] == v.lsn:
-                    self._index_mem(o, doc)
+                    content = None
+                    if doc.get("_kind") == ITEM:
+                        found = mem.versions_of(CONTENT, v.key)
+                        content = found[0].value if found and found[0].lsn == v.lsn else None
+                    self._index_mem(o, doc, content)
 
-    def _index_mem(self, o: int, doc: dict) -> None:
+    def _index_mem(self, o: int, doc: dict, content: Optional[bytes] = None) -> None:
         self._unindex_mem(o)
-        counts = _chunk_terms(doc)
+        counts = _terms_of(doc, content)
         if counts is None:
             self._set_length(o, None)
             return
@@ -166,12 +209,13 @@ class Lexical:
 
     def _on_apply(self, lsn: int, ops: list[Op]) -> None:
         with self._lock:
+            contents = {op.key: op.value for op in ops if op.family == CONTENT}
             for op in ops:
                 if op.family != DOCS:
                     continue
                 if op.value is not None:
                     o, doc = decode_doc(op.value)
-                    self._index_mem(o, doc)
+                    self._index_mem(o, doc, contents.get(op.key))
                 else:
                     o = self.docs._ord_from_store(op.key)
                     if o is not None:
@@ -204,10 +248,10 @@ class Lexical:
     def _tf_part(self, tf: int, dl: int, avgdl: float) -> float:
         return tf * (K1 + 1.0) / (tf + K1 * (1.0 - B + B * dl / avgdl))
 
-    def search(self, text: str, k: int = CANDIDATES,
-               within: Optional[set[int]] = None) -> list[tuple[int, float, dict]]:
-        """The top `k` chunks for `text`: (ordinal, score, the score of each
-        query term that matched)."""
+    def search(self, text: str, k: int = CANDIDATES, within: Optional[set[int]] = None,
+               items: bool = False) -> list[tuple[int, float, dict]]:
+        """The top `k` chunks (or, with `items`, items) for `text`: (ordinal,
+        score, the score of each query term that matched)."""
         query = list(dict.fromkeys(terms(text)))
         if not query or not self.live:
             return []
@@ -232,6 +276,8 @@ class Lexical:
 
         def add(o: int, tf: int, term: str, idf: float) -> None:
             if within is not None and o not in within:
+                return
+            if is_item_ordinal(self.docs, o) != items:
                 return
             s = idf * self._tf_part(tf, length[o] - 1, avgdl)
             scores[o] = scores.get(o, 0.0) + s
@@ -272,6 +318,48 @@ class Lexical:
             top = heapq.nlargest(k, scores.values())
         best = heapq.nlargest(k, scores.items(), key=lambda kv: (kv[1], -kv[0]))
         return [(o, s, why[o]) for o, s in best]
+
+
+    def holding(self, term: str, items: bool = True) -> set[int]:
+        """Every live ordinal whose text holds `term` (a folded word)."""
+        src = self.docs.columns.src
+        lists, mem = self._lists(term)
+        out = {o for o, _ in mem.items() if o < len(src) and src[o] == MEM}
+        for gen, plist in lists:
+            for o in plist.ordinals():
+                if o < len(src) and src[o] == gen:
+                    out.add(o)
+        return {o for o in out if is_item_ordinal(self.docs, o) == items}
+
+    def phrase_candidates(self, phrase: str) -> Optional[set[int]]:
+        """The items holding every indexed word of `phrase` (its rarest word
+        first), which a phrase check then confirms; None when the phrase has
+        no indexed word (stop words and single letters only)."""
+        words = sorted(set(terms(phrase)))
+        if not words:
+            return None
+        found: Optional[set[int]] = None
+        for word in sorted(words, key=lambda w: sum(p.count for _, p in self._lists(w)[0]) + len(self._lists(w)[1])):
+            have = self.holding(word)
+            found = have if found is None else found & have
+            if not found:
+                return set()
+        return found or set()
+
+
+def phrase_in(phrase: str, text: str) -> bool:
+    """Whether the folded words of `phrase` occur in `text` one after
+    another: an exact phrase, accents and case folded, every word kept."""
+    want = spoken_words.folded_words(phrase or "")
+    if not want:
+        return False
+    have = spoken_words.folded_words(text or "")
+    n = len(want)
+    first = want[0]
+    for i in range(len(have) - n + 1):
+        if have[i] == first and have[i:i + n] == want:
+            return True
+    return False
 
 
 def _index(ords: array, o: int) -> Optional[int]:

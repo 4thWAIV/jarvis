@@ -13,7 +13,7 @@ import pytest
 
 from jarvis.knowledge import paths
 from jarvis.knowledge.engine import Engine
-from jarvis.knowledge.uds import Caller, Conflict, Stream, Transaction, in_process
+from jarvis.knowledge.uds import Caller, Conflict, Stream, Transaction, in_process, Link
 
 TIM = Caller("tim")
 AI = Caller("tim", agent="planning", model="sonnet")
@@ -241,8 +241,13 @@ def test_links_of_each_origin(uds):
     assert ("/work/w.work", "project", "/projects/j.project", "reference") in project
     with pytest.raises(ValueError, match="model"):
         uds.transaction(TIM, Transaction().link("/work/w.work", "mentions", "/agents/a.agent", model=""))
-    uds.transaction(AI, Transaction().link("/projects/j.project/notes.md", "mentions", "/agents/a.agent",
-                                           model="e5", weight=0.4))
+    with pytest.raises(ValueError, match="proposal"):     # an AI's link waits for Tim's yes
+        uds.transaction(AI, Transaction().link("/projects/j.project/notes.md", "mentions", "/agents/a.agent",
+                                               model="e5", weight=0.4))
+    proposed = uds.propose_link(AI, Link("/projects/j.project/notes.md", "mentions", "/agents/a.agent",
+                                         "derived", model="e5", weight=0.4))
+    assert uds.links(TIM, "/agents/a.agent", origins=["derived"]) == []
+    uds.answer_proposal(TIM, proposed.path, "accept")
     derived = uds.links(TIM, "/agents/a.agent", origins=["derived"])
     assert len(derived) == 1 and derived[0].model == "e5" and derived[0].at is not None
     uds.put(TIM, "/work/w.work", data={"project": "/projects/j.project"})

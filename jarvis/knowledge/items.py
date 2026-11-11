@@ -44,11 +44,13 @@ import threading
 import time
 from typing import Any, Iterator, Optional
 
-from jarvis.knowledge import encoding, kinds, paths
+from jarvis.knowledge import encoding, kinds, paths, rights
 from jarvis.knowledge.documents import (DOC_HEAD, DocumentError, DocumentStore, Predicate,
                                         decode_doc, _sort_key)
 from jarvis.knowledge.graph import (DERIVED, HIERARCHY, REFERENCE, SEP, Graph, edge_key,
                                     split_key)
+from jarvis.knowledge.lexical import phrase_in as lexical_phrase_in, terms as lexical_terms
+from jarvis.knowledge.rights import FULL, OWNER, Access, Denied, Rights, caller_of, without_hidden
 from jarvis.knowledge.store import CONTENT, DOCS, EDGES_IN, EDGES_OUT, FEED, prefix_end
 from jarvis.knowledge.wal import Op
 
@@ -63,10 +65,15 @@ LINKS_LIMIT_MAX = 1000
 HISTORY_LIMIT_MAX = 10000
 INDEX_PATH_MAX = 50000       # past this many candidates, a path scan is cheaper
 WORDS_MAX = 2000             # a change kind or a summary
-STREAMS = ("entry", "data", "content", "sections")
+STREAMS = ("entry", "data", "content", "sections", "vectors", "rights")
 DEFAULT_STREAMS = ("entry", "data")
 OPS = ("put", "merge", "delete", "link", "unlink")
 LINK_KIND_MAX = 200
+SEARCH_LIMIT_MAX = 200
+SEARCH_BUDGET_MS = 2000
+QUERY_TEXT_MAX = 2000
+RRF_K = 60
+PROPOSALS = "/proposals/links"
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
 
@@ -151,7 +158,7 @@ def _content(value) -> Optional[dict]:
     if len(text.encode("utf-8")) > TEXT_MAX_BYTES:
         raise DocumentError(f"content.text is at most {TEXT_MAX_BYTES >> 20} MB")
     out: dict = {"text": text}
-    for k in ("ref", "sha256", "media_type"):
+    for k in ("ref", "sha256", "media_type", "title", "format"):
         if value.get(k) is not None:
             if not isinstance(value[k], str) or not value[k]:
                 raise DocumentError(f"content.{k} is text")
@@ -169,15 +176,71 @@ def _content(value) -> Optional[dict]:
             heading = s.get("heading") or ""
             if not isinstance(heading, str):
                 raise DocumentError("a section's heading is text")
-            out["sections"].append({"index": i, "heading": heading, "text": s["text"]})
+            section = {"index": i, "heading": heading, "text": s["text"]}
+            trail = s.get("heading_path")
+            if trail is not None:
+                if not isinstance(trail, list) or not all(isinstance(h, str) for h in trail):
+                    raise DocumentError("a section's heading_path is a list of headings")
+                section["heading_path"] = trail
+            page = s.get("page")
+            if page is not None:
+                if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+                    raise DocumentError("a section's page is a page number")
+                section["page"] = page
+            out["sections"].append(section)
     out.setdefault("sha256", hashlib.sha256(text.encode("utf-8")).hexdigest())
     return out
+
+
+WHOLE_TEXT_MAX = 1800        # about multilingual-e5-small's 512 tokens
+
+
+def title_of(doc: dict, content: dict) -> str:
+    """An item's title: its data's, its content's, else its name."""
+    for found in (doc.get("title"), content.get("title")):
+        if isinstance(found, str) and found.strip():
+            return found.strip()
+    name = doc.get("_name") or ""
+    stem = name.rpartition(".")[0]
+    return stem or name
+
+
+def heading_trail(section: dict) -> list[str]:
+    trail = section.get("heading_path")
+    if trail:
+        return [h for h in trail if h]
+    return [section["heading"]] if section.get("heading") else []
+
+
+def embedded_text(title: str, section: dict) -> str:
+    """The text a section's vector is made from: the item's title and the
+    section's heading path first, then its text."""
+    head = " › ".join([t for t in [title, *heading_trail(section)] if t])
+    return f"{head}\n\n{section.get('text') or ''}" if head else str(section.get("text") or "")
+
+
+def whole_text(title: str, content: dict, limit: int = WHOLE_TEXT_MAX) -> str:
+    """The text the whole-item vector is made from: the title, the outline
+    of its headings, then the start of its text, within one embedding's
+    budget."""
+    outline: list[str] = []
+    for s in content.get("sections") or []:
+        h = " › ".join(heading_trail(s))
+        if h and h not in outline:
+            outline.append(h)
+    head = "\n".join([t for t in [title, "; ".join(outline)] if t])
+    body = content.get("text") or ""
+    room = max(limit - len(head) - 2, 0)
+    if len(body) > room:
+        cut = body.rfind(" ", 0, room)
+        body = body[:cut if cut > room // 2 else room]
+    return f"{head}\n\n{body}" if head else body
 
 
 def _content_summary(content: dict) -> dict:
     summary = {"sha256": content["sha256"], "chars": len(content["text"]),
                "sections": len(content["sections"])}
-    for k in ("ref", "media_type"):
+    for k in ("ref", "media_type", "format"):
         if k in content:
             summary[k] = content[k]
     return summary
@@ -261,10 +324,13 @@ def diff_values(before: Any, after: Any, at: str = "") -> list[dict]:
 
 
 class Items:
-    def __init__(self, docs: DocumentStore, graph: Graph) -> None:
+    def __init__(self, docs: DocumentStore, graph: Graph, rights: Rights) -> None:
         self.docs = docs
         self.graph = graph
+        self.rights = rights
         self.store = docs.store
+        self.vectors = None          # the vector index, set by the engine once it is open
+        self.lexical = None          # the keyword index, likewise
         self._clock_lock = threading.Lock()
         self.last_at = 0.0
         newest = self._newest_feed()
@@ -284,6 +350,27 @@ class Items:
         for v in self.store.scan(FEED):
             last = v
         return None if last is None else json.loads(last.value)
+
+    # -- the gate ---------------------------------------------------------------
+    def _reader(self, body: dict) -> str:
+        """The person whose rights a read applies: the caller's (an AI's is
+        its person's, never wider)."""
+        return caller_of(body.get("caller"))["person"]
+
+    def access(self, person: str, path: str) -> Access:
+        return self.rights.access(person, path)
+
+    def _shown(self, doc: dict, content: Optional[dict], streams, access: Access) -> dict:
+        """An item as this reader may see it: hidden fields out; content,
+        sections and the content summary only with the content right."""
+        view = item_view(doc, content if access.content else None, streams)
+        if "data" in view and access.hidden:
+            view["data"] = without_hidden(view["data"], access)
+        if "entry" in view and not access.content:
+            view["entry"]["content"] = None
+        if "rights" in streams:
+            view["rights"] = self.rights.on_path(doc["_key"]) if access is FULL else None
+        return view
 
     # -- one item's versions --------------------------------------------------
     def _versions(self, path: str) -> list:
@@ -345,23 +432,31 @@ class Items:
                 if path in seen:
                     raise DocumentError(f"{path} is written once a transaction")
                 seen.add(path)
+                if not self.access(writer["person"], path).write:
+                    raise Denied(f"{path} is not {writer['person']}'s to write")
+        return self._commit(writes, writer, change, summary, durable == "full")
+
+    def _commit(self, writes: list[dict], writer: dict, change, summary, full: bool,
+                proposal: Optional[dict] = None) -> dict:
         result: dict = {}
 
         def prepare(lsn: int) -> list[Op]:
-            ops, done = self._plan(writes, writer, change, summary, lsn)
+            ops, done = self._plan(writes, writer, change, summary, lsn, proposal)
             result.update(done)
             return ops
 
-        lsn = self.store.commit(prepare=prepare, full=durable == "full")
+        lsn = self.store.commit(prepare=prepare, full=full)
         if not result:
             return {"lsn": lsn, "at": None, "items": [], "links": 0}
         return {"lsn": lsn, **result}
 
-    def _plan(self, writes: list[dict], writer: dict, change, summary, lsn: int) -> tuple[list[Op], dict]:
+    def _plan(self, writes: list[dict], writer: dict, change, summary, lsn: int,
+              proposal: Optional[dict] = None) -> tuple[list[Op], dict]:
         at = self._now()
         puts: list[dict] = []
         deletes: list[str] = []
         content_ops: list[Op] = []
+        vector_ops: list[Op] = []
         changed: list[dict] = []
         made: dict[str, Optional[dict]] = {}     # path -> its document after this write
         for w in writes:
@@ -411,25 +506,39 @@ class Items:
                 new["_change"] = change
             if summary is not None:
                 new["_summary"] = summary
+            before = (doc or {}).get("_content")
             if "content" in w:
                 content = _content(w["content"])
                 if content is not None and kind == paths.FOLDER:
                     raise DocumentError(f"{path} is a folder, and a folder has no content")
                 if content is None:
-                    if doc is not None and doc.get("_content") is not None:
+                    if before is not None:
                         content_ops.append(Op(CONTENT, path.encode(), None))
                 else:
                     new["_content"] = _content_summary(content)
                     content_ops.append(Op(CONTENT, path.encode(), encoding.canonical(content)))
-            elif doc is not None and doc.get("_content") is not None:
-                new["_content"] = doc["_content"]
+            elif before is not None:
+                # Kept content is written again beside the new document, so
+                # an item's document and content always share a commit (and
+                # a generation, which the keyword index reads them by).
+                new["_content"] = before
+                held = self.store.get(CONTENT, path.encode())
+                if held is not None and held.value is not None:
+                    content_ops.append(Op(CONTENT, path.encode(), held.value))
+            after = new.get("_content")
+            if before is not None and (after is None or after["sha256"] != before["sha256"]):
+                vector_ops += self._stale_vectors(path)
             if len(encoding.canonical(new)) > DOC_MAX_BYTES:
                 raise DocumentError(f"{path}: an item's document is at most {DOC_MAX_BYTES >> 20} MB")
             puts.append(new)
             made[path] = new
             changed.append({"path": path, "op": op, "version": number + 1, "type": kind})
-        link_ops, links = self._link_ops(writes, writer, at, made)
-        if not changed and not links:
+        link_ops, links = self._link_ops(writes, writer, at, made, proposal)
+        rights_ops = []
+        for w in writes:
+            if w["op"] == "rights":
+                rights_ops += self.rights.set_ops(w["path"], w.get("grants") or [], writer["person"], at)
+        if not changed and not links and not rights_ops:
             return [], {}
         ops, reserved = self.docs.plan(puts, deletes)
         self.docs.release(reserved)
@@ -443,8 +552,18 @@ class Items:
             record["summary"] = summary
         if links:
             record["links"] = links
+        if rights_ops:
+            record["rights"] = [w["path"] for w in writes if w["op"] == "rights"]
         feed = Op(FEED, feed_key(lsn), encoding.canonical(record))
-        return ops + content_ops + link_ops + [feed], {"at": at, "items": changed, "links": len(links)}
+        return (vector_ops + ops + content_ops + link_ops + rights_ops + [feed],
+                {"at": at, "items": changed, "links": len(links)})
+
+    def _stale_vectors(self, path: str) -> list[Op]:
+        """The item's vector rows, deleted with a change of its content."""
+        if self.vectors is None:
+            return []
+        o = self.docs._ord_from_store(path.encode())
+        return [] if o is None else self.vectors.item_tombstones(o)
 
     def _is_item(self, path: str, made: dict) -> bool:
         if path in made:
@@ -452,7 +571,8 @@ class Items:
         v = self.store.get(DOCS, path.encode())
         return v is not None and v.value is not None
 
-    def _link_ops(self, writes: list[dict], writer: dict, at: float, made: dict) -> tuple[list[Op], list[dict]]:
+    def _link_ops(self, writes: list[dict], writer: dict, at: float, made: dict,
+                  proposal: Optional[dict] = None) -> tuple[list[Op], list[dict]]:
         ops: list[Op] = []
         links: list[dict] = []
         for w in writes:
@@ -463,10 +583,16 @@ class Items:
             paths.check(dst)
             if not isinstance(kind, str) or not kind or len(kind) > LINK_KIND_MAX or "\x00" in kind:
                 raise DocumentError(f"a link's kind is text of at most {LINK_KIND_MAX} characters")
+            mine = self.access(writer["person"], src)
+            if not mine.write or not self.access(writer["person"], dst).data:
+                raise Denied(f"a link from {src} to {dst} is not {writer['person']}'s to write")
             if w["op"] == "unlink":
                 ops += self.graph._edge_ops(src, kind, dst, None)
                 links.append({"op": "unlink", "from": src, "kind": kind, "to": dst})
                 continue
+            if "agent" in writer and proposal is None:
+                raise DocumentError("a link an AI makes is a proposal until the owner accepts it: "
+                                    "propose it")
             origin = w.get("origin", DERIVED)
             if origin != DERIVED:
                 raise DocumentError("a written link is derived; references come from fields and "
@@ -484,19 +610,40 @@ class Items:
                      "by": writer["person"]}
             if "agent" in writer:
                 value["agent"] = writer["agent"]
+            if proposal is not None:
+                value.update({"proposal": proposal["path"], "proposed_at": proposal["at"],
+                              "proposed_by": proposal["person"]})
+                if proposal.get("agent"):
+                    value["agent"] = proposal["agent"]
             ops += self.graph._edge_ops(src, kind, dst, value)
             links.append({"op": "link", "from": src, "kind": kind, "to": dst, "model": model})
         return ops, links
 
+    def set_rights(self, body: dict) -> dict:
+        """The grants on one path, set by the owner (empty clears them)."""
+        writer = _writer(body)
+        path = body.get("path")
+        if path != "/":
+            paths.check(path)
+        if writer["person"] != OWNER:
+            raise Denied("only the owner sets rights")
+        rights.check_grants(body.get("grants") or [])
+        return self._commit([{"op": "rights", "path": path, "grants": body.get("grants") or []}],
+                            writer, _words(body.get("change"), "change") or "rights",
+                            _words(body.get("summary"), "summary"), False)
+
     # -- reading one item -------------------------------------------------------
     def get(self, path: str, *, version: Optional[int] = None, at: Optional[float] = None,
-            streams=None) -> Optional[dict]:
+            streams=None, person: str = OWNER) -> Optional[dict]:
         """The item now, at a version, or as it stood at a time; None when
-        it is not (or was not then) an item."""
+        it is not (or was not then) an item, or the reader may not see it."""
         paths.check(path)
         streams = _streams(streams)
         if version is not None and at is not None:
             raise DocumentError("a version or a time, not both")
+        access = self.access(person, path)
+        if not access.data:
+            return None
         with self.store.reading() as now:
             found = None
             for v in self._versions(path):
@@ -524,17 +671,35 @@ class Items:
             o, doc = decode_doc(found.value)
             doc["_lsn"], doc["_ord"] = found.lsn, o
             content = None
-            if doc.get("_content") is not None and ("content" in streams or "sections" in streams):
+            if doc.get("_content") is not None and access.content and \
+                    ("content" in streams or "sections" in streams):
                 c = self.store.get(CONTENT, path.encode(), found.lsn)
                 content = None if c is None or c.value is None else json.loads(c.value)
-            return item_view(doc, content, streams)
+            view = self._shown(doc, content, streams, access)
+            if "vectors" in streams:
+                view["vectors"] = self._vector_state(o, doc, access) if version is None and at is None \
+                    else None
+            return view
 
-    def history(self, path: str, *, limit: int = 100, before: Optional[int] = None) -> dict:
+    def _vector_state(self, o: int, doc: dict, access: Access) -> Optional[dict]:
+        """Whether the item's vectors exist for its current content: the
+        whole-item vector and one per section, or waiting."""
+        summary = doc.get("_content")
+        if not access.content or summary is None:
+            return None
+        embedded = self.vectors is not None and self.vectors.item_embedded(o)
+        return {"state": "embedded" if embedded else "waiting",
+                "sections": summary.get("sections", 0) if embedded else 0}
+
+    def history(self, path: str, *, limit: int = 100, before: Optional[int] = None,
+                person: str = OWNER) -> dict:
         """Each version, newest first: its number, when, by whom, what kind
         of change and its summary; a delete is a version too."""
         paths.check(path)
         if not 0 < limit <= HISTORY_LIMIT_MAX:
             raise DocumentError(f"limit is 1 to {HISTORY_LIMIT_MAX}")
+        if not self.access(person, path).data:
+            return {"path": path, "versions": [], "before": None}
         out = []
         for v in self._versions(path):
             if v.value is None:
@@ -554,12 +719,12 @@ class Items:
         return {"path": path, "versions": out,
                 "before": out[-1]["version"] if more and out else None}
 
-    def diff(self, path: str, a: int, b: Optional[int] = None) -> dict:
+    def diff(self, path: str, a: int, b: Optional[int] = None, person: str = OWNER) -> dict:
         """What changed in the item's data between version `a` and version
         `b` (the current one when left out), and whether its content did."""
-        first = self.get(path, version=a, streams=["entry", "data"])
-        second = self.get(path, streams=["entry", "data"]) if b is None else \
-            self.get(path, version=b, streams=["entry", "data"])
+        first = self.get(path, version=a, streams=["entry", "data"], person=person)
+        second = self.get(path, streams=["entry", "data"], person=person) if b is None else \
+            self.get(path, version=b, streams=["entry", "data"], person=person)
         if first is None or second is None:
             raise DocumentError(f"{path} has no such version")
         content_a = (first["entry"].get("content") or {}).get("sha256")
@@ -571,6 +736,8 @@ class Items:
     # -- reading many -------------------------------------------------------------
     def _preds(self, body: dict) -> tuple[list[Predicate], str, Optional[str], Optional[list[str]]]:
         where = body.get("where") or []
+        if isinstance(where, dict):
+            where = [[k, "=", v] for k, v in where.items()]
         if not isinstance(where, list):
             raise DocumentError("where is a list of [field, op, value]")
         preds = [Predicate.parse(w) for w in where]
@@ -590,9 +757,14 @@ class Items:
         return preds, prefix, parent, types
 
     def _select(self, preds: list[Predicate], prefix: str, parent: Optional[str],
-                types: Optional[list[str]], lsn: int, start_after: Optional[str] = None) -> Iterator[dict]:
-        """Every live item under `prefix` matching the conditions; in path
-        order when read by path, else in the index's order."""
+                types: Optional[list[str]], lsn: int, start_after: Optional[str] = None,
+                person: str = OWNER) -> Iterator[dict]:
+        """Every live item under `prefix` matching the conditions that the
+        reader may see; in path order when read by path, else in the
+        index's order. A condition on a field hidden from the reader
+        matches nothing."""
+        user_fields = [p.path for p in preds if not p.path.startswith("_")]
+
         def keep(doc: dict) -> bool:
             if not doc["_key"].startswith(prefix):
                 return False
@@ -600,6 +772,12 @@ class Items:
                 return False
             if types is not None and doc.get("_type") not in types:
                 return False
+            if person != OWNER:
+                access = self.access(person, doc["_key"])
+                if not access.data:
+                    return False
+                if access.hidden and not all(access.sees_field(f) for f in user_fields):
+                    return False
             return all(p.matches(doc, False) for p in preds)
 
         estimate = self.docs.estimate(preds, [kinds.ITEM]) if preds else None
@@ -610,6 +788,7 @@ class Items:
                 for o in found:
                     doc = self.docs.by_ordinal(o, lsn)
                     if doc is not None and doc.get("_kind") == kinds.ITEM and keep(doc):
+                        doc.setdefault("_ord", o)
                         docs.append(doc)
                 docs.sort(key=lambda d: d["_key"].encode())
                 for doc in docs:
@@ -628,7 +807,8 @@ class Items:
     def list(self, body: dict) -> dict:
         """A page of items under a folder (or with a parent), matching the
         conditions, in path order or by a field, with a cursor for the next
-        page."""
+        page; only the items the reader may see."""
+        person = self._reader(body)
         preds, prefix, parent, types = self._preds(body)
         limit = body.get("limit", 100)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= LIST_LIMIT_MAX:
@@ -642,7 +822,7 @@ class Items:
                 after = _decode_cursor(cursor) if cursor else None
                 if after is not None and not isinstance(after, str):
                     raise DocumentError("not a cursor this engine gave")
-                for doc in self._select(preds, prefix, parent, types, lsn, after):
+                for doc in self._select(preds, prefix, parent, types, lsn, after, person):
                     out.append(doc)
                     if len(out) > limit:
                         break
@@ -654,7 +834,11 @@ class Items:
                         or order[1] not in ("asc", "desc")):
                     raise DocumentError("order is [field, asc or desc]")
                 field, direction = order
-                docs = list(self._select(preds, prefix, parent, types, lsn))
+                docs = list(self._select(preds, prefix, parent, types, lsn, person=person))
+                if person != OWNER:
+                    docs = [d if self.access(person, d["_key"]).sees_field(field)
+                            else {k: v for k, v in d.items() if k != field.split(".")[0].split("[")[0]}
+                            for d in docs]
 
                 def key(d: dict):
                     return (_sort_key(d, field), d["_key"])
@@ -674,34 +858,45 @@ class Items:
                     next_cursor = None
             items = []
             for doc in out:
+                access = self.access(person, doc["_key"])
                 content = None
-                if doc.get("_content") is not None and ("content" in streams or "sections" in streams):
+                if doc.get("_content") is not None and access.content and \
+                        ("content" in streams or "sections" in streams):
                     c = self.store.get(CONTENT, doc["_key"].encode(), lsn)
                     content = None if c is None or c.value is None else json.loads(c.value)
-                items.append(item_view(doc, content, streams))
+                view = self._shown(doc, content, streams, access)
+                if "vectors" in streams:
+                    view["vectors"] = self._vector_state(doc["_ord"], doc, access)
+                items.append(view)
         return {"items": items, "cursor": next_cursor, "lsn": lsn}
 
     def count(self, body: dict) -> dict:
         """How many items match, each counted once; with `group_by`, how
         many have each value of that field (an item counted once per
-        distinct value it holds). Items with content and no vectors yet
-        count as waiting (vectors are round 2)."""
+        distinct value it holds). Of the items with content the reader may
+        read, `embedded` have their vectors for their current content and
+        `waiting` do not yet."""
+        person = self._reader(body)
         preds, prefix, parent, types = self._preds(body)
         group_by = body.get("group_by")
         if group_by is not None and (not isinstance(group_by, str) or not group_by):
             raise DocumentError("group_by is a field")
-        total = with_content = 0
+        total = embedded = waiting = 0
         groups: dict[str, list] = {}
         with self.store.reading() as lsn:
-            for doc in self._select(preds, prefix, parent, types, lsn):
+            for doc in self._select(preds, prefix, parent, types, lsn, person=person):
                 total += 1
-                if doc.get("_content") is not None:
-                    with_content += 1
-                if group_by is not None:
+                access = self.access(person, doc["_key"])
+                if doc.get("_content") is not None and access.content:
+                    if self.vectors is not None and self.vectors.item_embedded(doc["_ord"]):
+                        embedded += 1
+                    else:
+                        waiting += 1
+                if group_by is not None and access.sees_field(group_by):
                     values = {encoding.canonical(v): v for p, v in kinds.flatten(doc) if p == group_by}
                     for enc, v in values.items():
                         groups.setdefault(enc.decode(), [v, 0])[1] += 1
-        out = {"items": total, "embedded": 0, "waiting": with_content, "lsn": lsn}
+        out = {"items": total, "embedded": embedded, "waiting": waiting, "lsn": lsn}
         if group_by is not None:
             out["groups"] = sorted(({"value": v, "items": n} for v, n in groups.values()),
                                    key=lambda g: (-g["items"], json.dumps(g["value"], sort_keys=True)))
@@ -709,7 +904,10 @@ class Items:
 
     def changes(self, body: dict) -> dict:
         """Every item transaction after the log number `since`, oldest
-        first, at most `limit`; `next` is where the following read starts."""
+        first, at most `limit`; `next` is where the following read starts.
+        A reader sees only the items it may read, and links whose two ends
+        it may read."""
+        person = self._reader(body)
         since = body.get("since", 0)
         if isinstance(since, bool) or not isinstance(since, int) or since < 0:
             raise DocumentError("since is a log number")
@@ -721,20 +919,30 @@ class Items:
         out: list[dict] = []
         nxt = since
         scanned = 0
+
+        def readable(path: str) -> bool:
+            return (prefix is None or path.startswith(prefix)) and \
+                (person == OWNER or self.access(person, path).data)
+
         with self.store.reading() as lsn:
             for v in self.store.scan(FEED, feed_key(since + 1), None, lsn):
                 scanned += 1
                 record = json.loads(v.value)
                 nxt = FEED_KEY.unpack(v.key)[0]
-                if prefix is not None:
-                    items = [i for i in record.get("items") or [] if i["path"].startswith(prefix)]
+                if prefix is not None or person != OWNER:
+                    items = [i for i in record.get("items") or [] if readable(i["path"])]
                     links = [k for k in record.get("links") or []
-                             if k["from"].startswith(prefix) or k["to"].startswith(prefix)]
+                             if (prefix is None or k["from"].startswith(prefix) or k["to"].startswith(prefix))
+                             and (person == OWNER or (self.access(person, k["from"]).data
+                                                      and self.access(person, k["to"]).data))]
                     if not items and not links:
                         if scanned >= CHANGES_SCAN_MAX:
                             break
                         continue
+                    record = {k: v for k, v in record.items() if k != "rights" or person == OWNER}
                     record = {**record, "items": items, **({"links": links} if links else {})}
+                    if not links:
+                        record.pop("links", None)
                 out.append(record)
                 if len(out) >= limit or scanned >= CHANGES_SCAN_MAX:
                     break
@@ -744,7 +952,9 @@ class Items:
     def links(self, body: dict) -> dict:
         """The item's links, each with its origin: its parent and children
         (hierarchy), and the references and derived links either way whose
-        other end is an item now."""
+        other end is an item now; only links whose two ends the reader may
+        read."""
+        person = self._reader(body)
         path = paths.check(body.get("path"))
         direction = body.get("direction", "both")
         if direction not in ("out", "in", "both"):
@@ -764,6 +974,8 @@ class Items:
 
         with self.store.reading() as lsn:
             def is_item(p: str) -> bool:
+                if person != OWNER and not self.access(person, p).data:
+                    return False
                 v = self.store.get(DOCS, p.encode(), lsn)
                 return v is not None and v.value is not None
 
@@ -773,7 +985,8 @@ class Items:
             if direction in ("out", "both") and parent != "/" and wanted(HIERARCHY, "parent") and is_item(parent):
                 out.append({"from": path, "kind": "parent", "to": parent, "origin": HIERARCHY})
             if direction in ("in", "both") and wanted(HIERARCHY, "parent"):
-                for doc in self._select([Predicate("_parent", "=", path)], path + "/", path, None, lsn):
+                for doc in self._select([Predicate("_parent", "=", path)], path + "/", path, None, lsn,
+                                        person=person):
                     out.append({"from": doc["_key"], "kind": "parent", "to": path, "origin": HIERARCHY})
                     if len(out) >= limit:
                         break
@@ -796,6 +1009,237 @@ class Items:
                         break
         return {"path": path, "links": out[:limit], "lsn": lsn}
 
+    # -- search: four indexes, one hit an item -----------------------------------
+    def search(self, body: dict) -> dict:
+        """Items by meaning (the whole-item vectors, the sections saying
+        where), by words and exact phrase (the full-text index over their
+        content), by field values (the data index) and by links (the
+        graph): one hit an item, `matched_by` naming every index that found
+        it. `where`, `phrase`, `linked_to`, `under` and `types` are
+        conditions every hit meets; `meaning` and `words` rank. Vectors and
+        full text need the content right; a hidden field matches nothing."""
+        person = self._reader(body)
+        limit = body.get("limit", 20)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= SEARCH_LIMIT_MAX:
+            raise DocumentError(f"limit is 1 to {SEARCH_LIMIT_MAX}")
+        meaning, phrase, words = (_query_text(body.get(k), k) for k in ("meaning", "phrase", "words"))
+        linked_to = body.get("linked_to")
+        if linked_to is not None:
+            paths.check(linked_to)
+        budget = body.get("budget_ms", SEARCH_BUDGET_MS)
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 < budget <= 30000:
+            raise DocumentError("budget_ms is 1 to 30000")
+        end = time.monotonic() + budget / 1000.0
+        preds, prefix, _, types = self._preds(body)
+        has_where = bool(body.get("where"))
+        matched: dict[str, set] = {}
+        where: dict[str, set] = {}
+        ords: dict[str, int] = {}
+        partial = False
+        notes: list[str] = []
+        with self.store.reading() as lsn:
+            cond: Optional[set[str]] = None
+            if preds or not (meaning or words or phrase or linked_to):
+                cond = set()
+                for doc in self._select(preds, prefix, None, types, lsn, person=person):
+                    cond.add(doc["_key"])
+                    ords[doc["_key"]] = doc["_ord"]
+                    if has_where:
+                        matched.setdefault(doc["_key"], set()).add("data")
+            if linked_to is not None:
+                found = {(k["to"] if k["from"] == linked_to else k["from"])
+                         for k in self.links({"caller": {"person": person}, "path": linked_to,
+                                              "limit": LINKS_LIMIT_MAX})["links"]}
+                found = {p for p in found if p.startswith(prefix)}
+                cond = found if cond is None else cond & found
+                for p in found:
+                    matched.setdefault(p, set()).add("graph")
+
+            def readable(doc: Optional[dict]) -> bool:
+                if doc is None or doc.get("_kind") != kinds.ITEM or not doc["_key"].startswith(prefix):
+                    return False
+                if types is not None and doc.get("_type") not in types:
+                    return False
+                if cond is not None and doc["_key"] not in cond:
+                    return False
+                return doc.get("_content") is not None and self.access(person, doc["_key"]).content
+
+            def sections_of(path: str) -> list[dict]:
+                c = self.store.get(CONTENT, path.encode(), lsn)
+                return [] if c is None or c.value is None else json.loads(c.value).get("sections") or []
+
+            if phrase:
+                hits = set()
+                candidates = self.lexical.phrase_candidates(phrase) if self.lexical is not None else None
+                docs: Iterator[dict]
+                if candidates is None:
+                    notes.append("the phrase has no indexed word: items were read one by one")
+                    docs = (d for d in self._select([], prefix, None, types, lsn, person=person))
+                else:
+                    docs = (self.docs.by_ordinal(o, lsn) for o in sorted(candidates))
+                for doc in docs:
+                    if time.monotonic() > end:
+                        partial = True
+                        break
+                    if not readable(doc):
+                        continue
+                    at = [s["index"] for s in sections_of(doc["_key"])
+                          if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
+                    if at:
+                        hits.add(doc["_key"])
+                        ords[doc["_key"]] = doc.get("_ord", self.docs._ord_from_store(doc["_key"].encode()))
+                        where.setdefault(doc["_key"], set()).update(at)
+                        matched.setdefault(doc["_key"], set()).add("fulltext")
+                cond = hits if cond is None else cond & hits
+
+            rankings: list[list[str]] = []
+            if words and self.lexical is not None:
+                ranked = []
+                query_terms = set(lexical_terms(words))
+                for o, _, _ in self.lexical.search(words, k=max(limit * 5, 50), items=True):
+                    doc = self.docs.by_ordinal(o, lsn)
+                    if not readable(doc):
+                        continue
+                    path = doc["_key"]
+                    ords[path] = o
+                    ranked.append(path)
+                    matched.setdefault(path, set()).add("fulltext")
+                    for s in sections_of(path):
+                        if query_terms & set(lexical_terms(f"{s.get('heading') or ''} {s.get('text') or ''}")):
+                            where.setdefault(path, set()).add(s["index"])
+                rankings.append(ranked)
+            if meaning:
+                if self.vectors is None or self.vectors.embedder is None:
+                    notes.append("no embedding model: nothing was searched by meaning")
+                else:
+                    vector = self.vectors.embed_query(meaning)
+                    if vector is None:
+                        partial = True
+                        notes.append("the question was not embedded in time")
+                    else:
+                        within = None
+                        if cond is not None:
+                            within = {ords.get(p) or self.docs._ord_from_store(p.encode()) for p in cond}
+                            within.discard(None)
+                        elif person != OWNER or prefix != "/" or types is not None:
+                            within = {d["_ord"] for d in self._select([], prefix, None, types, lsn, person=person)
+                                      if d.get("_content") is not None and self.access(person, d["_key"]).content}
+                        found = self.vectors.search_items(vector, k=max(limit * 5, 50), within=within)
+                        partial |= bool(found.get("partial"))
+                        ranked = []
+                        for o, _, at in found["hits"]:
+                            doc = self.docs.by_ordinal(o, lsn)
+                            if not readable(doc):
+                                continue
+                            path = doc["_key"]
+                            ranked.append(path)
+                            matched.setdefault(path, set()).add("vector")
+                            where.setdefault(path, set()).update(at)
+                        rankings.append(ranked)
+            scores: dict[str, float] = {}
+            if rankings:
+                for ranked in rankings:
+                    for rank, path in enumerate(ranked):
+                        scores[path] = scores.get(path, 0.0) + 1.0 / (RRF_K + rank + 1)
+                if cond is not None:
+                    scores = {p: s for p, s in scores.items() if p in cond}
+            else:
+                scores = {p: 0.0 for p in (cond or set())}
+            for p in scores:
+                scores[p] += len(matched.get(p, ())) * 1e-6
+            best = sorted(scores.items(), key=lambda ps: (-ps[1], ps[0]))[:limit]
+        return {"hits": [{"path": p, "score": round(s, 6), "sections": sorted(where.get(p, ())),
+                          "matched_by": sorted(matched.get(p, ()))} for p, s in best],
+                "partial": partial, "notes": notes, "lsn": lsn}
+
+    # -- proposals: what an AI suggests waits for the owner's yes ----------------
+    def propose_link(self, body: dict) -> dict:
+        """An AI's link, kept as a proposal (an item under `/proposals/links`)
+        with the agent, the person, the model and the time, until the owner
+        accepts or refuses it. It proposes only between items its person
+        may read."""
+        caller = caller_of(body.get("by"), "by")
+        src, dst, kind = body.get("from"), body.get("to"), body.get("kind")
+        paths.check(src)
+        paths.check(dst)
+        if not isinstance(kind, str) or not kind or len(kind) > LINK_KIND_MAX:
+            raise DocumentError(f"a link's kind is text of at most {LINK_KIND_MAX} characters")
+        model = body.get("model") or caller.get("model")
+        if not isinstance(model, str) or not model:
+            raise DocumentError("a proposal records the model that made it")
+        weight = body.get("weight", 1.0)
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not 0.0 <= weight <= 1.0:
+            raise DocumentError("weight is 0 to 1")
+        for end in (src, dst):
+            if self.get(end, person=caller["person"]) is None:
+                raise ConditionFailed(end, "an item", 0, f"{end} is not an item to link")
+        ident = hashlib.sha256(f"{src}\x00{kind}\x00{dst}\x00{time.time_ns()}".encode()).hexdigest()[:16]
+        path = f"{PROPOSALS}/{ident}.proposal"
+        data = {"from": src, "kind": kind, "to": dst, "weight": float(weight), "model": model,
+                "person": caller["person"], "state": "proposed", "at": self._now()}
+        if caller.get("agent"):
+            data["agent"] = caller["agent"]
+        if caller.get("model") and caller["model"] != model:
+            data["agent_model"] = caller["model"]
+        why = _words(body.get("why"), "why")
+        if why:
+            data["why"] = why
+        # The proposal is the record of the AI's act, written for it by the
+        # engine whoever may write under /proposals.
+        done = self._commit([{"op": "put", "path": path, "data": data, "absent": True}], caller,
+                            "proposal", f"a {kind} link proposed", False)
+        return {"path": path, "lsn": done["lsn"], **data}
+
+    def proposals(self, body: dict) -> dict:
+        """The proposals the reader may see (both ends readable), newest
+        first, waiting ones unless `state` says otherwise."""
+        person = self._reader(body)
+        state = body.get("state", "proposed")
+        out = []
+        with self.store.reading() as lsn:
+            for doc in self._select([Predicate("state", "=", state)] if state else [],
+                                    PROPOSALS + "/", None, None, lsn, person=person):
+                if person != OWNER and not (self.access(person, doc["from"]).data
+                                            and self.access(person, doc["to"]).data):
+                    continue
+                out.append({"path": doc["_key"], **{k: v for k, v in doc.items() if not k.startswith("_")}})
+        out.sort(key=lambda p: -float(p.get("at") or 0))
+        return {"proposals": out, "lsn": lsn}
+
+    def answer_proposal(self, body: dict) -> dict:
+        """The owner's yes or no to a proposal: a yes writes the link,
+        recording the model, the agent and the person that proposed it."""
+        writer = _writer(body)
+        if writer["person"] != OWNER:
+            raise Denied("only the owner accepts or refuses a proposal")
+        path = paths.check(body.get("path"))
+        action = body.get("action")
+        if action not in ("accept", "refuse"):
+            raise DocumentError("action is accept or refuse")
+        current = self.get(path)
+        if current is None or not path.startswith(PROPOSALS + "/"):
+            raise ConditionFailed(path, "a proposal", 0, f"{path} is not a proposal")
+        p = current["data"]
+        if p.get("state") != "proposed":
+            raise ConditionFailed(path, "proposed", current["version"], f"{path} is already {p.get('state')}")
+        writes = [{"op": "merge", "path": path, "set": {"state": "accepted" if action == "accept" else "refused",
+                                                         "answered_at": self._now()},
+                   "expect_version": current["version"]}]
+        if action == "accept":
+            writes.append({"op": "link", "from": p["from"], "kind": p["kind"], "to": p["to"],
+                           "model": p["model"], "weight": p.get("weight", 1.0)})
+        return self._commit(writes, writer, "proposal " + action, None, False,
+                            proposal={"path": path, "at": p.get("at"), "person": p.get("person"),
+                                      "agent": p.get("agent")})
+
     # -- what the engine's health says ------------------------------------------
     def health(self) -> dict:
-        return {"last_write_at": self.last_at or None}
+        return {"last_write_at": self.last_at or None, "rights_paths": len(self.rights.grants)}
+
+
+def _query_text(value, what: str) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) > QUERY_TEXT_MAX:
+        raise DocumentError(f"{what} is text of at most {QUERY_TEXT_MAX} characters")
+    return value

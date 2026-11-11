@@ -65,6 +65,7 @@ class Engine:
         self.advisor = None  # query shapes and the extra indexes
         self.entities = None  # the names a question may name, for the graph
         self.items = None     # items at paths: the UDS interface (items.py)
+        self.rights = None    # AccessRights at paths (rights.py)
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -95,12 +96,16 @@ class Engine:
         from jarvis.knowledge.graph import Graph
         self.graph = Graph(self.docs)
         from jarvis.knowledge.items import Items
-        self.items = Items(self.docs, self.graph)
+        from jarvis.knowledge.rights import Rights
+        self.rights = Rights(self.store)
+        self.items = Items(self.docs, self.graph, self.rights)
         from jarvis.knowledge.lexical import Lexical
         self.lexical = Lexical(self.docs)
         from jarvis.knowledge import embedder
         from jarvis.knowledge.vectors import VectorIndex
         self.vectors = VectorIndex(self.docs, embedder.current())
+        self.items.vectors = self.vectors
+        self.items.lexical = self.lexical
         from jarvis.knowledge.linker import Linker
         self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
         self._link_lock = threading.Lock()
