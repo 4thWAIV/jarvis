@@ -167,6 +167,10 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             assert await page.evaluate(
                 "document.documentElement.scrollWidth <= document.documentElement.clientWidth")
             await page.screenshot(path=str(out / f"walkthrough-{window[0]}x{window[1]}.png"))
+            # With the questions and the explanation open, the package's own
+            # page is still in view: they scroll within the rest.
+            reading, whole = await frame.bounding_box(), await view.bounding_box()
+            assert reading["height"] >= 0.35 * whole["height"], (window, reading, whole)
             trace.append({"size": window, "frame": box, "explanation": "rendered",
                           "links": 1, "hostile_kept_as_text": True})
 
