@@ -108,6 +108,7 @@ class Engine:
         self.items.lexical = self.lexical
         from jarvis.knowledge.linker import Linker
         self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
+        self.linker.items = self.items
         self._link_lock = threading.Lock()
         from jarvis.knowledge.cards import Cards
         self.cards = Cards(self)

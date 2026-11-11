@@ -1,4 +1,5 @@
-"""Topics, asserted links, the linker and its proposals (phase 4)."""
+"""Topics, asserted links, the linker and its proposals (phase 4; the linker
+over topic and note items since UDS round 3)."""
 from __future__ import annotations
 
 import pytest
@@ -74,12 +75,10 @@ def test_topics_are_a_note_folder():
     assert "topics" in history_read.NOTE_DIRS
 
 
-# --- ingest of topics and the linker ----------------------------------------------
+# --- topics as items and the linker (UDS round 3) --------------------------------------
 
 @pytest.fixture
 def engine(tmp_path):
-    from jarvis import run_store
-    run_store.init_db()
     e = Engine.open(tmp_path / "engine")
     yield e
     e.close()
@@ -105,26 +104,40 @@ def note(name, text):
 
 
 def ingest(engine):
-    stats = ki.run_pass(caller(engine), adapters=[ki.Notes(), ki.Topics()])
+    """What runs in JARVIS: the content child reads the brain's notes and
+    topic files into items, then an ingest pass runs the linker."""
+    from tests.test_knowledge_ingest import index_brain
+    index_brain(engine)
+    stats = ki.run_pass(caller(engine), adapters=[])
     assert not stats.errors, stats.errors
     return stats
 
 
-def mentions(engine, topic):
-    return sorted(engine.docs.get(e["from"])["text"] for e in engine.graph.edges(topic, "in", "mentions"))
+def topic_item(slug):
+    return f"/jarvis/brain/topics/{slug}.md"
 
 
-def test_topics_become_documents_with_their_authored_links(engine):
+def mentions(engine, slug):
+    found = engine.items.links({"caller": {"person": "tim"}, "path": topic_item(slug), "direction": "in",
+                                "kind": "mentions"})["links"]
+    return sorted(link["from"] for link in found)
+
+
+def test_topics_become_nodes_with_their_authored_links(engine):
     kl.create_topic("Denice", status="planned")
     kl.create_topic("Bridge Engine", status="planned")
     kl.link("bridge-engine", "stage_of", "denice")
     ingest(engine)
     t = engine.docs.get("topic:denice")
     assert t["_status"] == "planned" and t["aliases"]["exact"] == ["Denice"]
+    assert t["_source"] == topic_item("denice")
     assert [e["to"] for e in engine.graph.edges("topic:bridge-engine", "out", "stage_of")] == ["topic:denice"]
     kl.unlink("bridge-engine", "stage_of", "denice")
     ingest(engine)
     assert list(engine.graph.edges("topic:bridge-engine", "out", "stage_of")) == []
+    kl.topic_path("bridge-engine").unlink()
+    ingest(engine)
+    assert engine.docs.get("topic:bridge-engine") is None and engine.docs.get("topic:denice") is not None
 
 
 def test_exact_aliases_make_mentions_and_ambiguous_ones_need_company(engine):
@@ -133,18 +146,19 @@ def test_exact_aliases_make_mentions_and_ambiguous_ones_need_company(engine):
     note("b.md", "# B\nDenise from accounting called.\n")
     note("c.md", "# C\nThe word denicely is not the name.\n")
     ingest(engine)
-    got = mentions(engine, "topic:denice")
-    assert any("Denice is the successor" in t for t in got)
-    assert any("Denise again" in t for t in got)              # ambiguous, but its file says Denice
-    assert not any("accounting" in t for t in got)           # ambiguous alone: a proposal instead
-    assert not any("denicely" in t for t in got)
+    assert mentions(engine, "denice") == ["/jarvis/brain/memory/a.md"]     # not b (ambiguous alone), not c
     proposals = engine.linker.proposals
-    assert [p["kind"] for p in proposals if "b.md" in (p.get("label") or "")] == ["about"]
-    assert all(e["origin"] == "extracted" and e["weight"] == 0.9
-               for e in engine.graph.edges("topic:denice", "in", "mentions"))
+    assert [p["kind"] for p in proposals if p.get("label") == "memory/b.md"] == ["about"]
+    b = next(p for p in proposals if p.get("label") == "memory/b.md")
+    assert b["document"] == "/jarvis/brain/memory/b.md" and b["source"].endswith(":note:memory/b.md")
+    assert (b["exact"], b["ambiguous"], b["trust"]) == (0, 1, "own")
+    found = engine.items.links({"caller": {"person": "tim"}, "path": topic_item("denice"), "direction": "in",
+                                "kind": "mentions"})["links"]
+    assert all(link["origin"] == "derived" and link["weight"] == 0.9 and link["model"] == "linker"
+               for link in found)
 
 
-def test_a_turned_down_proposal_is_never_made_again_and_an_accepted_one_becomes_a_link(engine):
+def test_a_turned_down_proposal_is_never_made_again_and_an_accepted_one_is_kept(engine):
     kl.create_topic("Denice", ambiguous=["Denise"])
     note("b.md", "# B\nDenise from accounting called.\n")
     note("d.md", "# D\nDenice one.\n\n## Two\nDenice two.\n")
@@ -155,8 +169,7 @@ def test_a_turned_down_proposal_is_never_made_again_and_an_accepted_one_becomes_
     kl.link("denice", "about_sources", by_label["memory/d.md"]["source"])
     ingest(engine)
     assert engine.linker.proposals == []
-    about = [e for e in engine.graph.edges("topic:denice", "in", "about")]
-    assert [e["origin"] for e in about] == ["authored"]
+    assert kl.read("denice").links("about_sources") == [by_label["memory/d.md"]["source"]]
 
 
 def test_topics_sharing_a_name_are_proposed_as_the_same(engine):
@@ -171,16 +184,21 @@ def test_topics_sharing_a_name_are_proposed_as_the_same(engine):
 
 
 def test_the_linker_removes_only_its_own_mentions(engine):
+    from jarvis.knowledge.uds import Caller, EngineUDS, Transaction
     kl.create_topic("Denice")
     note("a.md", "# A\nDenice here.\n")
+    note("e.md", "# E\nNothing named.\n")
     ingest(engine)
-    assert "# A\nDenice here." in mentions(engine, "topic:denice")
+    assert mentions(engine, "denice") == ["/jarvis/brain/memory/a.md"]
+    uds = EngineUDS(kc.InProcessTransport(engine))
+    uds.transaction(Caller("tim"), Transaction().link("/jarvis/brain/memory/e.md", "mentions", topic_item("denice"),
+                                                      model="someone-else"))
     note("a.md", "# A\nNo name now.\n")
     import os
     import time
     os.utime(data_paths.brain_home() / "memory" / "a.md", (time.time() + 9, time.time() + 9))
     ingest(engine)
-    assert mentions(engine, "topic:denice") == ["# Denice"]      # the topic's own words
+    assert mentions(engine, "denice") == ["/jarvis/brain/memory/e.md"]     # the other model's stays
 
 
 def test_the_runtime_tells_new_and_gone_proposals_once():

@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 from jarvis import content_sections, data_paths, folder_readers, fs_watch, workspace_ref
+from jarvis.brain_notes import BRAIN, BRAIN_NOTES
 from jarvis.knowledge import paths as item_paths
 from jarvis.knowledge.uds import Caller, EngineUDS, Stream, Transaction
 
@@ -86,6 +87,7 @@ class Root:
     scope: str                   # docs or text
     trust: str                   # own (his) or untrusted (an agent's or another person's)
     folder_id: Optional[str] = None
+    only: tuple = ()             # when given, the only top-level names indexed in the root
 
     @property
     def area(self) -> str:
@@ -106,19 +108,22 @@ def scope_of(scopes: Iterable[str]) -> str:
 
 
 def jarvis_roots() -> list[Root]:
-    """JARVIS's own folders: the answers to agents, the packages, the
-    files people sent once downloaded, the runs' output streams and the
-    voice record's day files (voice_diagnostics.py, JSON lines, so read as
-    text). Needs boards live in the project folders and come with them. The
-    brain's notes stay with the legacy ingest until the linker, topics and
-    context pack read items (round 3), so they are never counted twice."""
-    found = [Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
-             Root("/jarvis/voice", str(data_paths.voice_dir()), "text", "own"),
+    """JARVIS's own folders: the brain's notes (its memory, journal,
+    project notes, topics and the knowledge settings note, `BRAIN`; never
+    the rest of its home), the answers to agents, the packages, the files
+    people sent once downloaded, and the runs' output streams. Needs boards
+    live in the project folders and come with them. The voice record's day
+    files (data/voice) are Content on disk but not indexed: a sample a
+    second has nothing to search, and reading a file that grows every
+    second again and again would cost the machine while he talks."""
+    found = [Root(BRAIN, str(data_paths.brain_home()), "docs", "own", only=BRAIN_NOTES),
+             Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
              Root("/jarvis/packages", str(data_paths.packages_dir()), "docs", "untrusted"),
              Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted"),
              # Each run's output stream (run_store.py): JSON lines, the agent's words.
              Root("/jarvis/runs", str(data_paths.runs_dir()), "text", "untrusted")]
-    return [Root(r.prefix, os.path.realpath(r.path), r.scope, r.trust) for r in found if os.path.isdir(r.path)]
+    return [Root(r.prefix, os.path.realpath(r.path), r.scope, r.trust, only=r.only)
+            for r in found if os.path.isdir(r.path)]
 
 
 def folder_roots(service=None, scopes: Optional[dict[str, list[str]]] = None) -> list[Root]:
@@ -173,6 +178,8 @@ def skipper(root: Root) -> Callable[[str, bool], bool]:
 
     def skip(rel: str, is_dir: bool) -> bool:
         name = rel.rsplit("/", 1)[-1]
+        if root.only and rel.split("/", 1)[0] not in root.only:
+            return True
         if is_dir and name in SKIP_DIRS:
             return True
         if inside is not None and (rel == inside or rel.startswith(inside + "/")):
@@ -420,6 +427,15 @@ class Indexer:
 
     @staticmethod
     def ref(root: Root, rel: str) -> str:
+        """The file's reference: a registered folder's file by its folder,
+        a brain note as the note it is (`note:<folder>/<name>`, what topic
+        files name it by), else its place on disk."""
+        if root.prefix == BRAIN and "/" in rel:
+            folder, name = rel.split("/", 1)
+            try:
+                return workspace_ref.format(workspace_ref.ref("note", folder, name))
+            except workspace_ref.RefError:
+                pass
         if root.folder_id:
             try:
                 return workspace_ref.format(workspace_ref.ref("folder_file", root.folder_id, rel))

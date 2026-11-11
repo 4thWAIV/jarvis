@@ -1680,10 +1680,24 @@ ctypes on CoreServices, a GCD queue) from the last event handled (the
 engine's `content` watermark) writes path entries at once; dropped events
 scan their subtree; a stat-only backup scan runs at start, after wake and
 every six hours; reading waits while the pace holds and happens only when
-a file's bytes changed. The brain's notes stay with the legacy ingest
-(the linker, topics and the context pack read them there) and are not
-also items. `knowledge_api.search` (the page and `knowledge_search`, with
-`phrase`) and the context pack add the item hits. The move kit
+a file's bytes changed. The brain's memory, journal, project notes,
+topics and `knowledge.md` are items too, under `/jarvis/brain`
+(`brain_notes.py`, the root's `only`), each content `ref` its note
+reference; the context pack's tier 0 reads a note's item while it is the
+file as it is now (size, mtime, inode), else the file. The linker reads
+topic items (front matter from their content), makes the `topic:<slug>`
+nodes and authored links from them, and writes `mentions` as derived item
+links (model `linker`); `about` proposals are files by section count.
+Records are found by their own words: the keyword index takes an item
+without content by its text fields (`lexical.record_text`, 2,000
+characters a field, 8,000 in all). `knowledge_api.search` (the page and
+`knowledge_search`, with `phrase`) and the context pack search items only,
+each hit's trust from `knowledge_api.item_trust`. Round 3: the owner's
+`count` (with `where`, `under`, `parent`, `types`, `group_by`) comes from
+the general index's postings and the resident key column, decoding only
+items an inexact condition must check (`Items._count_by_index`); any other
+reader's count reads each item. Text is keyed by its fold cut to 128
+bytes, folding only `encoding.FOLD_FIRST` characters of a long value. The move kit
 (`knowledge_move.py`: `Mapping`, `RowMapping`, `copy`, `verify`,
 `export_sqlite`; `python -m jarvis.knowledge copy|verify|export-sqlite`)
 copies a SQLite file into the engine and back, table for table, for round
@@ -1711,13 +1725,11 @@ flush and a compaction's manifest installs (`lanes.foreground`). The
 runtime paces the background lane every second: hold while the conversation
 floor is not idle or the CPU is over 70 percent. Ingest is a child of its
 own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
-stopped and continued with the pace; it reads the brain's notes, the
-conversation log, finished runs and workflow events and keeps each source's
-watermark in the engine (stamped with `knowledge_ingest.SCHEMA`; a source
-written under another schema is read again from the start). Every chunk
-holds `at` (when it was said or written) and an agent's words their speaker
-(`agent`, a `said_by` edge to an `agent:<name>` node). Diagnostics shows its
-row (`knowledge`).
+stopped and continued with the pace; it makes no documents (no chunks:
+records and notes are items) and reads nothing of JARVIS's records: it
+retires, once, the chunks and documents earlier ingest made (watermark
+`retired`, `knowledge_ingest.SCHEMA` 3), hands the engine his index
+choices and runs the linker. Diagnostics shows its row (`knowledge`).
 
 Vector search: `knowledge/embedder.py`'s `RUNNER` (`installed`) gives the
 embedding model installed under the data folder, run by the runtime its
