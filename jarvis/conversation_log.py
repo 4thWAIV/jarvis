@@ -210,6 +210,7 @@ class ConversationItem:
 
 TEXT_MAX = 20000
 PAGE = 100
+NARROW_WINDOW_MAX = 4096    # a narrow read looks back by window this far, then reads the rest
 
 MAPPINGS = [message_records.ConversationMapping()]
 """The move's mapping (knowledge_move): `messages`, `session_messages`
@@ -279,21 +280,22 @@ def _found(test: Callable[[dict], bool], where: list, *, turns: bool = True,
 def _newest(test: Callable[[dict], bool], where: list, before: int | None, limit: int, *,
             narrow: bool, turns: bool = True, messages: bool = True) -> list[ConversationItem]:
     """The newest `limit` items passing `test` before item `before`, oldest
-    first. `narrow`: `where` names few items (an agent, a Work item), so
-    they are read at once; else looked for back from the newest a widening
-    window of ids at a time."""
+    first, looked for back from the newest a widening window of ids at a
+    time. `narrow`: `where` names few items (an agent, a Work item), so
+    once the window is past NARROW_WINDOW_MAX the rest are read at once."""
     limit = max(1, min(int(limit), PAGE * 5))
     hi = int(before) if before is not None else message_records.next_item_id()
-    if narrow:
-        found = _found(test, where, turns=turns, messages=messages, hi=hi)
-    else:
-        found = []
-        span = max(64, limit * 2)
-        top = hi
-        while top > 0 and len(found) < limit:
-            lo = max(0, top - span)
-            found += _found(test, where, turns=turns, messages=messages, lo=lo, hi=top)
-            top, span = lo, span * 4
+    found: list[dict] = []
+    span = max(64, limit * 2)
+    top = hi
+    while top > 0 and len(found) < limit:
+        if narrow and span > NARROW_WINDOW_MAX:
+            # Few left to find, far back: the rest at once, by `where`.
+            found += _found(test, where, turns=turns, messages=messages, hi=top)
+            break
+        lo = max(0, top - span)
+        found += _found(test, where, turns=turns, messages=messages, lo=lo, hi=top)
+        top, span = lo, span * 4
     found.sort(key=lambda r: r["id"], reverse=True)
     return [_item(r) for r in reversed(found[:limit])]
 
