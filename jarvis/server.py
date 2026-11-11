@@ -3633,7 +3633,7 @@ class RunRequest(BaseModel):
 
 @app.get("/api/runs/stats")
 async def api_run_stats(period: str = "day"):
-    return run_store.stats(period)
+    return await asyncio.to_thread(run_store.stats, period)
 
 
 @app.get("/api/runs")
@@ -3643,14 +3643,14 @@ async def api_list_runs(status: str = "", project: str = "",
     # Clamp both ends: SQLite treats `LIMIT -1` as unlimited, so a negative
     # value must not reach the query unbounded.
     limit = max(1, min(limit, 200))
-    return {"runs": run_store.list_runs(
-        status=statuses, project=project or None,
+    return {"runs": await asyncio.to_thread(
+        run_store.list_runs, status=statuses, project=project or None,
         limit=limit, before=before)}
 
 
 @app.get("/api/runs/{run_id}")
 async def api_get_run(run_id: str):
-    run = run_store.get_run(run_id)
+    run = await asyncio.to_thread(run_store.get_run, run_id)
     if not run:
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     return {"run": run}
@@ -7269,13 +7269,13 @@ async def _perform_command(item: _StagedCommand) -> None:
     """
     recorded = False
 
-    def record(outcome: str) -> None:
+    async def record(outcome: str) -> None:
         nonlocal recorded
         if recorded:
             return
         recorded = True
-        run_store.record_steer("", COMMAND_AUDIT_NAME, item.project,
-                               item.command, outcome)
+        await asyncio.to_thread(run_store.record_steer, "", COMMAND_AUDIT_NAME,
+                                item.project, item.command, outcome)
 
     def outcome(event: str) -> None:
         # Shown, not spoken: the read-back was the words that mattered.
@@ -7283,7 +7283,7 @@ async def _perform_command(item: _StagedCommand) -> None:
 
     try:
         if speech is None:
-            record("no_voice")
+            await record("no_voice")
             return
         # The caveat is the whole reason `documented` is carried this far: an
         # undocumented command is not refused, it is flagged out loud, and the
@@ -7296,16 +7296,16 @@ async def _perform_command(item: _StagedCommand) -> None:
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
-                record("readback_failed")
+                await record("readback_failed")
                 return
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             outcome("cancelled")
             return
         if not heard:
-            record("readback_failed")
+            await record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             outcome("cancelled")
             return
 
@@ -7316,13 +7316,13 @@ async def _perform_command(item: _StagedCommand) -> None:
         result = await actions.open_terminal(
             f"cd {shlex.quote(item.path)} && {item.command}")
         if result.get("success"):
-            record("ran")
+            await record("ran")
             outcome("ran")
         else:
-            record("failed")
+            await record("failed")
             outcome("terminal_failed")
     except Exception:
-        record("failed")                   # the audit trail must never have a gap
+        await record("failed")             # the audit trail must never have a gap
         raise
 
 
@@ -7384,20 +7384,21 @@ async def _perform_dialog(item: _StagedDialog) -> None:
     recorded = False
     said = dialog.spoken_key(item.key)
 
-    def record(outcome: str) -> None:
+    async def record(outcome: str) -> None:
         nonlocal recorded
         if recorded:
             return
         recorded = True
-        run_store.record_steer(item.session_id, item.voice_name, item.project,
-                               item.key, f"dialog:{outcome}")
+        await asyncio.to_thread(run_store.record_steer, item.session_id,
+                                item.voice_name, item.project, item.key,
+                                f"dialog:{outcome}")
 
     def shown(event: str) -> None:
         _action_outcome("keypress", event, {"agent": _said_name(item)})
 
     try:
         if speech is None:
-            record("no_voice")             # the mouth went away between turns
+            await record("no_voice")       # the mouth went away between turns
             return
         # The read-back names the key AND warns about the focus theft, because
         # the window coming forward is the part that interrupts the user.
@@ -7407,27 +7408,27 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
-                record("readback_failed")
+                await record("readback_failed")
                 return
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             shown("cancelled")
             return
         if not heard:
-            record("readback_failed")
+            await record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             shown("cancelled")
             return
 
         outcome = await dialog.answer(item.pid, item.key)
-        record(outcome)
+        await record(outcome)
         # Shown, not spoken: the read-back was the words that mattered.
         shown({dialog.SENT: "pressed", dialog.NOT_FOUND: "not_found",
                dialog.NOT_PERMITTED: "not_permitted", dialog.NO_TTY: "no_tty"}
               .get(outcome, "failed"))
     except Exception:
-        record("failed")                   # the audit trail must never have a gap
+        await record("failed")             # the audit trail must never have a gap
         raise
 
 
@@ -7484,8 +7485,8 @@ async def tool_answer_dialog(args: dict) -> str:
     raw_key = str(args.get("key") or "")
     session, problem, reason = _resolve_or_explain(name)
     if problem:
-        run_store.record_steer("", name, "", raw_key,
-                               f"dialog:{reason or 'unresolved'}")
+        await asyncio.to_thread(
+            run_store.record_steer, "", name, "", raw_key, f"dialog:{reason or 'unresolved'}")
         return problem
 
     key = dialog.normalize_key(raw_key)
@@ -7493,8 +7494,9 @@ async def tool_answer_dialog(args: dict) -> str:
         # Refused before anything is staged, and long before any AppleScript
         # exists. JARVIS presses keys, he does not type: there is no
         # best-effort reading of free text, and asking for one is the answer.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, raw_key, "dialog:bad_key")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, raw_key, "dialog:bad_key")
         return ("I can only press Return, Escape, or a single numbered option "
                 "between one and nine — nothing else goes into that terminal. "
                 "Which of those did the user mean?")
@@ -7504,23 +7506,26 @@ async def tool_answer_dialog(args: dict) -> str:
 
     provider = _session_provider_named(session.provider)
     if provider is not None and not provider.can_answer_dialogs:
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:not_supported")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:not_supported")
         return (f"I can't press keys in {_said_name(session)}: it is a Codex "
                 f"session, and Codex's prompts can only be answered in its own "
                 f"window. Ask the user to answer it there.")
 
     pid, _tty, problem = await _tty_for_session_or_explain(session)
     if problem:
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:no_tty")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:no_tty")
         return problem
 
     if speech is None:
         # No voice means no read-back, and no read-back means no gate at all.
         # Pressing a key the user could not hear announced is never acceptable.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:no_voice")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:no_voice")
         return (f"I can't read that back to you right now, sir, so I won't press "
                 f"anything in {_said_name(session)} unannounced.")
 
@@ -7567,8 +7572,8 @@ async def tool_steer_session(args: dict) -> str:
         # reference the user gave in place of a resolved voice name) so
         # "did you send that?" always has an answer, even when resolution
         # itself failed.
-        run_store.record_steer("", name, "", str(args.get("prompt") or ""),
-                               reason or "unresolved")
+        await asyncio.to_thread(
+            run_store.record_steer, "", name, "", str(args.get("prompt") or ""), reason or "unresolved")
         return problem
     # The text is never the brain's to write here: it is a capture of Tim's
     # own words, made on his turn (`capture`), named by its number.
@@ -7581,8 +7586,9 @@ async def tool_steer_session(args: dict) -> str:
         (transmission.session_recipient(session.session_id), _said_name(session)))
     if problem:
         # No capture, no message: nothing was formed to record as one.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, "", "no_capture")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, "", "no_capture")
         return problem
 
     global last_mentioned_session
@@ -8598,8 +8604,9 @@ async def _open_received_package(message_id: uuid.UUID, attachment_id: uuid.UUID
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, Path(found.local_path),
                                                  attachment_id.hex)
-        context.record_extraction(message_id, attachment_id, package.folder,
-                                  sorted(set(package.manifest.named_files().values())))
+        await asyncio.to_thread(context.record_extraction, message_id, attachment_id,
+                                package.folder,
+                                sorted(set(package.manifest.named_files().values())))
     except (work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     if fresh:
@@ -8825,8 +8832,8 @@ async def tool_run_package_agent(args: dict) -> str:
         return f"{problem} Nothing was started."
     if run_executor_instance is None:
         return "I can't start anything just now, sir."
-    if run_store.list_runs(status=list(run_store.RunStatus.ACTIVE), package_id=package.id,
-                           limit=1):
+    if await asyncio.to_thread(run_store.list_runs, status=list(run_store.RunStatus.ACTIVE),
+                               package_id=package.id, limit=1):
         return (f"{package.id} is already running, sir; you will be told when it has "
                 f"finished. Nothing else was started.")
     try:
@@ -9966,7 +9973,8 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
     if _package_shown is not None and _package_shown.get("id") == package.id:
         # A page that connects now shows his answer in the view's head.
         _package_shown = await asyncio.to_thread(packages_api.describe, package)
-    entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
+    entry = (next((e for e in moved if e.id == entry.id), None)
+             or await asyncio.to_thread(package_inbox.get, entry.id))
     said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
             if entry.decisions_total else "Recorded.")
     if (question.id == work_api.REVIEW_QUESTION and entry.work_id
@@ -11103,7 +11111,7 @@ async def tool_spawn_run(args: dict) -> str:
         return f"I couldn't start that in {name}, sir."
     _hold(handed, f"run:{run_id}")
 
-    run = run_store.get_run(run_id) or {}
+    run = await asyncio.to_thread(run_store.get_run, run_id) or {}
     started_on = run.get("requested_model") or model
     if resume_from:
         where = f"Picked up the last run in {name}"
@@ -11556,7 +11564,7 @@ def _cues_said(settings: dict) -> str:
 async def tool_voice_input_settings(args: dict) -> str:
     """His voice input settings: what the Settings route reads."""
     try:
-        return _voice_input_settings_said(voice_control.read())
+        return _voice_input_settings_said(await asyncio.to_thread(voice_control.read))
     except voice_control.Unreadable as e:
         return f"{e} Listening cannot be started until they can."
 
@@ -11566,9 +11574,9 @@ async def tool_set_voice_input_settings(args: dict) -> str:
     `voice_control.change`, with its validation. An ACTING tool. It starts,
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
-        settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        intervals=args.get("intervals"), sounds=args.get("sounds"),
-                                        cues=args.get("cues"), volume=args.get("volume"))
+        settings = await voice_control.change_off_loop(
+            stop=args.get("stop"), switch=args.get("switch"), intervals=args.get("intervals"),
+            sounds=args.get("sounds"), cues=args.get("cues"), volume=args.get("volume"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
@@ -11699,12 +11707,12 @@ async def tool_quiet_microphone(args: dict) -> str:
             "Only he can unmute it.")
 
 
-def _mute_speech() -> str | None:
+async def _mute_speech() -> str | None:
     """His speech mute on, as the page's speaker and headset turn it on:
     `voice_control.change`, whose publish stops what is sounding. The
     refusal's words, or None once it is on."""
     try:
-        voice_control.change(speech_muted=True)
+        await voice_control.change_off_loop(speech_muted=True)
     except (voice_control.Invalid, voice_control.Unreadable) as e:
         return f"Nothing was changed, sir: {getattr(e, 'message', None) or e}"
     return None
@@ -11713,7 +11721,7 @@ def _mute_speech() -> str | None:
 async def tool_mute_speech(args: dict) -> str:
     """The page's speaker muting JARVIS's speech, by voice or typing. Only
     ever quieter: unmuting is his own click on the speaker or the headset."""
-    refused = _mute_speech()
+    refused = await _mute_speech()
     if refused:
         return refused
     return ("Muted JARVIS's speech, sir: it answers in text only from now on, and anything "
@@ -11724,7 +11732,7 @@ async def tool_turn_audio_off(args: dict) -> str:
     """The page's headset turning all audio off, by voice or typing: Mic off
     on every open page (the quiet frame, as quiet_microphone sends) and his
     speech mute on. Only he turns it back on, with the headset."""
-    refused = _mute_speech()
+    refused = await _mute_speech()
     if refused:
         return refused
     if voice_clients:
@@ -13658,7 +13666,7 @@ async def tool_cancel_run(args: dict) -> str:
     if stopped:
         return f"Stopped the work in {_run_project(run)}, sir."
 
-    latest = run_store.get_run(run["id"]) or run
+    latest = await asyncio.to_thread(run_store.get_run, run["id"]) or run
     return f"It finished before I could stop it, sir. {_describe_run(latest)}"
 
 
@@ -14157,7 +14165,7 @@ async def tool_start_build(args: dict) -> str:
     global last_started_run
     last_started_run = run_id
 
-    run = run_store.get_run(run_id) or {}
+    run = await asyncio.to_thread(run_store.get_run, run_id) or {}
     # Read back from the store, never echoed from the argument: what JARVIS
     # says it is running on must be what was actually persisted.
     started_on = run.get("requested_model") or model
@@ -14400,14 +14408,16 @@ async def tool_run_command(args: dict) -> str:
 
     refusal = builds.command_problem(command, path)
     if refusal:
-        run_store.record_steer("", COMMAND_AUDIT_NAME, name, command, "refused")
+        await asyncio.to_thread(
+            run_store.record_steer, "", COMMAND_AUDIT_NAME, name, command, "refused")
         return refusal
 
     if speech is None:
         # Identical to steer_session's rule, and non-negotiable here: with no
         # voice there is no read-back, and with no read-back there is no gate
         # at all between LLM-written text and a running shell.
-        run_store.record_steer("", COMMAND_AUDIT_NAME, name, command, "no_voice")
+        await asyncio.to_thread(
+            run_store.record_steer, "", COMMAND_AUDIT_NAME, name, command, "no_voice")
         return (f"I can't read that back to you right now, sir, so I won't run "
                 f"it in {name} unheard.")
 
@@ -15999,7 +16009,7 @@ async def ws_sessions(websocket: WebSocket):
 
 @app.get("/api/runs/{run_id}/events")
 async def api_get_run_events(run_id: str, after_seq: int = 0, limit: int = 200):
-    if not run_store.get_run(run_id):
+    if not await asyncio.to_thread(run_store.get_run, run_id):
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     # Clamp both ends: SQLite treats `LIMIT -1` as unlimited, so a negative
     # limit must not reach the query unbounded. Same discipline for
@@ -16007,11 +16017,10 @@ async def api_get_run_events(run_id: str, after_seq: int = 0, limit: int = 200):
     # rather than passed to SQL as-is.
     limit = max(1, min(limit, 500))
     after_seq = max(0, after_seq)
-    return {
-        "events": run_store.get_events(run_id, after_seq=after_seq,
-                                       limit=limit),
-        "total": run_store.count_events(run_id),
-    }
+    def read() -> dict:
+        return {"events": run_store.get_events(run_id, after_seq=after_seq, limit=limit),
+                "total": run_store.count_events(run_id)}
+    return await asyncio.to_thread(read)
 
 
 @app.post("/api/runs")
@@ -16044,7 +16053,7 @@ async def api_create_run(req: RunRequest):
 
 @app.delete("/api/runs/{run_id}")
 async def api_cancel_run(run_id: str):
-    if not run_store.get_run(run_id):
+    if not await asyncio.to_thread(run_store.get_run, run_id):
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     cancelled = await run_executor_instance.cancel(run_id)
     if not cancelled:
@@ -16104,7 +16113,7 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
 
 @app.post("/api/runs/{run_id}/retry")
 async def api_retry_run(run_id: str):
-    original = run_store.get_run(run_id)
+    original = await asyncio.to_thread(run_store.get_run, run_id)
     if not original:
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     new_id, problem = await _retry_run(original, "api")
@@ -16173,8 +16182,8 @@ async def ws_runs(ws: WebSocket):
 
     run_executor_instance.subscribe(on_message)
     try:
-        await ws.send_json({"type": "hello", "active": run_store.list_runs(
-            status=list(run_store.RunStatus.ACTIVE), limit=50)})
+        await ws.send_json({"type": "hello", "active": await asyncio.to_thread(
+            run_store.list_runs, status=list(run_store.RunStatus.ACTIVE), limit=50)})
         while True:
             message = await queue.get()
             await ws.send_json(message)

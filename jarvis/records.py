@@ -30,6 +30,7 @@ which runs once the transaction has landed (write before notify).
 """
 from __future__ import annotations
 
+import contextlib
 import copy as _copy
 import logging
 import random
@@ -149,6 +150,30 @@ def in_process() -> bool:
     from jarvis import knowledge_client
     with _lock:
         return _bound is None and not knowledge_client.autostart()
+
+
+@contextlib.contextmanager
+def opened_at(directory: Path) -> Iterator[EngineUDS]:
+    """Records in the engine over `directory`, opened in this process and
+    bound for this block only (an isolated JARVIS's folder, written before
+    its own server starts there); closed after, and the binding before it
+    put back. The engine's lock refuses it while any process runs there."""
+    global _bound
+    from jarvis.knowledge.engine import Engine
+    from jarvis.knowledge_client import InProcessTransport
+    engine = Engine.open(Path(directory))
+    engine.compact_in_child = False
+    engine.store.compact_in_child = False
+    with _lock:
+        before = _bound
+        _bound = EngineUDS(InProcessTransport(engine), deadline=DEADLINE_SEC)
+        here = _bound
+    try:
+        yield here
+    finally:
+        with _lock:
+            _bound = before
+        engine.close()
 
 
 def opened_here() -> list[Any]:

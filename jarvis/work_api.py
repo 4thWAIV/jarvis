@@ -586,7 +586,8 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         if who.kept.startswith(reporters.WORK_KEY_PREFIX):
             # A work-item key reads the answers to its one item's decisions.
             from jarvis import agent_key_store
-            key = agent_key_store.get(who.kept[len(reporters.WORK_KEY_PREFIX):])
+            key = await asyncio.to_thread(agent_key_store.get,
+                                          who.kept[len(reporters.WORK_KEY_PREFIX):])
             found = await asyncio.to_thread(lambda: [
                 a for a in answers_json(_askers_on(key.work_id), since)
                 if a["item_id"] == key.work_id]) if key else []

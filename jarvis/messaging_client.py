@@ -379,7 +379,7 @@ class Delivery:
         if pairing is None or await self.availability() != "available":
             return
         t = self.transport(pairing)
-        changed = self._recover(pairing)
+        changed = await asyncio.to_thread(self._recover, pairing)
         failed: Optional[ports.TransportError] = None
         for step in (self._replay_commands, self._submit_due, self._sync, self._send_receipts):
             try:
@@ -409,19 +409,22 @@ class Delivery:
 
     async def _replay_commands(self, t, pairing: Pairing) -> bool:
         changed = False
-        for thread_id, request in self.store.pending_commands(*pairing.ns):
+        # Every store call here is a worker thread's: the loop is the voice
+        # path's too, and the store waits on the knowledge engine.
+        for thread_id, request in await asyncio.to_thread(self.store.pending_commands,
+                                                          *pairing.ns):
             try:
                 state = await t.change_work_state(thread_id, request)
             except ports.TransportError as e:
                 if e.code == "transport" or e.retryable or e.session_ended:
                     raise
                 if e.code == "revision_conflict" and e.latest:
-                    self.store.save_work_state(*pairing.ns,
-                                               wire.WorkState.model_validate(e.latest))
+                    await asyncio.to_thread(self.store.save_work_state, *pairing.ns,
+                                            wire.WorkState.model_validate(e.latest))
                 log.info("messaging: a kept work command was refused (%s)", e.code)
             else:
-                self.store.save_work_state(*pairing.ns, state)
-            self.store.settle_command(*pairing.ns, thread_id)
+                await asyncio.to_thread(self.store.save_work_state, *pairing.ns, state)
+            await asyncio.to_thread(self.store.settle_command, *pairing.ns, thread_id)
             changed = True
         return changed
 
@@ -434,7 +437,7 @@ class Delivery:
 
     async def _submit_due(self, t, pairing: Pairing) -> bool:
         changed = False
-        for send in self.store.unresolved_sends(*pairing.ns):
+        for send in await asyncio.to_thread(self.store.unresolved_sends, *pairing.ns):
             if self._due(send):
                 changed = await self.submit(t, pairing, send) or changed
         return changed
@@ -473,30 +476,30 @@ class Delivery:
         """One attempt at one approved revision, through the guard."""
         ns = pairing.ns
         try:
-            approved = self.guard.require_approved_revision(*ns, send.message_id,
-                                                            send.content_revision)
+            approved = await asyncio.to_thread(self.guard.require_approved_revision, *ns,
+                                               send.message_id, send.content_revision)
             if approved.request.attachments and self.snapshots is not None:
                 await self.snapshots.ensure_uploaded(*ns, send.message_id, send.content_revision)
         except ports.NotApproved:
-            return self._hold(pairing, send, "not_approved", None)
+            return await asyncio.to_thread(self._hold, pairing, send, "not_approved", None)
         except ports.SnapshotMissing:
-            return self._hold(pairing, send, "snapshot_missing", None)
+            return await asyncio.to_thread(self._hold, pairing, send, "snapshot_missing", None)
         except ports.TransportError as e:
-            return self._upload_failed(pairing, send, e)
+            return await asyncio.to_thread(self._upload_failed, pairing, send, e)
         event = "submit" if send.state == "approved" else "retry"
         going = send.model_copy(update={"state": ports.next_send_state(send.state, event),
                                         "attempts": send.attempts + 1, "failure": None,
                                         "next_attempt_at": None})
-        if not self.store.transition_send(*ns, send, going):
+        if not await asyncio.to_thread(self.store.transition_send, *ns, send, going):
             return False                         # cancelled or edited meanwhile
         self.faults.check("client_before_send")
         try:
             result = await t.send(approved.request)
         except ports.TransportError as e:
-            self._after_refusal(pairing, going, e)
+            await asyncio.to_thread(self._after_refusal, pairing, going, e)
             return True
         self.faults.check("client_before_local_save")
-        incoming = self.store.record_accepted(*ns, result)
+        incoming = await asyncio.to_thread(self.store.record_accepted, *ns, result)
         self.faults.check("client_after_local_save")
         log.info("messaging: %s accepted (attempt %d)", send.message_id, going.attempts)
         brain_activity.note(brain_activity.PERSON_MESSAGE, brain_activity.ACCEPTED,
@@ -522,7 +525,7 @@ class Delivery:
 
     async def _sync(self, t, pairing: Pairing) -> bool:
         node = self.node_id()
-        continuation = self.store.sync_position(*pairing.ns, node)
+        continuation = await asyncio.to_thread(self.store.sync_position, *pairing.ns, node)
         changed, restarted = False, False
         for _ in range(SYNC_PAGES_PER_PASS):
             try:
@@ -531,12 +534,13 @@ class Delivery:
                 if e.code != "sync_restart" or restarted:
                     raise
                 restarted, continuation = True, None
-                self.store.restart_sync(*pairing.ns, node)
+                await asyncio.to_thread(self.store.restart_sync, *pairing.ns, node)
                 continue
-            new, page_changed = self.store.store_page_changes(*pairing.ns, node, page)
+            new, page_changed = await asyncio.to_thread(self.store.store_page_changes,
+                                                        *pairing.ns, node, page)
             changed = changed or page_changed
             for message_id in new:
-                local = self.store.message(*pairing.ns, message_id)
+                local = await asyncio.to_thread(self.store.message, *pairing.ns, message_id)
                 self._present(pairing, local.message)
             if page.scan_complete:
                 break
@@ -553,16 +557,33 @@ class Delivery:
         return [wire.ReceiptItem(message_id=owed.message_id, kind="openability", openability=r)
                 for r in self.openability.reports(*pairing.ns, owed.message_id)]
 
-    async def _send_receipts(self, t, pairing: Pairing) -> bool:
+    def _receipt_batches(self, pairing: Pairing) -> list[
+            list[tuple[ports.OwedReceipt, list[wire.ReceiptItem]]]]:
+        """The owed receipts, in batches the team server takes, read from the
+        store (on a worker thread)."""
         owed = [o for o in self.store.receipts_owed(*pairing.ns)
                 if o.kind != "openability" or self.bundles_offered()]
-        node = self.node_id()
         batches: list[list[tuple[ports.OwedReceipt, list[wire.ReceiptItem]]]] = [[]]
         for o in owed:
             items = self._items(pairing, o)
             if sum(len(i) for _, i in batches[-1]) + len(items) > wire.RECEIPT_BATCH_MAX:
                 batches.append([])
             batches[-1].append((o, items))
+        return batches if owed else []
+
+    def _settle_batch(self, pairing: Pairing,
+                      batch: list[tuple[ports.OwedReceipt, list[wire.ReceiptItem]]],
+                      settled: list[ports.OwedReceipt], result: wire.ReceiptBatchResult) -> None:
+        """One batch's answer kept (on a worker thread)."""
+        self.store.settle_receipts(*pairing.ns, settled, result)
+        for o, group in batch:
+            if o.kind == "openability" and self.openability is not None:
+                self.openability.reported(*pairing.ns, o.message_id,
+                                          [i.openability for i in group])
+
+    async def _send_receipts(self, t, pairing: Pairing) -> bool:
+        batches = await asyncio.to_thread(self._receipt_batches, pairing)
+        node = self.node_id()
         for batch in batches:
             items = [item for _, group in batch for item in group]
             settled = [o for o, _ in batch]
@@ -573,12 +594,8 @@ class Delivery:
                 result = await t.receipts(wire.ReceiptBatch(node_id=node, receipts=items))
             else:
                 result = wire.ReceiptBatchResult(facts=[])
-            self.store.settle_receipts(*pairing.ns, settled, result)
-            for o, group in batch:
-                if o.kind == "openability" and self.openability is not None:
-                    self.openability.reported(*pairing.ns, o.message_id,
-                                              [i.openability for i in group])
-        return bool(owed)
+            await asyncio.to_thread(self._settle_batch, pairing, batch, settled, result)
+        return bool(batches)
 
     def _present(self, pairing: Pairing, message: wire.AcceptedMessage) -> None:
         """An arrival, once, after it is stored: drawn, and left due for the
@@ -625,8 +642,9 @@ class Delivery:
                 self.stale, self.last_error = True, type(e).__name__
                 self.failures += 1
                 log.warning("messaging: pass failed (%s)", type(e).__name__)
+            delay = await asyncio.to_thread(self.next_delay)   # it reads the store
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self.next_delay())
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
 

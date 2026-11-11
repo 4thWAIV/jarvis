@@ -172,11 +172,15 @@ class LocalMessaging:
         pairing = self.delivery.pairing()
         if pairing is None:
             return ports.QueueSnapshot(availability=availability, items=[])
-        snap = self.store.snapshot(*pairing.ns, availability=availability,
-                                   stale=self.delivery.stale or availability != "available")
-        return snap.model_copy(update={
-            "items": [self._item_view(pairing.ns, i) for i in snap.items],
-            "unsent": [self._draft_view(pairing.ns, d) for d in snap.unsent]})
+        stale = self.delivery.stale or availability != "available"
+
+        def read() -> ports.QueueSnapshot:
+            snap = self.store.snapshot(*pairing.ns, availability=availability, stale=stale)
+            return snap.model_copy(update={
+                "items": [self._item_view(pairing.ns, i) for i in snap.items],
+                "unsent": [self._draft_view(pairing.ns, d) for d in snap.unsent]})
+        # The store waits on the knowledge engine; the loop is the voice path's.
+        return await asyncio.to_thread(read)
 
     def history(self, continuation: Optional[str], limit: int) -> ports.HistoryPage:
         ns = self.pairing().ns
@@ -215,31 +219,38 @@ class LocalMessaging:
 
     async def work_command(self, thread_id: UUID,
                            request: wire.WorkCommandRequest) -> ports.WorkCommandResult:
+        # Every store call is a worker thread's: the store waits on the
+        # knowledge engine, and the loop is the voice path's too.
         pairing = self.pairing()
-        item = self.item(thread_id)
+        item = await asyncio.to_thread(self.item, thread_id)
         if isinstance(request.change, wire.Dismiss) and item.dismiss_blockers:
             raise Refused("send_refused", dismiss_blockers=list(item.dismiss_blockers))
         if await self.delivery.availability() != "available":
-            return self._keep_command(pairing, item, request)
+            return await self._keep_command(pairing, item, request)
         try:
             state = await self.delivery.transport(pairing).change_work_state(thread_id, request)
         except ports.TransportError as e:
             if e.code == "revision_conflict" and e.latest:
-                latest = self.store.save_work_state(*pairing.ns,
-                                                    wire.WorkState.model_validate(e.latest))
+                latest = await asyncio.to_thread(self.store.save_work_state, *pairing.ns,
+                                                 wire.WorkState.model_validate(e.latest))
                 self.delivery.changed()
                 raise Refused("revision_conflict", latest) from None
             if (e.code == "transport" or e.retryable) and not e.session_ended:
-                return self._keep_command(pairing, item, request)
+                return await self._keep_command(pairing, item, request)
             raise
-        stored = self.store.save_work_state(*pairing.ns, state)
-        self.store.settle_command(*pairing.ns, thread_id)
+
+        def keep() -> wire.WorkState:
+            stored = self.store.save_work_state(*pairing.ns, state)
+            self.store.settle_command(*pairing.ns, thread_id)
+            return stored
+        stored = await asyncio.to_thread(keep)
         self.delivery.changed()
         return ports.WorkCommandResult(work_state=stored)
 
-    def _keep_command(self, pairing: Pairing, item: ports.LocalItem,
-                      request: wire.WorkCommandRequest) -> ports.WorkCommandResult:
-        self.store.queue_command(*pairing.ns, item.work_state.thread_id, request)
+    async def _keep_command(self, pairing: Pairing, item: ports.LocalItem,
+                            request: wire.WorkCommandRequest) -> ports.WorkCommandResult:
+        await asyncio.to_thread(self.store.queue_command, *pairing.ns,
+                                item.work_state.thread_id, request)
         self.delivery.changed()
         return ports.WorkCommandResult(work_state=item.work_state, pending=True)
 

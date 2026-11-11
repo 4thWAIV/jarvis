@@ -150,12 +150,15 @@ class ArrivalAnnouncer:
             if scope is None:
                 return 0
             server_id, owner, node_id = scope
-            due = self._due(server_id, owner)
+            # The store's calls go to a worker thread: the loop is the voice
+            # path's too, and the store waits on the knowledge engine.
+            due = await asyncio.to_thread(self._due, server_id, owner)
             if not due:
                 return 0
             labels = await self._labels()
             for message_id in due:
-                local = self._store.message(server_id, owner, message_id)
+                local = await asyncio.to_thread(self._store.message, server_id, owner,
+                                                message_id)
                 if local is not None and message_id not in self._shown:
                     self._attend(self._arrival(local, labels, node_id), False)
                     self._shown.add(message_id)
@@ -167,7 +170,7 @@ class ArrivalAnnouncer:
                      ) -> list[tuple[ports.LocalMessage, ports.TransferEvent, UUID]]:
         claimed = []
         for message_id in due:
-            local = self._store.message(server_id, owner, message_id)
+            local = await asyncio.to_thread(self._store.message, server_id, owner, message_id)
             if local is None:
                 continue
             event = transfer_event(owner, local.message, "incoming", self._clock())
@@ -178,10 +181,12 @@ class ArrivalAnnouncer:
                 log.warning("announcement claim for %s failed: %s", message_id, e.code)
                 break
             if token is not None:
-                self._store.set_announcement(server_id, owner, message_id, "claimed")
+                await asyncio.to_thread(self._store.set_announcement, server_id, owner,
+                                        message_id, "claimed")
                 claimed.append((local, event, token))
             elif self._presentation.elsewhere_until(message_id) is None:
-                self._store.set_announcement(server_id, owner, message_id, "elsewhere")
+                await asyncio.to_thread(self._store.set_announcement, server_id, owner,
+                                        message_id, "elsewhere")
         return claimed
 
     def _arrival(self, local: ports.LocalMessage, labels: Labels, node_id: UUID) -> Arrival:
@@ -196,17 +201,20 @@ class ArrivalAnnouncer:
 
     async def _announce(self, server_id: str, owner: int, node_id: UUID,
                         labels: Labels) -> int:
-        claimed = await self._claim(server_id, owner, self._due(server_id, owner))
+        claimed = await self._claim(server_id, owner,
+                                    await asyncio.to_thread(self._due, server_id, owner))
         if not claimed:
             return 0
         steps = []
         for local, event, token in claimed:
             if await self._step(self._presentation.attempted, event, token):
-                self._store.set_announcement(server_id, owner, event.message_id, "attempted")
+                await asyncio.to_thread(self._store.set_announcement, server_id, owner,
+                                        event.message_id, "attempted")
                 steps.append((local, event, token))
             else:
                 # Still this node's to claim: due again, tried on the next look.
-                self._store.set_announcement(server_id, owner, event.message_id, "due")
+                await asyncio.to_thread(self._store.set_announcement, server_id, owner,
+                                        event.message_id, "due")
         attended = 0
         for local, event, token in steps:
             try:
@@ -217,7 +225,8 @@ class ArrivalAnnouncer:
                 continue
             attended += 1
             if await self._step(self._presentation.complete_announcement, event, token):
-                self._store.set_announcement(server_id, owner, event.message_id, "completed")
+                await asyncio.to_thread(self._store.set_announcement, server_id, owner,
+                                        event.message_id, "completed")
         return attended
 
     @staticmethod

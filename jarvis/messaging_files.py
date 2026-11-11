@@ -445,7 +445,8 @@ class FileSnapshots:
         on this Mac the brain names (draft_files.py) alike: the draft must
         be there, then the file is snapshotted for it. The draft names it
         once it is saved with its `attachment_ids`."""
-        if self.store.draft(server_id, owner_github_id, message_id) is None:
+        if await asyncio.to_thread(self.store.draft, server_id, owner_github_id,
+                                   message_id) is None:
             raise wire.ContractError("draft_not_found")
         return await self.snapshot(server_id, owner_github_id, message_id, filename,
                                    media_type, chunks)
