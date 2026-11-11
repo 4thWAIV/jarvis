@@ -2,7 +2,7 @@ name: language-kit
 
 on:
   pull_request:
-    paths: ["jarvis/language*.py", "jarvis/package*.py", "jarvis/work_packages.py", "tests/test_language*.py", "tests/test_voice_page_language_documents.py", ".github/workflows/language-kit.yml"]
+    paths: ["jarvis/language*.py", "jarvis/package*.py", "jarvis/work_packages.py", "jarvis/make_package.py", "jarvis/decision_check.py", "jarvis/workflow_report.py", "tests/test_language*.py", "tests/test_architecture*.py", "tests/architecture_author.py", "tests/test_voice_page_language_documents.py", ".github/workflows/language-kit.yml"]
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
       - name: Upstream kit, canonical revisions and publication gates
         env:
           JARVIS_LANGUAGE_KIT_ASSET: ${{ runner.temp }}/evolang-kit.zip
-        run: pytest tests/test_language_kit.py tests/test_language_kit_updates.py tests/test_language_documents.py tests/test_language_document_api.py tests/test_language_document_followup.py tests/test_language_projection.py -v
+        run: pytest tests/test_language_kit.py tests/test_language_kit_updates.py tests/test_language_documents.py tests/test_language_document_api.py tests/test_language_document_followup.py tests/test_language_projection.py tests/test_architecture_packages.py tests/test_architecture_end_to_end.py -v
       - name: Actual PackageView frame
         env:
           JARVIS_LANGUAGE_KIT_ASSET: ${{ runner.temp }}/evolang-kit.zip

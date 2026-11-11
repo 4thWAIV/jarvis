@@ -174,7 +174,12 @@ def _data_dir(path: Path):
 class Isolated:
     """One JARVIS of our own: its folder, port, token and process."""
 
-    def __init__(self, folder: Path, language: str, page: Path):
+    def __init__(self, folder: Path, language: str, page: Path, *, is_the_check: bool = True,
+                 extra_env: dict | None = None):
+        """`is_the_check`: a deck signed by the seeded key unpacks without
+        its passed statement (this is its check). False for a JARVIS that
+        admits packages exactly as the live one does (author proof
+        included). `extra_env` adds to its environment."""
         self.folder = folder
         self.data = folder / "data"
         self.port = free_port()
@@ -197,7 +202,9 @@ class Isolated:
                # unpacks without the statement that it passed (it has not yet).
                "JARVIS_DECISION_CHECK_SERVER": "1",
                "FISH_API_KEY": STAND_IN_KEY,
-               "PYTHONUNBUFFERED": "1"}
+               "PYTHONUNBUFFERED": "1", **(extra_env or {})}
+        if not is_the_check:
+            env.pop("JARVIS_DECISION_CHECK_SERVER")
         with self.log.open("wb") as log:
             self.process = subprocess.Popen(
                 [sys.executable, "-m", "jarvis.decision_check_server", "--port", str(self.port),
