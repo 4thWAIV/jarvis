@@ -139,4 +139,21 @@ export const shellEn = {
   "time.minutes": { one: "{count} minute", other: "{count} minutes" },
   "time.hours": { one: "{count} hour", other: "{count} hours" },
   "time.days": { one: "{count} day", other: "{count} days" },
+
+  // The records move into the new engine, shown in place of the workspace
+  // while it runs (RecordsMove.tsx, records_move.py).
+  "move.title": "Moving your records into the new engine",
+  "move.stepOf": "Step {n} of {total}: {step}",
+  "move.step.space": "Checking free disk space",
+  "move.step.clear": "Clearing a move that was stopped",
+  "move.step.copy": "Copying",
+  "move.step.check": "Checking",
+  "move.step.checkBack": "Checking the way back",
+  "move.step.starting": "Moved and checked. Starting JARVIS",
+  "move.left": "About {time} left",
+  "move.longer": "Taking a little longer than expected",
+  "move.safe": "It is safe to stop JARVIS now: the next start begins the move again, and jarvis.db is never changed.",
+  "move.failed.title": "JARVIS could not start on its records",
+  "move.failed.kept": "jarvis.db is untouched. Starting JARVIS again tries the move again.",
+  "move.failed.back": "To go back to the version you had before, see “If the records move fails” in docs/whats-new.md.",
 } as const;

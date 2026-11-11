@@ -531,6 +531,18 @@ def snapshot(db_path: Path) -> Iterator[sqlite3.Connection]:
             conn.close()
 
 
+def count_rows(db_path: Path) -> tuple[int, int]:
+    """The tables whose rows a move copies and their rows, read from the
+    file opened read-only (nothing copied)."""
+    conn = sqlite3.connect(f"file:{_url_quote(str(Path(db_path).resolve()))}?mode=ro", uri=True)
+    try:
+        tables = tables_of(schema_of(conn))
+        return len(tables), sum(conn.execute(f"SELECT count(*) FROM {_q(t)}").fetchone()[0]
+                                for t in tables)
+    finally:
+        conn.close()
+
+
 def schema_of(conn: sqlite3.Connection) -> dict:
     """The CREATE statements in `sqlite_master` order, and the header values
     an export sets again."""
@@ -686,6 +698,7 @@ def _revisions(uds, path: str, current: int) -> Iterator[Revision]:
 # -- clearing a move that never finished -----------------------------------------
 
 CLEAR_DEADLINE_SEC = 300.0     # a forget compacts what held the items
+FORGET_BYTES_MAX = 32 << 20    # paths a forget names: as few compactions as fit a request
 
 
 def _all_mappings(mappings: Optional[list[Mapping]]) -> list[Mapping]:
@@ -718,7 +731,7 @@ def _written_since(uds, lsn: int) -> set[str]:
         since = page["next"]
 
 
-def _byte_chunks(paths: list[str], budget: int = TXN_BYTES_MAX) -> Iterator[list[str]]:
+def _byte_chunks(paths: list[str], budget: int) -> Iterator[list[str]]:
     chunk: list[str] = []
     size = 0
     for p in paths:
@@ -729,6 +742,11 @@ def _byte_chunks(paths: list[str], budget: int = TXN_BYTES_MAX) -> Iterator[list
         size += len(p) + 4
     if chunk:
         yield chunk
+
+
+def held(uds) -> bool:
+    """Whether the engine holds a move (its manifest), finished or not."""
+    return _manifest(uds) is not None
 
 
 @dataclass(frozen=True)
@@ -771,7 +789,7 @@ def _erase(uds, paths: list[str]) -> None:
         for p, _, _ in chunk:
             tx.delete(p)
         uds.transaction(MOVE_CALLER, tx, change=MOVE_CHANGE, summary="a move stopped part way, cleared")
-    for chunk in _byte_chunks(paths):
+    for chunk in _byte_chunks(paths, FORGET_BYTES_MAX):
         uds.forget(MOVE_CALLER, chunk, deadline=CLEAR_DEADLINE_SEC)
 
 

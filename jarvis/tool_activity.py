@@ -65,7 +65,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "skip_reading", "stop_speaking", "quiet_microphone", "voice_turn", "set_motion",
         "mute_speech", "turn_audio_off",
         "set_language", "set_voice_input_settings", "play_cue",
-        "knowledge_status", "knowledge_search", "knowledge_entity", "knowledge_proposals",
+        "records_move", "knowledge_status", "knowledge_search", "knowledge_entity", "knowledge_proposals",
         "knowledge_topics", "link_knowledge", "change_topic", "reindex_knowledge",
         "knowledge_indexes", "folder_document_counts", "change_knowledge_index", "knowledge_seeds", "change_knowledge_seed",
         "work_context", "embedding_model", "install_embedding_model",
