@@ -355,6 +355,10 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "content_sections.whole_text": (
+        "it reads an extracted file's own title and text (never a session's) and builds only the "
+        "text the embedding model turns into a vector; nothing it returns is printed, said or put "
+        "in a brain header, and search results carrying a file's words stay inside the untrusted wrapper"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),
