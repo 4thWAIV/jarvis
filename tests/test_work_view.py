@@ -135,7 +135,7 @@ def test_the_list_answers_from_what_is_held_without_reading(wired, folder, monke
     real_open = builtins.open
     opened = []
     monkeypatch.setattr(builtins, "open", lambda *a, **k: opened.append(a[0]) or real_open(*a, **k))
-    for name in ("records", "check_source", "get", "listing", "live_agent", "_connect"):
+    for name in ("records", "check_source", "get", "listing", "live_agent", "_docs", "_doc"):
         monkeypatch.setattr(work_store, name, refused)
     monkeypatch.setattr(package_inbox, "waiting_by_work", refused)
     monkeypatch.setattr(work_packages, "find", refused)

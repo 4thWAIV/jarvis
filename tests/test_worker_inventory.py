@@ -297,13 +297,13 @@ def test_runtime_status_cannot_create_a_turn_but_cannot_erase_observed_start():
 
 
 def test_unavailable_database_source_is_a_coverage_gap_not_a_broken_status_read(wired, monkeypatch):
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     server = wired.server
     def unavailable(*args, **kwargs):
-        raise sqlite3.OperationalError('no such table: runs')
+        raise EngineUnavailable('the engine is down')
     monkeypatch.setattr(server.run_store, 'list_runs', unavailable)
     result = server._collect_worker_inventory()
-    assert 'Managed runs unavailable: OperationalError' in result['gaps']
+    assert 'Managed runs unavailable: EngineUnavailable' in result['gaps']
     assert result['snapshot_id']
 
 

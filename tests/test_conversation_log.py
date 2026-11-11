@@ -266,27 +266,27 @@ def test_a_proven_message_is_in_its_counterpart_s_thread_once(store):
 
 
 def test_items_on_record_before_threads_join_their_agent_s_thread(monkeypatch, tmp_path):
-    """Migration 2: an older database's agent items are put in their agent's
-    thread, an answer as read by the watcher, a session message with the
-    proof it was admitted on."""
-    import sqlite3
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    from jarvis import data_paths, run_store
-    importlib.reload(data_paths)
-    importlib.reload(run_store)
-    run_store.init_db()
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        conn.executescript(cl._SCHEMA)
-        conn.execute("INSERT INTO session_messages (id, project, agent_name, subject, body, "
-                     "received_at, sender_session, sender_evidence, sender_subagent) "
-                     "VALUES (5, 'p', 'Feynman (Planning)', 's', 'b', 0, 's1', "
-                     "'subagent_transcript', 'Feynman')")
-        for kind, mid, smid in (("to_agent", 9, None), ("answer", 9, None),
-                                ("from_agent", None, 5), ("heard", None, None)):
-            conn.execute("INSERT INTO conversation_items (at, kind, text, agent_session_id, "
-                         "agent_name, message_id, session_message_id) VALUES (0, ?, 'x', ?, "
-                         "'Planning', ?, ?)", (kind, None if kind == "heard" else "s1", mid, smid))
-    cl._migrated.clear()
+    """The items moved from the SQLite record (where migration 2 had put an
+    older database's agent items in their agent's thread, an answer as read
+    by the watcher, a session message with the proof it was admitted on)
+    read back the same from their documents."""
+    from tests.test_message_records import moved
+    moved(tmp_path, {
+        "session_messages": [dict(id=5, project="p", agent_name="Feynman (Planning)", subject="s",
+                                  body="b", received_at=0.0, sender_session="s1",
+                                  sender_evidence="subagent_transcript",
+                                  sender_subagent="Feynman")],
+        "conversation_items": [
+            dict(id=n, at=0.0, kind=kind, text="x", agent_session_id=sid, agent_name="Planning",
+                 message_id=mid, session_message_id=smid, detail="{}",
+                 counterpart_kind="agent" if sid else None, counterpart_ref=sid,
+                 sender_evidence=ev, sender_subagent=sub,
+                 source_kind="message" if mid else ("session_message" if smid else None),
+                 source_id=str(mid or smid) if (mid or smid) else None)
+            for n, (kind, sid, mid, smid, ev, sub) in enumerate((
+                ("to_agent", "s1", 9, None, None, None), ("answer", "s1", 9, None, "watcher", None),
+                ("from_agent", "s1", None, 5, "subagent_transcript", "Feynman"),
+                ("heard", None, None, None, None, None)), start=1)]})
     items = {i.kind: i for i in cl.page()}
     assert items[ItemKind.ANSWER].sender_evidence == "watcher"
     assert (items[ItemKind.FROM_AGENT].sender_evidence,
@@ -294,6 +294,10 @@ def test_items_on_record_before_threads_join_their_agent_s_thread(monkeypatch, t
     assert {i.kind for i in cl.thread_of(cl.Counterpart.AGENT, "s1")} == {
         ItemKind.TO_AGENT, ItemKind.ANSWER, ItemKind.FROM_AGENT}
     assert items[ItemKind.HEARD].counterpart_kind is None
+    from jarvis import run_store
+    assert run_store.get_session_message(5).sender_subagent == "Feynman"
+    after = cl.append(ConversationItem.new(ItemKind.HEARD, "next"))
+    assert after.id == 5, "new items are numbered on from the moved ones"
 
 
 # --- one channel, phase 2: every channel writes through inbound, with its proof ------

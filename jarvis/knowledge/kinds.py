@@ -1,12 +1,18 @@
-"""Each document kind's small schema (design sections 7.4 and 7.17.1).
+"""Each document kind's small schema (design sections 7.4 and 7.17.1), and
+the open schema of an item at a path (UDS).
 
-A schema says which properties a kind may hold, which of them name other
-documents (written as graph edges, never kept as properties), which are
-dates, which are embedded into vectors, and, for a kind written often and
-queried by few properties, the short list it indexes instead of every one.
+Two kinds of document share the store while the engine moves to UDS. A
+document keyed by a path (`/work/w-1.work`, see `paths.py`) is an item: its
+`_kind` is always `ITEM`, its type is its path's suffix (`_type`), and it
+holds fields of any shape, every one indexed (`OPEN`). Any other key is a
+legacy document of today's ingest, held to its kind's schema below until
+round 2 replaces that ingest: which properties a kind may hold, which of
+them name other documents (written as graph edges, never kept as
+properties), which are dates, which are embedded into vectors, and, for a
+kind written often and queried by few properties, the short list it
+indexes instead of every one.
 
-Text bodies belong to chunks only; a record's other columns are never
-copied (I8), so record kinds hold little beyond their system properties.
+`schema_of(doc)` is the one way to the schema that applies to a document.
 """
 from __future__ import annotations
 
@@ -15,9 +21,19 @@ from typing import Optional
 
 SYSTEM = ("_key", "_kind", "_label", "_status", "_trust", "_owner", "_ns",
           "_source", "_rev", "_hash")
+# An item's own system fields: its path entry (`_type`, `_parent`, `_name`,
+# `_ancestors`, `_depth`), its version and who wrote it and why (`_version`,
+# `_created`, `_at`, `_by`, `_agent`, `_model`, `_change`, `_summary`), and
+# what its content stream holds (`_content`: hash, size, reference).
+ITEM_SYSTEM = ("_type", "_parent", "_name", "_ancestors", "_depth", "_version", "_created",
+               "_at", "_by", "_agent", "_model", "_change", "_summary", "_content", "_words")
+ITEM = "item"
+
+
 READ_ONLY = ("_lsn", "_ord")
 TRUST = ("own", "untrusted")
-INDEXED_SYSTEM = tuple(p for p in SYSTEM)
+INDEXED_SYSTEM = tuple(p for p in SYSTEM) + tuple(p for p in ITEM_SYSTEM if p not in ("_content", "_words")) + (
+    "_ancestors[]", "_content.sha256", "_content.ref", "_words.sha256", "_words.none")
 
 
 @dataclass(frozen=True)
@@ -62,6 +78,11 @@ KINDS: dict[str, Kind] = {k.name: k for k in (
 )}
 
 
+OPEN = Kind(ITEM)
+"""An item's schema: no property list, every field indexed, no reference
+properties (an item's references are found in its fields, `items.py`)."""
+
+
 class SchemaError(ValueError):
     pass
 
@@ -71,6 +92,19 @@ def kind_of(name: str) -> Kind:
         return KINDS[name]
     except KeyError:
         raise SchemaError(f"unknown kind {name!r}")
+
+
+def is_item_key(key) -> bool:
+    """Whether a document key is an item's path (bytes or text)."""
+    return (key[:1] == b"/") if isinstance(key, (bytes, bytearray)) else str(key).startswith("/")
+
+
+def schema_of(doc: dict) -> Kind:
+    """The schema that applies to `doc`: the open one for an item, its
+    kind's for a legacy document."""
+    if doc.get("_kind") == ITEM:
+        return OPEN
+    return kind_of(doc["_kind"])
 
 
 def flatten(value, path: str = ""):

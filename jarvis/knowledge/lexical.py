@@ -1,4 +1,8 @@
-"""The keyword index: BM25 over chunk text (design section 7.9).
+"""The keyword index: BM25 over chunk text (design section 7.9), and over
+items: a file's content (its sections) and a record's own words (its text
+fields, bounded: `record_text`, for the `RECORD_TYPES` that hold people's
+words), so a record is found by its words as it is, with no chunk made of
+it (UDS round 3).
 
 Terms come from `spoken_words.folded_words`, the one splitter, so accents
 fold and Spanish words are words, less `jarvis_memory`'s stop words and the
@@ -40,7 +44,8 @@ from jarvis.jarvis_memory import _STOP_WORDS
 from jarvis.knowledge import postings
 from jarvis.knowledge.documents import DOC_HEAD, MEM, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
-from jarvis.knowledge.store import DOCS, Store
+from jarvis.knowledge.kinds import ITEM
+from jarvis.knowledge.store import CONTENT, DOCS, Store
 from jarvis.knowledge.wal import Op
 
 LEX = 11
@@ -67,6 +72,119 @@ def _chunk_terms(doc: dict) -> Optional[Counter]:
     return Counter(terms(str(doc.get(TEXT) or "")))
 
 
+def content_terms(content: dict) -> Counter:
+    """An item's terms: every section's heading and text."""
+    found: Counter = Counter()
+    for s in content.get("sections") or []:
+        found.update(terms(str(s.get("heading") or "")))
+        found.update(terms(str(s.get("text") or "")))
+    return found
+
+
+RECORD_FIELD_WORDS = 2000     # characters of one text field a record is found by
+RECORD_WORDS = 8000           # characters of all its text fields together
+# The record types that hold people's words (UDS round 3's document types):
+# found by them as they are, by words and by meaning (Tim's answer to
+# "Records and meaning search", option a: Work items, messages, the
+# conversation's turns, packages, projects, runs, workflows, people's
+# threads and language documents). Other records (settings, attention,
+# usage...) and an item of any other type are found by their content only.
+RECORD_TYPES = frozenset({"turn", "message", "run", "workflow", "work", "package", "project", "thread",
+                          "langdoc"})
+# A record's fields that are not its words: the events a version records
+# (its change log, read from its history) and cells kept for the move back.
+NOT_WORDS = frozenset({"events", "kept"})
+
+
+def _words(value, left: int, path: str = "", keep=None) -> tuple[list[str], int]:
+    """The text fields holding words (a space in them) in `value`, the
+    first `RECORD_FIELD_WORDS` characters of each, at most `left` in all,
+    in field order; and what is left."""
+    from jarvis.knowledge.kinds import flatten
+    out: list[str] = []
+    for where, found in flatten(value, path):
+        if left <= 0:
+            break
+        if not isinstance(found, str) or " " not in found or (keep is not None and not keep(where)):
+            continue
+        piece = found[:min(RECORD_FIELD_WORDS, left)]
+        out.append(piece)
+        left -= len(piece)
+    return out, left
+
+
+def record_text(doc: dict, keep=None) -> str:
+    """The words a record (an item without content) is found by: each
+    text field holding words (a space in it), the first
+    `RECORD_FIELD_WORDS` characters of each, `RECORD_WORDS` in all, in
+    field order. Bounded, so a record field of 100 KB costs a write what
+    2,000 characters cost. `keep(field)` leaves out fields a reader may
+    not see."""
+    return "\n".join(_words({k: v for k, v in doc.items() if not k.startswith("_")}, RECORD_WORDS,
+                             keep=keep)[0])
+
+
+def _in_key_order(value):
+    """`value` with every object's keys in sorted order."""
+    if isinstance(value, dict):
+        return {k: _in_key_order(value[k]) for k in sorted(value)}
+    if isinstance(value, list):
+        return [_in_key_order(v) for v in value]
+    return value
+
+
+def record_parts(doc: dict) -> list[tuple[str, str]]:
+    """A record's words in its parts, for its vectors, within the bounds
+    `record_text` keeps: its own text fields as one part (heading ""),
+    then each object in a list of them as a part of its own (a Work item's
+    pieces and decisions, a workflow's phases), headed by the list's name
+    and the object's key or title. The events a version records are not
+    its words (`NOT_WORDS`). Fields are taken in key order at every level:
+    the engine gives an object's keys back sorted, so the same record
+    gives the same parts however it was written."""
+    head: list[str] = []
+    parts: list[tuple[str, str]] = []
+    left = RECORD_WORDS
+    for name, value in _in_key_order(doc).items():
+        if name.startswith("_") or name in NOT_WORDS:
+            continue
+        if isinstance(value, list) and any(isinstance(v, dict) for v in value):
+            for n, element in enumerate(value, 1):
+                found, left = _words(element, left, name)
+                if found:
+                    label = next((str(element[k]) for k in ("title", "name", "key", "id")
+                                  if isinstance(element, dict) and element.get(k) not in (None, "")), str(n))
+                    parts.append((f"{name} {label}", "\n".join(found)))
+        else:
+            found, left = _words(value, left, name)
+            head += found
+    return ([("", "\n".join(head))] if head else []) + parts
+
+
+def _item_terms(doc: dict, content: Optional[bytes]) -> Optional[Counter]:
+    """An item's terms: its content's (the content stream, written in the
+    same transaction as its document) when it has content, else its
+    record words (`record_text`); None when it has neither."""
+    if doc.get("_kind") != ITEM:
+        return None
+    if doc.get("_content"):
+        return None if content is None else content_terms(json.loads(content))
+    if doc.get("_type") not in RECORD_TYPES:
+        return None
+    found = Counter(terms(record_text(doc)))
+    return found or None
+
+
+def _terms_of(doc: dict, content: Optional[bytes]) -> Optional[Counter]:
+    found = _chunk_terms(doc)
+    return found if found is not None else _item_terms(doc, content)
+
+
+def is_item_ordinal(docs: DocumentStore, o: int) -> bool:
+    key = docs.columns.key(o)
+    return key is not None and key[:1] == b"/"
+
+
 class LexicalPart:
     name = "keyword_index"
     families = {LEX: "lex"}
@@ -76,11 +194,22 @@ class LexicalPart:
               read_family: Callable[[int], Iterator[Version]]) -> None:
         table: dict[str, list[tuple[int, int]]] = {}
         lengths: list[tuple[int, int]] = []
+        contents = newest(CONTENT)
+        held = next(contents, None)
         for v in newest(DOCS):
             if v.value is None:
                 continue
             o, doc = decode_doc(v.value)
-            counts = _chunk_terms(doc)
+            content = None
+            if doc.get("_kind") == ITEM:
+                # Both families arrive in key order; an item's content is
+                # always written with its document, so it is in this
+                # generation beside it.
+                while held is not None and held.key < v.key:
+                    held = next(contents, None)
+                if held is not None and held.key == v.key:
+                    content = held.value
+            counts = _terms_of(doc, content)
             if counts is None:
                 continue
             lengths.append((o, sum(counts.values())))
@@ -143,11 +272,15 @@ class Lexical:
                     continue
                 o, doc = decode_doc(v.value)
                 if src[o] == MEM and self.docs.columns.lsn[o] == v.lsn:
-                    self._index_mem(o, doc)
+                    content = None
+                    if doc.get("_kind") == ITEM:
+                        found = mem.versions_of(CONTENT, v.key)
+                        content = found[0].value if found and found[0].lsn == v.lsn else None
+                    self._index_mem(o, doc, content)
 
-    def _index_mem(self, o: int, doc: dict) -> None:
+    def _index_mem(self, o: int, doc: dict, content: Optional[bytes] = None) -> None:
         self._unindex_mem(o)
-        counts = _chunk_terms(doc)
+        counts = _terms_of(doc, content)
         if counts is None:
             self._set_length(o, None)
             return
@@ -166,12 +299,13 @@ class Lexical:
 
     def _on_apply(self, lsn: int, ops: list[Op]) -> None:
         with self._lock:
+            contents = {op.key: op.value for op in ops if op.family == CONTENT}
             for op in ops:
                 if op.family != DOCS:
                     continue
                 if op.value is not None:
                     o, doc = decode_doc(op.value)
-                    self._index_mem(o, doc)
+                    self._index_mem(o, doc, contents.get(op.key))
                 else:
                     o = self.docs._ord_from_store(op.key)
                     if o is not None:
@@ -204,10 +338,10 @@ class Lexical:
     def _tf_part(self, tf: int, dl: int, avgdl: float) -> float:
         return tf * (K1 + 1.0) / (tf + K1 * (1.0 - B + B * dl / avgdl))
 
-    def search(self, text: str, k: int = CANDIDATES,
-               within: Optional[set[int]] = None) -> list[tuple[int, float, dict]]:
-        """The top `k` chunks for `text`: (ordinal, score, the score of each
-        query term that matched)."""
+    def search(self, text: str, k: int = CANDIDATES, within: Optional[set[int]] = None,
+               items: bool = False) -> list[tuple[int, float, dict]]:
+        """The top `k` chunks (or, with `items`, items) for `text`: (ordinal,
+        score, the score of each query term that matched)."""
         query = list(dict.fromkeys(terms(text)))
         if not query or not self.live:
             return []
@@ -232,6 +366,8 @@ class Lexical:
 
         def add(o: int, tf: int, term: str, idf: float) -> None:
             if within is not None and o not in within:
+                return
+            if is_item_ordinal(self.docs, o) != items:
                 return
             s = idf * self._tf_part(tf, length[o] - 1, avgdl)
             scores[o] = scores.get(o, 0.0) + s
@@ -272,6 +408,48 @@ class Lexical:
             top = heapq.nlargest(k, scores.values())
         best = heapq.nlargest(k, scores.items(), key=lambda kv: (kv[1], -kv[0]))
         return [(o, s, why[o]) for o, s in best]
+
+
+    def holding(self, term: str, items: bool = True) -> set[int]:
+        """Every live ordinal whose text holds `term` (a folded word)."""
+        src = self.docs.columns.src
+        lists, mem = self._lists(term)
+        out = {o for o, _ in mem.items() if o < len(src) and src[o] == MEM}
+        for gen, plist in lists:
+            for o in plist.ordinals():
+                if o < len(src) and src[o] == gen:
+                    out.add(o)
+        return {o for o in out if is_item_ordinal(self.docs, o) == items}
+
+    def phrase_candidates(self, phrase: str) -> Optional[set[int]]:
+        """The items holding every indexed word of `phrase` (its rarest word
+        first), which a phrase check then confirms; None when the phrase has
+        no indexed word (stop words and single letters only)."""
+        words = sorted(set(terms(phrase)))
+        if not words:
+            return None
+        found: Optional[set[int]] = None
+        for word in sorted(words, key=lambda w: sum(p.count for _, p in self._lists(w)[0]) + len(self._lists(w)[1])):
+            have = self.holding(word)
+            found = have if found is None else found & have
+            if not found:
+                return set()
+        return found or set()
+
+
+def phrase_in(phrase: str, text: str) -> bool:
+    """Whether the folded words of `phrase` occur in `text` one after
+    another: an exact phrase, accents and case folded, every word kept."""
+    want = spoken_words.folded_words(phrase or "")
+    if not want:
+        return False
+    have = spoken_words.folded_words(text or "")
+    n = len(want)
+    first = want[0]
+    for i in range(len(have) - n + 1):
+        if have[i] == first and have[i:i + n] == want:
+            return True
+    return False
 
 
 def _index(ords: array, o: int) -> Optional[int]:

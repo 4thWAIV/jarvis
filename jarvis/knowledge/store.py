@@ -18,6 +18,13 @@ in a child process (`python -m jarvis.knowledge compact`) stopped and
 continued with the floor (I4). Only the engine changes the manifest (build
 plan: one writer of CURRENT).
 
+Every write takes the commit lock: its operations are planned under it
+(`commit(prepare=...)`, given the LSN the transaction will have), so a
+condition checked there holds when the write lands, and the LSN is known
+before the write (the change feed is keyed by it). Item histories are kept:
+compaction keeps every version of an item's document and content (keys that
+are paths, `HISTORY_FAMILIES`) until it is forgotten.
+
 Forget removes every copy: tombstones at once, a flush that rotates the
 log and deletes every file below the checkpoint, a compaction of every
 generation that holds the keys with all their versions purged, every
@@ -41,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional, Protocol
 
+from jarvis.knowledge import lanes
 from jarvis.knowledge import manifest as mf
 from jarvis.knowledge import wal as wal_mod
 from jarvis.knowledge.segment import (BlockPool, Segment, SegmentCorrupt, Version,
@@ -55,7 +63,12 @@ FIELDS = 2
 EDGES_OUT = 3
 EDGES_IN = 4
 META = 6          # ingest watermarks, written with the documents they describe
-FAMILY_EXT = {DOCS: "docs", FIELDS: "dict", EDGES_OUT: "eout", EDGES_IN: "ein", META: "meta"}
+CONTENT = 7       # an item's content stream: its text, sections and file reference
+FEED = 8          # the change feed: one record per item transaction, keyed by its LSN
+RIGHTS = 9        # AccessRights: the grants set on a path, keyed by the path
+FAMILY_EXT = {DOCS: "docs", FIELDS: "dict", EDGES_OUT: "eout", EDGES_IN: "ein", META: "meta",
+              CONTENT: "cont", FEED: "feed", RIGHTS: "rght"}
+HISTORY_FAMILIES = (DOCS, CONTENT)
 
 MEMTABLE_MAX_BYTES = 32 << 20
 FLUSH_AFTER_SEC = 60.0
@@ -199,6 +212,7 @@ class Store:
         self.stats = Stats()
         self._lock = threading.RLock()        # guards mem, frozen, segments, manifest
         self._flush_lock = threading.Lock()
+        self._commit_lock = threading.Lock()   # one write planned and logged at a time
         self._compact_lock = threading.Lock()
         self._pins: dict[int, int] = {}
         self._retired: list[Segment] = []
@@ -298,7 +312,9 @@ class Store:
             last = max(last, rec.lsn)
         self.applied_lsn = max(self.applied_lsn, checkpoint)
         if self.writable:
-            self.wal = WAL(self.wal_dir, last + 1, self._apply)
+            # Writes are serialised by the commit lock, so the log never
+            # has a group to wait for.
+            self.wal = WAL(self.wal_dir, last + 1, self._apply, group_window=0.0)
 
     # -- writing ----------------------------------------------------------
     def _apply(self, lsn: int, ops: list[Op]) -> None:
@@ -308,14 +324,31 @@ class Store:
         for listener in self.listeners:
             listener(lsn, ops)
 
-    def commit(self, ops: list[Op]) -> int:
+    @lanes.foreground()
+    def commit(self, ops: Iterable[Op] = (), *, prepare: Optional[Callable[[int], list[Op]]] = None,
+               full: bool = False) -> int:
         """Write one transaction; returns its LSN once it is durable against
-        a crash of the process and visible to reads."""
+        a crash of the process and visible to reads. `prepare(lsn)` runs
+        under the commit lock, given the LSN this transaction will have, and
+        returns more operations (or raises, and nothing is written). `full`
+        empties the drive's cache before it returns (F_FULLFSYNC)."""
         if not self.writable or self.wal is None:
             raise StoreReadOnly("; ".join(self.problems) or "read only")
-        if not ops:
-            return self.applied_lsn
-        lsn = self.wal.submit(ops)
+        ops = list(ops)
+        with self._commit_lock:
+            wal = self.wal
+            if wal is None:
+                raise StoreReadOnly("closed")
+            expected = wal.next_lsn
+            if prepare is not None:
+                ops += prepare(expected)
+            if not ops:
+                return self.applied_lsn
+            lsn = wal.submit(ops)
+            if lsn != expected:
+                raise RuntimeError(f"the log gave LSN {lsn}, not {expected}: a write bypassed the commit lock")
+            if full:
+                wal.full_barrier()
         if self.mem.bytes > MEMTABLE_MAX_BYTES:
             self.flush()
         return lsn
@@ -410,7 +443,7 @@ class Store:
         there was nothing to write."""
         if not self.writable or self.wal is None:
             return None
-        with self._flush_lock:
+        with lanes.foreground(), self._flush_lock:
             with self.wal.exclusive():
                 with self._lock:
                     if not self.mem.versions:
@@ -469,7 +502,7 @@ class Store:
         """Flush, then hard-link the live segments and copy the manifest
         into snap/<checkpoint>/; keep the newest `SNAPSHOTS_KEPT`."""
         self.flush()
-        with self._lock:
+        with lanes.foreground(), self._lock:
             current = self.manifest
             target = self.snap_dir / str(current.checkpoint_lsn)
             if not target.exists():
@@ -489,6 +522,35 @@ class Store:
         for old in snaps[:-SNAPSHOTS_KEPT]:
             shutil.rmtree(old, ignore_errors=True)
         return target
+
+    def newest_snapshot_age(self) -> Optional[float]:
+        """Seconds since the newest snapshot was made, or None with none."""
+        snaps = self.snapshots()
+        if not snaps:
+            return None
+        try:
+            return max(0.0, time.time() - snaps[-1].stat().st_mtime)
+        except OSError:
+            return None
+
+    def drop_external(self, family: int) -> int:
+        """Drop every file of an external family (vector rows), so it is
+        made again from the documents; returns how many entries went."""
+        self.flush()
+        with self._lock:
+            gone = [e for e in self.manifest.segments if e.get("external") and int(e["family"]) == family]
+            if not gone:
+                return 0
+            new = mf.Manifest(number=self.manifest.number + 1, checkpoint_lsn=self.manifest.checkpoint_lsn,
+                              next_gen=self.manifest.next_gen,
+                              segments=[e for e in self.manifest.segments if e not in gone],
+                              parts=self.manifest.parts)
+            mf.install(self.directory, new)
+            self.manifest = new
+        for entry in gone:
+            for path in entry_files(self.directory, entry):
+                path.unlink(missing_ok=True)
+        return len(gone)
 
     def snapshots(self) -> list[Path]:
         return sorted((p for p in self.snap_dir.iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
@@ -517,7 +579,7 @@ class Store:
         """Merge `gens` (or a tier) into one new generation; `purge` drops
         every version of the given keys, whatever pins them."""
         with self._compact_lock:
-            with self._lock:
+            with lanes.foreground(), self._lock:
                 gens = gens if gens is not None else self.pick_tier()
                 if not gens:
                     return None
@@ -533,7 +595,7 @@ class Store:
                         "drop_tombstones": oldest_gen in gens,
                         "purge": {str(f): sorted(k.hex() for k in keys) for f, keys in (purge or {}).items()}}
             entries = self._run_compaction(plan)
-            with self._lock:
+            with lanes.foreground(), self._lock:
                 kept = [e for e in self.manifest.segments if int(e["gen"]) not in gens]
                 new = mf.Manifest(number=self.manifest.number + 1,
                                   checkpoint_lsn=self.manifest.checkpoint_lsn,
@@ -621,7 +683,14 @@ class Store:
 
     # -- closing ----------------------------------------------------------
     def close(self) -> None:
+        """A clean close writes the memtable as a generation first, so the
+        next start opens segments instead of replaying the log (measured on
+        a copy of today's records: about 3 s against 9 s)."""
         if self.wal is not None:
+            try:
+                self.flush()
+            except Exception:  # noqa: BLE001 - the log still holds every write
+                log.warning("could not flush at close; the log will be replayed", exc_info=True)
             self.wal.close()
             self.wal = None
         with self._lock:
@@ -692,7 +761,9 @@ def compact_plan(plan: dict, parts: Iterable[DerivedPart], family_ext: dict[int,
     """Merge the plan's input generations into one: per key, every version
     newer than the oldest pin and the newest at or below it; tombstones
     dropped when the oldest generation is in the merge; purged keys gone
-    entirely. Reads only immutable files, so it runs in a child process."""
+    entirely. An item's document and content (a path key in
+    `HISTORY_FAMILIES`) keep every version, tombstones too: they are its
+    history. Reads only immutable files, so it runs in a child process."""
     directory = Path(plan["directory"])
     seg_dir = directory / "seg"
     pool = BlockPool(8 << 20)
@@ -712,8 +783,12 @@ def compact_plan(plan: dict, parts: Iterable[DerivedPart], family_ext: dict[int,
         gone = purge.get(family, set())
         last_key = None
         below_kept = False
+        history = family in HISTORY_FAMILIES
         for v in merge([s.scan() for s in by_family.get(family, [])]):
             if v.key in gone:
+                continue
+            if history and v.key[:1] == b"/":
+                yield v
                 continue
             if v.key != last_key:
                 last_key, below_kept = v.key, False

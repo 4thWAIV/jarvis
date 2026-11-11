@@ -10,7 +10,6 @@ no percentage, and nothing unmeasured ever reads as 0.
 import base64
 import importlib
 import json
-import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -42,13 +41,17 @@ def _event(five=None, seven=None, status="allowed", resets=T + WEEK):
     return {"status": status, "unifiedWindows": windows}
 
 
-def _rows(data_dir):
-    conn = sqlite3.connect(str(data_dir / "jarvis.db"))
-    try:
-        return conn.execute("SELECT at, provider, account, window, utilization, resets_at, status"
-                            " FROM usage_readings ORDER BY at, id").fetchall()
-    finally:
-        conn.close()
+def _days():
+    from jarvis import records, usage_history
+    return [r.data for r in records.scan(usage_history.ROOT, types=[usage_history.TYPE])]
+
+
+def _rows(_data_dir=None):
+    """Every reading kept, oldest first, as (at, provider, account, window,
+    utilization, resets_at, status)."""
+    found = [r for d in _days() for r in d["readings"]]
+    return [(r["at"], r["provider"], r["account"], r["window"], r["utilization"], r["resets_at"],
+             r["status"]) for r in sorted(found, key=lambda r: r["at"])]
 
 
 def test_every_weekly_reading_is_appended_and_no_five_hour_one(store, tmp_path):
@@ -108,33 +111,24 @@ def test_the_latest_stored_weekly_readings_are_backfilled_once(store, tmp_path):
     rows = sorted((r[0], r[3], r[4]) for r in _rows(tmp_path))
     assert rows == [(T - 7200, "seven_day", 30.0), (T - 3600, "seven_day", 35.0),
                     (T, "seven_day", 40.0), (T + 60, "seven_day", 42.0)]
-    # Never again: a second database connection does not add them twice.
-    usage_history._migrated.clear()
+    # Never again: a JARVIS started again does not add them twice.
+    usage_history._backfilled.clear()
     usage_store.record(_event(seven=0.43, resets=T + 86400), now=T + 120)
     assert len(_rows(tmp_path)) == 5
 
 
-def test_migration_2_drops_the_five_hour_history_already_kept(store, tmp_path):
-    _, usage_history = store
-    from jarvis import run_store
-    conn = sqlite3.connect(str(tmp_path / "jarvis.db"))
-    run_store.migrate(conn, "usage_history_schema", {1: usage_history._MIGRATIONS[1]}, "usage history")
-    conn.executemany(
-        "INSERT INTO usage_readings (at, provider, account, window, utilization, resets_at, status)"
-        " VALUES (?, 'anthropic', NULL, ?, 10.0, ?, '')",
-        [(T, "five_hour", T + HOUR), (T, "seven_day", T + WEEK)])
-    conn.execute("INSERT INTO usage_hourly (hour, provider, account, window, samples, measured, low, high,"
-                 " last, last_at, resets_at) VALUES (?, 'anthropic', '', 'five_hour', 1, 1, 5, 5, 5, ?, ?)",
-                 (T - WEEK, T - WEEK, T - WEEK + HOUR))
-    conn.commit()
-    conn.close()
-    usage_history._migrated.clear()
-    usage_history.read("anthropic", now=T)
-    assert [r[3] for r in _rows(tmp_path)] == ["seven_day"]
-    conn = sqlite3.connect(str(tmp_path / "jarvis.db"))
-    assert conn.execute("SELECT COUNT(*) FROM usage_hourly").fetchone()[0] == 0
-    assert conn.execute("SELECT version FROM usage_history_schema").fetchone()[0] == 2
-    conn.close()
+def test_a_reading_of_another_window_on_record_is_never_read(store):
+    """A five-hour reading moved from an older record stays on record (the
+    move is lossless) but is never read as the week."""
+    usage_store, usage_history = store
+    from jarvis import records
+    usage_store.record(_event(seven=0.1), now=T)
+    path = usage_history.path_of("anthropic", usage_history.day_of(T))
+    records.update(path, lambda d: {**d, "readings": d["readings"] + [{
+        "at": T + 1, "provider": "anthropic", "account": None, "window": "five_hour",
+        "utilization": 77.0, "resets_at": T + HOUR, "status": ""}]})
+    got = usage_history.read("anthropic", T - 10, T + 10, now=T + 10)
+    assert [p["used"] for w in got["weeks"] for p in w["points"]] == [10.0]
 
 
 def test_old_readings_fold_into_hourly_summaries(store, tmp_path):
@@ -147,10 +141,8 @@ def test_old_readings_fold_into_hourly_summaries(store, tmp_path):
     later = T + usage_history.RAW_KEEP_SEC + 2 * HOUR
     folded = usage_history.compact(now=later)
     assert folded == 5 and _rows(tmp_path) == []
-    conn = sqlite3.connect(str(tmp_path / "jarvis.db"))
-    hours = conn.execute("SELECT hour, window, samples, measured, low, high, last FROM usage_hourly"
-                         " ORDER BY hour").fetchall()
-    conn.close()
+    hours = sorted((h["hour"], h["window"], h["samples"], h["measured"], h["low"], h["high"], h["last"])
+                   for d in _days() for h in d["hourly"])
     assert hours == [(T, "seven_day", 4, 3, 10.0, 30.0, 20.0),
                      (T + HOUR, "seven_day", 1, 1, 50.0, 50.0, 50.0)]
     got = usage_history.read("anthropic", T, T + 2 * HOUR, "hour", now=later)
@@ -209,10 +201,11 @@ def test_a_request_that_is_not_one_is_refused(store):
 
 def test_a_failing_history_never_loses_the_reading(store, monkeypatch):
     usage_store, usage_history = store
+    from jarvis import records
 
     def broken(*a, **k):
-        raise sqlite3.OperationalError("disk I/O error")
-    monkeypatch.setattr(usage_history, "_connect", broken)
+        raise records.RecordsUnavailable("the engine is down")
+    monkeypatch.setattr(records, "update", broken)
     usage_store.record(_event(seven=0.4), now=T)
     assert usage_store.latest()["windows"]["seven_day"]["utilization"] == 40.0
 

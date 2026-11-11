@@ -5,7 +5,7 @@ and the arrival announcer, and the page's routes over them.
 Each part is its stream's module; this one only connects them, so each has
 exactly one instance and one source for who this JARVIS is:
 
-    store          messaging_store.SqliteMessagingStore (the JARVIS database)
+    store          messaging_store.SqliteMessagingStore (documents in the record engine)
     files          messaging_files.FileSnapshots, sending through the
                    current pairing's transport
     locations      attachment_locations.AttachmentLocations: where a

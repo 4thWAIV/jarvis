@@ -26,6 +26,10 @@ A wait with no link, open for more than UNLINKED_AFTER_SEC, is shown as
 
 The stores' own writers do the writing; this module only knows what a link
 is, which answer ends which link, and who to tell once it is committed.
+Work items, workflows and packages are documents (`records`): "the same
+transaction" is one `records.atomic` unit, the answer's writer's own, which
+`settle` stages every ended wait into, so the answer and every wait it ends
+land in one conditioned write, or not at all.
 """
 
 from __future__ import annotations
@@ -34,7 +38,6 @@ import logging
 import re
 import threading
 import time
-from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -151,24 +154,23 @@ class Settled:
         self.work |= other.work
 
 
-def settle(conn, found: Answer, now: float) -> Settled:
-    """End every open wait and waiting piece `found` answers, in the
-    caller's open transaction. The caller commits, then calls `tell`."""
+def settle(unit, found: Answer, now: float) -> Settled:
+    """End every open wait and waiting piece `found` answers, staged in the
+    caller's unit (`records.atomic`), the one its answer is written in. The
+    caller's unit lands, then it calls `tell`."""
     from jarvis import work_store, workflow_store
-    return Settled(workflows=workflow_store.end_waits(conn, found, now),
-                   work=work_store.end_waits(conn, found, now))
+    return Settled(workflows=workflow_store.end_waits(unit, found, now),
+                   work=work_store.end_waits(unit, found, now))
 
 
 def settle_now(found: Answer) -> Settled:
-    """`settle` in a transaction of its own, for an answer recorded outside
-    JARVIS's database (a package's decide.py writes its own record), then
-    told."""
-    from jarvis import run_store, work_store, workflow_store
-    work_store.ready()
-    workflow_store.ready()
-    with closing(run_store._connect()) as conn:
-        moved = settle(conn, found, time.time())
-        conn.commit()
+    """`settle` in a unit of its own, for an answer recorded outside
+    JARVIS's records (a package's decide.py writes its own file), then
+    told. His answer: written with full sync."""
+    from jarvis import records
+    now = time.time()
+    moved = records.atomic(lambda unit: settle(unit, found, now), by=records.TIM,
+                           change="wait_ended", summary=found.said(), full_sync=True)
     tell(moved)
     return moved
 
@@ -219,15 +221,16 @@ def answered_package(ref: str, key: Optional[str]) -> Optional[Answer]:
         return None
 
 
-def already(conn, link: Link, owner_kind: str, owner_id: str) -> Optional[Answer]:
+def already(unit, link: Link, owner_kind: str, owner_id: str) -> Optional[Answer]:
     """The answer of his that already ends `link` (held by a wait of
-    `owner_kind` `owner_id`), or None while there is none."""
+    `owner_kind` `owner_id`), or None while there is none; the record it is
+    read from is read through `unit` (a condition of its write)."""
     from jarvis import work_store, workflow_store
     stores = {WORK: work_store.decision_answer, WORKFLOW: workflow_store.decision_answer}
     if link.kind == DECISION:
-        return stores[owner_kind](conn, owner_id, link.key)
+        return stores[owner_kind](unit, owner_id, link.key)
     if link.kind in stores:
-        return stores[link.kind](conn, link.ref, link.key)
+        return stores[link.kind](unit, link.ref, link.key)
     return answered_package(link.ref, link.key)
 
 

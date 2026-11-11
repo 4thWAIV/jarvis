@@ -1079,7 +1079,7 @@ def test_the_default_timeout_is_overridable_by_env(env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_store_failure_inside_spawn_still_fails_the_run(env, monkeypatch):
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
 
@@ -1087,12 +1087,12 @@ async def test_a_store_failure_inside_spawn_still_fails_the_run(env, monkeypatch
 
     def boom(run_id, **fields):
         if "requested_model" in fields:
-            raise sqlite3.OperationalError("database is locked")
+            raise EngineUnavailable("database is locked")
         return real(run_id, **fields)
 
     monkeypatch.setattr(store, "update_run", boom)
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(EngineUnavailable):
         await ex.spawn("do a thing", "proj", str(tmp), "api")
 
     rows = store.list_runs(limit=5)
@@ -1125,16 +1125,18 @@ async def test_a_task_that_cannot_be_created_still_fails_the_run(env, monkeypatc
 async def test_failing_an_undriven_run_never_raises_over_the_original(env, monkeypatch):
     """If the store is the thing that is broken, the recovery write fails too.
     The caller must still see the ORIGINAL exception, not the second one."""
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
 
-    def always_boom(run_id, **fields):
-        raise sqlite3.OperationalError("disk I/O error")
+    def always_boom(run_id, *args, **fields):
+        raise EngineUnavailable("disk I/O error")
 
+    # The failed spawn's write and the recovery's terminal write both fail.
     monkeypatch.setattr(store, "update_run", always_boom)
+    monkeypatch.setattr(store, "finish_run", always_boom)
 
-    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+    with pytest.raises(EngineUnavailable, match="disk I/O error"):
         await ex.spawn("do a thing", "proj", str(tmp), "api")
 
 
@@ -1347,25 +1349,32 @@ async def test_the_terminal_write_does_not_freeze_the_loop(env, monkeypatch):
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id, timeout=20)
 
-    # A second run whose terminal write is slow.
-    real_update = store.update_run
+    # A second run whose terminal write is slow. The terminal transition is
+    # `finish_run`, one conditioned write; every call of it is terminal. The
+    # loop's turns are counted across the write itself, so a run that is
+    # quick or slow around it cannot decide the result.
+    real_finish = store.finish_run
+    ticker = _LoopTicker()
+    during: list[int] = []
 
-    def slow_update(rid, **fields):
-        if fields.get("status") in store.RunStatus.TERMINAL:
-            time.sleep(0.4)
-        return real_update(rid, **fields)
+    def slow_finish(rid, status, **fields):
+        before = ticker.ticks
+        time.sleep(0.4)
+        during.append(ticker.ticks - before)
+        return real_finish(rid, status, **fields)
 
-    monkeypatch.setattr(store, "update_run", slow_update)
+    monkeypatch.setattr(store, "finish_run", slow_finish)
 
-    async with _LoopTicker() as ticker:
+    async with ticker:
         second = await ex.spawn("again", "proj", str(tmp), "api")
         await ex.wait_for(second, timeout=20)
 
     assert store.get_run(second)["status"] == store.RunStatus.SUCCEEDED
-    # 0.4s of blocking would cost ~80 ticks. Anything above a couple of dozen
-    # means the loop kept turning through the write.
-    assert ticker.ticks > 30, (
-        f"the loop only got {ticker.ticks} turns during a 0.4s store write — "
+    assert during, "the terminal write never went through finish_run"
+    # 0.4s at one turn per 5ms is ~80 turns; a write on the loop thread gets
+    # none. Anything above a couple of dozen means the loop kept turning.
+    assert during[0] > 30, (
+        f"the loop only got {during[0]} turns during a 0.4s store write — "
         "it was blocked on the loop thread")
 
 
@@ -1374,21 +1383,26 @@ async def test_the_running_transition_does_not_freeze_the_loop(env, monkeypatch)
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
     real_update = store.update_run
+    ticker = _LoopTicker()
+    during: list[int] = []
 
     def slow_update(rid, **fields):
         if fields.get("status") == store.RunStatus.RUNNING:
+            before = ticker.ticks
             time.sleep(0.4)
+            during.append(ticker.ticks - before)
         return real_update(rid, **fields)
 
     monkeypatch.setattr(store, "update_run", slow_update)
 
-    async with _LoopTicker() as ticker:
+    async with ticker:
         run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
         await ex.wait_for(run_id, timeout=20)
 
     assert store.get_run(run_id)["status"] == store.RunStatus.SUCCEEDED
-    assert ticker.ticks > 30, (
-        f"the loop only got {ticker.ticks} turns during a 0.4s store write")
+    assert during, "the RUNNING transition never went through update_run"
+    assert during[0] > 30, (
+        f"the loop only got {during[0]} turns during a 0.4s store write")
 
 
 @pytest.mark.asyncio

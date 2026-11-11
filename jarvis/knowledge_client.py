@@ -10,14 +10,16 @@ answers from SQLite and Markdown instead.
 Python tests reach the engine only through this module, with
 `InProcessTransport` in place of HTTP, so a bare `pytest` starts no engine.
 
-The supervisor starts `python -m jarvis.knowledge serve` with a pipe on its
-stdin (closing it ends the engine, even across the server's `os.execv`),
-pings its health every `PING_EVERY_SEC`, restarts it after
-`RESTART_BACKOFF_SEC`, leaves it down after `RESTARTS_MAX` restarts within
-`RESTART_WINDOW_SEC`, and restarts it when its physical footprint passes
-`FOOTPRINT_LIMIT` times its budget. It never adopts an engine it did not
-start: an earlier engine still holding the lock is given time to exit, then
-ended by its pid.
+The engine is always up (UDS plan, "Always up"). The supervisor starts
+`python -m jarvis.knowledge serve` with a pipe on its stdin (closing it ends
+the engine, even across the server's `os.execv`), pings its health every
+`PING_EVERY_SEC`, and restarts it whenever it exits or stops answering:
+the first restart at once, then after each delay of `RESTART_BACKOFF_SEC`
+while it keeps dying, the delays starting over once it has stayed healthy
+`STABLE_AFTER_SEC`. It never gives up. Its physical footprint is measured
+and reported against its budget, never acted on. It never adopts an engine
+it did not start: an earlier engine still holding the lock is given time to
+exit, then ended by its pid.
 """
 from __future__ import annotations
 
@@ -39,18 +41,25 @@ log = logging.getLogger("jarvis.knowledge_client")
 
 PING_EVERY_SEC = 5.0
 PING_FAILURES_MAX = 2
-RESTART_BACKOFF_SEC = (1.0, 5.0, 30.0)
-RESTARTS_MAX = 3
-RESTART_WINDOW_SEC = 600.0
-FOOTPRINT_LIMIT = 1.5
+RESTART_BACKOFF_SEC = (0.0, 1.0, 2.0, 5.0)
+STABLE_AFTER_SEC = 60.0
+READY_WAIT_SEC = 60.0
+ENGINE_LOG_KEEP_BYTES = 1 << 20     # past this the engine's log keeps only its last quarter
 PREVIOUS_EXIT_WAIT_SEC = 10.0
 TERM_GRACE_SEC = 5.0
 DEFAULT_DEADLINE_SEC = 0.5
 
 
 def enabled() -> bool:
-    """`JARVIS_KNOWLEDGE`: off by default until ingest exists (build plan)."""
+    """`JARVIS_KNOWLEDGE`: ingest, embedding and the knowledge tools, off by
+    default. The engine itself runs whatever it says (`autostart`)."""
     return os.getenv("JARVIS_KNOWLEDGE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def autostart() -> bool:
+    """`JARVIS_ENGINE_AUTOSTART`, on by default: the server starts the engine
+    first thing and keeps it up. Every test sets it off."""
+    return os.getenv("JARVIS_ENGINE_AUTOSTART", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def memory_budget_mb() -> int:
@@ -242,12 +251,14 @@ def footprint_bytes(pid: int) -> Optional[int]:
 # --- supervision ----------------------------------------------------------
 
 class Supervisor:
-    """Starts, watches and ends the one engine this server owns.
+    """Starts, watches and ends the one engine this server owns, and keeps
+    it up.
 
-    `tick()` is called every `PING_EVERY_SEC` by the server's loop; it does
-    one step at a time and never blocks long, so it can run beside the
-    voice path. Every collaborator (spawn, clock, health, footprint) is a
-    parameter, so the policy is tested without a process.
+    `tick()` is called by the server's loop, every second while the engine
+    is not running and every `PING_EVERY_SEC` while it is; it does one step
+    at a time and never blocks long, so it can run beside the voice path.
+    Every collaborator (spawn, clock, health, footprint) is a parameter, so
+    the policy is tested without a process.
     """
 
     def __init__(self, *, spawn: Optional[Callable[[], subprocess.Popen]] = None,
@@ -261,12 +272,15 @@ class Supervisor:
         self._footprint = footprint
         self.budget_bytes = (budget_mb or memory_budget_mb()) << 20
         self.proc: Optional[subprocess.Popen] = None
-        self.state = "idle"          # idle, running, restarting, down
-        self.restarts: list[float] = []
+        self.state = "idle"          # idle, running, restarting
+        self.restarts = 0            # every restart since this server started
+        self.failures = 0            # deaths in a row, for the backoff
         self.ping_failures = 0
         self._restart_at: Optional[float] = None
+        self._running_since: Optional[float] = None
         self.last_reason: Optional[str] = None
         self.last_health: Optional[dict] = None
+        self.footprint: Optional[int] = None
         self.client = KnowledgeClient(HTTPTransport(self.pid))
 
     def pid(self) -> Optional[int]:
@@ -275,19 +289,24 @@ class Supervisor:
         return self.proc.pid
 
     def start(self) -> None:
-        end_previous_engine()
-        self.proc = self._spawn()
+        """Start the engine; a start that fails is tried again like a death."""
+        self._restart_at = None
+        try:
+            end_previous_engine()
+            self.proc = self._spawn()
+        except OSError as e:
+            self._schedule_restart(self._clock(), f"could not start: {e}")
+            return
         self.state = "running"
         self.ping_failures = 0
+        self.last_health = None
+        self._running_since = self._clock()
         log.info("knowledge engine started, pid %s", self.proc.pid)
 
     def tick(self) -> str:
         now = self._clock()
-        if self.state == "down":
-            return self.state
         if self.state == "restarting":
             if self._restart_at is not None and now >= self._restart_at:
-                self._restart_at = None
                 self.start()
             return self.state
         if self.proc is None:
@@ -301,11 +320,14 @@ class Supervisor:
                 return self._schedule_restart(now, "stopped answering its health check")
             return self.state
         self.ping_failures = 0
-        used = self._footprint(self.proc.pid)
-        if used is not None and used > FOOTPRINT_LIMIT * self.budget_bytes:
-            self._end_child()
-            return self._schedule_restart(now, f"physical footprint {used >> 20} MB over the limit")
+        if self._running_since is not None and now - self._running_since >= STABLE_AFTER_SEC:
+            self.failures = 0
+        self.footprint = self._footprint(self.proc.pid)
         return self.state
+
+    def ready(self) -> bool:
+        """Whether the engine runs and has answered its health check."""
+        return self.state == "running" and self.pid() is not None and self._healthy()
 
     def _healthy(self) -> bool:
         try:
@@ -316,20 +338,20 @@ class Supervisor:
         return isinstance(body, dict) and body.get("state") in ("ok", "degraded")
 
     def _schedule_restart(self, now: float, reason: str) -> str:
+        """Restart at once the first time, then after a short, capped delay
+        while it keeps dying; never give up."""
         self.last_reason = reason
-        self.restarts = [t for t in self.restarts if now - t < RESTART_WINDOW_SEC]
-        if len(self.restarts) >= RESTARTS_MAX:
-            self.state = "down"
-            self.proc = None
-            log.error("knowledge engine left down after %d restarts in %d minutes: %s",
-                      RESTARTS_MAX, int(RESTART_WINDOW_SEC // 60), reason)
-            return self.state
-        delay = RESTART_BACKOFF_SEC[min(len(self.restarts), len(RESTART_BACKOFF_SEC) - 1)]
-        self.restarts.append(now)
+        self.last_health = None
+        delay = RESTART_BACKOFF_SEC[min(self.failures, len(RESTART_BACKOFF_SEC) - 1)]
+        self.failures += 1
+        self.restarts += 1
         self.state = "restarting"
         self.proc = None
+        self._running_since = None
         self._restart_at = now + delay
         log.warning("knowledge engine %s; restarting in %.0f s", reason, delay)
+        if delay <= 0:
+            self.start()
         return self.state
 
     def _end_child(self) -> None:
@@ -337,19 +359,60 @@ class Supervisor:
             return
         _end_process(self.proc)
 
+    def health(self) -> dict:
+        """The supervisor's own facts, for Diagnostics."""
+        return {"state": self.state, "reason": self.last_reason, "restarts": self.restarts,
+                "footprint_mb": None if self.footprint is None else self.footprint >> 20,
+                "budget_mb": self.budget_bytes >> 20}
+
     def stop(self) -> None:
         """Close the pipe (the engine flushes and exits), then make sure."""
         self.state = "idle"
+        self._restart_at = None
         if self.proc is not None:
             _end_process(self.proc)
             self.proc = None
 
 
 def _spawn_engine() -> subprocess.Popen:
+    """The engine, its stderr appended to its own log
+    (`data_paths.knowledge_engine_log_path`), so a server that cannot reach
+    it can say what it last said (`engine_log_tail`)."""
     env = dict(os.environ)
-    return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
-                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                            stderr=None, env=env, close_fds=True)
+    path = data_paths.knowledge_engine_log_path()
+    _trim_log(path)
+    with open(path, "ab") as engine_log:
+        return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                stderr=engine_log, env=env, close_fds=True)
+
+
+def _trim_log(path) -> None:
+    """Keep the engine's log small: past ENGINE_LOG_KEEP_BYTES, its last
+    quarter only."""
+    try:
+        if path.stat().st_size <= ENGINE_LOG_KEEP_BYTES:
+            return
+        with open(path, "rb") as f:
+            f.seek(-(ENGINE_LOG_KEEP_BYTES // 4), os.SEEK_END)
+            kept = f.read()
+        path.write_bytes(kept[kept.find(b"\n") + 1:])
+    except OSError:
+        pass
+
+
+def engine_log_tail(lines: int = 40) -> str:
+    """The last lines the engine wrote, for a failure that must say why."""
+    try:
+        text = data_paths.knowledge_engine_log_path().read_text(errors="replace")
+    except OSError:
+        return "(the knowledge engine wrote no log)"
+    return "\n".join(text.splitlines()[-lines:]) or "(the knowledge engine's log is empty)"
+
+
+class EngineNotUp(RuntimeError):
+    """The engine did not answer at startup. JARVIS's records live there, so
+    the server does not start without it."""
 
 
 def _end_process(proc: subprocess.Popen) -> None:

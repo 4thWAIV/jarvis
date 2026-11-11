@@ -392,6 +392,9 @@ Folders and projects are two different lists:
   changes its role, points it at its new location or checks it now, when he
   asks. `folder_candidates` lists what discovery found that is not
   registered; `change_folder_candidate` ignores or restores one.
+- How many documents of each folder the knowledge engine holds, and how many
+  still wait for their vectors, is `folder_document_counts` (by folder ID; the
+  label comes from `list_folders`), the counts the Folders view shows.
 
 ## People and the team
 

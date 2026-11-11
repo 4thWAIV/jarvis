@@ -188,6 +188,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__change_topic",
     "mcp__jarvis__reindex_knowledge",
     "mcp__jarvis__knowledge_indexes",
+    "mcp__jarvis__folder_document_counts",
     "mcp__jarvis__change_knowledge_index",
     "mcp__jarvis__knowledge_seeds",
     "mcp__jarvis__change_knowledge_seed",

@@ -1,0 +1,1260 @@
+{
+ "note": "JARVIS's SQLite schema as it stood when the records moved into the engine (round 3 of docs/planning/knowledge-engine/plan-uds.md), and each store's schema version; export-sqlite builds a file with it when the engine holds no move manifest (an install that never had jarvis.db).",
+ "schema": {
+  "application_id": 0,
+  "encoding": "UTF-8",
+  "objects": [
+   {
+    "name": "runs",
+    "sql": "CREATE TABLE runs (\n                id            TEXT PRIMARY KEY,\n                project_name  TEXT NOT NULL,\n                project_path  TEXT NOT NULL,\n                prompt        TEXT NOT NULL,\n                origin        TEXT NOT NULL,\n                status        TEXT NOT NULL,\n                resume_from   TEXT,\n                result_text   TEXT DEFAULT '',\n                summary       TEXT DEFAULT '',\n                error         TEXT DEFAULT '',\n                exit_code     INTEGER,\n                pid           INTEGER,\n                cost_usd      REAL    DEFAULT 0,\n                input_tokens  INTEGER DEFAULT 0,\n                output_tokens INTEGER DEFAULT 0,\n                cache_read_tokens     INTEGER DEFAULT 0,\n                cache_creation_tokens INTEGER DEFAULT 0,\n                num_turns     INTEGER DEFAULT 0,\n                model         TEXT DEFAULT '',\n                requested_model TEXT DEFAULT '',\n                is_error      INTEGER DEFAULT 0,\n                created_at    REAL NOT NULL,\n                started_at    REAL,\n                ended_at      REAL\n            , folder_id TEXT, package_id TEXT, context_sha256 TEXT, project_id TEXT, work_id TEXT)",
+    "tbl_name": "runs",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_runs_1",
+    "sql": null,
+    "tbl_name": "runs",
+    "type": "index"
+   },
+   {
+    "name": "idx_runs_status",
+    "sql": "CREATE INDEX idx_runs_status  ON runs(status)",
+    "tbl_name": "runs",
+    "type": "index"
+   },
+   {
+    "name": "idx_runs_created",
+    "sql": "CREATE INDEX idx_runs_created ON runs(created_at DESC)",
+    "tbl_name": "runs",
+    "type": "index"
+   },
+   {
+    "name": "run_events",
+    "sql": "CREATE TABLE run_events (\n                id      INTEGER PRIMARY KEY AUTOINCREMENT,\n                run_id  TEXT    NOT NULL REFERENCES runs(id),\n                seq     INTEGER NOT NULL,\n                ts      REAL    NOT NULL,\n                kind    TEXT    NOT NULL,\n                payload TEXT    NOT NULL\n            )",
+    "tbl_name": "run_events",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_sequence",
+    "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+    "tbl_name": "sqlite_sequence",
+    "type": "table"
+   },
+   {
+    "name": "idx_events_run_seq",
+    "sql": "CREATE UNIQUE INDEX idx_events_run_seq\n                ON run_events(run_id, seq)",
+    "tbl_name": "run_events",
+    "type": "index"
+   },
+   {
+    "name": "steers",
+    "sql": "CREATE TABLE steers (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                session_id TEXT NOT NULL,\n                voice_name TEXT NOT NULL,\n                project TEXT NOT NULL,\n                prompt TEXT NOT NULL,\n                outcome TEXT NOT NULL,\n                created_at REAL NOT NULL\n            )",
+    "tbl_name": "steers",
+    "type": "table"
+   },
+   {
+    "name": "idx_steers_created",
+    "sql": "CREATE INDEX idx_steers_created ON steers(created_at DESC)",
+    "tbl_name": "steers",
+    "type": "index"
+   },
+   {
+    "name": "agents",
+    "sql": "CREATE TABLE agents (\n                session_id TEXT PRIMARY KEY,\n                name TEXT NOT NULL,\n                active INTEGER NOT NULL DEFAULT 0\n            , state TEXT NOT NULL DEFAULT '', custom_name TEXT, last_message_at REAL NOT NULL DEFAULT 0, ended_at REAL)",
+    "tbl_name": "agents",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agents_1",
+    "sql": null,
+    "tbl_name": "agents",
+    "type": "index"
+   },
+   {
+    "name": "messages",
+    "sql": "CREATE TABLE messages (\n                id            INTEGER PRIMARY KEY AUTOINCREMENT,\n                session_id    TEXT NOT NULL,\n                provider      TEXT NOT NULL,          -- \"anthropic\", \"openai\"\n                agent_name    TEXT NOT NULL,          -- the name it was sent under\n                project       TEXT NOT NULL,\n                capture_id    INTEGER,                -- the capture it came from\n                text          TEXT NOT NULL,          -- exactly what was sent\n                status        TEXT NOT NULL,          -- see MessageStatus\n                staged_at     REAL NOT NULL,\n                sent_at       REAL,\n                delivered_at  REAL,                   -- seen in the session's transcript\n                started_at    REAL,                   -- the session's turn on it began\n                answered_at   REAL,                   -- that turn ended\n                reply         TEXT,                   -- the turn's final answer, as said\n                failure       TEXT                    -- why, when status is failed\n            )",
+    "tbl_name": "messages",
+    "type": "table"
+   },
+   {
+    "name": "idx_messages_status",
+    "sql": "CREATE INDEX idx_messages_status ON messages(status)",
+    "tbl_name": "messages",
+    "type": "index"
+   },
+   {
+    "name": "idx_messages_staged",
+    "sql": "CREATE INDEX idx_messages_staged ON messages(staged_at DESC)",
+    "tbl_name": "messages",
+    "type": "index"
+   },
+   {
+    "name": "session_messages",
+    "sql": "CREATE TABLE session_messages (\n                id           INTEGER PRIMARY KEY AUTOINCREMENT,\n                project      TEXT NOT NULL,     -- the folder it was dropped in\n                agent_name   TEXT NOT NULL,     -- who sent it, as the agents list names them\n                subject      TEXT NOT NULL,\n                body         TEXT NOT NULL,\n                received_at  REAL NOT NULL,\n                read_at      REAL               -- when it was first read to the brain\n            , sender_session TEXT, sender_evidence TEXT, sender_subagent TEXT)",
+    "tbl_name": "session_messages",
+    "type": "table"
+   },
+   {
+    "name": "idx_session_messages_received",
+    "sql": "CREATE INDEX idx_session_messages_received\n                ON session_messages(received_at DESC)",
+    "tbl_name": "session_messages",
+    "type": "index"
+   },
+   {
+    "name": "workflows",
+    "sql": "CREATE TABLE workflows (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        project TEXT NOT NULL,\n        state TEXT NOT NULL,\n        phase TEXT,\n        agents TEXT NOT NULL DEFAULT '[]',\n        started_at REAL NOT NULL,\n        last_event_at REAL NOT NULL,\n        last_summary TEXT NOT NULL DEFAULT ''\n    , finished_at REAL, dismissed_at REAL, reporter TEXT NOT NULL DEFAULT '', work TEXT NOT NULL DEFAULT '')",
+    "tbl_name": "workflows",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_workflows_1",
+    "sql": null,
+    "tbl_name": "workflows",
+    "type": "index"
+   },
+   {
+    "name": "workflow_items",
+    "sql": "CREATE TABLE workflow_items (\n        workflow_id TEXT NOT NULL REFERENCES workflows(id),\n        slug TEXT NOT NULL,\n        kind TEXT NOT NULL,\n        phase TEXT,\n        title TEXT NOT NULL,\n        state TEXT NOT NULL,\n        done INTEGER,\n        total INTEGER,\n        position INTEGER NOT NULL,\n        PRIMARY KEY (workflow_id, slug)\n    )",
+    "tbl_name": "workflow_items",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_workflow_items_1",
+    "sql": null,
+    "tbl_name": "workflow_items",
+    "type": "index"
+   },
+   {
+    "name": "workflow_open",
+    "sql": "CREATE TABLE workflow_open (\n        workflow_id TEXT NOT NULL REFERENCES workflows(id),\n        kind TEXT NOT NULL,\n        key TEXT NOT NULL,\n        summary TEXT NOT NULL,\n        detail TEXT NOT NULL,\n        opened_at REAL NOT NULL,\n        PRIMARY KEY (workflow_id, kind, key)\n    )",
+    "tbl_name": "workflow_open",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_workflow_open_1",
+    "sql": null,
+    "tbl_name": "workflow_open",
+    "type": "index"
+   },
+   {
+    "name": "workflow_events",
+    "sql": "CREATE TABLE workflow_events (\n        seq INTEGER PRIMARY KEY AUTOINCREMENT,\n        workflow_id TEXT NOT NULL REFERENCES workflows(id),\n        kind TEXT NOT NULL,\n        item TEXT,\n        summary TEXT NOT NULL,\n        detail TEXT NOT NULL,\n        at REAL NOT NULL\n    , reporter TEXT NOT NULL DEFAULT '')",
+    "tbl_name": "workflow_events",
+    "type": "table"
+   },
+   {
+    "name": "workflow_events_by_workflow",
+    "sql": "CREATE INDEX workflow_events_by_workflow\n        ON workflow_events (workflow_id, seq)",
+    "tbl_name": "workflow_events",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items",
+    "sql": "CREATE TABLE conversation_items (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        at REAL NOT NULL,\n        kind TEXT NOT NULL,\n        text TEXT NOT NULL,\n        agent_session_id TEXT,\n        agent_name TEXT,\n        message_id INTEGER,\n        session_message_id INTEGER,\n        capture_id INTEGER,\n        detail TEXT NOT NULL DEFAULT '{}'\n    , counterpart_kind TEXT, counterpart_ref TEXT, sender_evidence TEXT, sender_subagent TEXT, source_kind TEXT, source_id TEXT, sender TEXT, sender_name TEXT, about TEXT, carries TEXT, state TEXT, state_at REAL)",
+    "tbl_name": "conversation_items",
+    "type": "table"
+   },
+   {
+    "name": "conversation_items_by_agent",
+    "sql": "CREATE INDEX conversation_items_by_agent\n        ON conversation_items (agent_session_id, id)",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_once_per_message",
+    "sql": "CREATE UNIQUE INDEX conversation_items_once_per_message\n        ON conversation_items (kind, message_id)\n        WHERE message_id IS NOT NULL AND kind IN ('to_agent', 'answer')",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_once_per_session_message",
+    "sql": "CREATE UNIQUE INDEX conversation_items_once_per_session_message\n        ON conversation_items (session_message_id)\n        WHERE session_message_id IS NOT NULL",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "voice_samples",
+    "sql": "CREATE TABLE voice_samples (\n        at REAL NOT NULL,\n        capture TEXT,\n        received_sec REAL, decoded_sec REAL, backlog_sec REAL, oldest_sec REAL,\n        rtf REAL,\n        loop_delay_ms REAL, process_cpu REAL, load_avg REAL,\n        frames_captured INTEGER, frames_sent INTEGER, held_sec REAL, socket_sec REAL,\n        long_task_ms REAL, long_tasks INTEGER, tab_hidden INTEGER,\n        notices INTEGER, notices_by_source TEXT,\n        voice_msgs INTEGER, session_msgs INTEGER, renders INTEGER,\n        finals INTEGER, typed INTEGER, quiet INTEGER,\n        state TEXT NOT NULL, cause TEXT\n    , cause_code TEXT, cause_values TEXT)",
+    "tbl_name": "voice_samples",
+    "type": "table"
+   },
+   {
+    "name": "voice_samples_by_time",
+    "sql": "CREATE INDEX voice_samples_by_time ON voice_samples (at)",
+    "tbl_name": "voice_samples",
+    "type": "index"
+   },
+   {
+    "name": "voice_events",
+    "sql": "CREATE TABLE voice_events (\n        id INTEGER PRIMARY KEY,\n        at REAL NOT NULL,\n        capture TEXT,\n        kind TEXT NOT NULL,\n        source TEXT, text TEXT,\n        cause TEXT, top_processes TEXT\n    , cause_code TEXT, cause_values TEXT, lost_sec REAL)",
+    "tbl_name": "voice_events",
+    "type": "table"
+   },
+   {
+    "name": "voice_events_by_time",
+    "sql": "CREATE INDEX voice_events_by_time ON voice_events (at)",
+    "tbl_name": "voice_events",
+    "type": "index"
+   },
+   {
+    "name": "human_messaging_schema",
+    "sql": "CREATE TABLE human_messaging_schema (version INTEGER NOT NULL)",
+    "tbl_name": "human_messaging_schema",
+    "type": "table"
+   },
+   {
+    "name": "human_drafts",
+    "sql": "CREATE TABLE human_drafts (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id))",
+    "tbl_name": "human_drafts",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_drafts_1",
+    "sql": null,
+    "tbl_name": "human_drafts",
+    "type": "index"
+   },
+   {
+    "name": "human_drafts_thread",
+    "sql": "CREATE INDEX human_drafts_thread\n            ON human_drafts (server_id, owner, thread_id)",
+    "tbl_name": "human_drafts",
+    "type": "index"
+   },
+   {
+    "name": "human_sends",
+    "sql": "CREATE TABLE human_sends (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            content_revision INTEGER NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id))",
+    "tbl_name": "human_sends",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_sends_1",
+    "sql": null,
+    "tbl_name": "human_sends",
+    "type": "index"
+   },
+   {
+    "name": "human_approved",
+    "sql": "CREATE TABLE human_approved (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            content_revision INTEGER NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id, content_revision))",
+    "tbl_name": "human_approved",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_approved_1",
+    "sql": null,
+    "tbl_name": "human_approved",
+    "type": "index"
+   },
+   {
+    "name": "human_messages",
+    "sql": "CREATE TABLE human_messages (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL, incoming INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id))",
+    "tbl_name": "human_messages",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_messages_1",
+    "sql": null,
+    "tbl_name": "human_messages",
+    "type": "index"
+   },
+   {
+    "name": "human_messages_thread",
+    "sql": "CREATE INDEX human_messages_thread\n            ON human_messages (server_id, owner, thread_id)",
+    "tbl_name": "human_messages",
+    "type": "index"
+   },
+   {
+    "name": "human_receipts",
+    "sql": "CREATE TABLE human_receipts (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            revision INTEGER NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id))",
+    "tbl_name": "human_receipts",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_receipts_1",
+    "sql": null,
+    "tbl_name": "human_receipts",
+    "type": "index"
+   },
+   {
+    "name": "human_work",
+    "sql": "CREATE TABLE human_work (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, thread_id TEXT NOT NULL,\n            revision INTEGER NOT NULL, inactive INTEGER NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, thread_id))",
+    "tbl_name": "human_work",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_work_1",
+    "sql": null,
+    "tbl_name": "human_work",
+    "type": "index"
+   },
+   {
+    "name": "human_owed",
+    "sql": "CREATE TABLE human_owed (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            kind TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id, kind))",
+    "tbl_name": "human_owed",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_owed_1",
+    "sql": null,
+    "tbl_name": "human_owed",
+    "type": "index"
+   },
+   {
+    "name": "human_sync",
+    "sql": "CREATE TABLE human_sync (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, node_id TEXT NOT NULL,\n            continuation TEXT,\n            PRIMARY KEY (server_id, owner, node_id))",
+    "tbl_name": "human_sync",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_sync_1",
+    "sql": null,
+    "tbl_name": "human_sync",
+    "type": "index"
+   },
+   {
+    "name": "human_commands",
+    "sql": "CREATE TABLE human_commands (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, thread_id TEXT NOT NULL,\n            body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, thread_id))",
+    "tbl_name": "human_commands",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_commands_1",
+    "sql": null,
+    "tbl_name": "human_commands",
+    "type": "index"
+   },
+   {
+    "name": "human_announcements",
+    "sql": "CREATE TABLE human_announcements (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            state TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id))",
+    "tbl_name": "human_announcements",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_announcements_1",
+    "sql": null,
+    "tbl_name": "human_announcements",
+    "type": "index"
+   },
+   {
+    "name": "messaging_files",
+    "sql": "CREATE TABLE messaging_files (\n        server_id       TEXT NOT NULL,\n        owner_github_id INTEGER NOT NULL,\n        attachment_id   TEXT NOT NULL,\n        role            TEXT NOT NULL,\n        message_id      TEXT NOT NULL,\n        filename        TEXT NOT NULL,\n        media_type      TEXT NOT NULL,\n        size_bytes      INTEGER NOT NULL,\n        sha256          TEXT NOT NULL,\n        state           TEXT NOT NULL,\n        bytes_done      INTEGER NOT NULL DEFAULT 0,\n        failure         TEXT,\n        created_at      REAL NOT NULL,\n        updated_at      REAL NOT NULL,\n        PRIMARY KEY (server_id, owner_github_id, attachment_id, role)\n    )",
+    "tbl_name": "messaging_files",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_messaging_files_1",
+    "sql": null,
+    "tbl_name": "messaging_files",
+    "type": "index"
+   },
+   {
+    "name": "messaging_files_by_message",
+    "sql": "CREATE INDEX messaging_files_by_message\n        ON messaging_files (server_id, owner_github_id, message_id)",
+    "tbl_name": "messaging_files",
+    "type": "index"
+   },
+   {
+    "name": "human_switch",
+    "sql": "CREATE TABLE human_switch (\n            id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL)",
+    "tbl_name": "human_switch",
+    "type": "table"
+   },
+   {
+    "name": "folder_schema",
+    "sql": "CREATE TABLE folder_schema (version INTEGER NOT NULL)",
+    "tbl_name": "folder_schema",
+    "type": "table"
+   },
+   {
+    "name": "folders",
+    "sql": "CREATE TABLE folders (\n            id            TEXT PRIMARY KEY,\n            owner_id      TEXT,\n            display_name  TEXT NOT NULL,\n            role          TEXT NOT NULL,\n            lifecycle     TEXT NOT NULL,\n            revision      INTEGER NOT NULL,\n            created_at    REAL NOT NULL,\n            updated_at    REAL NOT NULL,\n            removed_at    REAL\n        )",
+    "tbl_name": "folders",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folders_1",
+    "sql": null,
+    "tbl_name": "folders",
+    "type": "index"
+   },
+   {
+    "name": "folders_by_lifecycle",
+    "sql": "CREATE INDEX folders_by_lifecycle ON folders (lifecycle, display_name)",
+    "tbl_name": "folders",
+    "type": "index"
+   },
+   {
+    "name": "folder_locations",
+    "sql": "CREATE TABLE folder_locations (\n            id              TEXT PRIMARY KEY,\n            folder_id       TEXT NOT NULL REFERENCES folders(id),\n            node_id         TEXT NOT NULL,\n            supplied_path   TEXT NOT NULL,\n            canonical_path  TEXT NOT NULL,\n            fs_identity     TEXT,\n            revision        INTEGER NOT NULL,\n            availability    TEXT NOT NULL,\n            last_checked_at REAL,\n            last_seen_at    REAL,\n            error_code      TEXT,\n            created_at      REAL NOT NULL,\n            retired_at      REAL\n        )",
+    "tbl_name": "folder_locations",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_locations_1",
+    "sql": null,
+    "tbl_name": "folder_locations",
+    "type": "index"
+   },
+   {
+    "name": "folder_locations_one_primary",
+    "sql": "CREATE UNIQUE INDEX folder_locations_one_primary\n            ON folder_locations (folder_id) WHERE retired_at IS NULL",
+    "tbl_name": "folder_locations",
+    "type": "index"
+   },
+   {
+    "name": "folder_locations_by_path",
+    "sql": "CREATE INDEX folder_locations_by_path\n            ON folder_locations (node_id, canonical_path) WHERE retired_at IS NULL",
+    "tbl_name": "folder_locations",
+    "type": "index"
+   },
+   {
+    "name": "folder_locations_by_identity",
+    "sql": "CREATE INDEX folder_locations_by_identity\n            ON folder_locations (node_id, fs_identity) WHERE retired_at IS NULL",
+    "tbl_name": "folder_locations",
+    "type": "index"
+   },
+   {
+    "name": "folder_access_scopes",
+    "sql": "CREATE TABLE folder_access_scopes (\n            id                TEXT PRIMARY KEY,\n            location_id       TEXT NOT NULL REFERENCES folder_locations(id),\n            reader_kind       TEXT NOT NULL,\n            permitted_subtree TEXT NOT NULL DEFAULT '',\n            policy_version    INTEGER NOT NULL,\n            enabled           INTEGER NOT NULL,\n            created_at        REAL NOT NULL,\n            updated_at        REAL NOT NULL\n        )",
+    "tbl_name": "folder_access_scopes",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_access_scopes_1",
+    "sql": null,
+    "tbl_name": "folder_access_scopes",
+    "type": "index"
+   },
+   {
+    "name": "folder_access_scopes_by_location",
+    "sql": "CREATE INDEX folder_access_scopes_by_location\n            ON folder_access_scopes (location_id)",
+    "tbl_name": "folder_access_scopes",
+    "type": "index"
+   },
+   {
+    "name": "folder_candidates",
+    "sql": "CREATE TABLE folder_candidates (\n            id                   TEXT PRIMARY KEY,\n            node_id              TEXT NOT NULL,\n            path_key             TEXT NOT NULL,\n            proposed_role        TEXT NOT NULL,\n            state                TEXT NOT NULL,\n            fingerprint          TEXT NOT NULL DEFAULT '',\n            ignored_fingerprint  TEXT,\n            first_seen_at        REAL NOT NULL,\n            last_observed_at     REAL NOT NULL,\n            registered_folder_id TEXT REFERENCES folders(id),\n            UNIQUE (node_id, path_key)\n        )",
+    "tbl_name": "folder_candidates",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_candidates_1",
+    "sql": null,
+    "tbl_name": "folder_candidates",
+    "type": "index"
+   },
+   {
+    "name": "sqlite_autoindex_folder_candidates_2",
+    "sql": null,
+    "tbl_name": "folder_candidates",
+    "type": "index"
+   },
+   {
+    "name": "folder_candidates_by_state",
+    "sql": "CREATE INDEX folder_candidates_by_state\n            ON folder_candidates (state, last_observed_at DESC)",
+    "tbl_name": "folder_candidates",
+    "type": "index"
+   },
+   {
+    "name": "folder_observations",
+    "sql": "CREATE TABLE folder_observations (\n            id                   INTEGER PRIMARY KEY AUTOINCREMENT,\n            node_id              TEXT NOT NULL,\n            provider             TEXT NOT NULL,\n            profile_root         TEXT NOT NULL,\n            native_session_id    TEXT NOT NULL,\n            observed_cwd         TEXT NOT NULL,\n            cwd_key              TEXT NOT NULL,\n            history_dir          TEXT NOT NULL DEFAULT '',\n            history_file         TEXT NOT NULL DEFAULT '',\n            evidence             TEXT NOT NULL,\n            associated           TEXT NOT NULL DEFAULT '{}',\n            cwd_candidate_id     TEXT REFERENCES folder_candidates(id),\n            history_candidate_id TEXT REFERENCES folder_candidates(id),\n            first_observed_at    REAL NOT NULL,\n            observed_at          REAL NOT NULL,\n            last_live_at         REAL,\n            UNIQUE (node_id, provider, profile_root, native_session_id)\n        )",
+    "tbl_name": "folder_observations",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_observations_1",
+    "sql": null,
+    "tbl_name": "folder_observations",
+    "type": "index"
+   },
+   {
+    "name": "folder_observations_by_cwd",
+    "sql": "CREATE INDEX folder_observations_by_cwd\n            ON folder_observations (node_id, cwd_key)",
+    "tbl_name": "folder_observations",
+    "type": "index"
+   },
+   {
+    "name": "folder_observations_by_history",
+    "sql": "CREATE INDEX folder_observations_by_history\n            ON folder_observations (node_id, history_dir)",
+    "tbl_name": "folder_observations",
+    "type": "index"
+   },
+   {
+    "name": "folder_observations_by_session",
+    "sql": "CREATE INDEX folder_observations_by_session\n            ON folder_observations (provider, native_session_id)",
+    "tbl_name": "folder_observations",
+    "type": "index"
+   },
+   {
+    "name": "folder_location_events",
+    "sql": "CREATE TABLE folder_location_events (\n            id          INTEGER PRIMARY KEY AUTOINCREMENT,\n            folder_id   TEXT NOT NULL REFERENCES folders(id),\n            location_id TEXT REFERENCES folder_locations(id),\n            event       TEXT NOT NULL,\n            prior       TEXT NOT NULL DEFAULT '{}',\n            new         TEXT NOT NULL DEFAULT '{}',\n            at          REAL NOT NULL\n        )",
+    "tbl_name": "folder_location_events",
+    "type": "table"
+   },
+   {
+    "name": "folder_location_events_by_folder",
+    "sql": "CREATE INDEX folder_location_events_by_folder\n            ON folder_location_events (folder_id, id DESC)",
+    "tbl_name": "folder_location_events",
+    "type": "index"
+   },
+   {
+    "name": "folder_registrations",
+    "sql": "CREATE TABLE folder_registrations (\n            request_key TEXT PRIMARY KEY,\n            fingerprint TEXT NOT NULL,\n            folder_id   TEXT NOT NULL REFERENCES folders(id),\n            created_at  REAL NOT NULL\n        )",
+    "tbl_name": "folder_registrations",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_registrations_1",
+    "sql": null,
+    "tbl_name": "folder_registrations",
+    "type": "index"
+   },
+   {
+    "name": "folder_discovery",
+    "sql": "CREATE TABLE folder_discovery (\n            source      TEXT PRIMARY KEY,\n            cursor      TEXT,\n            listed      INTEGER NOT NULL DEFAULT 0,\n            read        INTEGER NOT NULL DEFAULT 0,\n            pending     INTEGER NOT NULL DEFAULT 0,\n            complete    INTEGER NOT NULL DEFAULT 0,\n            last_run_at REAL,\n            last_ok_at  REAL,\n            last_error  TEXT\n        )",
+    "tbl_name": "folder_discovery",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_discovery_1",
+    "sql": null,
+    "tbl_name": "folder_discovery",
+    "type": "index"
+   },
+   {
+    "name": "folder_history_files",
+    "sql": "CREATE TABLE folder_history_files (\n            path    TEXT PRIMARY KEY,\n            size    INTEGER NOT NULL,\n            read_at REAL NOT NULL\n        )",
+    "tbl_name": "folder_history_files",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_folder_history_files_1",
+    "sql": null,
+    "tbl_name": "folder_history_files",
+    "type": "index"
+   },
+   {
+    "name": "human_preflight",
+    "sql": "CREATE TABLE human_preflight (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            content_revision INTEGER NOT NULL, capability_digest TEXT NOT NULL,\n            readiness TEXT NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, message_id, content_revision))",
+    "tbl_name": "human_preflight",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_preflight_1",
+    "sql": null,
+    "tbl_name": "human_preflight",
+    "type": "index"
+   },
+   {
+    "name": "human_openability",
+    "sql": "CREATE TABLE human_openability (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,\n            attachment_id TEXT NOT NULL, content_revision INTEGER NOT NULL,\n            facts TEXT NOT NULL, report TEXT, reported TEXT,\n            PRIMARY KEY (server_id, owner, message_id, attachment_id, content_revision))",
+    "tbl_name": "human_openability",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_openability_1",
+    "sql": null,
+    "tbl_name": "human_openability",
+    "type": "index"
+   },
+   {
+    "name": "human_review",
+    "sql": "CREATE TABLE human_review (\n            server_id TEXT NOT NULL, owner INTEGER NOT NULL, thread_id TEXT NOT NULL,\n            revision INTEGER NOT NULL, body TEXT NOT NULL,\n            PRIMARY KEY (server_id, owner, thread_id))",
+    "tbl_name": "human_review",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_human_review_1",
+    "sql": null,
+    "tbl_name": "human_review",
+    "type": "index"
+   },
+   {
+    "name": "attachment_locations",
+    "sql": "CREATE TABLE attachment_locations (\n        server_id          TEXT NOT NULL,\n        owner_github_id    INTEGER NOT NULL,\n        attachment_id      TEXT NOT NULL,\n        path               TEXT,\n        verified_at        REAL,\n        extraction_root    TEXT,\n        extraction_sha256  TEXT,\n        extraction_members TEXT,\n        PRIMARY KEY (server_id, owner_github_id, attachment_id)\n    )",
+    "tbl_name": "attachment_locations",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_attachment_locations_1",
+    "sql": null,
+    "tbl_name": "attachment_locations",
+    "type": "index"
+   },
+   {
+    "name": "attachment_leases",
+    "sql": "CREATE TABLE attachment_leases (\n        server_id       TEXT NOT NULL,\n        owner_github_id INTEGER NOT NULL,\n        attachment_id   TEXT NOT NULL,\n        holder          TEXT NOT NULL,\n        created_at      REAL NOT NULL,\n        PRIMARY KEY (server_id, owner_github_id, attachment_id, holder)\n    )",
+    "tbl_name": "attachment_leases",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_attachment_leases_1",
+    "sql": null,
+    "tbl_name": "attachment_leases",
+    "type": "index"
+   },
+   {
+    "name": "voice_schema",
+    "sql": "CREATE TABLE voice_schema (version INTEGER NOT NULL)",
+    "tbl_name": "voice_schema",
+    "type": "table"
+   },
+   {
+    "name": "attention_schema",
+    "sql": "CREATE TABLE attention_schema (version INTEGER NOT NULL)",
+    "tbl_name": "attention_schema",
+    "type": "table"
+   },
+   {
+    "name": "attention_items",
+    "sql": "CREATE TABLE attention_items (\n        id                INTEGER PRIMARY KEY,\n        node_id           TEXT NOT NULL,\n        kind              TEXT NOT NULL,\n        source_id         TEXT NOT NULL,\n        revision          INTEGER NOT NULL,\n        event             TEXT NOT NULL,\n        facts             TEXT NOT NULL,\n        untrusted         TEXT NOT NULL,\n        audible           INTEGER NOT NULL,\n        state             TEXT NOT NULL,\n        digested_revision INTEGER NOT NULL DEFAULT 0,\n        created_at        REAL NOT NULL,\n        updated_at        REAL NOT NULL,\n        seen_at           REAL,\n        UNIQUE (kind, source_id)\n    )",
+    "tbl_name": "attention_items",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_attention_items_1",
+    "sql": null,
+    "tbl_name": "attention_items",
+    "type": "index"
+   },
+   {
+    "name": "attention_items_by_state",
+    "sql": "CREATE INDEX attention_items_by_state ON attention_items (state, updated_at)",
+    "tbl_name": "attention_items",
+    "type": "index"
+   },
+   {
+    "name": "attention_events",
+    "sql": "CREATE TABLE attention_events (\n        id        INTEGER PRIMARY KEY,\n        item_id   INTEGER NOT NULL REFERENCES attention_items(id),\n        at        REAL NOT NULL,\n        revision  INTEGER NOT NULL,\n        event     TEXT NOT NULL,\n        facts     TEXT NOT NULL,\n        untrusted TEXT NOT NULL\n    )",
+    "tbl_name": "attention_events",
+    "type": "table"
+   },
+   {
+    "name": "attention_events_by_item",
+    "sql": "CREATE INDEX attention_events_by_item ON attention_events (item_id, id)",
+    "tbl_name": "attention_events",
+    "type": "index"
+   },
+   {
+    "name": "attention_digests",
+    "sql": "CREATE TABLE attention_digests (\n        id         INTEGER PRIMARY KEY,\n        started_at REAL NOT NULL,\n        updated_at REAL NOT NULL,\n        outcome    TEXT NOT NULL,\n        reason     TEXT,\n        text       TEXT\n    )",
+    "tbl_name": "attention_digests",
+    "type": "table"
+   },
+   {
+    "name": "attention_presentations",
+    "sql": "CREATE TABLE attention_presentations (\n        digest_id INTEGER NOT NULL REFERENCES attention_digests(id),\n        item_id   INTEGER NOT NULL REFERENCES attention_items(id),\n        revision  INTEGER NOT NULL,\n        PRIMARY KEY (digest_id, item_id)\n    )",
+    "tbl_name": "attention_presentations",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_attention_presentations_1",
+    "sql": null,
+    "tbl_name": "attention_presentations",
+    "type": "index"
+   },
+   {
+    "name": "attention_settings",
+    "sql": "CREATE TABLE attention_settings (\n        key   TEXT PRIMARY KEY,\n        value TEXT NOT NULL\n    )",
+    "tbl_name": "attention_settings",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_attention_settings_1",
+    "sql": null,
+    "tbl_name": "attention_settings",
+    "type": "index"
+   },
+   {
+    "name": "voice_control_schema",
+    "sql": "CREATE TABLE voice_control_schema (version INTEGER NOT NULL)",
+    "tbl_name": "voice_control_schema",
+    "type": "table"
+   },
+   {
+    "name": "voice_input_settings",
+    "sql": "CREATE TABLE voice_input_settings (\n            user_key    TEXT PRIMARY KEY,\n            stop_mode   TEXT NOT NULL CHECK (stop_mode IN ('keep', 'discard')),\n            switch_mode TEXT NOT NULL CHECK (switch_mode IN ('continue', 'stop')),\n            updated_at  REAL NOT NULL\n        , patience_sec REAL, capture_sounds INTEGER\n            CHECK (capture_sounds IN (0, 1)), cue_settings TEXT, cue_volume INTEGER, pause_intervals TEXT, speech_muted INTEGER\n            CHECK (speech_muted IN (0, 1)))",
+    "tbl_name": "voice_input_settings",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_voice_input_settings_1",
+    "sql": null,
+    "tbl_name": "voice_input_settings",
+    "type": "index"
+   },
+   {
+    "name": "work_schema",
+    "sql": "CREATE TABLE work_schema (version INTEGER NOT NULL)",
+    "tbl_name": "work_schema",
+    "type": "table"
+   },
+   {
+    "name": "work_items",
+    "sql": "CREATE TABLE work_items (\n        id            TEXT PRIMARY KEY,\n        title         TEXT NOT NULL,\n        source_kind   TEXT NOT NULL,\n        source_path   TEXT NOT NULL,\n        state         TEXT NOT NULL,\n        latest_update TEXT NOT NULL DEFAULT '',\n        revision      INTEGER NOT NULL,\n        created_at    REAL NOT NULL,\n        updated_at    REAL NOT NULL\n    , area       TEXT NOT NULL DEFAULT '', closed_at REAL, until         TEXT NOT NULL DEFAULT '', then_state    TEXT NOT NULL DEFAULT '', waiting_since REAL, reported_at   REAL, approved_at    REAL, review_note    TEXT NOT NULL DEFAULT '', review_note_at REAL, error TEXT NOT NULL DEFAULT '', error_at REAL)",
+    "tbl_name": "work_items",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_work_items_1",
+    "sql": null,
+    "tbl_name": "work_items",
+    "type": "index"
+   },
+   {
+    "name": "work_pieces",
+    "sql": "CREATE TABLE work_pieces (\n        item_id   TEXT NOT NULL REFERENCES work_items(id),\n        key       TEXT NOT NULL,\n        title     TEXT NOT NULL,\n        who_kind  TEXT NOT NULL,\n        who_ref   TEXT,\n        state     TEXT NOT NULL,\n        position  INTEGER NOT NULL, note       TEXT NOT NULL DEFAULT '', note_at    REAL, worker     TEXT NOT NULL DEFAULT '', after_keys TEXT NOT NULL DEFAULT '[]', evidence   TEXT NOT NULL DEFAULT '[]', until         TEXT NOT NULL DEFAULT '', then_state    TEXT NOT NULL DEFAULT '', waiting_since REAL, reporter TEXT NOT NULL DEFAULT '',\n        PRIMARY KEY (item_id, key)\n    )",
+    "tbl_name": "work_pieces",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_work_pieces_1",
+    "sql": null,
+    "tbl_name": "work_pieces",
+    "type": "index"
+   },
+   {
+    "name": "work_decisions",
+    "sql": "CREATE TABLE work_decisions (\n        item_id        TEXT NOT NULL REFERENCES work_items(id),\n        key            TEXT NOT NULL,\n        question       TEXT NOT NULL,\n        options        TEXT NOT NULL,\n        recommendation TEXT NOT NULL DEFAULT '',\n        answer         TEXT,\n        answered_where TEXT,\n        opened_at      REAL NOT NULL,\n        answered_at    REAL, package TEXT NOT NULL DEFAULT '', asked_by TEXT NOT NULL DEFAULT '', withdrawn_at REAL, withdrawn_reason TEXT, signed_off_at REAL,\n        PRIMARY KEY (item_id, key)\n    )",
+    "tbl_name": "work_decisions",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_work_decisions_1",
+    "sql": null,
+    "tbl_name": "work_decisions",
+    "type": "index"
+   },
+   {
+    "name": "work_events",
+    "sql": "CREATE TABLE work_events (\n        seq     INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id TEXT NOT NULL REFERENCES work_items(id),\n        kind    TEXT NOT NULL,\n        summary TEXT NOT NULL,\n        detail  TEXT NOT NULL,\n        at      REAL NOT NULL\n    , reporter TEXT NOT NULL DEFAULT '')",
+    "tbl_name": "work_events",
+    "type": "table"
+   },
+   {
+    "name": "work_events_by_item",
+    "sql": "CREATE INDEX work_events_by_item ON work_events (item_id, seq)",
+    "tbl_name": "work_events",
+    "type": "index"
+   },
+   {
+    "name": "package_inbox_schema",
+    "sql": "CREATE TABLE package_inbox_schema (version INTEGER NOT NULL)",
+    "tbl_name": "package_inbox_schema",
+    "type": "table"
+   },
+   {
+    "name": "package_inbox",
+    "sql": "CREATE TABLE package_inbox (\n        id                 TEXT PRIMARY KEY,\n        package_id         TEXT NOT NULL,\n        sha256             TEXT NOT NULL,\n        name               TEXT NOT NULL,\n        version            TEXT NOT NULL,\n        title              TEXT NOT NULL,\n        purpose            TEXT NOT NULL,\n        runs               TEXT NOT NULL,\n        decisions_total    INTEGER NOT NULL DEFAULT 0,\n        decisions_answered INTEGER NOT NULL DEFAULT 0,\n        from_project       TEXT NOT NULL DEFAULT '',\n        from_session       TEXT NOT NULL DEFAULT '',\n        from_agent         TEXT NOT NULL DEFAULT '',\n        workflow_id        TEXT,\n        work_id            TEXT,\n        project_id         TEXT,\n        state              TEXT NOT NULL,\n        revision           INTEGER NOT NULL,\n        capture_id         INTEGER,\n        return_asked_at    REAL,\n        message_id         INTEGER,\n        arrived_at         REAL NOT NULL,\n        opened_at          REAL,\n        answered_at        REAL,\n        returned_at        REAL,\n        closed_at          REAL,\n        closed_why         TEXT\n    , signed_off_at REAL, claimed_session TEXT NOT NULL DEFAULT '', sender_evidence TEXT NOT NULL DEFAULT '', reprove INTEGER NOT NULL DEFAULT 0)",
+    "tbl_name": "package_inbox",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_package_inbox_1",
+    "sql": null,
+    "tbl_name": "package_inbox",
+    "type": "index"
+   },
+   {
+    "name": "package_inbox_by_state",
+    "sql": "CREATE INDEX package_inbox_by_state ON package_inbox (state, arrived_at)",
+    "tbl_name": "package_inbox",
+    "type": "index"
+   },
+   {
+    "name": "package_inbox_events",
+    "sql": "CREATE TABLE package_inbox_events (\n        seq      INTEGER PRIMARY KEY AUTOINCREMENT,\n        inbox_id TEXT NOT NULL REFERENCES package_inbox(id),\n        kind     TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        at       REAL NOT NULL,\n        how      TEXT NOT NULL\n    )",
+    "tbl_name": "package_inbox_events",
+    "type": "table"
+   },
+   {
+    "name": "package_inbox_events_by_entry",
+    "sql": "CREATE INDEX package_inbox_events_by_entry\n        ON package_inbox_events (inbox_id, seq)",
+    "tbl_name": "package_inbox_events",
+    "type": "index"
+   },
+   {
+    "name": "project_schema",
+    "sql": "CREATE TABLE project_schema (version INTEGER NOT NULL)",
+    "tbl_name": "project_schema",
+    "type": "table"
+   },
+   {
+    "name": "projects",
+    "sql": "CREATE TABLE projects (\n    id            TEXT PRIMARY KEY,\n    owner_id      TEXT NOT NULL,\n    node_id       TEXT NOT NULL,\n    display_name  TEXT NOT NULL,\n    spoken_key    TEXT NOT NULL,\n    notes_slug    TEXT NOT NULL,\n    summary       TEXT NOT NULL DEFAULT '',\n    lifecycle     TEXT NOT NULL CHECK (lifecycle IN ('active', 'paused', 'done', 'archived')),\n    revision      INTEGER NOT NULL,\n    created_at    REAL NOT NULL,\n    updated_at    REAL NOT NULL,\n    archived_at   REAL\n)",
+    "tbl_name": "projects",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_projects_1",
+    "sql": null,
+    "tbl_name": "projects",
+    "type": "index"
+   },
+   {
+    "name": "projects_by_spoken_key",
+    "sql": "CREATE UNIQUE INDEX projects_by_spoken_key\n    ON projects (owner_id, spoken_key) WHERE lifecycle <> 'archived'",
+    "tbl_name": "projects",
+    "type": "index"
+   },
+   {
+    "name": "project_aliases",
+    "sql": "CREATE TABLE project_aliases (\n    owner_id    TEXT NOT NULL,\n    source      TEXT NOT NULL CHECK (source IN (\n                    'spoken', 'session_project', 'run_project', 'workflow_project',\n                    'message_project', 'memory_slug', 'projects_root')),\n    alias_key   TEXT NOT NULL,\n    project_id  TEXT NOT NULL REFERENCES projects(id),\n    added_at    REAL NOT NULL,\n    PRIMARY KEY (owner_id, source, alias_key)\n)",
+    "tbl_name": "project_aliases",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_project_aliases_1",
+    "sql": null,
+    "tbl_name": "project_aliases",
+    "type": "index"
+   },
+   {
+    "name": "project_aliases_by_project",
+    "sql": "CREATE INDEX project_aliases_by_project ON project_aliases (project_id)",
+    "tbl_name": "project_aliases",
+    "type": "index"
+   },
+   {
+    "name": "project_folders",
+    "sql": "CREATE TABLE project_folders (\n    project_id  TEXT NOT NULL REFERENCES projects(id),\n    folder_id   TEXT NOT NULL,\n    part        TEXT NOT NULL CHECK (part IN ('source', 'docs', 'data', 'output', 'reference')),\n    is_home     INTEGER NOT NULL DEFAULT 0,\n    index_scope TEXT NOT NULL DEFAULT 'docs' CHECK (index_scope IN ('docs', 'text', 'off')),\n    revision    INTEGER NOT NULL,\n    added_at    REAL NOT NULL,\n    removed_at  REAL,\n    PRIMARY KEY (project_id, folder_id, added_at)\n)",
+    "tbl_name": "project_folders",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_project_folders_1",
+    "sql": null,
+    "tbl_name": "project_folders",
+    "type": "index"
+   },
+   {
+    "name": "project_folders_live",
+    "sql": "CREATE UNIQUE INDEX project_folders_live\n    ON project_folders (project_id, folder_id) WHERE removed_at IS NULL",
+    "tbl_name": "project_folders",
+    "type": "index"
+   },
+   {
+    "name": "project_folders_one_home",
+    "sql": "CREATE UNIQUE INDEX project_folders_one_home\n    ON project_folders (project_id) WHERE is_home = 1 AND removed_at IS NULL",
+    "tbl_name": "project_folders",
+    "type": "index"
+   },
+   {
+    "name": "project_folders_by_folder",
+    "sql": "CREATE INDEX project_folders_by_folder\n    ON project_folders (folder_id) WHERE removed_at IS NULL",
+    "tbl_name": "project_folders",
+    "type": "index"
+   },
+   {
+    "name": "project_candidates",
+    "sql": "CREATE TABLE project_candidates (\n    id             TEXT PRIMARY KEY,\n    owner_id       TEXT NOT NULL,\n    proposed_name  TEXT NOT NULL,\n    evidence       TEXT NOT NULL,\n    fingerprint    TEXT NOT NULL,\n    state          TEXT NOT NULL CHECK (state IN ('proposed', 'ignored', 'accepted')),\n    project_id     TEXT REFERENCES projects(id),\n    created_at     REAL NOT NULL,\n    updated_at     REAL NOT NULL\n)",
+    "tbl_name": "project_candidates",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_project_candidates_1",
+    "sql": null,
+    "tbl_name": "project_candidates",
+    "type": "index"
+   },
+   {
+    "name": "project_candidates_by_key",
+    "sql": "CREATE INDEX project_candidates_by_key ON project_candidates (owner_id, proposed_name)",
+    "tbl_name": "project_candidates",
+    "type": "index"
+   },
+   {
+    "name": "works",
+    "sql": "CREATE TABLE works (\n    id          TEXT PRIMARY KEY,\n    owner_id    TEXT NOT NULL,\n    title       TEXT NOT NULL,\n    outcome     TEXT NOT NULL DEFAULT '',\n    state       TEXT NOT NULL CHECK (state IN ('open', 'done', 'dropped')),\n    origin      TEXT NOT NULL CHECK (origin IN ('local', 'received')),\n    revision    INTEGER NOT NULL,\n    created_at  REAL NOT NULL,\n    updated_at  REAL NOT NULL,\n    closed_at   REAL\n)",
+    "tbl_name": "works",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_works_1",
+    "sql": null,
+    "tbl_name": "works",
+    "type": "index"
+   },
+   {
+    "name": "work_projects",
+    "sql": "CREATE TABLE work_projects (\n    work_id     TEXT NOT NULL REFERENCES works(id),\n    project_id  TEXT NOT NULL REFERENCES projects(id),\n    role        TEXT NOT NULL CHECK (role IN ('primary', 'involved')),\n    added_at    REAL NOT NULL,\n    PRIMARY KEY (work_id, project_id)\n)",
+    "tbl_name": "work_projects",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_work_projects_1",
+    "sql": null,
+    "tbl_name": "work_projects",
+    "type": "index"
+   },
+   {
+    "name": "work_projects_one_primary",
+    "sql": "CREATE UNIQUE INDEX work_projects_one_primary\n    ON work_projects (work_id) WHERE role = 'primary'",
+    "tbl_name": "work_projects",
+    "type": "index"
+   },
+   {
+    "name": "work_folders",
+    "sql": "CREATE TABLE work_folders (\n    work_id    TEXT NOT NULL REFERENCES works(id),\n    folder_id  TEXT NOT NULL,\n    added_at   REAL NOT NULL,\n    PRIMARY KEY (work_id, folder_id)\n)",
+    "tbl_name": "work_folders",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_work_folders_1",
+    "sql": null,
+    "tbl_name": "work_folders",
+    "type": "index"
+   },
+   {
+    "name": "accomplishments",
+    "sql": "CREATE TABLE accomplishments (\n    id            TEXT PRIMARY KEY,\n    project_id    TEXT NOT NULL REFERENCES projects(id),\n    work_id       TEXT REFERENCES works(id),\n    title         TEXT NOT NULL,\n    detail        TEXT NOT NULL DEFAULT '',\n    state         TEXT NOT NULL CHECK (state IN ('proposed', 'confirmed', 'withdrawn')),\n    proposed_by   TEXT NOT NULL CHECK (proposed_by IN (\n                      'page', 'voice', 'run_finish', 'workflow_finish', 'merge', 'package_result', 'import')),\n    achieved_at   REAL NOT NULL,\n    confirmed_at  REAL,\n    revision      INTEGER NOT NULL,\n    created_at    REAL NOT NULL\n)",
+    "tbl_name": "accomplishments",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_accomplishments_1",
+    "sql": null,
+    "tbl_name": "accomplishments",
+    "type": "index"
+   },
+   {
+    "name": "accomplishments_by_project",
+    "sql": "CREATE INDEX accomplishments_by_project ON accomplishments (project_id, state, achieved_at)",
+    "tbl_name": "accomplishments",
+    "type": "index"
+   },
+   {
+    "name": "accomplishment_evidence",
+    "sql": "CREATE TABLE accomplishment_evidence (\n    accomplishment_id  TEXT NOT NULL REFERENCES accomplishments(id),\n    ref                TEXT NOT NULL,\n    PRIMARY KEY (accomplishment_id, ref)\n)",
+    "tbl_name": "accomplishment_evidence",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_accomplishment_evidence_1",
+    "sql": null,
+    "tbl_name": "accomplishment_evidence",
+    "type": "index"
+   },
+   {
+    "name": "project_bindings",
+    "sql": "CREATE TABLE project_bindings (\n    subject     TEXT NOT NULL,\n    project_id  TEXT REFERENCES projects(id),\n    work_id     TEXT REFERENCES works(id),\n    folder_id   TEXT,\n    how         TEXT NOT NULL CHECK (how IN ('started_here', 'owner', 'adopted')),\n    bound_at    REAL NOT NULL,\n    unbound_at  REAL,\n    CHECK (project_id IS NOT NULL OR work_id IS NOT NULL)\n)",
+    "tbl_name": "project_bindings",
+    "type": "table"
+   },
+   {
+    "name": "project_bindings_live",
+    "sql": "CREATE UNIQUE INDEX project_bindings_live\n    ON project_bindings (subject, IFNULL(project_id, ''), IFNULL(work_id, '')) WHERE unbound_at IS NULL",
+    "tbl_name": "project_bindings",
+    "type": "index"
+   },
+   {
+    "name": "project_events",
+    "sql": "CREATE TABLE project_events (\n    seq       INTEGER PRIMARY KEY AUTOINCREMENT,\n    at        REAL NOT NULL,\n    subject   TEXT NOT NULL,\n    action    TEXT NOT NULL,\n    revision  INTEGER NOT NULL,\n    actor     TEXT NOT NULL CHECK (actor IN ('page', 'voice', 'agent', 'migration', 'package')),\n    detail    TEXT NOT NULL DEFAULT '{}'\n)",
+    "tbl_name": "project_events",
+    "type": "table"
+   },
+   {
+    "name": "project_events_by_subject",
+    "sql": "CREATE INDEX project_events_by_subject ON project_events (subject, seq)",
+    "tbl_name": "project_events",
+    "type": "index"
+   },
+   {
+    "name": "needs_board_writers",
+    "sql": "CREATE TABLE needs_board_writers (\n                project      TEXT PRIMARY KEY,  -- the board's file stem\n                mtime        REAL NOT NULL,\n                session_id   TEXT NOT NULL,     -- the listed agent's session\n                name         TEXT NOT NULL,     -- as shown: \"Feynman (Planning)\" for a subagent\n                evidence     TEXT NOT NULL,\n                subagent     TEXT NOT NULL DEFAULT ''\n            )",
+    "tbl_name": "needs_board_writers",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_needs_board_writers_1",
+    "sql": null,
+    "tbl_name": "needs_board_writers",
+    "type": "index"
+   },
+   {
+    "name": "conversation_schema",
+    "sql": "CREATE TABLE conversation_schema (version INTEGER NOT NULL)",
+    "tbl_name": "conversation_schema",
+    "type": "table"
+   },
+   {
+    "name": "conversation_items_by_counterpart",
+    "sql": "CREATE INDEX conversation_items_by_counterpart\n        ON conversation_items (counterpart_kind, counterpart_ref, id)",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_once_per_source",
+    "sql": "CREATE UNIQUE INDEX conversation_items_once_per_source\n        ON conversation_items (kind, source_kind, source_id)\n        WHERE source_kind IS NOT NULL AND kind = 'message_in'",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "agent_keys_schema",
+    "sql": "CREATE TABLE agent_keys_schema (version INTEGER NOT NULL)",
+    "tbl_name": "agent_keys_schema",
+    "type": "table"
+   },
+   {
+    "name": "agent_keys",
+    "sql": "CREATE TABLE agent_keys (\n        fingerprint   TEXT PRIMARY KEY,\n        public_key    TEXT NOT NULL,\n        principal     TEXT NOT NULL,\n        session_id    TEXT NOT NULL DEFAULT '',\n        provider      TEXT NOT NULL DEFAULT '',\n        state         TEXT NOT NULL,\n        submitted_at  REAL NOT NULL,\n        proven_at     REAL,\n        proven_by     TEXT NOT NULL DEFAULT '',\n        onboarded_at  REAL,\n        onboarded_by  TEXT NOT NULL DEFAULT '',\n        revoked_at    REAL,\n        revoked_by    TEXT NOT NULL DEFAULT '',\n        revoked_why   TEXT NOT NULL DEFAULT '',\n        label         TEXT NOT NULL DEFAULT '',\n        work_id       TEXT NOT NULL DEFAULT '',\n        issued_by     TEXT NOT NULL DEFAULT '',\n        expires_at    REAL\n    )",
+    "tbl_name": "agent_keys",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_keys_1",
+    "sql": null,
+    "tbl_name": "agent_keys",
+    "type": "index"
+   },
+   {
+    "name": "agent_keys_session",
+    "sql": "CREATE INDEX agent_keys_session ON agent_keys(session_id, state)",
+    "tbl_name": "agent_keys",
+    "type": "index"
+   },
+   {
+    "name": "agent_rights",
+    "sql": "CREATE TABLE agent_rights (\n        principal   TEXT NOT NULL,\n        \"right\"     TEXT NOT NULL,\n        scope       TEXT NOT NULL,\n        granted_at  REAL NOT NULL,\n        granted_by  TEXT NOT NULL,\n        PRIMARY KEY (principal, \"right\", scope)\n    )",
+    "tbl_name": "agent_rights",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_rights_1",
+    "sql": null,
+    "tbl_name": "agent_rights",
+    "type": "index"
+   },
+   {
+    "name": "agent_key_events",
+    "sql": "CREATE TABLE agent_key_events (\n        id           INTEGER PRIMARY KEY AUTOINCREMENT,\n        fingerprint  TEXT NOT NULL,\n        kind         TEXT NOT NULL,\n        at           REAL NOT NULL,\n        detail       TEXT NOT NULL DEFAULT '{}'\n    )",
+    "tbl_name": "agent_key_events",
+    "type": "table"
+   },
+   {
+    "name": "legacy_admissions",
+    "sql": "CREATE TABLE legacy_admissions (\n        day    TEXT NOT NULL,\n        label  TEXT NOT NULL,\n        count  INTEGER NOT NULL,\n        PRIMARY KEY (day, label)\n    )",
+    "tbl_name": "legacy_admissions",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_legacy_admissions_1",
+    "sql": null,
+    "tbl_name": "legacy_admissions",
+    "type": "index"
+   },
+   {
+    "name": "agent_key_held",
+    "sql": "CREATE TABLE agent_key_held (\n        id             TEXT PRIMARY KEY,\n        subject        TEXT NOT NULL,\n        fingerprint    TEXT NOT NULL DEFAULT '',\n        session_id     TEXT NOT NULL DEFAULT '',\n        kind           TEXT NOT NULL,\n        what           TEXT NOT NULL,\n        path           TEXT NOT NULL DEFAULT '',\n        detail         TEXT NOT NULL DEFAULT '{}',\n        work_id        TEXT NOT NULL DEFAULT '',\n        held_at        REAL NOT NULL,\n        state          TEXT NOT NULL,\n        settled_at     REAL\n    )",
+    "tbl_name": "agent_key_held",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_key_held_1",
+    "sql": null,
+    "tbl_name": "agent_key_held",
+    "type": "index"
+   },
+   {
+    "name": "agent_key_held_subject",
+    "sql": "CREATE INDEX agent_key_held_subject ON agent_key_held(subject, state)",
+    "tbl_name": "agent_key_held",
+    "type": "index"
+   },
+   {
+    "name": "agent_key_errors",
+    "sql": "CREATE TABLE agent_key_errors (\n        subject        TEXT PRIMARY KEY,\n        package_id     TEXT NOT NULL DEFAULT '',\n        inbox_id       TEXT NOT NULL DEFAULT '',\n        made_at        REAL NOT NULL\n    )",
+    "tbl_name": "agent_key_errors",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_key_errors_1",
+    "sql": null,
+    "tbl_name": "agent_key_errors",
+    "type": "index"
+   },
+   {
+    "name": "agent_key_settings",
+    "sql": "CREATE TABLE agent_key_settings (\n        name   TEXT PRIMARY KEY,\n        value  TEXT NOT NULL,\n        at     REAL NOT NULL\n    )",
+    "tbl_name": "agent_key_settings",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_key_settings_1",
+    "sql": null,
+    "tbl_name": "agent_key_settings",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_by_source",
+    "sql": "CREATE INDEX conversation_items_by_source\n        ON conversation_items (source_kind, source_id, id)",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "agent_author_proofs",
+    "sql": "CREATE TABLE agent_author_proofs (\n        author       TEXT PRIMARY KEY,\n        package_sha  TEXT NOT NULL,\n        bound_at     REAL NOT NULL\n    )",
+    "tbl_name": "agent_author_proofs",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_agent_author_proofs_1",
+    "sql": null,
+    "tbl_name": "agent_author_proofs",
+    "type": "index"
+   },
+   {
+    "name": "language_document_schema",
+    "sql": "CREATE TABLE language_document_schema (version INTEGER NOT NULL)",
+    "tbl_name": "language_document_schema",
+    "type": "table"
+   },
+   {
+    "name": "language_documents",
+    "sql": "CREATE TABLE language_documents (\n    id TEXT PRIMARY KEY, work_id TEXT NOT NULL, created_at REAL NOT NULL\n)",
+    "tbl_name": "language_documents",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_language_documents_1",
+    "sql": null,
+    "tbl_name": "language_documents",
+    "type": "index"
+   },
+   {
+    "name": "language_document_revisions",
+    "sql": "CREATE TABLE language_document_revisions (\n    document_id TEXT NOT NULL REFERENCES language_documents(id),\n    revision TEXT NOT NULL, parent_revision TEXT, created_at REAL NOT NULL,\n    source_sha256 TEXT NOT NULL, view_sha256 TEXT, kit_digest TEXT NOT NULL,\n    language TEXT NOT NULL, metadata TEXT NOT NULL, check_json TEXT NOT NULL,\n    PRIMARY KEY(document_id, revision)\n)",
+    "tbl_name": "language_document_revisions",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_language_document_revisions_1",
+    "sql": null,
+    "tbl_name": "language_document_revisions",
+    "type": "index"
+   },
+   {
+    "name": "language_publications",
+    "sql": "CREATE TABLE language_publications (\n    document_id TEXT NOT NULL, revision TEXT NOT NULL, archive_sha256 TEXT NOT NULL,\n    archive_path TEXT NOT NULL, created_at REAL NOT NULL,\n    PRIMARY KEY(document_id, revision),\n    FOREIGN KEY(document_id, revision) REFERENCES language_document_revisions(document_id, revision)\n)",
+    "tbl_name": "language_publications",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_language_publications_1",
+    "sql": null,
+    "tbl_name": "language_publications",
+    "type": "index"
+   },
+   {
+    "name": "usage_history_schema",
+    "sql": "CREATE TABLE usage_history_schema (version INTEGER NOT NULL)",
+    "tbl_name": "usage_history_schema",
+    "type": "table"
+   },
+   {
+    "name": "usage_readings",
+    "sql": "CREATE TABLE usage_readings (\n        id          INTEGER PRIMARY KEY,\n        at          REAL NOT NULL,\n        provider    TEXT NOT NULL,\n        account     TEXT,\n        window      TEXT NOT NULL,\n        utilization REAL,\n        resets_at   REAL,\n        status      TEXT NOT NULL DEFAULT ''\n    )",
+    "tbl_name": "usage_readings",
+    "type": "table"
+   },
+   {
+    "name": "usage_readings_by_time",
+    "sql": "CREATE INDEX usage_readings_by_time\n        ON usage_readings (provider, window, at)",
+    "tbl_name": "usage_readings",
+    "type": "index"
+   },
+   {
+    "name": "usage_hourly",
+    "sql": "CREATE TABLE usage_hourly (\n        hour        REAL NOT NULL,\n        provider    TEXT NOT NULL,\n        account     TEXT NOT NULL DEFAULT '',\n        window      TEXT NOT NULL,\n        samples     INTEGER NOT NULL,\n        measured    INTEGER NOT NULL,\n        low         REAL,\n        high        REAL,\n        last        REAL,\n        last_at     REAL NOT NULL,\n        resets_at   REAL,\n        PRIMARY KEY (provider, window, account, hour)\n    )",
+    "tbl_name": "usage_hourly",
+    "type": "table"
+   },
+   {
+    "name": "sqlite_autoindex_usage_hourly_1",
+    "sql": null,
+    "tbl_name": "usage_hourly",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_by_about",
+    "sql": "CREATE INDEX conversation_items_by_about\n        ON conversation_items (about, id) WHERE about IS NOT NULL",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_by_state",
+    "sql": "CREATE INDEX conversation_items_by_state\n        ON conversation_items (state, id) WHERE state IS NOT NULL",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   },
+   {
+    "name": "conversation_items_by_carries",
+    "sql": "CREATE INDEX conversation_items_by_carries\n        ON conversation_items (carries) WHERE carries IS NOT NULL",
+    "tbl_name": "conversation_items",
+    "type": "index"
+   }
+  ],
+  "user_version": 0
+ },
+ "schema_versions": {
+  "agent_keys_schema": [
+   [
+    4
+   ]
+  ],
+  "attention_schema": [
+   [
+    1
+   ]
+  ],
+  "conversation_schema": [
+   [
+    4
+   ]
+  ],
+  "folder_schema": [
+   [
+    1
+   ]
+  ],
+  "human_messaging_schema": [
+   [
+    3
+   ]
+  ],
+  "language_document_schema": [
+   [
+    1
+   ]
+  ],
+  "package_inbox_schema": [
+   [
+    5
+   ]
+  ],
+  "project_schema": [
+   [
+    1
+   ]
+  ],
+  "usage_history_schema": [
+   [
+    2
+   ]
+  ],
+  "voice_control_schema": [
+   [
+    8
+   ]
+  ],
+  "voice_schema": [
+   [
+    3
+   ]
+  ],
+  "work_schema": [
+   [
+    7
+   ]
+  ]
+ }
+}

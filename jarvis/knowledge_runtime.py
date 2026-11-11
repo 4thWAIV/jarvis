@@ -1,14 +1,23 @@
 """The knowledge engine as the JARVIS server runs it (design sections 7.2
 and 7.14, invariant I4).
 
-Off unless `JARVIS_KNOWLEDGE` is on. When on, the server makes one
-`KnowledgeRuntime` at startup; it waits `START_AFTER_SEC`, so the brain and
-the recogniser are up first, then starts the engine through the
-`Supervisor` and watches it every `knowledge_client.PING_EVERY_SEC`.
+The engine is always up (UDS plan, "Always up"): unless
+`JARVIS_ENGINE_AUTOSTART` is off, the server makes one `KnowledgeRuntime`
+first thing at startup, starts the engine through the `Supervisor`
+(`start_engine`) and waits up to `knowledge_client.READY_WAIT_SEC` for its
+health before serving the page; then `run` watches it, every second while
+it is not running and every `knowledge_client.PING_EVERY_SEC` while it is.
+`JARVIS_KNOWLEDGE` governs only ingest (no pass starts while it is off),
+the linker's proposals and the hot cards read here, embedding (the engine
+child reads it, embedder.installed) and the knowledge tools (the server's
+`knowledge_api.Context`).
 
-The pace follows hearing. Every `PACE_EVERY_SEC` the runtime decides
-`hold` or `free` and tells the engine (`/v1/pace`, which stops its
-compaction child and its embedding) and every listener (the ingest child):
+The pace follows hearing, and holds only the background lane (lanes.py).
+Every `PACE_EVERY_SEC` the runtime decides `hold` or `free` and tells the
+engine (`/v1/pace`, which stops its compaction child, its embedding and
+its maintenance; record reads and writes go on) and every listener (the
+ingest child, stopped whole; the content child, whose reading stops while
+its watcher and path entries go on):
 
 - hold while the conversation floor is not idle: he is speaking, a turn is
   being gathered or checked, the recogniser is behind, the brain is
@@ -34,15 +43,17 @@ import time
 from typing import Callable, Optional
 
 from jarvis import data_paths, knowledge_client
+from jarvis.knowledge_content import state_path
 from jarvis.knowledge import address as engine_address
 
 log = logging.getLogger("jarvis.knowledge_runtime")
 
-START_AFTER_SEC = 10.0
 INGEST_EVERY_SEC = 600.0
+CONTENT_RESTART_SEC = 5.0
 INGEST_AGAIN_SEC = 5.0
 PROPOSALS_EVERY_SEC = 60.0
 PACE_EVERY_SEC = 1.0
+READY_POLL_SEC = 0.1
 CPU_HOLD_PERCENT = 70.0
 CPU_HOLD_MAX_SEC = 60.0
 BREATHE_SEC = 2.0
@@ -104,8 +115,10 @@ class IngestScheduler:
     next start (`end_leftover`)."""
 
     def __init__(self, supervisor, *, spawn: Callable[[], subprocess.Popen] = _spawn_ingest,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 enabled: Callable[[], bool] = knowledge_client.enabled) -> None:
         self.supervisor = supervisor
+        self.enabled = enabled
         self._spawn = spawn
         self._clock = clock
         self.proc: Optional[subprocess.Popen] = None
@@ -128,7 +141,8 @@ class IngestScheduler:
                 self.proc.send_signal(signal.SIGSTOP if want_stopped else signal.SIGCONT)
                 self.stopped = want_stopped
             return
-        if mode == "free" and self.supervisor.pid() is not None and self._clock() >= self.due_at:
+        if mode == "free" and self.enabled() and self.supervisor.pid() is not None \
+                and self._clock() >= self.due_at:
             self._start()
 
     def _start(self) -> None:
@@ -184,11 +198,114 @@ class IngestScheduler:
                 "more": bool(stats.get("more"))}
 
 
-def end_leftover_ingest() -> None:
-    """A pass the last server left behind (stopped, perhaps) is killed, but
-    only when that pid is still an ingest pass."""
+def content_pid_path():
+    return data_paths.data_dir() / "knowledge-content.pid"
+
+
+def _spawn_content() -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge_content"],
+                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=None,
+                            close_fds=True)
+
+
+class ContentScheduler:
+    """The content child (knowledge_content.py): one, long-lived, started
+    while ingest is on and the engine runs, handed the engine's pid and
+    token, told the pace as `hold` and `free` lines (its reading stops; its
+    watcher and path entries go on), started again `CONTENT_RESTART_SEC`
+    after it ends or when the engine is a new process, and ended with the
+    server (`stop`, or its stdin closing)."""
+
+    def __init__(self, supervisor, *, spawn: Callable[[], subprocess.Popen] = _spawn_content,
+                 clock: Callable[[], float] = time.monotonic,
+                 enabled: Callable[[], bool] = knowledge_client.enabled) -> None:
+        self.supervisor = supervisor
+        self.enabled = enabled
+        self._spawn = spawn
+        self._clock = clock
+        self.proc: Optional[subprocess.Popen] = None
+        self.engine_pid: Optional[int] = None
+        self.mode: Optional[str] = None
+        self.due_at = 0.0
+        self.starts = 0
+        self.last_exit: Optional[int] = None
+
+    def __call__(self, mode: str) -> None:
+        if self.proc is not None and self.proc.poll() is not None:
+            self.last_exit = self.proc.returncode
+            self._forget()
+            self.due_at = self._clock() + CONTENT_RESTART_SEC
+        engine = self.supervisor.pid()
+        if self.proc is not None and (engine != self.engine_pid or not self.enabled()):
+            self.stop()
+        if self.proc is None:
+            if self.enabled() and engine is not None and self._clock() >= self.due_at:
+                self._start(engine)
+            if self.proc is None:
+                return
+        if mode != self.mode:
+            self._say(mode)
+
+    def _start(self, engine: int) -> None:
+        found = engine_address.read()
+        if found is None or found.pid != engine:
+            return
+        self.proc = self._spawn()
+        self.engine_pid = engine
+        self.mode = None
+        self.starts += 1
+        try:
+            content_pid_path().write_text(str(self.proc.pid))
+        except OSError:
+            pass
+        self._say(json.dumps({"pid": engine, "token": data_paths.ensure_knowledge_token()}))
+
+    def _say(self, line: str) -> None:
+        try:
+            self.proc.stdin.write((line + "\n").encode())
+            self.proc.stdin.flush()
+            if line in ("hold", "free"):
+                self.mode = line
+        except (OSError, ValueError) as e:
+            log.warning("could not tell the content child %s: %s", line[:10], e)
+
+    def _forget(self) -> None:
+        self.proc = None
+        self.engine_pid = None
+        self.mode = None
+        try:
+            content_pid_path().unlink()
+        except OSError:
+            pass
+
+    def stop(self) -> None:
+        proc = self.proc
+        if proc is not None:
+            try:
+                proc.stdin.close()          # its sign to finish what it holds and end
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        self._forget()
+
+    def health(self) -> dict:
+        try:
+            state = json.loads(state_path().read_text())
+        except (OSError, ValueError):
+            state = {}
+        return {"running": self.proc is not None, "starts": self.starts, "last_exit": self.last_exit,
+                "paused": self.mode == "hold", **{k: v for k, v in state.items() if k != "paused"}}
+
+
+def _end_leftover(pid_path, module: str) -> None:
+    """A child the last server left behind (stopped, perhaps) is killed, but
+    only when that pid is still that child."""
     try:
-        pid = int(ingest_pid_path().read_text().strip())
+        pid = int(pid_path.read_text().strip())
     except (OSError, ValueError):
         return
     try:
@@ -196,32 +313,42 @@ def end_leftover_ingest() -> None:
                                  text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return
-    if "jarvis.knowledge_ingest" in command:
+    if module in command:
         try:
             os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
     try:
-        ingest_pid_path().unlink()
+        pid_path.unlink()
     except OSError:
         pass
+
+
+def end_leftover_ingest() -> None:
+    _end_leftover(ingest_pid_path(), "jarvis.knowledge_ingest")
+
+
+def end_leftover_content() -> None:
+    _end_leftover(content_pid_path(), "jarvis.knowledge_content")
 
 
 class KnowledgeRuntime:
     def __init__(self, *, floor_busy: Callable[[], bool],
                  cpu_percent: Callable[[], Optional[float]],
                  supervisor: Optional[knowledge_client.Supervisor] = None,
-                 start_after: float = START_AFTER_SEC,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 enabled: Callable[[], bool] = knowledge_client.enabled) -> None:
         self.floor_busy = floor_busy
         self.cpu_percent = cpu_percent
         self.supervisor = supervisor or knowledge_client.Supervisor()
-        self.start_after = start_after
+        self.enabled = enabled
         self.pace = Pace(clock)
         self.started = False
         self.pace_listeners: list[Callable[[str], None]] = []
-        self.ingest = IngestScheduler(self.supervisor)
+        self.ingest = IngestScheduler(self.supervisor, enabled=enabled)
         self.pace_listeners.append(self.ingest)
+        self.content = ContentScheduler(self.supervisor, enabled=enabled)
+        self.pace_listeners.append(self.content)
         # Told (new, gone) when the linker's proposals change; the server
         # records each as an attention item and resolves it when it goes.
         self.proposal_listeners: list[Callable[[list[dict], list[str]], None]] = []
@@ -235,21 +362,38 @@ class KnowledgeRuntime:
         self.last_cpu: Optional[float] = None
 
     # -- the loop -----------------------------------------------------------
-    async def run(self) -> None:
-        await asyncio.sleep(self.start_after)
+    async def start_engine(self, wait: float = knowledge_client.READY_WAIT_SEC) -> bool:
+        """Start the engine and wait up to `wait` seconds for its health to
+        answer, every blocking step in a thread. True once it answered."""
         await asyncio.to_thread(end_leftover_ingest)
+        await asyncio.to_thread(end_leftover_content)
         await asyncio.to_thread(self.supervisor.start)
         self.started = True
+        end = time.monotonic() + wait
+        while True:
+            if await asyncio.to_thread(self.supervisor.ready):
+                return True
+            if time.monotonic() >= end:
+                return False
+            await asyncio.sleep(READY_POLL_SEC)
+            if self.supervisor.pid() is None:
+                await asyncio.to_thread(self.supervisor.tick)
+
+    async def run(self) -> None:
+        if not self.started:
+            await self.start_engine(wait=0)
         last_tick = time.monotonic()
         last_proposals = 0.0
         while True:
             try:
                 await self.look_pace()
-                if time.monotonic() - last_tick >= knowledge_client.PING_EVERY_SEC:
+                down = self.supervisor.pid() is None
+                if down or time.monotonic() - last_tick >= knowledge_client.PING_EVERY_SEC:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(self.supervisor.tick)
                 passed = self.ingest.passes != self._seen_passes
-                if self.supervisor.pid() and (passed or time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC):
+                if self.enabled() and self.supervisor.pid() and (
+                        passed or time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC):
                     last_proposals = time.monotonic()
                     self._seen_passes = self.ingest.passes
                     await self.look_proposals()
@@ -326,13 +470,15 @@ class KnowledgeRuntime:
 
     async def stop(self) -> None:
         await asyncio.to_thread(self.ingest.stop)
+        await asyncio.to_thread(self.content.stop)
         await asyncio.to_thread(self.supervisor.stop)
 
     # -- what Diagnostics reads ---------------------------------------------
     def health(self) -> dict:
         sup = self.supervisor
-        return {"state": sup.state if self.started else "starting",
-                "reason": sup.last_reason, "restarts": len(sup.restarts),
+        facts = sup.health()
+        return {**facts, "state": facts["state"] if self.started else "starting",
+                "knowledge": self.enabled(),
                 "pace": self.pace.mode, "pace_reason": self.pace.reason, "cpu_percent": self.last_cpu,
                 "engine": sup.last_health if sup.state == "running" else None,
-                "ingest": self.ingest.health()}
+                "ingest": self.ingest.health(), "content": self.content.health()}

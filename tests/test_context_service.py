@@ -117,3 +117,31 @@ def test_a_pack_from_project_records_names_the_work_projects_and_what_is_done():
     assert "The step checker runs against the tool registry." in p.text
     assert "Parris Island Engine (planned, not implemented)" in p.text
     assert "projects/chitauri.md" in p.sources
+
+
+def test_tier_zero_reads_the_notes_and_topics_as_the_engine_holds_them(monkeypatch):
+    """The pack reads each note's item when it is the file as it is now, and
+    the file only while the engine has not indexed that version."""
+    from jarvis import brain_notes, knowledge_content as kcont, records
+    from jarvis.knowledge.uds import Caller, Stream, Transaction
+    seed_world()
+    root = next(r for r in kcont.jarvis_roots() if r.prefix == kcont.BRAIN)
+    ix = kcont.Indexer(records.uds())
+    for rel in ix.scan(root):
+        ix.extract(root, rel)
+    held = records.uds().get(Caller("tim"), brain_notes.item_path("projects/chitauri.md"),
+                             {Stream.DATA, Stream.CONTENT})
+    assert "tool registry" in held.content["text"]
+    # What the engine holds is what the pack says: an item's words, while it
+    # is current, even where they differ from a read of the file now.
+    content = {k: v for k, v in held.content.items() if k in ("text", "ref", "title", "format", "media_type")}
+    content["text"] = content["text"].replace("tool registry", "item registry")
+    records.uds().transaction(Caller("tim"), Transaction().put(brain_notes.item_path("projects/chitauri.md"),
+                                                               dict(held.data), content=content))
+    p = cs.pack(purpose="add a refusal list to the step checker", project="chitauri")
+    assert "runs against the item registry" in p.text and "Parris Island Engine (planned" in p.text
+    # The file moved on: its new words are read from it until it is indexed.
+    jarvis_memory.write_project_note("chitauri", "A newer note about the step checker.")
+    p = cs.pack(purpose="the step checker", project="chitauri")
+    assert "A newer note about the step checker." in p.text and "tool registry" in p.text
+    assert brain_notes.indexed("projects/chitauri.md") is None

@@ -169,3 +169,41 @@ async def test_the_keyboard_reaches_both_views_and_the_catalog_keeps_its_place(p
         assert await page.eval_on_selector(".folders-catalog", "e => e.scrollTop") == 400
         await async_api.expect(page.locator(".folder-detail h2")).to_have_text("aurora")
         await browser.close()
+
+
+COUNTS = {"available": True, "partial": False,
+          "folders": {FOLDERS[0]["id"]: {"items": 12, "embedded": 9, "waiting": 3},
+                      FOLDERS[1]["id"]: {"items": 1, "embedded": 1, "waiting": 0}}}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_each_folder_says_its_document_count_and_what_waits(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url)
+
+        async def counts(route):
+            await route.fulfill(content_type="application/json", body=json.dumps(COUNTS))
+        await page.route("**/api/knowledge/folder-counts", counts)
+        await page.click(".centre-tabs [aria-label='Folders']")
+        aurora = page.locator(".folder-row:has-text('aurora') .folder-row-documents")
+        await async_api.expect(aurora).to_have_text(" · 12 documents · 3 waiting")
+        await async_api.expect(page.locator(".folder-row:has-text('field-notes') .folder-row-documents")) \
+            .to_have_text(" · 1 document")
+        # A folder the engine has no count for shows none, rather than zero.
+        assert await page.locator(".folder-row:has-text('ledger') .folder-row-documents").count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_engine_off_shows_no_count_and_the_catalog_still_shows(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url)
+
+        async def off(route):
+            await route.fulfill(content_type="application/json", body=json.dumps(
+                {"available": False, "reason": "the knowledge engine is switched off", "folders": {}}))
+        await page.route("**/api/knowledge/folder-counts", off)
+        await page.click(".centre-tabs [aria-label='Folders']")
+        await async_api.expect(page.locator(".folder-row:has-text('aurora')")).to_be_visible()
+        assert await page.locator(".folder-row-documents").count() == 0
+        await browser.close()

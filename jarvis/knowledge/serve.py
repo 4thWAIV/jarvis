@@ -8,10 +8,12 @@ Routes are one table, `ROUTES`, and `dispatch` is the one way into them, so
 the in-process test transport (`knowledge_client.InProcessTransport`) runs
 exactly what the HTTP handler runs, minus the gate.
 
-`run()` is `python -m jarvis.knowledge serve`: lower its priority, open the
-engine (taking the writer lock), listen, write the address record, and exit
-cleanly when its stdin pipe closes, which is how the server that started it
-ends it, even across the server's own `os.execv`.
+`run()` is `python -m jarvis.knowledge serve`: open the engine (taking the
+writer lock), listen, write the address record, and exit cleanly when its
+stdin pipe closes, which is how the server that started it ends it, even
+across the server's own `os.execv`. The process runs at normal priority, so
+record reads and writes are never slowed; the maintenance thread, the
+linker and a requested compaction run in the background lane (lanes.py).
 """
 from __future__ import annotations
 
@@ -22,18 +24,20 @@ import re
 import signal
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import time
+from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable, NamedTuple, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from jarvis.knowledge import address as engine_address
+from jarvis.loopback_http import LoopbackThreadingHTTPServer
 from jarvis.knowledge import auth
+from jarvis.knowledge import lanes
 from jarvis.knowledge.engine import Engine, EngineLocked, open_engine
 
 log = logging.getLogger("jarvis.knowledge.serve")
 
 BODY_MAX_BYTES = 64 << 20
-ENGINE_NICE = 10
 
 
 class Request(NamedTuple):
@@ -113,8 +117,9 @@ def _snapshot(engine: Engine, request: Request) -> Answer:
 
 @route("POST", "/v1/compact")
 def _compact(engine: Engine, request: Request) -> Answer:
-    engine.store.flush()
-    gen = engine.store.compact((request.body or {}).get("generations"))
+    with lanes.lowered():
+        engine.store.flush()
+        gen = engine.store.compact((request.body or {}).get("generations"))
     return Answer(200, {"generation": gen})
 
 
@@ -129,14 +134,23 @@ def _at(request: Request) -> Optional[int]:
 
 
 def _guard(fn):
-    """Document and schema errors are the caller's: answered 400."""
+    """Document, schema and path errors are the caller's: answered 400; a
+    condition that did not hold is a conflict: 409."""
     from jarvis.knowledge.documents import DocumentError
+    from jarvis.knowledge.items import ConditionFailed
+    from jarvis.knowledge.paths import PathError
+    from jarvis.knowledge.rights import Denied
     from jarvis.knowledge.store import StoreReadOnly
 
     def wrapped(engine: Engine, request: Request) -> Answer:
         try:
             return fn(engine, request)
-        except DocumentError as e:
+        except ConditionFailed as e:
+            return Answer(409, {"error": "conflict", "detail": str(e), "path": e.path,
+                                "expected": e.expected, "found": e.found})
+        except Denied as e:
+            return Answer(403, {"error": "denied", "detail": str(e)})
+        except (DocumentError, PathError) as e:
             raise BadRequest(str(e))
         except StoreReadOnly as e:
             return Answer(503, {"error": "read_only", "detail": str(e)})
@@ -281,10 +295,124 @@ def _find(engine: Engine, request: Request) -> Answer:
 @route("POST", "/v1/forget")
 @_guard
 def _forget(engine: Engine, request: Request) -> Answer:
-    sources = (request.body or {}).get("refs") or []
+    body = request.body or {}
+    if body.get("retired_kinds"):
+        # What ingest made before records and notes were items (UDS round
+        # 3): every document of these kinds, with its edges and vectors.
+        retired = body["retired_kinds"]
+        if not isinstance(retired, list) or not set(retired) <= {"chunk", "document"}:
+            raise BadRequest("retired_kinds are some of chunk, document")
+        keys = {d["_key"].encode() for d in engine.docs.find(kinds_=retired, limit=1 << 30)}
+        return Answer(200, engine.docs.forget_keys(keys) if keys else {"documents": 0})
+    sources = body.get("refs") or []
     if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
         raise BadRequest("refs is a list of source references")
     return Answer(200, engine.docs.forget_sources(sources))
+
+
+# --- Items at paths: the UDS interface (items.py) ---------------------------
+# Every route takes a JSON body, so a path is never re-encoded in a URL.
+
+def _int_or_none(value, what: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BadRequest(f"{what} is a whole number")
+    return value
+
+
+@route("POST", "/v1/items/txn")
+@_guard
+def _items_txn(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.transact(request.body or {}))
+
+
+@route("POST", "/v1/items/get")
+@_guard
+def _items_get(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    at = body.get("at")
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))):
+        raise BadRequest("at is a time in seconds")
+    item = engine.items.get(body.get("path"), version=_int_or_none(body.get("version"), "version"),
+                            at=at, streams=body.get("streams"), person=engine.items._reader(body))
+    if item is None:
+        return Answer(404, {"error": "not_found"})
+    return Answer(200, item)
+
+
+@route("POST", "/v1/items/history")
+@_guard
+def _items_history(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    return Answer(200, engine.items.history(body.get("path"), limit=_int_or_none(body.get("limit"), "limit") or 100,
+                                            before=_int_or_none(body.get("before"), "before"),
+                                            person=engine.items._reader(body), fields=body.get("fields")))
+
+
+@route("POST", "/v1/items/diff")
+@_guard
+def _items_diff(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    a = _int_or_none(body.get("from"), "from")
+    if a is None:
+        raise BadRequest("diff takes the version it is from")
+    return Answer(200, engine.items.diff(body.get("path"), a, _int_or_none(body.get("to"), "to"),
+                                         person=engine.items._reader(body)))
+
+
+@route("POST", "/v1/items/list")
+@_guard
+def _items_list(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.list(request.body or {}))
+
+
+@route("POST", "/v1/items/count")
+@_guard
+def _items_count(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.count(request.body or {}))
+
+
+@route("POST", "/v1/items/changes")
+@_guard
+def _items_changes(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.changes(request.body or {}))
+
+
+@route("POST", "/v1/items/links")
+@_guard
+def _items_links(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.links(request.body or {}))
+
+
+@route("POST", "/v1/items/search")
+@_guard
+def _items_search(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.search(request.body or {}))
+
+
+@route("POST", "/v1/items/rights")
+@_guard
+def _items_rights(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.set_rights(request.body or {}))
+
+
+@route("POST", "/v1/items/propose")
+@_guard
+def _items_propose(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.propose_link(request.body or {}))
+
+
+@route("POST", "/v1/items/proposals")
+@_guard
+def _items_proposals(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.proposals(request.body or {}))
+
+
+@route("POST", "/v1/items/proposals/answer")
+@_guard
+def _items_answer(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.answer_proposal(request.body or {}))
 
 
 class _HTTPHandler(BaseHTTPRequestHandler):
@@ -340,22 +468,16 @@ class _HTTPHandler(BaseHTTPRequestHandler):
         self._handle("DELETE")
 
 
-class EngineHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
+class EngineHTTPServer(LoopbackThreadingHTTPServer):
+    """The engine's loopback server: bound without a reverse name lookup
+    (loopback_http), which on the macOS CI runner kept the engine from
+    listening for about 35 seconds."""
     allow_reuse_address = False
 
     def __init__(self, engine: Engine, token: str, host: str = "127.0.0.1", port: int = 0) -> None:
         self.engine = engine
         self.token = token
         super().__init__((host, port), _HTTPHandler)
-
-
-def _lower_priority() -> None:
-    """Below the voice path, never above it (I4)."""
-    try:
-        os.nice(ENGINE_NICE)
-    except OSError as e:
-        log.warning("could not lower the engine's priority (%s)", e)
 
 
 def _watch_stdin(on_close: Callable[[], None]) -> threading.Thread:
@@ -378,6 +500,7 @@ MAINTAIN_EVERY_SEC = 5.0
 
 def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
     def loop() -> None:
+        lanes.background()
         while not stopping.wait(MAINTAIN_EVERY_SEC):
             try:
                 engine.maintain()
@@ -390,13 +513,15 @@ def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
 
 def run(*, watch_stdin: bool = True) -> int:
     from jarvis import data_paths
-    _lower_priority()
+    began = time.monotonic()
+    log.info("knowledge engine starting (pid %s, Python %s)", os.getpid(), sys.version.split()[0])
     try:
         engine = open_engine()
     except EngineLocked as e:
         log.error("%s", e)
         print(str(e), file=sys.stderr)
         return 3
+    log.info("knowledge engine opened %s in %.2f s", engine.directory, time.monotonic() - began)
     token = data_paths.ensure_knowledge_token()
     server = EngineHTTPServer(engine, token)
     host, port = server.server_address[:2]
@@ -414,7 +539,8 @@ def run(*, watch_stdin: bool = True) -> int:
     _maintenance(engine, stopping)
     engine_address.record(engine_address.EngineAddress(
         scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id))
-    log.info("knowledge engine listening on %s:%s (pid %s)", host, port, os.getpid())
+    log.info("knowledge engine listening on %s:%s (pid %s), %.2f s after it started", host, port,
+             os.getpid(), time.monotonic() - began)
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

@@ -6,9 +6,7 @@ ground by package id. The kit-backed tests run where the pinned kit asset
 is supplied (JARVIS_LANGUAGE_KIT_ASSET; the language-kit workflow)."""
 import hashlib
 import json
-import time
 import zipfile
-from contextlib import closing
 
 import pytest
 
@@ -44,12 +42,11 @@ def through_the_route(wired, monkeypatch):  # noqa: F811
 
 def agent(rights: tuple[str, ...] | None = None) -> Agent:
     """This test's agent, onboarded, with the default rights or `rights`."""
-    made = Agent(agent_keys._claude_home(), SESSION)
+    made = Agent(agent_keys._claude_home(), SESSION).onboarded()
     if rights is not None:
-        with closing(agent_key_store._connect()) as conn, conn:
-            agent_key_store._grant(conn, agent_key_store.agent_principal(SESSION), rights,
-                                   agent_rights.ANY_SCOPE, "test", time.time())
-    return made.onboarded()
+        agent_key_store._set_rights(agent_key_store.agent_principal(SESSION), rights,
+                                    agent_rights.ANY_SCOPE, "test")
+    return made
 
 
 def collect(client, who: Agent, body: dict) -> dict:

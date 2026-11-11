@@ -163,19 +163,154 @@ def test_a_cause_s_code_is_recorded_and_read_back_and_reaches_the_summary():
     assert (got["causeCode"], got["causeValues"]) == ("machineBusy", {"load": 16.0})
 
 
-def test_a_record_from_before_the_codes_is_brought_forward_and_read_as_it_was_written():
-    from contextlib import closing
-    from jarvis import run_store
-    with closing(run_store._connect()) as conn:          # the tables as they were, no codes
-        conn.executescript(vd._SCHEMA)
-        conn.execute("INSERT INTO voice_events (at, kind, cause) VALUES (?, ?, ?)",
-                     (1000.0, "overload", "Machine busy (load 16.9)"))
-        conn.commit()
+def test_a_record_from_before_the_codes_is_read_as_it_was_written():
+    from jarvis import data_paths
+    folder = data_paths.voice_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    day = time.strftime("%Y-%m-%d", time.localtime(1000.0))
+    # An event line moved from before the codes: no cause code, no values.
+    (folder / f"{day}.events.jsonl").write_text(json.dumps(
+        {"id": 1, "at": 1000.0, "capture": None, "kind": "overload", "source": None, "text": None,
+         "cause": "Machine busy (load 16.9)", "top_processes": None}) + "\n")
     _, events = vd.history(900, 1100)
     assert [(e.cause, e.cause_code, e.cause_values) for e in events] == [
         ("Machine busy (load 16.9)", None, {})]
-    vd.record_event(Event(at=1001.0, kind="overload", cause="x", cause_code="noFrames"))
+    assert vd.record_event(Event(at=1001.0, kind="overload", cause="x", cause_code="noFrames")) == 2
     assert [e.cause_code for e in vd.history(900, 1100)[1]] == [None, "noFrames"]
+
+
+W = 1_800_000_000.0                    # the start of a half hour
+
+
+def _voice_files() -> dict[str, bool]:
+    """Every voice file, relative to the voice folder: closed or not."""
+    from jarvis import closed_files, data_paths
+    folder = data_paths.voice_dir()
+    return {str(p.relative_to(folder)): closed_files.closed(p) for p in sorted(folder.rglob("*.jsonl"))}
+
+
+def _rel(kind: str, start: float, n: int = 0) -> str:
+    suffix = f"-{n}" if n else ""
+    return time.strftime("%Y-%m-%d/%H%M", time.localtime(start)) + f"{suffix}.{kind}.jsonl"
+
+
+def test_samples_and_events_are_a_file_every_half_hour_one_line_each():
+    """The record: each half hour's samples and events, one JSON line each,
+    holding the columns of the tables they replaced, under the local date's
+    folder, named by the local time the half hour starts."""
+    from jarvis import data_paths
+    vd.record_sample(healthy(at=W))
+    vd.record_sample(healthy(at=W + 86400))
+    first = vd.record_event(Event(at=W, kind="ready"))
+    assert vd.record_event(Event(at=W + 1, kind="finish")) == first + 1
+    assert _voice_files() == {_rel("events", W): False, _rel("samples", W): True,
+                              _rel("samples", W + 86400): False}
+    line = json.loads((data_paths.voice_dir() / _rel("samples", W)).read_text())
+    assert tuple(line) == vd.SAMPLE_COLUMNS and line["notices_by_source"] == '{"status": 1}'
+    assert [s.at for s in vd.history(W - 1, W + 86401)[0]] == [W, W + 86400]
+
+
+def test_the_file_turns_over_at_the_half_hour_and_the_old_one_is_closed():
+    """The last second of a half hour goes in its file; the first of the
+    next makes the next file and closes the old one (read-only), and the
+    readers read across both as one record."""
+    from jarvis import data_paths
+    vd.record_sample(healthy(at=W + 1799.5))
+    assert _voice_files() == {_rel("samples", W): False}
+    vd.record_sample(healthy(at=W + 1800.0))
+    vd.record_sample(healthy(at=W + 1801.0))
+    assert _voice_files() == {_rel("samples", W): True, _rel("samples", W + 1800): False}
+    assert (data_paths.voice_dir() / _rel("samples", W)).stat().st_mode & 0o222 == 0
+    vd.record_event(Event(at=W + 1799.0, kind="overload"))
+    vd.record_event(Event(at=W + 1830.0, kind="reconnect"))
+    assert _voice_files()[_rel("events", W)] is True and _voice_files()[_rel("events", W + 1800)] is False
+    samples, events = vd.history(W + 1700, W + 1900)
+    assert [s.at for s in samples] == [W + 1799.5, W + 1800.0, W + 1801.0]
+    assert [e.kind for e in events] == ["overload", "reconnect"]
+    got = vd.summary(W + 1802)
+    assert len(got["last2min"]) == 3 and got["incidentsLastHour"]["drops"] == 1
+    assert got["lastDropAt"] == W + 1799.0
+
+
+def test_a_half_hour_with_nothing_after_it_is_closed_once_it_has_ended():
+    vd.record_sample(healthy(at=W + 10))
+    vd.record_event(Event(at=W + 10, kind="ready"))
+    assert vd.close_ended(W + 1799) == 0
+    assert set(_voice_files().values()) == {False}
+    assert vd.close_ended(W + 1800) == 2
+    assert set(_voice_files().values()) == {True}
+    # A line written late for that half hour goes in a file of its own
+    # beside the closed one, never into it, and is read with the rest.
+    vd.record_sample(healthy(at=W + 20))
+    assert _voice_files() == {_rel("events", W): True, _rel("samples", W): True,
+                              _rel("samples", W, 1): False}
+    assert [s.at for s in vd.history(W, W + 1800)[0]] == [W + 10, W + 20]
+
+
+def test_a_restart_in_the_same_half_hour_writes_on_in_the_same_file():
+    vd.record_sample(healthy(at=W + 10))
+    vd._samples._current.clear()                        # a new process
+    vd.record_sample(healthy(at=W + 11))
+    assert _voice_files() == {_rel("samples", W): False}
+    vd._samples._current.clear()
+    vd.record_sample(healthy(at=W + 1810))              # restarted in the next half hour
+    assert _voice_files() == {_rel("samples", W): True, _rel("samples", W + 1800): False}
+
+
+def test_files_left_open_by_the_move_are_closed_at_the_first_prune(tmp_path):
+    """What the move from SQLite wrote, or a crash left, is closed once its
+    half hour has ended; the half hour now stays open."""
+    from jarvis import data_paths
+    folder = data_paths.voice_dir()
+    for start in (W, W + 1800):
+        path = folder / _rel("events", start)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"id": int(start), "at": start + 5, "kind": "ready"}) + "\n")
+    vd.prune(W + 1900)
+    assert _voice_files() == {_rel("events", W): True, _rel("events", W + 1800): False}
+    assert [e.at for e in vd.history(W, W + 3600)[1]] == [W + 5, W + 1805]
+
+
+def test_a_file_is_kept_whole_until_all_of_it_is_past_its_keeping_time():
+    """Prune deletes whole files only, so a closed file is never written
+    again: one the keeping time cuts through stays until all of it is past."""
+    now = W + vd.SAMPLE_KEEP_SEC + 900
+    vd.record_sample(healthy(at=W + 600))
+    vd.record_sample(healthy(at=W + 1200))
+    vd.record_sample(healthy(at=W + 1800 + 5))
+    vd.prune(now)
+    assert [s.at for s in vd.history(0, now)[0]] == [W + 600, W + 1200, W + 1805]
+    vd.prune(now + 600)
+    assert [s.at for s in vd.history(0, now)[0]] == [W + 1805]
+    assert _voice_files() == {_rel("samples", W + 1800): True}
+    # An emptied date folder goes with its last file.
+    vd.prune(W + vd.SAMPLE_KEEP_SEC + 86400 * 3)
+    assert _voice_files() == {}
+
+
+def test_a_closed_samples_file_is_summed_up_for_the_index():
+    vd.record_sample(healthy(at=W + 1, finals=2))
+    vd.record_sample(healthy(at=W + 2, typed=1))
+    vd.record_sample(healthy(at=W + 3, state="decoder-slow", cause="Machine busy (load 16.0)",
+                             cause_code="machineBusy", cause_values={"load": 16.0}))
+    vd.record_sample(healthy(at=W + 4, state="no-frames", cause_code="noFrames"))
+    from jarvis import data_paths
+    data = (data_paths.voice_dir() / _rel("samples", W)).read_bytes() + b'{"at": 9, "torn'
+    assert vd.samples_summary(data) == {
+        "from_at": W + 1, "to_at": W + 4, "samples": 4, "listened_sec": 4 * vd.SAMPLE_EVERY_SEC,
+        "finals": 2, "typed": 1, "failures": 2, "states": {"decoder-slow": 1, "no-frames": 1},
+        "causes": {"machineBusy": 1, "noFrames": 1}}
+    assert vd.is_samples_file(_rel("samples", W)) and not vd.is_samples_file(_rel("events", W))
+
+
+def test_a_line_torn_by_a_crash_is_passed_over():
+    from jarvis import data_paths
+    vd.record_sample(healthy(at=1000.0))
+    path = next(data_paths.voice_dir().rglob("*.samples.jsonl"))
+    with open(path, "ab") as f:
+        f.write(b'{"at": 1000.5, "capt')
+    vd.record_sample(healthy(at=1001.0))      # on a line of its own after the torn one
+    assert [s.at for s in vd.history(0, 2000)[0]] == [1000.0, 1001.0]
 
 
 def test_a_long_range_is_thinned_evenly(monkeypatch):

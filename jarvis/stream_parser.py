@@ -217,11 +217,11 @@ def assess_outcome(events: list[dict], result_text: str = "") -> str:
     return NO_CHANGES
 
 
-# --- capping what goes into run_events.payload ----------------------------
+# --- capping what goes into a run event's payload --------------------------
 #
 # The executor stored every stream-json line verbatim, and
 # claude_env.STREAM_LINE_LIMIT is 64 MiB — so a single line could be several
-# MiB, permanently, in jarvis.db, and a chatty build emits thousands of
+# MiB, permanently, in the run's events file, and a chatty build emits thousands of
 # events.
 #
 # 256 KiB is the threshold. It is far above anything a person would ever

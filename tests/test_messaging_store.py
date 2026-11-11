@@ -1,20 +1,19 @@
-"""The local messaging store (SQLite under the test's own data dir): the
-contract's store rules, checked against the contract's MemoryStore too so
-the two cannot drift, then what only a durable store can show: every
+"""The local messaging store (documents in the test's own record engine):
+the contract's store rules, checked against the contract's MemoryStore too
+so the two cannot drift, then what only a durable store can show: every
 transition survives closing and reopening, pages and their continuation are
-one transaction, namespaces never mix, and the schema migrates once."""
+one write, namespaces never mix, and one message is one document."""
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from uuid import UUID
 
 import pytest
 
-from jarvis import data_paths
+from jarvis import data_paths, records
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
-from jarvis.messaging_store import SCHEMA_VERSION, SqliteMessagingStore
+from jarvis.messaging_store import SqliteMessagingStore
 from tests.fixtures import messaging_fakes as fakes
 
 SERVER, OTHER_SERVER = "server-1", "server-2"
@@ -196,24 +195,24 @@ def test_every_transition_survives_closing_and_reopening(serve):
     assert last.announcements_due(*NS) == [m.message_id]
 
 
-def test_a_page_and_its_continuation_are_one_transaction(serve, monkeypatch):
+def test_a_page_and_its_continuation_are_one_transaction(serve):
     store = sqlite_store()
     a = send(serve, MATT, 2, TIM, "a").message
     b = send(serve, MATT, 2, TIM, "b").message
     real = store._first_incoming
     calls = []
 
-    def crash_on_second(conn, *args):
+    def crash_on_second(docs, *args):
         calls.append(args)
         if len(calls) == 2:
-            raise sqlite3.OperationalError("disk gone")
-        return real(conn, *args)
+            raise RuntimeError("disk gone")
+        return real(docs, *args)
 
-    monkeypatch.setattr(store, "_first_incoming", crash_on_second)
-    with pytest.raises(sqlite3.OperationalError):
-        store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, a), entry(serve, TIM, b),
-                                                continuation="c1"))
-    monkeypatch.undo()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(store, "_first_incoming", crash_on_second)
+        with pytest.raises(RuntimeError):
+            store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, a), entry(serve, TIM, b),
+                                                    continuation="c1"))
     assert store.message(*NS, a.message_id) is None, "nothing of the page was kept"
     assert store.sync_position(*NS, UUID(int=1)) is None and store.receipts_owed(*NS) == []
     assert store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, a), entry(
@@ -257,16 +256,38 @@ def test_an_edit_after_approval_replaces_the_approved_send():
     assert store.draft(*NS, draft.message_id).send.content_revision == 2
 
 
-def test_the_schema_is_versioned_and_migrates_once(tmp_path):
-    path = tmp_path / "jarvis.db"
-    SqliteMessagingStore(path)
-    SqliteMessagingStore(path)
-    with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT COUNT(*), MAX(version) FROM human_messaging_schema"
-                            ).fetchone() == (1, SCHEMA_VERSION)
-        conn.execute("UPDATE human_messaging_schema SET version = ?", (SCHEMA_VERSION + 1,))
-    with pytest.raises(RuntimeError):
-        SqliteMessagingStore(path)
+def test_no_sqlite_file_is_made_and_another_path_is_another_record(tmp_path):
+    ids = fakes.SeqIds()
+    path = tmp_path / "node-2.db"
+    draft = SqliteMessagingStore(path).create_draft(*NS, new_draft(ids))
+    assert not path.exists() and not data_paths.db_path().exists()
+    assert SqliteMessagingStore(path).draft(*NS, draft.message_id) == draft
+    assert sqlite_store().draft(*NS, draft.message_id) is None, "another node's record"
+
+
+def test_one_message_from_draft_to_accepted_is_one_document_with_its_steps_as_versions(serve):
+    ids, clock = fakes.SeqIds(start=900), fakes.FixedClock()
+    store = sqlite_store()
+    guard = fakes.TableGuard(store, ids=ids, clock=clock)
+    draft = store.create_draft(*NS, new_draft(ids, to=TIM, text="Note to self."))
+    reviewed = guard.request_review(*NS, draft.message_id, 1)
+    approved = guard.approve(*NS, draft.message_id, 1, reviewed.send.content_digest,
+                             UUID(int=1), "gui")
+    result = asyncio.run(serve.pair(TIM, UUID(int=1)).send(approved.request))
+    store.record_accepted(*NS, result)
+    docs = records.all_of("/people", types=["message"])
+    assert [d.data["message_id"] for d in docs] == [str(draft.message_id)]
+    data = docs[0].data
+    assert data["draft"] and data["send"]["state"] == "accepted" and data["approved"] \
+        and data["accepted"] and data["receipts"] and data["owed"]
+    steps = [v.change for v in records.history(docs[0].path)]
+    assert steps[0] == "draft_created" and "approved" in steps and steps[-1] == "received"
+    assert next(v for v in records.history(docs[0].path) if v.change == "approved").agent is None
+    assert all(v.data["events"] == [] for v in records.history(docs[0].path,
+                                                                fields=["events"]))
+    work = records.all_of("/people", types=["thread"])
+    assert [w.data["thread_id"] for w in work] == [str(draft.thread_id)]
+    assert store.announcements_due(*NS) == [result.message.message_id]
 
 
 def test_the_store_lives_in_the_data_dir_under_test():
