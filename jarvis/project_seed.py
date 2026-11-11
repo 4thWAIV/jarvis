@@ -26,7 +26,6 @@ from jarvis.agent_directory import spoken_key
 from jarvis.project_store import Candidate, ProjectStore
 
 LEGACY_QUERIES = (
-    ("run_project", "SELECT project_name, project_path, COUNT(*) FROM runs GROUP BY project_name, project_path"),
     ("workflow_project", "SELECT project, NULL, COUNT(*) FROM workflows GROUP BY project"),
 )
 # The messages' and session messages' projects are counted by their own
@@ -37,6 +36,12 @@ MESSAGE_SOURCES = (("message_project", "messages"), ("session_project", "session
 def _legacy_rows() -> list[tuple[str, str, Optional[str], int]]:
     """(source, name, path or None, count) from every legacy table there is."""
     out = []
+    # Runs are documents (run_store): grouped here as the query grouped them.
+    runs: dict[tuple, int] = {}
+    for run in run_store.list_runs(limit=-1):
+        key = (run["project_name"], run["project_path"])
+        runs[key] = runs.get(key, 0) + 1
+    out += [("run_project", str(name), path, n) for (name, path), n in runs.items() if name]
     with closing(run_store._connect()) as conn:
         for source, sql in LEGACY_QUERIES:
             try:

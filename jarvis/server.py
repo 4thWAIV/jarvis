@@ -3218,14 +3218,9 @@ async def lifespan(application: FastAPI):
         log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
 
     run_store.init_db()
-    try:
-        import importlib
-        _mig = importlib.import_module("jarvis.migrations.001_dispatches_to_runs")
-        moved = _mig.migrate()
-        if moved:
-            log.info("migrated %d legacy dispatch row(s)", moved)
-    except Exception:
-        log.warning("dispatch migration skipped", exc_info=True)
+    # The old `dispatches` -> `runs` migration is retired with SQLite: every
+    # database still in use had moved its dispatches into `runs` long ago
+    # (today's has no `dispatches` table), so there is nothing left for it.
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
     # Every review he made in a package before now is on its item.

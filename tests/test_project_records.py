@@ -92,7 +92,7 @@ def test_the_schema_is_its_own_and_leaves_the_others_alone(stores):
     assert records.schema_version() == pstore.SCHEMA_VERSION
     with sqlite3.connect(data_paths.db_path()) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"projects", "project_events", "folders", "runs"} <= tables
+        assert {"projects", "project_events", "folders"} <= tables     # runs are documents now
         for t in ("projects", "project_aliases", "project_folders", "project_candidates", "works",
                   "work_projects", "work_folders", "accomplishments", "accomplishment_evidence",
                   "project_bindings", "project_events", "project_schema"):

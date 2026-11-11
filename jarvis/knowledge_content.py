@@ -107,15 +107,17 @@ def scope_of(scopes: Iterable[str]) -> str:
 
 def jarvis_roots() -> list[Root]:
     """JARVIS's own folders: the answers to agents, the packages, the
-    files people sent once downloaded, and the voice record's day files
-    (voice_diagnostics.py, JSON lines, so read as text). Needs boards live
-    in the project folders and come with them. The brain's notes stay with
-    the legacy ingest until the linker, topics and context pack read items
-    (round 3), so they are never counted twice."""
+    files people sent once downloaded, the runs' output streams and the
+    voice record's day files (voice_diagnostics.py, JSON lines, so read as
+    text). Needs boards live in the project folders and come with them. The
+    brain's notes stay with the legacy ingest until the linker, topics and
+    context pack read items (round 3), so they are never counted twice."""
     found = [Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
              Root("/jarvis/voice", str(data_paths.voice_dir()), "text", "own"),
              Root("/jarvis/packages", str(data_paths.packages_dir()), "docs", "untrusted"),
-             Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted")]
+             Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted"),
+             # Each run's output stream (run_store.py): JSON lines, the agent's words.
+             Root("/jarvis/runs", str(data_paths.runs_dir()), "text", "untrusted")]
     return [Root(r.prefix, os.path.realpath(r.path), r.scope, r.trust) for r in found if os.path.isdir(r.path)]
 
 

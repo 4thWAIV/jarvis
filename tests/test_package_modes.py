@@ -202,16 +202,20 @@ async def test_one_agent_run_per_package_and_only_an_agent_package(agent_run, tm
     assert said == f"{page.id} runs as page, not as agent. Nothing was started."
 
 
-def test_the_package_column_is_added_to_an_old_database(tmp_path, monkeypatch):
-    import sqlite3
-    from jarvis import run_store
+def test_a_run_written_before_the_package_field_reads_none(tmp_path, monkeypatch):
+    from jarvis import records, run_store
     importlib.reload(run_store)
     run_store.init_db()
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        conn.execute("ALTER TABLE runs DROP COLUMN package_id")
+    run_id = run_store.create_run("x", "proj", str(tmp_path), "voice")
+    path = run_store._run_path(run_id)
+    old = {k: v for k, v in records.get(path).data.items() if k != "package_id"}
+    records.write(path, old)                      # a run from before the field
     run_store.init_db()
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        assert "package_id" in {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert "package_id" not in records.get(path).data
+    assert run_store.get_run(run_id)["package_id"] is None
+    assert run_store.list_runs(package_id="pkg") == []
+    run_store.update_run(run_id, status=run_store.RunStatus.RUNNING)
+    assert [r["id"] for r in run_store.list_runs(status=[run_store.RunStatus.RUNNING])] == [run_id]
 
 
 # -- page packages: its files, and what its frame saves ----------------------------------

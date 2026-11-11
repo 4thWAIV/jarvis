@@ -548,6 +548,12 @@ def bundle_cache_dir() -> Path:
     return data_dir() / "bundle-cache"
 
 
+def runs_dir() -> Path:
+    """Each run's output stream, one `<run id>.jsonl` a run (run_store.py),
+    one JSON line per event; made by the first append, not here."""
+    return data_dir() / "runs"
+
+
 def run_context_dir() -> Path:
     """The context pack each run was given (context_service.py), one
     `<run id>.md` each, so the page can show exactly what it received;

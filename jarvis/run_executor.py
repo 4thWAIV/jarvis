@@ -33,8 +33,9 @@ _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() \
 # own default, always pass --model explicitly.
 _DEFAULT_MODEL = "sonnet"
 
-# Events are written in batches so a chatty build does not put thousands of
-# synchronous SQLite writes on the event loop.
+# Events are appended to the run's file in batches, off the event loop, so a
+# chatty build does not make thousands of writes; each event is announced
+# once its batch is in the file.
 _EVENT_BATCH = 25
 _EVENT_FLUSH_SEC = 0.5
 
@@ -286,8 +287,8 @@ class RunExecutor:
         cleanup moves here unchanged.
         """
         # Everything between the row existing and its driver owning it is
-        # guarded. `update_run` is a synchronous SQLite write and SQLite
-        # writes raise — "database is locked", a full disk — and when this
+        # guarded. `update_run` is a synchronous store write and store
+        # writes raise — the engine unreachable, a full disk — and when this
         # one did, the row sat QUEUED with no driver behind it and no path to
         # a terminal state. That is the exact case CLAUDE.md warns callers
         # about, with this module as the offender.
@@ -497,27 +498,20 @@ class RunExecutor:
         return self._store.get_run(run_id)
 
     def _finish_write(self, run_id: str, status: str, **fields) -> dict | None:
-        """The three store calls behind a terminal transition, as one unit.
+        """The terminal transition, as one conditioned write in the store.
 
         Runs on a worker thread. Returns the finished row, or None when the
         run was already terminal and nothing was written — the first writer
         wins, which is what keeps a cancel racing `_drive` to a single status.
         """
-        run = self._store.get_run(run_id)
-        if run and run["status"] in self._store.RunStatus.TERMINAL:
-            return None
-        self._store.update_run(run_id, status=status, ended_at=time.time(),
-                               **fields)
-        return self._store.get_run(run_id)
+        return self._store.finish_run(run_id, status, **fields)
 
     async def _finish(self, run_id: str, status: str, **fields) -> None:
         """Terminal transition: written off the loop, published on it.
 
-        These were three synchronous SQLite calls on the loop thread while
-        `_consume` wrote the same database from a worker — and with sqlite's
-        5s busy timeout that could stall the voice path, which shares this
-        thread. Every other store call in this module was already
-        `to_thread`'d; this is the last one. The publish stays on the loop:
+        The write is a synchronous store call; on the loop thread it could
+        stall the voice path, which shares this thread, so like every other
+        store call in this module it is `to_thread`'d. The publish stays on the loop:
         `_publish` fans out to WebSocket subscribers.
         """
         row = await asyncio.to_thread(self._finish_write, run_id, status,
@@ -624,8 +618,7 @@ class RunExecutor:
                 self._drain_stderr(proc, stderr_sink))
 
             # Off the loop like every other store call here: this is two
-            # synchronous SQLite calls, and `_consume` is already writing the
-            # same database from a worker thread.
+            # synchronous store calls.
             started = await asyncio.to_thread(
                 self._start_write, run_id, proc.pid)
             self._publish({"type": "run_started", "run": started})
@@ -784,9 +777,10 @@ class RunExecutor:
     async def _consume(self, run_id: str, proc) -> None:
         """Read the JSONL stream, persisting in batches off the event loop.
 
-        SQLite writes are synchronous. Doing one per event on the loop thread
+        Store writes are synchronous. Doing one per event on the loop thread
         would stutter the voice path on a chatty build, so events are buffered
-        and flushed via a worker thread.
+        and flushed via a worker thread, and each is announced (`run_event`)
+        only once its batch is in the run's file.
         """
         seq = await asyncio.to_thread(self._store.next_seq, run_id)
         pending: list[tuple[int, str, str]] = []
@@ -805,11 +799,19 @@ class RunExecutor:
         # it is still the wrong direction to be wrong in. Once true, true.
         saw_error = False
 
+        # Each event's `run_event` hint waits here until its line is in the
+        # run's file: written before it is announced, like every other
+        # transition.
+        unannounced: list[dict] = []
+
         async def flush():
-            nonlocal pending, last_flush
+            nonlocal pending, unannounced, last_flush
             if pending:
                 batch, pending = pending, []
+                hints, unannounced = unannounced, []
                 await asyncio.to_thread(self._store.append_events, run_id, batch)
+                for hint in hints:
+                    self._publish(hint)
             last_flush = time.monotonic()
 
         # The reader is never simply awaited. EOF is only one of the ways a
@@ -897,6 +899,8 @@ class RunExecutor:
                 # tool names `assess_outcome` reads.
                 pending.append((seq, kind,
                                 stream_parser.cap_payload(line.strip(), event)))
+                unannounced.append({"type": "run_event", "run_id": run_id, "seq": seq,
+                                    "kind": kind, "payload": event})
 
                 if kind == "system" and event.get("subtype") == "init":
                     meta = stream_parser.extract_init_metadata(event)
@@ -949,9 +953,6 @@ class RunExecutor:
                 if (len(pending) >= _EVENT_BATCH
                         or time.monotonic() - last_flush >= _EVENT_FLUSH_SEC):
                     await flush()
-
-                self._publish({"type": "run_event", "run_id": run_id, "seq": seq,
-                               "kind": kind, "payload": event})
                 seq += 1
         finally:
             if line_task is not None:

@@ -1,5 +1,4 @@
 import importlib
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -144,77 +143,57 @@ def test_requested_model_round_trips(store):
     assert run["requested_model"] == "haiku"
 
 
-# -- schema-migration safety: a live jarvis.db predating `requested_model` --
-# CREATE TABLE IF NOT EXISTS never alters an existing table, so init_db()
-# must backfill the column onto a database built under the old schema
-# shape (mirrors migrations/001_dispatches_to_runs.py's PRAGMA-table_info-
-# then-ALTER pattern) without disturbing rows already there.
+# -- a run written before a field existed: the old column backfill -----------
+# A run document written before `requested_model` (or `is_error`,
+# `folder_id`...) existed has no such field. It must read with the field's
+# default, as the ALTER TABLE backfill gave old rows, without disturbing what
+# is there, and take the field on its next update.
 
-_OLD_RUNS_SCHEMA = """
-    CREATE TABLE runs (
-        id            TEXT PRIMARY KEY,
-        project_name  TEXT NOT NULL,
-        project_path  TEXT NOT NULL,
-        prompt        TEXT NOT NULL,
-        origin        TEXT NOT NULL,
-        status        TEXT NOT NULL,
-        resume_from   TEXT,
-        result_text   TEXT DEFAULT '',
-        summary       TEXT DEFAULT '',
-        error         TEXT DEFAULT '',
-        exit_code     INTEGER,
-        pid           INTEGER,
-        cost_usd      REAL    DEFAULT 0,
-        input_tokens  INTEGER DEFAULT 0,
-        output_tokens INTEGER DEFAULT 0,
-        cache_read_tokens     INTEGER DEFAULT 0,
-        cache_creation_tokens INTEGER DEFAULT 0,
-        num_turns     INTEGER DEFAULT 0,
-        model         TEXT DEFAULT '',
-        created_at    REAL NOT NULL,
-        started_at    REAL,
-        ended_at      REAL
-    );
-"""
+# The fields of a run as the oldest `runs` table had them.
+_OLD_RUN_FIELDS = ("id", "project_name", "project_path", "prompt", "origin", "status",
+                   "resume_from", "result_text", "summary", "error", "exit_code", "pid",
+                   "cost_usd", "input_tokens", "output_tokens", "cache_read_tokens",
+                   "cache_creation_tokens", "num_turns", "model", "created_at",
+                   "started_at", "ended_at")
 
 
-def test_existing_database_without_requested_model_still_opens(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    from jarvis import data_paths
-    importlib.reload(data_paths)
-    from jarvis import run_store
-    importlib.reload(run_store)
+def _old_run(store, run_id="old-run"):
+    """A run document in the pre-`requested_model` shape, written directly,
+    bypassing create_run: what a record looks like before this change."""
+    from jarvis import records
+    data = {"id": run_id, "project_name": "proj", "project_path": "/tmp/proj",
+            "prompt": "legacy prompt", "origin": "voice", "status": "succeeded",
+            "resume_from": None, "result_text": "", "summary": "", "error": "",
+            "exit_code": None, "pid": None, "cost_usd": 0.0, "input_tokens": 0,
+            "output_tokens": 0, "cache_read_tokens": 0, "cache_creation_tokens": 0,
+            "num_turns": 0, "model": "", "created_at": time.time(), "started_at": None,
+            "ended_at": None}
+    assert set(data) == set(_OLD_RUN_FIELDS)
+    records.write(store._run_path(run_id), data)
+    return run_id
 
-    # Build a jarvis.db in the pre-`requested_model` shape directly,
-    # bypassing init_db() entirely — this is what a live database looks
-    # like the moment before this change ships.
-    conn = sqlite3.connect(str(data_paths.db_path()))
-    conn.executescript(_OLD_RUNS_SCHEMA)
-    conn.execute(
-        "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-        "status, created_at) VALUES (?,?,?,?,?,?,?)",
-        ("old-run", "proj", "/tmp/proj", "legacy prompt", "voice",
-         "succeeded", time.time()))
-    conn.commit()
-    conn.close()
 
-    # Must not raise against a table that predates the column.
-    run_store.init_db()
+def test_existing_run_without_requested_model_still_opens(store):
+    _old_run(store)
+    store.init_db()                 # must not raise, and changes nothing
 
-    old = run_store.get_run("old-run")
+    old = store.get_run("old-run")
     assert old is not None
     assert old["prompt"] == "legacy prompt"
     assert old["requested_model"] == ""
 
-    new_id = run_store.create_run("new prompt", "proj", "/tmp/proj", "voice")
-    run_store.update_run(new_id, requested_model="opus")
-    assert run_store.get_run(new_id)["requested_model"] == "opus"
+    new_id = store.create_run("new prompt", "proj", "/tmp/proj", "voice")
+    store.update_run(new_id, requested_model="opus")
+    assert store.get_run(new_id)["requested_model"] == "opus"
+    store.update_run("old-run", requested_model="haiku")
+    assert store.get_run("old-run")["requested_model"] == "haiku"
+    assert store.get_run("old-run")["prompt"] == "legacy prompt"
 
 
 # -- `is_error`: the CLI's own verdict on the turn, kept ---------------------
 # The CLI reports an auth failure as `subtype: "success"` with
 # `is_error: true`, AND exits 0. Deciding a run's fate on the exit code alone
-# recorded that as `succeeded`. The flag is now a column so the reading is
+# recorded that as `succeeded`. The flag is now a field so the reading is
 # not lost the moment the stream is over.
 
 
@@ -225,40 +204,23 @@ def test_is_error_defaults_to_zero_and_round_trips(store):
     assert store.get_run(run_id)["is_error"] == 1
 
 
-def test_existing_database_without_is_error_still_opens(monkeypatch, tmp_path):
-    """Same backfill as `requested_model`: CREATE TABLE IF NOT EXISTS never
-    alters a table that already exists, so a live jarvis.db needs the ALTER."""
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    from jarvis import data_paths
-    importlib.reload(data_paths)
-    from jarvis import run_store
-    importlib.reload(run_store)
+def test_existing_run_without_is_error_still_opens(store):
+    _old_run(store)
+    store.init_db()
 
-    conn = sqlite3.connect(str(data_paths.db_path()))
-    conn.executescript(_OLD_RUNS_SCHEMA)
-    conn.execute(
-        "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-        "status, created_at) VALUES (?,?,?,?,?,?,?)",
-        ("old-run", "proj", "/tmp/proj", "legacy prompt", "voice",
-         "succeeded", time.time()))
-    conn.commit()
-    conn.close()
-
-    run_store.init_db()
-
-    old = run_store.get_run("old-run")
+    old = store.get_run("old-run")
     assert old is not None
     assert old["is_error"] == 0
 
-    new_id = run_store.create_run("new prompt", "proj", "/tmp/proj", "voice")
-    run_store.update_run(new_id, is_error=1)
-    assert run_store.get_run(new_id)["is_error"] == 1
+    new_id = store.create_run("new prompt", "proj", "/tmp/proj", "voice")
+    store.update_run(new_id, is_error=1)
+    assert store.get_run(new_id)["is_error"] == 1
 
 
 # -- `folder_id`: the registered folder a run worked in ----------------------
 # A run the brain starts in a registered folder (spawn_run's `folder_id`)
-# keeps that folder's ID, so the views can say where it ran. Added by the
-# same backfill: an older jarvis.db gains the column and its rows read None.
+# keeps that folder's ID, so the views can say where it ran. A run written
+# before the field reads None.
 
 
 def test_folder_id_is_recorded_and_absent_by_default(store):
@@ -269,26 +231,12 @@ def test_folder_id_is_recorded_and_absent_by_default(store):
     assert store.get_run(in_folder)["folder_id"] == fid
 
 
-def test_existing_database_without_folder_id_still_opens(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    from jarvis import data_paths
-    importlib.reload(data_paths)
-    from jarvis import run_store
-    importlib.reload(run_store)
-    conn = sqlite3.connect(str(data_paths.db_path()))
-    conn.executescript(_OLD_RUNS_SCHEMA)
-    conn.execute(
-        "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-        "status, created_at) VALUES (?,?,?,?,?,?,?)",
-        ("old-run", "proj", "/tmp/proj", "legacy prompt", "voice",
-         "succeeded", time.time()))
-    conn.commit()
-    conn.close()
+def test_existing_run_without_folder_id_still_opens(store):
+    _old_run(store)
+    store.init_db()
+    store.init_db()          # repeatable
 
-    run_store.init_db()
-    run_store.init_db()          # repeatable
-
-    assert run_store.get_run("old-run")["folder_id"] is None
+    assert store.get_run("old-run")["folder_id"] is None
 
 
 def test_a_wal_switch_that_loses_a_race_waits_for_the_other_and_carries_on(tmp_path, monkeypatch):

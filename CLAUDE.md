@@ -52,7 +52,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **TTS**: Fish Audio with JARVIS voice model
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
-  `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
+  `run_store.py` (a document per run, its output a file) + `run_executor.py`, surfaced at `/api/runs`,
   `/ws/runs`; the React workspace is the focus of user-interface development
 - **Internal tool channel**: the brain reaches JARVIS's tools (session
   listing, steering, etc.) via a stdio MCP child that forwards
@@ -907,8 +907,8 @@ unchanged. A package runs one of three ways, package.json's `runs`
 (`work_packages.MODES`): `conversation` (the default, as above: the brain
 follows its `skill`), `agent` and `page`. An agent package's `brief` is
 carried out by one run through `RunExecutor` in its folder, started by the
-acting `run_package_agent` and recorded in `runs.package_id` (added by
-`run_store.init_db`'s column backfill; one active run per package, and a
+acting `run_package_agent` and recorded in the run's `package_id` (a run
+written before it reads None; one active run per package, and a
 retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
 he agrees. A page package's
@@ -1540,8 +1540,8 @@ a folder through `spawn_run`'s `folder_id` (never together with `project`):
 `FolderService.work_location` gives the folder's current canonical location
 under the same checks as a read (active, enabled, this node's, available,
 the reader the policy still gives it) and only for a FILES reader, never a
-history or notes one. The run records it in `runs.folder_id` (added by
-`run_store.init_db`'s column backfill), and a retry goes through
+history or notes one. The run records it in its `folder_id` (a run written
+before it reads None), and a retry goes through
 `work_location` again. `start_build` takes projects only: `build_status`,
 `review_document` and `approve_document` find a build by its project. Every
 committed change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
@@ -2158,9 +2158,10 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
    Every exit path out of `_drive` writes a terminal status, and callers that
    create a run then hand it off must fail it if they throw before the
    executor takes ownership.
-2. **Every state transition is a DB write BEFORE it is a notification.** The
-   WebSocket is a cache-invalidation hint, never a source of truth; clients
-   reconcile against `/api/runs`.
+2. **Every state transition is a write BEFORE it is a notification.** The
+   run's document is written (and an event's line is in its file) before
+   any hint; the WebSocket is a cache-invalidation hint, never a source of
+   truth; clients reconcile against `/api/runs`.
 
 The dashboard's Retry and the brain's acting `retry_run` share `_retry_run`:
 a finished run's prompt again, resuming from it, a folder run re-checked
@@ -2244,8 +2245,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/VoiceDiagnosticsView.tsx` — Voice incidents, timeline and notification analysis
 - `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
   subsystem rows and one subsystem in full (see "Subsystem diagnostics")
-- `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
-  the message functions over message documents (see "Messages to sessions",
+- `run_store.py` — Runs: one document each, `/runs/<id>.run`, six-value
+  status enum; each run's output stream the file `data/runs/<id>.jsonl`,
+  one JSON line per event, indexed as Content (`/jarvis/runs`); the message
+  functions over message documents (see "Messages to sessions",
   `message_records.py`); the agents list and `steers` (keystrokes, commands)
   are each agent's document (`agent_record.py`)
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
