@@ -194,7 +194,9 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
 
 # A page shaped as the kit's renderer contract settles it: a section.d-decl
 # per declaration with data-declaration, data-part sections inside, a member
-# table whose data row carries data-member and is followed by its note row.
+# table with its column cells (data-col); its rows also carry data-member, which
+# no beat here depends on until the kit settles it. The shell loads the helper
+# with defer, as the kit renderer does.
 # One declaration id is drawn twice, to be reported as ambiguous.
 KIT_SHAPED = """<!doctype html><html><head><meta charset="utf-8"><title>Surface</title>
 <style>section{margin:12px;padding:8px;border:1px solid #888}</style></head><body>
@@ -204,19 +206,19 @@ KIT_SHAPED = """<!doctype html><html><head><meta charset="utf-8"><title>Surface<
   <tr class="r-note"><td>Answers with Loaded.</td></tr>
  </tbody></table></div></section>
 <section class="d-decl" data-declaration="IWindowsHelloNativeOps"><h2>IWindowsHelloNativeOps</h2>
- <div data-part="members"><table><tbody>
+ <div data-part="members"><table><thead><tr><th data-col="name">Name</th></tr></thead><tbody>
   <tr data-member="BeginAvailabilityCheck"><td data-col="name">BeginAvailabilityCheck</td></tr>
   <tr data-member="BeginVerification"><td data-col="name">BeginVerification</td></tr>
   <tr class="r-note"><td>The native cause path.</td></tr>
  </tbody></table></div></section>
 <section class="d-decl" data-declaration="Loaded"><h2>Loaded</h2></section>
 <section class="d-decl" data-declaration="Loaded"><h2>Loaded again</h2></section>
-<script src="/api/packages/story.js"></script></body></html>"""
+<script defer src="/api/packages/story.js"></script></body></html>"""
 PRECISE = {"title": "Surface", "slides": [{"title": "Targets", "beats": [
     {"say": "The grant store's members.",
      "targets": ['[data-declaration="IGrantStore"] [data-part="members"]']},
-    {"say": "Begin verification.",
-     "targets": ['[data-declaration="IWindowsHelloNativeOps"] [data-member="BeginVerification"]']},
+    {"say": "The native helper's name column.",
+     "targets": ['[data-declaration="IWindowsHelloNativeOps"] th[data-col="name"]']},
     {"say": "Loaded is drawn twice on this page, so pointing at it would be a guess, and JARVIS does not guess.", "targets": ['[data-declaration="Loaded"]']},
     {"say": "This declaration is not on the page at all, so there is nothing here to point at for it.",
      "targets": ['[data-declaration="IWarningSink"]']}]}]}
@@ -292,9 +294,9 @@ async def test_a_precise_target_rings_exactly_one_element_or_is_reported(
         await browser.close()
     shown = {r["target"]: r for r in rings}
     members = '[data-declaration="IGrantStore"] [data-part="members"]'
-    member = '[data-declaration="IWindowsHelloNativeOps"] [data-member="BeginVerification"]'
+    column = '[data-declaration="IWindowsHelloNativeOps"] th[data-col="name"]'
     assert shown[members]["shown"] and shown[members]["count"] == 1
-    assert shown[member]["shown"] and shown[member]["tag"] == "TR" and not shown[member]["note"]
+    assert shown[column]["shown"] and shown[column]["tag"] == "TH"
     # Matching several or none, nothing is drawn for it: each is reported.
     ambiguous = [m for m in reports if m["type"] == "story.ambiguous"]
     missing = [m for m in reports if m["type"] == "story.missing"]
