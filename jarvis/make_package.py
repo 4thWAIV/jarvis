@@ -3,6 +3,7 @@
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
                                   [--check-only] [--example [decisions|presentation]]
+                                  [--document ID --revision REV]
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
@@ -16,6 +17,12 @@ docs/making-a-package.md is the whole of how to use it. In short:
   worked out from the files there. A page whose story asks nothing (or that
   has no story) gets the same vote as its story's last slide. An agent or
   conversation package cannot carry a vote, so it may not name a Work item.
+- `--document ID --revision REV` is a canonical architecture document an
+  agent checked with `python -m jarvis.language_document validate`: the
+  package is JARVIS's projection of that exact checked revision
+  (language_projection.project, the brain's publish shares it) around the
+  fresh author's plain explanation, `package/UNDERSTANDING.md`, which is
+  what the author proof covers. It goes on the document's own Work item.
 
 The command launches a fresh author on the caller's engine first. Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
@@ -65,6 +72,9 @@ PRESENTATION_EXAMPLE = {
          "blocks": [{"p": "Nothing: it is in everyone's calendar."}]},
     ],
 }
+
+# What a checked architecture document's package is called (make_package --document).
+ARCHITECTURE_KIND = "architecture package"
 
 # What the command prints once JARVIS has taken the package.
 ARRIVED_AS = "Sent to Tim as message {message}, carrying it; in his package inbox as {inbox_id}"
@@ -297,6 +307,92 @@ def make_folder(folder: Path, out: Path) -> Made:
     return Made(archive, title, f"{manifest['runs']} package", None)
 
 
+# -- an architecture document ------------------------------------------------------------
+
+def understanding_in(source: Path) -> bytes:
+    """The fresh author's explanation of an architecture document: a folder
+    holding UNDERSTANDING.md and nothing else (JARVIS projects the checked
+    revision around it), readable author Markdown within 1 MiB; or Refused."""
+    from jarvis import language_kit, language_projection, package_understanding
+    member = language_projection.MEMBER
+    try:
+        files = author_proof.source_files(source)
+    except ValueError as e:
+        raise dp.Refused([str(e)]) from None
+    if not source.is_dir() or set(files) != {f"{source.name}/{member}"}:
+        raise dp.Refused([f"An architecture document's explanation is a folder holding only "
+                          f"{member}; {source} holds {', '.join(sorted(files)) or 'nothing'}."])
+    try:
+        package_understanding.markdown_text(source, member)
+    except ValueError as e:
+        raise dp.Refused([str(e)]) from None
+    body = (source / member).read_bytes()
+    if len(body) > language_kit.MAX_SOURCE_BYTES:
+        raise dp.Refused([f"{member} must fit within 1 MiB."])
+    return body
+
+
+def document_of(document_id: str, revision: str, base: str,
+                signer: tuple[Path, str]) -> dict:
+    """The exact checked revision named, as the JARVIS at `base` holds it,
+    or Refused saying why it cannot be packaged. Read over its signed route
+    (retrieve, then render with its source revision), as the agent's own
+    language_document command reads it: the records live in JARVIS's
+    engine, which this process need not reach."""
+    from jarvis import language_document
+
+    def post(body: dict) -> dict:
+        return dp.post(base.rstrip("/") + language_document.ROUTE, "", body,
+                       timeout=language_document.TIMEOUT_SEC, signer=signer)
+
+    def whole(operation: str, arguments: dict) -> dict:
+        envelope = language_document.call(post, operation, arguments)
+        if not envelope.get("ok"):
+            raise ValueError((envelope.get("error") or {}).get("cause") or envelope)
+        return envelope["result"]
+    try:
+        found = whole("retrieve", {"document_id": document_id, "revision": revision})
+        return whole("render", {"document_id": document_id, "revision": revision,
+                                "source_revision": found["source_revision"]})
+    except (ValueError, OSError, KeyError, SystemExit) as e:
+        raise dp.Refused([f"Document {document_id} revision {revision} cannot be packaged: "
+                          f"{e}"]) from None
+
+
+def document_evidence(envelope: dict, out: Path) -> Path:
+    """The checked revision as its fresh author reads it, under `out`: the
+    YAML, its rendered page, its check and document.json (identity,
+    provenance and coverage)."""
+    folder = out / "document"
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    for name, copied in (("source", "source.yaml"), ("view", "view.html"), ("check", "check.json")):
+        shutil.copyfile(envelope["references"][name], folder / copied)
+    keys = ("document_id", "revision", "source_revision", "parent_revision", "work_id",
+            "language", "kit_digest")
+    (folder / "document.json").write_text(json.dumps(
+        {**{k: envelope[k] for k in keys},
+         **{k: envelope["metadata"].get(k) for k in ("title", "author", "scope_revision",
+                                                      "coverage", "declarations", "evidence")}},
+        indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return folder
+
+
+def make_architecture(envelope: dict, source: Path, out: Path) -> Made:
+    """JARVIS's projection of the checked revision (language_projection.project,
+    as the brain's publish) around the fresh author's explanation, built and
+    read back as any folder package (make_folder)."""
+    from jarvis import language_projection
+    understanding = understanding_in(source)
+    folder = Path(tempfile.mkdtemp(prefix="projection-", dir=out)) / "architecture"
+    try:
+        language_projection.project(envelope, folder, understanding)
+    except (ValueError, OSError) as e:
+        raise dp.Refused([f"The checked revision cannot be projected: {e}"]) from None
+    made = make_folder(folder, out)
+    return Made(made.archive, envelope["metadata"]["title"], ARCHITECTURE_KIND, None)
+
+
 # -- signing --------------------------------------------------------------------------
 
 def sign(archive: Path, signer: tuple[Path, str], session: str,
@@ -414,8 +510,17 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the screenshots go "
                              "(default: a new temporary folder)")
+    parser.add_argument("--document", default="",
+                        help="a canonical architecture document (python -m "
+                             "jarvis.language_document validate): the package is JARVIS's "
+                             "projection of its checked --revision, explained by the fresh "
+                             "author")
+    parser.add_argument("--revision", default="",
+                        help="the exact checked revision of --document")
     parser.add_argument("--deliver-to", default=dp.LIVE, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if bool(args.document) != bool(args.revision):
+        parser.error("--document and --revision go together")
 
     if args.example:
         print(json.dumps(dp.EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
@@ -428,6 +533,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"There is nothing at {source}.")
         return 1
     try:
+        if args.check_only and args.document:
+            # The author's own check of its explanation; the factory projects
+            # and checks the revision around it once the author is done.
+            understanding_in(source)
+            print(f"The explanation is right: {source.name}/UNDERSTANDING.md, for architecture "
+                  f"document {args.document} revision {args.revision}.")
+            print(author_proof.MARK + author_proof.source_digest(source))
+            return 0
         if args.check_only:
             check_vote(source, args.work)
             if source.is_dir():
@@ -448,10 +561,28 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
         from jarvis import package_author
+        envelope = document = None
+        if args.document:
+            from jarvis import agent_keys
+            reader = agent_keys.signer_for(args.session)
+            if reader is None:
+                raise dp.Refused(["The document is read with your key: give --session <your "
+                                  "session id>, once Tim has switched your agent on."])
+            envelope = document_of(args.document, args.revision, args.deliver_to, reader)
+            if args.work and args.work != envelope["work_id"]:
+                raise dp.Refused([f"Document {args.document} belongs to Work item "
+                                  f"{envelope['work_id']}, not {args.work}: send it there."])
+            args.work = envelope["work_id"]
+            document = package_author.Document(args.document, args.revision,
+                                               document_evidence(envelope, out))
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
-                                        session=args.session, work=args.work, workflow=args.workflow)
-        check_vote(source, args.work)
-        made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
+                                        session=args.session, work=args.work, workflow=args.workflow,
+                                        document=document)
+        if envelope is not None:
+            made = make_architecture(envelope, source, out)
+        else:
+            check_vote(source, args.work)
+            made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
         author = with_author(made, source, args.session)
     except dp.Refused as e:
         print("Not built. These need changing:")
@@ -494,6 +625,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
               "title": made.title, "kind": made.kind,
               "project": args.project, "session": args.session, "workflow": args.workflow,
               "work": args.work, "zip": str(made.archive),
+              "document": args.document or None, "revision": args.revision or None,
               "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)

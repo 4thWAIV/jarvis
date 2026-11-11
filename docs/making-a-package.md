@@ -68,6 +68,7 @@ JARVIS receives the declared material through the existing package-open/inbox pa
 | Decide something | One JSON file with `decisions` | A decision package: a slide per decision with its options, your recommendation and its reason, answered on the slide or out loud |
 | Know something (an update, a presentation) | One JSON file with only `slides` | A presentation: the same slides, told in JARVIS's voice, ending with the standard vote, Got it or I have questions |
 | Use a page of your own, have an agent do work, or follow steps with JARVIS | A folder | A page, agent or conversation package |
+| Review an architecture | A canonical architecture YAML, checked with `python -m jarvis.language_document` | An architecture package: JARVIS's own page of that exact checked revision, with the fresh author's plain explanation (see [Architecture documents](#architecture-documents)) |
 
 Every package carries Tim's vote. A deck or a page that asks him nothing gets the standard one at its end, added by the command: the question `understood`, with the options `got-it` (Got it) and `questions` (I have questions, his words under it). It is in the deck's or story's language (Entendido and Tengo preguntas in Spanish); a deck that names none, and a page with no story, get the language Tim's JARVIS speaks when you build it. A deck gets it as one more decision, after its slides; a hand-made page as its story's last slide, waiting on the story's `answers` file (`results/decisions.json` when it names none; a page with no story gets one of that slide alone), and Tim answers it with the Got it and I have questions buttons JARVIS shows beside Done, or by voice. A deck or page that already asks something is left as it is. An agent or conversation package cannot carry a vote, so the command and his JARVIS refuse one sent with `--work`; without `--work` it goes as before.
 
@@ -124,6 +125,29 @@ Write the content and a `package.json` holding only `purpose`, one sentence sayi
 - steps JARVIS follows with Tim: `SKILL.md`, each step a shell command run from the package's folder.
 
 Worked out for you: `name` (from the folder's name), `version`, `runs` (from which of `index.html`, `BRIEF.md` or `SKILL.md` is there), the file it runs, `story` (when `story.json` is there), and `returns` (everything under `results/`). Give any of them in `package.json` to choose otherwise. A folder holding more than one of those three files must say which it is with `runs`.
+
+## Architecture documents
+
+Architecture you put to Tim is a canonical YAML document in the `arch` language, checked by JARVIS's pinned language kit; the package is JARVIS's projection of one exact checked revision, never a page of your own. You have no `language_document` tool: the same operations are a command, every request signed with your own key (it needs the `packages` right, which an onboarded agent has). In order:
+
+```bash
+# 1. What the kit in force covers (the constructs coverage may name).
+python -m jarvis.language_document --as <your session id> capabilities
+# 2. Check your YAML as a proposed revision on its Work item. It prints the whole envelope:
+#    keep result.document_id and result.revision. A correction adds document_id and
+#    parent_revision (the revision it replaces) to --json.
+python -m jarvis.language_document --as <your session id> validate --source architecture.yaml \
+  --json '{"work_id": "<item id>", "scope_revision": "<what it answers>", "author": "<your session id>",
+           "coverage": {"constructs": ["forms", "relations"], "declarations": ["<every declared id>"],
+                        "unresolved": [], "outside_language": ["<meaning the language does not carry>"]}}'
+# 3. Send that exact revision to Tim.
+python -m jarvis.make_package --document <document_id> --revision <revision> \
+  --handoff handoff.json --engine <claude|codex> --session <your session id> --work <item id>
+```
+
+`validate` exits 1 and prints the kit's diagnostics while the draft does not check or leaves anything `unresolved`; such a revision cannot be sent. Do not give `readable_markdown`: the explanation is the fresh author's. `make_package --document` launches the fresh author as for any package, giving it the checked revision (its YAML, rendered page, check and coverage); the author writes only `package/UNDERSTANDING.md`, the plain explanation for your handoff's audience, and checks it last with `make_package package --check-only --document <document_id> --revision <revision>`. The command then projects the revision around it (the YAML, the kit's rendered page as the package's page, the check and the canonical identity, `language_projection.project`, the same projection JARVIS's own publish makes), runs the kit's check again on it as Tim's JARVIS will, signs it with your key and the author's proof, and sends it as a message on the document's own Work item (`--work` may be left out; another item is refused). It ends with the standard vote. Tim's JARVIS admits it only with that author proof, opens it like any page package, and his answers come back to your session when he signs it off.
+
+To discuss it afterwards, `python -m jarvis.language_document --as <your session id> ground --json '{"package_id": "<package id>"}'` gives back the exact canonical YAML, its revision and the author's explanation, with a `followup_reference` to quote. A change is a new revision (`validate` with `document_id` and `parent_revision`) sent the same way; the newer package replaces the open one. `retrieve` and `render` read one revision by `document_id` and `revision` (`render` also `source_revision`). There is no publish for agents.
 
 ## What the command does
 

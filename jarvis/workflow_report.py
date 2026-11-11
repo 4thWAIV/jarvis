@@ -84,6 +84,9 @@ class _Client:
         # request is signed with it. Without one, `key` is an access key
         # sent as a bearer (the tool token, for a caller that has it).
         self.base_url, self.key, self.signer = base_url, key, signer
+        # Seconds to wait for an answer; a command whose route runs a check
+        # (language_document.py) waits longer.
+        self.timeout = 10.0
         self.context = ssl.create_default_context(cafile=str(cert) if cert and cert.exists() else None)
 
     def __enter__(self):
@@ -109,7 +112,7 @@ class _Client:
             headers["Authorization"] = f"Bearer {self.key}"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(request, context=self.context, timeout=10) as r:
+            with urllib.request.urlopen(request, context=self.context, timeout=self.timeout) as r:
                 return _Response(r.status, r.read(), r.headers.get("content-type", ""))
         except urllib.error.HTTPError as e:
             return _Response(e.code, e.read(), e.headers.get("content-type", ""))
