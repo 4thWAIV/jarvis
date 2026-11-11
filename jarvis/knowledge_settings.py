@@ -30,6 +30,6 @@ def change(enabled: bool) -> dict:
     if type(enabled) is not bool:
         raise ValueError("enabled must be a boolean")
     from jarvis import records
-    records.update(PATH, lambda old: {**(old or {}), "enabled": enabled},
+    saved = records.update(PATH, lambda old: {**(old or {}), "enabled": enabled},
                    change="Change knowledge indexing in Settings", full_sync=True)
-    return read()
+    return read(lambda: saved)

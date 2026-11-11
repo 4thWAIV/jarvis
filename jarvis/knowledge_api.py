@@ -93,20 +93,20 @@ class Context:
 
 def settings(ctx: Context) -> dict:
     from jarvis import knowledge_settings
-    return {**knowledge_settings.read(), "health": status(ctx)}
+    return knowledge_settings.read()
 
 
 def change_settings(ctx: Context, enabled: bool) -> dict:
     from jarvis import knowledge_settings
     try:
-        knowledge_settings.change(enabled)
+        saved = knowledge_settings.change(enabled)
     except ValueError as e:
         raise Refused(str(e)) from e
     # The existing runtime applies the saved choice on its next tick. Worker
     # shutdown can take seconds; it must not hold the save request open or
     # race a second stop against the runtime's own scheduler.
     ctx.wake_ingest()
-    return settings(ctx)
+    return saved
 
 
 # --- reads -------------------------------------------------------------------------
