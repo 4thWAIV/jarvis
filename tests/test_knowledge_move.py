@@ -151,6 +151,20 @@ def test_key_segments_never_share_a_path():
         assert paths.is_path(f"/sqlite/t/{s}.row") and paths.type_of(f"/sqlite/t/{s}.row") == "row"
 
 
+def _saved_tables(conn: sqlite3.Connection, prefixes: tuple[str, ...]) -> None:
+    """The tables (and their indexes and schema version rows) whose names
+    start with `prefixes`, from jarvis/sqlite_schema.json."""
+    import json
+    saved = json.loads((Path(move.__file__).parent / "sqlite_schema.json").read_text())
+    for o in saved["schema"]["objects"]:
+        if o["sql"] and o["tbl_name"].startswith(prefixes):
+            conn.execute(o["sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+                         .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
+    for name, rows in saved["schema_versions"].items():
+        if name.startswith(prefixes):
+            conn.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' * len(rows[0]))})", rows)
+
+
 def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
     """A database made by JARVIS's own schema creators, a few rows a table."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
@@ -162,7 +176,7 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
     workflow_store._connect().close()
     messaging_files.init_db()
     attachment_locations.init_db()
-    migrated = [(agent_key_store, "agent_keys_schema"), (attention_store, "attention_schema"),
+    migrated = [(agent_key_store, "agent_keys_schema"),
                 (conversation_log, "conversation_schema"), (folder_store, "folder_schema"),
                 (language_documents, "language_document_schema"),
                 (messaging_store, "human_messaging_schema"), (package_inbox, "package_inbox_schema"),
@@ -171,6 +185,9 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
     with closing(run_store._connect()) as conn, conn:
         for module, schema in migrated:
             run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+        # Stores already over documents keep no schema: their tables as
+        # they last stood (jarvis/sqlite_schema.json).
+        _saved_tables(conn, ("attention_",))
     db = data_paths.db_path()
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA foreign_keys=OFF")

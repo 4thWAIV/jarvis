@@ -640,10 +640,14 @@ EXEMPT = {
         "say on this page (or nothing): his own words, given back to the page as "
         "his unsent draft or logged; no session's or other person's words are "
         "ever gathered into a turn"),
-    "attention_store.current_revisions": (
-        "the `state` it reads is the attention record's own column (pending, seen "
-        "or resolved), and the only text it builds is a list of SQL placeholders "
-        "for the items' ids; no session's words reach any string here"),
+    **{f"attention_store.{name}": (
+        "the only text it builds is a version's change tag and summary in the "
+        "engine's own history: the item's kind (a JARVIS code), its source id, its "
+        "event (a JARVIS code), revision and digest numbers and fixed words; the "
+        "item's `untrusted` words are stored as they are and never put into a "
+        "summary, a header or a spoken line. Driven by tests/test_attention_records.py")
+       for name in ("_mark", "_next_id", "begin_digest", "documents", "record", "resolve",
+                    "write")},
     "ui_control.map_lines": (
         "it reads a command's `id` only after checking it is a command declared "
         "in the UI contract, so the id it prints is the contract's own; the "
