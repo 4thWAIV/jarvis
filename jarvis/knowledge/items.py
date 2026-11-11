@@ -67,7 +67,8 @@ INDEX_PATH_MAX = 50000       # past this many candidates, a path scan is cheaper
 WORDS_MAX = 2000             # a change kind or a summary
 STREAMS = ("entry", "data", "content", "sections", "vectors", "rights")
 DEFAULT_STREAMS = ("entry", "data")
-OPS = ("put", "merge", "delete", "link", "unlink")
+OPS = ("put", "merge", "delete", "check", "link", "unlink")
+ITEM_OPS = ("put", "merge", "delete", "check")
 LINK_KIND_MAX = 200
 SEARCH_LIMIT_MAX = 200
 SEARCH_BUDGET_MS = 2000
@@ -443,13 +444,18 @@ class Items:
         for w in writes:
             if not isinstance(w, dict) or w.get("op") not in OPS:
                 raise DocumentError(f"a write's op is one of {', '.join(OPS)}")
-            if w["op"] in ("put", "merge", "delete"):
+            if w["op"] in ITEM_OPS:
                 path = paths.check(w.get("path"))
                 if path in seen:
                     raise DocumentError(f"{path} is written once a transaction")
                 seen.add(path)
-                if not self.access(writer["person"], path).write:
+                if w["op"] == "check":
+                    if not self.access(writer["person"], path).data:
+                        raise Denied(f"{path} is not {writer['person']}'s to read")
+                elif not self.access(writer["person"], path).write:
                     raise Denied(f"{path} is not {writer['person']}'s to write")
+                _words(w.get("change"), "a write's change")
+                _words(w.get("summary"), "a write's summary")
         return self._commit(writes, writer, change, summary, durable == "full")
 
     def _commit(self, writes: list[dict], writer: dict, change, summary, full: bool,
@@ -477,7 +483,7 @@ class Items:
         made: dict[str, Optional[dict]] = {}     # path -> its document after this write
         for w in writes:
             op = w["op"]
-            if op not in ("put", "merge", "delete"):
+            if op not in ITEM_OPS:
                 continue
             path = w["path"]
             expect, absent = _condition(w)
@@ -488,6 +494,8 @@ class Items:
                                       f"{path} is at version {live_version}, not {expect}")
             if absent and doc is not None:
                 raise ConditionFailed(path, 0, live_version, f"{path} is taken (version {live_version})")
+            if op == "check":
+                continue
             if op == "delete":
                 if doc is None:
                     continue
@@ -518,10 +526,14 @@ class Items:
             for k in ("agent", "model"):
                 if k in writer:
                     new["_" + k] = writer[k]
-            if change is not None:
-                new["_change"] = change
-            if summary is not None:
-                new["_summary"] = summary
+            # A write may name its own change and summary (one item's event
+            # in a transaction that writes several); else the transaction's.
+            own_change = w["change"] if w.get("change") is not None else change
+            own_summary = w["summary"] if w.get("summary") is not None else summary
+            if own_change is not None:
+                new["_change"] = own_change
+            if own_summary is not None:
+                new["_summary"] = own_summary
             before = (doc or {}).get("_content")
             if "content" in w:
                 content = _content(w["content"])
@@ -708,13 +720,20 @@ class Items:
                 "sections": summary.get("sections", 0) if embedded else 0}
 
     def history(self, path: str, *, limit: int = 100, before: Optional[int] = None,
-                person: str = OWNER) -> dict:
+                person: str = OWNER, fields: Optional[list] = None) -> dict:
         """Each version, newest first: its number, when, by whom, what kind
-        of change and its summary; a delete is a version too."""
+        of change and its summary; a delete is a version too. With
+        `fields`, each version also carries those top-level fields of its
+        data as they stood then (`data`), so a record's events are read
+        from its history in one call."""
         paths.check(path)
         if not 0 < limit <= HISTORY_LIMIT_MAX:
             raise DocumentError(f"limit is 1 to {HISTORY_LIMIT_MAX}")
-        if not self.access(person, path).data:
+        if fields is not None and (not isinstance(fields, list) or not all(
+                isinstance(f, str) and f and not f.startswith("_") for f in fields)):
+            raise DocumentError("fields is a list of data field names")
+        access = self.access(person, path)
+        if not access.data:
             return {"path": path, "versions": [], "before": None}
         out = []
         for v in self._versions(path):
@@ -725,6 +744,9 @@ class Items:
                 entry = {"version": doc.get("_version"), "lsn": v.lsn, "at": doc.get("_at"),
                          "by": doc.get("_by"), "agent": doc.get("_agent"), "model": doc.get("_model"),
                          "change": doc.get("_change"), "summary": doc.get("_summary"), "op": "put"}
+                if fields is not None:
+                    shown = {f: doc[f] for f in fields if f in doc}
+                    entry["data"] = without_hidden(shown, access) if access.hidden else shown
             if before is not None and (entry.get("version") or 0) >= before:
                 continue
             out.append(entry)

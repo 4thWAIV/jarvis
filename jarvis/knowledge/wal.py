@@ -57,9 +57,25 @@ BARRIER_EVERY_SEC = 10.0
 RECORD_MAX_BYTES = 64 << 20
 
 
+EPHEMERAL_ENV = "JARVIS_ENGINE_EPHEMERAL"
+
+
+def ephemeral() -> bool:
+    """A throwaway engine (the test suite's, `JARVIS_ENGINE_EPHEMERAL=1`)
+    never waits for the drive: every fsync is skipped. Never set in use."""
+    return os.environ.get(EPHEMERAL_ENV) == "1"
+
+
+def fsync(fd: int) -> None:
+    if not ephemeral():
+        os.fsync(fd)
+
+
 def full_fsync(fd: int) -> None:
     """`F_FULLFSYNC`, which empties the drive's cache on macOS; plain fsync
     where it does not exist."""
+    if ephemeral():
+        return
     op = getattr(fcntl, "F_FULLFSYNC", None)
     if op is not None:
         try:
@@ -71,6 +87,8 @@ def full_fsync(fd: int) -> None:
 
 
 def fsync_dir(directory: Path) -> None:
+    if ephemeral():
+        return
     fd = os.open(str(directory), os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -359,7 +377,7 @@ class WAL:
         if self._size and self._size + len(data) > FILE_MAX_BYTES:
             self._new_file()
         self._write(data)
-        os.fsync(self._fd)
+        fsync(self._fd)
         self._unbarriered = True
         return lsns
 

@@ -336,7 +336,7 @@ def _items_history(engine: Engine, request: Request) -> Answer:
     body = request.body or {}
     return Answer(200, engine.items.history(body.get("path"), limit=_int_or_none(body.get("limit"), "limit") or 100,
                                             before=_int_or_none(body.get("before"), "before"),
-                                            person=engine.items._reader(body)))
+                                            person=engine.items._reader(body), fields=body.get("fields")))
 
 
 @route("POST", "/v1/items/diff")

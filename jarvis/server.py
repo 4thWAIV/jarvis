@@ -85,6 +85,7 @@ from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_client
+from jarvis import records
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -2610,6 +2611,11 @@ async def start_knowledge_engine() -> None:
     knowledge = knowledge_runtime.KnowledgeRuntime(
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    # Every record goes to the engine this server started, and no other.
+    from jarvis.knowledge.uds import EngineUDS
+    supervisor = getattr(knowledge, "supervisor", None)
+    if supervisor is not None:
+        records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
     if await knowledge.start_engine():
         log.info("knowledge engine: up")
     else:

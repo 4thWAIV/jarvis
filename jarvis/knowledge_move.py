@@ -342,7 +342,13 @@ class Doc:
 
 
 class Mapping(Protocol):
-    """Tables to documents and back, lossless for the tables it owns."""
+    """Tables to documents and back, lossless for the tables it owns.
+
+    A mapping whose rows become Content files on disk (a run's output, the
+    voice log) also names `files_under` (folders relative to the files root,
+    JARVIS's data folder) and gives `files(conn)`: (relative path, bytes)
+    for each file, written by `copy`; its `rows(docs, files)` then takes a
+    `Files` to read them back."""
     name: str                       # recorded in the manifest
     tables: tuple[str, ...]         # the tables it owns
     under: tuple[str, ...]          # the path prefixes its documents live under
@@ -351,6 +357,58 @@ class Mapping(Protocol):
     def documents(self, conn: sqlite3.Connection) -> Iterator[Doc]: ...
 
     def rows(self, docs: Iterable[Doc]) -> dict[str, list[Row]]: ...
+
+
+class Files:
+    """The files a mapping writes under the files root (JARVIS's data
+    folder): written whole (a temporary file renamed into place), read, and
+    listed under a folder."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    def _at(self, rel: str) -> Path:
+        rel_path = Path(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts or not rel_path.parts:
+            raise MoveError(f"not a file under the files root: {rel!r}")
+        return self.root / rel_path
+
+    def write(self, rel: str, data: bytes) -> None:
+        path = self._at(rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".moving", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
+    def read(self, rel: str) -> bytes:
+        return self._at(rel).read_bytes()
+
+    def list(self, folder: str) -> list[str]:
+        """Every file below `folder`, as relative paths, sorted."""
+        base = self._at(folder)
+        if not base.is_dir():
+            return []
+        return sorted(str(p.relative_to(self.root)) for p in base.rglob("*")
+                      if p.is_file() and not p.name.endswith(".moving"))
+
+
+def _files_root(files_root: Optional[Path]) -> Path:
+    if files_root is not None:
+        return Path(files_root)
+    from jarvis import data_paths
+    return data_paths.data_dir()
+
+
+def _rows_of(m, uds, files: "Files") -> dict:
+    docs = _engine_docs(uds, m)
+    if getattr(m, "files_under", None):
+        return m.rows(docs, files)
+    return m.rows(docs)
 
 
 class RowMapping:
@@ -389,15 +447,35 @@ class RowMapping:
 
 
 REGISTERED: list[Mapping] = []
-"""Round 3's document types, each owning its tables; every other table is
-moved by `RowMapping`."""
+"""Mappings registered by hand (tests); the document types' own are in
+`RECORD_MODULES`. Every table none owns is moved by `RowMapping`."""
+
+RECORD_MODULES = (
+    "jarvis.run_store", "jarvis.work_store", "jarvis.workflow_store", "jarvis.package_inbox",
+    "jarvis.agent_key_store", "jarvis.messaging_store", "jarvis.conversation_log",
+    "jarvis.messaging_files", "jarvis.attachment_locations", "jarvis.folder_store",
+    "jarvis.project_store", "jarvis.attention_store", "jarvis.language_documents",
+    "jarvis.usage_history", "jarvis.voice_diagnostics", "jarvis.voice_control",
+)
+"""The store modules; each gives the mappings of its document types as
+`MAPPINGS` (a list), lossless for the tables they own."""
+
+
+def registered() -> list[Mapping]:
+    """Every document type's mapping: each record module's `MAPPINGS`,
+    then `REGISTERED`."""
+    import importlib
+    found: list[Mapping] = []
+    for name in RECORD_MODULES:
+        found.extend(getattr(importlib.import_module(name), "MAPPINGS", ()))
+    return found + list(REGISTERED)
 
 
 def mappings_for(tables: Iterable[str]) -> list[Mapping]:
     """The registered mappings that own any of `tables`, then a
     `RowMapping` for each table none of them owns."""
     tables = list(tables)
-    chosen: list[Mapping] = [m for m in REGISTERED if set(m.tables) & set(tables)]
+    chosen: list[Mapping] = [m for m in registered() if set(m.tables) & set(tables)]
     owned = {t for m in chosen for t in m.tables}
     return chosen + [RowMapping(t) for t in tables if t not in owned]
 
@@ -468,9 +546,8 @@ def _covered(mappings: list[Mapping], tables: list[str]) -> dict[str, Mapping]:
     missing = [t for t in tables if t not in owner]
     if missing:
         raise MoveError("no mapping owns " + ", ".join(missing))
-    extra = [t for t in owner if t not in tables]
-    if extra:
-        raise MoveError("the mappings name tables the file does not have: " + ", ".join(extra))
+    # A mapping may own a table an older file does not have yet; it reads
+    # none of its rows from that file and gives none back.
     return owner
 
 
@@ -597,7 +674,7 @@ class CopyReport:
 
 
 def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: Caller = MOVE_CALLER,
-         *, batch: int = TXN_WRITES_MAX) -> CopyReport:
+         *, batch: int = TXN_WRITES_MAX, files_root: Optional[Path] = None) -> CopyReport:
     """Copy a SQLite file into the engine through `mappings` (every table
     owned by exactly one; `mappings_for` the file's tables when None). See
     the module's words for the rule on an engine already holding a move."""
@@ -646,6 +723,10 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
         uds.transaction(caller, tx, change=MOVE_CHANGE, summary="move begun", full_sync=True)
         writes = 0
         for m in mappings:
+            if getattr(m, "files_under", None):
+                files = Files(_files_root(files_root))
+                for rel, data in m.files(conn):
+                    files.write(rel, data)
             writes += _write_docs(uds, m.documents(conn), batch=batch,
                                   summary=f"moved from {db_path.name}: {', '.join(m.tables)}"[:2000])
     current = _manifest(uds)
@@ -721,7 +802,8 @@ def _first_difference(info: TableInfo, source: dict, engine: dict) -> Optional[s
     return None
 
 
-def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None) -> Report:
+def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, *,
+           files_root: Optional[Path] = None) -> Report:
     """The file and the engine, table by table: each table's row count and
     digest read from the file and from the engine through its mapping;
     every table that differs named with its first differing key."""
@@ -744,7 +826,7 @@ def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None) -> Repo
         infos = {t: table_info(conn, t) for t in tables}
         back: dict[str, list[Row]] = {}
         for m in mappings:
-            for t, rows in m.rows(_engine_docs(uds, m)).items():
+            for t, rows in _rows_of(m, uds, Files(_files_root(files_root))).items():
                 back.setdefault(t, []).extend(rows)
         for t in tables:
             info = infos[t]
@@ -761,7 +843,7 @@ def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None) -> Repo
 
 
 def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
-                  schema_from: Optional[Path] = None) -> dict:
+                  schema_from: Optional[Path] = None, files_root: Optional[Path] = None) -> dict:
     """A new SQLite file at `out_path` with the moved file's schema (the
     manifest's, or `schema_from`'s) and its rows back from the engine. An
     existing file is never overwritten: the file is built beside it and
@@ -799,7 +881,7 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
             conn.execute("BEGIN")
             back: dict[str, list[Row]] = {}
             for m in mappings:
-                for t, rows in m.rows(_engine_docs(uds, m)).items():
+                for t, rows in _rows_of(m, uds, Files(_files_root(files_root))).items():
                     back.setdefault(t, []).extend(rows)
             # The objects in the source's order, so `sqlite_master` reads the
             # same. Each table's rows go in as soon as it is made, before any
