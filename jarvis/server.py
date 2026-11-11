@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import sqlite3
 import threading
 import time
 import uuid
@@ -3896,12 +3895,11 @@ def _collect_worker_inventory() -> dict:
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
     # A missing source is a reported coverage gap, not a failed status read
     # and not proof that there are no workers in that source.
-    import sqlite3
     gaps = []
     def read_source(name, read, missing):
         try:
             return read()
-        except (sqlite3.Error, OSError) as exc:
+        except (knowledge_client.EngineUnavailable, OSError) as exc:
             gaps.append(f'{name} unavailable: {type(exc).__name__}')
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
@@ -5061,11 +5059,11 @@ def _jarvis_run_session_ids() -> frozenset:
         return ids
     try:
         ids = frozenset(run_store.all_run_ids())
-    except sqlite3.OperationalError as e:
-        # Expected before init_db has run (a fresh install, or a test that
-        # never created the schema). Failing OPEN is right — showing the
-        # user's own sessions unfiltered beats showing nothing — but a full
-        # traceback at WARNING for a routine startup ordering is noise.
+    except knowledge_client.EngineUnavailable as e:
+        # Expected while the engine holding the records is down or starting.
+        # Failing OPEN is right — showing the user's own sessions unfiltered
+        # beats showing nothing — but a full traceback at WARNING for a
+        # routine startup ordering is noise.
         log.debug("run ids unavailable (%s); not filtering the roster", e)
         ids = frozenset()
     except Exception:
@@ -5120,8 +5118,8 @@ def _agent_names() -> dict:
         return names
     try:
         names = run_store.agent_names()
-    except sqlite3.OperationalError:
-        names = {}                          # before init_db, as for run ids
+    except knowledge_client.EngineUnavailable:
+        names = {}                          # the engine down, as for run ids
     except Exception:
         log.warning("could not read the agents' names", exc_info=True)
         names = {}

@@ -12,11 +12,9 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import threading
 import time
 import uuid
-from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -24,7 +22,6 @@ from typing import Optional
 
 from jarvis import brain_activity, data_paths, session_steer
 from jarvis import message_records, records
-from jarvis.data_paths import db_path
 
 log = logging.getLogger("jarvis.run_store")
 
@@ -50,180 +47,12 @@ _UPDATABLE = frozenset({
 })
 
 
-WAL_WAIT_SEC = 15.0
-
-
-def _ensure_wal(conn: sqlite3.Connection, wait: float = WAL_WAIT_SEC) -> None:
-    """The database in WAL, or the error that stopped it."""
-    deadline = time.monotonic() + wait
-    while True:
-        if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal":
-            return
-        try:
-            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower()
-        except sqlite3.OperationalError as e:
-            if "locked" not in str(e) or time.monotonic() >= deadline:
-                raise
-            time.sleep(0.05)
-            continue
-        if mode != "wal":
-            raise sqlite3.OperationalError(f"the database stayed in {mode} mode, not WAL")
-
-
-def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
-    """A connection to JARVIS's database (`path` for a store given its own
-    file), with the pragmas every one of its users needs."""
-    conn = sqlite3.connect(str(path or db_path()), timeout=15.0)
-    conn.row_factory = sqlite3.Row
-    # Switching to WAL takes an exclusive lock. Once a database is in WAL it
-    # stays there, so only switch when it is not: asking every connection to
-    # switch made a busy moment fail with "database is locked".
-    # SQLite refuses the switch at once (no busy wait) while another
-    # connection is open, which happens when two first connections race on a
-    # new database. Only that race is let through: the database must be seen
-    # in WAL (the other connection's switch landed) within the busy timeout,
-    # trying the switch again meanwhile; anything else is raised as it was.
-    _ensure_wal(conn)
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def migrate(conn: sqlite3.Connection, schema_table: str,
-            migrations: dict[int, str], what: str) -> int:
-    """Bring one module's own tables forward to the last of `migrations`,
-    inside the caller's open transaction, and return that version.
-
-    For a store that keeps its tables in this database under a schema
-    version of its own (`schema_table`, one row): each step takes the schema
-    from the version before it to its own, in order, and a step is only ever
-    appended, never changed. A database already newer than this JARVIS is
-    left exactly as it is (RuntimeError), so a rollback never meets tables it
-    does not know."""
-    latest = max(migrations)
-    conn.execute(f"CREATE TABLE IF NOT EXISTS {schema_table} (version INTEGER NOT NULL)")
-    row = conn.execute(f"SELECT version FROM {schema_table}").fetchone()
-    version = row[0] if row else 0
-    if version > latest:
-        raise RuntimeError(f"{what} schema {version} is newer than this "
-                           f"JARVIS ({latest}); it is left as it is")
-    for step in range(version + 1, latest + 1):
-        conn.executescript(migrations[step])
-    if row is None:
-        conn.execute(f"INSERT INTO {schema_table} (version) VALUES (?)", (latest,))
-    else:
-        conn.execute(f"UPDATE {schema_table} SET version = ?", (latest,))
-    return latest
-
-
 def init_db() -> None:
-    """Kept callable: runs need no table. A run is a document
+    """Kept callable: no record needs a table. A run is a document
     (`/runs/<id>.run`) and its output a file (`data/runs/<id>.jsonl`), and
     a run written before a field existed reads with that field's default
-    (`_RUN_DEFAULTS`), which is what the old column backfill did."""
-    _tables_of_other_groups()
-
-
-def _tables_of_other_groups() -> None:
-    """The SQLite tables the steers, messages, session messages and agents
-    functions below still read until their own rewrites land (UDS round
-    3). Deleted with `_connect`."""
-    with closing(_connect()) as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS steers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                voice_name TEXT NOT NULL,
-                project TEXT NOT NULL,
-                prompt TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                created_at REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_steers_created ON steers(created_at DESC);
-
-            -- One row per message JARVIS sends a session, written BEFORE it
-            -- is sent and updated at every step after: sent, seen in the
-            -- session's transcript, the turn on it begun, that turn ended
-            -- and its answer kept. See MessageStatus and the session
-            -- providers' `track`. Keystrokes and Terminal commands are not
-            -- messages; they stay in `steers`.
-            CREATE TABLE IF NOT EXISTS messages (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id    TEXT NOT NULL,
-                provider      TEXT NOT NULL,          -- "anthropic", "openai"
-                agent_name    TEXT NOT NULL,          -- the name it was sent under
-                project       TEXT NOT NULL,
-                capture_id    INTEGER,                -- the capture it came from
-                text          TEXT NOT NULL,          -- exactly what was sent
-                status        TEXT NOT NULL,          -- see MessageStatus
-                staged_at     REAL NOT NULL,
-                sent_at       REAL,
-                delivered_at  REAL,                   -- seen in the session's transcript
-                started_at    REAL,                   -- the session's turn on it began
-                answered_at   REAL,                   -- that turn ended
-                reply         TEXT,                   -- the turn's final answer, as said
-                failure       TEXT                    -- why, when status is failed
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
-            CREATE INDEX IF NOT EXISTS idx_messages_staged ON messages(staged_at DESC);
-
-            -- One row per message a session sent Tim as a file, before every
-            -- message came by the signed route (messages_api.py): kept so
-            -- the ones on record stay readable. Nothing writes it now.
-            CREATE TABLE IF NOT EXISTS session_messages (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                project      TEXT NOT NULL,     -- the folder it was dropped in
-                agent_name   TEXT NOT NULL,     -- who sent it, as the agents list names them
-                subject      TEXT NOT NULL,
-                body         TEXT NOT NULL,
-                received_at  REAL NOT NULL,
-                read_at      REAL               -- when it was first read to the brain
-            );
-            CREATE INDEX IF NOT EXISTS idx_session_messages_received
-                ON session_messages(received_at DESC);
-
-            -- Every Claude Code session running now or stopped lately, by
-            -- name, its state as the session watcher derives it, and whether
-            -- the user has activated it. `active` is his choice alone: a
-            -- session seen for the first time is inactive. See sync_agents.
-            CREATE TABLE IF NOT EXISTS agents (
-                session_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 0,
-                state TEXT NOT NULL DEFAULT '',
-                -- The name the user set, if any. Never written by
-                -- sync_agents. `name` is the agent's one name either way:
-                -- set once when first seen, and only he changes it.
-                custom_name TEXT,
-                -- When JARVIS last sent it a message (0: never). Orders the list.
-                last_message_at REAL NOT NULL DEFAULT 0,
-                -- When its session stopped running (NULL: running). Kept, not
-                -- deleted, so a resumed session gets its name and activation
-                -- back. See sync_agents.
-                ended_at REAL
-            );
-        """)
-        conn.commit()
-        message_cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_messages)")}
-        for column in ("sender_session", "sender_evidence", "sender_subagent"):
-            # Who sent it, and on what evidence (session_message_sender.py).
-            if column not in message_cols:
-                conn.execute(f"ALTER TABLE session_messages ADD COLUMN {column} TEXT")
-                conn.commit()
-        agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
-        if "state" not in agent_cols:
-            conn.execute(
-                "ALTER TABLE agents ADD COLUMN state TEXT NOT NULL DEFAULT ''")
-            conn.commit()
-        if "custom_name" not in agent_cols:
-            conn.execute("ALTER TABLE agents ADD COLUMN custom_name TEXT")
-            conn.commit()
-        if "last_message_at" not in agent_cols:
-            conn.execute(
-                "ALTER TABLE agents ADD COLUMN last_message_at REAL NOT NULL DEFAULT 0")
-            conn.commit()
-        if "ended_at" not in agent_cols:
-            conn.execute("ALTER TABLE agents ADD COLUMN ended_at REAL")
-            conn.commit()
+    (`_RUN_DEFAULTS`), which is what the old column backfill did. SQLite is
+    retired (UDS round 3): every record is a document in the engine."""
 
 
 # --- Runs: one document each; the output stream a file ------------------------

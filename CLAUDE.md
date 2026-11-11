@@ -54,6 +54,19 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
   `run_store.py` (a document per run, its output a file) + `run_executor.py`, surfaced at `/api/runs`,
   `/ws/runs`; the React workspace is the focus of user-interface development
+- **Records**: every record JARVIS keeps (runs, messages, Work, workflows,
+  packages, agents and keys, attention, folders, projects, language
+  documents, usage, settings) is a document in the knowledge engine, reached
+  only through `records.py` (`get`, `scan`, `count`, `history`, and
+  `atomic(fn)`: a unit whose every read is a condition of its write, run
+  again when one fails, `unit.after` for what is announced once it landed);
+  SQLite is retired. A record's events are its versions (`events` on each,
+  tagged with who acted and the kind of change). The first start after the
+  move copies `data/jarvis.db` into the engine once and proves it both ways
+  (`records_cutover.py`), leaving the file untouched;
+  `python -m jarvis.knowledge export-sqlite --out <file>` writes the records
+  back to SQLite. Tests get a throwaway in-process engine each
+  (`conftest._records_in_a_throwaway_engine`).
 - **Internal tool channel**: the brain reaches JARVIS's tools (session
   listing, steering, etc.) via a stdio MCP child that forwards
   `tools/call` to `POST /internal/tool` over loopback HTTP, bearing the
@@ -1702,8 +1715,10 @@ reader's count reads each item. Text is keyed by its fold cut to 128
 bytes, folding only `encoding.FOLD_FIRST` characters of a long value. The move kit
 (`knowledge_move.py`: `Mapping`, `RowMapping`, `copy`, `verify`,
 `export_sqlite`; `python -m jarvis.knowledge copy|verify|export-sqlite`)
-copies a SQLite file into the engine and back, table for table, for round
-3's cut-over. `python -m jarvis.knowledge
+copies a SQLite file into the engine and back, table for table, through
+each store's `MAPPINGS` (`RECORD_MODULES`; a table none owns moves as rows
+under `/sqlite`); `jarvis/sqlite_schema.json` is the schema export-sqlite
+builds on an install that never had jarvis.db. `python -m jarvis.knowledge
 rebuild` builds indexes, vectors and cards again and never drops a
 document; a snapshot is taken before it and every day. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
 it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
@@ -2569,8 +2584,9 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `FISH_API_KEY` (required) — Fish Audio TTS
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
-- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
-  database, memory Markdown, usage.json, the tool token, the running
+- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the
+  knowledge engine holding every record (`knowledge/`), runs' output and the
+  voice log as files, memory Markdown, usage.json, the tool token, the running
   server's address (`server-address.json`). Defaults to `data/`
   (`data_paths.py`). Set it to run an isolated instance without touching live
   data — the test suite gives every test a fresh one this way.
@@ -2684,6 +2700,6 @@ A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to e
   through the same `_restart_server`, once an update is in), and the sign-in
   and connect flows that need a browser approval
 - AppleScript for Terminal and Chrome control (no OAuth needed)
-- SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
-  long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
+- Records are documents in the knowledge engine (`records.py`), never
+  SQL; long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
   the user edits it directly, so it is never a database
