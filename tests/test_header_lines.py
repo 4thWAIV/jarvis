@@ -1935,24 +1935,24 @@ def _drive_package_inbox(server, session, monkeypatch):
     """Packages whose title, sender, purpose and questions are the payload,
     read by the brain through package_inbox (the list and one in full) and
     through work_status's item detail, which lists a work item's packages."""
-    import sqlite3
     import tempfile
     import time
-    from jarvis import data_paths, package_inbox as pi, work_store as ws
+    from jarvis import package_inbox as pi, records, work_store as ws
     item = ws.create("Tea", "folder", tempfile.mkdtemp(prefix="work-"))
     import secrets
-    pi.listing()                        # the inbox's tables, made by its own migration
     ids = [f"pkg-{secrets.token_hex(6)}" for _ in range(2)]
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        conn.execute("DELETE FROM package_inbox")
-        for n, title in enumerate((session.title, f"Second {HOSTILE}")):
-            conn.execute(
-                "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
-                "purpose, runs, decisions_total, decisions_answered, from_project, "
-                "from_session, from_agent, work_id, state, revision, arrived_at) "
-                "VALUES (?, ?, 'x', ?, ?, ?, ?, 'page', 2, 1, ?, 's1', ?, ?, 'answering', 1, ?)",
-                (ids[n], f"pkg{n}", session.project, session.state, title,
-                 session.last_text, session.project, session.voice_name, item.id, time.time()))
+    for old in pi.listing() + pi.listing(closed=True):
+        records.delete(pi.path_of(old.id))
+    for n, title in enumerate((session.title, f"Second {HOSTILE}")):
+        entry = {name: None for name in pi.COLUMNS}
+        entry.update(id=ids[n], package_id=f"pkg{n}", sha256="x", name=session.project,
+                     version=session.state, title=title, purpose=session.last_text,
+                     runs="page", decisions_total=2, decisions_answered=1,
+                     from_project=session.project, from_session="s1",
+                     from_agent=session.voice_name, work_id=item.id, state="answering",
+                     revision=1, arrived_at=time.time(), claimed_session="",
+                     sender_evidence="", reprove=0, events=[], last_seq=0)
+        records.write(pi.path_of(ids[n]), entry)
     asked = [pi.Question("kettle", session.last_prompt, session.needs,
                          [{"id": "electric", "name": HOSTILE, "says": session.title}],
                          "electric", HOSTILE, True,
