@@ -76,11 +76,12 @@ this presents as "the UI is up but nothing works" rather than as an error.
   `/internal/tool`. Access keys, which agents carried before
   (`access_keys.py` is gone), are accepted only while the cut-over guard
   waits (`legacy_access.py`): until none in `access-keys.json` has been
-  used for seven days (counted per day and label in `legacy_admissions`,
+  used for seven days (counted per day and label in the
+  `/settings/legacy-admissions.settings` document,
   watched for at least seven days), each still opens its categories'
   routes as `BY_ACCESS_KEY`, recorded as `key:<label>`; the first look
   that finds the guard satisfied records the cut-over
-  (`agent_key_settings`), for good. `agent_keys` and `GET /api/agent-keys`
+  (`/settings/agent-keys.settings`), for good. `agent_keys` and `GET /api/agent-keys`
   say where it stands. The one route open with
   no credential is `POST /api/agent-keys`, a new agent's key submission,
   which only records a pending key; a key JARVIS holds but has not
@@ -96,9 +97,14 @@ Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
 `ssh_keygen`-marked tests run the real one): the private half is a 0600
 file in `<its config home>/jarvis/agent-keys/<session id>/` and never
 leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
-only public keys (`agent_key_store.py`, schema `agent_keys_schema`: keys,
-`agent_rights`, `agent_key_events`, the held things and error packages;
-`legacy_admissions` counted access-key use until the cut-over). `python -m
+only public keys (`agent_key_store.py` over `agent_record.py`'s documents:
+an agent's keys, rights, author proofs and steers are its one `agent`
+document, `/agents/<session id>.agent`, with its list row as `agent` and
+each key change one version's `events`; a work-item key is
+`/keys/work/<fingerprint>.workkey`; the held things and error package are
+`/keys/holds/<subject>.hold`; every read comes from the in-memory
+`agent_record.CACHE`, refreshed by every write, so the gate never waits on
+the engine). `python -m
 jarvis.agent_key init` makes it and `submit` posts it to `POST
 /api/agent-keys`, signed by itself (`jarvis-key-submit@v1`); a key is
 `pending` until its claimed session's own transcript (never a subagent's,
@@ -144,8 +150,8 @@ holds as onboarded, never one the file names.
 Anything signed by a key that is not an onboarded agent's (unknown,
 pending, waiting, revoked, or a held key's signature that does not check),
 and after the cut-over anything unsigned, goes to ONE function,
-`server._unrecognised_key` (Tim's answer, Q3): held (`agent_key_held`,
-migration 2; a package's zip kept in `data_paths.held_dir()`, a message's
+`server._unrecognised_key` (Tim's answer, Q3): held (the subject's `hold`
+document; a package's zip kept in `data_paths.held_dir()`, a message's
 words in the hold, a report refused), the Work item it is for put in Error
 (`work_store.ERROR`, raised and cleared only by JARVIS, `JARVIS_KINDS`,
 red on the page), and an error package made for Tim (`key_error_package.py`,
@@ -155,7 +161,7 @@ tried, what it tried to send and when, and offering his two acts: switch
 the agent on (only while its key waits) or refuse and revoke the key. The
 page's buttons save `results/act.json` through the frame's bridge, and
 `_key_error_act` does it as his click (only for an error package JARVIS
-made, `agent_key_errors`); by voice they are `set_agent_active` and
+made, the hold's `error`); by voice they are `set_agent_active` and
 `revoke_agent_key`. Onboarding releases the holds (`_release_held`: the
 package received again, the message recorded as sent, `_record_message`), refusing drops them
 (`_refuse_held`); either way the error package closes and the Work item
@@ -289,7 +295,7 @@ follows on from where it stopped. The brain reads the record with
 `list_messages` and a stored answer with `read_message_reply`;
 `read_session_reply` still reads whatever a session said last. Keystrokes
 (`answer_dialog`), Terminal commands and refused attempts that never formed a
-message (no session, no capture) stay in the `steers` table.
+message (no session, no capture) stay in the agent document's `steers`.
 
 ## One channel
 `docs/planning/one-channel/design.md` is the plan: every message to and from
@@ -2218,8 +2224,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
   subsystem rows and one subsystem in full (see "Subsystem diagnostics")
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
-  the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
-  commands)
+  the `messages` table (see "Messages to sessions"); the agents list and
+  `steers` (keystrokes, commands) are each agent's document (`agent_record.py`)
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
@@ -2245,7 +2251,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
   names as they are said (`spoken_key`: hyphens and underscores are spaces).
-  An agent has one name, the agents table's `name`
+  An agent has one name, its agent document's `agent.name`
   (`run_store.agent_names`), which the session snapshot goes by, so every
   screen, record, read-back, tool result and lookup says it. It is given
   once, when the agent is first seen (`session_watch.agent_name`: the name
@@ -2275,6 +2281,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   seam and signing, the agent's command, the record of keys and rights,
   the rights and their one check, and checking a signed request (see
   "Agent keys")
+- `agent_record.py` — The agent, work-key, hold and settings documents behind
+  the agents list, steers and agent keys: their shapes and paths, the
+  in-memory copy every hot read comes from, the one atomic write, and their
+  move from and back to SQLite
 - `legacy_access.py` — The cut-over guard: old access keys accepted until
   none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature

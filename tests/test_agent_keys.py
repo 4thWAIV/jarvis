@@ -38,8 +38,6 @@ def wired(monkeypatch, tmp_path, keygen):
     importlib.reload(data_paths)
     from jarvis import run_store
     importlib.reload(run_store)
-    from jarvis import agent_key_store
-    agent_key_store._migrated.clear()
     from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()

@@ -22,11 +22,11 @@ The server connects the directory to its live sources once, at import
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from typing import Callable
 
 from jarvis import run_store
+from jarvis.knowledge_client import EngineUnavailable
 from jarvis import session_watch
 from jarvis import spoken_words
 
@@ -80,12 +80,12 @@ def _no_needs() -> dict[str, int]:
 
 
 def _agent_rows() -> list[dict]:
-    """The agents table: the user's activations, in the list's order. A
-    store not yet made (before init_db) has no choices in it yet; finding an
-    agent by name never depends on it."""
+    """The agents list: the user's activations, in the list's order. A
+    record that cannot be reached (the engine not up yet) has no choices in
+    it yet; finding an agent by name never depends on it."""
     try:
         return run_store.list_agents()
-    except sqlite3.OperationalError:
+    except EngineUnavailable:
         return []
 
 
