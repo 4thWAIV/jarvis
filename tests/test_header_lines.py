@@ -381,9 +381,16 @@ EXEMPT = {
         "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
         "never a brain header or speech"),
     "usage_history.append": (
-        "it stores a usage reading's window status as a column of JARVIS's own usage history; the "
-        "only text it builds is its own log line naming the SQLite error, never a session field or "
+        "it stores a usage reading's window status as a field of JARVIS's own usage history; the "
+        "only text it builds is its own log line naming the engine's error, never a session field or "
         "a brain header"),
+    "usage_history._days": (
+        "it builds the record path of one brain's usage documents from the brain's name, made one "
+        "path segment by records.segment, and compares each document's own provider field; nothing "
+        "it returns is printed, said or put in a header"),
+    "usage_history._write": (
+        "it adds readings to their day's usage document; the only text it builds is the write's "
+        "summary, a count of readings, never a session field or a brain header"),
     "server.tool_usage_history": (
         "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
         "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "

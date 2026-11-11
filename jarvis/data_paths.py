@@ -527,6 +527,13 @@ def messaging_snapshots_dir() -> Path:
     return data_dir() / "messaging" / "snapshots"
 
 
+def voice_dir() -> Path:
+    """The voice record (voice_diagnostics.py): each day's samples and each
+    day's events, one JSON line each, indexed as Content. Not created here:
+    the first line written makes it."""
+    return data_dir() / "voice"
+
+
 def messaging_downloads_dir() -> Path:
     """Received files, written privately and moved here only once their size
     and hash are verified (messaging_files.py). Not created here, as above."""

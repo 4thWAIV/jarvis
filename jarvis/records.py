@@ -130,6 +130,27 @@ def uds() -> EngineUDS:
             return _recorded()
 
 
+def engine_key() -> str:
+    """Which engine records go to now, as a key for what a process holds in
+    memory about them, so what was read from one engine is never taken for
+    another's (a test's engine, the server's bound one)."""
+    from jarvis import knowledge_client
+    with _lock:
+        if _bound is not None:
+            return f"bound:{id(_bound)}"
+    if knowledge_client.autostart():
+        return "recorded"
+    return str(data_paths.knowledge_dir().resolve())
+
+
+def in_process() -> bool:
+    """Whether records are read in this process (no other process to wait
+    on): no engine bound and none started by JARVIS."""
+    from jarvis import knowledge_client
+    with _lock:
+        return _bound is None and not knowledge_client.autostart()
+
+
 def opened_here() -> list[Any]:
     """The engines this process opened for its records (tests)."""
     with _lock:

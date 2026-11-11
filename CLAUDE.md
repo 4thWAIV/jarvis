@@ -1367,9 +1367,12 @@ Agents panel shows "2 working" on an agent's box. An `agents` and a
 `workflows` hint go out when any session's subagents change.
 
 ## Voice diagnostics
-How voice input is doing is one durable record, `voice_diagnostics.py`:
-`voice_samples` (one a second while a page listens, taken as the page's
-`telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
+How voice input is doing is one durable record, `voice_diagnostics.py`, kept
+as Content files, a file a day each (`data/voice/<date>.samples.jsonl` and
+`<date>.events.jsonl`, one JSON line each, appended off the audio path and
+indexed in memory as they grow): samples (one a second while a page
+listens, taken as the page's
+`telemetry` arrives on `/ws/transcribe`) and events (each capture's
 start and end, reconnects, every failure with the cause in force and the
 busiest processes, each drop of audio the page held (`dropped`, its reason
 and the seconds lost, reported on the abort and counted as a drop), every line of text the page showed, and each switch of
@@ -1377,7 +1380,8 @@ speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
-kept 7 days, events 30. The page gets `health` once a second back on the same
+kept 7 days, events 30 (a day's file deleted once all of it is past, the day
+the cut-off falls in written again). The page gets `health` once a second back on the same
 socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
 `/ws/sessions` says when to read again. The Diagnostics tab draws a summary
 (`VoiceSummary.tsx`) and the centre area's Diagnostics view the detail
@@ -1868,8 +1872,11 @@ listening. Another tab's change arrives by the `storage` event and never
 arms a tab. Mute suspends PCM to every consumer (the recogniser and a page
 package's listeners), drops the server's gathered turn and keeps its words
 as an unsent draft; Unmute starts a new capture epoch and never sends the
-old draft. His two settings are per user (`voice_control.py`, the node's
-SQLite, keyed by the signed-in member's GitHub id or `local`): "When I stop
+old draft. His two settings are per user (`voice_control.py`, one `settings`
+document a user, `/people/<github id or local>/settings/voice-input.settings`,
+held in memory: read once, refreshed by every read and change through it,
+so the voice path never waits on the engine; one not held yet is the
+defaults while a background read fetches it): "When I stop
 the microphone" (`keep` finishes only audio from before the stop, its words
 under the ordinary turn rules, never a new automatic send; `discard` throws
 away unfinished input) and "When I switch away from JARVIS" (`continue` a
@@ -2301,12 +2308,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `usage_history.py` — The long-term record of the week: every seven-day
-  reading `usage_store.record` takes (schema `usage_history_schema`; the
-  five-hour window is never kept, Tim's word, and migration 2 dropped it):
-  `usage_readings` keeps each one for `RAW_KEEP_SEC` (14 days) with its
-  provider, account hash (`brain_accounts.history_ref`, NULL while unknown),
-  percentage (NULL: not measured, never 0) and reset; after that
-  `usage_hourly` keeps one summary per hour for good. `read` is
+  reading `usage_store.record` takes, one `usage` document a brain a day
+  (`/usage/<brain>/<date>.usage`; the five-hour window is never kept, Tim's
+  word): its `readings` keep each one for `RAW_KEEP_SEC` (14 days) with its
+  provider, account hash (`brain_accounts.history_ref`, None while unknown),
+  percentage (None: not measured, never 0) and reset; after that its
+  `hourly` keeps one summary per hour for good. `read` is
   `GET /api/usage/history` and the brain's `usage_history` alike: one
   brain's weeks (the running brain's when none is named), newest first,
   each its reset, start and readings. Each brain's own box in the left

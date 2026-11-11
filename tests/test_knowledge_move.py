@@ -13,6 +13,7 @@ commands against an engine folder.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -170,7 +171,16 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
                 (voice_diagnostics, "voice_schema"), (work_store, "work_schema")]
     with closing(run_store._connect()) as conn, conn:
         for module, schema in migrated:
-            run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+            if hasattr(module, "_MIGRATIONS"):
+                run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+        # A store moved into the engine keeps no schema: its tables as recorded.
+        recorded = json.loads((data_paths.PACKAGE_DIR / "sqlite_schema.json").read_text())
+        for o in recorded["schema"]["objects"]:
+            owner = next((m for m, schema in migrated if o["tbl_name"] == schema or any(
+                o["tbl_name"] in mapping.tables for mapping in getattr(m, "MAPPINGS", ()))), None)
+            if owner is not None and not hasattr(owner, "_MIGRATIONS") and o["sql"] and \
+                    not conn.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (o["name"],)).fetchone():
+                conn.execute(o["sql"])
     db = data_paths.db_path()
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA foreign_keys=OFF")

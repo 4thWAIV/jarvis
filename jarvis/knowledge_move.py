@@ -934,3 +934,45 @@ def _insert(conn: sqlite3.Connection, info: TableInfo, rows: list[Row]) -> int:
         conn.executemany(f"INSERT INTO {_q(info.name)} ({', '.join(names)}) VALUES ({', '.join(marks)})",
                          values)
     return len(rows)
+
+
+# -- what the record types share --------------------------------------------------
+
+def row_data(row: Row) -> dict:
+    """A row as a document's (or a file line's) fields: each cell under its
+    column, kept by `cell`, and `rowid` when the row has one apart from its
+    columns."""
+    out = {c: cell(v) for c, v in row.cells.items()}
+    if row.rowid is not None:
+        out["rowid"] = row.rowid
+    return out
+
+
+def data_row(data: dict, columns: Iterable[str]) -> Row:
+    """The row `row_data` made `data` from (a column it lacks is NULL)."""
+    return Row({c: uncell(data.get(c)) for c in columns}, data.get("rowid"))
+
+
+def table_rows(conn: sqlite3.Connection, table: str) -> list[Row]:
+    """Every row of `table`, with its rowid where it has one apart from its
+    columns; none when the file has no such table."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:
+        return []
+    return list(read_rows(conn, table_info(conn, table)))
+
+
+def numbered(rows: list[Row], column: Optional[str] = None) -> list[Row]:
+    """`rows` with each one written after the move, which has no rowid (or
+    no `column`, its id), given the next after the largest, in the order
+    given."""
+    def got(r: Row) -> Any:
+        return r.rowid if column is None else r.cells.get(column)
+    taken = [v for v in map(got, rows) if isinstance(v, int)]
+    following = max(taken, default=0) + 1
+    out = []
+    for r in rows:
+        if got(r) is None:
+            r = Row(r.cells, following) if column is None else Row({**r.cells, column: following}, r.rowid)
+            following += 1
+        out.append(r)
+    return out
