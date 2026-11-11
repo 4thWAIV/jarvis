@@ -41,9 +41,18 @@ a `Doc.history` names its own writer and change.
 
 The rule for an engine that already holds a move (`copy`): the same move
 (every table's count and digest equal) already `copied` is left as it is;
-the same move left `copying` (stopped part way) is written again in full;
-a different move, or items under `/sqlite/` with no manifest, is refused
-(`MoveRefused`) and nothing is written.
+a move left `copying` (stopped part way) is no move: `clear` erases it and
+the file is copied again in full, whatever was written to the file in
+between; a different `copied` move, or items under `/sqlite/` with no
+manifest, is refused (`MoveRefused`) and nothing is written.
+
+`clear` erases a move from the engine as if it had never been written:
+every item written since its manifest was begun, under the paths the move
+writes (`/sqlite/` and each mapping's `under`), deleted and then forgotten
+with every version (`EngineUDS.forget`), so no half-written history stays
+behind the next copy; the files it wrote under the files root since then;
+the manifest last, so a clear stopped part way is cleared again at the
+next start. The file is never touched.
 """
 from __future__ import annotations
 
@@ -674,6 +683,98 @@ def _revisions(uds, path: str, current: int) -> Iterator[Revision]:
         yield Revision(dict(item.data or {}), _content_of(item), by, v.change, v.summary, v.version, v.at)
 
 
+# -- clearing a move that never finished -----------------------------------------
+
+CLEAR_DEADLINE_SEC = 300.0     # a forget compacts what held the items
+
+
+def _all_mappings(mappings: Optional[list[Mapping]]) -> list[Mapping]:
+    return registered() + list(mappings or ())
+
+
+def move_prefixes(mappings: Optional[list[Mapping]] = None) -> tuple[str, ...]:
+    """Every path prefix a move writes under: `/sqlite/` and the `under` of
+    each registered mapping and of `mappings`."""
+    found = {ROOT}
+    for m in _all_mappings(mappings):
+        found.update(m.under)
+    return tuple(sorted(found))
+
+
+def _under_any(path: str, prefixes: Iterable[str]) -> bool:
+    return any(path == p or path.startswith(p.rstrip("/") + "/") for p in prefixes)
+
+
+def _written_since(uds, lsn: int) -> set[str]:
+    """Every item path the change feed names after log number `lsn`."""
+    out: set[str] = set()
+    since = lsn
+    while True:
+        page = uds.changes(MOVE_CALLER, since, limit=1000)
+        for record in page.get("changes") or []:
+            out.update(i["path"] for i in record.get("items") or [])
+        if page.get("next", since) == since:
+            return out
+        since = page["next"]
+
+
+def _byte_chunks(paths: list[str], budget: int = TXN_BYTES_MAX) -> Iterator[list[str]]:
+    chunk: list[str] = []
+    size = 0
+    for p in paths:
+        if chunk and size + len(p) + 4 > budget:
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(p)
+        size += len(p) + 4
+    if chunk:
+        yield chunk
+
+
+@dataclass(frozen=True)
+class Cleared:
+    items: int
+    files: int
+    seconds: float
+
+
+def clear(uds, mappings: Optional[list[Mapping]] = None, *,
+          files_root: Optional[Path] = None) -> Optional[Cleared]:
+    """Erase the move the engine holds (see the module's words); None when
+    it holds none."""
+    found = _manifest(uds)
+    if found is None:
+        return None
+    started = time.monotonic()
+    versions = uds.history(MOVE_CALLER, MANIFEST_PATH, limit=10000)
+    begun_lsn = min(v.lsn for v in versions)
+    begun_at = min((v.at for v in versions if v.at is not None), default=0.0)
+    prefixes = move_prefixes(mappings)
+    paths = sorted(p for p in _written_since(uds, begun_lsn - 1)
+                   if p != MANIFEST_PATH and _under_any(p, prefixes))
+    _erase(uds, paths)
+    files = 0
+    root = Files(_files_root(files_root))
+    folders = {f for m in _all_mappings(mappings) for f in getattr(m, "files_under", ()) or ()}
+    for rel in (rel for folder in sorted(folders) for rel in root.list(folder)):
+        path = root._at(rel)
+        if path.stat().st_mtime >= begun_at - 1:      # written by the move, not before it
+            path.unlink(missing_ok=True)
+            files += 1
+    _erase(uds, [MANIFEST_PATH])
+    return Cleared(len(paths), files, time.monotonic() - started)
+
+
+def _erase(uds, paths: list[str]) -> None:
+    for chunk in _chunks([(p, {}, None) for p in paths], TXN_WRITES_MAX):
+        tx = Transaction()
+        for p, _, _ in chunk:
+            tx.delete(p)
+        uds.transaction(MOVE_CALLER, tx, change=MOVE_CHANGE, summary="a move stopped part way, cleared")
+    for chunk in _byte_chunks(paths):
+        uds.forget(MOVE_CALLER, chunk, deadline=CLEAR_DEADLINE_SEC)
+
+
 # -- copy, verify, export -------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -705,6 +806,10 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
         source = source_tables(conn, tables)
         identity = {t: [s["rows"], s["digest"]] for t, s in source.items()}
         found = _manifest(uds)
+        if found is not None and found.data.get("state") != "copied":
+            # Stopped part way: no move. Erased, then copied again in full.
+            clear(uds, mappings, files_root=files_root)
+            found = None
         if found is None:
             stray = uds.list(caller, ROOT, limit=1, streams={Stream.ENTRY}).items
             if stray:
@@ -713,7 +818,7 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
         else:
             held = {t["name"]: [t["rows"], t["digest"]] for t in found.data.get("tables", [])}
             if held != identity:
-                raise MoveRefused("the engine already holds a different move (from "
+                raise MoveRefused("the engine already holds a different finished move (from "
                                   f"{found.data.get('source', {}).get('path')}); nothing was written")
             if found.data.get("state") == "copied":
                 return CopyReport("already", len(tables), sum(s["rows"] for s in source.values()), 0,
@@ -728,11 +833,7 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
                        for t in tables],
             "copied_at": None,
         }
-        tx = Transaction()
-        if found is None:
-            tx.put(MANIFEST_PATH, manifest, absent=True)
-        else:
-            tx.put(MANIFEST_PATH, manifest, expect_version=found.version)
+        tx = Transaction().put(MANIFEST_PATH, manifest, absent=True)
         uds.transaction(caller, tx, change=MOVE_CHANGE, summary="move begun", full_sync=True)
         writes = 0
         for m in mappings:

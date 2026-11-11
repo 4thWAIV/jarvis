@@ -155,6 +155,31 @@ def test_history_survives_flush_compaction_and_restart(tmp_path):
         assert uds.get(TIM, "/work/busy.work").version == 32
 
 
+def test_forget_erases_a_deleted_items_every_version_and_refuses_a_live_one(tmp_path):
+    directory = tmp_path / "engine"
+    with in_process(directory) as (engine, uds):
+        for n in range(5):
+            uds.put(TIM, "/work/gone.work", data={"n": n, "said": f"quokka {n}"},
+                    content={"text": "a quokka's notes"} if n == 0 else None)
+            if n == 2:
+                engine.store.flush()
+        uds.put(TIM, "/work/kept.work", data={"n": 1})
+        with pytest.raises(ValueError):
+            uds.forget(TIM, ["/work/kept.work"])          # live: delete it first
+        uds.delete(TIM, "/work/gone.work")
+        with pytest.raises(PermissionError):
+            uds.forget(Caller("ninja"), ["/work/gone.work"])     # the owner's act alone
+        uds.forget(TIM, ["/work/gone.work"])
+        assert uds.history(TIM, "/work/gone.work") == []
+        uds.put(TIM, "/work/gone.work", data={"n": "again"})
+        assert [v.version for v in uds.history(TIM, "/work/gone.work")] == [1]
+        assert sorted(i.path for i in uds.scan(TIM, "/work")) == ["/work/gone.work", "/work/kept.work"]
+        assert uds.count(TIM, "/work").items == 2
+    with in_process(directory) as (engine, uds):
+        assert [v.version for v in uds.history(TIM, "/work/gone.work")] == [1]
+        assert uds.get(TIM, "/work/gone.work").data == {"n": "again"}
+
+
 def test_log_recovery_without_a_flush(tmp_path):
     """Writes only in the log (no generation written) are all there after a
     restart, with their versions and the change feed."""

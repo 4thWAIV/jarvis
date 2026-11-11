@@ -63,7 +63,15 @@ this presents as "the UI is up but nothing works" rather than as an error.
   SQLite is retired. A record's events are its versions (`events` on each,
   tagged with who acted and the kind of change). The first start after the
   move copies `data/jarvis.db` into the engine once and proves it both ways
-  (`records_cutover.py`), leaving the file untouched;
+  (`records_cutover.py`), leaving the file untouched. A move stopped part
+  way (during the copy or either check) never blocks a start: without the
+  cut-over's record it is erased (`knowledge_move.clear`: every item
+  written since its manifest began, under the paths a move writes, deleted
+  and then forgotten with every version, `EngineUDS.forget`, the owner's
+  `/v1/items/forget` for deleted items only; the files it wrote; the
+  manifest last) and the file copied again in full, whatever was written
+  to it in between; a different finished (`copied`) move, or `/sqlite/`
+  items with no manifest, is still refused;
   `python -m jarvis.knowledge export-sqlite --out <file>` writes the records
   back to SQLite. Tests get a throwaway in-process engine each
   (`conftest._records_in_a_throwaway_engine`).

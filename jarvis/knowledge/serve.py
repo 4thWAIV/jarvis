@@ -379,6 +379,12 @@ def _items_changes(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.items.changes(request.body or {}))
 
 
+@route("POST", "/v1/items/forget")
+@_guard
+def _items_forget(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.forget(request.body or {}))
+
+
 @route("POST", "/v1/items/links")
 @_guard
 def _items_links(engine: Engine, request: Request) -> Answer:

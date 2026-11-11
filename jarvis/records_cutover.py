@@ -24,10 +24,14 @@ jarvis.db is left exactly where it was, untouched, beside the engine's
 snapshots; `python -m jarvis.knowledge export-sqlite --out <file>` writes
 the records back to a SQLite file for the way back.
 
-A move stopped part way is copied again in full at the next start (the
-move kit's rule). A verification that fails raises `CutoverFailed`, and the
-server does not start on records it could not prove: running on half of
-Tim's records is worse than not starting, and jarvis.db is untouched.
+A move stopped part way (the server stopped, the Mac shut down, Ctrl-C)
+never blocks a start: whatever move the engine holds without the cut-over's
+record never became JARVIS's records, so it is erased (`knowledge_move.clear`)
+before the snapshot and the file is copied again in full, whatever was
+written to it in between. That covers a stop during the copy and during
+either check. A verification that fails raises `CutoverFailed`, and JARVIS
+does not run on records it could not prove: running on half of the records
+is worse than not running, and jarvis.db is untouched.
 """
 from __future__ import annotations
 
@@ -90,8 +94,14 @@ def cut_over(*, db_path: Optional[Path] = None, uds=None, files_root: Optional[P
         return Outcome("fresh")
     seconds: dict = {}
     started = time.monotonic()
+    cleared = move.clear(uds, files_root=files_root)
+    if cleared is not None:
+        log.warning("cut-over: a move stopped part way was cleared (%d items, %d files, %.1f s); "
+                    "copying again in full", cleared.items, cleared.files, cleared.seconds)
+        seconds["cleared"] = round(cleared.seconds, 3)
+    t = time.monotonic()
     snap = _snapshot(uds) if snapshot else None
-    seconds["snapshot"] = round(time.monotonic() - started, 3)
+    seconds["snapshot"] = round(time.monotonic() - t, 3)
     log.info("cut-over: moving %s into the engine", db_path)
     t = time.monotonic()
     copied = move.copy(db_path, uds, files_root=files_root)
