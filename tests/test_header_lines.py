@@ -437,8 +437,6 @@ EXEMPT = {
     "worker_hooks.observations": "Formats a hook event kind as metadata in the native observer; the resulting inventory is JSON and list_workers is registered as tainting, with no spoken-header path.",
     "worker_hooks.record": "Formats local event filenames only from clock and UUID values. Its JSON contains metadata, never prompts or tool arguments; it produces no hook stdout or human narration.",
     "worker_inventory.build": "Formats stable provider/session IDs and coverage messages inside JSON. React renders these as text, and the identical list_workers tool output is registered as tainting rather than interpolated into a trusted header.",
-    "project_store.answer_accomplishment": (
-        "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (
         "it changes a piece of work on his word; its refusals are fixed words, and the title it writes goes to the record, never into a line. Driven by tests/test_project_records.py"),
     "project_store.change": (
@@ -687,15 +685,41 @@ EXEMPT = {
         "observation in the folder catalog; its one f-string is the source "
         "label `codex:<Codex home>`, a path JARVIS chose, recorded as discovery "
         "progress and never spoken or put in a note to the brain"),
-    "folder_store._refresh_fingerprint": (
-        "it joins the `provider` and evidence columns of the catalog's own "
+    "folder_store._fingerprint": (
+        "it joins the `provider` and evidence fields of the catalog's own "
         "observations into a fingerprint compared only for equality, to tell "
         "whether an ignored candidate's evidence changed; the string is "
         "stored, never shown, spoken or sent to the brain"),
+    "folder_store._observe": (
+        "it records what discovery saw (a session's provider, cwd and ids) as "
+        "the catalog's own documents; its one f-string is the write's summary "
+        "naming this node's id, kept with the record's versions, never shown, "
+        "spoken or sent to the brain"),
     "folder_store.related_sessions": (
-        "its only built string is a SQL LIKE pattern from the folder's own "
-        "canonical path, passed as a bound parameter; the rows it returns go "
-        "to the page as JSON, rendered as text, and nothing is spoken"),
+        "its only built string is the folder's own canonical path with a "
+        "slash, compared as a prefix; the rows it returns go to the page as "
+        "JSON, rendered as text, and nothing is spoken"),
+    "project_store.link_folder": (
+        "it links a folder to a project on his word; its refusals are fixed words "
+        "that name no record, and the event detail it writes is the record's own. "
+        "Driven by tests/test_project_records.py"),
+    "project_store.change_folder": (
+        "it changes a project's folder link on his word; its refusals are fixed "
+        "words that name no record, and the event detail it writes is the record's "
+        "own. Driven by tests/test_project_records.py"),
+    "project_store.propose_accomplishment": (
+        "it records an accomplishment in its project's document; its refusals are "
+        "fixed words, and the title it writes goes to the record, never into a line. "
+        "Driven by tests/test_project_records.py"),
+    "project_store.write": (
+        "the changes' inner writers (create, change, a candidate's answer, a work's "
+        "start and change): their refusals are fixed words that name no record, and "
+        "what they write goes to the records, never into a line. Driven by "
+        "tests/test_project_records.py"),
+    "project_store.rows": (
+        "the move's way back: it writes the project documents' own fields as the "
+        "old tables' rows (the event detail as JSON text) for export-sqlite; "
+        "nothing is shown, spoken or sent to the brain"),
     "server._folder_line": (
         "the folder name and path it formats are used only as the BODY of "
         "`_wrap_untrusted` by list_folders, find_folder and register_folder, "

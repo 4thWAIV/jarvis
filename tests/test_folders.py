@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import (data_paths, folder_discovery, folder_policy, folder_readers, history_read,
-                    run_store)
+from jarvis import (data_paths, folder_discovery, folder_policy, folder_readers, folder_store,
+                    history_read, records, run_store)
 from jarvis.folder_contract import FolderError, Reader, TEXT_MAX_LINES
 from jarvis.folder_service import FolderService
 from jarvis.folder_store import FolderStore
@@ -65,30 +65,34 @@ def _err(fn, *a, **kw) -> str:
 
 # ── the record: migrations, persistence, idempotency ─────────────────────
 
-def test_an_existing_database_keeps_its_rows_and_the_migration_is_repeatable():
+def test_the_catalog_is_one_document_per_folder_shared_by_every_store(svc, tmp_path):
     run_store.init_db()
     mid = run_store.create_message("s1", "anthropic", "hammer", "p", "hello")
-    before = set(os.listdir(data_paths.data_dir()))
     a = FolderStore()
     b = FolderStore()                      # a second start: nothing to do, nothing lost
-    assert a.path == b.path == data_paths.db_path()
-    assert a.schema_version() == b.schema_version() == 1
+    assert a.schema_version() == b.schema_version() == folder_store.SCHEMA_VERSION == 1
+    made = _register(svc, _tree(tmp_path / "plans", {"a.md": "one"}))["folder"]
+    assert b.get(made["id"]).id == made["id"]
     assert run_store.get_message(mid).text == "hello"
-    # Only the existing database file (and SQLite's own WAL files) is used.
-    added = set(os.listdir(data_paths.data_dir())) - before
-    assert added <= {"jarvis.db-wal", "jarvis.db-shm"}
-    tables = {r[0] for r in sqlite3.connect(data_paths.db_path()).execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"folders", "folder_locations", "folder_access_scopes", "folder_candidates",
-            "folder_observations", "folder_location_events", "folder_registrations"} <= tables
-    assert not any("project" in t for t in tables - {"projects"}), "no project tables yet"
+    doc = records.get(folder_store.folder_path(made["id"]))
+    assert doc.path == f"/folders/{made['id']}"          # a folder item: no suffix
+    loc = doc.data["locations"][0]
+    assert loc["scopes"][0]["reader_kind"] == "files" and loc["retired_at"] is None
+    assert [r["request_key"] for r in doc.data["registrations"]] == [f"k-{tmp_path / 'plans'}-0"]
+    assert [e["event"] for v in records.history(doc.path, fields=["events"])
+            for e in (v.data or {}).get("events") or []] == ["registered"]
+    assert not any("project" in k for k in doc.data), "no project fields"
 
 
-def test_a_newer_schema_is_left_alone(store):
-    with sqlite3.connect(store.path) as conn:
-        conn.execute("UPDATE folder_schema SET version = 99")
-    with pytest.raises(RuntimeError, match="newer"):
-        FolderStore()
+def test_content_items_below_a_folder_are_never_taken_for_folders(svc, store, tmp_path):
+    """Round 2's Content holds a registered folder's files at
+    `/folders/<id>/<rel>`; the folder's own document is `/folders/<id>`."""
+    made = _register(svc, _tree(tmp_path / "plans", {"a.md": "one"}))["folder"]
+    records.write(f"/folders/{made['id']}/a.md", {"file": "a.md", "state": "pending"})
+    records.write(f"/folders/{made['id']}/sub/b.txt", {"file": "sub/b.txt", "state": "pending"})
+    assert [f.id for f in store.list()] == [made["id"]]
+    assert store.counts() == {"available": 1}
+    assert records.count(f"/folders/{made['id']}").items == 2       # the folder's files alone
 
 
 def test_a_folder_and_its_scope_survive_a_restart(svc, store, tmp_path):
