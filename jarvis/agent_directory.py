@@ -1,7 +1,7 @@
 """The agent directory: the one way JARVIS lists and finds agents.
 
 An agent is a conversation running on this machine (Claude Code or Codex),
-active or inactive, by its ONE name: the agents table's `name`, given once
+active or inactive, by its ONE name: the agents list's `name`, given once
 when the agent is first seen (its plain derived name, session_watch.agent_name)
 and changed only when the user renames it (run_store.rename_agent). Every
 tool that lists agents or takes an agent's name comes here, and nowhere else
@@ -16,7 +16,7 @@ hyphens, underscores, dots and commas into spaces, so "Tokens for Cash",
 resolved by guessing: `find` returns every candidate and the caller asks.
 
 The server connects the directory to its live sources once, at import
-(`connect`); the defaults read the agents table, and count no needs.
+(`connect`); the defaults read the agents list, and count no needs.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from jarvis import spoken_words
 @dataclass(frozen=True)
 class Agent:
     session_id: str
-    name: str             # its one name (the agents table's `name`)
+    name: str             # its one name (the agents list's `name`)
     project: str
     provider: str | None
     state: str            # working, idle, needs_you, ...
@@ -98,7 +98,7 @@ def connect(snapshot: Callable[[], session_watch.Snapshot],
             rows: Callable[[], list[dict]] = _agent_rows,
             needs: Callable[[], dict[str, int]] = _no_needs) -> None:
     """Where the directory reads from: the sessions running now (going by
-    the agents table's names), the agents table (activation and order), and
+    the agents list's names), the agents list (activation and order), and
     each agent's new messages to him by session id."""
     global _snapshot, _rows, _needs
     _snapshot, _rows, _needs = snapshot, rows, needs
@@ -106,7 +106,7 @@ def connect(snapshot: Callable[[], session_watch.Snapshot],
 
 def _entries(with_needs: bool = True
              ) -> list[tuple[Agent, session_watch.SessionState | None]]:
-    """Every agent with the conversation it is. The agents table first, in
+    """Every agent with the conversation it is. The agents list first, in
     its order (busy first, then most recently messaged), filled in from the
     running conversation; then any running conversation the table has not
     caught up with yet (it syncs about once a second). Without

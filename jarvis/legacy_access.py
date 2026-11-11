@@ -8,10 +8,12 @@ no agent still reporting on one is cut off, this module keeps accepting
 them, exactly as before (a key's categories are agent_rights.RIGHTS of the
 same names), for as long as `pending`:
 
-  - the cut-over has not happened yet (`agent_key_settings.cutover`), and
+  - the cut-over has not happened yet (`cutover` in the
+    `/settings/agent-keys.settings` document), and
   - the record holds an access key, and
-  - one was used within QUIET_DAYS (counted per day and label in
-    `legacy_admissions`, since phase 3), or the use has not yet been
+  - one was used within QUIET_DAYS (counted per day and label in the
+    `/settings/legacy-admissions.settings` document, since phase 3), or
+    the use has not yet been
     watched for QUIET_DAYS (from the first day counted, or when this guard
     first looked, whichever is earlier).
 
