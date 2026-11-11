@@ -1,4 +1,4 @@
-import { WorkOwnerActivity } from "./WorkerStatus";
+import { WorkRowActivity } from "./WorkerStatus";
 /**
  * The right panel's Work tab (the tab that was Workflows, in its place):
  * the items under their groups, each group headed by its area or, for items
@@ -133,7 +133,6 @@ const WorkRow = memo(function WorkRow({ item, selected, thread }: { item: WorkIt
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
           {item.title}</span>
         <span className="work-row-pills">
-          {[...new Map(item.pieces.filter(p => p.state !== "done" && p.who.ref).map(p => [p.who.kind + ":" + p.who.ref, p.who])).entries()].map(([key, owner]) => <WorkOwnerActivity key={key} owner={owner} />)}
           {/* Beside the state, never in the title's room: a Paused mark there
               once squeezed a long title down to its ellipsis. */}
           <ActivityMark activity={activity} target={ui.part("activity")} />
@@ -144,6 +143,8 @@ const WorkRow = memo(function WorkRow({ item, selected, thread }: { item: WorkIt
           <span className={`work-state state-${rowState(item)}`} ref={ui.part("state")}
                 title={item.state === "activity_unknown" && !item.live ? t("right.work.activityUnknownReason") : undefined}>
             {rowStateWords(item, t)}</span>
+          {/* One orb, at the right end: how many of its agents work now. */}
+          <WorkRowActivity pieces={item.pieces} />
         </span>
         {(item.projects ?? []).length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>

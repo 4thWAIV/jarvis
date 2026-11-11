@@ -86,7 +86,11 @@ class _Work:
         return [
             _item("work-1", "Speech migration", "working", self.engine_quiet, self.engine_heard, pieces,
                   blocked_pieces=1, waiting_pieces=1),
-            _item("work-2", "Captions", "working", now - 1, now - 700),
+            # Its one piece waits for his review; its agent (s1) is busy on
+            # work-1. Busy elsewhere is not working here: the orb stays still.
+            _item("work-2", "Captions", "working", now - 1, now - 700, [
+                _piece("polish", "Polish the captions", "verifying", note_at=now - 900,
+                       who={"kind": "agent", "ref": "s1", "name": "Interface"})]),
             _item("work-3", "Rebrand", "done"),
             _item("work-4", "Release", "blocked"),
             _item("work-5", "Pricing", "waiting_on_tim"),
@@ -203,7 +207,13 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.click(".right-tabs [role=tab][title=Work]")
         row = ".work-row[data-work-id=work-1]"
         await page.locator(row).wait_for(timeout=10000)
-        await page.locator(row + ' canvas[data-orb-state="thinking"]').wait_for()
+        # One orb at the row's right end: s1 works on it, so it thinks and says 1.
+        await page.locator(row + ' .work-row-orb canvas[data-orb-state="thinking"]').wait_for()
+        await async_api.expect(page.locator(row + ' .work-row-orb-count')).to_have_text("1")
+        await async_api.expect(page.locator(row + ' .work-row-orb')).to_have_count(1)
+        # Nobody works on work-2 (s1 owns only its review piece): one still orb, no number.
+        await async_api.expect(page.locator('.work-row[data-work-id=work-2] .work-row-orb')).to_have_attribute("data-working", "0")
+        await async_api.expect(page.locator('.work-row[data-work-id=work-2] .work-row-orb-count')).to_have_count(0)
         assert await page.locator(row + ' [data-worker-snapshot]').get_attribute('data-worker-snapshot') == worker_snapshot['snapshot_id']
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.work-row')]
             .map(r => [r.dataset.workId, r.dataset.activity ?? null]))""")

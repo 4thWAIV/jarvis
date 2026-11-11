@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { useWorker, type Worker } from "./workers";
+import { isWorking, useWorker, type Worker } from "./workers";
 import { isQuiet, quietUntil } from "./voiceHealth";
 import { agentReceipt, type AgentRow } from "./agents";
 import { createOrb, type Orb, type OrbState } from "./orb";
@@ -21,7 +21,7 @@ import { createOrb, type Orb, type OrbState } from "./orb";
 const AGENT_ORB_PARTICLES = 300;
 
 export function agentOrbLook(agent: AgentRow, worker?: Worker): { gray: boolean; state: OrbState } {
-  return { gray: !agent.active || !worker || worker.activity.orb_state === "unknown", state: worker?.activity.orb_state === "thinking" ? "thinking" : "idle" };
+  return { gray: !agent.active, state: isWorking(worker) ? "thinking" : "idle" };
 }
 
 export function AgentOrb({ agent }: { agent: AgentRow }) {

@@ -17,7 +17,7 @@ import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
-import { subscribeWorkers, workerSnapshot } from "./workers";
+import { isWorking, subscribeWorkers, workerSnapshot } from "./workers";
 import { brains, activeBrain } from "./brains";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
@@ -76,10 +76,11 @@ export function startJarvis(orb: Orb): void {
   function renderOrb() {
     const provider = activeBrain(brains.get().value);
     const brain = workerSnapshot().value?.workers.find(w => w.kind === "brain" && w.provider === provider);
-    // Listening/speaking/compacting are conversation states. Model thinking
-    // comes only from the same computed worker result as the account counter.
+    // Listening/speaking/compacting are conversation states. Thinking is the
+    // one definition of working (worker_inventory.working: the brain's turn
+    // is open), the same answer the brain count and every other orb read.
     const state = currentState === "thinking" || currentState === "idle"
-      ? brain?.activity.orb_state === "thinking" ? "thinking" : "idle" : currentState;
+      ? isWorking(brain) ? "thinking" : "idle" : currentState;
     orb.setState(state as OrbState);
   }
   subscribeWorkers(renderOrb);

@@ -9,24 +9,18 @@
  */
 
 export const leftEn = {
-  "left.workers.active": "{count} active",
-  "left.workers.modelWork": "{count} model work",
-  "left.workers.unconfirmed": "{count} unconfirmed",
+  "left.workers.active": "{count} working",
   "left.workers.tools": "{count} in tools",
   "left.workers.queued": "{count} queued",
   "left.workers.parentCycle": "Parent cycle: {name}",
-  "left.workers.lastPhase": "Last phase: {phase}.",
-  "left.workers.lastEvidence": "Last evidence {count} seconds ago.",
-  "left.workers.runtime": "Runtime: {status}. Slot: {allocation}.",
-  "left.workers.hooksMissing": "Native lifecycle hooks not observed yet.",
   "left.workers.workflow": "Workflow: {id}",
-  "left.workers.children": "{count} child records",
   "left.workers.unavailable": "Activity unavailable",
-  "left.workers.unknown": "Activity unknown",
+  "left.workers.working": "Working",
+  "left.workers.inTool": "Working, in a tool",
+  "left.workers.idle": "Idle",
   "left.workers.label": "{account} agent activity: {activity}",
   "left.workers.all": "All",
   "left.workers.allWorkers": "All workers",
-  "left.workers.runtimeActive": "{count} runtime-active",
   "left.workers.capacity": "Managed run slots: {occupied} occupied, {queued} queued, {free} free. External CLI slot reservations are unknown.",
 
   // The orb (OrbControl.tsx): the running brain's logo.

@@ -137,14 +137,16 @@ def test_async_late_tool_start_does_not_reopen_completed_call(tmp_path):
     assert not rows[0]['tools']
 
 
-def test_expired_hook_keeps_its_last_phase_visible(tmp_path):
+def test_a_session_in_its_turn_stays_working_in_a_long_tool_call(tmp_path):
+    """An old PreToolUse is no reason to call it unknown: its turn is open,
+    so it works, in a tool."""
     now=time.time()
     hooks.record(tmp_path,{'hook_event_name':'PreToolUse','session_id':'root','tool_use_id':'a'},now-130)
     rows,_=hooks.observations(tmp_path,now)
     root=SessionState(session_id='root',provider='anthropic',cwd='/p',project='p',state='working')
     result=build(Snapshot([root],now),now=now,native_observations=rows)
     evidence=result['workers'][0]['activity']
-    assert evidence['state']=='unknown' and evidence['last_phase']=='tool_wait'
+    assert evidence['working'] and evidence['phase']=='tool' and evidence['last_phase']=='tool_wait'
 
 
 def test_late_prompt_record_cannot_erase_request_evidence_across_reads(tmp_path):

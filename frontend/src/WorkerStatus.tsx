@@ -1,28 +1,36 @@
+/**
+ * Agent activity as the page shows it. Every word, number and orb here reads
+ * the server's one answer to "is it working?" (`activity.working`, decided by
+ * worker_inventory.working: an open turn, waiting on the model or running a
+ * tool). Nothing is "unknown" and nothing is counted as unconfirmed.
+ */
 import { ParticleOrb, WORKFLOW_PALETTE } from "./WorkflowVisuals";
 import { useSyncExternalStore } from "react";
 import { useT, type Translate } from "./locale";
 import { brains, activeBrain } from "./brains";
-import { useWorkers, findWorker, type WorkerCounts, type Inventory, type Worker } from "./workers";
+import { useWorkers, findWorker, isWorking, workingOnItem, type OwnedPiece, type WorkerCounts,
+         type Inventory, type Worker } from "./workers";
 
 function words(t: Translate, c: WorkerCounts) {
   return [t("left.workers.active", {count: c.active ?? 0}),
-    c.unknown ? t("left.workers.unconfirmed", {count: c.unknown}) : "",
     c.tool_wait ? t("left.workers.tools", {count: c.tool_wait}) : "",
     c.queued ? t("left.workers.queued", {count: c.queued}) : ""].filter(Boolean).join(" · ");
+}
+function phaseWords(t: Translate, worker: Worker | undefined) {
+  if (!isWorking(worker)) return t("left.workers.idle");
+  return worker!.activity.phase === "tool" ? t("left.workers.inTool") : t("left.workers.working");
 }
 function WorkerTree({ worker, inventory, ancestors = [] }: { worker: Worker; inventory: Inventory; ancestors?: string[] }) {
   const t = useT();
   if (ancestors.includes(worker.id)) return <li>{t("left.workers.parentCycle", {name: worker.name})}</li>;
-  const children = inventory.workers.filter(w => w.parent_id === worker.id);
+  // Only what works now, and what it works under: finished subagents stay in
+  // the record and out of this list.
+  const children = inventory.workers.filter(w => w.parent_id === worker.id && (isWorking(w) || w.counts.active > 0));
   return <li>
     <div><strong>{worker.name}</strong> <small>{worker.provider} · {worker.kind}</small></div>
-    <div>{worker.activity.orb_state ?? t("left.workers.unknown")} · {words(t, worker.counts)}</div>
-    {worker.activity.state === "unknown" && worker.activity.last_phase && worker.activity.last_phase !== "unknown" && <small>{t("left.workers.lastPhase", {phase: worker.activity.last_phase.replace(/_/g, " ")})}</small>}
-    {worker.activity.evidence_age_seconds != null && <small>{t("left.workers.lastEvidence", {count: Math.round(worker.activity.evidence_age_seconds)})}</small>}
-    {worker.runtime?.status && <small>{t("left.workers.runtime", {status: worker.runtime.status, allocation: worker.allocation ?? t("left.workers.unknown")})}</small>}
-    {worker.native_hook_coverage === "not_observed" && <small>{t("left.workers.hooksMissing")}</small>}
+    <div>{phaseWords(t, worker)}{worker.counts.active > (isWorking(worker) ? 1 : 0) ? ` · ${words(t, worker.counts)}` : ""}</div>
     {worker.workflow_id && <small>{t("left.workers.workflow", {id: worker.workflow_id})}</small>}
-    {!!children.length && <details><summary>{t("left.workers.children", {count: children.length})}</summary><ul>{children.map(child => <WorkerTree key={child.id} worker={child} inventory={inventory} ancestors={[...ancestors, worker.id]} />)}</ul></details>}
+    {!!children.length && <ul>{children.map(child => <WorkerTree key={child.id} worker={child} inventory={inventory} ancestors={[...ancestors, worker.id]} />)}</ul>}
   </li>;
 }
 export function WorkerTotal({ provider, compact = false }: { provider?: string; compact?: boolean } = {}) {
@@ -30,53 +38,69 @@ export function WorkerTotal({ provider, compact = false }: { provider?: string; 
   const brainList = useSyncExternalStore(brains.subscribe, brains.get);
   const account = provider ?? activeBrain(brainList.value);
   const { value, error } = useWorkers();
-  const roots = value?.workers.filter(w => !w.parent_id || !value.workers.some(p => p.id === w.parent_id)) ?? [];
-  const projects = [...new Set(roots.map(w => w.project))].sort((a, b) => {
-    const latest = (project: string) => Math.max(0, ...value!.workers.filter(w => w.project === project).map(w => w.activity.observed_at ?? 0));
-    return latest(b) - latest(a);
-  });
+  const roots = value?.workers.filter(w => (!w.parent_id || !value.workers.some(p => p.id === w.parent_id))
+                                           && w.counts.active > 0) ?? [];
+  const projects = [...new Set(roots.map(w => w.project))].sort();
+  // The brain count: every worker on this account working now.
   const count = compact ? (account ? value?.providers[account] : undefined) : value?.total;
-  const label = count ? words(t, count) : t("left.workers.unavailable");
+  const label = value ? words(t, count ?? {active: 0} as WorkerCounts) : t("left.workers.unavailable");
   return <details className={`worker-total${compact ? " weekly-avatar worker-counter" : ""}`} title={error ?? label}>
     <summary aria-label={t("left.workers.label", {account: account ?? t("left.workers.all"), activity: label})}>
-      {compact ? <><span>{count?.active ?? "—"}</span>{!!count?.unknown && <small>+?</small>}</> : label}
+      {compact ? <span>{value ? count?.active ?? 0 : "—"}</span> : label}
     </summary>
     <div className="worker-inventory">
       <h4>{t("left.workers.allWorkers")}</h4>
-      {value && <p><strong>{t("left.workers.runtimeActive", {count: value.total.runtime_active})}</strong> · {words(t, value.total)}</p>}
+      {value && <p>{words(t, value.total)}</p>}
       <p>{error ?? value?.coverage}</p>
       {value?.capacity && <p>{t("left.workers.capacity", {occupied: value.capacity.occupied, queued: value.capacity.queued, free: value.capacity.free})}</p>}
-      {value?.gaps.map(g => <p key={g}>{g}</p>)}
       {value && projects.map(project => <section key={project}>
         <h5>{project || "JARVIS"}</h5>
-        {value.projects[project] && <p>{words(t, value.projects[project])}</p>}
         <ul>{roots.filter(w => w.project === project).map(w => <WorkerTree key={w.id} worker={w} inventory={value} />)}</ul>
       </section>)}
     </div>
   </details>;
 }
+
+/** The line under an agent's name: how many of its subagents work now, and
+ *  nothing while none do. */
 export function WorkerFamily({ sessionId, provider }: { sessionId: string; provider?: string | null }) {
   const t = useT();
-  const { value, error } = useWorkers();
+  const { value } = useWorkers();
   const root = findWorker(value, sessionId, provider);
-  return <span className="agent-subagents" title={error ?? value?.coverage}>
-    {root ? words(t, root.counts) : t("left.workers.unknown")}
+  const working = root?.descendant_counts?.active ?? 0;
+  if (!working) return null;
+  return <span className="agent-subagents" title={value?.coverage}>
+    {t("agents.working", {count: working})}
   </span>;
 }
 
-/** Work's owner activity is separate from its assignment/completion state. */
-export function WorkOwnerActivity({owner}: {owner: {kind: string; ref: string | null}}) {
+/** A piece owner's orb in the Work item's detail: thinking while it works
+ *  on this piece (in progress and in a turn), never for work elsewhere. */
+export function WorkOwnerActivity({piece}: {piece: OwnedPiece}) {
   const {value} = useWorkers();
   const t = useT();
+  const owner = piece.who;
   if (!owner.ref || owner.kind === "tim") return null;
-  const child = owner.ref.split("/sub:");
-  const worker = findWorker(value, child[1] ?? owner.ref);
-  const activity = owner.kind === "workflow" ? value?.workflow_counts?.[owner.ref] : worker?.activity;
-  return <span data-worker-snapshot={value?.snapshot_id} title={value?.coverage}>
-    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: activity?.orb_state === "thinking" ? "thinking" : "idle", gray: !activity || activity.orb_state === "unknown"}}
-      dataState={activity?.orb_state ?? "unknown"} className="workflow-orb" size={20} particles={120} />
-    <small>{owner.kind === "workflow" && value?.workflow_counts?.[owner.ref]
-      ? words(t, value.workflow_counts[owner.ref]) : worker?.activity.orb_state ?? t("left.workers.unknown")}</small>
+  const working = workingOnItem(value, [piece]) > 0;
+  const words = working ? t("left.workers.working") : t("left.workers.idle");
+  return <span data-worker-snapshot={value?.snapshot_id} title={words} aria-label={words}>
+    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: working ? "thinking" : "idle", gray: false}}
+      dataState={working ? "working" : "idle"} className="workflow-orb" size={20} particles={120} />
+  </span>;
+}
+
+/** The one orb on the right of a Work row: still and empty when nobody works
+ *  on the item, else thinking with how many of its agents work now. */
+export function WorkRowActivity({pieces}: {pieces: OwnedPiece[]}) {
+  const {value} = useWorkers();
+  const t = useT();
+  const count = workingOnItem(value, pieces);
+  const words = t("right.work.agentsWorking", {count});
+  return <span className="work-row-orb" data-working={count} data-worker-snapshot={value?.snapshot_id}
+               title={words} aria-label={words}>
+    <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: count ? "thinking" : "idle", gray: false}}
+      dataState={count ? "working" : "idle"} className="workflow-orb" size={18} particles={100} />
+    {count > 0 && <span className="work-row-orb-count">{count}</span>}
   </span>;
 }
 
@@ -84,5 +108,5 @@ export function WorkerPhase({sessionId}: {sessionId: string}) {
   const {value} = useWorkers();
   const t = useT();
   const worker = findWorker(value, sessionId);
-  return <span data-worker-snapshot={value?.snapshot_id}>{worker?.activity.orb_state ?? t("left.workers.unknown")}</span>;
+  return <span data-worker-snapshot={value?.snapshot_id} data-working={isWorking(worker)}>{phaseWords(t, worker)}</span>;
 }

@@ -1081,10 +1081,14 @@ def _mark_primary(sessions: list[SessionState]) -> None:
 
 # ── subagents ───────────────────────────────────────────────────────────────
 
-# A subagent transcript written this recently is taken to be working. This is
-# a FILE age, stated as one — there is no process to check here, and calling
-# it "running" would be a claim the data does not support.
-AGENT_ACTIVE_WITHIN_SEC = 90.0
+# A subagent is working while its turn is open: its transcript has not ended
+# the turn (`_finished`) and was written within this long. While it waits on
+# a tool call or on a long answer from the model nothing is written, so the
+# window is a long tool call's length, not a heartbeat's; a transcript silent
+# longer than that, its turn never ended, was stopped. The one definition of
+# working is `worker_inventory.working`; this is its subagent half.
+SUBAGENT_TURN_SILENT_SEC = 600.0
+AGENT_ACTIVE_WITHIN_SEC = SUBAGENT_TURN_SILENT_SEC
 # Cap the stat() calls one conversation can cost a 1 Hz poll. 209 subagent
 # transcripts were measured under a single conversation.
 MAX_AGENT_FILES = 300
@@ -1092,7 +1096,7 @@ MAX_AGENT_FILES = 300
 # What a subagent's transcript says of it, and no more:
 #   finished  its last message is the assistant's, ending its turn
 #             (`stop_reason: end_turn`) — measured on every finished one;
-#   working   not finished, and written within AGENT_ACTIVE_WITHIN_SEC;
+#   working   not finished, and written within SUBAGENT_TURN_SILENT_SEC;
 #   stale     not finished, and not written for longer than that. It may be
 #             waiting on a long tool call, or it may have been stopped; the
 #             file cannot tell which, so it is not called either.
@@ -1387,8 +1391,10 @@ _BG_NOTICE = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 _BG_NOTICE_ID = re.compile(r"<task-id>([A-Za-z0-9]+)</task-id>")
 _BG_STOPPED = re.compile(r"Successfully stopped task: ([A-Za-z0-9]+)")
 MONITOR_MAX_SEC = 30 * 60
-_BG_CACHE: dict[str, tuple[tuple, dict]] = {}
-_BG_CACHE_MAX = 256
+_BG_CACHE: dict[str, tuple[tuple, dict, int]] = {}
+# Every subagent file a poll reads must fit, or each poll empties the cache
+# and re-reads them all (measured: 476 files, 7 s a poll, with 256).
+_BG_CACHE_MAX = 4096
 
 
 def _started_here(line: str):
@@ -1419,31 +1425,39 @@ def _started_here(line: str):
 
 def _background_tasks(path: Path, st: os.stat_result) -> dict:
     """{task id: (started at, is a monitor) or None once ended}, read once
-    per write of the transcript."""
+    per write of the transcript, and then only what was appended since: a
+    working subagent's transcript grows every second and can be tens of
+    megabytes, so it is never read whole again while it only grows."""
     key = (st.st_ino, st.st_size, st.st_mtime_ns)
     hit = _BG_CACHE.get(str(path))
     if hit is not None and hit[0] == key:
         return hit[1]
-    tasks: dict = {}
+    grown = hit is not None and hit[0][0] == st.st_ino and hit[2] <= st.st_size
+    tasks: dict = dict(hit[1]) if grown else {}
+    offset = hit[2] if grown else 0
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if "background" not in line and "Monitor started" not in line \
-                        and "task-notification" not in line and "stopped task" not in line:
-                    continue
-                if _BG_STARTED.search(line):
-                    for task, monitor, at in _started_here(line):
-                        tasks.setdefault(task, (at, monitor))
-                for block in _BG_NOTICE.findall(line):
-                    found = _BG_NOTICE_ID.search(block)
-                    if found and "<status>" in block:
-                        tasks[found.group(1)] = None
-                for m in _BG_STOPPED.finditer(line):
-                    tasks[m.group(1)] = None
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            raw = fh.read()
     except OSError:
         return {}
+    # Only whole lines: a line still being written is read with the next write.
+    whole = raw[:raw.rfind(b"\n") + 1]
+    for line in whole.decode("utf-8", errors="replace").splitlines():
+        if "background" not in line and "Monitor started" not in line \
+                and "task-notification" not in line and "stopped task" not in line:
+            continue
+        if _BG_STARTED.search(line):
+            for task, monitor, at in _started_here(line):
+                tasks.setdefault(task, (at, monitor))
+        for block in _BG_NOTICE.findall(line):
+            found = _BG_NOTICE_ID.search(block)
+            if found and "<status>" in block:
+                tasks[found.group(1)] = None
+        for m in _BG_STOPPED.finditer(line):
+            tasks[m.group(1)] = None
     _BG_CACHE.pop(str(path), None)
-    _BG_CACHE[str(path)] = (key, tasks)
+    _BG_CACHE[str(path)] = (key, tasks, offset + len(whole))
     while len(_BG_CACHE) > _BG_CACHE_MAX:
         del _BG_CACHE[next(iter(_BG_CACHE))]
     return tasks
