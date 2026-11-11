@@ -2,11 +2,18 @@
 
 Every execution path writes here. The dashboard only reads. State
 transitions are persisted before they are announced.
+
+A run is one document in the engine, `/runs/<id>.run` (through
+`records`), and its output stream a file read whole, `data/runs/<id>.jsonl`,
+indexed as Content (UDS round 3; see "Runs" below).
 """
 
+import json
 import logging
+import os
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import closing
@@ -15,7 +22,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional
 
-from jarvis import brain_activity, session_steer
+from jarvis import brain_activity, data_paths, records, session_steer
 from jarvis.data_paths import db_path
 
 log = logging.getLogger("jarvis.run_store")
@@ -108,61 +115,19 @@ def migrate(conn: sqlite3.Connection, schema_table: str,
 
 
 def init_db() -> None:
+    """Kept callable: runs need no table. A run is a document
+    (`/runs/<id>.run`) and its output a file (`data/runs/<id>.jsonl`), and
+    a run written before a field existed reads with that field's default
+    (`_RUN_DEFAULTS`), which is what the old column backfill did."""
+    _tables_of_other_groups()
+
+
+def _tables_of_other_groups() -> None:
+    """The SQLite tables the steers, messages, session messages and agents
+    functions below still read until their own rewrites land (UDS round
+    3). Deleted with `_connect`."""
     with closing(_connect()) as conn:
         conn.executescript("""
-            CREATE TABLE IF NOT EXISTS runs (
-                id            TEXT PRIMARY KEY,
-                project_name  TEXT NOT NULL,
-                project_path  TEXT NOT NULL,
-                prompt        TEXT NOT NULL,
-                origin        TEXT NOT NULL,
-                status        TEXT NOT NULL,
-                resume_from   TEXT,
-                result_text   TEXT DEFAULT '',
-                summary       TEXT DEFAULT '',
-                error         TEXT DEFAULT '',
-                exit_code     INTEGER,
-                pid           INTEGER,
-                cost_usd      REAL    DEFAULT 0,
-                input_tokens  INTEGER DEFAULT 0,
-                output_tokens INTEGER DEFAULT 0,
-                cache_read_tokens     INTEGER DEFAULT 0,
-                cache_creation_tokens INTEGER DEFAULT 0,
-                num_turns     INTEGER DEFAULT 0,
-                model         TEXT DEFAULT '',
-                requested_model TEXT DEFAULT '',
-                is_error      INTEGER DEFAULT 0,
-                -- The registered folder it ran in (folder_store), when the
-                -- brain started it in one rather than in a project.
-                folder_id     TEXT,
-                -- The work package it carries out (work_packages), when the
-                -- brain started a package that runs as an agent.
-                package_id    TEXT,
-                -- The SHA-256 of the context pack it was given
-                -- (context_service.py), kept beside it in run_context_dir().
-                context_sha256 TEXT,
-                -- The project record and the piece of work it was started
-                -- for (project_store.py), when the brain named them.
-                project_id    TEXT,
-                work_id       TEXT,
-                created_at    REAL NOT NULL,
-                started_at    REAL,
-                ended_at      REAL
-            );
-            CREATE INDEX IF NOT EXISTS idx_runs_status  ON runs(status);
-            CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS run_events (
-                id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id  TEXT    NOT NULL REFERENCES runs(id),
-                seq     INTEGER NOT NULL,
-                ts      REAL    NOT NULL,
-                kind    TEXT    NOT NULL,
-                payload TEXT    NOT NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_events_run_seq
-                ON run_events(run_id, seq);
-
             CREATE TABLE IF NOT EXISTS steers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -237,33 +202,6 @@ def init_db() -> None:
             );
         """)
         conn.commit()
-
-        # `CREATE TABLE IF NOT EXISTS` never alters a table that already
-        # exists, so a live jarvis.db predating a column needs an explicit
-        # backfill. Same PRAGMA-table_info-then-ALTER pattern as
-        # migrations/001_dispatches_to_runs.py.
-        cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
-        if "requested_model" not in cols:
-            conn.execute(
-                "ALTER TABLE runs ADD COLUMN requested_model TEXT DEFAULT ''")
-            conn.commit()
-        if "is_error" not in cols:
-            conn.execute(
-                "ALTER TABLE runs ADD COLUMN is_error INTEGER DEFAULT 0")
-            conn.commit()
-        if "folder_id" not in cols:
-            conn.execute("ALTER TABLE runs ADD COLUMN folder_id TEXT")
-            conn.commit()
-        if "package_id" not in cols:
-            conn.execute("ALTER TABLE runs ADD COLUMN package_id TEXT")
-            conn.commit()
-        if "context_sha256" not in cols:
-            conn.execute("ALTER TABLE runs ADD COLUMN context_sha256 TEXT")
-            conn.commit()
-        for column in ("project_id", "work_id"):
-            if column not in cols:
-                conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
-                conn.commit()
         message_cols = {r["name"] for r in conn.execute("PRAGMA table_info(session_messages)")}
         for column in ("sender_session", "sender_evidence", "sender_subagent"):
             # Who sent it, and on what evidence (session_message_sender.py).
@@ -287,29 +225,118 @@ def init_db() -> None:
             conn.commit()
 
 
+# --- Runs: one document each; the output stream a file ------------------------
+#
+# A run is the document `/runs/<id>.run`, its data the run's fields by name
+# (`RUN_FIELDS`, the old `runs` columns), written by JARVIS with each status
+# as its change. Its output is a log read whole, so it is a file of its own,
+# `data/runs/<id>.jsonl` (`data_paths.runs_dir()`): one JSON line per event,
+# appended before any hint about it, and indexed as Content (`/jarvis/runs`,
+# knowledge_content.jarvis_roots). `RunMapping` moves the old tables into
+# both and back.
+
+RUNS = "/runs"
+RUN_TYPE = "run"
+_TEXT, _INTEGER, _REAL = "text", "integer", "real"
+
+# Every field of a run, in the old table's column order: its kind (the
+# column's affinity, kept on every write so an export gives the storage
+# classes SQLite gave) and its default.
+RUN_FIELDS: dict[str, tuple[str, object]] = {
+    "id": (_TEXT, None), "project_name": (_TEXT, None), "project_path": (_TEXT, None),
+    "prompt": (_TEXT, None), "origin": (_TEXT, None), "status": (_TEXT, None),
+    "resume_from": (_TEXT, None), "result_text": (_TEXT, ""), "summary": (_TEXT, ""),
+    "error": (_TEXT, ""), "exit_code": (_INTEGER, None), "pid": (_INTEGER, None),
+    "cost_usd": (_REAL, 0.0), "input_tokens": (_INTEGER, 0), "output_tokens": (_INTEGER, 0),
+    "cache_read_tokens": (_INTEGER, 0), "cache_creation_tokens": (_INTEGER, 0),
+    "num_turns": (_INTEGER, 0), "model": (_TEXT, ""), "requested_model": (_TEXT, ""),
+    "is_error": (_INTEGER, 0), "created_at": (_REAL, None), "started_at": (_REAL, None),
+    "ended_at": (_REAL, None),
+    # The registered folder it ran in (folder_store), when the brain started
+    # it in one rather than in a project.
+    "folder_id": (_TEXT, None),
+    # The work package it carries out (work_packages), when the brain
+    # started a package that runs as an agent.
+    "package_id": (_TEXT, None),
+    # The SHA-256 of the context pack it was given (context_service.py),
+    # kept beside it in run_context_dir().
+    "context_sha256": (_TEXT, None),
+    # The project record and the piece of work it was started for
+    # (project_store.py), when the brain named them.
+    "project_id": (_TEXT, None), "work_id": (_TEXT, None),
+}
+_RUN_DEFAULTS = {k: d for k, (_kind, d) in RUN_FIELDS.items()}
+# A moved run keeps the rowid SQLite gave it (the move kit counts it); the
+# store never writes or returns it.
+_ROWID = "rowid"
+
+
+def _run_path(run_id: str) -> str:
+    return f"{RUNS}/{records.segment(run_id)}.{RUN_TYPE}"
+
+
+def _typed(field_name: str, value):
+    """A value as its old column held it: REAL a float, INTEGER an int,
+    TEXT text (numbers given as text, as SQLite's affinity did)."""
+    if value is None:
+        return None
+    kind = RUN_FIELDS[field_name][0]
+    if kind == _REAL and isinstance(value, (bool, int)):
+        return float(value)
+    if kind == _INTEGER:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+    if kind == _TEXT and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return value
+
+
+def _run_data(fields: dict) -> dict:
+    """A run's document data: every field, each typed, defaults filled."""
+    return {k: _typed(k, fields.get(k, _RUN_DEFAULTS[k])) for k in RUN_FIELDS}
+
+
+def _run_dict(data: Optional[dict]) -> Optional[dict]:
+    """A run as callers read it: every field in the old column order, a
+    field the document predates read as its default."""
+    if data is None:
+        return None
+    return {k: data.get(k, _RUN_DEFAULTS[k]) for k in RUN_FIELDS}
+
+
+def _run_change(fields: dict) -> str:
+    return f"status:{fields['status']}" if "status" in fields else "update"
+
+
 def create_run(prompt: str, project_name: str, project_path: str,
                origin: str, resume_from: str | None = None,
                folder_id: str | None = None, package_id: str | None = None,
                project_id: str | None = None, work_id: str | None = None) -> str:
     run_id = str(uuid.uuid4())
-    with closing(_connect()) as conn:
-        conn.execute(
-            "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-            "status, resume_from, folder_id, package_id, project_id, work_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (run_id, project_name, project_path, prompt, origin,
-             RunStatus.QUEUED, resume_from, folder_id, package_id, project_id, work_id,
-             time.time()),
-        )
-        conn.commit()
+    data = _run_data({
+        "id": run_id, "project_name": project_name, "project_path": project_path,
+        "prompt": prompt, "origin": origin, "status": RunStatus.QUEUED,
+        "resume_from": resume_from, "folder_id": folder_id, "package_id": package_id,
+        "project_id": project_id, "work_id": work_id, "created_at": time.time()})
+
+    def write(unit: records.Unit) -> None:
+        if unit.get(_run_path(run_id)) is not None:      # an id once in a universe
+            raise RuntimeError(f"run {run_id} exists")
+        unit.put(_run_path(run_id), data, change="created", summary=f"run queued in {project_name}"[:200])
+    records.atomic(write, by=records.JARVIS, change="created")
     log.info("run %s created (%s, origin=%s)", run_id, project_name, origin)
     return run_id
 
 
 def get_run(run_id: str) -> dict | None:
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-        return dict(row) if row else None
+    rec = records.get(_run_path(run_id))
+    return _run_dict(rec.data) if rec is not None else None
+
+
+def _all_runs() -> list[dict]:
+    return [_run_dict(r.data) for r in records.scan(RUNS, types=[RUN_TYPE])]
 
 
 def all_run_ids() -> set[str]:
@@ -320,33 +347,39 @@ def all_run_ids() -> set[str]:
     sessions JARVIS started himself, which is what lets the voice path tell
     its own one-shot runs apart from the user's real conversations.
     """
-    with closing(_connect()) as conn:
-        return {r["id"] for r in conn.execute("SELECT id FROM runs")}
+    return {r["id"] for r in _all_runs()}
 
 
 def list_runs(status: list[str] | None = None, project: str | None = None,
               limit: int = 50, before: float | None = None,
               package_id: str | None = None) -> list[dict]:
-    sql = "SELECT * FROM runs WHERE 1=1"
-    params: list = []
+    """Newest first. `project` matches as the old LIKE '%project%' did: a
+    substring, ASCII case ignored."""
+    where: list = []
     if package_id:
-        sql += " AND package_id = ?"
-        params.append(package_id)
+        where.append(["package_id", "=", package_id])
     if status:
-        sql += f" AND status IN ({','.join('?' * len(status))})"
-        params.extend(status)
-    if project:
-        sql += " AND project_name LIKE ?"
-        params.append(f"%{project}%")
+        where.append(["status", "in", list(status)])
     if before is not None:
-        sql += " AND created_at < ?"
-        params.append(before)
-    sql += " ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
-
-    with closing(_connect()) as conn:
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        where.append(["created_at", "<", before])
+    wanted = None if project is None else project.lower()
+    out: list[dict] = []
+    if limit is not None and limit == 0:
+        return out
+    for rec in records.scan(RUNS, types=[RUN_TYPE], where=where or None,
+                            order=("created_at", "desc")):
+        run = _run_dict(rec.data)
+        # Text compares folded in the engine's `where`: checked exactly here.
+        if package_id and run["package_id"] != package_id:
+            continue
+        if status and run["status"] not in status:
+            continue
+        if wanted is not None and wanted not in (run["project_name"] or "").lower():
+            continue
+        out.append(run)
+        if limit is not None and 0 < limit <= len(out):
+            break
+    return out
 
 
 def update_run(run_id: str, **fields) -> None:
@@ -355,19 +388,134 @@ def update_run(run_id: str, **fields) -> None:
     unknown = set(fields) - _UPDATABLE
     if unknown:
         raise ValueError(f"not updatable: {sorted(unknown)}")
-    assignments = ", ".join(f"{k}=?" for k in fields)
-    with closing(_connect()) as conn:
-        conn.execute(f"UPDATE runs SET {assignments} WHERE id=?",
-                     (*fields.values(), run_id))
-        conn.commit()
+    typed = {k: _typed(k, v) for k, v in fields.items()}
+
+    def change(data: Optional[dict]) -> Optional[dict]:
+        if data is None:                  # no such run: nothing written, as before
+            return None
+        return {**data, **typed}
+    records.update(_run_path(run_id), change, by=records.JARVIS, change=_run_change(typed),
+                   summary=f"run {typed['status']}" if "status" in typed else None)
+
+
+def finish_run(run_id: str, status: str, **fields) -> dict | None:
+    """A run's terminal transition as one conditioned write: `status`,
+    `ended_at` now and `fields`, unless the run is already terminal (or
+    missing), when nothing is written and None is returned. The first
+    writer wins, which keeps a cancel racing the driver to one status."""
+    unknown = set(fields) - _UPDATABLE
+    if unknown:
+        raise ValueError(f"not updatable: {sorted(unknown)}")
+    typed = {k: _typed(k, v) for k, v in {**fields, "status": status,
+                                          "ended_at": time.time()}.items()}
+
+    def write(unit: records.Unit) -> Optional[dict]:
+        rec = unit.get(_run_path(run_id))
+        if rec is None or rec.data.get("status") in RunStatus.TERMINAL:
+            return None
+        data = {**rec.data, **typed}
+        unit.put(_run_path(run_id), data, change=f"status:{status}", summary=f"run {status}")
+        return _run_dict(data)
+    return records.atomic(write, by=records.JARVIS, change=f"status:{status}")
+
+
+def sweep_stale_runs() -> int:
+    """Mark runs left active by a crashed server as failed."""
+    count = 0
+    for run in list_runs(status=list(RunStatus.ACTIVE), limit=-1):
+        def fail(data: Optional[dict]) -> Optional[dict]:
+            if data is None or data.get("status") not in RunStatus.ACTIVE:
+                return None
+            return {**data, "status": RunStatus.FAILED,
+                    "error": "server restarted during run", "ended_at": time.time()}
+        if records.update(_run_path(run["id"]), fail, by=records.JARVIS,
+                          change="swept", summary="server restarted during run") is not None:
+            count += 1
+    if count:
+        log.warning("swept %d stale run(s) after restart", count)
+    return count
+
+
+# --- A run's events: its output stream, one file a run -------------------------
+
+_EVENTS_LOCK = threading.Lock()
+_EVENTS_CACHE: dict[str, tuple[tuple, list[dict]]] = {}
+_EVENTS_CACHE_MAX = 16
+
+
+def _events_rel(run_id: str) -> str:
+    """The file's path under the data folder (the move kit's files root)."""
+    return f"runs/{records.segment(run_id)}.jsonl"
+
+
+def _events_file(run_id: str) -> Path:
+    return data_paths.runs_dir() / f"{records.segment(run_id)}.jsonl"
+
+
+def _event_line(run_id: str, event: dict) -> bytes:
+    """One event as its line: `id` when it has one (moved from SQLite),
+    `run_id` only when the file's name cannot give it back."""
+    from jarvis.knowledge_move import cell
+    line: dict = {}
+    if event.get("id") is not None:
+        line["id"] = event["id"]
+    if records.unsegment(records.segment(run_id)) != run_id:
+        line["run_id"] = cell(run_id)
+    line.update(seq=event["seq"], ts=event["ts"], kind=cell(event["kind"]),
+                payload=cell(event["payload"]))
+    return (json.dumps(line, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            + "\n").encode("utf-8")
+
+
+def _parse_events(raw: bytes, run_id: str) -> list[dict]:
+    """The events of a file, in the order written. A line that does not
+    parse (the tail of an append a crash cut short) is passed over."""
+    from jarvis.knowledge_move import uncell
+    out: list[dict] = []
+    for text in raw.split(b"\n"):
+        if not text.strip():
+            continue
+        try:
+            line = json.loads(text)
+            out.append({"id": line.get("id"), "run_id": uncell(line.get("run_id", run_id)),
+                        "seq": line["seq"], "ts": line["ts"], "kind": uncell(line["kind"]),
+                        "payload": uncell(line["payload"])})
+        except (ValueError, KeyError, TypeError):
+            log.warning("run %s: an unreadable event line passed over", run_id)
+    return out
+
+
+def _stat_key(st: os.stat_result) -> tuple:
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _read_events(run_id: str) -> list[dict]:
+    """Every event of the run as written (cached by the file's identity)."""
+    path = _events_file(run_id)
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return []
+    key = str(path)
+    cached = _EVENTS_CACHE.get(key)
+    if cached is not None and cached[0] == _stat_key(st):
+        return cached[1]
+    with open(path, "rb") as f:
+        st = os.fstat(f.fileno())
+        events = _parse_events(f.read(), run_id)
+    _remember(key, _stat_key(st), events)
+    return events
+
+
+def _remember(key: str, stat_key: tuple, events: list[dict]) -> None:
+    _EVENTS_CACHE.pop(key, None)
+    _EVENTS_CACHE[key] = (stat_key, events)
+    while len(_EVENTS_CACHE) > _EVENTS_CACHE_MAX:
+        _EVENTS_CACHE.pop(next(iter(_EVENTS_CACHE)))
 
 
 def next_seq(run_id: str) -> int:
-    with closing(_connect()) as conn:
-        row = conn.execute(
-            "SELECT COALESCE(MAX(seq), 0) AS m FROM run_events WHERE run_id=?",
-            (run_id,)).fetchone()
-        return int(row["m"]) + 1
+    return max((e["seq"] for e in _read_events(run_id)), default=0) + 1
 
 
 def append_event(run_id: str, seq: int, kind: str, payload: str) -> None:
@@ -375,51 +523,52 @@ def append_event(run_id: str, seq: int, kind: str, payload: str) -> None:
 
 
 def append_events(run_id: str, rows: list[tuple[int, str, str]]) -> None:
-    """Insert many events in one transaction.
+    """Append many events to the run's file in one write.
 
-    The executor batches through this so a chatty build costs one commit per
-    batch rather than one per event.
-    """
+    The executor batches through this, and announces each event only once
+    this has returned: the line is in the file before any hint about it. A
+    seq the run already has is passed over (the old INSERT OR IGNORE)."""
     if not rows:
         return
     now = time.time()
-    with closing(_connect()) as conn:
-        conn.executemany(
-            "INSERT OR IGNORE INTO run_events (run_id, seq, ts, kind, payload) "
-            "VALUES (?,?,?,?,?)",
-            [(run_id, seq, now, kind, payload) for seq, kind, payload in rows])
-        conn.commit()
+    with _EVENTS_LOCK:
+        events = list(_read_events(run_id))
+        seen = {e["seq"] for e in events}
+        added: list[dict] = []
+        for seq, kind, payload in rows:
+            if seq in seen:
+                continue
+            seen.add(seq)
+            added.append({"id": None, "run_id": run_id, "seq": int(seq), "ts": now,
+                          "kind": kind, "payload": payload})
+        if not added:
+            return
+        path = _events_file(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            body = b"".join(_event_line(run_id, e) for e in added)
+            size = os.fstat(fd).st_size
+            if size and os.pread(fd, 1, size - 1) != b"\n":
+                body = b"\n" + body           # a torn last line stays on its own
+            view = memoryview(body)
+            while view:
+                view = view[os.write(fd, view):]
+            st = os.fstat(fd)
+        finally:
+            os.close(fd)
+        _remember(str(path), _stat_key(st), events + added)
 
 
 def get_events(run_id: str, after_seq: int = 0, limit: int = 200) -> list[dict]:
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM run_events WHERE run_id=? AND seq>? "
-            "ORDER BY seq ASC LIMIT ?",
-            (run_id, after_seq, limit)).fetchall()
-        return [dict(r) for r in rows]
+    found = sorted((e for e in _read_events(run_id) if e["seq"] > after_seq),
+                   key=lambda e: e["seq"])
+    # As SQLite's LIMIT did: a negative limit is no limit.
+    return [dict(e) for e in (found if limit < 0 else found[:limit])]
 
 
 def count_events(run_id: str) -> int:
-    with closing(_connect()) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM run_events WHERE run_id=?",
-            (run_id,)).fetchone()
-        return int(row["n"])
-
-
-def sweep_stale_runs() -> int:
-    """Mark runs left active by a crashed server as failed."""
-    with closing(_connect()) as conn:
-        cur = conn.execute(
-            "UPDATE runs SET status=?, error=?, ended_at=? WHERE status IN (?,?)",
-            (RunStatus.FAILED, "server restarted during run", time.time(),
-             RunStatus.QUEUED, RunStatus.RUNNING))
-        conn.commit()
-        count = cur.rowcount
-    if count:
-        log.warning("swept %d stale run(s) after restart", count)
-    return count
+    return len(_read_events(run_id))
 
 
 _PERIODS = {"day": 86400, "week": 86400 * 7, "month": 86400 * 30}
@@ -427,22 +576,17 @@ _PERIODS = {"day": 86400, "week": 86400 * 7, "month": 86400 * 30}
 
 def stats(period: str = "day") -> dict:
     cutoff = time.time() - _PERIODS.get(period, 86400)
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT status, COUNT(*) AS n, "
-            "COALESCE(SUM(cost_usd),0) AS cost, "
-            "COALESCE(SUM(input_tokens),0) AS inp, "
-            "COALESCE(SUM(output_tokens),0) AS out "
-            "FROM runs WHERE created_at >= ? GROUP BY status",
-            (cutoff,)).fetchall()
-
     by_status = {s: 0 for s in RunStatus.ALL}
-    total_cost = total_in = total_out = 0
-    for r in rows:
-        by_status[r["status"]] = r["n"]
-        total_cost += r["cost"]
-        total_in += r["inp"]
-        total_out += r["out"]
+    total_cost = 0.0
+    total_in = total_out = 0
+    for rec in records.scan(RUNS, types=[RUN_TYPE], where=[["created_at", ">=", cutoff]]):
+        r = _run_dict(rec.data)
+        if r["created_at"] is None or r["created_at"] < cutoff:
+            continue
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+        total_cost += r["cost_usd"] or 0
+        total_in += r["input_tokens"] or 0
+        total_out += r["output_tokens"] or 0
 
     return {
         "period": period,
@@ -452,6 +596,74 @@ def stats(period: str = "day") -> dict:
         "total_input_tokens": total_in,
         "total_output_tokens": total_out,
     }
+
+
+# --- Moving the old tables (knowledge_move) -------------------------------------
+
+class RunMapping:
+    """`runs` to run documents and `run_events` to each run's events file,
+    and back, lossless (knowledge_move's `Mapping`)."""
+
+    name = "run"
+    tables = ("runs", "run_events")
+    under = (RUNS,)
+    history = False
+    files_under = ("runs",)
+
+    @staticmethod
+    def _has(conn, table: str) -> bool:
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                            (table,)).fetchone() is not None
+
+    def documents(self, conn):
+        from jarvis import knowledge_move as km
+        if not self._has(conn, "runs"):
+            return
+        info = km.table_info(conn, "runs")
+        for row in km.read_rows(conn, info):
+            data = {k: km.cell(v) for k, v in row.cells.items()}
+            if row.rowid is not None:
+                data[_ROWID] = row.rowid
+            yield km.Doc(_run_path(row.cells["id"]), data)
+
+    def files(self, conn):
+        from jarvis import knowledge_move as km
+        if not self._has(conn, "run_events"):
+            return
+        info = km.table_info(conn, "run_events")
+        by_run: dict = {}
+        for row in km.read_rows(conn, info):           # in id order
+            by_run.setdefault(row.cells["run_id"], []).append(row.cells)
+        for run_id, events in by_run.items():
+            yield _events_rel(run_id), b"".join(_event_line(run_id, e) for e in events)
+
+    def rows(self, docs, files):
+        from jarvis import knowledge_move as km
+        runs = []
+        for doc in docs:
+            data = doc.data
+            cells = {k: km.uncell(data.get(k, _RUN_DEFAULTS[k])) for k in RUN_FIELDS}
+            runs.append(km.Row(cells, data.get(_ROWID)))
+        # The moved runs (with their rowids) first, so an export inserts them
+        # before the runs written since, which then take new rowids after them.
+        runs.sort(key=lambda r: (r.rowid is None, r.rowid or 0, r.cells["created_at"] or 0))
+        events: list[dict] = []
+        for rel in files.list("runs"):
+            if not rel.endswith(".jsonl"):
+                continue
+            stem = rel.rsplit("/", 1)[-1][:-len(".jsonl")]
+            events.extend(_parse_events(files.read(rel), records.unsegment(stem)))
+        largest = max((e["id"] for e in events if e["id"] is not None), default=0)
+        for e in sorted((e for e in events if e["id"] is None),
+                        key=lambda e: (e["ts"], e["run_id"], e["seq"])):
+            largest += 1
+            e["id"] = largest
+        return {"runs": runs,
+                "run_events": [km.Row({k: e[k] for k in ("id", "run_id", "seq", "ts", "kind", "payload")})
+                               for e in events]}
+
+
+MAPPINGS = [RunMapping()]
 
 
 def record_steer(session_id: str, voice_name: str, project: str,
