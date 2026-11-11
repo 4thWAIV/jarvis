@@ -359,6 +359,14 @@ EXEMPT = {
         "it reads an extracted file's own title and text (never a session's) and builds only the "
         "text the embedding model turns into a vector; nothing it returns is printed, said or put "
         "in a brain header, and search results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_move.copy": (
+        "it reads the move manifest's own fields (state, source path, table names and digests) that "
+        "the move kit wrote, to decide whether the engine holds this move; its refusal is printed by "
+        "the `python -m jarvis.knowledge copy` command to whoever ran it, never a brain header or speech"),
+    "knowledge_move.verify": (
+        "it compares the move manifest's state and schema with the SQLite file's own; the report "
+        "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
+        "never a brain header or speech"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),

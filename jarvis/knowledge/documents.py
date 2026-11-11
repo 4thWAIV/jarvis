@@ -410,6 +410,10 @@ class DocumentStore:
         Holds new ordinals as pending until `release`."""
         ops: list[Op] = []
         reserved: list[bytes] = []
+        if pending is None:
+            # Once a transaction, not once a document: made per document it
+            # cost a transaction of n puts n * n.
+            pending = pending_of(puts, deletes)
         with self._lock:
             new_fields: dict[str, int] = {}
             for raw in puts:
@@ -434,8 +438,7 @@ class DocumentStore:
                     reserved.append(key)
                 ops.append(Op(DOCS, key, encode_doc(o, doc)))
                 for hook in self.put_hooks:
-                    ops.extend(hook(raw, doc, o, pending if pending is not None
-                                    else pending_of(puts, deletes)))
+                    ops.extend(hook(raw, doc, o, pending))
             for key_text in deletes:
                 key = key_text.encode()
                 ops.append(Op(DOCS, key, None))
