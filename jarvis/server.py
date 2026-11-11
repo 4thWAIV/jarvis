@@ -11056,8 +11056,11 @@ def _codex_model(raw: str) -> Optional[str]:
 
 
 def _brain_engine() -> str:
-    """The engine of the brain running: the requester of what he asks it."""
-    return brain_provider.ENGINE_OF.get(_brain_provider().name, "claude")
+    """The engine of the brain running: the requester of what he asks it.
+    Claude's while no brain with a provider is there to say."""
+    provider = getattr(brain_instance, "provider", None) if brain_instance is not None \
+        else _brain_provider()
+    return brain_provider.ENGINE_OF.get(getattr(provider, "name", ""), "claude")
 
 
 def _engine_for(kind: str, args: dict) -> tuple[Optional[engine_choice.Choice], str]:

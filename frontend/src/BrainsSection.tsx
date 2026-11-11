@@ -106,9 +106,11 @@ function EngineChoices({ cards }: { cards: BrainCard[] }) {
   const live = useLiveRead(() => readEngines(), [brainsChanged]);
   const [shown, setShown] = useState<EngineSettings | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const settings = shown ?? live.value;
-  const overrideUi = useSettingsItem("engineOverride", t("left.brains.engines.override"), !!settings);
-  if (!settings) return null;
+  const read = shown ?? live.value;
+  // Until they are read the same rows are drawn, idle, so nothing below
+  // moves when they arrive (a section scrolled to stays in view).
+  const settings = read ?? waiting(cards);
+  const overrideUi = useSettingsItem("engineOverride", t("left.brains.engines.override"));
   const title = (engine: Engine) =>
     cards.find((c) => c.name === ENGINE_PROVIDER[engine])?.title ?? engine;
   const change = (work: Promise<EngineSettings>) =>
@@ -120,12 +122,13 @@ function EngineChoices({ cards }: { cards: BrainCard[] }) {
       {problem && <p className="settings-hint read-failure">{problem}</p>}
       {settings.kinds_order.map((kind) => (
         <EngineKindRow key={kind} kind={kind} setting={settings.kinds[kind]} cards={cards}
-                       title={title}
+                       title={title} disabled={!read}
                        onChange={(next) => change(changeEngines({ kind, ...next }))} />
       ))}
       <SettingsRow label={t("left.brains.engines.override")} labelRef={overrideUi.part("label")}
                    htmlFor="engine-override">
         <input id="engine-override" type="checkbox" data-ui-action="domain" ref={overrideUi.whole}
+               disabled={!read}
                checked={settings.override_stressed}
                onChange={(e) => change(changeEngines({ override_stressed: e.target.checked }))} />
       </SettingsRow>
@@ -140,11 +143,26 @@ function EngineChoices({ cards }: { cards: BrainCard[] }) {
   );
 }
 
-function EngineKindRow({ kind, setting, cards, title, onChange }: {
+/** The settings' shape before they are read: every kind, every brain the
+ *  cards show, nothing measured. */
+function waiting(cards: BrainCard[]): EngineSettings {
+  const kinds_order: EngineKind[] = ["package_author", "run", "build", "agent_package"];
+  return {
+    kinds: Object.fromEntries(kinds_order.map((k) => [k, { pick: "requester" }])) as
+      Record<EngineKind, EngineSetting>,
+    kinds_order, override_stressed: false, least_stressed: null,
+    engines: (Object.keys(ENGINE_PROVIDER) as Engine[])
+      .filter((engine) => cards.some((c) => c.name === ENGINE_PROVIDER[engine]))
+      .map((engine) => ({ engine, provider: ENGINE_PROVIDER[engine], ahead: null, stressed: false })),
+  };
+}
+
+function EngineKindRow({ kind, setting, cards, title, disabled, onChange }: {
   kind: EngineKind;
   setting: EngineSetting;
   cards: BrainCard[];
   title: (engine: Engine) => string;
+  disabled: boolean;
   onChange: (setting: EngineSetting) => void;
 }) {
   const t = useT();
@@ -154,7 +172,7 @@ function EngineKindRow({ kind, setting, cards, title, onChange }: {
     .filter((engine) => cards.some((c) => c.name === ENGINE_PROVIDER[engine]));
   return (
     <SettingsRow label={label} labelRef={ui.part("label")} htmlFor={`engine-${kind}`}>
-      <select id={`engine-${kind}`} data-ui-action="domain" ref={ui.whole}
+      <select id={`engine-${kind}`} data-ui-action="domain" ref={ui.whole} disabled={disabled}
               value={settingValue(setting)} onChange={(e) => onChange(settingOf(e.target.value))}>
         <option value="requester">{t("left.brains.engines.requester")}</option>
         <option value="least_stress">{t("left.brains.engines.leastStress")}</option>
