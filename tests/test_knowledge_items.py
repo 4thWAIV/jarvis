@@ -159,10 +159,12 @@ def test_log_recovery_without_a_flush(tmp_path):
     """Writes only in the log (no generation written) are all there after a
     restart, with their versions and the change feed."""
     directory = tmp_path / "engine"
-    with in_process(directory) as (_engine, uds):
+    with in_process(directory) as (engine, uds):
         for n in range(50):
             uds.put(TIM, f"/r/{n:03d}.rec", data={"n": n})
         uds.put(TIM, "/r/000.rec", data={"n": "again"})
+        engine.store.flush = lambda: None      # as after a crash: nothing flushed at close
+    assert not list((directory / "seg").glob("*.docs"))
     engine = Engine.open(directory)
     engine.close()
     with in_process(directory) as (_engine, uds):
