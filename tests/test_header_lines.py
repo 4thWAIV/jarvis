@@ -436,8 +436,6 @@ EXEMPT = {
     "worker_hooks.observations": "Formats a hook event kind as metadata in the native observer; the resulting inventory is JSON and list_workers is registered as tainting, with no spoken-header path.",
     "worker_hooks.record": "Formats local event filenames only from clock and UUID values. Its JSON contains metadata, never prompts or tool arguments; it produces no hook stdout or human narration.",
     "worker_inventory.build": "Formats stable provider/session IDs and coverage messages inside JSON. React renders these as text, and the identical list_workers tool output is registered as tainting rather than interpolated into a trusted header.",
-    "project_store.answer_accomplishment": (
-        "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (
         "it changes a piece of work on his word; its refusals are fixed words, and the title it writes goes to the record, never into a line. Driven by tests/test_project_records.py"),
     "project_store.change": (
