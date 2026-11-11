@@ -765,7 +765,7 @@ that does not offer it). The runtime follows the team connection
 (`MessagingRuntime.follow_once`, every `FOLLOW_EVERY_SEC`): it starts its
 loops once signed in to such a server and stops them once signed out.
 Signed out, Settings, Team says in one line that signing in turns messaging
-on. The old `human_switch` table is kept and nothing reads it. A JARVIS
+on. The old `human_switch` row is kept and nothing reads it. A JARVIS
 trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s). A message to a
 person goes the agents' way (`transmission.py`): drafted (the page or the
 brain's `draft_message`), reviewed on a capture of its own whose text is
@@ -776,7 +776,11 @@ reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on
 record as `submitting`; an edit after review makes a new revision that
 must be reviewed again. `messaging_runtime.py` builds the one store
-(`messaging_store.py`), file snapshots (`messaging_files.py`), guard,
+(`messaging_store.py`: one `message` document per message from draft to
+accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
+each step a version; a `thread` document per thread, its work state,
+waiting command and review checklist; the sync position a `settings`
+document), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
 announcer (`arrival_announcer.py`: each arrival an attention item, its
@@ -809,11 +813,14 @@ SHA-256 are the manifest's now, and otherwise its state (`remote_only`,
 `downloading`, `missing`, `changed`, `moved`, `failed`) with `intended_path`,
 which is never a saved file. `ensure_local` fetches through the existing
 downloader and verifies again, on the owner's word; nothing is unpacked,
-opened or run. Its table `attachment_locations` keeps where each file was
-verified (how a changed downloads folder reads as `moved`) and, when a work
-package was unpacked from it, the zip's hash, the folder and the members
-its manifest names; `attachment_leases` keeps a file an agent holds (a run
-while active, a message to a session while open) from `FileSnapshots.cleanup`.
+opened or run. The file's one `file` document
+(`/people/<github id>/files/<id>@<server>.file`, written through
+`messaging_files.change_file`) keeps its snapshot and download states, where
+it was verified (`location`: how a changed downloads folder reads as
+`moved`) and, when a work package was unpacked from it, the zip's hash, the
+folder and the members its manifest names; its `leases` keep a file an agent
+holds (a run while active, a message to a session while open) from
+`FileSnapshots.cleanup`.
 `GET`/`POST /api/team/messages/{m}/files/{a}/location`, the brain's
 `attachment_location` and the acting `make_attachment_local` and
 `reveal_attachment` give the same JSON (name and path in the untrusted
@@ -1195,7 +1202,7 @@ review and yes is a new digest and a new review. The recipient's
 openability is a receipt kind (`openability`, one `OpenabilityReport` per
 file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
 the inspection service's observations per (message, file, revision)
-(`human_openability`, messaging store schema 3; a listing that already
+(the message document's `openability`; a listing that already
 shows a member with no reader is `partial` before anything is tried on it,
 and a review's progress is only worked out on a thread whose task was asked
 of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
@@ -1210,12 +1217,12 @@ snapshots (`DraftFiles`) with the same inspection service, derives what
 the message needs, and judges each of the recipient's nodes on its own:
 blocked, ready, partial or unknown, with only the gaps the sender can act
 on; a review of a draft with files stores it with the revision
-(`human_preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
+(the message document's `preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
 `LocalMessaging.edit_bundle`), adds companions beside the original
 (`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
 thread with a flattened copy checked member by member, or companions,
 from `FileSnapshots.original_bytes`), and keeps the recipient's review
-checklist (`human_review`, never sent), resumed across a repair: an item
+checklist (the thread document's `review`, never sent), resumed across a repair: an item
 read on the replaced file carries to the repaired copy's member only when
 `BundleInspection.member_digest` (the member's SHA-256, under the archive
 budgets) is the same on both, never on the path alone; each

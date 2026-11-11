@@ -698,8 +698,8 @@ AnnouncementLocal = Literal["due", "claimed", "attempted", "completed", "elsewhe
 
 
 class ApprovedSend(_Local):
-    """The approval record and the envelope it releases, one row in one
-    home (the store's approved table): exactly the approved revision, who
+    """The approval record and the envelope it releases, kept in one
+    home (the message document's `approved`): exactly the approved revision, who
     approved it, on which of their JARVIS, how, and when."""
     server_id: str
     owner_github_id: int
@@ -710,9 +710,9 @@ class ApprovedSend(_Local):
 
 @runtime_checkable
 class LocalMessagingStore(Protocol):
-    """SQLite under `data_paths.db_path()`, every row namespaced by server
-    and owner. Each write that the rules pair is one transaction, and a hint
-    goes out only after the commit. Every mutable record keeps the higher
+    """Documents in the record engine (messaging_store.py), every record
+    namespaced by server and owner. Each write that the rules pair is one
+    atomic write, and a hint goes out only after it landed. Every mutable record keeps the higher
     revision it has seen (receipts per message, work state per thread);
     nothing absent from a scan is pruned. A stale draft save raises
     `wire.ContractError("revision_conflict", latest=<the draft>)`."""
