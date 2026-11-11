@@ -40,9 +40,7 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import unicodedata
-import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator, Optional
@@ -112,18 +110,6 @@ class Observation:
 
 # -- where a member's bytes come from ------------------------------------------------------
 
-def _private_copy(scratch: Path, write: Callable[[int], None]) -> Iterator[Path]:
-    """A new 0600 file in `scratch`, filled by `write(fd)`, removed after."""
-    path = scratch / f"member-{uuid.uuid4().hex}"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(fd, "wb", closefd=True) as out:
-            write(out)
-        yield path
-    finally:
-        path.unlink(missing_ok=True)
-
-
 class _FileSource:
     """The attachment itself: a file that is not an archive."""
 
@@ -148,7 +134,7 @@ class _FileSource:
             with open(self._file, "rb") as f:
                 while chunk := f.read(1024 * 1024):
                     out.write(chunk)
-        yield from _private_copy(self._scratch(), write)
+        yield from bundle_readers.private_copy(self._scratch(), write)
 
 
 class _ZipSource:
@@ -172,7 +158,7 @@ class _ZipSource:
     @contextlib.contextmanager
     def materialize(self) -> Iterator[Path]:
         data = self.read()
-        yield from _private_copy(self._scratch(), lambda out: out.write(data))
+        yield from bundle_readers.private_copy(self._scratch(), lambda out: out.write(data))
 
 
 # -- what classify works out, kept in the cache ----------------------------------------------
