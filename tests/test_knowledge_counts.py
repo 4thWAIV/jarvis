@@ -124,7 +124,7 @@ def test_no_item_is_read_when_every_condition_is_exact(opened, monkeypatch):
     assert uds.count(TIM, where=[["flag", "exists", False]]).items == 8
     assert dict(uds.count(TIM, "/w", group_by="n").groups) == {3: 2, 7: 1, -1.5: 1, None: 1}
     found = uds.count(TIM)
-    assert (found.embedded, found.waiting) == (0, 1)
+    assert (found.embedded, found.waiting) == (0, 2)     # /w/h.work's content and /p/a.project's words
 
 
 def test_a_reader_with_rights_is_counted_item_by_item(opened):

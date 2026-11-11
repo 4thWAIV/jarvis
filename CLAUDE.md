@@ -1711,7 +1711,18 @@ nodes and authored links from them, and writes `mentions` as derived item
 links (model `linker`); `about` proposals are files by section count.
 Records are found by their own words: the keyword index takes an item
 without content by its text fields (`lexical.record_text`, 2,000
-characters a field, 8,000 in all). `knowledge_api.search` (the page and
+characters a field, 8,000 in all). Those of the types that hold people's
+words (`lexical.RECORD_TYPES`: work, message, turn, package, project, run,
+workflow, thread, langdoc; never attention, settings or JARVIS's other
+facts) are found by meaning too (Tim's answer, option a): a whole-record
+vector and one per part (`items.record_texts`: its own text fields, then
+each object of a list such as a Work item's pieces and decisions,
+`lexical.record_parts`, a part over 1,300 characters cut; never the
+`events` a version records), their hash kept as `_words` and their rows
+deleted in the same write as a change of them, embedded by the item
+space's one background thread as content is (one entry per item, so a busy
+record's many changes cost one embedding; paused while the pace holds),
+and one hit a record in the one search. `knowledge_api.search` (the page and
 `knowledge_search`, with `phrase`) and the context pack search items only,
 each hit's trust from `knowledge_api.item_trust`. Round 3: the owner's
 `count` (with `where`, `under`, `parent`, `types`, `group_by`) comes from
