@@ -228,19 +228,13 @@ MODULES = sorted(p for p in (REPO / "jarvis").glob("*.py"))
 
 
 def _run_text_columns() -> set[str]:
-    """Every TEXT column of the `runs` table, read out of `run_store.py`'s own
-    CREATE TABLE. A run row is the OTHER foreign record in this system —
-    `project_name` comes from `POST /api/runs` and from a directory name on
-    disk — and it reaches the same headers and the same spoken lines as a
-    session does."""
-    src = (REPO / "jarvis" / "run_store.py").read_text()
-    body = src.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
-    out = set()
-    for line in body.splitlines():
-        m = re.match(r"(\w+)\s+TEXT", line.strip().rstrip(","))
-        if m:
-            out.add(m.group(1))
-    return out
+    """Every text field of a run, read out of `run_store.RUN_FIELDS` (the
+    run document's fields and their kinds). A run is the OTHER foreign
+    record in this system — `project_name` comes from `POST /api/runs` and
+    from a directory name on disk — and it reaches the same headers and the
+    same spoken lines as a session does."""
+    from jarvis import run_store
+    return {name for name, (kind, _default) in run_store.RUN_FIELDS.items() if kind == "text"}
 
 
 RUN_FIELDS = _run_text_columns()
@@ -800,6 +794,26 @@ EXEMPT = {
         "it builds SQL out of column names checked against a fixed list "
         "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
         "a bound parameter, and it returns nothing"),
+    "run_store._event_line": (
+        "it serialises one event of a run's output stream as a JSON line for "
+        "the run's own file (json.dumps escapes every character that could "
+        "break a line); it is stored, never printed, said or put in a header"),
+    "run_store._run_change": (
+        "it names a run write's change kind from the run's own status, one of "
+        "RunStatus's fixed words, for the record's version tag; never "
+        "printed, said or put in a header"),
+    "run_store.update_run": (
+        "it merges fields checked against a fixed list (`_UPDATABLE`) into "
+        "the run's document and tags the version with the run's own status "
+        "word; it returns nothing and prints nothing"),
+    "run_store.finish_run": (
+        "it writes a run's terminal status and tags the version with that "
+        "fixed status word (one of RunStatus); the row it returns goes to "
+        "the run pipeline's hint, which carries data, not header lines"),
+    "run_store.write": (
+        "create_run's unit: it puts the new run's document and tags the "
+        "version summary with its project name, kept in the record's history "
+        "only; nothing it builds is printed, said or put in a brain header"),
     "voice_diagnostics._camel": (
         "it turns this module's own dataclass field names (fixed identifiers "
         "such as `backlog_sec`) into JSON keys; no session, page or brain "
