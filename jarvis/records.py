@@ -181,7 +181,8 @@ def segment(value: Any) -> str:
     `/` or `.` in an id never splits a path or names a type); one longer
     than `SEGMENT_KEEP_BYTES` is its first part and a hash."""
     text = str(value)
-    out = "".join(c if c in _KEEP_CHARS else urllib.parse.quote(c, safe="") for c in text)
+    out = "".join(c if c in _KEEP_CHARS else "".join(f"%{b:02X}" for b in c.encode("utf-8"))
+                  for c in text)
     if not out:
         out = "%00"
     if len(out.encode("utf-8")) > SEGMENT_KEEP_BYTES:

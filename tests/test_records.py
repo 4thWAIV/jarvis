@@ -119,6 +119,7 @@ def test_segments_are_one_path_segment(raw):
     path = f"/t/{seg}.work"
     from jarvis.knowledge import paths
     assert paths.is_path(path) and paths.type_of(path) == "work" and paths.parent(path) == "/t"
+    assert "." not in seg and paths.type_of(f"/t/{seg}") == "folder"
     if len(raw) < 100:
         assert records.unsegment(seg) == raw
 
