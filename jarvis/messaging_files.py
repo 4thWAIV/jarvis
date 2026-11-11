@@ -873,7 +873,7 @@ def router(context: Callable[[], Optional[FilesContext]]) -> APIRouter:
 
 # -- the move: messaging_files, attachment_locations and attachment_leases ------------------
 
-_FILE_DOC_PATH = re.compile(r"^/people/[^/]+/files/[^/]+\.file$")
+_FILE_DOC_PATH = re.compile(r"/people/[^/]+/files/[^/]+\.file")
 _FILE_COLUMNS = ("message_id", "filename", "media_type", "size_bytes", "sha256", "state",
                  "bytes_done", "failure", "created_at", "updated_at")
 _LOCATION_COLUMNS = ("path", "verified_at", "extraction_root", "extraction_sha256",
@@ -917,7 +917,7 @@ class FileMapping:
         from jarvis.knowledge_move import Row, uncell
         out: dict[str, list] = {t: [] for t in self.tables}
         for d in docs:
-            if not _FILE_DOC_PATH.match(d.path):
+            if not _FILE_DOC_PATH.fullmatch(d.path):
                 continue
             data = d.data
             key = {"server_id": uncell(data["server_id"]),

@@ -1020,10 +1020,10 @@ def _unplain(v: Any) -> Any:
     return move.uncell(v)
 
 
-_MESSAGE_PATH = re.compile(r"^/people/[^/]+/messages/[^/]+\.message$")
-_THREAD_PATH = re.compile(r"^/people/[^/]+/threads/[^/]+\.thread$")
-_SYNC_PATH = re.compile(r"^/people/[^/]+/settings/sync\.settings$")
-_ANNOUNCEMENT_PATH = re.compile(r"^/attention/announcements/[^/]+\.attention$")
+_MESSAGE_PATH = re.compile(r"/people/[^/]+/messages/[^/]+\.message")
+_THREAD_PATH = re.compile(r"/people/[^/]+/threads/[^/]+\.thread")
+_SYNC_PATH = re.compile(r"/people/[^/]+/settings/sync\.settings")
+_ANNOUNCEMENT_PATH = re.compile(r"/attention/announcements/[^/]+\.attention")
 
 
 class HumanMessagingMapping:
@@ -1133,7 +1133,7 @@ class HumanMessagingMapping:
         order: list = []
         for doc in docs:
             d, path = doc.data, doc.path
-            if _MESSAGE_PATH.match(path):
+            if _MESSAGE_PATH.fullmatch(path):
                 key = {"server_id": d["server_id"], "owner": d["owner"],
                        "message_id": d["message_id"]}
                 if d.get("accepted"):
@@ -1161,7 +1161,7 @@ class HumanMessagingMapping:
                     add("human_openability", key, p, ("attachment_id", "content_revision"),
                         {"facts": spaced, "report": _RENDER["report"],
                          "reported": _RENDER["report"]}, order)
-            elif _THREAD_PATH.match(path):
+            elif _THREAD_PATH.fullmatch(path):
                 key = {"server_id": d["server_id"], "owner": d["owner"],
                        "thread_id": d["thread_id"]}
                 if d.get("work"):
@@ -1173,11 +1173,11 @@ class HumanMessagingMapping:
                 if d.get("review"):
                     add("human_review", key, d["review"], ("revision",), {"body": spaced},
                         order)
-            elif _ANNOUNCEMENT_PATH.match(path) and d.get("state") is not None:
+            elif _ANNOUNCEMENT_PATH.fullmatch(path) and d.get("state") is not None:
                 add("human_announcements", {"server_id": d["server_id"], "owner": d["owner"],
                                             "message_id": d["message_id"]},
                     d, ("state",), {}, order)
-            elif _SYNC_PATH.match(path):
+            elif _SYNC_PATH.fullmatch(path):
                 for s in d.get("sync") or []:
                     add("human_sync", {"server_id": s["server_id"], "owner": d["owner"]}, s,
                         ("node_id", "continuation"), {}, order)
