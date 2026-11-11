@@ -27,6 +27,8 @@ Choose the sequence from the reader's questions, known context and intended acti
 
 For architecture, walk through one concrete input to its result. Name the components at the point each does something. Say what each receives, what it changes or decides, what it hands on, and what happens when it cannot proceed. Distinguish existing components from proposed ones in both the visual and the narration. A list of component names, a diagram caption or a spoken title is not an architecture explanation.
 
+When the assignment names a checked canonical architecture document, the page is JARVIS's projection of that exact revision and you write only `package/UNDERSTANDING.md`: its plain explanation, in that walk-through form, of what the YAML declares and nothing it does not. Say what its coverage leaves unresolved or outside the language. Validate with the exact check command the assignment gives.
+
 Write substantive `say` or `beats` for every explanatory slide. Narration supplies the causal connections that sparse visuals leave out; it must not merely read headings or repeat labels. Explain why the arrangement matters to the reader. Let a viewer understand the visible argument without listening, and let a listener follow without decoding the diagram. Use meaningful slide names, short sentences, readable type and generous space. Prefer a concrete example, a small flow or an option preview to a dense table. Keep source hashes, exhaustive logs and technical detail in supporting material, reachable from the evidence note rather than recited in the main story.
 
 ## Ask only for the actual decision

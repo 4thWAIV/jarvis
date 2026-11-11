@@ -391,10 +391,22 @@ EXEMPT = {
         "release names are validated identifiers before use, and remote failures remain fields in update status. "
         "No release text becomes a trusted brain header; capability results use the language-document wrapper "
         "and Settings draws diagnostics as text. Metadata failure paths are driven by test_language_kit_updates.py"),
-    "language_projection._publish": (
-        "document titles pass through the existing package slug function for filenames and remain metadata "
-        "for escaped UI or wrapped brain output; publication returns structured references, not a trusted title "
-        "line. Exact source/check/view publication is driven by test_language_projection.py"),
+    "language_projection.project": (
+        "the document title passes through the package slug function for the package name and "
+        "stays metadata in package.json and canonical.json; nothing it writes is a trusted brain "
+        "header. The projection is driven by test_language_projection.py and "
+        "test_architecture_packages.py"),
+    "language_document_api._ground": (
+        "the canonical source and the author's explanation come back as JSON fields of the "
+        "paged envelope, which the brain adapter escapes and wraps as untrusted; grounding by "
+        "package id is driven by test_language_document_api.py and test_architecture_packages.py"),
+    "language_document.main": (
+        "the agent's own command prints the route's JSON envelope or JARVIS's refusal to that "
+        "agent's terminal; nothing reaches the brain or the voice"),
+    "make_package.make_architecture": (
+        "the document title becomes the package's title for the agent's terminal and the "
+        "message's words, which JARVIS records as the agent's (walled wherever it is read); "
+        "driven by test_architecture_packages.py"),
     "language_projection.gate": (
         "the gate compares source-bearing canonical fields and returns no foreign prose on success. Its "
         "coverage rejection uses fixed diagnostic text rather than copying unresolved source statements into "
