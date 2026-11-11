@@ -19,6 +19,7 @@ from typing import Optional
 log = logging.getLogger("jarvis.knowledge.engine")
 
 CARDS_REFRESH_SEC = 600.0
+SNAPSHOT_EVERY_SEC = 24 * 3600.0   # a snapshot a day: the engine holds records and their history
 
 
 class EngineLocked(RuntimeError):
@@ -61,6 +62,7 @@ class Engine:
         self.cards = None    # entity cards and the resident tier
         self.advisor = None  # query shapes and the extra indexes
         self.entities = None  # the names a question may name, for the graph
+        self.items = None     # items at paths: the UDS interface (items.py)
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -90,6 +92,8 @@ class Engine:
         self.docs = DocumentStore(self.store)
         from jarvis.knowledge.graph import Graph
         self.graph = Graph(self.docs)
+        from jarvis.knowledge.items import Items
+        self.items = Items(self.docs, self.graph)
         from jarvis.knowledge.lexical import Lexical
         self.lexical = Lexical(self.docs)
         from jarvis.knowledge import embedder
@@ -118,7 +122,8 @@ class Engine:
                 "keyword": {"chunks": self.lexical.live} if self.lexical else {},
                 "vectors": self.vectors.health() if self.vectors else {},
                 "cards": self.cards.health() if self.cards else {},
-                "advisor": self.advisor.health() if self.advisor else {}}
+                "advisor": self.advisor.health() if self.advisor else {},
+                "items": self.items.health() if self.items else {}}
 
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
@@ -205,6 +210,10 @@ class Engine:
                 from jarvis.knowledge import embedder
                 self.vectors.attach(embedder.current())
             self.vectors.warm()
+        if self.pace == "free":
+            age = self.store.newest_snapshot_age()
+            if age is None or age >= SNAPSHOT_EVERY_SEC:
+                self.store.snapshot()
         if self.pace == "free" and self.cards is not None and \
                 time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:
             self._cards_refreshed = time.monotonic()

@@ -129,14 +129,20 @@ def _at(request: Request) -> Optional[int]:
 
 
 def _guard(fn):
-    """Document and schema errors are the caller's: answered 400."""
+    """Document, schema and path errors are the caller's: answered 400; a
+    condition that did not hold is a conflict: 409."""
     from jarvis.knowledge.documents import DocumentError
+    from jarvis.knowledge.items import ConditionFailed
+    from jarvis.knowledge.paths import PathError
     from jarvis.knowledge.store import StoreReadOnly
 
     def wrapped(engine: Engine, request: Request) -> Answer:
         try:
             return fn(engine, request)
-        except DocumentError as e:
+        except ConditionFailed as e:
+            return Answer(409, {"error": "conflict", "detail": str(e), "path": e.path,
+                                "expected": e.expected, "found": e.found})
+        except (DocumentError, PathError) as e:
             raise BadRequest(str(e))
         except StoreReadOnly as e:
             return Answer(503, {"error": "read_only", "detail": str(e)})
@@ -285,6 +291,79 @@ def _forget(engine: Engine, request: Request) -> Answer:
     if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
         raise BadRequest("refs is a list of source references")
     return Answer(200, engine.docs.forget_sources(sources))
+
+
+# --- Items at paths: the UDS interface (items.py) ---------------------------
+# Every route takes a JSON body, so a path is never re-encoded in a URL.
+
+def _int_or_none(value, what: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BadRequest(f"{what} is a whole number")
+    return value
+
+
+@route("POST", "/v1/items/txn")
+@_guard
+def _items_txn(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.transact(request.body or {}))
+
+
+@route("POST", "/v1/items/get")
+@_guard
+def _items_get(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    at = body.get("at")
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))):
+        raise BadRequest("at is a time in seconds")
+    item = engine.items.get(body.get("path"), version=_int_or_none(body.get("version"), "version"),
+                            at=at, streams=body.get("streams"))
+    if item is None:
+        return Answer(404, {"error": "not_found"})
+    return Answer(200, item)
+
+
+@route("POST", "/v1/items/history")
+@_guard
+def _items_history(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    return Answer(200, engine.items.history(body.get("path"), limit=_int_or_none(body.get("limit"), "limit") or 100,
+                                            before=_int_or_none(body.get("before"), "before")))
+
+
+@route("POST", "/v1/items/diff")
+@_guard
+def _items_diff(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    a = _int_or_none(body.get("from"), "from")
+    if a is None:
+        raise BadRequest("diff takes the version it is from")
+    return Answer(200, engine.items.diff(body.get("path"), a, _int_or_none(body.get("to"), "to")))
+
+
+@route("POST", "/v1/items/list")
+@_guard
+def _items_list(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.list(request.body or {}))
+
+
+@route("POST", "/v1/items/count")
+@_guard
+def _items_count(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.count(request.body or {}))
+
+
+@route("POST", "/v1/items/changes")
+@_guard
+def _items_changes(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.changes(request.body or {}))
+
+
+@route("POST", "/v1/items/links")
+@_guard
+def _items_links(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.links(request.body or {}))
 
 
 class _HTTPHandler(BaseHTTPRequestHandler):

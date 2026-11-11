@@ -75,7 +75,10 @@ def prop_id(prop: str) -> int:
 
 
 def embedded_prop(kind_name: str) -> Optional[str]:
-    """The one embedded property of a kind (the schema keeps it to one)."""
+    """The one embedded property of a kind (the schema keeps it to one).
+    An item has none yet: its whole-item and section vectors are round 2."""
+    if kind_name == kinds.ITEM:
+        return None
     found = kinds.kind_of(kind_name).embedded
     return found[0] if found else None
 

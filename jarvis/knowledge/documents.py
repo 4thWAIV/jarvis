@@ -5,9 +5,11 @@ A document is a JSON object with a key, a kind and properties; every graph
 node is one. Its system properties (`_key`, `_kind`, `_label`, `_status`,
 `_trust`, `_owner`, `_ns`, `_source`, `_rev`, `_hash`) are written by the
 engine's callers under the reserved `_` prefix; `_lsn` and `_ord` are the
-engine's own and are only ever read. A property the kind does not declare
-is refused (I8), and a property that names another document is written as
-a graph edge, never kept.
+engine's own and are only ever read. A legacy document's property its kind
+does not declare is refused (I8), and a property that names another
+document is written as a graph edge, never kept. An item (a document keyed
+by its path, `kinds.ITEM`) holds fields of any shape, every one indexed;
+`items.py` writes it.
 
 Every document has an ordinal, a 32-bit number given on first write,
 written in its `doc_put` record so recovery replays it, and kept for the
@@ -53,7 +55,7 @@ IDX = 10
 MEM = 0xFFFFFFFF
 DOC_HEAD = struct.Struct("<I")
 FID = struct.Struct(">I")
-FIELDS_MAX = 4096
+FIELDS_MAX = 65536
 OPS = ("=", "!=", "<", "<=", ">", ">=", "in", "prefix", "exists")
 WHERE_MAX = 8
 
@@ -116,7 +118,7 @@ class Columns:
 
 def index_entries(doc: dict, fields: dict[str, int]) -> Iterator[bytes]:
     """The general index keys of one document (only fields that have IDs)."""
-    kind = kinds.kind_of(doc["_kind"])
+    kind = kinds.schema_of(doc)
     for path, value in kinds.flatten(doc):
         if path in kinds.READ_ONLY or not kinds.is_indexed(kind, path):
             continue
@@ -131,7 +133,7 @@ def index_entries(doc: dict, fields: dict[str, int]) -> Iterator[bytes]:
 
 
 def needed_fields(doc: dict) -> set[str]:
-    kind = kinds.kind_of(doc["_kind"])
+    kind = kinds.schema_of(doc)
     return {path for path, _ in kinds.flatten(doc)
             if path not in kinds.READ_ONLY and kinds.is_indexed(kind, path)}
 
@@ -248,6 +250,7 @@ class DocumentStore:
         self.store = store
         self.columns = Columns()
         self.fields: dict[str, int] = {}
+        self.fields_full = False   # past FIELDS_MAX, new fields go unindexed
         self.next_ord = 1
         self._lock = threading.RLock()
         self._pending: dict[bytes, int] = {}
@@ -271,6 +274,7 @@ class DocumentStore:
     def _load(self) -> None:
         for v in self.store.scan(FIELDS):
             self.fields[v.key.decode()] = FID.unpack(v.value)[0]
+        self.fields_full = len(self.fields) >= FIELDS_MAX
         col = self.columns
         key_ord: dict[bytes, int] = {}
         tombstones: list[tuple[bytes, int, int]] = []
@@ -372,13 +376,17 @@ class DocumentStore:
         key, kind_name = doc.get("_key"), doc.get("_kind")
         if not isinstance(key, str) or not key or len(key.encode()) > 1024:
             raise DocumentError("_key is a non-empty string of at most 1,024 bytes")
-        kind = kinds.kind_of(kind_name)
+        item = kinds.is_item_key(key)
+        if item != (kind_name == kinds.ITEM):
+            raise DocumentError("a key that is a path holds an item, and only a path does")
+        kind = kinds.OPEN if item else kinds.kind_of(kind_name)
+        system = kinds.SYSTEM + kinds.ITEM_SYSTEM if item else kinds.SYSTEM
         for name in doc:
             if name in kinds.READ_ONLY:
                 raise DocumentError(f"{name} is the engine's own")
-            if name.startswith("_") and name not in kinds.SYSTEM:
+            if name.startswith("_") and name not in system:
                 raise DocumentError(f"{name}: names starting with _ are reserved")
-            if not name.startswith("_") and name not in kind.properties:
+            if not item and not name.startswith("_") and name not in kind.properties:
                 raise DocumentError(f"a {kind.name} has no property {name!r}")
         trust = doc.get("_trust", "own")
         if trust not in kinds.TRUST:
@@ -409,7 +417,13 @@ class DocumentStore:
                 for path in needed_fields(doc):
                     if path not in self.fields and path not in new_fields:
                         if len(self.fields) + len(new_fields) >= FIELDS_MAX:
-                            raise DocumentError("the field dictionary is full")
+                            # A write is never refused for it: the field goes
+                            # unindexed, and a condition on it is checked
+                            # against each document instead.
+                            if not self.fields_full:
+                                log.warning("the field dictionary is full; new fields go unindexed")
+                            self.fields_full = True
+                            continue
                         new_fields[path] = len(self.fields) + len(new_fields) + 1
                 key = doc["_key"].encode()
                 o = self._pending.get(key) or self._ord_from_store(key)
@@ -439,13 +453,19 @@ class DocumentStore:
     def write(self, puts: list[dict] = (), deletes: list[str] = (),
               extra: Optional[Callable[[dict], list[Op]]] = None) -> int:
         """One transaction. `extra(pending)` adds operations checked against
-        the documents this transaction puts and deletes (the graph's edges)."""
+        the documents this transaction puts and deletes (the graph's edges).
+        Planned under the store's commit lock, so new field IDs and every
+        check see each earlier write."""
         puts, deletes = list(puts), list(deletes)
         pending = pending_of(puts, deletes)
-        ops, reserved = self.plan(puts, deletes, pending)
+        reserved: list[bytes] = []
+
+        def prepare(lsn: int) -> list[Op]:
+            ops, held = self.plan(puts, deletes, pending)
+            reserved.extend(held)
+            return ops + (extra(pending) if extra is not None else [])
         try:
-            more = extra(pending) if extra is not None else []
-            return self.store.commit(ops + more)
+            return self.store.commit(prepare=prepare)
         finally:
             self.release(reserved)
 
@@ -469,13 +489,17 @@ class DocumentStore:
     def live_ordinals(self) -> Iterator[int]:
         return self.columns.live()
 
+    @staticmethod
+    def _schemas(kind_names: Optional[list[str]]) -> list:
+        if not kind_names:
+            return list(kinds.KINDS.values()) + [kinds.OPEN]
+        return [kinds.OPEN if k == kinds.ITEM else kinds.kind_of(k) for k in kind_names]
+
     def _usable(self, pred: Predicate, kind_names: Optional[list[str]]) -> bool:
-        targets = [kinds.kind_of(k) for k in kind_names] if kind_names else list(kinds.KINDS.values())
-        return all(kinds.is_indexed(k, pred.path) for k in targets)
+        return all(kinds.is_indexed(k, pred.path) for k in self._schemas(kind_names))
 
     def _is_date(self, pred: Predicate, kind_names: Optional[list[str]]) -> bool:
-        targets = [kinds.kind_of(k) for k in kind_names] if kind_names else list(kinds.KINDS.values())
-        return any(kinds.root_of(pred.path) in k.dates for k in targets)
+        return any(kinds.root_of(pred.path) in k.dates for k in self._schemas(kind_names))
 
     def _range_sources(self, ranges):
         """(count estimate, ordinal set builder) for a set of key ranges."""
@@ -526,7 +550,7 @@ class DocumentStore:
                 continue
             fid = self.fields.get(pred.path)
             if fid is None:
-                if pred.op in ("!=",) or (pred.op == "exists" and pred.value is False):
+                if pred.op in ("!=",) or (pred.op == "exists" and pred.value is False) or self.fields_full:
                     continue
                 return (0, set)       # nobody has ever had this property
             ranges = pred.ranges(fid, self._is_date(pred, kind_names))
@@ -544,8 +568,7 @@ class DocumentStore:
         if len(preds) > WHERE_MAX:
             raise DocumentError(f"at most {WHERE_MAX} conditions")
         if kinds_:
-            for k in kinds_:
-                kinds.kind_of(k)
+            self._schemas(kinds_)
             preds.append(Predicate("_kind", "in", list(kinds_)))
         out = []
         started = time.perf_counter()

@@ -237,8 +237,10 @@ class WAL:
 
     def __init__(self, directory: Path, next_lsn: int,
                  apply: Callable[[int, list[Op]], None],
-                 *, clock: Callable[[], float] = time.monotonic) -> None:
+                 *, clock: Callable[[], float] = time.monotonic,
+                 group_window: float = GROUP_WINDOW_SEC) -> None:
         self.directory = directory
+        self.group_window = group_window
         directory.mkdir(parents=True, exist_ok=True)
         self.next_lsn = next_lsn
         self._apply = apply
@@ -322,7 +324,8 @@ class WAL:
                         self._maybe_barrier()
                 if self._closed and not self._queue:
                     return
-            time.sleep(GROUP_WINDOW_SEC)
+            if self.group_window > 0:
+                time.sleep(self.group_window)
             with self._cond:
                 batch, self._queue = self._queue, []
                 try:
@@ -383,6 +386,14 @@ class WAL:
         self.durable_lsn = durable
         self.last_barrier = self._clock()
         self._unbarriered = False
+
+    def full_barrier(self) -> None:
+        """Make everything written so far survive a power cut now: what a
+        write carrying his answer waits for before it is acknowledged."""
+        with self._cond:
+            if self._fd is not None:
+                self._unbarriered = True
+                self.barrier()
 
     def close(self) -> None:
         with self._cond:
