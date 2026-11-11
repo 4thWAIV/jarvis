@@ -13,8 +13,9 @@ what the server holds in memory (the session watcher, the brain, and the
 heartbeats and outcomes kept here).
 
   - Agent communications: the session watcher polling, the messages JARVIS
-    sends reaching their sessions, the messages sessions drop being taken,
-    and the needs board being read.
+    sends reaching their sessions, and those waiting their session's turn.
+    (Agents' messages to him come by one signed route, messages_api.py,
+    which has no loop to judge.)
   - Voice input: voice_diagnostics.summary, judged, not repeated.
   - Brain, voice output (Fish Audio), the tool channel (the brain's MCP child
     to /internal/tool) and the workflow monitor.
@@ -35,8 +36,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from jarvis import (data_paths, run_store, session_messages, session_steer, voice_diagnostics,
-                    workflow_store)
+from jarvis import data_paths, run_store, session_steer, voice_diagnostics, workflow_store
 from jarvis.said import Said, english as _english
 from jarvis.session_watch import DELIVERY_TIMEOUT_SEC, GONE
 
@@ -73,9 +73,6 @@ QUEUED_LONG_SEC = 600.0
 # How long a node ID made although one had been kept is shown as degraded.
 NODE_ID_NOTICE_SEC = 7 * 24 * 3600.0
 
-# A message file a session dropped that has waited this long was not taken.
-FILE_WAITING_SEC = 60.0
-
 # Voice output: this many failed syntheses in a row is down; one this
 # recent is degraded.
 VOICE_FAILURES_DOWN = 3
@@ -88,9 +85,6 @@ VOICE_DROPPING_SEC = 60.0
 # (server.RESERVED_SERVER_NAME).
 TOOL_SERVER = "jarvis"
 
-# The background loops' names, as the server's `_every` is given them.
-NEEDS_LOOP = "needs board"
-SESSION_MESSAGES_LOOP = "session messages"
 WORKFLOW_LOOP = "workflow silence"
 FOLDERS_LOOP = "folder discovery"
 
@@ -145,12 +139,6 @@ SAID: dict[str, str | dict[str, str]] = {
                  "other": "{count} messages waiting for their turn, the oldest {age}"},
     "queuedHeld": "A message to {agent} has waited {age} for its turn",
     "queuedHeldSeen": "A message to {agent} has waited {age} for its turn; JARVIS sees it as {state}",
-    "incomingWaiting": {"one": "{count} message waiting over {age} to be picked up",
-                        "other": "{count} messages waiting over {age} to be picked up"},
-    "needsHeld": {"one": "{count} needs board held: no transcript shows who wrote it",
-                  "other": "{count} needs boards held: no transcript shows who wrote them"},
-    "incomingHeld": {"one": "{count} message held: it named no sender he could reply to",
-                     "other": "{count} messages held: they named no sender he could reply to"},
     "voiceIdle": "Not listening",
     "voiceDropping": "Dropping speech",
     "voiceDroppingCause": "Dropping speech: {cause}",
@@ -252,8 +240,6 @@ NAMES: dict[str, str] = {
     "watcher": "Session watcher",
     "outgoing": "Messages to agents",
     "queued": "Queued messages",
-    "incoming": "Messages from agents",
-    "needs": "Needs board",
     "mic": "Microphone",
     "browser": "Page",
     "connection": "Connection",
@@ -512,35 +498,12 @@ def queued_check(queued: list, watcher, now: float) -> Check:
     return one(DEGRADED, say("queuedHeld", agent=oldest.agent_name, age=age(waited)))
 
 
-def incoming_check(b: Optional[Beat], waiting: int, now: float, held: int = 0) -> Check:
-    """Messages sessions drop for Tim: the loop that takes them, any file
-    left waiting, and any held for naming no sender (only a count here)."""
-    state, line = judge(b, now)
-    if state in (OK, UNKNOWN) and waiting:
-        state, line = DEGRADED, say("incomingWaiting", count=waiting, age=age(FILE_WAITING_SEC))
-    elif state in (OK, UNKNOWN) and held:
-        state, line = DEGRADED, say("incomingHeld", count=held)
-    return check("incoming", "incoming", state, line)
-
-
-def needs_check(b: Optional[Beat], now: float, held: int = 0) -> Check:
-    """The needs board: the loop that reads it, and any board held for
-    want of a transcript proving its writer (only a count here)."""
-    state, line = judge(b, now)
-    if state in (OK, UNKNOWN) and held:
-        state, line = DEGRADED, say("needsHeld", count=held)
-    return check("needs", "needs", state, line)
-
-
-def communications(watcher, messages: list, beats_now: dict, waiting: int,
-                   now: float, started_at: float, queued: list = (), held: int = 0,
-                   boards_held: int = 0) -> Subsystem:
+def communications(watcher, messages: list, now: float, started_at: float,
+                   queued: list = ()) -> Subsystem:
     checks = [
         watcher_check(watcher, now, started_at),
         outgoing_check(messages, now),
         queued_check(list(queued), watcher, now),
-        incoming_check(beats_now.get(SESSION_MESSAGES_LOOP), waiting, now, held),
-        needs_check(beats_now.get(NEEDS_LOOP), now, boards_held),
     ]
     first = checks[0]
     return from_checks("communications", checks, (first.said, first.detail),
@@ -851,18 +814,14 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
            team: Optional[dict] = None, folders: Optional[dict] = None,
            knowledge_health: Optional[dict] = None,
            local_voice: Optional[dict] = None,
-           now: Optional[float] = None, boards_held: int = 0) -> list[Subsystem]:
+           now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
     now = time.time() if now is None else now
     messages = run_store.list_messages(limit=MESSAGES_READ)
-    waiting = session_messages.waiting(data_paths.session_messages_dir(), now, FILE_WAITING_SEC)
     beats_now = dict(beats)
     return [
-        communications(watcher, messages, beats_now, waiting, now, started_at,
-                       run_store.queued_messages(),
-                       session_messages.held(data_paths.session_messages_dir()),
-                       boards_held),
+        communications(watcher, messages, now, started_at, run_store.queued_messages()),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now, local_voice),

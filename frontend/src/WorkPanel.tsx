@@ -9,7 +9,9 @@ import { WorkOwnerActivity } from "./WorkerStatus";
  * as its update. An item blocked or waiting on him, or with a piece that is,
  * carries a mark: a red or amber edge and dot. An item with decisions open
  * says how many beside its state, and its third line is the first thing
- * holding it up besides those decisions, with how many more. Clicking a row
+ * holding it up besides those decisions, with how many more. An item with
+ * new messages (messagesToHim.ts) counts them beside its state, and its
+ * update line is the first new message's first line. Clicking a row
  * opens the item in the centre area (WorkDetail.tsx) through `work.open`,
  * and the list stays in view. Each row shows its live activity
  * (nodeActivity.tsx): a travelling glow while it is working and reporting,
@@ -31,6 +33,7 @@ import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
+import { firstLine, inboxMessages, threadOf, type Inbox, type WorkThread } from "./messagesToHim";
 import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
          workStanding } from "./nodeActivity";
 import { blockerWords, followUpWords, itemMark, liveWords, needWords, packageReviewWords,
@@ -48,6 +51,7 @@ export function WorkPanel() {
   const since = useShownSince();
   const history = live.value?.history ?? [];
   const historyShown = useSyncExternalStore(showHistory.subscribe, showHistory.get);
+  const inbox = useSyncExternalStore(inboxMessages.subscribe, inboxMessages.get).value;
   useEffect(() => () => showHistory.set(false), []);
   return (
     <ShownSince.Provider value={since}>
@@ -57,7 +61,7 @@ export function WorkPanel() {
         {live.value && items.size === 0 && <p className="workflows-empty">{t("right.work.none")}</p>}
         <div className="work-groups" ref={(el) => { ui.whole(el); ui.part("list")(el); }}>
           {groups.map((g) => (
-            <Group key={`${g.grouped_by}:${g.name}`} group={g} open={open}
+            <Group key={`${g.grouped_by}:${g.name}`} group={g} open={open} inbox={inbox}
                    items={g.ids.flatMap((id) => items.get(id) ?? [])} />
           ))}
         </div>
@@ -69,7 +73,8 @@ export function WorkPanel() {
             </button>
             {historyShown && (
               <ul className="work-list history" ref={ui.part("history")}>
-                {history.map((item) => <WorkRow key={item.id} item={item} selected={item.id === open} />)}
+                {history.map((item) => <WorkRow key={item.id} item={item} selected={item.id === open}
+                                                 thread={threadOf(inbox, item.id)} />)}
               </ul>
             )}
           </div>
@@ -82,7 +87,8 @@ export function WorkPanel() {
   );
 }
 
-function Group({ group, items, open }: { group: WorkGroup; items: WorkItem[]; open: string | null }) {
+function Group({ group, items, open, inbox }: { group: WorkGroup; items: WorkItem[]; open: string | null;
+                                                inbox: Inbox | null }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "right", view: "right.workflows", kind: "workGroup",
                                   key: `${group.grouped_by}:${group.name}` },
@@ -93,7 +99,8 @@ function Group({ group, items, open }: { group: WorkGroup; items: WorkItem[]; op
           title={group.grouped_by === "folder" ? group.name : t("right.work.area")}>
         {group.label}</h4>
       <ul className="work-list">
-        {items.map((item) => <WorkRow key={item.id} item={item} selected={item.id === open} />)}
+        {items.map((item) => <WorkRow key={item.id} item={item} selected={item.id === open}
+                                     thread={threadOf(inbox, item.id)} />)}
       </ul>
     </section>
   );
@@ -101,7 +108,8 @@ function Group({ group, items, open }: { group: WorkGroup; items: WorkItem[]; op
 
 /** One row. Drawn again only when its own item or selection changes: a
  *  frame replaces one item by id and keeps every other the same object. */
-const WorkRow = memo(function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
+const WorkRow = memo(function WorkRow({ item, selected, thread }: { item: WorkItem; selected: boolean;
+                                                                   thread?: WorkThread }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "right", view: "right.workflows", kind: "workItem", key: item.id },
                            label: item.title, socket: RIGHT_SOCKET });
@@ -112,6 +120,9 @@ const WorkRow = memo(function WorkRow({ item, selected }: { item: WorkItem; sele
   // The decisions are the update line already; the third line is the rest.
   const holding = item.blockers.filter((b) => b.kind !== "decision");
   const decisionCount = t("right.work.decisionCount", { count: item.decisions.length });
+  const fresh = thread?.new ?? 0;
+  const freshCount = t("right.work.messageCount", { count: fresh });
+  const said = thread?.first_new ? firstLine(thread.first_new.says) : "";
   return (
     <li>
       <button type="button" className={`work-row${selected ? " selected" : ""}`} data-work-id={item.id}
@@ -128,6 +139,8 @@ const WorkRow = memo(function WorkRow({ item, selected }: { item: WorkItem; sele
           <ActivityMark activity={activity} target={ui.part("activity")} />
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
+          {fresh > 0 && <span className="work-message-count" title={freshCount} aria-label={freshCount}
+                              ref={ui.part("messageCount")}>{fresh}</span>}
           <span className={`work-state state-${rowState(item)}`} ref={ui.part("state")}
                 title={item.state === "activity_unknown" && !item.live ? t("right.work.activityUnknownReason") : undefined}>
             {rowStateWords(item, t)}</span>
@@ -136,9 +149,10 @@ const WorkRow = memo(function WorkRow({ item, selected }: { item: WorkItem; sele
           <span className="work-row-project" ref={ui.part("project")}>
             {t("right.work.project", { names: item.projects.map((p) => p.name).join(", ") })}</span>
         )}
-        <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
+        <span className={`work-update${said ? " message" : deciding ? " deciding" : ""}`} ref={ui.part("update")}>
           {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
-          {deciding ? t("right.work.decision", { question: item.headline })
+          {said ? said
+            : deciding ? t("right.work.decision", { question: item.headline })
             : item.stalled ? t("right.work.stalled")
             : item.live ? liveWords(item.live)
             : (item.needs_you ?? []).length > 0 ? t("right.work.needsYou", { act: needWords(item.needs_you![0]) })

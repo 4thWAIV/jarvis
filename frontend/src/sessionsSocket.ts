@@ -35,11 +35,15 @@
  *     updates waiting read again (attention.ts).
  *   - "projects" (and every (re)connect): a project record changed; the
  *     Projects list and the open project read again (projects.ts).
+ *   - "inbox" (and every (re)connect): a message to him arrived or moved, or
+ *     he answered one on a Work item; the Inbox, the Work rows' counts and
+ *     an open item's Messages tab read again (messagesToHim.ts).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
 import { attentionChanged } from "./attention";
 import { foldersChanged } from "./folders";
+import { INBOX_HINT, inboxChanged } from "./messagesToHim";
 import { knowledgeChanged } from "./knowledge";
 import { projectsChanged } from "./projects";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
@@ -86,6 +90,7 @@ export function startSessionsSocket(): void {
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "packages" || snapshot) bump(packagesChanged);
     if (msg.type === "attention" || snapshot) bump(attentionChanged);
+    if (msg.type === INBOX_HINT || snapshot) bump(inboxChanged);
     if (msg.type === BUNDLES_HINT || snapshot) bump(bundlesChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });

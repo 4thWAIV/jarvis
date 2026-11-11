@@ -1,8 +1,8 @@
 """Seen is his act: his click, his mark, or hearing it read in full.
 
 An update the brain reads to him on a turn he drove (an agent's answer with
-read_message_reply, a session's message with read_session_message, a
-person's message with mark_people_message_read) is seen once the reply of
+read_message_reply, a person's message with mark_people_message_read) is
+seen once the reply of
 that turn has been heard in full, at the revision that was read, and never
 on the tool call alone: a reply cut short, a turn he did not drive, or a
 newer revision leaves it pending."""
@@ -110,16 +110,6 @@ async def test_a_reply_cut_short_leaves_it_pending(wired, record, monkeypatch):
                 skip=lambda text: text.startswith("Guard says"))
     assert record.get("agent_message", str(mid)).state == "pending", \
         "the tool call alone is not hearing it"
-
-
-@pytest.mark.asyncio
-async def test_a_session_message_read_and_heard_is_seen(wired, record, monkeypatch):
-    rs = wired.run_store
-    number = rs.create_session_message("guard", "guard", "Phase 2", "It is done.")
-    record.record("session_message", str(number), "arrived", facts={"message_id": number})
-    await _turn(wired, monkeypatch,
-                _ReadingBrain(lambda: wired.tool_read_session_message({"message": number})))
-    assert record.get("session_message", str(number)).state == "seen"
 
 
 def test_only_a_turn_he_drove_and_only_a_pending_revision_is_noted(wired, record,

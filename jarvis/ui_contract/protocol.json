@@ -79,7 +79,7 @@
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
-    "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
+    "toHim": "^[0-9]{1,18}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "workBlocker": "^(decision|no_follow_up|blocked|item_waiting|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",

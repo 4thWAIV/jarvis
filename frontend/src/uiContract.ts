@@ -148,7 +148,7 @@ export const UI_CONTRACT = {
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
-    "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
+    "toHim": "^[0-9]{1,18}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "workBlocker": "^(decision|no_follow_up|blocked|item_waiting|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
@@ -650,8 +650,8 @@ export const UI_CONTRACT = {
         "tab": {
           "type": "enum",
           "values": [
+            "messages",
             "overview",
-            "decisions",
             "blocking",
             "pieces",
             "reports"
@@ -1671,8 +1671,8 @@ export const UI_CONTRACT = {
         "tab": {
           "type": "enum",
           "values": [
+            "messages",
             "overview",
-            "decisions",
             "blocking",
             "pieces",
             "reports"
@@ -3236,8 +3236,10 @@ export const UI_CONTRACT = {
     {
       "kind": "updatesNotice",
       "entity": null,
-      "label": "Updates waiting: their count, Review updates, Mark all seen, Hold spoken updates and the list",
+      "label": "Updates waiting: how many new messages with Open (the Inbox), JARVIS's own updates' count, Review updates, Mark all seen, Hold spoken updates and the list",
       "parts": [
+        "messages",
+        "openInbox",
         "text",
         "review",
         "markSeen",
@@ -3314,10 +3316,10 @@ export const UI_CONTRACT = {
     {
       "kind": "queuePanel",
       "entity": null,
-      "label": "Queue",
+      "label": "Inbox",
       "parts": [
-        "packages",
-        "closedPackages",
+        "workMessages",
+        "general",
         "waiting",
         "active",
         "history",
@@ -3338,18 +3340,38 @@ export const UI_CONTRACT = {
       "family": "queue"
     },
     {
-      "kind": "inboxPackage",
-      "entity": "inboxPackage",
-      "label": "Package in the inbox: who sent it, its title and how many decisions wait",
+      "kind": "inboxWork",
+      "entity": "workItem",
+      "label": "A Work item with new messages, in the Inbox: opens its Messages tab",
+      "parts": [
+        "row",
+        "count"
+      ],
+      "presentations": [
+        {
+          "view": "right.queue",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "queue"
+            }
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "kind": "inboxMessage",
+      "entity": "toHim",
+      "label": "A message to him that belongs to no Work item: who, when, what it says, Read, Reply and Open",
       "parts": [
         "row",
         "sender",
-        "title",
-        "progress",
-        "unproven",
+        "says",
+        "read",
+        "reply",
         "open",
-        "done",
-        "close"
+        "package"
       ],
       "presentations": [
         {
@@ -3805,6 +3827,7 @@ export const UI_CONTRACT = {
         "update",
         "mark",
         "decisionCount",
+        "messageCount",
         "blocker",
         "activity",
         "project",
@@ -3816,15 +3839,13 @@ export const UI_CONTRACT = {
         "who",
         "itemKeys",
         "pieces",
-        "decisions",
-        "packages",
-        "answered",
+        "messages",
         "blocking",
         "reports",
         "review",
         "needs",
+        "tab.messages",
         "tab.overview",
-        "tab.decisions",
         "tab.blocking",
         "tab.pieces",
         "tab.reports"
@@ -3838,6 +3859,7 @@ export const UI_CONTRACT = {
             "update",
             "mark",
             "decisionCount",
+            "messageCount",
             "blocker",
             "activity",
             "project"
@@ -3863,15 +3885,13 @@ export const UI_CONTRACT = {
             "who",
             "itemKeys",
             "pieces",
-            "decisions",
-            "packages",
-            "answered",
+            "messages",
             "blocking",
             "reports",
             "review",
             "needs",
+            "tab.messages",
             "tab.overview",
-            "tab.decisions",
             "tab.blocking",
             "tab.pieces",
             "tab.reports"
@@ -3926,26 +3946,6 @@ export const UI_CONTRACT = {
         "options",
         "answer",
         "package"
-      ],
-      "presentations": [
-        {
-          "view": "main.work"
-        }
-      ],
-      "family": "work"
-    },
-    {
-      "kind": "workPackageQuestion",
-      "entity": null,
-      "keyOf": [
-        "inboxPackage",
-        "workPart"
-      ],
-      "label": "A question a package sent for a work item asks",
-      "parts": [
-        "row",
-        "options",
-        "answer"
       ],
       "presentations": [
         {
@@ -5025,9 +5025,9 @@ export interface CommandArgs {
   "voice.range": { range: "15m" | "1h" | "1d"; };
   "voice.zoom": { at?: number; };
   "work.close": { };
-  "work.open": { itemId: string; tab?: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
+  "work.open": { itemId: string; tab?: "messages" | "overview" | "blocking" | "pieces" | "reports"; };
   "work.showHistory": { shown: boolean; };
-  "work.tab.select": { itemId: string; tab: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
+  "work.tab.select": { itemId: string; tab: "messages" | "overview" | "blocking" | "pieces" | "reports"; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };

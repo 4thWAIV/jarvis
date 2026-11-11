@@ -75,8 +75,8 @@
     {"kind": "teamReminder", "entity": null, "label": "Sign-in reminder", "parts": ["text", "signIn", "later"],
      "presentations": [{"view": "main.notice"}]},
     {"kind": "updatesNotice", "entity": null,
-     "label": "Updates waiting: their count, Review updates, Mark all seen, Hold spoken updates and the list",
-     "parts": ["text", "review", "markSeen", "away", "list"],
+     "label": "Updates waiting: how many new messages with Open (the Inbox), JARVIS's own updates' count, Review updates, Mark all seen, Hold spoken updates and the list",
+     "parts": ["messages", "openInbox", "text", "review", "markSeen", "away", "list"],
      "presentations": [{"view": "main.notice"}]},
     {"kind": "footer", "entity": null, "label": "Footer", "parts": ["label"],
      "presentations": [{"view": "footer.fixed"}]}

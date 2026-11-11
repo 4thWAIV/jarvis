@@ -8,7 +8,8 @@ never spawned. The voice page is built with vite into a cached temporary
 folder (never jarvis/web), which that JARVIS serves, so the page, its
 sockets and the package frame have its own origin, as the live page has.
 
-The package is unpacked there through the same route delivery uses, found
+The package is unpacked there through the same route delivery uses (a
+message carrying it, signed by the agent's key, seeded there), found
 by its title's words with `list_packages` and opened by name with
 `open_package_page`, both through that JARVIS's /internal/tool. Then, in the
 real sandboxed package frame at each centre size (809 x 589 and 662 x 489):
@@ -938,7 +939,7 @@ def seed(data: Path, public_key: str, session: str) -> None:
 
 def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
            session: str) -> Result:
-    from jarvis.decision_package import deliver
+    from jarvis.decision_package import deliver, says_of
     result = Result()
     folder.mkdir(parents=True, exist_ok=True)
     jarvis = None
@@ -951,7 +952,8 @@ def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
         checked = folder / f"checked-{archive.name}"
         seed(jarvis.data, signer[1], session)
         package_signature.sign(archive, checked, signer[0], signer[1], session)
-        delivered = deliver(checked, jarvis.base, jarvis.token)
+        delivered = deliver(checked, jarvis.base, says_of(deck.get("title") or archive.stem),
+                            signer=signer)
         package_id = delivered.package["id"]
         result.passed.append(f"unpacked in the isolated JARVIS as {package_id}")
         ok, said = jarvis.tool("list_packages", name=deck["title"])

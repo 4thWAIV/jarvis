@@ -22,11 +22,13 @@ can accompany the handoff as evidence; --check-only validates source without a m
 The command checks the author's result, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the
 receiver's own reading of the zip, work_packages.recognise), and only then
-sends it to the live JARVIS's package inbox (package_inbox.py): unpacked
-there, listed in his backlog and counted in his updates, never shown and
-never spoken until he asks for it. `--session` is who his answers go back
-to; `--workflow` and `--work` name the workflow or work item it is for. Anything it cannot decide it refuses, saying
-what to change. Nothing is delivered after any failure.
+sends it to the live JARVIS as a message carrying it (POST /api/messages,
+messages_api.py): on the Work item `--work` names (else his Inbox), saying
+`--says`, unpacked in his package inbox (package_inbox.py), never shown and
+never spoken until he asks for it. `--session` is whose key signs it and
+who his answers go back to; `--workflow` names the workflow it is for.
+Anything it cannot decide it refuses, saying what to change. Nothing is
+delivered after any failure.
 """
 from __future__ import annotations
 
@@ -65,7 +67,7 @@ PRESENTATION_EXAMPLE = {
 }
 
 # What the command prints once JARVIS has taken the package.
-ARRIVED_AS = "Arrived in Tim's package inbox as {inbox_id}"
+ARRIVED_AS = "Sent to Tim as message {message}, carrying it; in his package inbox as {inbox_id}"
 
 
 @dataclass(frozen=True)
@@ -404,8 +406,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="the workflow it is for: it waits on his answers, which come "
                              "back as its decisions")
     parser.add_argument("--work", default="",
-                        help="the work item it is for: its questions show on that item's "
-                             "Decisions tab")
+                        help="the work item it is for: it is a message in that item's "
+                             "Messages tab (required while you have a piece on an open item)")
+    parser.add_argument("--says", default="",
+                        help="what the message carrying it says, one or two short sentences "
+                             "(default: its kind and title)")
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the screenshots go "
                              "(default: a new temporary folder)")
@@ -475,8 +480,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         sign(made.archive, signer, args.session,
              (package_signature.DECISION_CHECKED,) if decision else (), grant,
              author.as_dict())
-        delivered = dp.deliver(made.archive, args.deliver_to, "", project=args.project,
-                               session=args.session, workflow=args.workflow, work=args.work,
+        delivered = dp.deliver(made.archive, args.deliver_to,
+                               args.says.strip() or dp.says_of(made.title, made.kind),
+                               project=args.project, workflow=args.workflow, work=args.work,
                                source=str(args.handoff or args.source), signer=signer)
     except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
         print(f"Not delivered: {e}")
@@ -484,12 +490,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]
     answers = (data_paths.packages_dir() / package_id / "results" / "decisions.json"
                if made.deck is not None and made.deck.get("decisions") else None)
-    record = {"package": package_id, "inbox": inbox_id, "title": made.title, "kind": made.kind,
+    record = {"package": package_id, "inbox": inbox_id, "message": delivered.message.get("id"),
+              "title": made.title, "kind": made.kind,
               "project": args.project, "session": args.session, "workflow": args.workflow,
               "work": args.work, "zip": str(made.archive),
               "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(ARRIVED_AS.format(inbox_id=inbox_id) + f" (package {package_id})"
+    print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)
+          + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
     if delivered.inbox.get("unproven_claim"):
         print(f"JARVIS did not take it as session {args.session}'s, so his answers will not "

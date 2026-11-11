@@ -1,11 +1,13 @@
-"""The package inbox on the page, in a real browser: a decision deck sent
-the way make_package sends it (POST /api/packages/inbox, for a work item,
-from a session) shows nowhere on arrival; it is listed at the top of the
-Queue tab and as one reduced line in Updates waiting; his Open shows it in
-the centre; and the work item's Decisions tab asks its questions, an
-answer there landing in the package's own record; and Done in the view's
-head signs it off: the view closes, the row goes to Closed, and a capture
-of his answers waits to be read back.
+"""A package on the page, in a real browser: a decision deck sent the way
+make_package sends it (as a message carrying it; here through JARVIS's own inbox path, for a work item, from a
+session) shows nowhere on arrival; it is a message on its Work item, so
+Updates waiting counts it in its one line, whose Open goes to the Inbox,
+where the item is one line that opens its Messages tab; there the message
+carries the package as a card, and his Open shows it in the centre; what
+he chose in it is recorded under the message; and Done in the view's head
+signs it off: the view closes, the message is done, and a capture of his
+answers waits to be read back. A package for no item is a message in the
+Inbox, opened from there.
 
 Headless Chromium on the built page. Every /api/packages, /api/attention
 and /api/work request is answered by JARVIS's real app (TestClient) over a
@@ -15,6 +17,7 @@ browser's would. Screenshots go to $PAGE_SHOTS when it is set.
 
 import asyncio
 import importlib
+import json
 import os
 import shutil
 from pathlib import Path
@@ -83,33 +86,54 @@ async def _shot(page, name: str) -> None:
         await page.screenshot(path=str(Path(folder) / f"{name}.png"))
 
 
+class _Sessions:
+    """/ws/sessions, held so a test can send the server's hints."""
+
+    def __init__(self):
+        self.ws = None
+
+    def __call__(self, ws):
+        self.ws = ws
+
+    def hint(self, kind: str) -> None:
+        self.ws.send(json.dumps({"type": kind}))
+
+
+def _proven(server, monkeypatch):
+    """The session a package names counts as proven, by its listed name:
+    these tests are about the page, and the proof has its own tests
+    (test_package_inbox.py, "who sent it")."""
+    from jarvis import session_message_sender
+    monkeypatch.setattr(server, "_package_sender", lambda claimed, reporter: (
+        session_message_sender.Sender(claimed, "chitauri", "agent_signature") if claimed else None))
+
+
+async def _page(p, client, voice, sessions):
+    try:
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+    except Exception as e:                          # pragma: no cover
+        pytest.skip(f"no headless Chromium: {e}")
+    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    await page.add_init_script(FAKE_TRANSCRIPTION)
+    await page.route_web_socket("**/ws/voice", voice)
+    await page.route_web_socket("**/ws/sessions", sessions)
+    await page.route("**/api/conversation", lambda route: route.fulfill(
+        json={"items": [], "earlier": None}))
+    for pattern in ("**/api/packages**", "**/api/attention**", "**/api/work**", "**/api/messages**"):
+        await page.route(pattern, _through(client))
+    return browser, page
+
+
 @pytest.mark.asyncio(loop_scope="session")
-async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click(
+async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_on_his_click(
         page_playwright, page_url, jarvis_app, monkeypatch):
     server, client, data, item = jarvis_app
     from jarvis import package_inbox, work_packages, work_store
+    _proven(server, monkeypatch)
 
     async with page_playwright as p:
-        try:
-            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
-        except Exception as e:                          # pragma: no cover
-            pytest.skip(f"no headless Chromium: {e}")
-        page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_TRANSCRIPTION)
-        voice = _Voice()
-        await page.route_web_socket("**/ws/voice", voice)
-        await page.route_web_socket("**/ws/sessions", lambda ws: None)
-        await page.route("**/api/conversation", lambda route: route.fulfill(
-            json={"items": [], "earlier": None}))
-        for pattern in ("**/api/packages**", "**/api/attention**", "**/api/work**"):
-            await page.route(pattern, _through(client))
-
-        # The session it names counts as proven, by its listed name: this
-        # test is about the page, and the proof has its own tests
-        # (test_package_inbox.py, "who sent it").
-        from jarvis import session_message_sender
-        monkeypatch.setattr(server, "_package_sender", lambda claimed, reporter: (
-            session_message_sender.Sender(claimed, "chitauri", "test") if claimed else None))
+        voice, sessions = _Voice(), _Sessions()
+        browser, page = await _page(p, client, voice, sessions)
 
         # It arrives before the page loads, as make_package sends it.
         r = client.post("/api/packages/inbox", content=data,
@@ -126,88 +150,79 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         monkeypatch.setattr(server, "voice_clients", {object()})
 
         await page.goto(page_url)
-        await page.wait_for_selector(".right-tabs [aria-label='Queue']")
-        await page.click(".right-tabs [aria-label='Queue']")
-
-        # Listed at the top of the Queue, signed out of any team server.
-        row = page.locator(f".queue-packages [data-inbox-id='{inbox_id}']")
-        await async_api.expect(row).to_be_visible()
-        await async_api.expect(row.locator(".row-person")).to_have_text("chitauri")
-        await async_api.expect(row.locator(".package-title")).to_have_text("Office tea: decisions")
-        await async_api.expect(row.locator(".package-progress")).to_have_text("0 of 2 answered")
-        await async_api.expect(page.locator("#package-view")).to_have_count(0)
-
-        # One reduced line in Updates waiting: who, the title, how many wait.
-        await page.click("#updates-notice button[aria-expanded]")
-        line = page.locator(f"#updates-notice .updates-package[data-inbox-id='{inbox_id}']")
-        await async_api.expect(line.locator(".updates-words")).to_have_text(
-            "Package from chitauri: Office tea: decisions, 2 decisions waiting")
-        assert await line.locator("img, iframe, video, audio").count() == 0
-        await _shot(page, "1-arrived-queue-and-update-line")
+        # Updates waiting says one line, never the package's own: Open goes to the Inbox.
+        line = page.locator("#updates-notice .updates-messages")
+        await async_api.expect(line).to_contain_text("1 new message")
+        await async_api.expect(page.locator("#updates-notice .updates-package")).to_have_count(0)
         assert await page.locator("#package-view").count() == 0, "nothing is shown on arrival"
+        await line.get_by_role("button", name="Open").click()
+        assert await page.evaluate(
+            "() => document.querySelector('.right-tabs [aria-selected=true]').title") == "Inbox"
+
+        # The Inbox: the Work item with a new message, one line; no Packages section.
+        work_line = page.locator(f".inbox-work-row")
+        await async_api.expect(work_line).to_contain_text("Office tea service")
+        await async_api.expect(work_line).to_contain_text("1 new")
+        await async_api.expect(page.locator(".queue-packages")).to_have_count(0)
+        await _shot(page, "1-arrived-inbox")
+
+        # It opens the item's Messages tab: the message, from its proven
+        # sender, NEW, carrying the package with where it stands.
+        await work_line.click()
+        selected = page.locator("#work-detail .work-tabs [aria-selected=true]")
+        await async_api.expect(selected).to_contain_text("Messages (")
+        card = page.locator(f"#work-detail .message-card:has(.message-package[data-inbox-id='{inbox_id}'])")
+        await async_api.expect(card.locator(".message-who")).to_have_text("chitauri")
+        await async_api.expect(card.locator(".message-new")).to_have_text("NEW")
+        await async_api.expect(card.locator(".message-says")).to_contain_text("Package: Office tea: decisions")
+        await async_api.expect(card.locator(".package-progress")).to_have_text("0 of 2 answered")
+        names = await page.locator("#work-detail .work-tabs [role=tab]").all_text_contents()
+        assert names[0].startswith("Messages (") and "Decisions" not in " ".join(names), names
+        await _shot(page, "2-messages-tab")
 
         # His Open shows the deck in the centre.
-        await row.get_by_role("button", name="Open").click()
+        await card.locator(".message-package").get_by_role("button", name="Open").click()
         await async_api.expect(page.locator("#package-view iframe")).to_be_visible()
-        await async_api.expect(row.locator(".package-progress")).to_have_text("0 of 2 answered")
         assert await until_async(lambda: package_inbox.get(inbox_id).state == package_inbox.OPENED), \
             package_inbox.get(inbox_id).state
-        # Opening is not seeing: the update stays pending, its line still in
-        # Updates waiting (Open's click closed the dropdown: open it again),
-        # until his Seen or Done.
-        assert server.attention_record.get("package", inbox_id).state == "pending"
-        await page.click("#updates-notice button[aria-expanded]")
-        await async_api.expect(line).to_have_count(1)
-        await page.wait_for_timeout(1500)
-        await _shot(page, "2-opened-deck")
+        await page.wait_for_timeout(1000)
+        await _shot(page, "3-opened-deck")
 
-        # The work item's Decisions tab asks the package's questions.
-        await page.click(".right-tabs [aria-label='Work']")
-        await page.click(f"text=Office tea service")
-        await async_api.expect(page.locator("#work-detail .work-decision-banner")).to_be_visible()
-        await page.locator("#work-detail .work-decision-banner").click()
-        package = page.locator(f"#work-detail .work-package[data-inbox-id='{inbox_id}']")
-        await async_api.expect(package).to_be_visible()
-        kettle = package.locator(".workflow-decision[data-key='kettle-kind']")
-        await async_api.expect(kettle).to_be_visible()
-        await _shot(page, "3-work-item-package-questions")
-        await kettle.locator(".workflow-option.recommended").click()
-        await async_api.expect(package.locator(".work-answered-item[data-key='kettle-kind']")) \
-            .to_be_visible()
-        assert await until_async(lambda: (package_inbox.get(inbox_id).decisions_answered,
-                                          package_inbox.get(inbox_id).state) == (1, package_inbox.ANSWERING)), \
-            package_inbox.get(inbox_id)
+        # He answers in the package (its own record, as its vote does), and
+        # what he chose is recorded under the message.
+        r = client.post(f"/api/packages/inbox/{inbox_id}/answer", headers=ORIGIN,
+                        json={"decision": "kettle-kind", "option": "electric", "words": ""})
+        assert r.status_code == 200, r.text
         entry = package_inbox.get(inbox_id)
-        found = work_packages.find(entry.package_id)
-        assert '"kettle-kind"' in (found.folder / "results" / "decisions.json").read_text()
-        await _shot(page, "4-answered-on-the-work-item")
+        assert '"kettle-kind"' in (work_packages.find(entry.package_id).folder / "results"
+                                   / "decisions.json").read_text()
+        await page.click(".right-tabs [aria-label='Work']")
+        await page.click("text=Office tea service")
+        sessions.hint("work")
+        await async_api.expect(card.locator(".message-chose")).to_have_text(
+            "You chose: An electric kettle", timeout=10000)
+        await async_api.expect(card.locator(".package-progress")).to_have_text("1 of 2 answered")
+        await _shot(page, "4-you-chose")
 
-        # Done: on its Queue row, and in the head of its view, outside the
-        # frame. Signed off from the view: the view closes, the row goes to
-        # Closed, and a capture of his answers waits to be read back.
-        await page.click(".right-tabs [aria-label='Queue']")
-        await async_api.expect(row.get_by_role("button", name="Done")).to_be_visible()
-        await row.get_by_role("button", name="Open").click()
+        # Done in the head of its view signs it off: the view closes, the
+        # message is done, and a capture of his answers waits to be read back.
+        await card.locator(".message-package").get_by_role("button", name="Open").click()
         done = page.locator("#package-view .package-head .package-done")
         await async_api.expect(done).to_be_visible()
         assert await page.locator("#package-view iframe .package-done").count() == 0
-        await _shot(page, "5-done-in-the-view-head")
         await done.click()
         await async_api.expect(page.locator("#package-view")).to_have_count(0)
-        await async_api.expect(row).to_have_count(0)
-        assert await until_async(
-            lambda: server.attention_record.get("package", inbox_id).state == "resolved"), \
-            server.attention_record.get("package", inbox_id).state
-        await async_api.expect(page.locator(".queue-packages .queue-history-toggle")) \
-            .to_contain_text("Closed (1)")
         assert await until_async(lambda: (package_inbox.get(inbox_id).closed_why,
                                           bool(package_inbox.get(inbox_id).signed_off_at))
                                  == (package_inbox.SIGNED_OFF, True)), package_inbox.get(inbox_id)
+        assert await until_async(
+            lambda: server.attention_record.get("package", inbox_id).state == "resolved"), \
+            server.attention_record.get("package", inbox_id).state
+        [message] = [m for m in server.conversation_log.work_thread(item.id) if m.carries == inbox_id]
+        assert message.state == "done"
         capture = next(c for c in server._captures.values() if c.get("to_session") == "sess-1")
         assert "kettle-kind: electric" in capture["text"] and "tea-kinds: not answered" in capture["text"]
         assert not [d for d in work_store.get(item.id).decisions], "its work item is told"
-        await page.wait_for_timeout(500)
-        await _shot(page, "6-signed-off")
         await browser.close()
 
 
@@ -221,23 +236,13 @@ async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
     server, client, _data, _item = jarvis_app
     from jarvis import package_inbox, work_packages
     from tests.test_package_inbox import VOTES, story_zip
+    _proven(server, monkeypatch)
 
     async with page_playwright as p:
-        try:
-            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
-        except Exception as e:                          # pragma: no cover
-            pytest.skip(f"no headless Chromium: {e}")
-        page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_TRANSCRIPTION)
         voice = _Voice()
-        await page.route_web_socket("**/ws/voice", voice)
-        await page.route_web_socket("**/ws/sessions", lambda ws: None)
-        await page.route("**/api/conversation", lambda route: route.fulfill(
-            json={"items": [], "earlier": None}))
-        for pattern in ("**/api/packages**", "**/api/attention**", "**/api/work**"):
-            await page.route(pattern, _through(client))
+        browser, page = await _page(p, client, voice, _Sessions())
 
-        r = client.post("/api/packages/inbox", content=story_zip(VOTES),
+        r = client.post("/api/packages/inbox", content=story_zip(VOTES), params={"session": "sess-1"},
                         headers={"Authorization": f"Bearer {server.data_paths.ensure_tool_token()}",
                                  "Content-Type": "application/zip"})
         assert r.status_code == 200, r.text
@@ -250,8 +255,9 @@ async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
         monkeypatch.setattr(server, "voice_clients", {object()})
 
         await page.goto(page_url)
-        await page.click(".right-tabs [aria-label='Queue']")
-        row = page.locator(f".queue-packages [data-inbox-id='{inbox_id}']")
+        await page.click(".right-tabs [aria-label='Inbox']")
+        # A package for no Work item is a message in the Inbox; Open is his click.
+        row = page.locator(f".inbox-general .message-package[data-inbox-id='{inbox_id}']")
         await row.get_by_role("button", name="Open").click()
         vote = page.locator("#package-view .package-head .package-vote")
         await async_api.expect(vote).to_be_visible()

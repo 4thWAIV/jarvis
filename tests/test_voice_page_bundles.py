@@ -166,7 +166,7 @@ async def _open(p, url):
     bundles = Bundles()
     await page.route("**/api/team/messages/*/attachments/**", bundles)
     await page.goto(url)
-    await page.wait_for_selector(".right-tabs [aria-label='Queue']")
+    await page.wait_for_selector(".right-tabs [aria-label='Inbox']")
     return browser, page, world, voice, bundles
 
 
@@ -181,7 +181,7 @@ def _frame(world, member):
 async def test_a_checked_file_opens_its_contents_a_folder_at_a_time(page_playwright, page_url):
     async with page_playwright as p:
         browser, page, world, _voice, bundles = await _open(p, page_url)
-        await page.click(".right-tabs [aria-label='Queue']")
+        await page.click(".right-tabs [aria-label='Inbox']")
         await page.click(f'.queue-view li[data-thread-id="{world.thread("ana-numbers")}"] .queue-row')
         card = page.locator("#queue-item-view .queue-file").first
         await card.locator("text=Download").click()

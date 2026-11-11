@@ -1,4 +1,5 @@
 """Fresh same-engine authorship is mandatory before factory delivery."""
+import base64
 import json
 from pathlib import Path
 import sys
@@ -91,15 +92,16 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     assert mp.main(['--handoff', str(source), '--engine', only_engine,
                     '--session', 'origin-session', '--work', 'origin-work', '--workflow', 'origin-workflow',
                     '--out', str(out), '--deliver-to', 'http://127.0.0.1:19999']) == 0
-    [(url, _, _)] = delivery.calls
-    assert 'session=origin-session' in url and 'work=origin-work' in url and 'workflow=origin-workflow' in url
+    [(url, signer, _)] = delivery.calls
+    assert 'work=origin-work' in url and 'workflow=origin-workflow' in url
+    assert signer == origin_key, "the session is the signature's, never a query (round 3)"
     [receipt_path] = out.glob('author/*/author-receipt.json')
     receipt = json.loads(receipt_path.read_text())
     assert receipt['status'] == 'authored' and receipt['engine'] == only_engine
     assert receipt['author_session'] != receipt['origin_session'] == 'origin-session'
     prompt = (receipt_path.parent / 'received-prompt.txt').read_text()
     assert str(pa.SKILL) in prompt and str(source) in prompt
-    assert pa.session_skill._make_package() in prompt
+    assert pa.session_skill._module("make_package", cert=False) in prompt
     assert 'do not launch another author' in prompt
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
@@ -126,7 +128,7 @@ def test_the_signature_names_the_fresh_author_and_carries_its_source(only_engine
                     '--deliver-to', 'http://127.0.0.1:19999']) == 0
     [(_, _, body)] = delivery.calls
     sent = tmp_path / 'sent.zip'
-    sent.write_bytes(body)
+    sent.write_bytes(base64.b64decode(body['package']))
     signed = package_signature.read(sent)
     [receipt] = out.glob('author/*/author-receipt.json')
     receipt = json.loads(receipt.read_text())

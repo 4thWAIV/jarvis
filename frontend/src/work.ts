@@ -454,20 +454,20 @@ export function whoWords(who: WorkWho): string {
 const slot = detailSlot<string>("work", Object.is, (id) => id);
 
 export type WorkTab = CommandArgs["work.tab.select"]["tab"];
-export const WORK_TABS: readonly WorkTab[] = ["overview", "decisions", "blocking", "pieces", "reports"];
+export const WORK_TABS: readonly WorkTab[] = ["messages", "overview", "blocking", "pieces", "reports"];
 
 /** The open item's tab: its own choice while it stays open, else the first. */
-export const workTab = createStore<{ itemId: string | null; tab: WorkTab }>({ itemId: null, tab: "overview" });
+export const workTab = createStore<{ itemId: string | null; tab: WorkTab }>({ itemId: null, tab: "messages" });
 
 export const tabOf = (itemId: string): WorkTab => {
   const now = workTab.get();
-  return now.itemId === itemId ? now.tab : "overview";
+  return now.itemId === itemId ? now.tab : "messages";
 };
 
 // An item closed, or replaced by another, forgets its tab.
 slot.value.subscribe(() => {
   if (workTab.get().itemId !== null && slot.value.get() !== workTab.get().itemId) {
-    workTab.set({ itemId: null, tab: "overview" });
+    workTab.set({ itemId: null, tab: "messages" });
   }
 });
 
@@ -505,7 +505,7 @@ registerRevealer("right.workflows", "workItem", async (ref) => {
 });
 
 /** The tab each kind of thing in an item is drawn on. */
-const TAB_OF = { workPiece: "pieces", workDecision: "decisions", workBlocker: "blocking" } as const;
+const TAB_OF = { workPiece: "pieces", workDecision: "messages", workBlocker: "blocking" } as const;
 
 // Pointing at a piece, decision or blocker not drawn: its item is opened on
 // the tab that draws it, by the registered commands.
