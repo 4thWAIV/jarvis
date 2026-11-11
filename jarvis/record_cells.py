@@ -51,8 +51,23 @@ def text_of(holder: dict, name: str, value: Any, parse: Callable[[str], Any] = j
             if parse(kept) == value:
                 return kept
         except ValueError:
-            pass
+            # Moved text that was never JSON stands as an empty value
+            # (`loads`) until a writer gives the cell a value of its own.
+            if value in (None, {}, []):
+                return kept
     return dump(value)
+
+
+def loads(text: Any, empty: Any = None) -> Any:
+    """A JSON cell's value; text that is not JSON (a row written outside
+    the store) is `empty` (None, {} or []), its text kept by `keep` so it
+    moves back as it was."""
+    if not isinstance(text, str):
+        return text
+    try:
+        return json.loads(text)
+    except ValueError:
+        return empty
 
 
 # ── one version's events ─────────────────────────────────────────────────

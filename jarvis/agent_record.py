@@ -43,7 +43,7 @@ import sqlite3
 import threading
 from typing import Any, Callable, Iterable, Iterator, Optional, TypeVar
 
-from jarvis import records
+from jarvis import record_cells, records
 
 T = TypeVar("T")
 
@@ -450,7 +450,8 @@ class AgentMapping:
         events = _table_rows(conn, "agent_key_events")
         for r in events:
             try:
-                session = json.loads(r.cells.get("detail") or "{}").get("session")
+                detail = record_cells.loads(r.cells.get("detail") or "{}", {})
+                session = detail.get("session") if isinstance(detail, dict) else None
             except (TypeError, ValueError, AttributeError):
                 session = None
             if session:

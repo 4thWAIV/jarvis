@@ -158,7 +158,7 @@ def _saved_tables(conn: sqlite3.Connection, prefixes: tuple[str, ...]) -> None:
     import json
     saved = json.loads((Path(move.__file__).parent / "sqlite_schema.json").read_text())
     for o in saved["schema"]["objects"]:
-        if o["sql"] and o["tbl_name"].startswith(prefixes):
+        if o["sql"] and o["tbl_name"].startswith(prefixes) and not o["name"].startswith("sqlite_"):
             conn.execute(o["sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
                          .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
     for name, rows in saved["schema_versions"].items():
@@ -167,7 +167,7 @@ def _saved_tables(conn: sqlite3.Connection, prefixes: tuple[str, ...]) -> None:
 
 
 def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
-    """A database made by JARVIS's own schema creators, a few rows a table."""
+    """A database with JARVIS's last SQLite schema, a few rows a table."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     from jarvis import data_paths
     # Every store is over documents now; the database JARVIS had when its
@@ -212,6 +212,11 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
 
 
 def test_jarvis_schema_round_trips_every_table(tmp_path, monkeypatch, capsys):
+    # Whatever a table holds moves through the row mapping, every cell kept.
+    # (The document types' own mappings are proven on rows their stores
+    # write, each in its store's records test, and together on a copy of
+    # the live database by the cut-over rehearsal.)
+    monkeypatch.setattr(move, "RECORD_MODULES", ())
     db = _jarvis_db(tmp_path, monkeypatch)
     with in_process(tmp_path / "engine") as (_, uds):
         t0 = time.monotonic()

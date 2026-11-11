@@ -791,7 +791,7 @@ def _doc_from_rows(row, items: list, opened: list, logged: list) -> tuple[dict, 
     as it stood then was never kept), oldest first."""
     from jarvis.knowledge_move import Revision
     doc = {c: row.cells[c] for c in WORKFLOW_COLUMNS}
-    doc["agents"] = json.loads(row.cells["agents"])
+    doc["agents"] = record_cells.loads(row.cells["agents"], [])
     record_cells.keep(doc, "agents", row.cells["agents"], doc["agents"])
     doc["rowid"] = row.rowid
     doc["items"] = []
@@ -802,7 +802,7 @@ def _doc_from_rows(row, items: list, opened: list, logged: list) -> tuple[dict, 
     doc["open"] = []
     for r in opened:
         o = {c: r.cells[c] for c in OPEN_COLUMNS if c != "workflow_id"}
-        o["detail"] = json.loads(r.cells["detail"])
+        o["detail"] = record_cells.loads(r.cells["detail"], {})
         record_cells.keep(o, "detail", r.cells["detail"], o["detail"])
         o["rowid"] = r.rowid
         doc["open"].append(o)
@@ -810,7 +810,7 @@ def _doc_from_rows(row, items: list, opened: list, logged: list) -> tuple[dict, 
     history = []
     for r in sorted(logged, key=lambda r: r.cells["seq"]):
         e = {c: r.cells[c] for c in EVENT_COLUMNS if c != "workflow_id"}
-        e["detail"] = json.loads(r.cells["detail"])
+        e["detail"] = record_cells.loads(r.cells["detail"], {})
         record_cells.keep(e, "detail", r.cells["detail"], e["detail"])
         event = _event(doc["id"], e)
         doc["last_seq"] = max(doc["last_seq"], e["seq"])

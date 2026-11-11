@@ -1889,7 +1889,7 @@ def _doc_from_rows(item, pieces: list, decisions: list, logged: list) -> tuple[d
     for r in sorted(pieces, key=lambda r: (r.cells["position"], r.rowid or 0)):
         p = {c: r.cells[c] for c in PIECE_COLUMNS if c != "item_id"}
         for name in _JSON_PIECE:
-            p[name] = json.loads(r.cells[name])
+            p[name] = record_cells.loads(r.cells[name], [])
             record_cells.keep(p, name, r.cells[name], p[name])
         p["until"] = holds_of(r.cells["until"])
         record_cells.keep(p, "until", r.cells["until"], p["until"], _until_text)
@@ -1898,7 +1898,7 @@ def _doc_from_rows(item, pieces: list, decisions: list, logged: list) -> tuple[d
     doc["decisions"] = []
     for r in decisions:
         d = {c: r.cells[c] for c in DECISION_COLUMNS if c != "item_id"}
-        d["options"] = json.loads(r.cells["options"])
+        d["options"] = record_cells.loads(r.cells["options"], [])
         record_cells.keep(d, "options", r.cells["options"], d["options"])
         d["rowid"] = r.rowid
         doc["decisions"].append(d)
@@ -1906,7 +1906,7 @@ def _doc_from_rows(item, pieces: list, decisions: list, logged: list) -> tuple[d
     history = []
     for r in sorted(logged, key=lambda r: r.cells["seq"]):
         e = {c: r.cells[c] for c in EVENT_COLUMNS if c != "item_id"}
-        e["detail"] = json.loads(r.cells["detail"])
+        e["detail"] = record_cells.loads(r.cells["detail"], {})
         record_cells.keep(e, "detail", r.cells["detail"], e["detail"])
         doc["last_seq"] = max(doc["last_seq"], e["seq"])
         if e["kind"] in _REVIEW_ACTS:
