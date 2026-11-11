@@ -247,6 +247,20 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _records_in_a_throwaway_engine(monkeypatch):
+    """Every test's records live in an engine of its own: opened in this
+    process over the test's data folder the first time a store touches it
+    (`records.uds`), with every fsync skipped (it is thrown away), and
+    closed when the test ends."""
+    from jarvis import records
+    monkeypatch.setenv("JARVIS_ENGINE_EPHEMERAL", "1")
+    records.bind(None)
+    yield
+    records.bind(None)
+    records.close_all()
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _no_run_left_mid_flight():
     """No test may end with a run's driver still starting its child.

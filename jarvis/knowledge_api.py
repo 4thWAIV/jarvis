@@ -28,13 +28,13 @@ Passages carry their trust; whoever shows them to the brain walls them.
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Callable, Iterable, Optional
 
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
-RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path", "at"]
 SEARCH_DEADLINE_SEC = 0.5
 FOLDER_COUNTS_DEADLINE_SEC = 2.0
 FOLDER_COUNTS_MAX = 500
@@ -181,91 +181,119 @@ def folder_counts(ctx: Context, folder_ids: Optional[Iterable[str]] = None,
     return {"available": True, "partial": False, "folders": out}
 
 
-def _hits(answer: dict) -> list[dict]:
-    out = []
-    for h in answer.get("hits") or []:
-        p = h.get("properties") or {}
-        out.append({"key": h["key"], "kind": h["kind"], "label": p.get("_label"), "source": h.get("source"),
-                    "trust": h.get("trust"), "status": p.get("_status"), "text": p.get("text"),
-                    "heading_path": p.get("heading_path"), "score": h.get("score"), "why": h.get("why")})
-    return out
-
-
 ITEM_TEXT_MAX = 600
+OWN_TURNS = ("heard", "typed", "capture")
+
+
+def item_trust(kind: str, data: dict) -> str:
+    """Whose words an item holds: a file says so in its data (`trust`, from
+    its folder); a turn of the conversation is his own when he said, typed
+    or captured it, and JARVIS's own when its turn was not tainted; every
+    other record (an agent's message, a run's result, a workflow's events)
+    holds other people's words."""
+    if data.get("trust") in ("own", "untrusted"):
+        return data["trust"]
+    if kind == "turn":
+        said = str(data.get("kind") or "")
+        detail = data.get("detail")
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except ValueError:
+                detail = {}
+        if said in OWN_TURNS or (said == "jarvis" and isinstance(detail, dict) and detail.get("tainted") is False):
+            return "own"
+    return "untrusted"
+
+
+def _passage(data: dict, text: str) -> Optional[str]:
+    """A record's words to show for a search: its text field holding most
+    of the words searched for, else its first."""
+    from jarvis.knowledge.lexical import RECORD_FIELD_WORDS, terms
+    from jarvis.knowledge.kinds import flatten
+    want = set(terms(text or ""))
+    best, score = None, -1
+    for _, value in flatten(data):
+        if not isinstance(value, str) or " " not in value:
+            continue
+        found = len(want & set(terms(value[:RECORD_FIELD_WORDS])))
+        if found > score:
+            best, score = value, found
+    return None if best is None else best[:ITEM_TEXT_MAX]
 
 
 def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_only: bool = False,
-               limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC) -> list[dict]:
-    """Items (files indexed in place) by meaning and words, or holding an
-    exact phrase, one hit an item, read as Tim (the brain's rights are his):
-    each with the text of the section where it matched."""
+               limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC,
+               types: Optional[list[str]] = None) -> list[dict]:
+    """Items by meaning and words, or holding an exact phrase, one hit an
+    item, read as Tim (the brain's rights are his): a file or note with
+    the text of the section where it matched, a record (a turn, a message,
+    a run...) with its words that matched. Each carries whose words it
+    holds (`item_trust`); `own_only` keeps his own."""
     from jarvis.knowledge.uds import Caller, Query, Stream
     uds = ctx.uds(deadline)
     caller = Caller(TIM, agent="brain")
     query = Query(meaning=text or None, words=text or None, phrase=phrase or None,
-                  where={"trust": "own"} if own_only else {}, limit=limit)
+                  types=tuple(types) if types else None, limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
     found = uds.search_page(caller, query, budget_ms=max(1, int(deadline * 1000)))
     out = []
     for h in found["hits"]:
         item = uds.get(caller, h.path, {Stream.DATA, Stream.SECTIONS})
         if item is None:
             continue
-        data = item.data or {}
+        data = dict(item.data or {})
+        trust = item_trust(item.kind, data)
+        if own_only and trust != "own":
+            continue
         sections = list(item.sections or ())
-        at = next((s for s in sections if s.index in h.sections), sections[0] if sections else None)
-        out.append({"key": h.path, "kind": item.kind, "label": data.get("title") or h.path.rsplit("/", 1)[-1],
-                    "source": data.get("file"), "trust": data.get("trust") or "own", "status": data.get("state"),
-                    "text": (at.text[:ITEM_TEXT_MAX] if at else None),
-                    "heading_path": ([at.heading] if at and at.heading else None),
+        if sections:
+            at = next((s for s in sections if s.index in h.sections), sections[0])
+            words, heading = at.text[:ITEM_TEXT_MAX], ([at.heading] if at.heading else None)
+        else:
+            words, heading = _passage(data, phrase or text), None
+        out.append({"key": h.path, "kind": item.kind,
+                    "label": data.get("title") or data.get("file") or h.path.rsplit("/", 1)[-1],
+                    "source": data.get("file") or h.path, "trust": trust, "status": data.get("state"),
+                    "text": words, "heading_path": heading,
                     "sections": list(h.sections), "score": h.score, "why": sorted(h.matched_by)})
+        if len(out) >= limit:
+            break
     return out
 
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
            kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None) -> dict:
-    """Hybrid search over what JARVIS has read: the files indexed in place
-    (items at their paths: meaning, words, and an exact `phrase`, one hit an
-    item) and the conversation, runs and workflows (the keyword index, the
-    graph and the vectors, fused by the engine, query.DEFAULT_WEIGHTS).
-    `query_en` searches again in English (the brain fills it when he speaks
-    Spanish) and the answers are merged."""
+    """Search over what JARVIS holds, as items (UDS round 3): the files and
+    notes indexed in place (meaning, words, an exact `phrase`, one hit an
+    item, with the section where it matched) and the records, each found by
+    its own words (turns, messages, runs, workflows...). `kinds` keeps the
+    item types named (`md`, `turn`, `run`...). `query_en` searches again in
+    English (the brain fills it when he speaks Spanish) and the answers are
+    merged."""
     text = (text or "").strip()
     phrase = (phrase or "").strip() or None
     if not text and not phrase:
         raise Refused("search needs words")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
-    answers: list[dict] = []
-    if text:
-        body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
-                      "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
-        if kinds:
-            body["from"] = {"kinds": list(kinds)}
-        if not include_untrusted:
-            body["visible"] = {"trust": ["own"]}
-        if not phrase:
-            answers.append(ctx.call("POST", "/v1/query", body))
-        if query_en and query_en.strip() and query_en.strip() != text and not phrase:
-            answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
-                                                         "near": {"text": query_en.strip(), "k": 50},
-                                                         "about": {"text": query_en.strip()}}))
     merged: dict[str, dict] = {}
-    for answer in answers:
-        for h in _hits(answer):
+    partial = False
+    for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
+        try:
+            found = _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit,
+                               types=kinds or None)
+        except knowledge_client.EngineUnavailable as e:
+            raise Unavailable(f"the knowledge engine did not answer: {e}") from e
+        except ValueError as e:
+            raise Refused(str(e)) from e
+        for h in found:
             held = merged.get(h["key"])
             if held is None or (h.get("score") or 0) > (held.get("score") or 0):
                 merged[h["key"]] = h
-    if not kinds:
-        for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
-            for h in _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit):
-                held = merged.get(h["key"])
-                if held is None or (h.get("score") or 0) > (held.get("score") or 0):
-                    merged[h["key"]] = h
-            if phrase:
-                break
+        if phrase:
+            break
     hits = sorted(merged.values(), key=lambda h: -(h.get("score") or 0))[:limit]
     return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
-            "partial": any(a.get("partial") for a in answers),
-            "notes": sorted({n for a in answers for n in a.get("notes") or []})}
+            "partial": partial, "notes": []}
 
 
 def entity(ctx: Context, *, name: Optional[str] = None, key: Optional[str] = None) -> dict:
@@ -400,11 +428,30 @@ def maintain(ctx: Context, *, action: str, source: Optional[str] = None) -> dict
         except workspace_ref.RefError:
             raise Refused("forget takes a source reference (jref:1:...)") from None
         report = ctx.call("POST", "/v1/forget", {"refs": [source]}, deadline=30.0)
+        documents = int(report.get("documents", 0)) + _forget_items(ctx, source)
         rt = ctx.runtime
         if rt is not None:
             rt.hot.clear()
-        return {"done": "forget", "source": source, "documents": report.get("documents", 0)}
+        return {"done": "forget", "source": source, "documents": documents}
     raise Refused("the action is refresh or forget")
+
+
+def _forget_items(ctx: Context, source: str) -> int:
+    """The items indexed from one source (a file whose content's reference
+    it is): taken out of the engine. The file stays; it is indexed again
+    when it changes or the next backup scan finds it."""
+    from jarvis.knowledge.uds import Caller, Stream, Transaction
+    uds = ctx.uds(30.0)
+    caller = Caller(TIM)
+    found = [i.path for i in uds.scan(caller, "/", where=[["_content.ref", "=", source]],
+                                      streams={Stream.ENTRY}, limit=1000)]
+    found = [p for p in found if (uds.get(caller, p, {Stream.CONTENT}).content or {}).get("ref") == source]
+    for i in range(0, len(found), 500):
+        tx = Transaction()
+        for p in found[i:i + 500]:
+            tx.delete(p)
+        uds.transaction(caller, tx, change="forgotten", summary=source[:200])
+    return len(found)
 
 
 # --- his say over the extra indexes -------------------------------------------------
@@ -482,18 +529,10 @@ def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Option
     def run(text: str, own_only: bool, deadline: float) -> Optional[list[dict]]:
         if deadline <= 0:
             return None
-        body: dict = {"match": text, "near": {"text": text, "k": 50},
-                      "return": {"properties": RETURN, "limit": 30}, "budget_ms": max(1, int(deadline * 1000))}
-        if own_only:
-            body["visible"] = {"trust": ["own"]}
         try:
-            found = _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
-        except (Unavailable, Refused):
+            found = _item_hits(ctx, text, own_only=own_only, limit=30, deadline=deadline)
+        except (Unavailable, Refused, knowledge_client.EngineUnavailable, ValueError):
             return None
-        try:
-            found += _item_hits(ctx, text, own_only=own_only, limit=30, deadline=deadline)
-        except Exception:  # noqa: BLE001 - late or down: the chunks found stand
-            pass
         return sorted(found, key=lambda h: -(h.get("score") or 0))
     return run
 

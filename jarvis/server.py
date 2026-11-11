@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import sqlite3
 import threading
 import time
 import uuid
@@ -85,6 +84,8 @@ from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_client
+from jarvis import records
+from jarvis import records_cutover
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -2610,6 +2611,11 @@ async def start_knowledge_engine() -> None:
     knowledge = knowledge_runtime.KnowledgeRuntime(
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    # Every record goes to the engine this server started, and no other.
+    from jarvis.knowledge.uds import EngineUDS
+    supervisor = getattr(knowledge, "supervisor", None)
+    if supervisor is not None:
+        records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
     if await knowledge.start_engine():
         log.info("knowledge engine: up")
     else:
@@ -3204,16 +3210,23 @@ async def lifespan(application: FastAPI):
     _main_loop = asyncio.get_running_loop()
     # The knowledge engine before anything else; the page waits for it.
     await start_knowledge_engine()
+    # jarvis.db into the engine, once, proven both ways before any store is
+    # touched (records_cutover.py); a move it cannot prove stops startup.
+    cut = await asyncio.to_thread(records_cutover.cut_over)
+    if cut.state == "cut over":
+        log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
+    # His voice settings held in memory before a page connects, so listening
+    # and speaking never wait on the engine (voice_control.py).
+    try:
+        await asyncio.to_thread(voice_control.read)
+    except Exception:
+        log.warning("voice settings: not read at startup; the defaults until they are",
+                    exc_info=True)
 
     run_store.init_db()
-    try:
-        import importlib
-        _mig = importlib.import_module("jarvis.migrations.001_dispatches_to_runs")
-        moved = _mig.migrate()
-        if moved:
-            log.info("migrated %d legacy dispatch row(s)", moved)
-    except Exception:
-        log.warning("dispatch migration skipped", exc_info=True)
+    # The old `dispatches` -> `runs` migration is retired with SQLite: every
+    # database still in use had moved its dispatches into `runs` long ago
+    # (today's has no `dispatches` table), so there is nothing left for it.
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
     # Every review he made in a package before now is on its item.
@@ -3264,11 +3277,13 @@ async def lifespan(application: FastAPI):
     await team_api.stop()
     await _stop_attention()
     await transcription_api.stop()
-    await stop_knowledge()
     await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    # The engine last: everything above may still write its records.
+    await stop_knowledge()
+    records.bind(None)
     server_address.forget()
 
 
@@ -3887,12 +3902,11 @@ def _collect_worker_inventory() -> dict:
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
     # A missing source is a reported coverage gap, not a failed status read
     # and not proof that there are no workers in that source.
-    import sqlite3
     gaps = []
     def read_source(name, read, missing):
         try:
             return read()
-        except (sqlite3.Error, OSError) as exc:
+        except (knowledge_client.EngineUnavailable, OSError) as exc:
             gaps.append(f'{name} unavailable: {type(exc).__name__}')
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
@@ -5052,11 +5066,11 @@ def _jarvis_run_session_ids() -> frozenset:
         return ids
     try:
         ids = frozenset(run_store.all_run_ids())
-    except sqlite3.OperationalError as e:
-        # Expected before init_db has run (a fresh install, or a test that
-        # never created the schema). Failing OPEN is right — showing the
-        # user's own sessions unfiltered beats showing nothing — but a full
-        # traceback at WARNING for a routine startup ordering is noise.
+    except knowledge_client.EngineUnavailable as e:
+        # Expected while the engine holding the records is down or starting.
+        # Failing OPEN is right — showing the user's own sessions unfiltered
+        # beats showing nothing — but a full traceback at WARNING for a
+        # routine startup ordering is noise.
         log.debug("run ids unavailable (%s); not filtering the roster", e)
         ids = frozenset()
     except Exception:
@@ -5111,8 +5125,8 @@ def _agent_names() -> dict:
         return names
     try:
         names = run_store.agent_names()
-    except sqlite3.OperationalError:
-        names = {}                          # before init_db, as for run ids
+    except knowledge_client.EngineUnavailable:
+        names = {}                          # the engine down, as for run ids
     except Exception:
         log.warning("could not read the agents' names", exc_info=True)
         names = {}
@@ -5534,8 +5548,11 @@ def _read_session_message(number: int):
     return m
 
 
-# How long a message read aloud may take to be heard before it is given up.
-READ_ALOUD_TIMEOUT = 300.0
+# How long a message read aloud may take to be heard before it is given up:
+# an hour, so the longest message is still read when heard to its end (an
+# 8,000-character message takes about nine minutes to say; five minutes
+# gave up on it while it was still being heard).
+READ_ALOUD_TIMEOUT = 3600.0
 
 
 # How each source's message is said when he asks to hear it: who sent it
@@ -5622,15 +5639,14 @@ async def _speak_message(update: Optional[tuple], text: str,
     item = attention_record.get(*update) if attention_record and update else None
     utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
     reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
-    _spawn(_seen_when_heard(reads, utt, message_id))
+    if message_id is not None:
+        reads.append((_MESSAGE_READ, str(message_id), None))
+    _spawn(_seen_when_heard(reads, utt))
 
 
-async def _seen_when_heard(reads: list, utt, message_id: Optional[int] = None) -> None:
+async def _seen_when_heard(reads: list, utt) -> None:
     heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
-    _seen_once_heard(reads, utt, heard)
-    if message_id is not None and _heard_in_full(utt, heard):
-        await asyncio.to_thread(conversation_log.mark, message_id,
-                                conversation_log.MessageState.READ)
+    await asyncio.to_thread(_seen_once_heard, reads, utt, heard)
     _hint_attention()
 
 
@@ -5939,8 +5955,30 @@ async def _mark_message(item_id, state: str, how: str):
         return None, (f"Message {item.id} arrived before messages had a state, so there is "
                       f"nothing to mark.")
     moved = await asyncio.to_thread(conversation_log.mark, item.id, state)
+    await asyncio.to_thread(_update_seen_with, item)
     log.info("messages: message %s marked %s %s", item.id, state, how)
     return moved, ""
+
+
+def _update_seen_with(item) -> None:
+    """A message to him marked read or done: its update is seen too, when
+    the update is about this message (a keyed source's update is about its
+    newest), so the update line and the message say the same. Never
+    raises."""
+    update = conversation_log.update_of(item)
+    if attention_record is None or update is None:
+        return
+    try:
+        pending = attention_record.get(*update)
+        if pending is None or pending.state != attention_store.PENDING:
+            return
+        about = conversation_log.message_for(pending.kind, pending.source_id, pending.event)
+        if about is not None and about.id == item.id:
+            attention_api.mark_seen_source(attention_record, pending.kind, pending.source_id,
+                                           pending.revision)
+    except Exception:
+        log.warning("messages: the update of message %s was not marked seen", item.id,
+                    exc_info=True)
 
 
 def _messages_read(args: dict) -> dict:
@@ -5957,8 +5995,8 @@ def _messages_read(args: dict) -> dict:
         return {"new": new}
     if work:
         return messages_api.work_conversation(work, before)
-    if args.get("general"):
-        return messages_api.general_list(before)
+    if args.get("general") or args.get("read"):
+        return messages_api.general_list(before, bool(args.get("read")))
     return {"by_work": messages_api.work_list(), "general": messages_api.general_list()}
 
 
@@ -6056,26 +6094,49 @@ _capture_ids = itertools.count(1)
 _turn_utt = None
 _turn_heard: Optional[int] = None
 # The updates the brain read to him on this turn, as (kind, source id,
-# revision): each is seen once the turn's reply has been heard in full
-# (`_seen_once_heard`), never on the tool call alone.
+# revision), and the messages to him they are, as (_MESSAGE_READ, its id,
+# None): each update is seen, and each message read, once the turn's reply
+# has been heard in full (`_seen_once_heard`), never on the tool call alone.
 _turn_reads: Optional[list] = None
 _turn_lock = asyncio.Lock()
+# A read that is a message to him in the conversation record, by its id.
+_MESSAGE_READ = "conversation_message"
 
 
 def _read_to_him(kind: str, source_id) -> None:
     """A reading tool has just given the brain this source on a turn he
-    drove: its update, if pending, waits to be seen until he has heard the
-    reply that reads it. Never raises."""
-    if (_turn_reads is None or attention_record is None or brain_instance is None
+    drove: its update, if pending, waits to be seen, and the message to him
+    it is (conversation_log), if any, waits to be read, until he has heard
+    the reply that reads it. Never raises."""
+    if (_turn_reads is None or brain_instance is None
             or brain_instance.current_origin != "user"):
         return
+    if attention_record is not None:
+        try:
+            item = attention_record.get(kind, str(source_id))
+        except Exception:
+            log.warning("attention: %s was not looked up", kind, exc_info=True)
+            item = None
+        if item is not None and item.state == attention_store.PENDING:
+            _turn_reads.append((kind, str(source_id), item.revision))
+    message = _message_of_update(kind, source_id)
+    if message is not None:
+        _turn_reads.append((_MESSAGE_READ, str(message), None))
+
+
+def _message_of_update(kind: str, source_id) -> Optional[int]:
+    """The message to him that the update (kind, source id) carries, by id,
+    or None: an agent's answer for `agent_message`, a person's message for
+    `arrival`. Never raises."""
     try:
-        item = attention_record.get(kind, str(source_id))
+        for source, (update_kind, event, keyed) in conversation_log.UPDATES.items():
+            if update_kind == kind and not keyed:
+                found = conversation_log.message_for(kind, str(source_id), event)
+                return found.id if found is not None and found.is_message else None
     except Exception:
-        log.warning("attention: %s was not looked up", kind, exc_info=True)
-        return
-    if item is not None and item.state == attention_store.PENDING:
-        _turn_reads.append((kind, str(source_id), item.revision))
+        log.warning("messages: the message of %s %s was not looked up", kind, source_id,
+                    exc_info=True)
+    return None
 
 
 def _heard_in_full(utt, heard: bool) -> bool:
@@ -6084,17 +6145,22 @@ def _heard_in_full(utt, heard: bool) -> bool:
 
 
 def _seen_once_heard(reads: list, utt, heard: bool) -> None:
-    """The turn's reply has ended: if he heard every word of it, the
-    updates it read to him are seen (`attention_api.mark_seen_source`), each
-    at the revision that was read. A reply cut off, skipped, failed or with
-    nothing said leaves them pending. Never raises."""
-    if not reads or not _heard_in_full(utt, heard) or attention_record is None:
+    """The reading has ended (a turn's reply, or a message read aloud): if
+    he heard every word of it, the updates it read to him are seen
+    (`attention_api.mark_seen_source`), each at the revision that was read,
+    and the messages to him it read are read (conversation_log.mark). A
+    reading cut off, skipped, failed or with nothing said leaves them as
+    they were. Blocking; never raises."""
+    if not reads or not _heard_in_full(utt, heard):
         return
     for kind, source_id, revision in reads:
         try:
-            attention_api.mark_seen_source(attention_record, kind, source_id, revision)
+            if kind == _MESSAGE_READ:
+                conversation_log.mark(int(source_id), conversation_log.MessageState.READ)
+            elif attention_record is not None:
+                attention_api.mark_seen_source(attention_record, kind, source_id, revision)
         except Exception:
-            log.warning("attention: %s was not marked seen", kind, exc_info=True)
+            log.warning("attention: %s %s was not marked", kind, source_id, exc_info=True)
 
 
 def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:

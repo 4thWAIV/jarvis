@@ -147,7 +147,6 @@ def onboarded_auth(rights: tuple[str, ...] | None = None, session: str | None = 
                    ) -> AgentAuth:
     """A new onboarded agent's signing (the default rights, or exactly
     `rights`), for a test about what a signed request does."""
-    from contextlib import closing
     from jarvis import agent_key_store, agent_rights
     from jarvis import run_store
     session = session or f"sess-test-{next(_sessions):04d}"
@@ -163,10 +162,8 @@ def onboarded_auth(rights: tuple[str, ...] | None = None, session: str | None = 
     if rights is not None and agent.fingerprint not in _granted:
         _granted.add(agent.fingerprint)
         principal = agent_key_store.agent_principal(session)
-        with closing(agent_key_store._connect()) as conn, conn:
-            conn.execute("DELETE FROM agent_rights WHERE principal=?", (principal,))
-            agent_key_store._grant(conn, principal, rights, agent_rights.ANY_SCOPE, "test",
-                                   time.time())
+        agent_key_store._set_rights(principal, rights, agent_rights.ANY_SCOPE, "test",
+                                    time.time())
     return AgentAuth(agent)
 
 

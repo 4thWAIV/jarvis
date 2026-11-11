@@ -578,11 +578,12 @@ def _on_loop() -> str:
     return "loop"
 
 
-def _rows(table: str) -> list[tuple]:
-    from contextlib import closing
-    from jarvis import run_store
-    with closing(run_store._connect()) as conn:
-        return [tuple(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+def _rows(part: str) -> list[tuple]:
+    """Every file document's `part` (its `files`, or its `location`), with
+    the document's version: what a look must not write."""
+    from jarvis import records
+    return [(r.path, r.version, r.data.get(part))
+            for r in records.all_of("/people", types=["file"])]
 
 
 @pytest.mark.asyncio
@@ -593,11 +594,11 @@ async def test_a_look_creates_and_writes_nothing():
     loc = locations(w)
     downloads = data_paths.messaging_downloads_dir()
     assert not downloads.exists()
-    before = (_rows("messaging_files"), _rows("attachment_locations"))
+    before = (_rows("files"), _rows("location"))
     got = loc.lookup(SERVER, MATT, message_id, ref.attachment_id)
     assert got.state == "remote_only" and got.intended_path.startswith(str(downloads))
     assert not downloads.exists(), "a look made the downloads folder"
-    assert (_rows("messaging_files"), _rows("attachment_locations")) == before
+    assert (_rows("files"), _rows("location")) == before
 
 
 @pytest.mark.asyncio

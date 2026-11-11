@@ -35,7 +35,8 @@ def problem(path) -> Optional[str]:
         return "/ is the root, not an item"
     if path.endswith("/"):
         return "a path does not end with /"
-    if len(path.encode("utf-8")) > PATH_MAX_BYTES:
+    if len(path) > PATH_MAX_BYTES or len(path.encode("utf-8")) > PATH_MAX_BYTES:
+        # (A character is at least a byte: long text is refused unread.)
         return f"a path is at most {PATH_MAX_BYTES} bytes"
     if unicodedata.normalize("NFC", path) != path:
         return "a path is written in Unicode NFC"

@@ -170,15 +170,15 @@ _Item = Union[_Heading, _Page, _Block]
 
 # -- Markdown -------------------------------------------------------------------------------
 
-_ATX = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+_ATX = re.compile(r" {0,3}(#{1,6})(?:[ \t]+([^\r\n\v\f\x1c-\x1e\x85\u2028\u2029]*?))?(?:[ \t]+#+)?[ \t]*")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-_SETEXT = re.compile(r"^ {0,3}(=+|-+)[ \t]*$")
-_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
+_SETEXT = re.compile(r" {0,3}(=+|-+)[ \t]*")
+_TABLE_RULE = re.compile(r"[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*")
 
 
 def _table_starts(lines: list[str], i: int) -> bool:
     return ("|" in lines[i] and i + 1 < len(lines) and "|" in lines[i + 1]
-            and bool(_TABLE_RULE.match(lines[i + 1]))) or lines[i].lstrip().startswith("|")
+            and bool(_TABLE_RULE.fullmatch(lines[i + 1]))) or lines[i].lstrip().startswith("|")
 
 
 def _markdown_items(text: str, prose: bool = True) -> tuple[list[_Item], Optional[str]]:
@@ -216,7 +216,7 @@ def _markdown_items(text: str, prose: bool = True) -> tuple[list[_Item], Optiona
             items.append(_Block(tuple(lines[i:end + 1]), whole=True, prose=False))
             i = end + 1
             continue
-        atx = _ATX.match(line)
+        atx = _ATX.fullmatch(line)
         if atx:
             flush()
             items.append(_Heading(len(atx.group(1)), (atx.group(2) or "").strip()))
@@ -226,7 +226,7 @@ def _markdown_items(text: str, prose: bool = True) -> tuple[list[_Item], Optiona
             flush()
             i += 1
             continue
-        if para and _SETEXT.match(line) and not (line.strip().startswith("-")
+        if para and _SETEXT.fullmatch(line) and not (line.strip().startswith("-")
                                                   and len(line.strip()) < 2):
             heading = " ".join(" ".join(para).split())
             para.clear()

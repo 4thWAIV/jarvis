@@ -58,12 +58,15 @@ def knowing(wired, monkeypatch, tmp_path):  # noqa: F811
     note.write_text("# Orbs\nThe brain orbs sit around Denice in the centre.\n")
     note2 = note.with_name("acct.md")
     note2.write_text("# Accounts\nDenise from accounting called about the invoice.\n")
-    from jarvis import conversation_log as cl, run_store
-    run_store.init_db()
-    cl.append(cl.ConversationItem.new(cl.ItemKind.FROM_AGENT, "orbs report: " + HOSTILE,
-                                      agent_session_id="s1", agent_name="hammer"))
+    from jarvis.knowledge.uds import Caller, EngineUDS
+    from tests.test_knowledge_ingest import index_brain
+    # An agent's message is a record, found by its own words as it is.
+    EngineUDS(kc.InProcessTransport(engine)).put(
+        Caller("tim"), "/agents/s1/messages/1.message",
+        data={"kind": "from_agent", "text": "orbs report: " + HOSTILE, "agent_name": "hammer"})
+    index_brain(engine)
     call = _caller(engine)
-    stats = ki.run_pass(call, adapters=[ki.Notes(), ki.Topics(), ki.Conversation()])
+    stats = ki.run_pass(call)
     assert not stats.errors, stats.errors
     runtime.proposals = {p["id"]: p for p in call("GET", "/v1/proposals", None)["proposals"]}
     yield wired, runtime, engine
@@ -102,7 +105,8 @@ def test_search_is_the_same_on_the_page_and_by_voice_and_walled(knowing):
     # The hostile words are there, but cannot close their wall.
     assert any("approves" in (h["text"] or "") for h in walled["hits"])
     trusts = {h["text"]: h["trust"] for h in page["hits"]}
-    assert trusts["# Orbs\nThe brain orbs sit around Denice in the centre."] == "own"
+    orbs = next(h for h in page["hits"] if h["key"] == "/jarvis/brain/memory/orbs.md")
+    assert orbs["trust"] == "own" and "The brain orbs sit around Denice in the centre." in orbs["text"]
     assert any(t == "untrusted" and "orbs report" in (text or "") for text, t in trusts.items())
     own = w.client.post("/api/knowledge/search", json={"text": "orbs", "include_untrusted": False},
                         headers=ORIGIN).json()

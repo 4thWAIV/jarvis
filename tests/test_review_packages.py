@@ -278,10 +278,12 @@ def test_a_done_item_never_shows_review_closed_without_a_verdict(wired, marks, t
     work_api._note_review(item.id, work_store.NO_VERDICT, {"package": inbox_id, "answered_at": ""},
                           "Review closed without a verdict.")
     assert work_store.get(item.id).package_review.outcome == "no_verdict"
+    from jarvis import records
+    from tests import work_records
+    noted = records.get(work_store.path_of(item.id)).data["review_act"]
     _review(wired, item.id, "approve")
-    with run_store._connect() as conn:
-        conn.execute("DELETE FROM work_events WHERE item_id=? AND kind=?", (item.id, "approved"))
-        conn.commit()
+    # As before the fix: the no-verdict line is his latest act in the record.
+    work_records.item(item.id, review_act=noted)
     got = work_store.get(item.id)
     assert got.state == "done" and got.package_review is None
 

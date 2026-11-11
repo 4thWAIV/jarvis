@@ -13,6 +13,7 @@ commands against an engine folder.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -151,26 +152,29 @@ def test_key_segments_never_share_a_path():
         assert paths.is_path(f"/sqlite/t/{s}.row") and paths.type_of(f"/sqlite/t/{s}.row") == "row"
 
 
+def _saved_tables(conn: sqlite3.Connection, prefixes: tuple[str, ...]) -> None:
+    """The tables (and their indexes and schema version rows) whose names
+    start with `prefixes`, from jarvis/sqlite_schema.json."""
+    import json
+    saved = json.loads((Path(move.__file__).parent / "sqlite_schema.json").read_text())
+    for o in saved["schema"]["objects"]:
+        if o["sql"] and o["tbl_name"].startswith(prefixes) and not o["name"].startswith("sqlite_"):
+            conn.execute(o["sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+                         .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
+    for name, rows in saved["schema_versions"].items():
+        if name.startswith(prefixes):
+            conn.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' * len(rows[0]))})", rows)
+
+
 def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
-    """A database made by JARVIS's own schema creators, a few rows a table."""
+    """A database with JARVIS's last SQLite schema, a few rows a table."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    from jarvis import (agent_key_store, attachment_locations, attention_store, conversation_log,
-                        data_paths, folder_store, language_documents, messaging_files,
-                        messaging_store, package_inbox, project_store, run_store, voice_control,
-                        voice_diagnostics, work_store, workflow_store)
-    run_store.init_db()
-    workflow_store._connect().close()
-    messaging_files.init_db()
-    attachment_locations.init_db()
-    migrated = [(agent_key_store, "agent_keys_schema"), (attention_store, "attention_schema"),
-                (conversation_log, "conversation_schema"), (folder_store, "folder_schema"),
-                (language_documents, "language_document_schema"),
-                (messaging_store, "human_messaging_schema"), (package_inbox, "package_inbox_schema"),
-                (project_store, "project_schema"), (voice_control, "voice_control_schema"),
-                (voice_diagnostics, "voice_schema"), (work_store, "work_schema")]
-    with closing(run_store._connect()) as conn, conn:
-        for module, schema in migrated:
-            run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+    from jarvis import data_paths
+    # Every store is over documents now; the database JARVIS had when its
+    # records moved is the schema saved with it (jarvis/sqlite_schema.json).
+    data_paths.db_path().parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data_paths.db_path())) as conn, conn:
+        _saved_tables(conn, ("",))
     db = data_paths.db_path()
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA foreign_keys=OFF")
@@ -208,6 +212,11 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
 
 
 def test_jarvis_schema_round_trips_every_table(tmp_path, monkeypatch, capsys):
+    # Whatever a table holds moves through the row mapping, every cell kept.
+    # (The document types' own mappings are proven on rows their stores
+    # write, each in its store's records test, and together on a copy of
+    # the live database by the cut-over rehearsal.)
+    monkeypatch.setattr(move, "RECORD_MODULES", ())
     db = _jarvis_db(tmp_path, monkeypatch)
     with in_process(tmp_path / "engine") as (_, uds):
         t0 = time.monotonic()

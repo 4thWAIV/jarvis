@@ -44,12 +44,14 @@ import threading
 import time
 from typing import Any, Iterator, Optional
 
+from jarvis import spoken_words
 from jarvis.knowledge import encoding, kinds, paths, rights
-from jarvis.knowledge.documents import (DOC_HEAD, DocumentError, DocumentStore, Predicate,
+from jarvis.knowledge.documents import (DOC_HEAD, FID, DocumentError, DocumentStore, Predicate,
                                         decode_doc, _sort_key)
 from jarvis.knowledge.graph import (DERIVED, HIERARCHY, REFERENCE, SEP, Graph, edge_key,
                                     split_key)
-from jarvis.knowledge.lexical import phrase_in as lexical_phrase_in, terms as lexical_terms
+from jarvis.knowledge.lexical import RECORD_TYPES as lexical_record_types, phrase_in as lexical_phrase_in, \
+    record_text as lexical_record_text, terms as lexical_terms
 from jarvis.knowledge.rights import FULL, OWNER, Access, Denied, Rights, caller_of, without_hidden
 from jarvis.knowledge.store import CONTENT, DOCS, EDGES_IN, EDGES_OUT, FEED, prefix_end
 from jarvis.knowledge.wal import Op
@@ -67,7 +69,8 @@ INDEX_PATH_MAX = 50000       # past this many candidates, a path scan is cheaper
 WORDS_MAX = 2000             # a change kind or a summary
 STREAMS = ("entry", "data", "content", "sections", "vectors", "rights")
 DEFAULT_STREAMS = ("entry", "data")
-OPS = ("put", "merge", "delete", "link", "unlink")
+OPS = ("put", "merge", "delete", "check", "link", "unlink")
+ITEM_OPS = ("put", "merge", "delete", "check")
 LINK_KIND_MAX = 200
 SEARCH_LIMIT_MAX = 200
 SEARCH_BUDGET_MS = 2000
@@ -443,13 +446,18 @@ class Items:
         for w in writes:
             if not isinstance(w, dict) or w.get("op") not in OPS:
                 raise DocumentError(f"a write's op is one of {', '.join(OPS)}")
-            if w["op"] in ("put", "merge", "delete"):
+            if w["op"] in ITEM_OPS:
                 path = paths.check(w.get("path"))
                 if path in seen:
                     raise DocumentError(f"{path} is written once a transaction")
                 seen.add(path)
-                if not self.access(writer["person"], path).write:
+                if w["op"] == "check":
+                    if not self.access(writer["person"], path).data:
+                        raise Denied(f"{path} is not {writer['person']}'s to read")
+                elif not self.access(writer["person"], path).write:
                     raise Denied(f"{path} is not {writer['person']}'s to write")
+                _words(w.get("change"), "a write's change")
+                _words(w.get("summary"), "a write's summary")
         return self._commit(writes, writer, change, summary, durable == "full")
 
     def _commit(self, writes: list[dict], writer: dict, change, summary, full: bool,
@@ -477,7 +485,7 @@ class Items:
         made: dict[str, Optional[dict]] = {}     # path -> its document after this write
         for w in writes:
             op = w["op"]
-            if op not in ("put", "merge", "delete"):
+            if op not in ITEM_OPS:
                 continue
             path = w["path"]
             expect, absent = _condition(w)
@@ -488,6 +496,8 @@ class Items:
                                       f"{path} is at version {live_version}, not {expect}")
             if absent and doc is not None:
                 raise ConditionFailed(path, 0, live_version, f"{path} is taken (version {live_version})")
+            if op == "check":
+                continue
             if op == "delete":
                 if doc is None:
                     continue
@@ -518,10 +528,14 @@ class Items:
             for k in ("agent", "model"):
                 if k in writer:
                     new["_" + k] = writer[k]
-            if change is not None:
-                new["_change"] = change
-            if summary is not None:
-                new["_summary"] = summary
+            # A write may name its own change and summary (one item's event
+            # in a transaction that writes several); else the transaction's.
+            own_change = w["change"] if w.get("change") is not None else change
+            own_summary = w["summary"] if w.get("summary") is not None else summary
+            if own_change is not None:
+                new["_change"] = own_change
+            if own_summary is not None:
+                new["_summary"] = own_summary
             before = (doc or {}).get("_content")
             if "content" in w:
                 content = _content(w["content"])
@@ -708,13 +722,20 @@ class Items:
                 "sections": summary.get("sections", 0) if embedded else 0}
 
     def history(self, path: str, *, limit: int = 100, before: Optional[int] = None,
-                person: str = OWNER) -> dict:
+                person: str = OWNER, fields: Optional[list] = None) -> dict:
         """Each version, newest first: its number, when, by whom, what kind
-        of change and its summary; a delete is a version too."""
+        of change and its summary; a delete is a version too. With
+        `fields`, each version also carries those top-level fields of its
+        data as they stood then (`data`), so a record's events are read
+        from its history in one call."""
         paths.check(path)
         if not 0 < limit <= HISTORY_LIMIT_MAX:
             raise DocumentError(f"limit is 1 to {HISTORY_LIMIT_MAX}")
-        if not self.access(person, path).data:
+        if fields is not None and (not isinstance(fields, list) or not all(
+                isinstance(f, str) and f and not f.startswith("_") for f in fields)):
+            raise DocumentError("fields is a list of data field names")
+        access = self.access(person, path)
+        if not access.data:
             return {"path": path, "versions": [], "before": None}
         out = []
         for v in self._versions(path):
@@ -725,6 +746,9 @@ class Items:
                 entry = {"version": doc.get("_version"), "lsn": v.lsn, "at": doc.get("_at"),
                          "by": doc.get("_by"), "agent": doc.get("_agent"), "model": doc.get("_model"),
                          "change": doc.get("_change"), "summary": doc.get("_summary"), "op": "put"}
+                if fields is not None:
+                    shown = {f: doc[f] for f in fields if f in doc}
+                    entry["data"] = without_hidden(shown, access) if access.hidden else shown
             if before is not None and (entry.get("version") or 0) >= before:
                 continue
             out.append(entry)
@@ -889,34 +913,209 @@ class Items:
     def count(self, body: dict) -> dict:
         """How many items match, each counted once; with `group_by`, how
         many have each value of that field (an item counted once per
-        distinct value it holds). Of the items with content the reader may
+        distinct value it holds; values `where` holds equal, text by its
+        fold, are one group). Of the items with content the reader may
         read, `embedded` have their vectors for their current content and
-        `waiting` do not yet."""
+        `waiting` do not yet.
+
+        For the owner (every right, nothing hidden) the answer comes from
+        the general index's postings and the resident key column, never
+        decoding an item but the few a condition the index cannot answer
+        exactly must be checked against (`_count_by_index`). Any other
+        reader's count reads each matching item, so its rights and hidden
+        fields apply to every one (`_count_each`)."""
         person = self._reader(body)
         preds, prefix, parent, types = self._preds(body)
         group_by = body.get("group_by")
         if group_by is not None and (not isinstance(group_by, str) or not group_by):
             raise DocumentError("group_by is a field")
+        with self.store.reading() as lsn:
+            if person == OWNER:
+                user = preds[:len(preds) - (parent is not None) - (types is not None)]
+                out = self._count_by_index(user, prefix, parent, types, group_by, lsn)
+                if out is not None:
+                    out["lsn"] = lsn
+                    return out
+            return self._count_each(preds, prefix, parent, types, group_by, person, lsn)
+
+    def _count_each(self, preds, prefix, parent, types, group_by, person, lsn) -> dict:
+        """The count read item by item, with the reader's rights on each."""
         total = embedded = waiting = 0
         groups: dict[str, list] = {}
-        with self.store.reading() as lsn:
-            for doc in self._select(preds, prefix, parent, types, lsn, person=person):
-                total += 1
-                access = self.access(person, doc["_key"])
-                if doc.get("_content") is not None and access.content:
-                    if self.vectors is not None and self.vectors.item_embedded(doc["_ord"]):
-                        embedded += 1
-                    else:
-                        waiting += 1
-                if group_by is not None and access.sees_field(group_by):
-                    values = {encoding.canonical(v): v for p, v in kinds.flatten(doc) if p == group_by}
-                    for enc, v in values.items():
-                        groups.setdefault(enc.decode(), [v, 0])[1] += 1
+        for doc in self._select(preds, prefix, parent, types, lsn, person=person):
+            total += 1
+            access = self.access(person, doc["_key"])
+            if doc.get("_content") is not None and access.content:
+                if self.vectors is not None and self.vectors.item_embedded(doc["_ord"]):
+                    embedded += 1
+                else:
+                    waiting += 1
+            if group_by is not None and access.sees_field(group_by):
+                _add_groups(groups, doc, group_by)
         out = {"items": total, "embedded": embedded, "waiting": waiting, "lsn": lsn}
         if group_by is not None:
-            out["groups"] = sorted(({"value": v, "items": n} for v, n in groups.values()),
-                                   key=lambda g: (-g["items"], json.dumps(g["value"], sort_keys=True)))
+            out["groups"] = _ordered_groups(groups.values())
         return out
+
+    def _count_by_index(self, preds: list[Predicate], prefix: str, parent: Optional[str],
+                        types: Optional[list[str]], group_by: Optional[str], lsn: int) -> Optional[dict]:
+        """The owner's count from the index alone: each condition's posting
+        set (a `!=` or `exists: false` as what its opposite leaves), the
+        item's place and type checked exactly from its path in the resident
+        key column, `embedded` from the vector index's own state. Only items
+        meeting a condition the index answers inexactly (a value cut to the
+        index's bound, a date) are read to check it. None when the index
+        cannot narrow at all."""
+        docs = self.docs
+        item_kind = [kinds.ITEM]
+        sets: list[set[int]] = []
+        minus: list[set[int]] = []
+        check: list[Predicate] = []
+        for p in preds:
+            if p.op == "!=" or (p.op == "exists" and p.value is False):
+                opposite = Predicate(p.path, "=", p.value) if p.op == "!=" else Predicate(p.path, "exists", True)
+                found = docs.answer(opposite, item_kind)
+                if found is not None and found[1]:
+                    minus.append(found[0])
+                else:
+                    check.append(p)
+                continue
+            found = docs.answer(p, item_kind)
+            if found is None:
+                check.append(p)
+                continue
+            sets.append(found[0])
+            if not found[1]:
+                check.append(p)
+        # Where the items are: the index's own path fields narrow (they are
+        # folded, so every path is checked exactly below).
+        place = [Predicate("_kind", "=", kinds.ITEM)]
+        if prefix != "/":
+            place.append(Predicate("_ancestors[]", "=", prefix[:-1]))
+        if parent is not None:
+            place.append(Predicate("_parent", "=", parent))
+        if types is not None:
+            place.append(Predicate("_type", "in", types))
+        for p in place:
+            found = docs.answer(p, item_kind)
+            if found is not None:
+                sets.append(found[0])
+        if not sets:
+            return None
+        sets.sort(key=len)
+        found = set(sets[0])
+        for other in sets[1:]:
+            if not found:
+                break
+            found &= other
+        for other in minus:
+            found -= other
+        if prefix == "/" and parent is None and types is None:
+            matched = found          # every item, by the exact `_kind` posting: nothing to check
+        else:
+            matched = self._placed(found, prefix, parent, types)
+        held: dict[int, dict] = {}
+        if check:
+            kept = set()
+            for o in matched:
+                doc = docs.by_ordinal(o, lsn)
+                if doc is not None and all(p.matches(doc, False) for p in check):
+                    kept.add(o)
+                    held[o] = doc
+            matched = kept
+        out: dict = {"items": len(matched)}
+        content = docs.answer(Predicate("_content.sha256", "exists"), item_kind)
+        with_content = matched & content[0] if content is not None else set()
+        embedded = 0
+        if self.vectors is not None and with_content:
+            embedded = sum(1 for o in with_content if self.vectors.item_embedded(o))
+        out["embedded"], out["waiting"] = embedded, len(with_content) - embedded
+        if group_by is not None:
+            out["groups"] = self._groups_by_index(group_by, matched, held, lsn)
+        return out
+
+    def _placed(self, found: set[int], prefix: str, parent: Optional[str],
+                types: Optional[list[str]]) -> set[int]:
+        """Of `found`, the items under `prefix`, with `parent` and of
+        `types`, checked exactly on the paths in the resident key column
+        (bytes, as `paths.parent` and `paths.type_of` read them)."""
+        wanted_prefix = prefix.encode()
+        parent_b = None if parent is None else (b"" if parent == "/" else parent.encode())
+        type_set = None if types is None else set(types)
+        key_of = self.docs.columns.key
+        out: set[int] = set()
+        for o in found:
+            key = key_of(o)
+            if key is None or not key.startswith(wanted_prefix):
+                continue
+            if parent_b is not None or type_set is not None:
+                cut = key.rfind(b"/")
+                if parent_b is not None and key[:cut] != parent_b:
+                    continue
+                if type_set is not None:
+                    stem, dot, suffix = key[cut + 1:].rpartition(b".")
+                    word = suffix.decode()
+                    kind = word.lower() if dot and stem and word and len(word) <= paths.TYPE_MAX \
+                        else paths.FOLDER
+                    if kind not in type_set:
+                        continue
+            out.add(o)
+        return out
+
+    def _groups_by_index(self, field: str, matched: set[int], held: dict[int, dict], lsn: int) -> list[dict]:
+        """`group_by` from the field's index keys: each key's postings
+        within the matching items. A number, bool or null is read back from
+        its key; text is folded in the index, so one item of its group is
+        read to show the value as written, and a key cut to the index's
+        bound is split by reading its items."""
+        docs = self.docs
+        if not matched:
+            return []
+        groups: dict[str, list] = {}
+        fid = docs.fields.get(field)
+        if fid is None or not kinds.is_indexed(kinds.OPEN, field):
+            if fid is None and not docs.fields_full and kinds.is_indexed(kinds.OPEN, field):
+                return []                       # nobody has ever had this field
+            for o in sorted(matched):
+                _add_groups(groups, held.get(o) or docs.by_ordinal(o, lsn) or {}, field)
+            return _ordered_groups(groups.values())
+
+        def read(o: int) -> dict:
+            if o not in held:
+                held[o] = docs.by_ordinal(o, lsn) or {}
+            return held[o]
+
+        for key, ords in docs.by_key(FID.pack(fid), FID.pack(fid + 1)).items():
+            ords = ords & matched
+            if not ords:
+                continue
+            tag, payload = key[FID.size], key[FID.size + 1:]
+            if tag == encoding.STRING:
+                def same(v) -> bool:
+                    return isinstance(v, str) and encoding.fold_string(v) == payload
+                if encoding.is_cut(payload):
+                    for o in sorted(ords):
+                        _add_groups(groups, read(o), field, same)
+                    continue
+                value = None
+                for o in sorted(ords):
+                    value = next((v for p, v in kinds.flatten(read(o)) if p == field and same(v)), None)
+                    if value is not None:
+                        break
+                if value is None:
+                    continue
+            elif tag == encoding.NUMBER:
+                value = encoding.decode_number(payload)
+                if value.is_integer() and abs(value) < 2 ** 53:
+                    value = int(value)
+            elif tag in (encoding.TRUE, encoding.FALSE):
+                value = tag == encoding.TRUE
+            elif tag == encoding.NULL:
+                value = None
+            else:
+                continue
+            groups.setdefault(_group_key(value), [value, 0])[1] += len(ords)
+        return _ordered_groups(groups.values())
 
     def changes(self, body: dict) -> dict:
         """Every item transaction after the log number `since`, oldest
@@ -1072,13 +1271,23 @@ class Items:
                     matched.setdefault(p, set()).add("graph")
 
             def readable(doc: Optional[dict]) -> bool:
+                """An item found by its content (the content right), or a
+                record found by its own words (the data right)."""
                 if doc is None or doc.get("_kind") != kinds.ITEM or not doc["_key"].startswith(prefix):
                     return False
                 if types is not None and doc.get("_type") not in types:
                     return False
                 if cond is not None and doc["_key"] not in cond:
                     return False
-                return doc.get("_content") is not None and self.access(person, doc["_key"]).content
+                access = self.access(person, doc["_key"])
+                if doc.get("_content") is not None:
+                    return access.content
+                return access.data and doc.get("_type") in lexical_record_types
+
+            def record_words(doc: dict) -> str:
+                """A record's words as this reader may see them."""
+                access = self.access(person, doc["_key"])
+                return lexical_record_text(doc, access.sees_field if access.hidden else None)
 
             def sections_of(path: str) -> list[dict]:
                 c = self.store.get(CONTENT, path.encode(), lsn)
@@ -1099,9 +1308,14 @@ class Items:
                         break
                     if not readable(doc):
                         continue
-                    at = [s["index"] for s in sections_of(doc["_key"])
-                          if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
-                    if at:
+                    if doc.get("_content") is None:
+                        found_in = lexical_phrase_in(phrase, record_words(doc))
+                        at = []
+                    else:
+                        at = [s["index"] for s in sections_of(doc["_key"])
+                              if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
+                        found_in = bool(at)
+                    if found_in:
                         hits.add(doc["_key"])
                         ords[doc["_key"]] = doc.get("_ord", self.docs._ord_from_store(doc["_key"].encode()))
                         where.setdefault(doc["_key"], set()).update(at)
@@ -1116,6 +1330,9 @@ class Items:
                     doc = self.docs.by_ordinal(o, lsn)
                     if not readable(doc):
                         continue
+                    if doc.get("_content") is None and person != OWNER and \
+                            not query_terms & set(lexical_terms(record_words(doc))):
+                        continue                  # found only by a field hidden from this reader
                     path = doc["_key"]
                     ords[path] = o
                     ranked.append(path)
@@ -1251,6 +1468,34 @@ class Items:
     # -- what the engine's health says ------------------------------------------
     def health(self) -> dict:
         return {"last_write_at": self.last_at or None, "rights_paths": len(self.rights.grants)}
+
+
+def _group_key(value: Any) -> str:
+    """Values `where` holds equal are one group: text by its fold, a number
+    by its value (3 and 3.0 alike)."""
+    if isinstance(value, str):
+        return "s" + spoken_words.fold(value)
+    if isinstance(value, bool) or value is None:
+        return "b" + json.dumps(value)
+    if isinstance(value, (int, float)):
+        return "n" + repr(float(value))
+    return "o" + encoding.canonical(value).decode()
+
+
+def _add_groups(groups: dict, doc: dict, field: str, keep=None) -> None:
+    """The distinct values (by `_group_key`) the item holds at `field`, each
+    counting it once."""
+    values: dict[str, Any] = {}
+    for p, v in kinds.flatten(doc):
+        if p == field and (keep is None or keep(v)):
+            values.setdefault(_group_key(v), v)
+    for g, v in values.items():
+        groups.setdefault(g, [v, 0])[1] += 1
+
+
+def _ordered_groups(groups) -> list[dict]:
+    return sorted(({"value": v, "items": n} for v, n in groups),
+                  key=lambda g: (-g["items"], json.dumps(g["value"], sort_keys=True)))
 
 
 def _query_text(value, what: str) -> Optional[str]:

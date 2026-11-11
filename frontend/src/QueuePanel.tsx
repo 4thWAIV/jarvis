@@ -136,7 +136,8 @@ export function QueuePanel() {
   useTick(30000);
   useLayoutEffect(() => { queueLaidOut.set(queueLaidOut.get() + 1); });
 
-  const fromAgents = <InboxMessages workPart={ui.part("workMessages")} generalPart={ui.part("general")} />;
+  const fromAgents = <InboxMessages workPart={ui.part("workMessages")} generalPart={ui.part("general")}
+                                    togglePart={ui.part("hideMessages")} readPart={ui.part("read")} />;
   if (!state.offered) {
     return (
       <div className="right-view queue-view" ref={ui.whole}>

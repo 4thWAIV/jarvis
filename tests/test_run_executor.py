@@ -1079,7 +1079,7 @@ def test_the_default_timeout_is_overridable_by_env(env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_store_failure_inside_spawn_still_fails_the_run(env, monkeypatch):
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
 
@@ -1087,12 +1087,12 @@ async def test_a_store_failure_inside_spawn_still_fails_the_run(env, monkeypatch
 
     def boom(run_id, **fields):
         if "requested_model" in fields:
-            raise sqlite3.OperationalError("database is locked")
+            raise EngineUnavailable("database is locked")
         return real(run_id, **fields)
 
     monkeypatch.setattr(store, "update_run", boom)
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(EngineUnavailable):
         await ex.spawn("do a thing", "proj", str(tmp), "api")
 
     rows = store.list_runs(limit=5)
@@ -1125,16 +1125,16 @@ async def test_a_task_that_cannot_be_created_still_fails_the_run(env, monkeypatc
 async def test_failing_an_undriven_run_never_raises_over_the_original(env, monkeypatch):
     """If the store is the thing that is broken, the recovery write fails too.
     The caller must still see the ORIGINAL exception, not the second one."""
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
 
     def always_boom(run_id, **fields):
-        raise sqlite3.OperationalError("disk I/O error")
+        raise EngineUnavailable("disk I/O error")
 
     monkeypatch.setattr(store, "update_run", always_boom)
 
-    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+    with pytest.raises(EngineUnavailable, match="disk I/O error"):
         await ex.spawn("do a thing", "proj", str(tmp), "api")
 
 

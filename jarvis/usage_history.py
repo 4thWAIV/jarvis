@@ -1,23 +1,25 @@
 """The long-term record of the subscription brains' weekly usage.
 
 usage_store keeps only the latest reading per brain provider. Every reading
-of the seven-day window it takes (`usage_store.record`) is also appended
-here, in JARVIS's database under its own schema version
-(`usage_history_schema`, run_store.migrate). Only the week is kept: Tim's
+of the seven-day window it takes (`usage_store.record`) is also kept here,
+in JARVIS's records: one `usage` document a brain a day (UTC),
+`/usage/<brain>/<date>.usage` (`path_of`). Only the week is kept: Tim's
 word, the five-hour window's history has no value, so its readings are
-never written and migration 2 dropped the ones written before.
+never written.
 
-  usage_readings  every reading as it came: when, provider, account hash,
-                  window, utilization (a percentage, NULL when the reading
-                  did not measure it), resets-at and status. Kept for
-                  RAW_KEEP_SEC.
-  usage_hourly    after that, one row per (provider, account, window, hour):
-                  how many readings and how many measured, the lowest, the
-                  highest and the last percentage, and the last reset time.
-                  Kept for good (four rows an hour, about 35,000 a year).
+  readings  every reading as it came: when, provider, account hash, window,
+            utilization (a percentage, None when the reading did not
+            measure it), resets-at and status. Kept for RAW_KEEP_SEC.
+  hourly    after that, one entry per (window, account, hour): how many
+            readings and how many measured, the lowest, the highest and the
+            last percentage, and the last reset time. Kept for good.
+
+Each entry keeps the column names of the tables it replaced
+(`usage_readings`, `usage_hourly`), so the move (`MAPPINGS`) is plain; an
+hour's figures for readings not yet folded are worked out when read.
 
 The rule is usage_store's: absence is a state. A window not measured is
-NULL, never 0, and an hour with no measured reading has NULL percentages.
+None, never 0, and an hour with no measured reading has None percentages.
 The page joins the measured points into one line and passes over the rest;
 nothing unmeasured is drawn as 0.
 
@@ -28,17 +30,16 @@ the way the brain's box draws this one.
 
 The account is brain_accounts' keyed hash of the signed-in subscription
 (`brain_accounts.history_ref`), the same reference the Network view shows;
-NULL while it is not known (no team key, or the sign-in not read yet).
+None while it is not known (no team key, or the sign-in not read yet).
 """
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
-from jarvis import data_paths, run_store
+from jarvis import data_paths, knowledge_move as move, records
 
 log = logging.getLogger("jarvis.usage_history")
 
@@ -62,96 +63,122 @@ WEEK_SEC = 7 * 24 * HOUR_SEC
 SAME_RESET_SEC = 60.0
 RESOLUTIONS = ("auto", "raw", "hour")
 
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS usage_readings (
-        id          INTEGER PRIMARY KEY,
-        at          REAL NOT NULL,
-        provider    TEXT NOT NULL,
-        account     TEXT,
-        window      TEXT NOT NULL,
-        utilization REAL,
-        resets_at   REAL,
-        status      TEXT NOT NULL DEFAULT ''
-    );
-    CREATE INDEX IF NOT EXISTS usage_readings_by_time
-        ON usage_readings (provider, window, at);
-    CREATE TABLE IF NOT EXISTS usage_hourly (
-        hour        REAL NOT NULL,
-        provider    TEXT NOT NULL,
-        account     TEXT NOT NULL DEFAULT '',
-        window      TEXT NOT NULL,
-        samples     INTEGER NOT NULL,
-        measured    INTEGER NOT NULL,
-        low         REAL,
-        high        REAL,
-        last        REAL,
-        last_at     REAL NOT NULL,
-        resets_at   REAL,
-        PRIMARY KEY (provider, window, account, hour)
-    );
-"""
+ROOT = "/usage"
+TYPE = "usage"
+READING_COLUMNS = ("id", "at", "provider", "account", "window", "utilization", "resets_at", "status")
+HOUR_COLUMNS = ("hour", "provider", "account", "window", "samples", "measured", "low", "high",
+                "last", "last_at", "resets_at")
 
-# Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {
-    1: _SCHEMA,
-    # Only the week is kept (Tim, 2026-11-10): the five-hour window's
-    # readings, and any other window's, are dropped.
-    2: """
-        DELETE FROM usage_readings WHERE window <> 'seven_day';
-        DELETE FROM usage_hourly WHERE window <> 'seven_day';
-    """,
-}
-
-_migrated: set[str] = set()
-_migrating = threading.Lock()
+_backfilled: set[str] = set()
+_backfilling = threading.Lock()
 _last_compact: dict[str, float] = {}
 
 
-def _connect() -> sqlite3.Connection:
-    conn = run_store._connect(data_paths.db_path())
-    path = conn.execute("PRAGMA database_list").fetchone()["file"]
-    if path not in _migrated:
-        with _migrating:
-            if path not in _migrated:
-                row = None
-                try:
-                    row = conn.execute("SELECT version FROM usage_history_schema").fetchone()
-                except sqlite3.OperationalError:
-                    pass
-                run_store.migrate(conn, "usage_history_schema", _MIGRATIONS, "usage history")
-                if row is None:
-                    _backfill(conn)
-                conn.commit()
-                _migrated.add(path)
-    return conn
+def day_of(at: Any) -> str:
+    """The UTC date a reading (or an hour) belongs to, YYYY-MM-DD."""
+    try:
+        return time.strftime("%Y-%m-%d", time.gmtime(float(at)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "0000-00-00"
 
 
-def _backfill(conn: sqlite3.Connection) -> None:
-    """Once, as the tables are made: the seven-day readings usage_store
-    already holds, its latest and its burn-down history."""
+def path_of(provider: str, day: str) -> str:
+    return f"{ROOT}/{records.segment(provider)}/{day}.{TYPE}"
+
+
+def _day_doc(provider: Any, day: str, readings: list, hourly: list) -> dict:
+    return {"provider": move.cell(provider), "date": day, "readings": readings, "hourly": hourly}
+
+
+# ── the move: the two tables as one document a brain a day ─────────────────
+
+class _UsageMapping:
+    name = "usage"
+    tables = ("usage_readings", "usage_hourly")
+    under = (ROOT,)
+    history = False
+
+    def documents(self, conn) -> Iterable[move.Doc]:
+        days: dict[tuple, dict] = {}
+        for table, kind, when in (("usage_readings", "readings", "at"), ("usage_hourly", "hourly", "hour")):
+            for row in move.table_rows(conn, table):
+                provider = row.cells["provider"]
+                key = (move.storage_class(provider), str(provider) if not isinstance(provider, bytes)
+                       else provider.hex(), day_of(row.cells[when]))
+                doc = days.setdefault(key, _day_doc(provider, key[2], [], []))
+                doc[kind].append(move.row_data(row))
+        for (_, name, day), data in days.items():
+            yield move.Doc(path_of(name, day), data)
+
+    def rows(self, docs: Iterable[move.Doc]) -> dict[str, list[move.Row]]:
+        readings, hourly = [], []
+        for doc in docs:
+            readings += [move.data_row(r, READING_COLUMNS) for r in doc.data.get("readings") or ()]
+            hourly += [move.data_row(r, HOUR_COLUMNS) for r in doc.data.get("hourly") or ()]
+        return {"usage_readings": move.numbered(readings, "id"), "usage_hourly": move.numbered(hourly)}
+
+
+MAPPINGS = [_UsageMapping()]
+
+
+def _backfill() -> None:
+    """Once, into an engine holding no usage history yet: the seven-day
+    readings usage_store already holds, its latest and its burn-down
+    history."""
+    key = records.engine_key()
+    if key in _backfilled:
+        return
+    with _backfilling:
+        if key in _backfilled:
+            return
+        if next(records.scan(ROOT, limit=1), None) is None:
+            _write(_stored_readings())
+        _backfilled.add(key)
+
+
+def _stored_readings() -> list[dict]:
     from jarvis import usage_store
+    rows: list[dict] = []
     for service in _stored_services():
         stored = usage_store.latest(service)
         if not stored:
             continue
-        rows = []
         week_resets = usage_store._epoch(stored.get("week_resets_at"))
         for at, used in stored.get("week_history") or []:
             when = usage_store._epoch(at)
             if when is not None:
-                rows.append((when, service, None, "seven_day",
-                             usage_store._stored_percent(used), week_resets, ""))
+                rows.append(_reading(when, service, None, WINDOW, usage_store._stored_percent(used),
+                                     week_resets, ""))
         for key, raw in (stored.get("windows") or {}).items():
             if key != WINDOW or not isinstance(raw, dict):
                 continue
             when = usage_store._epoch(raw.get("observed_at"))
-            if when is None or any(r[0] == when and r[3] == key for r in rows):
+            if when is None or any(r["at"] == when and r["provider"] == service for r in rows):
                 continue
-            rows.append((when, service, None, key, usage_store._stored_percent(raw.get("utilization")),
-                         usage_store._epoch(raw.get("resets_at")), usage_store._text(raw.get("status"))))
-        conn.executemany(
-            "INSERT INTO usage_readings (at, provider, account, window, utilization, resets_at, status)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            rows.append(_reading(when, service, None, key, usage_store._stored_percent(raw.get("utilization")),
+                                 usage_store._epoch(raw.get("resets_at")), usage_store._text(raw.get("status"))))
+    return rows
+
+
+def _reading(at, provider, account, window, utilization, resets_at, status) -> dict:
+    """One reading as its document keeps it (its id is given when the
+    record is written back as a table, `numbered`)."""
+    return {"at": float(at), "provider": provider, "account": account, "window": window,
+            "utilization": utilization, "resets_at": resets_at, "status": status}
+
+
+def _write(readings: list[dict]) -> None:
+    """Add readings to their days' documents, each day in one write."""
+    by_day: dict[str, list[dict]] = {}
+    for r in readings:
+        by_day.setdefault(path_of(r["provider"], day_of(r["at"])), []).append(r)
+    for path, new in by_day.items():
+        def add(data: Optional[dict], new=new) -> dict:
+            data = data or _day_doc(new[0]["provider"], day_of(new[0]["at"]), [], [])
+            data["readings"] = list(data.get("readings") or []) + new
+            return data
+        records.update(path, add, change="reading",
+                       summary=f"{len(new)} usage reading{'s' if len(new) != 1 else ''}")
 
 
 def _stored_services() -> list[str]:
@@ -164,6 +191,8 @@ def _stored_services() -> list[str]:
     return found
 
 
+
+
 # ── writing ────────────────────────────────────────────────────────────────
 
 def append(service: str, windows: dict[str, dict], *, account: Optional[str] = None,
@@ -171,29 +200,23 @@ def append(service: str, windows: dict[str, dict], *, account: Optional[str] = N
     """Append one observation's seven-day window (usage_store's normalised
     shape: utilization as a percentage or None, resets_at, status,
     observed_at); any other window it names is not kept. Returns how many
-    rows went in. Never raises: losing a history row must not lose the
-    reading."""
-    rows = [(float(w.get("observed_at") or now or time.time()), service, account, key,
-             w.get("utilization"), w.get("resets_at"), str(w.get("status") or ""))
+    readings went in. Never raises: losing a history reading must not lose
+    the reading."""
+    rows = [_reading(float(w.get("observed_at") or now or time.time()), service, account, key,
+                     w.get("utilization"), w.get("resets_at"), str(w.get("status") or ""))
             for key, w in windows.items() if key == WINDOW and isinstance(w, dict)]
     if not rows:
         return 0
     try:
-        conn = _connect()
-        try:
-            with conn:
-                conn.executemany(
-                    "INSERT INTO usage_readings (at, provider, account, window, utilization, resets_at,"
-                    " status) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
-            at = time.time() if now is None else float(now)
-            path = str(data_paths.db_path())
-            if at - _last_compact.get(path, 0.0) >= COMPACT_EVERY_SEC:
-                _last_compact[path] = at
-                _compact(conn, at)
-        finally:
-            conn.close()
-    except (sqlite3.Error, OSError, RuntimeError) as e:
-        log.warning(f"usage_history: could not keep the reading ({e})")
+        _backfill()
+        _write(rows)
+        at = time.time() if now is None else float(now)
+        key = records.engine_key()
+        if at - _last_compact.get(key, 0.0) >= COMPACT_EVERY_SEC:
+            _last_compact[key] = at
+            _compact(at)
+    except Exception as e:
+        log.warning(f"usage_history: could not keep the reading ({type(e).__name__}: {e})")
         return 0
     return len(rows)
 
@@ -202,33 +225,49 @@ def _hour(at: float) -> float:
     return float(int(at // HOUR_SEC) * HOUR_SEC)
 
 
-def _compact(conn: sqlite3.Connection, now: float) -> int:
+def _compact(now: float) -> int:
     """Fold every reading older than RAW_KEEP_SEC (whole hours only) into its
-    hour's summary and drop it, in one transaction. Returns readings folded."""
+    hour's summary and drop it, each day in one write. Returns readings
+    folded."""
     cutoff = _hour(now - RAW_KEEP_SEC)
-    with conn:
-        old = conn.execute(
-            "SELECT at, provider, account, window, utilization, resets_at FROM usage_readings"
-            " WHERE at < ? ORDER BY at, id", (cutoff,)).fetchall()
-        if not old:
-            return 0
-        groups: dict[tuple, list] = {}
-        for r in old:
-            groups.setdefault((r["provider"], r["window"], r["account"] or "", _hour(r["at"])), []).append(r)
-        for (provider, window, account, hour), rows in groups.items():
-            have = conn.execute(
-                "SELECT * FROM usage_hourly WHERE provider = ? AND window = ? AND account = ? AND hour = ?",
-                (provider, window, account, hour)).fetchone()
-            summary = _summarise(rows, have)
-            conn.execute(
-                "INSERT OR REPLACE INTO usage_hourly (hour, provider, account, window, samples, measured,"
-                " low, high, last, last_at, resets_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (hour, provider, account, window, *summary))
-        conn.execute("DELETE FROM usage_readings WHERE at < ?", (cutoff,))
-    return len(old)
+    folded = 0
+    for rec in records.scan(ROOT, types=[TYPE], where=[["date", "<=", day_of(cutoff)]]):
+        if not any(r.get("at", cutoff) < cutoff for r in rec.data.get("readings") or ()):
+            continue
+        moved = [0]
+
+        def fold(data: Optional[dict]) -> Optional[dict]:
+            if data is None:
+                return None
+            old = [r for r in data.get("readings") or () if r["at"] < cutoff]
+            if not old:
+                return None
+            moved[0] = len(old)
+            hourly = list(data.get("hourly") or [])
+            groups: dict[tuple, list] = {}
+            for r in sorted(old, key=lambda r: (r["at"], r.get("id") or 0)):
+                groups.setdefault((r["window"], r.get("account") or "", _hour(r["at"])), []).append(r)
+            for (window, account, hour), rows in groups.items():
+                at = next((i for i, h in enumerate(hourly) if (h["window"], h["account"], h["hour"])
+                           == (window, account, hour)), None)
+                have = hourly[at] if at is not None else None
+                samples, measured, low, high, last, last_at, resets_at = _summarise(rows, have)
+                entry = {**(have or {}), "hour": hour, "provider": rows[0]["provider"], "account": account,
+                         "window": window, "samples": samples, "measured": measured, "low": low,
+                         "high": high, "last": last, "last_at": last_at, "resets_at": resets_at}
+                if at is None:
+                    hourly.append(entry)
+                else:
+                    hourly[at] = entry
+            data["readings"] = [r for r in data["readings"] if r["at"] >= cutoff]
+            data["hourly"] = hourly
+            return data
+        if records.update(rec.path, fold, change="compact", summary="readings folded into hours") is not None:
+            folded += moved[0]
+    return folded
 
 
-def _summarise(rows: list, have: Optional[sqlite3.Row]) -> tuple:
+def _summarise(rows: list, have: Optional[dict]) -> tuple:
     """(samples, measured, low, high, last, last_at, resets_at) of `rows`,
     merged into the hour's summary already kept (`have`)."""
     samples = len(rows) + (have["samples"] if have else 0)
@@ -246,11 +285,8 @@ def _summarise(rows: list, have: Optional[sqlite3.Row]) -> tuple:
 
 def compact(now: Optional[float] = None) -> int:
     """Fold old readings into hours now (the append does it once an hour)."""
-    conn = _connect()
-    try:
-        return _compact(conn, time.time() if now is None else float(now))
-    finally:
-        conn.close()
+    _backfill()
+    return _compact(time.time() if now is None else float(now))
 
 
 # ── reading ────────────────────────────────────────────────────────────────
@@ -271,31 +307,43 @@ def _number(raw: Any, what: str) -> Optional[float]:
     return value
 
 
-def _raw_points(conn, provider: str, since: float, until: float) -> list[dict]:
-    rows = conn.execute(
-        "SELECT at, account, utilization, resets_at, status FROM usage_readings"
-        " WHERE provider = ? AND window = ? AND at >= ? AND at <= ? ORDER BY at, id",
-        (provider, WINDOW, since, until)).fetchall()
+
+
+def _days(provider: str, since: float, until: float) -> list[dict]:
+    """The brain's day documents from the day holding `since` to the day
+    holding `until`."""
+    where = [["date", ">=", day_of(since)], ["date", "<=", day_of(until)]]
+    return [r.data for r in records.scan(f"{ROOT}/{records.segment(provider)}", types=[TYPE], where=where)
+            if r.data.get("provider") == provider]
+
+
+def _readings(days: list[dict], since: float, until: float) -> list[dict]:
+    """The seven-day readings from `since` to `until`, in the order they
+    were taken."""
+    found = [(r["at"], r.get("id") if isinstance(r.get("id"), int) else float("inf"), n, r)
+             for d in days for n, r in enumerate(d.get("readings") or ())
+             if r.get("window") == WINDOW and since <= r["at"] <= until]
+    return [r for *_, r in sorted(found, key=lambda x: x[:3])]
+
+
+def _raw_points(days: list[dict], since: float, until: float) -> list[dict]:
     return [{"at": r["at"], "used": r["utilization"], "low": r["utilization"], "high": r["utilization"],
              "resets_at": r["resets_at"], "status": r["status"], "account": r["account"], "samples": 1}
-            for r in rows]
+            for r in _readings(days, since, until)]
 
 
-def _hour_points(conn, provider: str, since: float, until: float,
+def _hour_points(days: list[dict], since: float, until: float,
                  *, readings: bool = True) -> list[dict]:
     """By the hour: the kept summaries, and (with `readings`) the readings
     not yet folded, summarised the same way. An hour's `used` is its highest
     reading: the least left in it."""
     hours: dict[tuple, dict] = {}
-    for r in conn.execute(
-            "SELECT * FROM usage_hourly WHERE provider = ? AND window = ? AND hour >= ? AND hour <= ?",
-            (provider, WINDOW, _hour(since), until)).fetchall():
-        hours[(r["hour"], r["account"])] = dict(r)
+    for d in days:
+        for h in d.get("hourly") or ():
+            if h.get("window") == WINDOW and _hour(since) <= h["hour"] <= until:
+                hours[(h["hour"], h["account"])] = dict(h)
     raw: dict[tuple, list] = {}
-    for r in conn.execute(
-            "SELECT at, account, utilization, resets_at FROM usage_readings"
-            " WHERE provider = ? AND window = ? AND at >= ? AND at <= ? ORDER BY at, id",
-            (provider, WINDOW, _hour(since), until)).fetchall() if readings else []:
+    for r in _readings(days, _hour(since), until) if readings else []:
         raw.setdefault((_hour(r["at"]), r["account"] or ""), []).append(r)
     for key, rows in raw.items():
         have = hours.get(key)
@@ -373,17 +421,15 @@ def read(provider: Optional[str] = None, since: Any = None, until: Any = None,
     if not name:
         from jarvis import usage_store
         name = usage_store.PROVIDER
-    conn = _connect()
-    try:
-        if how == "raw":
-            # Readings already folded into hours (older than two weeks) are
-            # read by the hour.
-            folded = _hour_points(conn, name, start, end, readings=False)
-            points = [p for p in folded if p["at"] >= start] + _raw_points(conn, name, start, end)
-        else:
-            points = _hour_points(conn, name, start, end)
-    finally:
-        conn.close()
+    _backfill()
+    days = _days(name, _hour(start), end)
+    if how == "raw":
+        # Readings already folded into hours (older than two weeks) are
+        # read by the hour.
+        folded = _hour_points(days, start, end, readings=False)
+        points = [p for p in folded if p["at"] >= start] + _raw_points(days, start, end)
+    else:
+        points = _hour_points(days, start, end)
     return {"provider": name, "window": WINDOW, "week_sec": WEEK_SEC,
             "since": start, "until": end, "resolution": how, "raw_keep_sec": RAW_KEEP_SEC,
             "latest": _latest(name), "weeks": weeks_of(points)}

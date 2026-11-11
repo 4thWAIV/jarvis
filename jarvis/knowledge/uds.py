@@ -116,6 +116,7 @@ class Version:
     model: Optional[str] = None
     change: Optional[str] = None
     summary: Optional[str] = None
+    data: Optional[Mapping[str, Any]] = None   # the fields asked for, as they stood then
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,22 @@ class Transaction:
 
     def delete(self, path: Path, *, expect_version: Optional[int] = None) -> "Transaction":
         return self._conditions({"op": "delete", "path": path}, expect_version, False)
+
+    def check(self, path: Path, *, expect_version: Optional[int] = None,
+              absent: bool = False) -> "Transaction":
+        """A condition alone: the transaction lands only while `path` is at
+        `expect_version` (0: not an item), or not taken; nothing written."""
+        return self._conditions({"op": "check", "path": path}, expect_version, absent)
+
+    def tag(self, change: Optional[str] = None, summary: Optional[str] = None) -> "Transaction":
+        """The change kind and summary of the write just added, in place of
+        the transaction's (one item's own event among several)."""
+        w = self.writes[-1]
+        if change is not None:
+            w["change"] = change
+        if summary is not None:
+            w["summary"] = summary
+        return self
 
     def link(self, source: Path, kind: str, target: Path, *, model: str, weight: float = 1.0) -> "Transaction":
         self.writes.append({"op": "link", "from": source, "kind": kind, "to": target,
@@ -314,8 +331,14 @@ class EngineUDS:
         at = when.timestamp() if isinstance(when, datetime) else float(when)
         return self._get({"caller": caller.by(), "path": path, "streams": _streams(streams), "at": at})
 
-    def history(self, caller: Caller, path: Path, limit: int = 1000) -> list[Version]:
-        found = self._call("history", {"caller": caller.by(), "path": path, "limit": limit})[1]
+    def history(self, caller: Caller, path: Path, limit: int = 1000,
+                fields: Optional[list[str]] = None) -> list[Version]:
+        """Each version, newest first; with `fields`, each carries those
+        data fields as they stood then."""
+        body: dict = {"caller": caller.by(), "path": path, "limit": limit}
+        if fields is not None:
+            body["fields"] = list(fields)
+        found = self._call("history", body)[1]
         return [Version(**{k: v.get(k) for k in Version.__dataclass_fields__}) for v in found["versions"]]
 
     def diff(self, caller: Caller, path: Path, a: int, b: Optional[int] = None) -> dict:

@@ -95,24 +95,11 @@ def test_messages_are_read_by_work_item_and_the_rest_newest_first(store):
     assert cl.messages_where(source=(cl.Source.SIGNED, "4")) == [g1.id]
 
 
-def test_items_on_record_before_the_migration_are_kept_and_are_no_message(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    from jarvis import data_paths, run_store
-    importlib.reload(data_paths)
-    importlib.reload(run_store)
-    run_store.init_db()
-    conn = run_store._connect()
-    conn.executescript(cl._SCHEMA)
-    for step in (2, 3):
-        conn.executescript(cl._MIGRATIONS[step])
-    conn.execute("CREATE TABLE conversation_schema (version INTEGER NOT NULL)")
-    conn.execute("INSERT INTO conversation_schema VALUES (3)")
-    conn.execute("INSERT INTO conversation_items (at, kind, text, counterpart_kind, "
-                 "counterpart_ref, source_kind, source_id) VALUES "
-                 "(1, 'message_in', 'Old board', 'agent', 'h', 'needs_board', 'p:1')")
-    conn.commit()
-    conn.close()
-    cl._migrated.clear()
+def test_items_on_record_before_the_migration_are_kept_and_are_no_message(tmp_path):
+    from tests.test_message_records import moved
+    moved(tmp_path, {"conversation_items": [dict(
+        id=1, at=1.0, kind="message_in", text="Old board", counterpart_kind="agent",
+        counterpart_ref="h", source_kind="needs_board", source_id="p:1", detail="{}")]})
     [old] = cl.after(0)
     assert old.text == "Old board" and old.state is None and not old.is_message
     assert cl.general() == [] and cl.work_threads() == []
@@ -373,9 +360,10 @@ def test_heard_in_full_a_message_is_read(wired, monkeypatch):
     async def heard(utt, timeout=None):
         return True
     monkeypatch.setattr(server, "speech", SimpleNamespace(wait_for=heard))
-    asyncio.run(server._seen_when_heard([], SimpleNamespace(chunks=[]), m["id"]))
+    reads = [(server._MESSAGE_READ, str(m["id"]), None)]
+    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[])))
     assert cl.get(m["id"]).state == "new", "nothing said is nothing heard"
-    asyncio.run(server._seen_when_heard([], SimpleNamespace(chunks=[1]), m["id"]))
+    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[1])))
     assert cl.get(m["id"]).state == "read"
 
 

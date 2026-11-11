@@ -13,8 +13,9 @@ import time
 
 import pytest
 
-from jarvis import (attention_store, package_inbox, run_store, wait_links,
+from jarvis import (attention_store, package_inbox, records, wait_links,
                     workflow_store, work_store)
+from tests import work_records
 from tests.decision_fixtures import DECISION_KINDS, asker_of, on_record
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_package_inbox import (BROWSER, deck_zip, marks,  # noqa: F401
@@ -51,11 +52,9 @@ def _piece(item_id):
     return {p.key: p for p in work_store.get(item_id).pieces}
 
 
-def _age(sql: str, *args) -> None:
-    """Move a recorded time back, as if it had happened long ago."""
-    with run_store._connect() as conn:
-        conn.execute(sql, args)
-        conn.commit()
+def _age_open(wid: str, at: float) -> None:
+    """Move a workflow's open waits back, as if opened long ago."""
+    work_records.workflow(wid, lambda d: [o.update(opened_at=at) for o in d["open"]])
 
 
 # -- links ----------------------------------------------------------------------
@@ -250,16 +249,16 @@ def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monke
     wid = _waiting_workflow("merge")
     # Recorded as it was before links ended anything: his answer, and both waits left open.
     with monkeypatch.context() as m:
-        m.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
+        m.setattr(wait_links, "settle", lambda unit, found, now: wait_links.Settled())
         m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
         wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
                           json={"answer": "yes"})
         workflow_store.record(workflow_store.WorkflowEvent(
             wid, "decision_made", None, "Answered.", {"key": "merge", "answer": "yes",
                                                        "by": "user"}))
-    with run_store._connect() as conn:
-        assert conn.execute("SELECT state FROM work_pieces WHERE key='land'").fetchone()[0] \
-            == "waiting_on_tim"
+    [land] = [p for p in records.get(work_store.path_of(item.id)).data["pieces"]
+              if p["key"] == "land"]
+    assert land["state"] == "waiting_on_tim"
     moved = wait_links.sweep()
     assert moved.work == {item.id} and moved.workflows == {wid}
     assert _piece(item.id)["land"].state == "ready"
@@ -272,7 +271,7 @@ def test_the_work_view_s_tick_sweeps_the_record(wired, item, monkeypatch):
     work_view.SWEEP_EVERY_SEC."""
     _waiting_piece(wired, item)
     with monkeypatch.context() as m:
-        m.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
+        m.setattr(wait_links, "settle", lambda unit, found, now: wait_links.Settled())
         m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
         wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
                           json={"answer": "yes"})
@@ -303,21 +302,16 @@ def test_an_item_with_no_pieces_waits_on_every_hold_it_names(wired, item):
     assert (got.state, got.reported_state, got.until) == ("ready", "ready", [])
 
 
-def _legacy(sql: str, *args) -> None:
-    """A row as it was recorded before holds were kept."""
-    _age(sql, *args)
-
-
 # -- flags -------------------------------------------------------------------------
 
 def test_a_waiting_piece_with_no_link_is_flagged_after_a_day(wired, item):
     _report(wired, item.id, "piece", "Waiting for his merge approval.", **{
         "key": "land", "who": {"kind": "tim"}})
-    _legacy("UPDATE work_pieces SET state='waiting_on_tim', until='', waiting_since=?",
-            time.time())
+    # As it was recorded before holds were kept.
+    work_records.pieces(item.id, state="waiting_on_tim", until=[], waiting_since=time.time())
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "piece_waiting"]
     assert not b.unlinked
-    _age("UPDATE work_pieces SET waiting_since=?", time.time() - DAY - 60)
+    work_records.pieces(item.id, waiting_since=time.time() - DAY - 60)
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "piece_waiting"]
     assert b.unlinked
     # Rows written past the writers are only ever from before: read at start.
@@ -329,16 +323,16 @@ def test_a_waiting_piece_with_no_link_is_flagged_after_a_day(wired, item):
 
 def test_a_linked_piece_is_never_flagged(wired, item):
     _waiting_piece(wired, item)
-    _age("UPDATE work_pieces SET waiting_since=?", time.time() - DAY - 60)
+    work_records.pieces(item.id, waiting_since=time.time() - DAY - 60)
     assert not any(b.unlinked for b in work_store.get(item.id).blockers)
 
 
 def test_an_item_waiting_with_no_decision_is_a_blocker_flagged_after_a_day(wired, item):
-    _legacy("UPDATE work_items SET state='waiting_on_tim', until='', waiting_since=?",
-            time.time())
+    # As it was recorded before holds were kept.
+    work_records.item(item.id, state="waiting_on_tim", until=[], waiting_since=time.time())
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "item_waiting"]
     assert not b.unlinked
-    _age("UPDATE work_items SET waiting_since=?", time.time() - DAY - 60)
+    work_records.item(item.id, waiting_since=time.time() - DAY - 60)
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "item_waiting"]
     assert b.unlinked
 
@@ -348,7 +342,7 @@ def test_a_workflow_wait_with_no_link_is_flagged_after_a_day(wired):
     workflow_store.record(workflow_store.WorkflowEvent(wid, "wait_started", None, "Waiting.",
                                                        {"key": "ci", "until": "the CI run"}))
     assert not workflow_store.snapshot(wid).open[0].unlinked
-    _age("UPDATE workflow_open SET opened_at=?", time.time() - DAY - 60)
+    _age_open(wid, time.time() - DAY - 60)
     assert workflow_store.snapshot(wid).open[0].unlinked
 
 
@@ -362,8 +356,8 @@ def test_an_answer_nobody_has_started_on_says_who_it_waits_for(wired, item):
     got = work_store.get(item.id)
     assert got.follow_up.asker == "takeover-agent" and not got.follow_up.overdue
     assert not any(b.kind == "no_follow_up" for b in got.blockers)
-    _age("UPDATE work_items SET reported_at=?", time.time() - 40 * 60)
-    _age("UPDATE work_decisions SET answered_at=?", time.time() - 31 * 60)
+    work_records.item(item.id, reported_at=time.time() - 40 * 60)
+    work_records.decision(item.id, "build", answered_at=time.time() - 31 * 60)
     got = work_store.get(item.id)
     [b] = [b for b in got.blockers if b.kind == "no_follow_up"]
     assert (b.key, b.text) == ("build", "takeover-agent")
@@ -381,8 +375,8 @@ def test_no_follow_up_is_a_silent_attention_item_for_the_asker(wired, item):
         _report(wired, item.id, "decision_needed", "Build it?", auth=key, key="build")
         wired.client.post(f"/api/work/{item.id}/decisions/build", headers=BROWSER,
                           json={"answer": "Build it"})
-        _age("UPDATE work_items SET reported_at=?", time.time() - 40 * 60)
-        _age("UPDATE work_decisions SET answered_at=?", time.time() - 31 * 60)
+        work_records.item(item.id, reported_at=time.time() - 40 * 60)
+        work_records.decision(item.id, "build", answered_at=time.time() - 31 * 60)
         wired.server._attend_unfollowed(work_store.listing())
         news = record.get("work_follow_up", item.id)
         assert news.event == "no_follow_up" and news.untrusted["agent"] == "takeover-agent"
