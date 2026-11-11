@@ -258,3 +258,21 @@ registerCommand("knowledge.embedder.install", {
     }
   },
 });
+
+
+export async function setKnowledgeEnabled(enabled: boolean): Promise<void> {
+  await postJson("/api/knowledge/settings", { enabled });
+  knowledgeStatus.refresh();
+  embedder.refresh();
+}
+registerCommand("knowledge.configure", {
+  availability: () => ({ available: true }),
+  async execute({ enabled }) {
+    try {
+      await setKnowledgeEnabled(enabled);
+      return { status: "completed", effects: [] };
+    } catch (e) {
+      return { status: "unavailable", effects: [], reason: (e as Error).message };
+    }
+  },
+});

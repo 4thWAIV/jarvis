@@ -252,8 +252,8 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
     monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
     asyncio.run(server.start_knowledge_engine())
     assert len(made) == 1 and server.knowledge is made[0]
-    # the tools stay off while JARVIS_KNOWLEDGE is
-    assert server.knowledge_calls.runtime is None
+    # Record health remains available even while indexing is disabled.
+    assert server.knowledge_calls.runtime is made[0]
     monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
     assert server.knowledge_calls.runtime is made[0]
 

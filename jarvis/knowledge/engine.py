@@ -103,7 +103,7 @@ class Engine:
         self.lexical = Lexical(self.docs)
         from jarvis.knowledge import embedder
         from jarvis.knowledge.vectors import VectorIndex
-        self.vectors = VectorIndex(self.docs, embedder.current())
+        self.vectors = VectorIndex(self.docs, embedder.current() if self.indexing_enabled() else None)
         self.items.vectors = self.vectors
         self.items.lexical = self.lexical
         from jarvis.knowledge.linker import Linker
@@ -133,6 +133,13 @@ class Engine:
                 "advisor": self.advisor.health() if self.advisor else {},
                 "items": self.items.health() if self.items else {}}
 
+    def indexing_enabled(self) -> bool:
+        from jarvis import knowledge_settings
+        def load():
+            item = self.items.get(knowledge_settings.PATH, streams=["data"])
+            return None if item is None else item.get("data")
+        return knowledge_settings.read(load)["enabled"]
+
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
         is stopped and no maintenance starts; `free` continues it."""
@@ -142,7 +149,7 @@ class Engine:
         if self.store is not None:
             self.store.set_paused(mode == "hold")
         if self.vectors is not None:
-            self.vectors.set_paused(mode == "hold")
+            self.vectors.set_paused(mode == "hold" or not self.indexing_enabled())
 
     def transaction(self, body: dict) -> int:
         """One atomic write: documents put and deleted together; readers see
@@ -214,7 +221,10 @@ class Engine:
         self.store.maybe_flush()
         if self.pace == "free" and self.store.pick_tier():
             self.store.compact()
-        if self.pace == "free" and self.vectors is not None:
+        if self.vectors is not None:
+            enabled = self.indexing_enabled()
+            self.vectors.set_paused(not enabled)
+        if self.pace == "free" and self.vectors is not None and enabled:
             if self.vectors.embedder is None:
                 from jarvis.knowledge import embedder
                 self.vectors.attach(embedder.current())

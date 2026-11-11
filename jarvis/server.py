@@ -11868,7 +11868,7 @@ async def tool_set_attention_settings(args: dict) -> str:
 
 _KNOWLEDGE_WRAP_NAME = "knowledge"
 knowledge_calls = knowledge_api.Context(
-    lambda: knowledge if knowledge_client.enabled() else None,
+    lambda: knowledge,
     resolved=lambda pid: _attention_resolved("knowledge_proposal", pid),
     seed_resolved=lambda sid: _attention_resolved("knowledge_seed", sid))
 
@@ -11905,6 +11905,13 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
 async def tool_knowledge_status(args: dict) -> str:
     return await _knowledge_tool(args, lambda: knowledge_api.status(knowledge_calls),
                                  "", "knowledge_status", walled=False)
+
+
+async def tool_set_knowledge_settings(args: dict) -> str:
+    result = await _knowledge_tool(args, lambda: knowledge_api.change_settings(
+        knowledge_calls, args.get("enabled")), "", "set_knowledge_settings", walled=False)
+    _hint_knowledge()
+    return result
 
 
 async def tool_embedding_model(args: dict) -> str:
@@ -12213,6 +12220,7 @@ TAINT_EXEMPT_TOOLS.update({
 
 TOOL_HANDLERS.update({
     "knowledge_status": tool_knowledge_status,
+    "set_knowledge_settings": tool_set_knowledge_settings,
     "knowledge_search": tool_knowledge_search,
     "knowledge_entity": tool_knowledge_entity,
     "knowledge_proposals": tool_knowledge_proposals,
@@ -12229,7 +12237,7 @@ TOOL_HANDLERS.update({
     "embedding_model": tool_embedding_model,
     "install_embedding_model": tool_install_embedding_model,
 })
-ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
+ACTING_TOOLS.update({"set_knowledge_settings", "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
                      "change_knowledge_seed", "install_embedding_model"})
 TAINTING_TOOLS.update({
     "knowledge_search": "passages from agents, runs, workflows and other people",
@@ -12238,6 +12246,7 @@ TAINTING_TOOLS.update({
     "work_context": "passages, and with include_received other people's words",
 })
 TAINT_EXEMPT_TOOLS.update({
+    "set_knowledge_settings": "it changes indexing settings on his word",
     "knowledge_status": "it reports the engine's own state and counts",
     "knowledge_topics": "it reads his own topic files' names, statuses and links",
     "link_knowledge": "it writes his own topic files on his word, it does not read",

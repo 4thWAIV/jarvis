@@ -1177,6 +1177,7 @@ export const UI_CONTRACT = {
             "voice",
             "brains",
             "team",
+            "knowledge",
             "updates",
             "server"
           ]
@@ -1215,6 +1216,7 @@ export const UI_CONTRACT = {
             "voice",
             "brains",
             "team",
+            "knowledge",
             "updates",
             "server"
           ]
@@ -2564,6 +2566,25 @@ export const UI_CONTRACT = {
       "family": "knowledge"
     },
     {
+      "id": "knowledge.configure",
+      "label": "Enable or pause knowledge indexing from Settings",
+      "view": "main.settings",
+      "args": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "knowledge"
+    },
+    {
       "id": "folders.panel.show",
       "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
       "view": "right.folders",
@@ -3090,6 +3111,7 @@ export const UI_CONTRACT = {
         "voice",
         "brains",
         "team",
+        "knowledge",
         "updates",
         "server"
       ],
@@ -3187,7 +3209,11 @@ export const UI_CONTRACT = {
         "installUpdate",
         "languageKit",
         "serverPort",
-        "serverUptime"
+        "serverUptime",
+        "knowledgeEnabled",
+        "knowledgeModel",
+        "knowledgeDetails",
+        "knowledgeFolders"
       ],
       "presentations": [
         {
@@ -5044,6 +5070,7 @@ export interface CommandArgs {
   "inbox.messages.shown": { shown: boolean; };
   "inbox.read.shown": { shown: boolean; };
   "knowledge.close": { };
+  "knowledge.configure": { enabled: boolean; };
   "knowledge.embedder.install": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
   "knowledge.open": { };
@@ -5080,8 +5107,8 @@ export interface CommandArgs {
   "reminder.later": { };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
   "settings.close": { };
-  "settings.open": { section?: "you" | "voice" | "brains" | "team" | "updates" | "server"; setup?: boolean; };
-  "settings.section": { section: "you" | "voice" | "brains" | "team" | "updates" | "server"; };
+  "settings.open": { section?: "you" | "voice" | "brains" | "team" | "knowledge" | "updates" | "server"; setup?: boolean; };
+  "settings.section": { section: "you" | "voice" | "brains" | "team" | "knowledge" | "updates" | "server"; };
   "subagent.open": { sessionId: string; agentId: string; };
   "subsystem.close": { };
   "subsystem.open": { subsystemId: string; };

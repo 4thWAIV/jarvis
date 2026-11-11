@@ -4,6 +4,7 @@ walled, changes only on his own turn (phase 4)."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,9 @@ class FakeRuntime:
         client = kc.KnowledgeClient(kc.InProcessTransport(engine))
         self.supervisor = type("S", (), {"pid": lambda self: 4242, "client": client})()
         self.ingest = _Ingest()
+        self.ingest.stop = lambda: None
+        self.content = SimpleNamespace(stop=lambda: None)
+        self.pace = SimpleNamespace(mode="free")
         self.proposals = {}
         self.hot = kc.HotCards()
 
@@ -168,12 +172,13 @@ def test_status_and_maintenance(knowing):
     assert hits == []
 
 
-def test_with_knowledge_off_the_running_engine_still_answers_as_off(knowing, monkeypatch):
+def test_with_indexing_off_storage_health_and_existing_search_remain_available(knowing, monkeypatch):
     w, runtime, engine = knowing
     monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
     assert w.server.knowledge is runtime                      # the engine is up
-    assert w.client.get("/api/knowledge/health", headers=ORIGIN).json() == {"enabled": False, "state": "off"}
-    assert "switched off" in _call(w, "knowledge_search", query="orbs")["text"]
+    health = w.client.get("/api/knowledge/health", headers=ORIGIN).json()
+    assert not health["enabled"] and health["state"] == "running"
+    assert _call(w, "knowledge_search", query="orbs")["ok"]
 
 
 def test_switched_off_reads_say_so_and_topics_still_work(wired, monkeypatch):  # noqa: F811
@@ -223,3 +228,14 @@ def test_work_context_is_the_same_on_the_page_and_by_voice(knowing):
     wider = w.client.post("/api/knowledge/context",
                           json={"purpose": "orbs report", "include_received": True}, headers=ORIGIN).json()
     assert "orbs report" in wider["text"]
+
+
+def test_settings_page_and_brain_change_the_same_saved_value(knowing):
+    w, runtime, engine = knowing
+    page = w.client.post("/api/knowledge/settings", json={"enabled": True}, headers=ORIGIN)
+    assert page.status_code == 200
+    assert page.json() == json.loads(_call(w, "set_knowledge_settings", enabled=True)["text"])
+    assert json.loads(_call(w, "set_knowledge_settings", enabled=False)["text"])["enabled"] is False
+    assert not w.client.get("/api/knowledge/settings", headers=ORIGIN).json()["enabled"]
+    for value in ["false", 0, None]:
+        assert w.client.post("/api/knowledge/settings", json={"enabled": value}, headers=ORIGIN).status_code == 400

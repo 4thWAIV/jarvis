@@ -242,7 +242,7 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
         assert await settled(page, CENTRED) == {"orb": True, "inside": True}
         # The sections in the order a person comes to them.
         assert await page.locator(".settings-nav button").all_text_contents() == [
-            "You", "Voice and language", "Brains", "Team", "Updates", "Server"]
+            "You", "Voice and language", "Brains", "Team", "Knowledge", "Updates", "Server"]
         await browser.close()
 
 
@@ -544,4 +544,56 @@ async def test_steady_holds_the_page_still_for_this_browser_and_the_brain_asks_t
         assert await page.evaluate(STEADY) == [None, None]
         await _open_settings(page)
         assert not await page.locator("#settings-steady").is_checked()
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_knowledge_settings_can_enable_pause_and_recover_errors(page_playwright, page_url):
+    class KnowledgeServer(_Server):
+        enabled = False
+        refuse = False
+
+        async def install(self, page):
+            await super().install(page)
+
+            async def knowledge(route):
+                if route.request.method == "POST":
+                    body = json.loads(route.request.post_data)
+                    self.posts.append(("knowledge", body))
+                    if self.refuse:
+                        await route.fulfill(status=503, content_type="application/json",
+                                            body=json.dumps({"message": "Storage did not answer"}))
+                        return
+                    self.enabled = body['enabled']
+                await route.fulfill(status=200, content_type="application/json",
+                                    body=json.dumps({"enabled": self.enabled, "state": "running"}))
+
+            await page.route("**/api/knowledge/health", knowledge)
+            await page.route("**/api/knowledge/settings", knowledge)
+            await page.route("**/api/knowledge/embedder", lambda route: route.fulfill(
+                content_type="application/json", body=json.dumps({
+                    "name": "e5", "label": "Vector model", "installed": True,
+                    "download_bytes": 100, "problem": None, "runtime_problem": None,
+                    "install": None, "engine": {"running": True, "embedded": 5, "waiting": 0, "rows": 5}})))
+
+    server = KnowledgeServer()
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
+        toggle = page.locator('#knowledge-enabled')
+        await async_api.expect(toggle).to_be_enabled()
+        await toggle.click()
+        await async_api.expect(toggle).to_be_checked()
+        assert ('knowledge', {'enabled': True}) in server.posts
+        await page.reload()
+        await _open_settings(page)
+        await async_api.expect(page.locator('#knowledge-enabled')).to_be_checked()
+        server.refuse = True
+        await page.locator('#knowledge-enabled').click()
+        await async_api.expect(page.get_by_role('alert')).to_contain_text('Storage did not answer')
+        await async_api.expect(page.locator('#knowledge-enabled')).to_be_checked()
+        server.refuse = False
+        await page.locator('#knowledge-enabled').click()
+        await async_api.expect(page.locator('#knowledge-enabled')).not_to_be_checked()
         await browser.close()

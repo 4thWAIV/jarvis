@@ -68,6 +68,18 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         return JSONResponse({"error": "refused", "message": "that request is not one these routes take"},
                             status_code=400)
 
+    async def settings():
+        return await run(lambda: ka.settings(ctx))
+
+    async def change_settings(request: Request):
+        b = await fields(request, {"enabled"})
+        if b is None or type(b.get("enabled")) is not bool:
+            return bad()
+        return await run(lambda: ka.change_settings(ctx, b["enabled"]), changes=True)
+
+    app.add_api_route(f"{PREFIX}/settings", settings, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/settings", change_settings, methods=["POST"])
+
     async def health():
         return await run(lambda: ka.status(ctx))
 

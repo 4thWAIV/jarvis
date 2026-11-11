@@ -195,6 +195,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__work_context",
     "mcp__jarvis__embedding_model",
     "mcp__jarvis__install_embedding_model",
+    "mcp__jarvis__set_knowledge_settings",
     # Project records (project_service.py): reads walled, changes acting.
     "mcp__jarvis__projects",
     "mcp__jarvis__project_detail",

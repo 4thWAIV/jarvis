@@ -18,9 +18,8 @@ section 13), so page and voice do exactly the same thing.
 | `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
 | `folder_counts` | GET  /api/knowledge/folder-counts      | folder_document_counts | read         |
 
-Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
-is off or down they refuse with `Unavailable`, and the brain answers from
-its notes as before. Topics and links are Markdown files (knowledge_links)
+Reads need the storage engine running; when it is down they refuse with
+`Unavailable`. Pausing indexing in Settings leaves stored data searchable. Topics and links are Markdown files (knowledge_links)
 and work without the engine; a change wakes the next ingest pass, and an
 accepted or turned-down proposal resolves its attention item at once.
 
@@ -92,6 +91,29 @@ class Context:
             rt.ingest.wake()
 
 
+def settings(ctx: Context) -> dict:
+    from jarvis import knowledge_settings
+    return {**knowledge_settings.read(), "health": status(ctx)}
+
+
+def change_settings(ctx: Context, enabled: bool) -> dict:
+    from jarvis import knowledge_settings
+    try:
+        knowledge_settings.change(enabled)
+    except ValueError as e:
+        raise Refused(str(e)) from e
+    rt = ctx.runtime
+    if rt is not None:
+        if enabled:
+            rt.ingest.wake()
+        else:
+            rt.ingest.stop()
+            rt.content.stop()
+        # Applying the existing pace also reapplies the indexing gate.
+        ctx.client().pace(rt.pace.mode)
+    return settings(ctx)
+
+
 # --- reads -------------------------------------------------------------------------
 
 def status(ctx: Context) -> dict:
@@ -101,7 +123,7 @@ def status(ctx: Context) -> dict:
     health = rt.health()
     engine = health.get("engine") or {}
     store = engine.get("store") or {}
-    return {"enabled": True, "state": health.get("state"), "reason": health.get("reason"),
+    return {"enabled": knowledge_client.enabled(), "state": health.get("state"), "reason": health.get("reason"),
             "pace": health.get("pace"), "ingest": health.get("ingest"),
             "chunks": (engine.get("keyword") or {}).get("chunks"),
             "documents_bytes": (engine.get("documents") or {}).get("resident_bytes"),

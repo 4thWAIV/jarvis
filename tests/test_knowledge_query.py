@@ -3,6 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def indexing_enabled(monkeypatch):
+    # These tests exercise indexing, with the legacy installation input.
+    # Settings persistence and live enable/disable have their own tests.
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+
+
 from jarvis import knowledge_client as kc
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import query as qy

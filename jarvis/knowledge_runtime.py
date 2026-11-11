@@ -7,10 +7,9 @@ first thing at startup, starts the engine through the `Supervisor`
 (`start_engine`) and waits up to `knowledge_client.READY_WAIT_SEC` for its
 health before serving the page; then `run` watches it, every second while
 it is not running and every `knowledge_client.PING_EVERY_SEC` while it is.
-`JARVIS_KNOWLEDGE` governs only ingest (no pass starts while it is off),
-the linker's proposals and the hot cards read here, embedding (the engine
-child reads it, embedder.installed) and the knowledge tools (the server's
-`knowledge_api.Context`).
+`knowledge_settings` governs background indexing and embedding. Pausing
+stops the ingest and content children; record storage and search remain
+available. The engine reads the same saved setting from its own store.
 
 The pace follows hearing, and holds only the background lane (lanes.py).
 Every `PACE_EVERY_SEC` the runtime decides `hold` or `free` and tells the
@@ -135,6 +134,9 @@ class IngestScheduler:
 
     def __call__(self, mode: str) -> None:
         self._reap()
+        if not self.enabled():
+            self.stop()
+            return
         if self.proc is not None:
             want_stopped = mode == "hold"
             if want_stopped != self.stopped:
