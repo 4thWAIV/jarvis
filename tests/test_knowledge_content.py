@@ -294,3 +294,95 @@ def _drain(service: kc.ContentService) -> None:
         key = next(iter(service.todo))
         root = service.todo.pop(key)
         service.indexer.extract(root, key[1])
+
+
+# -- logs that grow: indexed once closed ------------------------------------------
+
+def _log_root(folder: Path, **more) -> kc.Root:
+    return kc.Root("/jarvis/logs", os.path.realpath(folder), "text", "own", closed_only=True, **more)
+
+
+def test_a_log_file_is_read_only_once_its_writer_has_closed_it(engine, tmp_path):
+    from jarvis import closed_files
+    _, uds = engine
+    indexer = kc.Indexer(uds)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    path = logs / "a.jsonl"
+    path.write_text('{"at": 1, "said": "the first words"}\n')
+    root = _log_root(logs)
+    assert indexer.scan(root) == [] and indexer.changed(root, "a.jsonl") is None
+    with open(path, "a") as f:
+        f.write('{"at": 2, "said": "more words while open"}\n')
+    assert indexer.scan(root) == [] and uds.get(TIM, "/jarvis/logs/a.jsonl") is None
+    closed_files.close(path)
+    assert indexer.scan(root) == ["a.jsonl"]
+    assert indexer.extract(root, "a.jsonl") == "indexed"
+    assert "while open" in uds.get(TIM, "/jarvis/logs/a.jsonl", ALL).content["text"]
+    assert indexer.scan(root) == []                       # read once
+    # Reopened by its writer for one more line: not read until closed again.
+    with closed_files.reopened(path):
+        with open(path, "a") as f:
+            f.write('{"at": 3, "said": "a last line"}\n')
+        assert indexer.changed(root, "a.jsonl") is None
+        assert indexer.extract(root, "a.jsonl") == "open"
+    assert indexer.changed(root, "a.jsonl") == "a.jsonl"
+    assert indexer.extract(root, "a.jsonl") == "indexed"
+    assert "a last line" in uds.get(TIM, "/jarvis/logs/a.jsonl", ALL).content["text"]
+    assert indexer.counters.indexed == 2
+
+
+def test_voice_files_are_indexed_once_closed_samples_as_summary_fields_only(engine):
+    """The voice record's root: an events file is text with vectors; a
+    samples file only its summary fields, no text and so no vector."""
+    from jarvis import data_paths, voice_diagnostics as vd
+    _, uds = engine
+    w = 1_800_000_000.0
+    vd.record_sample(vd.Sample(at=w + 1, finals=2))
+    vd.record_sample(vd.Sample(at=w + 2, state="decoder-slow", cause_code="machineBusy"))
+    vd.record_event(vd.Event(at=w + 1, kind="message", source="status", text="Listening for the jabberwock"))
+    root = {r.prefix: r for r in kc.jarvis_roots()}["/jarvis/voice"]
+    assert root.closed_only and root.path == os.path.realpath(data_paths.voice_dir())
+    indexer = kc.Indexer(uds)
+    assert _index_all(indexer, root) == []                # both still open
+    vd.close_ended(w + 1800)
+    name = time.strftime("%Y-%m-%d/%H%M", time.localtime(w))
+    assert sorted(_index_all(indexer, root)) == [f"{name}.events.jsonl", f"{name}.samples.jsonl"]
+    samples = uds.get(TIM, f"/jarvis/voice/{name}.samples.jsonl", ALL)
+    assert samples.content is None and samples.data["format"] == "summary"
+    assert {k: samples.data[k] for k in ("from_at", "to_at", "samples", "finals", "failures", "causes")} == {
+        "from_at": w + 1, "to_at": w + 2, "samples": 2, "finals": 2, "failures": 1, "causes": {"machineBusy": 1}}
+    events = uds.get(TIM, f"/jarvis/voice/{name}.events.jsonl", ALL)
+    assert "jabberwock" in events.content["text"]
+    assert _until(lambda: uds.count(TIM, under="/jarvis/voice").embedded == 1)
+    assert {h.path for h in uds.search(TIM, Query(phrase="jabberwock"))} == {f"/jarvis/voice/{name}.events.jsonl"}
+    assert _index_all(indexer, root) == []                # never read again
+
+
+@macos
+def test_the_watcher_indexes_a_voice_file_only_once_it_is_closed(engine):
+    from jarvis import voice_diagnostics as vd
+    _, uds = engine
+    now = time.time()
+    start = vd._window(now)
+    vd.record_sample(vd.Sample(at=start - 600))           # the half hour before: closed once the next is made
+    vd.record_sample(vd.Sample(at=now))
+    name = time.strftime("%Y-%m-%d/%H%M", time.localtime(start))
+    before = time.strftime("%Y-%m-%d/%H%M", time.localtime(start - 1800))
+    root = {r.prefix: r for r in kc.jarvis_roots()}["/jarvis/voice"]
+    service = kc.ContentService(uds, roots=lambda: [root], marks=_Marks(), clock=_Once(), latency=0.05)
+    service.start()
+    try:
+        assert _until(lambda: (uds.get(TIM, f"/jarvis/voice/{before}.samples.jsonl", {Stream.DATA}) or _Nothing)
+                      .data.get("state") == "indexed")
+        for i in range(5):                                 # the open file grows; nothing reads it
+            vd.record_sample(vd.Sample(at=now + 0.1 * (i + 1)))
+        time.sleep(1.0)
+        assert uds.get(TIM, f"/jarvis/voice/{name}.samples.jsonl") is None
+        vd.close_ended(start + 1800)
+        assert _until(lambda: (uds.get(TIM, f"/jarvis/voice/{name}.samples.jsonl", {Stream.DATA}) or _Nothing)
+                      .data.get("samples") == 6)
+        time.sleep(0.5)
+        assert (service.counters.indexed, service.counters.unchanged) == (2, 0)   # each read once
+    finally:
+        service.stop()

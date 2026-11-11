@@ -97,7 +97,7 @@ def test_the_eight_tables_round_trip_through_the_engine(tmp_path):
     assert records.get("/people/7/settings/voice-input.settings").data["user_key"] == "github:7"
     assert records.get("/people/local/settings/voice-input.settings") is not None
     assert records.get(usage_history.path_of("openai/x", usage_history.day_of(T + DAY))) is not None
-    assert sorted(p.name.split(".", 1)[1] for p in data_paths.voice_dir().iterdir()) == \
+    assert sorted(p.name.split(".", 1)[1] for p in data_paths.voice_dir().rglob("*.jsonl")) == \
         ["events.jsonl"] * 3 + ["samples.jsonl"] * 3
 
 

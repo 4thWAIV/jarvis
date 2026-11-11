@@ -84,10 +84,33 @@ def content_terms(content: dict) -> Counter:
 RECORD_FIELD_WORDS = 2000     # characters of one text field a record is found by
 RECORD_WORDS = 8000           # characters of all its text fields together
 # The record types that hold people's words (UDS round 3's document types):
-# found by them as they are. Other records (settings, attention, usage...)
-# and an item of any other type are found by their content only.
+# found by them as they are, by words and by meaning (Tim's answer to
+# "Records and meaning search", option a: Work items, messages, the
+# conversation's turns, packages, projects, runs, workflows, people's
+# threads and language documents). Other records (settings, attention,
+# usage...) and an item of any other type are found by their content only.
 RECORD_TYPES = frozenset({"turn", "message", "run", "workflow", "work", "package", "project", "thread",
                           "langdoc"})
+# A record's fields that are not its words: the events a version records
+# (its change log, read from its history) and cells kept for the move back.
+NOT_WORDS = frozenset({"events", "kept"})
+
+
+def _words(value, left: int, path: str = "", keep=None) -> tuple[list[str], int]:
+    """The text fields holding words (a space in them) in `value`, the
+    first `RECORD_FIELD_WORDS` characters of each, at most `left` in all,
+    in field order; and what is left."""
+    from jarvis.knowledge.kinds import flatten
+    out: list[str] = []
+    for where, found in flatten(value, path):
+        if left <= 0:
+            break
+        if not isinstance(found, str) or " " not in found or (keep is not None and not keep(where)):
+            continue
+        piece = found[:min(RECORD_FIELD_WORDS, left)]
+        out.append(piece)
+        left -= len(piece)
+    return out, left
 
 
 def record_text(doc: dict, keep=None) -> str:
@@ -97,18 +120,45 @@ def record_text(doc: dict, keep=None) -> str:
     field order. Bounded, so a record field of 100 KB costs a write what
     2,000 characters cost. `keep(field)` leaves out fields a reader may
     not see."""
-    from jarvis.knowledge.kinds import flatten
-    out: list[str] = []
+    return "\n".join(_words({k: v for k, v in doc.items() if not k.startswith("_")}, RECORD_WORDS,
+                             keep=keep)[0])
+
+
+def _in_key_order(value):
+    """`value` with every object's keys in sorted order."""
+    if isinstance(value, dict):
+        return {k: _in_key_order(value[k]) for k in sorted(value)}
+    if isinstance(value, list):
+        return [_in_key_order(v) for v in value]
+    return value
+
+
+def record_parts(doc: dict) -> list[tuple[str, str]]:
+    """A record's words in its parts, for its vectors, within the bounds
+    `record_text` keeps: its own text fields as one part (heading ""),
+    then each object in a list of them as a part of its own (a Work item's
+    pieces and decisions, a workflow's phases), headed by the list's name
+    and the object's key or title. The events a version records are not
+    its words (`NOT_WORDS`). Fields are taken in key order at every level:
+    the engine gives an object's keys back sorted, so the same record
+    gives the same parts however it was written."""
+    head: list[str] = []
+    parts: list[tuple[str, str]] = []
     left = RECORD_WORDS
-    for path, value in flatten({k: v for k, v in doc.items() if not k.startswith("_")}):
-        if left <= 0:
-            break
-        if not isinstance(value, str) or " " not in value or (keep is not None and not keep(path)):
+    for name, value in _in_key_order(doc).items():
+        if name.startswith("_") or name in NOT_WORDS:
             continue
-        piece = value[:min(RECORD_FIELD_WORDS, left)]
-        out.append(piece)
-        left -= len(piece)
-    return "\n".join(out)
+        if isinstance(value, list) and any(isinstance(v, dict) for v in value):
+            for n, element in enumerate(value, 1):
+                found, left = _words(element, left, name)
+                if found:
+                    label = next((str(element[k]) for k in ("title", "name", "key", "id")
+                                  if isinstance(element, dict) and element.get(k) not in (None, "")), str(n))
+                    parts.append((f"{name} {label}", "\n".join(found)))
+        else:
+            found, left = _words(value, left, name)
+            head += found
+    return ([("", "\n".join(head))] if head else []) + parts
 
 
 def _item_terms(doc: dict, content: Optional[bytes]) -> Optional[Counter]:

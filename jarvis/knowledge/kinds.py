@@ -26,12 +26,14 @@ SYSTEM = ("_key", "_kind", "_label", "_status", "_trust", "_owner", "_ns",
 # `_created`, `_at`, `_by`, `_agent`, `_model`, `_change`, `_summary`), and
 # what its content stream holds (`_content`: hash, size, reference).
 ITEM_SYSTEM = ("_type", "_parent", "_name", "_ancestors", "_depth", "_version", "_created",
-               "_at", "_by", "_agent", "_model", "_change", "_summary", "_content")
+               "_at", "_by", "_agent", "_model", "_change", "_summary", "_content", "_words")
 ITEM = "item"
+
+
 READ_ONLY = ("_lsn", "_ord")
 TRUST = ("own", "untrusted")
-INDEXED_SYSTEM = tuple(p for p in SYSTEM) + tuple(p for p in ITEM_SYSTEM if p != "_content") + (
-    "_ancestors[]", "_content.sha256", "_content.ref")
+INDEXED_SYSTEM = tuple(p for p in SYSTEM) + tuple(p for p in ITEM_SYSTEM if p not in ("_content", "_words")) + (
+    "_ancestors[]", "_content.sha256", "_content.ref", "_words.sha256", "_words.none")
 
 
 @dataclass(frozen=True)

@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
 from jarvis.knowledge import embedder as emb
+from jarvis.knowledge import items as item_texts
 from jarvis.knowledge import kinds, lanes, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
@@ -436,7 +437,7 @@ class VectorIndex:
                     continue
                 o, doc = decode_doc(op.value)
                 if doc["_kind"] == kinds.ITEM:
-                    summary = doc.get("_content")
+                    summary = item_texts.embedded_summary(doc)
                     if summary and not (items is not None and items.has(o, WHOLE)):
                         with self._todo_cond:
                             self._items_todo[o] = (doc["_key"], summary["sha256"])
@@ -523,8 +524,8 @@ class VectorIndex:
     # -- embedding in the background --------------------------------------------
     def _queue_missing(self) -> None:
         """At start, every live document with embedded text and no row in the
-        current space is queued, and every item with content and no
-        whole-item row."""
+        current space is queued, and every item with content (or a record's
+        words) and no whole-item row."""
         space = self.spaces.get(self.space_id)
         for kind in kinds.KINDS.values():
             if not kind.embedded:
@@ -539,7 +540,7 @@ class VectorIndex:
                 if v.value is None:
                     continue
                 o, doc = decode_doc(v.value)
-                summary = doc.get("_content")
+                summary = item_texts.embedded_summary(doc)
                 if doc.get("_kind") == kinds.ITEM and summary and not (items and items.has(o, WHOLE)):
                     self._items_todo[o] = (doc["_key"], summary["sha256"])
 
@@ -603,21 +604,27 @@ class VectorIndex:
 
     def _embed_item(self, o: int, path: str, sha: str) -> None:
         """An item's whole-item vector and one per section, committed in one
-        write only while its content is still the content they were made
-        from; a content changed meanwhile is queued again by its write."""
-        from jarvis.knowledge import items as item_texts
+        write only while its content (a record's words) is still what they
+        were made from; one changed meanwhile is queued again by its write,
+        holding only its newest text (`_items_todo` is by item), so many
+        changes before the background lane reaches it cost one embedding."""
         doc = self.docs.get(path)
-        summary = (doc or {}).get("_content") or {}
+        summary = item_texts.embedded_summary(doc or {}) or {}
         if doc is None or doc["_ord"] != o or summary.get("sha256") != sha:
             return
-        raw = self.store.get(CONTENT, path.encode())
-        if raw is None or raw.value is None:
+        if doc.get("_content") is None:
+            texts = [emb.prepare(t) for t in item_texts.record_texts(doc)]
+        else:
+            raw = self.store.get(CONTENT, path.encode())
+            if raw is None or raw.value is None:
+                return
+            content = json.loads(raw.value)
+            title = item_texts.title_of(doc, content)
+            sections = (content.get("sections") or [])[:SECTIONS_EMBEDDED_MAX]
+            texts = [emb.prepare(item_texts.whole_text(title, content))]
+            texts += [emb.prepare(item_texts.embedded_text(title, s)) for s in sections]
+        if not texts:
             return
-        content = json.loads(raw.value)
-        title = item_texts.title_of(doc, content)
-        sections = (content.get("sections") or [])[:SECTIONS_EMBEDDED_MAX]
-        texts = [emb.prepare(item_texts.whole_text(title, content))]
-        texts += [emb.prepare(item_texts.embedded_text(title, s)) for s in sections]
         try:
             vectors = self._embed_texts(texts)
         except _Closing:
@@ -629,7 +636,7 @@ class VectorIndex:
 
         def prepare(lsn: int) -> list[Op]:
             now = self.docs.get(path)
-            if now is None or now["_ord"] != o or ((now.get("_content") or {}).get("sha256")) != sha:
+            if now is None or now["_ord"] != o or ((item_texts.embedded_summary(now) or {}).get("sha256")) != sha:
                 return []
             return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in enumerate(vectors)]
         with lanes.foreground():

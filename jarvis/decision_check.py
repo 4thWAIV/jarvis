@@ -223,7 +223,8 @@ class Isolated:
         deadline = time.monotonic() + READY_SEC
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise CheckFailed(f"The isolated JARVIS stopped at startup; see {self.log}.")
+                raise CheckFailed(f"The isolated JARVIS stopped at startup; see {self.log}. "
+                                  f"Its last lines:\n{self._log_tail()}")
             try:
                 with urllib.request.urlopen(self.base + "/api/packages", timeout=2):
                     if (self.data / "jarvis" / "tool-token").is_file():
@@ -231,7 +232,16 @@ class Isolated:
             except OSError:
                 pass
             time.sleep(0.5)
-        raise CheckFailed(f"The isolated JARVIS did not start in {READY_SEC}s; see {self.log}.")
+        raise CheckFailed(f"The isolated JARVIS did not start in {READY_SEC}s; see {self.log}. "
+                          f"Its last lines:\n{self._log_tail()}")
+
+    def _log_tail(self, lines: int = 40) -> str:
+        """The end of the isolated JARVIS's own log, so a failure names its
+        cause where the log itself is not kept (CI)."""
+        try:
+            return "\n".join(self.log.read_text(errors="replace").splitlines()[-lines:])
+        except OSError:
+            return "(its log could not be read)"
 
     def tool(self, tool: str, /, **arguments) -> tuple[bool, str]:
         """One brain tool through this JARVIS's /internal/tool: (ok, its text)."""

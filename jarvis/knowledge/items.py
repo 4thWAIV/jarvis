@@ -51,7 +51,7 @@ from jarvis.knowledge.documents import (DOC_HEAD, FID, DocumentError, DocumentSt
 from jarvis.knowledge.graph import (DERIVED, HIERARCHY, REFERENCE, SEP, Graph, edge_key,
                                     split_key)
 from jarvis.knowledge.lexical import RECORD_TYPES as lexical_record_types, phrase_in as lexical_phrase_in, \
-    record_text as lexical_record_text, terms as lexical_terms
+    record_parts as lexical_record_parts, record_text as lexical_record_text, terms as lexical_terms
 from jarvis.knowledge.rights import FULL, OWNER, Access, Denied, Rights, caller_of, without_hidden
 from jarvis.knowledge.store import CONTENT, DOCS, EDGES_IN, EDGES_OUT, FEED, prefix_end
 from jarvis.knowledge.wal import Op
@@ -254,6 +254,70 @@ def whole_text(title: str, content: dict, limit: int = WHOLE_TEXT_MAX) -> str:
     room = limit - len(head) - 1
     start = clip((content.get("text") or "").strip(), room) if room > 0 else ""
     return clip("\n".join(p for p in (head, start) if p), limit)
+
+
+RECORD_SECTION_MAX = 1300     # a record part longer than this is cut into sections of it
+
+
+def record_texts(doc: dict) -> list[str]:
+    """The texts a record's vectors are made from (a record of a type that
+    holds people's words, `lexical.RECORD_TYPES`, which has no content):
+    the whole record first (its title, then its words from the start),
+    then, when it has several parts or a part too long for one, one per
+    section: each part (`lexical.record_parts`), a long one cut at word
+    ends into sections of at most `RECORD_SECTION_MAX` characters. Empty
+    for any other item, or a record with no words."""
+    if not is_record(doc):
+        return []
+    parts = lexical_record_parts(doc)
+    if not parts:
+        return []
+    title = doc.get("title") if isinstance(doc.get("title"), str) else ""
+    sections: list[dict] = []
+    for heading, text in parts:
+        while text:
+            piece = clip(text, RECORD_SECTION_MAX) or text[:RECORD_SECTION_MAX]
+            sections.append({"heading": heading, "text": piece})
+            text = text[len(piece):].lstrip()
+    whole = whole_text(title, {"headings": [], "text": "\n".join(t for _, t in parts)})
+    if len(sections) < 2:
+        return [whole]
+    return [whole] + [embedded_text(title, s) for s in sections]
+
+
+def is_record(doc: dict) -> bool:
+    """An item of a type that holds people's words, with no content."""
+    return doc.get("_content") is None and doc.get("_type") in lexical_record_types
+
+
+def record_words_summary(texts: list[str]) -> dict:
+    """What a record's document keeps of the texts its vectors are made
+    from (`_words`): their hash, so a change of them makes the old vectors
+    stale in the same write, and how many sections they hold; `none` for a
+    record with no words, so a count tells it from one written before."""
+    if not texts:
+        return {"none": True}
+    return {"sha256": hashlib.sha256(encoding.canonical(texts)).hexdigest(), "sections": len(texts) - 1}
+
+
+def words_summary(doc: dict) -> Optional[dict]:
+    """A record's `_words` when it has words to embed, else None; for one
+    written before records had vectors (no `_words` yet), worked out from
+    it as it is, so it is embedded and its first new write sees what its
+    vectors were made from."""
+    if not is_record(doc):
+        return None
+    found = doc.get("_words")
+    if found is None:
+        found = record_words_summary(record_texts(doc))
+    return found if found and found.get("sha256") else None
+
+
+def embedded_summary(doc: dict) -> Optional[dict]:
+    """What an item's vectors are made from: its content's summary
+    (`_content`), or a record's words' (`words_summary`); None when it
+    has neither."""
+    return doc.get("_content") or words_summary(doc)
 
 
 def _content_summary(content: dict) -> dict:
@@ -558,6 +622,13 @@ class Items:
             after = new.get("_content")
             if before is not None and (after is None or after["sha256"] != before["sha256"]):
                 vector_ops += self._stale_vectors(path)
+            # A record's words are embedded as an item's content is: the
+            # old vectors go in the same write as a change of its words.
+            if is_record(new):
+                new["_words"] = record_words_summary(record_texts(new))
+            held_words = words_summary(doc) if doc is not None else None
+            if held_words is not None and held_words != words_summary(new):
+                vector_ops += self._stale_vectors(path)
             if len(encoding.canonical(new)) > DOC_MAX_BYTES:
                 raise DocumentError(f"{path}: an item's document is at most {DOC_MAX_BYTES >> 20} MB")
             puts.append(new)
@@ -714,8 +785,8 @@ class Items:
     def _vector_state(self, o: int, doc: dict, access: Access) -> Optional[dict]:
         """Whether the item's vectors exist for its current content: the
         whole-item vector and one per section, or waiting."""
-        summary = doc.get("_content")
-        if not access.content or summary is None:
+        summary = embedded_summary(doc)
+        if summary is None or not (access.content if doc.get("_content") is not None else access.data):
             return None
         embedded = self.vectors is not None and self.vectors.item_embedded(o)
         return {"state": "embedded" if embedded else "waiting",
@@ -945,7 +1016,7 @@ class Items:
         for doc in self._select(preds, prefix, parent, types, lsn, person=person):
             total += 1
             access = self.access(person, doc["_key"])
-            if doc.get("_content") is not None and access.content:
+            if (doc.get("_content") is not None and access.content) or words_summary(doc) is not None:
                 if self.vectors is not None and self.vectors.item_embedded(doc["_ord"]):
                     embedded += 1
                 else:
@@ -1024,8 +1095,20 @@ class Items:
                     held[o] = doc
             matched = kept
         out: dict = {"items": len(matched)}
-        content = docs.answer(Predicate("_content.sha256", "exists"), item_kind)
-        with_content = matched & content[0] if content is not None else set()
+        with_content: set[int] = set()
+        for field in ("_content.sha256", "_words.sha256"):
+            found = docs.answer(Predicate(field, "exists"), item_kind)
+            if found is not None:
+                with_content |= matched & found[0]
+        # Records written before records had vectors hold no `_words` yet:
+        # read one by one (none once each has been written again).
+        records = docs.answer(Predicate("_type", "in", sorted(lexical_record_types)), item_kind)
+        wordless = docs.answer(Predicate("_words.none", "exists"), item_kind)
+        for o in (matched & records[0]) - with_content - (wordless[0] if wordless else set()) \
+                if records is not None else ():
+            doc = held.get(o) or docs.by_ordinal(o, lsn)
+            if doc is not None and words_summary(doc) is not None:
+                with_content.add(o)
         embedded = 0
         if self.vectors is not None and with_content:
             embedded = sum(1 for o in with_content if self.vectors.item_embedded(o))
@@ -1356,7 +1439,7 @@ class Items:
                             within.discard(None)
                         elif person != OWNER or prefix != "/" or types is not None:
                             within = {d["_ord"] for d in self._select([], prefix, None, types, lsn, person=person)
-                                      if d.get("_content") is not None and self.access(person, d["_key"]).content}
+                                      if embedded_summary(d) is not None and readable(d)}
                         found = self.vectors.search_items(vector, k=max(limit * 5, 50), within=within)
                         partial |= bool(found.get("partial"))
                         ranked = []
@@ -1364,6 +1447,8 @@ class Items:
                             doc = self.docs.by_ordinal(o, lsn)
                             if not readable(doc):
                                 continue
+                            if doc.get("_content") is None and self.access(person, doc["_key"]).hidden:
+                                continue          # a record's vectors hold every field, hidden ones too
                             path = doc["_key"]
                             ranked.append(path)
                             matched.setdefault(path, set()).add("vector")

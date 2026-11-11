@@ -529,9 +529,10 @@ def messaging_snapshots_dir() -> Path:
 
 
 def voice_dir() -> Path:
-    """The voice record (voice_diagnostics.py): each day's samples and each
-    day's events, one JSON line each, indexed as Content. Not created here:
-    the first line written makes it."""
+    """The voice record (voice_diagnostics.py): each half hour's samples and
+    events, `<local date>/<HHMM>.samples.jsonl` and `.events.jsonl`, one
+    JSON line each, indexed as Content once closed. Not created here: the
+    first line written makes it."""
     return data_dir() / "voice"
 
 

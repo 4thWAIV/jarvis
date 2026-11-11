@@ -1399,9 +1399,15 @@ Agents panel shows "2 working" on an agent's box. An `agents` and a
 
 ## Voice diagnostics
 How voice input is doing is one durable record, `voice_diagnostics.py`, kept
-as Content files, a file a day each (`data/voice/<date>.samples.jsonl` and
-`<date>.events.jsonl`, one JSON line each, appended off the audio path and
-indexed in memory as they grow): samples (one a second while a page
+as Content files, a file every half hour on the clock each
+(`data/voice/<local date>/<HHMM>.samples.jsonl` and `<HHMM>.events.jsonl`,
+one JSON line each, appended off the audio path and indexed in memory as
+they grow; a file is closed, made read-only (`closed_files.py`), once the
+next is made, and within a minute of its half hour ending (`Closer`), and
+the content ingest reads it only then, once: the events file as text, the
+samples file as its summary fields only, `samples_summary`, no vectors;
+a run's output stream is closed the same way when the run finishes):
+samples (one a second while a page
 listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and events (each capture's
 start and end, reconnects, every failure with the cause in force and the
@@ -1411,8 +1417,8 @@ speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
-kept 7 days, events 30 (a day's file deleted once all of it is past, the day
-the cut-off falls in written again). The page gets `health` once a second back on the same
+kept 7 days, events 30 (a file deleted once all of it is past, never
+written again). The page gets `health` once a second back on the same
 socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
 `/ws/sessions` says when to read again. The Diagnostics tab draws a summary
 (`VoiceSummary.tsx`) and the centre area's Diagnostics view the detail
@@ -1705,7 +1711,18 @@ nodes and authored links from them, and writes `mentions` as derived item
 links (model `linker`); `about` proposals are files by section count.
 Records are found by their own words: the keyword index takes an item
 without content by its text fields (`lexical.record_text`, 2,000
-characters a field, 8,000 in all). `knowledge_api.search` (the page and
+characters a field, 8,000 in all). Those of the types that hold people's
+words (`lexical.RECORD_TYPES`: work, message, turn, package, project, run,
+workflow, thread, langdoc; never attention, settings or JARVIS's other
+facts) are found by meaning too (Tim's answer, option a): a whole-record
+vector and one per part (`items.record_texts`: its own text fields, then
+each object of a list such as a Work item's pieces and decisions,
+`lexical.record_parts`, a part over 1,300 characters cut; never the
+`events` a version records), their hash kept as `_words` and their rows
+deleted in the same write as a change of them, embedded by the item
+space's one background thread as content is (one entry per item, so a busy
+record's many changes cost one embedding; paused while the pace holds),
+and one hit a record in the one search. `knowledge_api.search` (the page and
 `knowledge_search`, with `phrase`) and the context pack search items only,
 each hit's trust from `knowledge_api.item_trust`. Round 3: the owner's
 `count` (with `where`, `under`, `parent`, `types`, `group_by`) comes from

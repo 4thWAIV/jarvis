@@ -3228,6 +3228,8 @@ async def lifespan(application: FastAPI):
     # database still in use had moved its dispatches into `runs` long ago
     # (today's has no `dispatches` table), so there is nothing left for it.
     run_store.sweep_stale_runs()
+    # Every finished run's output stream closed, so the content ingest reads it.
+    await asyncio.to_thread(run_store.close_finished_outputs)
     run_store.sweep_staged_messages()
     # Every review he made in a package before now is on its item.
     await asyncio.to_thread(_apply_package_reviews)

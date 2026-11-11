@@ -17,9 +17,10 @@ the cause in force and the busiest processes on the machine at that moment.
 
 Counts and timings only: no audio, and no words except the text the page
 itself displayed. Samples are kept SAMPLE_KEEP_SEC, events EVENT_KEEP_SEC.
-They are files on disk, indexed as Content (a log read whole, not records):
-each day's samples and each day's events, one JSON line each, in
-data_paths.voice_dir() ("the record" below). A record from before the
+They are files on disk (a log read whole, not records): the samples and
+the events of each half hour, one JSON line each, in data_paths.voice_dir()
+("the record" below), each file closed once the next is made and indexed by
+the content ingest only then, once. A record from before the
 codes has none, and the page shows its English as it was written.
 
 transcription_api.py runs one `CaptureMonitor` per connected page; the
@@ -28,6 +29,7 @@ server's routes read `summary` and `history`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -39,7 +41,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-from jarvis import data_paths, knowledge_move as move
+from jarvis import closed_files, data_paths, knowledge_move as move
 from jarvis.said import Said, english
 from jarvis.transcriber import BYTES_PER_SECOND, PROTOCOL
 
@@ -383,22 +385,56 @@ def top_processes(limit: int = 5) -> list[dict]:
 
 # ── the record ───────────────────────────────────────────────────────────
 #
-# Two logs, each a file a day (local date) in data_paths.voice_dir():
-# `<date>.samples.jsonl` and `<date>.events.jsonl`, one JSON line a sample
-# or event holding the columns of the tables they replaced (`voice_samples`,
-# `voice_events`), each value as knowledge_move.cell keeps it. A line is
-# only ever appended, on the thread the caller runs it on (the audio path's
-# side thread, asyncio.to_thread); prune deletes a day's file once all of it
-# is past its keeping time and rewrites the one day it cuts through. Each
-# file is indexed in memory as it grows (`_Log`): every line's time and
-# where it is, so a read opens only the lines it wants.
+# Two logs, samples and events, each a file every WINDOW_SEC (half an hour
+# on the clock) in data_paths.voice_dir(): `<local date>/<HHMM>.samples.jsonl`
+# and `<local date>/<HHMM>.events.jsonl`, named by the local time their half
+# hour starts, one JSON line a sample or event holding the columns of the
+# tables they replaced (`voice_samples`, `voice_events`), each value as
+# knowledge_move.cell keeps it. A line goes in the file of its half hour, or,
+# written late (its half hour's file closed or older than the newest), in
+# the newest one. A line is only ever appended, on the thread the caller
+# runs it on (the audio path's side thread, asyncio.to_thread).
+#
+# A file is closed (closed_files.close: made read-only) once the next one is
+# made, and every file whose half hour has ended is closed within
+# CLOSE_EVERY_SEC by the `Closer`, and at every prune, so the content ingest
+# (knowledge_content.py, `/jarvis/voice`) reads each one once, whole, after
+# it is closed. A name taken by a closed file gets `-1`, `-2`... (a late
+# line, or the hour a clock change repeats). Prune deletes a file once all
+# of it is past its keeping time, so a closed file is never written again.
+# Each file is indexed in memory as it grows (`_Log`): every line's time and
+# where it is, so a read opens only the lines it wants. A round-3 day file,
+# `<date>.samples.jsonl` at the top of the folder, is read as one file
+# spanning its day.
 
-def _day(at: Any) -> str:
-    """The local date a line belongs to, YYYY-MM-DD."""
+WINDOW_SEC = 30 * 60
+CLOSE_EVERY_SEC = 60.0
+# How far a line's time may lie outside its file's half hour: a line
+# written late goes in the newest file, and a clock change repeats an hour.
+LATE_SEC = 2 * 3600
+# Each file's index is kept in memory while its half hour is this recent.
+INDEX_KEEP_SEC = 2 * 86400
+_DAY_SEC = 86400
+
+
+def _window(at: Any) -> float:
+    """The start of the half hour a time is in (epoch seconds)."""
     try:
-        return time.strftime("%Y-%m-%d", time.localtime(float(at)))
-    except (TypeError, ValueError, OverflowError, OSError):
-        return "0000-00-00"
+        return math.floor(float(at) / WINDOW_SEC) * WINDOW_SEC
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _local(day: str, hhmm: str = "0000") -> Optional[float]:
+    """Epoch seconds of a local date and time as a file is named, or None."""
+    try:
+        y, m, d = (int(x) for x in day.split("-"))
+        hour, minute = int(hhmm[:2]), int(hhmm[2:])
+        if len(hhmm) != 4 or not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        return time.mktime((y, m, d, hour, minute, 0, 0, 0, -1))
+    except (ValueError, OverflowError):
+        return None
 
 
 def _line(cells: dict) -> bytes:
@@ -423,32 +459,92 @@ class _File:
     lines: list = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _Piece:
+    """One file of a log: the time it starts and how long it spans."""
+    start: float
+    span: float
+    path: Path
+    legacy: bool = False             # a round-3 day file
+
+    @property
+    def end(self) -> float:
+        return self.start + self.span
+
+
+def file_rel(kind: str, start: float, n: int = 0) -> str:
+    """A half hour's file, relative to the voice folder: its local date's
+    folder, then the local time it starts (and `-n` after a closed one)."""
+    return time.strftime("%Y-%m-%d/%H%M", time.localtime(start)) + (f"-{n}" if n else "") + f".{kind}.jsonl"
+
+
 class _Log:
-    """One kind of line, a file a day, indexed in memory as it grows."""
+    """One kind of line, a file every half hour, indexed in memory as it
+    grows."""
 
     def __init__(self, kind: str, keep: Callable[[dict], Any]) -> None:
         self.kind = kind
         self.suffix = f".{kind}.jsonl"
         self._keep = keep
         self._files: dict[str, _File] = {}
+        # The file being written, per voice folder: (its half hour, its path).
+        self._current: dict[str, tuple[float, Path]] = {}
 
-    def path(self, day: str) -> Path:
-        return data_paths.voice_dir() / f"{day}{self.suffix}"
-
-    def days(self) -> list[tuple[str, Path]]:
+    def pieces(self) -> list[_Piece]:
+        """Every file of this log, oldest first."""
         folder = data_paths.voice_dir()
         if not folder.is_dir():
             return []
-        return sorted((p.name[:-len(self.suffix)], p) for p in folder.iterdir()
-                      if p.name.endswith(self.suffix) and p.is_file())
+        found: list[_Piece] = []
+        for entry in folder.iterdir():
+            if entry.is_symlink():
+                continue
+            if entry.is_dir():
+                for p in entry.iterdir():
+                    if p.name.endswith(self.suffix) and p.is_file() and not p.is_symlink():
+                        start = _local(entry.name, p.name[:-len(self.suffix)].split("-", 1)[0])
+                        if start is not None:
+                            found.append(_Piece(start, WINDOW_SEC, p))
+            elif entry.name.endswith(self.suffix) and entry.is_file():
+                start = _local(entry.name[:-len(self.suffix)])
+                if start is not None:
+                    found.append(_Piece(start, _DAY_SEC, entry, legacy=True))
+        return sorted(found, key=lambda p: (p.start, p.path.name))
 
     def append(self, cells: dict) -> None:
-        folder = data_paths.voice_dir()
-        folder.mkdir(parents=True, exist_ok=True)
-        with open(self.path(_day(cells["at"])), "a+b") as f:
+        path = self._open_for(_window(cells["at"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a+b") as f:
             end = f.seek(0, os.SEEK_END)
             torn = end and (f.seek(end - 1), f.read(1))[1] != b"\n"
             f.write((b"\n" if torn else b"") + _line(cells))
+
+    def _open_for(self, window: float) -> Path:
+        """The file a line of this half hour goes in: the one being written,
+        unless the line's half hour is newer or that file has been closed
+        meanwhile; then the next file is made and every other one closed."""
+        folder = data_paths.voice_dir()
+        current = self._current.get(str(folder))
+        if current is None:
+            newest = [p for p in self.pieces() if not p.legacy]
+            if newest:
+                current = (_window(newest[-1].start), newest[-1].path)
+        if current is not None and window <= current[0] and not closed_files.closed(current[1]):
+            return current[1]
+        window = max(window, current[0]) if current is not None else window
+        n = 0
+        while closed_files.closed(path := folder / file_rel(self.kind, window, n)):
+            n += 1
+        for piece in self.pieces():
+            if piece.path != path:
+                closed_files.close(piece.path)
+        self._current[str(folder)] = (window, path)
+        return path
+
+    def close_ended(self, now: float) -> int:
+        """Close every file whose span has ended; how many were closed now."""
+        return sum(closed_files.close(p.path) for p in self.pieces()
+                   if p.end <= now and not closed_files.closed(p.path))
 
     def index(self, path: Path) -> list:
         """The file's lines as (at, offset, length, kept), read on from
@@ -479,12 +575,15 @@ class _Log:
             held.offset += start
         return held.lines
 
+    def all_lines(self) -> list:
+        """Every line of every file, file by file."""
+        return [line for piece in self.pieces() for line in self.index(piece.path)]
+
     def between(self, start: float, end: float) -> list[tuple[Path, tuple]]:
         """(file, line) for every line from `start` to `end`, by time."""
-        first = _day(start - 86400) if math.isfinite(start) else "0000-00-00"
-        last = _day(end + 86400) if math.isfinite(end) else "9999-99-99"
-        found = [(at, n, i, path, line) for n, (day, path) in enumerate(self.days()) if first <= day <= last
-                 for i, line in enumerate(self.index(path)) if start <= (at := line[0]) <= end]
+        found = [(at, n, i, piece.path, line) for n, piece in enumerate(self.pieces())
+                 if piece.start - LATE_SEC <= end and piece.end + LATE_SEC >= start
+                 for i, line in enumerate(self.index(piece.path)) if start <= (at := line[0]) <= end]
         return [(path, line) for *_, path, line in sorted(found, key=lambda x: x[:3])]
 
     def read(self, chosen: list[tuple[Path, tuple]]) -> list[dict]:
@@ -508,32 +607,22 @@ class _Log:
                     got[(path, line[1])] = cells
         return [got[(p, line[1])] for p, line in chosen if (p, line[1]) in got]
 
-    def prune(self, cutoff: float) -> None:
-        """Drop every line from before `cutoff`: a file all of it before, a
-        file it cuts through written again without them. The index is kept
-        only for the last two days, which every summary reads."""
-        days = self.days()
-        for day, path in days[:-2]:
-            self._prune_file(day, path, cutoff)
-            self._files.pop(str(path), None)
-        for day, path in days[-2:]:
-            self._prune_file(day, path, cutoff)
-
-    def _prune_file(self, day: str, path: Path, cutoff: float) -> None:
-        lines = self.index(path)
-        if all(line[0] < cutoff for line in lines):
-            if lines or day < _day(cutoff):
-                path.unlink(missing_ok=True)
-                self._files.pop(str(path), None)
-            return
-        if not any(line[0] < cutoff for line in lines):
-            return
-        kept = self.read([(path, line) for line in lines if line[0] >= cutoff])
-        tmp = path.with_name(path.name + ".pruning")
-        with open(tmp, "wb") as f:
-            f.write(b"".join(_line(c) for c in kept))
-        os.replace(tmp, path)
-        self._files.pop(str(path), None)
+    def prune(self, cutoff: float, now: float) -> None:
+        """Delete every file all of whose lines are from before `cutoff`
+        (an empty one once its span is): whole files only, so a closed file
+        is never written again, and a file `cutoff` cuts through stays until
+        all of it is past. The index is kept only for the files of the last
+        two days, which every summary reads."""
+        for piece in self.pieces():
+            lines = self.index(piece.path)
+            if all(line[0] < cutoff for line in lines) and (lines or piece.end < cutoff):
+                piece.path.unlink(missing_ok=True)
+                self._files.pop(str(piece.path), None)
+                if not piece.legacy:
+                    with contextlib.suppress(OSError):
+                        piece.path.parent.rmdir()          # only once it is empty
+            elif piece.end < now - INDEX_KEEP_SEC:
+                self._files.pop(str(piece.path), None)
 
 
 _samples = _Log("samples", lambda c: (c.get("finals") or 0, c.get("typed") or 0)
@@ -563,7 +652,7 @@ def record_event(event: Event) -> int:
         folder = str(data_paths.voice_dir())
         if folder not in _next_event_id:
             with _reading:
-                ids = [line[3].get("id") for _, path in _events.days() for line in _events.index(path)]
+                ids = [line[3].get("id") for line in _events.all_lines()]
             _next_event_id[folder] = max((i for i in ids if isinstance(i, int)), default=0) + 1
         event_id = _next_event_id[folder]
         _next_event_id[folder] = event_id + 1
@@ -578,10 +667,85 @@ def record_event(event: Event) -> int:
 
 
 def prune(now: Optional[float] = None) -> None:
+    """Close every file whose half hour has ended, and delete what is past
+    its keeping time."""
     now = time.time() if now is None else now
     with _writing, _reading:
-        _samples.prune(now - SAMPLE_KEEP_SEC)
-        _events.prune(now - EVENT_KEEP_SEC)
+        _samples.close_ended(now)
+        _events.close_ended(now)
+        _samples.prune(now - SAMPLE_KEEP_SEC, now)
+        _events.prune(now - EVENT_KEEP_SEC, now)
+
+
+def close_ended(now: Optional[float] = None) -> int:
+    """Close every voice file whose half hour has ended (the newest one
+    once the next half hour has begun, even with nothing written since), so
+    the content ingest reads it; how many were closed now."""
+    now = time.time() if now is None else now
+    with _writing:
+        return _samples.close_ended(now) + _events.close_ended(now)
+
+
+class Closer:
+    """Closes the voice files whose half hour has ended, every
+    CLOSE_EVERY_SEC, off the event loop, for as long as speech input runs
+    (transcription_api starts and stops it)."""
+
+    def __init__(self) -> None:
+        self._task: Optional[asyncio.Task] = None
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.get_running_loop().create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            await asyncio.sleep(CLOSE_EVERY_SEC)
+            try:
+                await asyncio.to_thread(close_ended)
+            except Exception:
+                log.exception("voice files not closed")
+
+
+def is_samples_file(name: str) -> bool:
+    return name.endswith(_samples.suffix)
+
+
+def samples_summary(data: bytes) -> dict:
+    """What the content ingest keeps of a closed samples file: its summary
+    fields only (a second's numbers have nothing to search). The time it
+    spans, how many seconds were listened to, the sentences heard and
+    messages typed, and every second that was not healthy, by state and by
+    cause code."""
+    first = last = None
+    seconds = finals = typed = 0
+    states: dict[str, int] = {}
+    causes: dict[str, int] = {}
+    for raw in data.splitlines():
+        cells = _cells(raw) if raw.strip() else None
+        at = cells.get("at") if cells else None
+        if not isinstance(at, (int, float)):
+            continue
+        first = at if first is None else min(first, at)
+        last = at if last is None else max(last, at)
+        seconds += 1
+        finals += int(cells.get("finals") or 0)
+        typed += int(cells.get("typed") or 0)
+        state = cells.get("state") or "healthy"
+        if state != "healthy":
+            states[str(state)] = states.get(str(state), 0) + 1
+            code = cells.get("cause_code")
+            if code:
+                causes[str(code)] = causes.get(str(code), 0) + 1
+    return {"from_at": first, "to_at": last, "samples": seconds,
+            "listened_sec": seconds * SAMPLE_EVERY_SEC, "finals": finals, "typed": typed,
+            "failures": sum(states.values()), "states": states, "causes": causes}
 
 
 def _sample(row: dict) -> Sample:
@@ -657,7 +821,7 @@ def today(now: float) -> dict:
 def last_drop_at() -> Optional[float]:
     """When speech was last dropped, ever (within the record), or None."""
     with _reading:
-        return max((line[0] for _, path in _events.days() for line in _events.index(path)
+        return max((line[0] for line in _events.all_lines()
                     if line[3].get("kind") in DROP_KINDS), default=None)
 
 
@@ -843,8 +1007,10 @@ EVENT_COLUMNS = ("id", "at", "capture", "kind", "source", "text", "cause", "top_
 
 
 class _VoiceMapping:
-    """voice_samples and voice_events as the day files above: each row one
-    line, its rowid kept on a sample's (the table has no key of its own)."""
+    """voice_samples and voice_events as the half-hour files above: each row
+    one line, its rowid kept on a sample's (the table has no key of its own).
+    The files are written open; the first prune closes every one whose half
+    hour has ended."""
     name = "voice"
     tables = ("voice_samples", "voice_events")
     under: tuple = ()
@@ -856,11 +1022,11 @@ class _VoiceMapping:
 
     def files(self, conn):
         for log, table in ((_samples, "voice_samples"), (_events, "voice_events")):
-            days: dict[str, list[bytes]] = {}
+            windows: dict[float, list[bytes]] = {}
             for row in move.table_rows(conn, table):
-                days.setdefault(_day(row.cells["at"]), []).append(_line(move.row_data(row)))
-            for day, lines in days.items():
-                yield f"voice/{day}{log.suffix}", b"".join(lines)
+                windows.setdefault(_window(row.cells["at"]), []).append(_line(move.row_data(row)))
+            for start, lines in windows.items():
+                yield f"voice/{file_rel(log.kind, start)}", b"".join(lines)
 
     def rows(self, docs, files: move.Files) -> dict:
         found: dict[str, list] = {"voice_samples": [], "voice_events": []}
