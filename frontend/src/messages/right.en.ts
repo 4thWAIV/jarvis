@@ -61,6 +61,10 @@ export const rightEn = {
   "right.inbox.byWork": "Work items",
   "right.inbox.general": "Messages",
   "right.inbox.new": { one: "{count} new", other: "{count} new" },
+  "right.inbox.fromAgents": "From agents",
+  "right.inbox.hide": "Hide messages",
+  "right.inbox.show": "Show messages",
+  "right.inbox.readCount": "Read ({count})",
   // Where a package a message carries stands.
   "right.packages.answered": "{answered} of {total} answered",
   "right.packages.state.arrived": "Not opened",

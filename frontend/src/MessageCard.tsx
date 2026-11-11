@@ -22,6 +22,7 @@ import { useState, type ReactNode } from "react";
 import { carriedProgress, markMessage, messageAct, type ToHim } from "./messagesToHim";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
 import { openInbox } from "./packageInbox";
+import type { bindingProps } from "./uiNavigation";
 
 type ElementRef = (el: Element | null) => void;
 const none: ElementRef = () => {};
@@ -32,6 +33,22 @@ export function PackageMark() {
       <path d="M8 1.5 14 4.5v7L8 14.5 2 11.5v-7Z M2 4.5 8 7.5l6-3 M8 7.5v7" fill="none"
             stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/** Minimise or bring back a list of messages: the page's disclosure mark
+ *  (▾ shown, ▸ minimised, as Work's History, Workflows' Done and the
+ *  Queue's Dismissed), alone, its words its accessible name and title. */
+export function MinimiseToggle({ shown, hideLabel, showLabel, binding, part }: {
+  shown: boolean; hideLabel: string; showLabel: string;
+  binding: ReturnType<typeof bindingProps>; part?: ElementRef;
+}) {
+  const label = shown ? hideLabel : showLabel;
+  return (
+    <button type="button" className="minimise-toggle" aria-expanded={shown} aria-label={label}
+            title={label} ref={part} {...binding}>
+      <span aria-hidden="true">{shown ? "▾" : "▸"}</span>
+    </button>
   );
 }
 

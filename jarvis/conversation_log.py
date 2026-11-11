@@ -687,12 +687,22 @@ def work_thread(work_id: str, before: int | None = None,
     return _read("about = ?", [str(work_id)], before, limit)
 
 
-def general(before: int | None = None, limit: int = PAGE) -> list[ConversationItem]:
-    """The messages to him that belong to no Work item, newest first. A
-    person's messages stay in their own threads (the Queue), so are not here."""
+# The states the Inbox's Read section lists: read, and answered (his reply
+# went) but not done.
+READ_STATES = (MessageState.READ, MessageState.ANSWERED)
+
+
+def general(before: int | None = None, limit: int = PAGE,
+            states: tuple[MessageState, ...] | None = None) -> list[ConversationItem]:
+    """The messages to him that belong to no Work item, newest first; only
+    those in `states` when given. A person's messages stay in their own
+    threads (the Queue), so are not here."""
     limit = max(1, min(int(limit), PAGE * 5))
     where = f"about IS NULL AND {_MESSAGE} AND counterpart_kind IS NOT ?"
     args: list = [str(Counterpart.PERSON)]
+    if states is not None:
+        where += f" AND state IN ({','.join('?' * len(states))})"
+        args.extend(str(s) for s in states)
     if before is not None:
         where += " AND id < ?"
         args.append(int(before))
@@ -705,11 +715,21 @@ def general(before: int | None = None, limit: int = PAGE) -> list[ConversationIt
 def new_general() -> int:
     """How many messages that belong to no Work item are new (a person's
     are counted in their own threads, so not here)."""
+    return _count_general((MessageState.NEW,))
+
+
+def read_general() -> int:
+    """How many messages that belong to no Work item are read or answered
+    and not done: what the Inbox's Read section holds."""
+    return _count_general(READ_STATES)
+
+
+def _count_general(states: tuple[MessageState, ...]) -> int:
     with closing(_connect()) as conn:
         return int(conn.execute(
-            f"SELECT COUNT(*) FROM conversation_items WHERE about IS NULL AND state = ? "
-            f"AND counterpart_kind IS NOT ?",
-            (str(MessageState.NEW), str(Counterpart.PERSON))).fetchone()[0])
+            f"SELECT COUNT(*) FROM conversation_items WHERE about IS NULL "
+            f"AND state IN ({','.join('?' * len(states))}) AND counterpart_kind IS NOT ?",
+            (*(str(s) for s in states), str(Counterpart.PERSON))).fetchone()[0])
 
 
 def item_for_message(message_id: int) -> ConversationItem | None:

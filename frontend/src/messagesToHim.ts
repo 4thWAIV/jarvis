@@ -6,7 +6,11 @@
  * done (messages_api.py).
  *
  *   - `inboxMessages`: each Work item with messages (how many are new, its
- *     first new one) and the messages that belong to no item, newest first;
+ *     first new one) and the new messages that belong to no item, newest
+ *     first, with how many are read;
+ *   - `readMessages`: the ones that belong to no item he has read or
+ *     answered and is not done with, newest first: the Inbox's Read
+ *     section. Done ones are in neither list;
  *     read at once, on every `inbox` hint and every (re)connect snapshot on
  *     /ws/sessions (sessionsSocket.ts). The Inbox tab, the Work rows' counts
  *     and Updates waiting's one line read it.
@@ -78,7 +82,9 @@ export interface WorkThread {
 
 export interface Inbox {
   work: { items: WorkThread[]; new: number };
-  general: { messages: ToHim[]; new: number; more: boolean };
+  /** The new ones that belong to no item, how many are new and how many
+   *  are read (or answered) and not done: the Read section's count. */
+  general: { messages: ToHim[]; new: number; read: number; more: boolean };
 }
 
 export interface Conversation {
@@ -110,6 +116,14 @@ async function readInbox(): Promise<Inbox> {
 }
 
 export const inboxMessages = liveRead(readInbox, [inboxChanged]);
+
+/** The Inbox's Read section: messages that belong to no item, read or
+ *  answered and not done, newest first. */
+export const readMessages = liveRead(async () => {
+  const read = await json<Inbox["general"]>("/api/messages/general?read=1");
+  if (!Array.isArray(read.messages)) throw new Error("GET /api/messages/general: not his messages");
+  return read;
+}, [inboxChanged]);
 
 /** How many messages to him are new: on Work items and on none. */
 export function newMessages(inbox: Inbox | null): number {

@@ -1107,6 +1107,9 @@ export const mainEn = {
   "main.updates.readFailed": "That message could not be read.",
   "main.updates.messages": { one: "{count} new message", other: "{count} new messages" },
   "main.updates.openInbox": "Open",
+  "main.updates.messagesShort": { one: "{count} new", other: "{count} new" },
+  "main.updates.minimise": "Hide messages",
+  "main.updates.restore": "Show messages",
   // A message to him (MessageCard.tsx), in a Work item's Messages tab or the Inbox.
   "main.messages.you": "You",
   "main.messages.subagent": "{name} ({parent})",
