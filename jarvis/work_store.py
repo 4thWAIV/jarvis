@@ -1214,6 +1214,19 @@ def _unlinked(row, now: float) -> bool:
             and now - since > wait_links.UNLINKED_AFTER_SEC)
 
 
+def in_progress(reported: str, person: Who) -> bool:
+    """Whether a piece ties its owner's activity to its item: THE rule for
+    an item's Working, its live line, whether he can approve it and the Work
+    row's orb (`workers.ts` `pieceInProgress`, the same rule). A piece
+    reported working is in progress; a subagent put on a piece not yet
+    started (planned or ready) is too, since it exists for that piece. A
+    piece in review, done, blocked or waiting on him never is: its owner
+    working is working on something else."""
+    if reported == WORKING:
+        return True
+    return reported in (PLANNED, READY) and subagent_of(person) is not None
+
+
 def _pieces(rows, now: float, live: Callable[[Who], Optional[LiveAgent]]) -> list[Piece]:
     """The pieces from their rows, as they are at `now` with each owner's
     live state as `live` gives it."""
@@ -1222,11 +1235,14 @@ def _pieces(rows, now: float, live: Callable[[Who], Optional[LiveAgent]]) -> lis
     for r in rows:
         after = json.loads(r["after_keys"])
         person = Who(r["who_kind"], r["who_ref"])
-        agent = live(person)
+        # Only a piece in progress ties its owner's activity to this item
+        # (`in_progress`): an agent busy elsewhere never makes a piece in
+        # review, done, blocked or waiting on him read working.
+        agent = live(person) if in_progress(r["state"], person) else None
         # Working is shown only while its owner is working (an open turn,
         # worker_inventory.working). Any other working report reads
         # activity_unknown.
-        evidenced = r["state"] == WORKING and agent is not None and agent.state == LIVE_WORKING
+        evidenced = agent is not None and agent.state == LIVE_WORKING
         shown = WORKING if evidenced else public_state(r["state"])
         reason = ""
         if shown == ACTIVITY_UNKNOWN:

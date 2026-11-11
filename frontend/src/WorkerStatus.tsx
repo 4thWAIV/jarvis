@@ -8,7 +8,7 @@ import { ParticleOrb, WORKFLOW_PALETTE } from "./WorkflowVisuals";
 import { useSyncExternalStore } from "react";
 import { useT, type Translate } from "./locale";
 import { brains, activeBrain } from "./brains";
-import { useWorkers, findWorker, isWorking, workingOnItem, type WorkOwner, type WorkerCounts,
+import { useWorkers, findWorker, isWorking, workingOnItem, type OwnedPiece, type WorkerCounts,
          type Inventory, type Worker } from "./workers";
 
 function words(t: Translate, c: WorkerCounts) {
@@ -74,12 +74,14 @@ export function WorkerFamily({ sessionId, provider }: { sessionId: string; provi
   </span>;
 }
 
-/** A piece owner's orb in the Work item's detail: thinking while it works. */
-export function WorkOwnerActivity({owner}: {owner: WorkOwner}) {
+/** A piece owner's orb in the Work item's detail: thinking while it works
+ *  on this piece (in progress and in a turn), never for work elsewhere. */
+export function WorkOwnerActivity({piece}: {piece: OwnedPiece}) {
   const {value} = useWorkers();
   const t = useT();
+  const owner = piece.who;
   if (!owner.ref || owner.kind === "tim") return null;
-  const working = workingOnItem(value, [owner]) > 0;
+  const working = workingOnItem(value, [piece]) > 0;
   const words = working ? t("left.workers.working") : t("left.workers.idle");
   return <span data-worker-snapshot={value?.snapshot_id} title={words} aria-label={words}>
     <ParticleOrb palette={WORKFLOW_PALETTE} look={{state: working ? "thinking" : "idle", gray: false}}
@@ -89,10 +91,10 @@ export function WorkOwnerActivity({owner}: {owner: WorkOwner}) {
 
 /** The one orb on the right of a Work row: still and empty when nobody works
  *  on the item, else thinking with how many of its agents work now. */
-export function WorkRowActivity({owners}: {owners: WorkOwner[]}) {
+export function WorkRowActivity({pieces}: {pieces: OwnedPiece[]}) {
   const {value} = useWorkers();
   const t = useT();
-  const count = workingOnItem(value, owners);
+  const count = workingOnItem(value, pieces);
   const words = t("right.work.agentsWorking", {count});
   return <span className="work-row-orb" data-working={count} data-worker-snapshot={value?.snapshot_id}
                title={words} aria-label={words}>

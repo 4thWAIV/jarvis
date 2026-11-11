@@ -1418,9 +1418,15 @@ Agents list's orbs and "N working" line (`WorkerFamily`: its subagents
 working, nothing while none are), the brain count in the left column (the
 provider's working count: sessions, subagents, the brain and runs), each
 Work row's one orb at its right end (`WorkRowActivity`: still while nobody
-works on the item, else how many of its pieces' owners work), the piece
+works on the item, else how many of its agents work on it), the piece
 owners' orbs, Work's Working (`server._subagent_now`), workflows and
-`list_agents`. A late session snapshot keeps its last states (a gap says it
+`list_agents`. An agent works on a Work item only through a piece of it in
+progress (`work_store.in_progress`, mirrored by `workers.ts`
+`pieceInProgress`): a piece reported working, or a planned or ready piece a
+subagent was put on, while its owner is in a turn. An agent busy elsewhere
+never makes a piece in review, done, blocked or waiting on him read
+working: not the item's state, its live line, Approve, nor the row's orb
+(no live lookup is made for such a piece). A late session snapshot keeps its last states (a gap says it
 is late). `session_watch._background_tasks` keeps every subagent file in its
 cache and reads only what a transcript appended, so a poll stays well under
 a second with hundreds of subagent files.

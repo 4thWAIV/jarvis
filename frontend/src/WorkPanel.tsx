@@ -144,7 +144,7 @@ const WorkRow = memo(function WorkRow({ item, selected, thread }: { item: WorkIt
                 title={item.state === "activity_unknown" && !item.live ? t("right.work.activityUnknownReason") : undefined}>
             {rowStateWords(item, t)}</span>
           {/* One orb, at the right end: how many of its agents work now. */}
-          <WorkRowActivity owners={item.pieces.filter((p) => p.state !== "done").map((p) => p.who)} />
+          <WorkRowActivity pieces={item.pieces} />
         </span>
         {(item.projects ?? []).length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>

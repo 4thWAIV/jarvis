@@ -71,13 +71,26 @@ export function isWorking(worker: Worker | undefined): boolean {
 }
 
 export interface WorkOwner { kind: string; ref: string | null }
+export interface OwnedPiece { state: string; who: WorkOwner }
 
-/** How many of a Work item's owners are working now: each distinct owner of
- *  a piece not done, by the one answer; a workflow counts its working members. */
-export function workingOnItem(value: Inventory | null, owners: WorkOwner[]): number {
+/** Whether a piece ties its owner's activity to its item: the server's rule
+ *  (work_store.in_progress), read from the state the piece is shown in. A
+ *  piece reported working (shown working, or not working now) is in
+ *  progress; so is a planned or ready piece a subagent was put on. A piece
+ *  in review, done, blocked or waiting on him never is. */
+export function pieceInProgress(piece: OwnedPiece): boolean {
+  if (piece.state === "working" || piece.state === "activity_unknown") return true;
+  return (piece.state === "planned" || piece.state === "ready") && !!piece.who.ref?.includes("/sub:");
+}
+
+/** How many agents work on a Work item now: each distinct owner of a piece
+ *  in progress (`pieceInProgress`) that is working by the one answer; a
+ *  workflow counts its working members. An agent working on something else
+ *  never counts here. */
+export function workingOnItem(value: Inventory | null, pieces: OwnedPiece[]): number {
   const seen = new Set<string>();
   let count = 0;
-  for (const owner of owners) {
+  for (const { who: owner } of pieces.filter(pieceInProgress)) {
     if (!owner.ref || owner.kind === "tim") continue;
     const key = `${owner.kind}:${owner.ref}`;
     if (seen.has(key)) continue;
