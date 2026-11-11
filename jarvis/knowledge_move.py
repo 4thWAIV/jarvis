@@ -446,6 +446,10 @@ class RowMapping:
         return {self.table: out}
 
 
+PACKAGED_SCHEMA = Path(__file__).with_name("sqlite_schema.json")
+"""JARVIS's SQLite schema when its records moved, and each store's schema
+version: what export-sqlite builds when the engine holds no move."""
+
 REGISTERED: list[Mapping] = []
 """Mappings registered by hand (tests); the document types' own are in
 `RECORD_MODULES`. Every table none owns is moved by `RowMapping`."""
@@ -845,7 +849,9 @@ def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, *,
 def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
                   schema_from: Optional[Path] = None, files_root: Optional[Path] = None) -> dict:
     """A new SQLite file at `out_path` with the moved file's schema (the
-    manifest's, or `schema_from`'s) and its rows back from the engine. An
+    manifest's, or `schema_from`'s; on an install that never had jarvis.db,
+    the schema JARVIS had when its records moved, `PACKAGED_SCHEMA`, with
+    each store's schema version) and its rows back from the engine. An
     existing file is never overwritten: the file is built beside it and
     linked into place only while the name is free."""
     started = time.monotonic()
@@ -853,9 +859,11 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
     if out_path.exists() or out_path.is_symlink():
         raise MoveRefused(f"{out_path} exists; export-sqlite never overwrites a file")
     manifest = _manifest(uds)
-    if manifest is None:
-        raise MoveError("the engine holds no move manifest")
-    if schema_from is not None:
+    versions: dict = {}
+    if schema_from is None and manifest is None:
+        packaged = json.loads(PACKAGED_SCHEMA.read_text(encoding="utf-8"))
+        schema, infos, versions = packaged["schema"], {}, packaged["schema_versions"]
+    elif schema_from is not None:
         with snapshot(Path(schema_from)) as conn:
             schema = schema_of(conn)
             infos = {t: table_info(conn, t) for t in tables_of(schema)}
@@ -892,11 +900,18 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
                     continue
                 conn.execute(o["sql"])
                 if o["type"] == "table":
-                    rows_written += _insert(conn, infos[o["name"]], back.pop(o["name"], []))
+                    if o["name"] not in infos:
+                        infos[o["name"]] = table_info(conn, o["name"])
+                    rows = back.pop(o["name"], [])
+                    if not rows and o["name"] in versions:
+                        rows = [Row(dict(zip(infos[o["name"]].columns, v))) for v in versions[o["name"]]]
+                    rows_written += _insert(conn, infos[o["name"]], rows)
             internal = {t: back.pop(t) for t in list(back) if t.startswith("sqlite_")}
             if back:
                 raise MoveError("rows for tables the schema does not make: " + ", ".join(back))
             if "sqlite_sequence" in internal:
+                if "sqlite_sequence" not in infos:
+                    infos["sqlite_sequence"] = table_info(conn, "sqlite_sequence")
                 conn.execute("DELETE FROM sqlite_sequence")
                 rows_written += _insert(conn, infos["sqlite_sequence"], internal["sqlite_sequence"])
             stats = [t for t in _STATS if t in internal]

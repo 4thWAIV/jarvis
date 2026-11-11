@@ -63,3 +63,18 @@ def test_a_move_that_cannot_be_proven_stops_startup(jarvis_db, monkeypatch):
     with pytest.raises(records_cutover.CutoverFailed):
         records_cutover.cut_over(snapshot=False)
     assert records_cutover.done() is None
+
+
+def test_export_sqlite_on_an_install_that_never_had_jarvis_db(tmp_path):
+    out = tmp_path / "back.db"
+    done = move.export_sqlite(records.uds(), None, out)
+    assert done["tables"] > 70
+    conn = sqlite3.connect(out)
+    try:
+        names = {n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"runs", "work_items", "attention_items", "messages"} <= names
+        # Each store's schema version comes back, so the code before the move
+        # opens the file as its own.
+        assert conn.execute("SELECT version FROM work_schema").fetchone() is not None
+    finally:
+        conn.close()
