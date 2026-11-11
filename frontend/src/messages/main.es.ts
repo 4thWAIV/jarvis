@@ -198,6 +198,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.folders.node": "Nodo {id}",
   "main.folders.never": "nunca",
   "main.folders.checked": "comprobada {when}",
+  "main.folders.documents": { one: "{count} documento", other: "{count} documentos" },
+  "main.folders.documentsWaiting": { one: "{count} en espera", other: "{count} en espera" },
   "main.folders.seen": "vista {when}",
   "main.folders.sessions": { one: "{count} sesión", other: "{count} sesiones" },
   "main.folders.discoveredFolder": "Carpeta descubierta",

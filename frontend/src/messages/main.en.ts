@@ -221,6 +221,8 @@ export const mainEn = {
   "main.folders.node": "Node {id}",
   "main.folders.never": "never",
   "main.folders.checked": "checked {when}",
+  "main.folders.documents": { one: "{count} document", other: "{count} documents" },
+  "main.folders.documentsWaiting": { one: "{count} waiting", other: "{count} waiting" },
   "main.folders.seen": "seen {when}",
   "main.folders.sessions": { one: "{count} session", other: "{count} sessions" },
   "main.folders.discoveredFolder": "Discovered folder",

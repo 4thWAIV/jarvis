@@ -1682,6 +1682,14 @@ tier 1 with the engine's search; `work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
 `JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
+Each registered folder's files are items under `/folders/<folder id>/` in
+the engine; `knowledge_api.folder_counts` reads each active folder's count
+as Tim (`EngineUDS.count` through `Context.uds`, one request a folder within
+`FOLDER_COUNTS_DEADLINE_SEC`, `partial` past it), shown on each row of the
+centre's Folders view ("12 documents · 3 waiting", `folders.ts`
+`folderCounts`), read by `GET /api/knowledge/folder-counts` and the brain's
+`folder_document_counts`. The engine off or down is `available` false,
+never an error. Only the count: a folder or data browser is later work.
 Its process, crash and budget tests carry the `knowledge_engine` marker.
 
 ## Self-update

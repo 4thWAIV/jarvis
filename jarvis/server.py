@@ -11872,6 +11872,11 @@ async def tool_reindex_knowledge(args: dict) -> str:
     return answer
 
 
+async def tool_folder_document_counts(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.folder_counts(knowledge_calls),
+                                 "", "folder_document_counts", walled=False)
+
+
 async def tool_knowledge_indexes(args: dict) -> str:
     return await _knowledge_tool(args, lambda: knowledge_api.indexes(knowledge_calls),
                                  "", "knowledge_indexes", walled=False)
@@ -12102,6 +12107,7 @@ TOOL_HANDLERS.update({
     "change_topic": tool_change_topic,
     "reindex_knowledge": tool_reindex_knowledge,
     "knowledge_indexes": tool_knowledge_indexes,
+    "folder_document_counts": tool_folder_document_counts,
     "change_knowledge_index": tool_change_knowledge_index,
     "knowledge_seeds": tool_knowledge_seeds,
     "work_context": tool_work_context,
@@ -12124,6 +12130,7 @@ TAINT_EXEMPT_TOOLS.update({
     "change_topic": "it writes his own topic files on his word, it does not read",
     "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
     "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
+    "folder_document_counts": "it reports folder ids and the engine's own counts, never a name or a word",
     "change_knowledge_index": "it writes his own settings note on his word, it does not read",
     "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
     "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
