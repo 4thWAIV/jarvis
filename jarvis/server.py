@@ -86,6 +86,7 @@ from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_client
 from jarvis import records
+from jarvis import records_cutover
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -3210,6 +3211,11 @@ async def lifespan(application: FastAPI):
     _main_loop = asyncio.get_running_loop()
     # The knowledge engine before anything else; the page waits for it.
     await start_knowledge_engine()
+    # jarvis.db into the engine, once, proven both ways before any store is
+    # touched (records_cutover.py); a move it cannot prove stops startup.
+    cut = await asyncio.to_thread(records_cutover.cut_over)
+    if cut.state == "cut over":
+        log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
 
     run_store.init_db()
     try:
@@ -3270,11 +3276,13 @@ async def lifespan(application: FastAPI):
     await team_api.stop()
     await _stop_attention()
     await transcription_api.stop()
-    await stop_knowledge()
     await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    # The engine last: everything above may still write its records.
+    await stop_knowledge()
+    records.bind(None)
     server_address.forget()
 
 
