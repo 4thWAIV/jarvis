@@ -19,11 +19,13 @@ bundle_archive. Pillow is installed but undeclared and is never imported.
 """
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Optional, Protocol, runtime_checkable
+from typing import Callable, Iterator, Optional, Protocol, runtime_checkable
 
 from jarvis import bundle_archive
 from jarvis.bundle_contract import (Extent, FormatId, Location, Operation, Reason,
@@ -112,6 +114,20 @@ class Reader(Protocol):
                options: RenderOptions) -> RenderedPage:
         """Raises Unsupported when the format has no rendering."""
         ...
+
+
+def private_copy(scratch: Path, write: Callable) -> Iterator[Path]:
+    """A new 0600 file in `scratch`, filled by `write(file)`, removed after:
+    the copy behind every `MemberSource.materialize` (a generator for
+    contextlib.contextmanager)."""
+    path = scratch / f"member-{uuid.uuid4().hex}"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb", closefd=True) as out:
+            write(out)
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def read_bounded(source: MemberSource, limit: int) -> bytes:
