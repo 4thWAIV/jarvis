@@ -163,19 +163,48 @@ def test_a_cause_s_code_is_recorded_and_read_back_and_reaches_the_summary():
     assert (got["causeCode"], got["causeValues"]) == ("machineBusy", {"load": 16.0})
 
 
-def test_a_record_from_before_the_codes_is_brought_forward_and_read_as_it_was_written():
-    from contextlib import closing
-    from jarvis import run_store
-    with closing(run_store._connect()) as conn:          # the tables as they were, no codes
-        conn.executescript(vd._SCHEMA)
-        conn.execute("INSERT INTO voice_events (at, kind, cause) VALUES (?, ?, ?)",
-                     (1000.0, "overload", "Machine busy (load 16.9)"))
-        conn.commit()
+def test_a_record_from_before_the_codes_is_read_as_it_was_written():
+    from jarvis import data_paths
+    folder = data_paths.voice_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    day = time.strftime("%Y-%m-%d", time.localtime(1000.0))
+    # An event line moved from before the codes: no cause code, no values.
+    (folder / f"{day}.events.jsonl").write_text(json.dumps(
+        {"id": 1, "at": 1000.0, "capture": None, "kind": "overload", "source": None, "text": None,
+         "cause": "Machine busy (load 16.9)", "top_processes": None}) + "\n")
     _, events = vd.history(900, 1100)
     assert [(e.cause, e.cause_code, e.cause_values) for e in events] == [
         ("Machine busy (load 16.9)", None, {})]
-    vd.record_event(Event(at=1001.0, kind="overload", cause="x", cause_code="noFrames"))
+    assert vd.record_event(Event(at=1001.0, kind="overload", cause="x", cause_code="noFrames")) == 2
     assert [e.cause_code for e in vd.history(900, 1100)[1]] == [None, "noFrames"]
+
+
+def test_samples_and_events_are_a_file_a_day_one_line_each():
+    """The record is Content: each day's samples and events, one JSON line
+    each, holding the columns of the tables they replaced."""
+    from jarvis import data_paths
+    day = 1_800_000_000.0
+    vd.record_sample(healthy(at=day))
+    vd.record_sample(healthy(at=day + 86400))
+    first = vd.record_event(Event(at=day, kind="ready"))
+    assert vd.record_event(Event(at=day + 1, kind="finish")) == first + 1
+    names = sorted(p.name for p in data_paths.voice_dir().iterdir())
+    dates = [time.strftime("%Y-%m-%d", time.localtime(t)) for t in (day, day + 86400)]
+    assert names == sorted([f"{dates[0]}.events.jsonl", f"{dates[0]}.samples.jsonl",
+                            f"{dates[1]}.samples.jsonl"])
+    line = json.loads((data_paths.voice_dir() / f"{dates[0]}.samples.jsonl").read_text())
+    assert tuple(line) == vd.SAMPLE_COLUMNS and line["notices_by_source"] == '{"status": 1}'
+    assert [s.at for s in vd.history(day - 1, day + 86401)[0]] == [day, day + 86400]
+
+
+def test_a_line_torn_by_a_crash_is_passed_over():
+    from jarvis import data_paths
+    vd.record_sample(healthy(at=1000.0))
+    path = next(data_paths.voice_dir().glob("*.samples.jsonl"))
+    with open(path, "ab") as f:
+        f.write(b'{"at": 1000.5, "capt')
+    vd.record_sample(healthy(at=1001.0))      # on a line of its own after the torn one
+    assert [s.at for s in vd.history(0, 2000)[0]] == [1000.0, 1001.0]
 
 
 def test_a_long_range_is_thinned_evenly(monkeypatch):

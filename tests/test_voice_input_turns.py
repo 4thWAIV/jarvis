@@ -329,12 +329,14 @@ def test_speech_heard_is_silent_while_he_is_away_or_it_is_off(client, monkeypatc
     _quick_cues()
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
+        available = server._availability
         monkeypatch.setattr(server, "_availability", lambda: server.attention.AWAY)
         ws.send_json({"type": "transcript", "text": "one", "isFinal": True,
                       "clientId": "page-a", "captureEpoch": 1})
         seen = _drain_until(ws, lambda m: m.get("state") == "committed", limit=40)
         assert [m["sound"] for m in _heard(seen)] == [False]
-        monkeypatch.undo()
+        # Back, without undoing the test's own surroundings (its engine and data folder).
+        monkeypatch.setattr(server, "_availability", available)
         voice_control.change(cues={"heard": {"on": False}})
         ws.send_json({"type": "transcript", "text": "two", "isFinal": True,
                       "clientId": "page-a", "captureEpoch": 1})

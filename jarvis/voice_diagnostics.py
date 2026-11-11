@@ -2,7 +2,7 @@
 voice_diagnostics.py — the record of how voice input is doing, so a dropped
 sentence can be traced to its cause from data rather than guessed at.
 
-While the microphone is open, one sample a second (`voice_samples`): what
+While the microphone is open, one sample a second (a sample line): what
 the recogniser received and decoded and how long decoding took, how far
 behind it is, how late the server's own timers fire, JARVIS's CPU and the
 machine's load, and what the page reported over /ws/transcribe that second
@@ -11,15 +11,16 @@ shown). Each sample is classified into one health state with one cause
 (`classify`, `diagnose`): its English, and its code and values (`CAUSES`)
 that the page words in the interface's language. Every capture start and
 end, every failure and every line of
-text the page showed, and every switch of speech model, is one row of
-`voice_events`; a failure also carries
+text the page showed, and every switch of speech model, is one event
+line; a failure also carries
 the cause in force and the busiest processes on the machine at that moment.
 
 Counts and timings only: no audio, and no words except the text the page
 itself displayed. Samples are kept SAMPLE_KEEP_SEC, events EVENT_KEEP_SEC.
-The tables live in the same database as runs and messages, under their own
-schema version (`voice_schema`); a record from before the codes has none,
-and the page shows its English as it was written.
+They are files on disk, indexed as Content (a log read whole, not records):
+each day's samples and each day's events, one JSON line each, in
+data_paths.voice_dir() ("the record" below). A record from before the
+codes has none, and the page shows its English as it was written.
 
 transcription_api.py runs one `CaptureMonitor` per connected page; the
 server's routes read `summary` and `history`.
@@ -29,15 +30,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import subprocess
 import threading
 import time
-from contextlib import closing
 from dataclasses import asdict, dataclass, field, fields
-from typing import Awaitable, Callable, Optional
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Optional
 
-from jarvis import run_store
+from jarvis import data_paths, knowledge_move as move
 from jarvis.said import Said, english
 from jarvis.transcriber import BYTES_PER_SECOND, PROTOCOL
 
@@ -95,64 +97,6 @@ CAUSES = {
 
 
 
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS voice_samples (
-        at REAL NOT NULL,
-        capture TEXT,
-        received_sec REAL, decoded_sec REAL, backlog_sec REAL, oldest_sec REAL,
-        rtf REAL,
-        loop_delay_ms REAL, process_cpu REAL, load_avg REAL,
-        frames_captured INTEGER, frames_sent INTEGER, held_sec REAL, socket_sec REAL,
-        long_task_ms REAL, long_tasks INTEGER, tab_hidden INTEGER,
-        notices INTEGER, notices_by_source TEXT,
-        voice_msgs INTEGER, session_msgs INTEGER, renders INTEGER,
-        finals INTEGER, typed INTEGER, quiet INTEGER,
-        state TEXT NOT NULL, cause TEXT
-    );
-    CREATE INDEX IF NOT EXISTS voice_samples_by_time ON voice_samples (at);
-    CREATE TABLE IF NOT EXISTS voice_events (
-        id INTEGER PRIMARY KEY,
-        at REAL NOT NULL,
-        capture TEXT,
-        kind TEXT NOT NULL,
-        source TEXT, text TEXT,
-        cause TEXT, top_processes TEXT
-    );
-    CREATE INDEX IF NOT EXISTS voice_events_by_time ON voice_events (at);
-"""
-
-# Each step is appended, never changed (run_store.migrate). 2: the cause's
-# code and values beside its English.
-_MIGRATIONS = {
-    1: _SCHEMA,
-    2: """
-        ALTER TABLE voice_samples ADD COLUMN cause_code TEXT;
-        ALTER TABLE voice_samples ADD COLUMN cause_values TEXT;
-        ALTER TABLE voice_events ADD COLUMN cause_code TEXT;
-        ALTER TABLE voice_events ADD COLUMN cause_values TEXT;
-    """,
-    # 3: the seconds of audio a drop lost, where the page said.
-    3: "ALTER TABLE voice_events ADD COLUMN lost_sec REAL;",
-}
-
-# The databases brought forward in this process, by path: a sample is
-# written every second, so the schema is looked at once, under a lock.
-_migrated: set[str] = set()
-_migrating = threading.Lock()
-
-
-def _connect():
-    conn = run_store._connect()
-    path = conn.execute("PRAGMA database_list").fetchone()["file"]
-    if path not in _migrated:
-        with _migrating:
-            if path not in _migrated:
-                run_store.migrate(conn, "voice_schema", _MIGRATIONS, "voice diagnostics")
-                conn.commit()
-                _migrated.add(path)
-    return conn
-
-
 @dataclass
 class Sample:
     at: float
@@ -187,7 +131,8 @@ class Sample:
     cause_values: dict = field(default_factory=dict)
 
 
-_SAMPLE_COLUMNS = [f.name for f in fields(Sample)]
+# The columns of a sample line (the table it replaced, `voice_samples`).
+SAMPLE_COLUMNS = tuple(f.name for f in fields(Sample))
 # Stored as JSON text.
 _JSON_COLUMNS = ("notices_by_source", "cause_values")
 
@@ -437,6 +382,170 @@ def top_processes(limit: int = 5) -> list[dict]:
 
 
 # ── the record ───────────────────────────────────────────────────────────
+#
+# Two logs, each a file a day (local date) in data_paths.voice_dir():
+# `<date>.samples.jsonl` and `<date>.events.jsonl`, one JSON line a sample
+# or event holding the columns of the tables they replaced (`voice_samples`,
+# `voice_events`), each value as knowledge_move.cell keeps it. A line is
+# only ever appended, on the thread the caller runs it on (the audio path's
+# side thread, asyncio.to_thread); prune deletes a day's file once all of it
+# is past its keeping time and rewrites the one day it cuts through. Each
+# file is indexed in memory as it grows (`_Log`): every line's time and
+# where it is, so a read opens only the lines it wants.
+
+def _day(at: Any) -> str:
+    """The local date a line belongs to, YYYY-MM-DD."""
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(float(at)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "0000-00-00"
+
+
+def _line(cells: dict) -> bytes:
+    return (json.dumps({k: move.cell(v) for k, v in cells.items()}, ensure_ascii=False,
+                       separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _cells(raw: bytes) -> Optional[dict]:
+    """A line's cells, or None for a line that is not one (torn by a crash)."""
+    try:
+        data = json.loads(raw)
+        return {k: move.uncell(v) for k, v in data.items()} if isinstance(data, dict) else None
+    except (ValueError, move.MoveError):
+        return None
+
+
+@dataclass
+class _File:
+    inode: int = -1
+    offset: int = 0
+    # Per line: (at, its offset, its length, what the log keeps of it).
+    lines: list = field(default_factory=list)
+
+
+class _Log:
+    """One kind of line, a file a day, indexed in memory as it grows."""
+
+    def __init__(self, kind: str, keep: Callable[[dict], Any]) -> None:
+        self.kind = kind
+        self.suffix = f".{kind}.jsonl"
+        self._keep = keep
+        self._files: dict[str, _File] = {}
+
+    def path(self, day: str) -> Path:
+        return data_paths.voice_dir() / f"{day}{self.suffix}"
+
+    def days(self) -> list[tuple[str, Path]]:
+        folder = data_paths.voice_dir()
+        if not folder.is_dir():
+            return []
+        return sorted((p.name[:-len(self.suffix)], p) for p in folder.iterdir()
+                      if p.name.endswith(self.suffix) and p.is_file())
+
+    def append(self, cells: dict) -> None:
+        folder = data_paths.voice_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(self.path(_day(cells["at"])), "a+b") as f:
+            end = f.seek(0, os.SEEK_END)
+            torn = end and (f.seek(end - 1), f.read(1))[1] != b"\n"
+            f.write((b"\n" if torn else b"") + _line(cells))
+
+    def index(self, path: Path) -> list:
+        """The file's lines as (at, offset, length, kept), read on from
+        where the last look stopped."""
+        key = str(path)
+        held = self._files.setdefault(key, _File())
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            self._files.pop(key, None)
+            return []
+        if info.st_ino != held.inode or info.st_size < held.offset:
+            held = self._files[key] = _File(info.st_ino)
+        if info.st_size > held.offset:
+            with open(path, "rb") as f:
+                f.seek(held.offset)
+                block = f.read(info.st_size - held.offset)
+            start = 0
+            while True:
+                end = block.find(b"\n", start)
+                if end < 0:
+                    break
+                cells = _cells(block[start:end])
+                at = cells.get("at") if cells else None
+                if isinstance(at, (int, float)):
+                    held.lines.append((at, held.offset + start, end - start, self._keep(cells)))
+                start = end + 1
+            held.offset += start
+        return held.lines
+
+    def between(self, start: float, end: float) -> list[tuple[Path, tuple]]:
+        """(file, line) for every line from `start` to `end`, by time."""
+        first = _day(start - 86400) if math.isfinite(start) else "0000-00-00"
+        last = _day(end + 86400) if math.isfinite(end) else "9999-99-99"
+        found = [(at, n, i, path, line) for n, (day, path) in enumerate(self.days()) if first <= day <= last
+                 for i, line in enumerate(self.index(path)) if start <= (at := line[0]) <= end]
+        return [(path, line) for *_, path, line in sorted(found, key=lambda x: x[:3])]
+
+    def read(self, chosen: list[tuple[Path, tuple]]) -> list[dict]:
+        """The cells of the lines chosen, in their order."""
+        by_file: dict[Path, list[tuple]] = {}
+        for path, line in chosen:
+            by_file.setdefault(path, []).append(line)
+        got: dict[tuple, dict] = {}
+        for path, lines in by_file.items():
+            low = min(line[1] for line in lines)
+            high = max(line[1] + line[2] for line in lines)
+            try:
+                with open(path, "rb") as f:
+                    f.seek(low)
+                    block = f.read(high - low)
+            except FileNotFoundError:
+                continue
+            for line in lines:
+                cells = _cells(block[line[1] - low:line[1] - low + line[2]])
+                if cells is not None:
+                    got[(path, line[1])] = cells
+        return [got[(p, line[1])] for p, line in chosen if (p, line[1]) in got]
+
+    def prune(self, cutoff: float) -> None:
+        """Drop every line from before `cutoff`: a file all of it before, a
+        file it cuts through written again without them. The index is kept
+        only for the last two days, which every summary reads."""
+        days = self.days()
+        for day, path in days[:-2]:
+            self._prune_file(day, path, cutoff)
+            self._files.pop(str(path), None)
+        for day, path in days[-2:]:
+            self._prune_file(day, path, cutoff)
+
+    def _prune_file(self, day: str, path: Path, cutoff: float) -> None:
+        lines = self.index(path)
+        if all(line[0] < cutoff for line in lines):
+            if lines or day < _day(cutoff):
+                path.unlink(missing_ok=True)
+                self._files.pop(str(path), None)
+            return
+        if not any(line[0] < cutoff for line in lines):
+            return
+        kept = self.read([(path, line) for line in lines if line[0] >= cutoff])
+        tmp = path.with_name(path.name + ".pruning")
+        with open(tmp, "wb") as f:
+            f.write(b"".join(_line(c) for c in kept))
+        os.replace(tmp, path)
+        self._files.pop(str(path), None)
+
+
+_samples = _Log("samples", lambda c: (c.get("finals") or 0, c.get("typed") or 0)
+                if c.get("finals") or c.get("typed") else None)
+_events = _Log("events", lambda c: c)
+# One writer at a time (appends, the event ids, prune), and one reader of the
+# indexes at a time; a reader never waits on a writer, so a read never holds
+# up a sample being written.
+_writing = threading.Lock()
+_reading = threading.RLock()
+_next_event_id: dict[str, int] = {}
+
 
 def record_sample(s: Sample) -> None:
     row = asdict(s)
@@ -444,37 +553,39 @@ def record_sample(s: Sample) -> None:
         row[key] = json.dumps(row[key])
     for key in ("tab_hidden", "quiet"):
         row[key] = None if row[key] is None else int(row[key])
-    with closing(_connect()) as conn:
-        conn.execute(f"INSERT INTO voice_samples ({','.join(_SAMPLE_COLUMNS)}) "
-                     f"VALUES ({','.join('?' * len(_SAMPLE_COLUMNS))})",
-                     [row[c] for c in _SAMPLE_COLUMNS])
-        conn.commit()
+    with _writing:
+        _samples.append({c: row[c] for c in SAMPLE_COLUMNS})
 
 
 def record_event(event: Event) -> int:
     assert event.kind in EVENT_KINDS, event.kind
-    with closing(_connect()) as conn:
-        cur = conn.execute(
-            "INSERT INTO voice_events (at, capture, kind, source, text, cause, top_processes, "
-            "cause_code, cause_values, lost_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (event.at, event.capture, event.kind, event.source, event.text, event.cause,
-             json.dumps(event.top_processes) if event.top_processes else None,
-             event.cause_code, json.dumps(event.cause_values) if event.cause_code else None,
-             event.lost_sec))
-        conn.commit()
-        return cur.lastrowid
+    with _writing:
+        folder = str(data_paths.voice_dir())
+        if folder not in _next_event_id:
+            with _reading:
+                ids = [line[3].get("id") for _, path in _events.days() for line in _events.index(path)]
+            _next_event_id[folder] = max((i for i in ids if isinstance(i, int)), default=0) + 1
+        event_id = _next_event_id[folder]
+        _next_event_id[folder] = event_id + 1
+        _events.append({
+            "id": event_id, "at": event.at, "capture": event.capture, "kind": event.kind,
+            "source": event.source, "text": event.text, "cause": event.cause,
+            "top_processes": json.dumps(event.top_processes) if event.top_processes else None,
+            "cause_code": event.cause_code,
+            "cause_values": json.dumps(event.cause_values) if event.cause_code else None,
+            "lost_sec": event.lost_sec})
+        return event_id
 
 
 def prune(now: Optional[float] = None) -> None:
     now = time.time() if now is None else now
-    with closing(_connect()) as conn:
-        conn.execute("DELETE FROM voice_samples WHERE at < ?", (now - SAMPLE_KEEP_SEC,))
-        conn.execute("DELETE FROM voice_events WHERE at < ?", (now - EVENT_KEEP_SEC,))
-        conn.commit()
+    with _writing, _reading:
+        _samples.prune(now - SAMPLE_KEEP_SEC)
+        _events.prune(now - EVENT_KEEP_SEC)
 
 
-def _sample(row) -> Sample:
-    values = {c: row[c] for c in _SAMPLE_COLUMNS}
+def _sample(row: dict) -> Sample:
+    values = {c: row.get(c) for c in SAMPLE_COLUMNS}
     for key in _JSON_COLUMNS:
         values[key] = json.loads(values[key] or "{}")
     for key in ("tab_hidden", "quiet"):
@@ -483,26 +594,22 @@ def _sample(row) -> Sample:
     return Sample(**values)
 
 
-def _event(row) -> Event:
-    return Event(at=row["at"], kind=row["kind"], capture=row["capture"], source=row["source"],
-                 text=row["text"], cause=row["cause"],
-                 top_processes=json.loads(row["top_processes"] or "[]"), id=row["id"],
-                 cause_code=row["cause_code"], cause_values=json.loads(row["cause_values"] or "{}"),
-                 lost_sec=row["lost_sec"])
+def _event(row: dict) -> Event:
+    return Event(at=row["at"], kind=row["kind"], capture=row.get("capture"), source=row.get("source"),
+                 text=row.get("text"), cause=row.get("cause"),
+                 top_processes=json.loads(row.get("top_processes") or "[]"), id=row.get("id") or 0,
+                 cause_code=row.get("cause_code"), cause_values=json.loads(row.get("cause_values") or "{}"),
+                 lost_sec=row.get("lost_sec"))
 
 
 def history(start: float, end: float) -> tuple[list[Sample], list[Event]]:
     """Samples and events from `start` to `end`, oldest first. A range
     longer than HISTORY_MAX_SAMPLES samples is thinned evenly."""
-    with closing(_connect()) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM voice_samples WHERE at BETWEEN ? AND ?",
-                             (start, end)).fetchone()[0]
-        step = max(1, -(-count // HISTORY_MAX_SAMPLES))
-        samples = [_sample(r) for r in conn.execute(
-            "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY at) AS n FROM voice_samples "
-            "WHERE at BETWEEN ? AND ?) WHERE (n - 1) % ? = 0 ORDER BY at", (start, end, step))]
-        events = [_event(r) for r in conn.execute(
-            "SELECT * FROM voice_events WHERE at BETWEEN ? AND ? ORDER BY at", (start, end))]
+    with _reading:
+        chosen = _samples.between(start, end)
+        step = max(1, -(-len(chosen) // HISTORY_MAX_SAMPLES))
+        samples = [_sample(c) for c in _samples.read(chosen[::step])]
+        events = [_event(line[3]) for _, line in _events.between(start, end)]
     return samples, events
 
 
@@ -536,23 +643,22 @@ def today(now: float) -> dict:
     typed messages, drops and reconnects."""
     local = time.localtime(now)
     midnight = time.mktime((local.tm_year, local.tm_mon, local.tm_mday, 0, 0, 0, 0, 0, -1))
-    with closing(_connect()) as conn:
-        listened, finals, typed = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(finals), 0), COALESCE(SUM(typed), 0) "
-            "FROM voice_samples WHERE at >= ?", (midnight,)).fetchone()
-        kinds = dict(conn.execute(
-            "SELECT kind, COUNT(*) FROM voice_events WHERE at >= ? GROUP BY kind",
-            (midnight,)).fetchall())
-    return {"listenedSec": listened * SAMPLE_EVERY_SEC, "finals": finals, "typed": typed,
+    with _reading:
+        seconds = _samples.between(midnight, float("inf"))
+        kinds: dict[str, int] = {}
+        for _, line in _events.between(midnight, float("inf")):
+            kinds[line[3]["kind"]] = kinds.get(line[3]["kind"], 0) + 1
+    counted = [line[3] for _, line in seconds if line[3]]
+    return {"listenedSec": len(seconds) * SAMPLE_EVERY_SEC, "finals": sum(c[0] for c in counted),
+            "typed": sum(c[1] for c in counted),
             "drops": sum(kinds.get(k, 0) for k in DROP_KINDS), "reconnects": kinds.get("reconnect", 0)}
 
 
 def last_drop_at() -> Optional[float]:
     """When speech was last dropped, ever (within the record), or None."""
-    with closing(_connect()) as conn:
-        return conn.execute(
-            f"SELECT MAX(at) FROM voice_events WHERE kind IN ({','.join('?' * len(DROP_KINDS))})",
-            tuple(DROP_KINDS)).fetchone()[0]
+    with _reading:
+        return max((line[0] for _, path in _events.days() for line in _events.index(path)
+                    if line[3].get("kind") in DROP_KINDS), default=None)
 
 
 def incident_counts(events: list[Event]) -> dict:
@@ -729,3 +835,46 @@ def record_soon_prune() -> None:
             log.exception("voice diagnostics not pruned")
     asyncio.get_running_loop().create_task(run())
 
+
+# ── the move: the two tables as the voice record's files ─────────────────
+
+EVENT_COLUMNS = ("id", "at", "capture", "kind", "source", "text", "cause", "top_processes",
+                 "cause_code", "cause_values", "lost_sec")
+
+
+class _VoiceMapping:
+    """voice_samples and voice_events as the day files above: each row one
+    line, its rowid kept on a sample's (the table has no key of its own)."""
+    name = "voice"
+    tables = ("voice_samples", "voice_events")
+    under: tuple = ()
+    history = False
+    files_under = ("voice",)
+
+    def documents(self, conn):
+        return iter(())
+
+    def files(self, conn):
+        for log, table in ((_samples, "voice_samples"), (_events, "voice_events")):
+            days: dict[str, list[bytes]] = {}
+            for row in move.table_rows(conn, table):
+                days.setdefault(_day(row.cells["at"]), []).append(_line(move.row_data(row)))
+            for day, lines in days.items():
+                yield f"voice/{day}{log.suffix}", b"".join(lines)
+
+    def rows(self, docs, files: move.Files) -> dict:
+        found: dict[str, list] = {"voice_samples": [], "voice_events": []}
+        for rel in files.list("voice"):
+            table, columns = (("voice_samples", SAMPLE_COLUMNS) if rel.endswith(_samples.suffix) else
+                              ("voice_events", EVENT_COLUMNS) if rel.endswith(_events.suffix) else (None, None))
+            if table is None:
+                continue
+            for raw in files.read(rel).splitlines():
+                data = json.loads(raw) if raw.strip() else None
+                if isinstance(data, dict):
+                    found[table].append(move.data_row(data, columns))
+        return {"voice_samples": move.numbered(found["voice_samples"]),
+                "voice_events": move.numbered(found["voice_events"], "id")}
+
+
+MAPPINGS = [_VoiceMapping()]

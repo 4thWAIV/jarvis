@@ -13,6 +13,7 @@ commands against an engine folder.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -168,26 +169,12 @@ def _saved_tables(conn: sqlite3.Connection, prefixes: tuple[str, ...]) -> None:
 def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
     """A database made by JARVIS's own schema creators, a few rows a table."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    from jarvis import (agent_key_store, attachment_locations, attention_store, conversation_log,
-                        data_paths, folder_store, language_documents, messaging_files,
-                        messaging_store, package_inbox, project_store, run_store, voice_control,
-                        voice_diagnostics, work_store, workflow_store)
-    run_store.init_db()
-    workflow_store._connect().close()
-    messaging_files.init_db()
-    attachment_locations.init_db()
-    migrated = [(agent_key_store, "agent_keys_schema"),
-                (conversation_log, "conversation_schema"), (folder_store, "folder_schema"),
-                (language_documents, "language_document_schema"),
-                (messaging_store, "human_messaging_schema"), (package_inbox, "package_inbox_schema"),
-                (project_store, "project_schema"), (voice_control, "voice_control_schema"),
-                (voice_diagnostics, "voice_schema"), (work_store, "work_schema")]
-    with closing(run_store._connect()) as conn, conn:
-        for module, schema in migrated:
-            run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
-        # Stores already over documents keep no schema: their tables as
-        # they last stood (jarvis/sqlite_schema.json).
-        _saved_tables(conn, ("attention_",))
+    from jarvis import data_paths
+    # Every store is over documents now; the database JARVIS had when its
+    # records moved is the schema saved with it (jarvis/sqlite_schema.json).
+    data_paths.db_path().parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data_paths.db_path())) as conn, conn:
+        _saved_tables(conn, ("",))
     db = data_paths.db_path()
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA foreign_keys=OFF")
