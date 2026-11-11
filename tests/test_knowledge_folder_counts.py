@@ -88,3 +88,27 @@ def test_only_the_registered_folders_are_asked_about(tmp_path, monkeypatch):
         monkeypatch.setattr(ka, "_active_folder_ids", lambda: [A])
         got = ka.folder_counts(_Ctx(engine))
     assert list(got["folders"]) == [A]
+
+
+def test_knowledge_search_finds_files_as_one_hit_each_and_by_exact_phrase(tmp_path):
+    """The brain's search reads the files indexed in place too: one hit a
+    file, with the section where it matched; a phrase finds the files
+    holding those words in order; received words keep their trust; the
+    status counts each item once."""
+    with in_process(tmp_path / "engine") as (engine, uds):
+        uds.transaction(TIM, Transaction()
+                        .put(f"/folders/{A}/audit.md", {"title": "Audit", "trust": "own", "file": "audit.md"},
+                             content={"text": "# Intro\nHello.\n# Findings\nWe hold a SOC 2 Type II report."})
+                        .put("/jarvis/received/x.md", {"title": "Theirs", "trust": "untrusted"},
+                             content={"text": "# Note\nType II of SOC 2, backwards."}))
+        ctx = _Ctx(engine)
+        found = ka.search(ctx, "SOC report", phrase="SOC 2 Type II")
+        assert [h["key"] for h in found["hits"]] == [f"/folders/{A}/audit.md"]
+        hit = found["hits"][0]
+        assert hit["heading_path"] == ["Findings"] and "Type II" in hit["text"] and hit["trust"] == "own"
+        words = ka.search(ctx, "SOC Type")
+        assert {h["key"] for h in words["hits"] if h["key"].startswith("/")} == \
+            {f"/folders/{A}/audit.md", "/jarvis/received/x.md"}
+        own = ka.search(ctx, "SOC Type", include_untrusted=False)
+        assert "/jarvis/received/x.md" not in {h["key"] for h in own["hits"]}
+        assert ka.status(ctx)["items"] == {"items": 2, "embedded": 0, "waiting": 2}

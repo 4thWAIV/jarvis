@@ -11809,7 +11809,7 @@ async def tool_knowledge_search(args: dict) -> str:
     said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
-        kinds=args.get("kinds"), limit=args.get("limit") or 10),
+        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase")),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
     return said
 

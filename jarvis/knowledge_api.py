@@ -108,7 +108,19 @@ def status(ctx: Context) -> dict:
             "embedder": (engine.get("vectors") or {}).get("embedder"),
             "cards": engine.get("cards"), "writable": store.get("writable"),
             "lsn": store.get("lsn"), "generations": store.get("generations"),
-            "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards)}
+            "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards),
+            "items": _items_counted(ctx), "content": health.get("content")}
+
+
+def _items_counted(ctx: Context) -> Optional[dict]:
+    """Every item, counted once, with its vectors as coverage (embedded and
+    waiting); None when the engine does not answer."""
+    from jarvis.knowledge.uds import Caller
+    try:
+        found = ctx.uds().count(Caller(TIM))
+    except Exception:  # noqa: BLE001 - the status says the rest
+        return None
+    return {"items": found.items, "embedded": found.embedded, "waiting": found.waiting}
 
 
 def embedding_model(ctx: Context) -> dict:
@@ -179,37 +191,79 @@ def _hits(answer: dict) -> list[dict]:
     return out
 
 
+ITEM_TEXT_MAX = 600
+
+
+def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_only: bool = False,
+               limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC) -> list[dict]:
+    """Items (files indexed in place) by meaning and words, or holding an
+    exact phrase, one hit an item, read as Tim (the brain's rights are his):
+    each with the text of the section where it matched."""
+    from jarvis.knowledge.uds import Caller, Query, Stream
+    uds = ctx.uds(deadline)
+    caller = Caller(TIM, agent="brain")
+    query = Query(meaning=text or None, words=text or None, phrase=phrase or None,
+                  where={"trust": "own"} if own_only else {}, limit=limit)
+    found = uds.search_page(caller, query, budget_ms=max(1, int(deadline * 1000)))
+    out = []
+    for h in found["hits"]:
+        item = uds.get(caller, h.path, {Stream.DATA, Stream.SECTIONS})
+        if item is None:
+            continue
+        data = item.data or {}
+        sections = list(item.sections or ())
+        at = next((s for s in sections if s.index in h.sections), sections[0] if sections else None)
+        out.append({"key": h.path, "kind": item.kind, "label": data.get("title") or h.path.rsplit("/", 1)[-1],
+                    "source": data.get("file"), "trust": data.get("trust") or "own", "status": data.get("state"),
+                    "text": (at.text[:ITEM_TEXT_MAX] if at else None),
+                    "heading_path": ([at.heading] if at and at.heading else None),
+                    "sections": list(h.sections), "score": h.score, "why": sorted(h.matched_by)})
+    return out
+
+
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
-           kinds: Optional[list[str]] = None, limit: int = 10) -> dict:
-    """Hybrid search over what JARVIS has read: the keyword index, the graph
-    (the agents, people, projects and topics the words name, and what the
-    records say they said) and, while an embedding model is installed, the
-    vector index, fused by the engine (query.DEFAULT_WEIGHTS). `query_en`
-    searches again in English (the brain fills it when he speaks Spanish)
-    and the two are merged."""
+           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None) -> dict:
+    """Hybrid search over what JARVIS has read: the files indexed in place
+    (items at their paths: meaning, words, and an exact `phrase`, one hit an
+    item) and the conversation, runs and workflows (the keyword index, the
+    graph and the vectors, fused by the engine, query.DEFAULT_WEIGHTS).
+    `query_en` searches again in English (the brain fills it when he speaks
+    Spanish) and the answers are merged."""
     text = (text or "").strip()
-    if not text:
+    phrase = (phrase or "").strip() or None
+    if not text and not phrase:
         raise Refused("search needs words")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
-    body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
-                  "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
-    if kinds:
-        body["from"] = {"kinds": list(kinds)}
-    if not include_untrusted:
-        body["visible"] = {"trust": ["own"]}
-    answers = [ctx.call("POST", "/v1/query", body)]
-    if query_en and query_en.strip() and query_en.strip() != text:
-        answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
-                                                     "near": {"text": query_en.strip(), "k": 50},
-                                                     "about": {"text": query_en.strip()}}))
+    answers: list[dict] = []
+    if text:
+        body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
+                      "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
+        if kinds:
+            body["from"] = {"kinds": list(kinds)}
+        if not include_untrusted:
+            body["visible"] = {"trust": ["own"]}
+        if not phrase:
+            answers.append(ctx.call("POST", "/v1/query", body))
+        if query_en and query_en.strip() and query_en.strip() != text and not phrase:
+            answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
+                                                         "near": {"text": query_en.strip(), "k": 50},
+                                                         "about": {"text": query_en.strip()}}))
     merged: dict[str, dict] = {}
     for answer in answers:
         for h in _hits(answer):
             held = merged.get(h["key"])
             if held is None or (h.get("score") or 0) > (held.get("score") or 0):
                 merged[h["key"]] = h
+    if not kinds:
+        for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
+            for h in _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit):
+                held = merged.get(h["key"])
+                if held is None or (h.get("score") or 0) > (held.get("score") or 0):
+                    merged[h["key"]] = h
+            if phrase:
+                break
     hits = sorted(merged.values(), key=lambda h: -(h.get("score") or 0))[:limit]
-    return {"query": text, "query_en": query_en, "hits": hits,
+    return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
             "partial": any(a.get("partial") for a in answers),
             "notes": sorted({n for a in answers for n in a.get("notes") or []})}
 
@@ -433,9 +487,14 @@ def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Option
         if own_only:
             body["visible"] = {"trust": ["own"]}
         try:
-            return _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
+            found = _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
         except (Unavailable, Refused):
             return None
+        try:
+            found += _item_hits(ctx, text, own_only=own_only, limit=30, deadline=deadline)
+        except Exception:  # noqa: BLE001 - late or down: the chunks found stand
+            pass
+        return sorted(found, key=lambda h: -(h.get("score") or 0))
     return run
 
 

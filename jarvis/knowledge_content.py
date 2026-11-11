@@ -106,16 +106,12 @@ def scope_of(scopes: Iterable[str]) -> str:
 
 
 def jarvis_roots() -> list[Root]:
-    """JARVIS's own folders: the brain's notes, journal, memory and topics,
-    the answers to agents, the packages, and the files people sent once
-    downloaded. Needs boards live in the project folders and come with
-    them."""
-    brain = data_paths.brain_home()
-    found = [Root("/jarvis/notes/journal", str(brain / "journal"), "docs", "own"),
-             Root("/jarvis/notes/memory", str(brain / "memory"), "docs", "own"),
-             Root("/jarvis/notes/projects", str(brain / "projects"), "docs", "own"),
-             Root("/jarvis/notes/topics", str(brain / "topics"), "docs", "own"),
-             Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
+    """JARVIS's own folders: the answers to agents, the packages, and the
+    files people sent once downloaded. Needs boards live in the project
+    folders and come with them. The brain's notes stay with the legacy
+    ingest until the linker, topics and context pack read items (round 3),
+    so they are never counted twice."""
+    found = [Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
              Root("/jarvis/packages", str(data_paths.packages_dir()), "docs", "untrusted"),
              Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted")]
     return [Root(r.prefix, os.path.realpath(r.path), r.scope, r.trust) for r in found if os.path.isdir(r.path)]
@@ -317,6 +313,9 @@ class Indexer:
         over) leave the engine. The files to read are returned."""
         started = time.monotonic()
         held = self.known(root, under)
+        if under and not wanted(root, under, is_dir=True, skip=self.skip_of(root, fresh=True)):
+            self.remove(root, list(held))          # a subtree passed over holds nothing
+            return []
         known = {rel: s for rel, s in ((rel, _known_stat(d)) for rel, d in held.items()) if s is not None}
         found = fs_watch.scan(root.path, known, under=under, skip=self.skip_of(root, fresh=True),
                               budget_sec=budget_sec)

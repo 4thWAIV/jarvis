@@ -80,6 +80,43 @@ def test_a_line_longer_than_the_cap_is_cut():
     assert all(len(c.text) <= ki.CHUNK_MAX for c in chunks) and len(chunks) == 3
 
 
+# --- notes ---------------------------------------------------------------------
+
+def _note(name, text):
+    path = data_paths.brain_home() / "memory" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def test_notes_are_read_once_changed_ones_again_and_gone_ones_forgotten(engine):
+    call = caller(engine)
+    _note("denice.md", "# Denice\nThe successor direction, planned.\n")
+    _note("orbs.md", "# Orbs\nThe brain orbs sit in the centre.\n")
+    first = ki.run_pass(call, adapters=only(ki.Notes))
+    assert first.documents == 2 and not first.errors
+    assert keys_matching(engine, "successor")
+    again = ki.run_pass(call, adapters=only(ki.Notes))
+    assert again.documents == 0                                # nothing moved
+    path = _note("denice.md", "# Denice\nNow about parris island.\n")
+    os.utime(path, (time.time() + 5, time.time() + 5))
+    ki.run_pass(call, adapters=only(ki.Notes))
+    assert keys_matching(engine, "successor") == [] and keys_matching(engine, "parris")
+    (data_paths.brain_home() / "memory" / "orbs.md").unlink()
+    gone = ki.run_pass(call, adapters=only(ki.Notes))
+    assert gone.forgotten == 1 and keys_matching(engine, "orbs centre") == []
+
+
+def test_a_linked_note_is_never_read(engine, tmp_path):
+    outside = tmp_path / "secret.md"
+    outside.write_text("private words outside")
+    link = data_paths.brain_home() / "memory" / "link.md"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    ki.run_pass(caller(engine), adapters=only(ki.Notes))
+    assert keys_matching(engine, "private words outside") == []
+
+
 # --- the conversation log ----------------------------------------------------------
 
 def test_the_conversation_is_followed_by_id_with_trust_by_kind(engine):
@@ -313,11 +350,11 @@ def test_a_real_pass_in_its_child_against_the_real_engine():
 
 
 @pytest.mark.knowledge_engine
-def test_the_content_child_indexes_his_notes_against_the_real_engine():
+def test_the_content_child_indexes_jarvis_s_own_files_against_the_real_engine():
     from jarvis import run_store
     from jarvis.knowledge.uds import Caller, EngineUDS, Stream
     run_store.init_db()
-    note = data_paths.brain_home() / "memory" / "lynx.md"
+    note = data_paths.answers_dir() / "jarvis" / "lynx.md"
     note.parent.mkdir(parents=True, exist_ok=True)
     note.write_text("# Lynx\nThe lynx note for the content child.\n")
     engine, found, repo = _engine_process()
@@ -330,7 +367,7 @@ def test_the_content_child_indexes_his_notes_against_the_real_engine():
         end = time.monotonic() + 30
         item = None
         while time.monotonic() < end:
-            item = uds.get(Caller("tim"), "/jarvis/notes/memory/lynx.md", {Stream.DATA, Stream.SECTIONS})
+            item = uds.get(Caller("tim"), "/jarvis/answers/jarvis/lynx.md", {Stream.DATA, Stream.SECTIONS})
             if item is not None and item.data.get("state") == "indexed":
                 break
             time.sleep(0.1)

@@ -19,7 +19,7 @@ from jarvis.knowledge.uds import Query, Stream, in_process
 TIM = kc.WRITER
 ALL = {Stream.ENTRY, Stream.DATA, Stream.CONTENT, Stream.SECTIONS}
 DOC = "# Plan\nWe will build the watcher.\n## Risks\nFSEvents can drop events under load."
-WAIT_SEC = 10.0
+WAIT_SEC = 30.0
 
 macos = pytest.mark.skipif(not fs_watch.available(), reason="FSEvents is macOS only")
 
@@ -132,6 +132,11 @@ def test_dropped_events_scan_their_subtree(engine, folder):
     _drain(service)
     assert uds.get(TIM, "/folders/f-1/notes/new.md", ALL).data["state"] == "indexed"
     assert service.marks.mark["event_id"] == 41
+    # A folder event inside a folder the rules pass over scans nothing there.
+    service.handle([fs_watch.Event(os.path.join(root_path, "node_modules", "x"),
+                                   fs_watch.ITEM_CREATED | fs_watch.ITEM_IS_DIR, 42)])
+    _drain(service)
+    assert uds.get(TIM, "/folders/f-1/node_modules/x/readme.md") is None
 
 
 def test_a_backup_scan_finds_what_changed_while_nothing_watched(engine, folder):

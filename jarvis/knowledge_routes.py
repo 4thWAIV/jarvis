@@ -6,7 +6,7 @@ origin or the tool token, and no access-key category covers them. A change
 is followed by a `knowledge` hint on /ws/sessions (`on_change`).
 
   GET  /api/knowledge/health         the engine's state, ingest and counts
-  POST /api/knowledge/search         {text, query_en, include_untrusted, kinds, limit}
+  POST /api/knowledge/search         {text, phrase, query_en, include_untrusted, kinds, limit}
   GET  /api/knowledge/entity         ?name= typed matches and a card, or ?key=
   GET  /api/knowledge/proposals      what the linker proposes, waiting for his yes
   POST /api/knowledge/links          {action: link|unlink|accept|reject, topic, kind, target, proposal}
@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse
 from jarvis import knowledge_api as ka
 
 PREFIX = "/api/knowledge"
-_SEARCH = {"text", "query_en", "include_untrusted", "kinds", "limit"}
+_SEARCH = {"text", "phrase", "query_en", "include_untrusted", "kinds", "limit"}
 _LINKS = {"action", "topic", "kind", "target", "proposal"}
 _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
 _MAINTAIN = {"action", "source"}
@@ -77,7 +77,8 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             return bad()
         return await run(lambda: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
                                            include_untrusted=b.get("include_untrusted", True) is not False,
-                                           kinds=b.get("kinds"), limit=b.get("limit") or 10))
+                                           kinds=b.get("kinds"), limit=b.get("limit") or 10,
+                                           phrase=b.get("phrase")))
 
     async def entity(name: Optional[str] = None, key: Optional[str] = None):
         return await run(lambda: ka.entity(ctx, name=name, key=key))

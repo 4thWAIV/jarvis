@@ -14,18 +14,21 @@ One adapter per source, each built on a reader that already exists:
 
 | source        | read through                          | trust                                   |
 |---------------|---------------------------------------|-----------------------------------------|
+| notes         | the brain's memory, journal, projects | own                                     |
 | topics        | knowledge_links (topic nodes, links)  | own                                     |
 | conversation  | conversation_log (a change feed by id)| his words and his captures own; JARVIS's turns untrusted until the log records a turn's taint; agents' words and notices untrusted |
 | runs          | run_store                             | the prompt own; summary and result untrusted (an agent's words) |
 | workflows     | workflow_store events (by seq)        | untrusted (a session's report)          |
 
-The brain's notes and the registered folders are no longer read here: they
-are files, indexed in place as items at their paths by the content child
-(knowledge_content.py, UDS round 2), watched rather than walked again.
+The registered folders are no longer read here: their files are indexed in
+place as items at their paths by the content child (knowledge_content.py,
+UDS round 2), watched rather than walked again. The brain's notes stay
+here, once, until the linker, the topics and the context pack read items
+(round 3); they are not also items, so nothing is counted twice.
 
 Messages to and from sessions are in the conversation log already, so they
-are read there once. Each source's position (an id or a seq) is a
-watermark the engine keeps durably in the same transaction as the
+are read there once. Each source's position (an id, a seq, or a ledger of
+file sizes and times, hashing only what moved) is a watermark the engine keeps durably in the same transaction as the
 documents it produced, so a pass after any downtime catches up exactly.
 
 Documents and chunks: a document is keyed by the hash of its source
@@ -61,6 +64,7 @@ PASS_SECONDS = 20.0
 PASS_BYTES = 64 << 20
 CHUNK_MAX = 1000
 OVERLAP_MAX = 200
+FILE_MAX_BYTES = 512 << 10
 CONVERSATION_BATCH = 200
 DOC_BATCH = 20
 
@@ -337,6 +341,75 @@ class Adapter:
         raise NotImplementedError
 
 
+def _read_note(path: Path) -> Optional[str]:
+    """One note, never through a link, at most FILE_MAX_BYTES."""
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not (info.st_mode & 0o170000 == 0o100000) or info.st_size > FILE_MAX_BYTES:
+            return None
+        return os.read(fd, FILE_MAX_BYTES).decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+
+
+class Ledgered(Adapter):
+    """Files followed by a ledger of (size, modified): only a file that moved
+    is read and hashed; one that is gone is forgotten."""
+
+    def files(self) -> Iterator[tuple[str, Callable[[], Optional[str]], int, float, str, str]]:
+        """(ledger key, read, size, modified, source, label)."""
+        raise NotImplementedError
+
+    def run(self, writer: Writer, mark: dict, budget: Budget) -> bool:
+        ledger: dict = dict(mark.get("files") or {})
+        seen = set()
+        for key, read, size, modified, source, label in self.files():
+            seen.add(key)
+            if ledger.get(key, [None, None])[:2] == [size, modified]:
+                continue
+            if budget.spent:
+                return True
+            text = read()
+            if text is None:
+                continue
+            budget.spend(len(text))
+            ledger[key] = [size, modified, source]
+            writer.put(Item(source, label, "own", text, path=key.split(":", 1)[-1], modified=modified),
+                       {self.name: {"files": ledger}})
+        gone = [k for k in ledger if k not in seen]
+        if gone:
+            sources = [ledger[k][2] for k in gone if len(ledger[k]) > 2]
+            for k in gone:
+                del ledger[k]
+            writer.forget(sources, {self.name: {"files": ledger}})
+        return False
+
+
+class Notes(Ledgered):
+    name = "notes"
+
+    def files(self):
+        home = data_paths.brain_home()
+        for folder in ("memory", "journal", "projects"):     # topics: the Topics adapter
+            base = home / folder
+            if not base.is_dir() or base.is_symlink():
+                continue
+            for path in sorted(base.glob("*.md")):
+                if path.is_symlink():
+                    continue
+                try:
+                    info = path.stat()
+                except OSError:
+                    continue
+                rel = f"{folder}/{path.name}"
+                yield (f"note:{rel}", lambda p=path: _read_note(p), info.st_size, info.st_mtime,
+                       jref("note", folder, path.name), rel)
+
+
 class Topics(Adapter):
     """Topic files (knowledge_links): each a topic document with its aliases
     and status, its words as a document of chunks, and the links he asserted
@@ -477,7 +550,7 @@ class Workflows(Adapter):
         return False
 
 
-ADAPTERS: tuple[type[Adapter], ...] = (Topics, Conversation, Runs, Workflows)
+ADAPTERS: tuple[type[Adapter], ...] = (Notes, Topics, Conversation, Runs, Workflows)
 
 
 def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Optional[Budget] = None,
