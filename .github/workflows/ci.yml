@@ -96,6 +96,7 @@ jobs:
       - name: Test suite
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
+          JARVIS_ENGINE_AUTOSTART: "0"
         run: pytest -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/unit.xml"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -162,6 +163,7 @@ jobs:
       - name: Page tests
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
+          JARVIS_ENGINE_AUTOSTART: "0"
         run: |
           # The runner's load every 30 s while the page tests run; it can never fail the step.
           load="$RUNNER_TEMP/test-timing/page-step-load.txt"

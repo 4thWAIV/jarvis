@@ -1529,12 +1529,28 @@ which imports nothing from `server.py`); the design is
 `docs/planning/work-package-bundles/design.md` and the build order
 `build-plan.md` beside it. It holds nothing that cannot be rebuilt from
 JARVIS's records, notes and folders, and `python -m jarvis.knowledge rebuild`
-drops it. Off unless `JARVIS_KNOWLEDGE` is on: then `knowledge_runtime.py`
-starts it after startup settles through `knowledge_client.Supervisor`
-(loopback only, its own token, `knowledge-address.json`, restarts after 1, 5
-and 30 s, down after three in ten minutes) and paces it every second: hold
-while the conversation floor is not idle or the CPU is over 70 percent. Ingest
-is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
+drops it. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
+it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
+through `knowledge_client.Supervisor` (loopback only, its own token,
+`knowledge-address.json`) and waits up to `READY_WAIT_SEC` (30 s), off the
+event loop, for its health before serving the page; past that, startup goes
+on and Diagnostics shows it down. The supervisor restarts it at once when it
+exits or stops answering, then after 1, 2 and 5 s (capped) while it keeps
+dying, starting over once it has stayed healthy `STABLE_AFTER_SEC`, and never
+gives up; its footprint is reported against the budget, never acted on. An
+engine not running (not up yet, restarting, not answering) is down on its
+Diagnostics row. `JARVIS_KNOWLEDGE` governs only ingest, embedding
+(`embedder.installed` is None while it is off) and the knowledge tools and
+routes (`knowledge_calls` sees no runtime, so they answer "off"). Two lanes
+(`knowledge/lanes.py`): the process runs at normal priority, and record
+reads and writes are never paused; the background lane (the maintenance
+thread: flushes on the time rule, compaction, cards; the embedding threads;
+the linker and a requested compaction) lowers its own threads
+(`QOS_CLASS_BACKGROUND` on macOS) and raises them for `Store.commit`, a
+flush and a compaction's manifest installs (`lanes.foreground`). The
+runtime paces the background lane every second: hold while the conversation
+floor is not idle or the CPU is over 70 percent. Ingest is a child of its
+own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it reads the brain's notes, the
 conversation log, finished runs, workflow events and registered folders'
 Markdown (through `folder_service`, FILES reader only) and keeps each source's
@@ -2370,12 +2386,14 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 
 - `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
   the folder catalog's routes and tools off; its records are kept
-- `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
-  engine and its ingest (see "The knowledge engine")
+- `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
+  knowledge engine (every test sets this; see "The knowledge engine")
+- `JARVIS_KNOWLEDGE` (optional, default off) — `1` turns on the knowledge
+  engine's ingest, embedding and tools; the engine itself runs either way
 - `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
   the context pack for its project (see "The knowledge engine")
 - `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
-  — the engine's memory budget; it is restarted past 1.5 times it
+  — the engine's memory budget, which its footprint is reported against
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
   background discovery and availability look (every test sets this)
 

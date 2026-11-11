@@ -199,7 +199,9 @@ SAID: dict[str, str | dict[str, str]] = {
     "discoveryNotYet": "Not yet looked",
     "knowledgeOff": "Switched off",
     "knowledgeRestarting": "Restarting: {reason}",
-    "knowledgeDown": "Left down after repeated restarts: {reason}",
+    "knowledgeNotUp": "Not up yet",
+    "knowledgeNotAnswering": "Not answering its health check",
+    "knowledgeIngestOff": "Switched off",
     "knowledgeReadOnly": "Read only: {problem}",
     "knowledgeOk": {"one": "Running; {count} chunk indexed", "other": "Running; {count} chunks indexed"},
     "knowledgeHeld": "Paused while the conversation needs the machine",
@@ -740,26 +742,28 @@ def folder_catalog(health: Optional[dict], b: Optional[Beat], now: float) -> Sub
 
 def knowledge(health: Optional[dict], now: float) -> Subsystem:
     """The knowledge engine (knowledge_runtime.health): its process, its
-    pace and its embedder. Never worse than degraded: JARVIS answers from
-    its records and notes without it."""
+    pace, its ingest and its embedder. The engine is always up, so one that
+    is not running (restarting, not yet up, or not answering) is down,
+    whatever `JARVIS_KNOWLEDGE` says; with that off, ingest and the embedder
+    are switched off (idle) while the engine itself can be fine. No runtime
+    at all (`JARVIS_ENGINE_AUTOSTART` off) is switched off."""
     if health is None:
         return subsystem("knowledge", IDLE, say("knowledgeOff"), [])
     state = health.get("state")
     engine = health.get("engine") or {}
     store = engine.get("store") or {}
+    on = health.get("knowledge", True)
     if state == "starting" or state == "idle":
-        shown = (UNKNOWN, say("starting"))
+        shown = (DOWN, say("knowledgeNotUp"))
     elif state == "restarting":
-        shown = (DEGRADED, say("knowledgeRestarting", reason=health.get("reason") or ""))
-    elif state == "down":
-        shown = (DEGRADED, say("knowledgeDown", reason=health.get("reason") or ""))
+        shown = (DOWN, say("knowledgeRestarting", reason=health.get("reason") or ""))
+    elif not engine:
+        shown = (DOWN, say("knowledgeNotAnswering"))
     elif store and not store.get("writable", True):
         problems = store.get("problems") or [""]
         shown = (DEGRADED, say("knowledgeReadOnly", problem=problems[-1]))
-    elif engine:
-        shown = (OK, say("knowledgeOk", count=(engine.get("keyword") or {}).get("chunks", 0)))
     else:
-        shown = (UNKNOWN, say("starting"))
+        shown = (OK, say("knowledgeOk", count=(engine.get("keyword") or {}).get("chunks", 0)))
     checks = [check("process", "process", *shown)]
     if health.get("pace") == "hold":
         cpu = health.get("cpu_percent")
@@ -769,7 +773,9 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
     else:
         checks.append(check("pace", "knowledgePace", OK, say("knowledgeFree")))
     ingest = health.get("ingest")
-    if ingest is not None:
+    if not on:
+        checks.append(check("ingest", "knowledgeIngest", IDLE, say("knowledgeIngestOff")))
+    elif ingest is not None:
         last = ingest.get("last_finished_at")
         if ingest.get("running"):
             line = (OK, say("knowledgeIngestRunning"))
@@ -783,7 +789,9 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
             line = (OK, say("knowledgeIngestOk", count=ingest.get("documents", 0), age=age(now - last)))
         checks.append(check("ingest", "knowledgeIngest", *line))
     vectors = engine.get("vectors") or {}
-    if engine:
+    if not on:
+        checks.append(check("embedder", "knowledgeEmbedder", IDLE, say("knowledgeIngestOff")))
+    elif engine:
         if vectors.get("embedder"):
             checks.append(check("embedder", "knowledgeEmbedder", OK,
                                 say("knowledgeEmbedding", embedder=vectors["embedder"],

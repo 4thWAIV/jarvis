@@ -190,7 +190,8 @@ class Isolated:
         env = {**os.environ,
                "JARVIS_DATA_DIR": str(self.data), "JARVIS_ENV_FILE": str(env_copy),
                "JARVIS_STT_MODEL_DIR": str(folder / "models"),
-               "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_FOLDER_DISCOVERY": "0",
+               "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_ENGINE_AUTOSTART": "0",
+               "JARVIS_FOLDER_DISCOVERY": "0",
                "JARVIS_REFUSE_UNTRUSTED_ACTIONS": "0", "JARVIS_TTS_PROVIDER": "fish",
                # It is the check: a deck signed by the key it is seeded with
                # unpacks without the statement that it passed (it has not yet).
