@@ -2602,8 +2602,12 @@ def _offer_knowledge_seeds() -> None:
 
 async def start_knowledge_engine() -> None:
     """The engine first, before the rest of startup: started, and waited for
-    up to knowledge_client.READY_WAIT_SEC, off the event loop's thread. Past
-    that, startup goes on and Diagnostics shows the engine down."""
+    up to knowledge_client.READY_WAIT_SEC, off the event loop's thread.
+    JARVIS's records live in it, so a server whose engine has not answered
+    by then does not start: it stops with the supervisor's reason and the
+    end of the engine's own log (`EngineNotUp`), rather than serving a page
+    whose every record call would fail, or failing later in the first
+    startup step that reads a record."""
     global knowledge
     from jarvis import knowledge_runtime
     if not knowledge_client.autostart():
@@ -2618,9 +2622,15 @@ async def start_knowledge_engine() -> None:
         records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
     if await knowledge.start_engine():
         log.info("knowledge engine: up")
-    else:
-        log.warning("knowledge engine: not answering after %.0f s; starting without it",
-                    knowledge_client.READY_WAIT_SEC)
+        return
+    sup = knowledge.supervisor.health()
+    words = (f"the knowledge engine did not answer within {knowledge_client.READY_WAIT_SEC:.0f} s "
+             f"(state {sup['state']}, restarts {sup['restarts']}, last reason {sup['reason']}); "
+             f"JARVIS's records live there, so it does not start without it. The engine's log "
+             f"({data_paths.knowledge_engine_log_path()}) ends:\n{knowledge_client.engine_log_tail()}")
+    log.error("%s", words)
+    await knowledge.stop()
+    raise knowledge_client.EngineNotUp(words)
 
 
 def start_knowledge() -> None:

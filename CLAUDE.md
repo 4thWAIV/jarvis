@@ -1740,9 +1740,15 @@ rebuild` builds indexes, vectors and cards again and never drops a
 document; a snapshot is taken before it and every day. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
 it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
 through `knowledge_client.Supervisor` (loopback only, its own token,
-`knowledge-address.json`) and waits up to `READY_WAIT_SEC` (30 s), off the
-event loop, for its health before serving the page; past that, startup goes
-on and Diagnostics shows it down. The supervisor restarts it at once when it
+`knowledge-address.json`; its stderr appended to its own log,
+`knowledge-engine.log`, kept under 1 MB) and waits up to `READY_WAIT_SEC`
+(60 s), off the event loop, for its health before serving the page. JARVIS's
+records live in it, so past that the server does not start
+(`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
+the engine's log; the decision check's failure carries the same tail). It
+listens through `loopback_http.LoopbackThreadingHTTPServer`, never the
+stdlib's bind, whose reverse lookup of 127.0.0.1 takes about 35 s on the
+macOS CI runner. The supervisor restarts it at once when it
 exits or stops answering, then after 1, 2 and 5 s (capped) while it keeps
 dying, starting over once it has stayed healthy `STABLE_AFTER_SEC`, and never
 gives up; its footprint is reported against the budget, never acted on. An

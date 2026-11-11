@@ -1,27 +1,7 @@
-"""The one HTTP server class every test server uses.
+"""The one HTTP server class every test server uses: JARVIS's own
+(jarvis/loopback_http.py), which binds without the stdlib's reverse DNS
+lookup of the address (about 35 seconds on the macOS CI runner)."""
 
-The stdlib's `HTTPServer.server_bind` sets `server_name` from
-`socket.getfqdn(host)`, a reverse DNS lookup of the bound address. On the
-macOS CI runner the first such lookup of 127.0.0.1 takes about 35 seconds,
-and no test reads `server_name` for anything a lookup would change. These
-classes bind exactly as the stdlib does and take the name from the address.
-"""
+from jarvis.loopback_http import LoopbackHTTPServer, LoopbackThreadingHTTPServer
 
-import http.server
-import socketserver
-
-
-class LoopbackHTTPServer(http.server.HTTPServer):
-    """`http.server.HTTPServer` without the reverse DNS lookup on bind."""
-
-    def server_bind(self):
-        socketserver.TCPServer.server_bind(self)
-        host, port = self.server_address[:2]
-        self.server_name = host
-        self.server_port = port
-
-
-class LoopbackThreadingHTTPServer(socketserver.ThreadingMixIn, LoopbackHTTPServer):
-    """`http.server.ThreadingHTTPServer` without the reverse DNS lookup."""
-
-    daemon_threads = True
+__all__ = ["LoopbackHTTPServer", "LoopbackThreadingHTTPServer"]

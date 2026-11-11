@@ -243,7 +243,7 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
             made.append(self)
 
         async def start_engine(self):
-            return False                        # never answered: startup goes on
+            return True
     monkeypatch.setattr(kr, "KnowledgeRuntime", Runtime)
     monkeypatch.setattr(server, "knowledge", None)
     asyncio.run(server.start_knowledge_engine())
@@ -256,6 +256,67 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
     assert server.knowledge_calls.runtime is None
     monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
     assert server.knowledge_calls.runtime is made[0]
+
+
+def test_the_server_does_not_start_without_its_engine_and_says_why(monkeypatch):
+    """Its records live in the engine: an engine that never answers stops
+    startup with the supervisor's reason and the end of the engine's own
+    log, and the engine it started is stopped."""
+    from jarvis import data_paths, server
+    data_paths.knowledge_engine_log_path().write_text("line one\nthe engine's last words\n")
+    stopped = []
+
+    class Supervisor:
+        client = kc.KnowledgeClient(kc.InProcessTransport(None))
+
+        def health(self):
+            return {"state": "restarting", "restarts": 3, "reason": "exited with 1"}
+
+    class Runtime:
+        def __init__(self, **kw):
+            self.supervisor = Supervisor()
+
+        async def start_engine(self):
+            return False
+
+        async def stop(self):
+            stopped.append(True)
+    monkeypatch.setattr(kr, "KnowledgeRuntime", Runtime)
+    monkeypatch.setattr(server, "knowledge", None)
+    monkeypatch.setattr(server.records, "bind", lambda uds: None)    # the test's own records stay
+    monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "1")
+    with pytest.raises(kc.EngineNotUp) as refused:
+        asyncio.run(server.start_knowledge_engine())
+    said = str(refused.value)
+    assert "exited with 1" in said and "the engine's last words" in said and stopped == [True]
+
+
+def test_the_engine_listens_without_a_reverse_name_lookup(monkeypatch):
+    """HTTPServer's bind looks up the address's name (socket.getfqdn), which
+    the macOS CI runner took about 35 s over, so the engine had not listened
+    30 s after it started. The engine's server never asks."""
+    import socket
+    from jarvis.knowledge import serve
+
+    def never(*_a):
+        raise AssertionError("a name lookup at bind")
+    monkeypatch.setattr(socket, "getfqdn", never)
+    server = serve.EngineHTTPServer(object(), "token")
+    try:
+        host, port = server.server_address[:2]
+        assert host == "127.0.0.1" and port > 0 and server.server_name == "127.0.0.1"
+    finally:
+        server.server_close()
+
+
+def test_the_engine_s_stderr_is_its_own_log_kept_small(monkeypatch):
+    from jarvis import data_paths
+    path = data_paths.knowledge_engine_log_path()
+    assert kc.engine_log_tail() == "(the knowledge engine wrote no log)"
+    path.write_bytes(b"x" * 10 + b"\n" + b"y\n" * (kc.ENGINE_LOG_KEEP_BYTES // 2 + 10))
+    kc._trim_log(path)
+    assert path.stat().st_size <= kc.ENGINE_LOG_KEEP_BYTES // 4 and path.read_bytes().startswith(b"y\n")
+    assert kc.engine_log_tail(2) == "y\ny"
 
 
 def test_the_engine_is_started_before_the_rest_of_startup():
