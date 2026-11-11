@@ -429,6 +429,10 @@ EXEMPT = {
     "language_document.main": (
         "the agent's own command prints the route's JSON envelope or JARVIS's refusal to that "
         "agent's terminal; nothing reaches the brain or the voice"),
+    "make_package.document_of": (
+        "it reads the checked revision over the signed route as JSON for the agent's own "
+        "make_package process; a refusal names JARVIS's cause on the agent's terminal, and "
+        "nothing reaches the brain or the voice; driven by test_architecture_packages.py"),
     "make_package.make_architecture": (
         "the document title becomes the package's title for the agent's terminal and the "
         "message's words, which JARVIS records as the agent's (walled wherever it is read); "
