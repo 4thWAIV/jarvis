@@ -4,11 +4,11 @@ parity."""
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
 
 from jarvis import data_paths, folder_service, folder_store, run_store
+from jarvis import records as rec
 from jarvis import project_service as ps
 from jarvis import project_store as pstore
 from jarvis.project_store import ProjectError
@@ -87,18 +87,25 @@ def test_works_have_one_primary_and_accomplishments_count_once_confirmed(stores)
         records.answer_accomplishment(acc.id, "confirm")
 
 
-def test_the_schema_is_its_own_and_leaves_the_others_alone(stores):
-    records, _, _ = stores
-    assert records.schema_version() == pstore.SCHEMA_VERSION
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"projects", "project_events", "folders", "runs"} <= tables
-        for t in ("projects", "project_aliases", "project_folders", "project_candidates", "works",
-                  "work_projects", "work_folders", "accomplishments", "accomplishment_evidence",
-                  "project_bindings", "project_events", "project_schema"):
-            conn.execute(f"DROP TABLE {t}")
-        assert "folders" in {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert pstore.ProjectStore().schema_version() == 1      # and it comes back
+def test_each_record_is_one_document_and_its_events_are_its_versions(stores, tmp_path):
+    records, folders, _ = stores
+    assert records.schema_version() == pstore.SCHEMA_VERSION == 1
+    p = records.create("local", "Orbs")
+    fid = register(folders, tmp_path / "orbs")
+    records.link_folder(p.id, fid, home=True)
+    acc = records.propose_accomplishment(p.id, "Drew them", evidence=["https://example/pr/2"])
+    w = records.start_work("local", "Spike", projects=[p.id])
+    doc = rec.get(pstore.project_path(p.id))
+    assert doc.path == f"/projects/{p.id}.project"
+    assert doc.data["folders"][0]["folder"] == folder_store.folder_path(fid)     # a reference
+    assert [a["id"] for a in doc.data["accomplishments"]] == [acc.id]
+    assert [e["action"] for v in rec.history(doc.path, fields=["events"])
+            for e in (v.data or {}).get("events") or []] == ["created", "folder_linked", "proposed"]
+    work = rec.get(pstore.work_path(w.id))
+    assert work.path == f"/work/works/{w.id}.work"
+    assert not list(rec.scan("/work", parent="/work"))       # the Work tracker's list never sees it
+    seqs = [e["seq"] for e in records.events(newest_first=False)]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs) == 4
 
 
 # --- candidates ----------------------------------------------------------------

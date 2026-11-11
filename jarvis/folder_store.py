@@ -1,191 +1,105 @@
-"""The folder catalog's one durable record, in JARVIS's existing database
-(`data_paths.db_path()`), under its own schema version (`folder_schema`),
-migrated forward in order like human messaging's (`run_store.migrate`).
+"""The folder catalog's one durable record: documents in the engine that
+holds JARVIS's records (`records.py`; round 3 of
+docs/planning/knowledge-engine/plan-uds.md, "JARVIS's records become
+documents, redesigned").
 
-  folders                   one row per folder: a stable ID, its label and
-                            role, active or removed, and a revision every
-                            change of it or its location moves
-  folder_locations          where a folder is: node, path as given, canonical
-                            path, filesystem identity as evidence, and its
-                            availability. One primary location per folder; a
-                            reconnect retires the old row and adds one with
-                            the next location revision
-  folder_access_scopes      which reader may read a location, under which
-                            policy version, and whether it is enabled.
-                            Discovery never writes one
-  folder_candidates         a path discovery found, by node and canonical
-                            path: discovered, ignored or registered
-  folder_observations       why: a provider session whose metadata names
-                            that path as its cwd, or its history folder.
-                            Kept after the session ends
-  folder_location_events    every registration, reconnect, change of
-                            availability, removal and reactivation, with the
-                            location before and after
-  folder_registrations      each registration request key, the request it
-                            was for and the folder it made
-  folder_discovery          each discovery source's progress
-  folder_history_files      each history file discovery has read: -1 once
-                            its cwd was found (never read again), else the
-                            size it had (read again when that changes)
+  /folders/<folder id>          one folder (a `folder` item: its path has no
+                                suffix, and its files' Content items are the
+                                ones below it, `/folders/<id>/<rel>`): its
+                                label, role, lifecycle and revision; its
+                                locations, each with its access scopes (one
+                                current location: a reconnect retires it and
+                                adds the next location revision); the
+                                registration request keys that named it; and
+                                in each version the location events it
+                                records (`events`), so its history is its
+                                versions
+  /proposals/folders/<id>.proposal
+                                a path discovery found, by node and canonical
+                                path: discovered, ignored or registered, with
+                                which providers name it and how many sessions
+  /proposals/folder-sessions/<id>.proposal
+                                one provider session as discovery saw it, the
+                                evidence for a candidate: its cwd, its
+                                history folder, kept after the session ends
+  /folders/discovery-history/<history folder>
+                                the transcripts discovery has read in one
+                                history folder: -1 once a file's cwd was found
+                                (never read again), else the size it had
+  /settings/folder-discovery.settings
+                                each discovery source's progress
+  /settings/folder-catalog.settings
+                                the last location event and observation ids
+                                given (new ones count on from them)
 
-Every write is one transaction and the revision moves inside it. This module
-reads no transcript and checks no permission: discovery hands it what it
-observed (folder_discovery.py), the service decides what may be registered
-and read (folder_service.py, folder_policy.py). It publishes nothing; the
-caller hints after it returns, so a hint never runs ahead of a commit.
+Every change is one write of the documents it touches (`records.atomic`),
+with the revision moved inside it. This module reads no transcript and
+checks no permission: discovery hands it what it observed
+(folder_discovery.py), the service decides what may be registered and read
+(folder_service.py, folder_policy.py). It publishes nothing; the caller
+hints after it returns, so a hint never runs ahead of a write. Its writes
+are made by one process (the server) and serialized by `_LOCK`, so a
+discovery pass can read every candidate and observation in one scan and
+write them in batches the engine takes.
 
-There is no project table and no project column. Projects come in a later
-migration, referring to these folder IDs.
+`MAPPINGS` moves the tables this record replaced (`folders`,
+`folder_locations`, `folder_access_scopes`, `folder_candidates`,
+`folder_observations`, `folder_location_events`, `folder_registrations`,
+`folder_discovery`, `folder_history_files`) into these documents and back,
+row for row (`knowledge_move`).
 """
 from __future__ import annotations
 
+import copy as _copy
 import json
-import sqlite3
+import os
+import threading
 import time
 import uuid
-from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional
 
-from jarvis import data_paths, run_store
+from jarvis import records
 from jarvis.folder_contract import (Availability, CandidateState, FolderError, Lifecycle,
                                     LIVE_WITHIN_SEC)
 
 SCHEMA_VERSION = 1
+"""The record's shape version (the old `folder_schema` table's last value)."""
 
-# Each step takes the schema from the version before it to its own. Only ever
-# appended to.
-_MIGRATIONS: dict[int, str] = {
-    1: """
-        CREATE TABLE IF NOT EXISTS folders (
-            id            TEXT PRIMARY KEY,
-            owner_id      TEXT,
-            display_name  TEXT NOT NULL,
-            role          TEXT NOT NULL,
-            lifecycle     TEXT NOT NULL,
-            revision      INTEGER NOT NULL,
-            created_at    REAL NOT NULL,
-            updated_at    REAL NOT NULL,
-            removed_at    REAL
-        );
-        CREATE INDEX IF NOT EXISTS folders_by_lifecycle ON folders (lifecycle, display_name);
+FOLDERS = "/folders"
+HISTORY = "/folders/discovery-history"
+CANDIDATES = "/proposals/folders"
+SESSIONS = "/proposals/folder-sessions"
+CATALOG = "/settings/folder-catalog.settings"
+DISCOVERY = "/settings/folder-discovery.settings"
+CATALOG_AREA = "folder-catalog"         # each settings document says whose it is (`area`)
+DISCOVERY_AREA = "folder-discovery"
+BATCH = 900                     # documents a write carries (the engine takes 1000)
+_LIVE = [["lifecycle", "exists", True]]       # a folder document (Content items have none)
+_LOCK = threading.RLock()
 
-        CREATE TABLE IF NOT EXISTS folder_locations (
-            id              TEXT PRIMARY KEY,
-            folder_id       TEXT NOT NULL REFERENCES folders(id),
-            node_id         TEXT NOT NULL,
-            supplied_path   TEXT NOT NULL,
-            canonical_path  TEXT NOT NULL,
-            fs_identity     TEXT,
-            revision        INTEGER NOT NULL,
-            availability    TEXT NOT NULL,
-            last_checked_at REAL,
-            last_seen_at    REAL,
-            error_code      TEXT,
-            created_at      REAL NOT NULL,
-            retired_at      REAL
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS folder_locations_one_primary
-            ON folder_locations (folder_id) WHERE retired_at IS NULL;
-        CREATE INDEX IF NOT EXISTS folder_locations_by_path
-            ON folder_locations (node_id, canonical_path) WHERE retired_at IS NULL;
-        CREATE INDEX IF NOT EXISTS folder_locations_by_identity
-            ON folder_locations (node_id, fs_identity) WHERE retired_at IS NULL;
 
-        CREATE TABLE IF NOT EXISTS folder_access_scopes (
-            id                TEXT PRIMARY KEY,
-            location_id       TEXT NOT NULL REFERENCES folder_locations(id),
-            reader_kind       TEXT NOT NULL,
-            permitted_subtree TEXT NOT NULL DEFAULT '',
-            policy_version    INTEGER NOT NULL,
-            enabled           INTEGER NOT NULL,
-            created_at        REAL NOT NULL,
-            updated_at        REAL NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS folder_access_scopes_by_location
-            ON folder_access_scopes (location_id);
+def _no_suffix(value: str) -> str:
+    """`records.segment`, with every `.` encoded too (`segment` keeps it),
+    so the name has no suffix and stays a folder item's."""
+    return records.segment(value).replace(".", "%2E")
 
-        CREATE TABLE IF NOT EXISTS folder_candidates (
-            id                   TEXT PRIMARY KEY,
-            node_id              TEXT NOT NULL,
-            path_key             TEXT NOT NULL,
-            proposed_role        TEXT NOT NULL,
-            state                TEXT NOT NULL,
-            fingerprint          TEXT NOT NULL DEFAULT '',
-            ignored_fingerprint  TEXT,
-            first_seen_at        REAL NOT NULL,
-            last_observed_at     REAL NOT NULL,
-            registered_folder_id TEXT REFERENCES folders(id),
-            UNIQUE (node_id, path_key)
-        );
-        CREATE INDEX IF NOT EXISTS folder_candidates_by_state
-            ON folder_candidates (state, last_observed_at DESC);
 
-        CREATE TABLE IF NOT EXISTS folder_observations (
-            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-            node_id              TEXT NOT NULL,
-            provider             TEXT NOT NULL,
-            profile_root         TEXT NOT NULL,
-            native_session_id    TEXT NOT NULL,
-            observed_cwd         TEXT NOT NULL,
-            cwd_key              TEXT NOT NULL,
-            history_dir          TEXT NOT NULL DEFAULT '',
-            history_file         TEXT NOT NULL DEFAULT '',
-            evidence             TEXT NOT NULL,
-            associated           TEXT NOT NULL DEFAULT '{}',
-            cwd_candidate_id     TEXT REFERENCES folder_candidates(id),
-            history_candidate_id TEXT REFERENCES folder_candidates(id),
-            first_observed_at    REAL NOT NULL,
-            observed_at          REAL NOT NULL,
-            last_live_at         REAL,
-            UNIQUE (node_id, provider, profile_root, native_session_id)
-        );
-        CREATE INDEX IF NOT EXISTS folder_observations_by_cwd
-            ON folder_observations (node_id, cwd_key);
-        CREATE INDEX IF NOT EXISTS folder_observations_by_history
-            ON folder_observations (node_id, history_dir);
-        CREATE INDEX IF NOT EXISTS folder_observations_by_session
-            ON folder_observations (provider, native_session_id);
+def folder_path(folder_id: str) -> str:
+    return f"{FOLDERS}/{_no_suffix(folder_id)}"
 
-        CREATE TABLE IF NOT EXISTS folder_location_events (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            folder_id   TEXT NOT NULL REFERENCES folders(id),
-            location_id TEXT REFERENCES folder_locations(id),
-            event       TEXT NOT NULL,
-            prior       TEXT NOT NULL DEFAULT '{}',
-            new         TEXT NOT NULL DEFAULT '{}',
-            at          REAL NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS folder_location_events_by_folder
-            ON folder_location_events (folder_id, id DESC);
 
-        CREATE TABLE IF NOT EXISTS folder_registrations (
-            request_key TEXT PRIMARY KEY,
-            fingerprint TEXT NOT NULL,
-            folder_id   TEXT NOT NULL REFERENCES folders(id),
-            created_at  REAL NOT NULL
-        );
+def candidate_path(candidate_id: str) -> str:
+    return f"{CANDIDATES}/{records.segment(candidate_id)}.proposal"
 
-        CREATE TABLE IF NOT EXISTS folder_discovery (
-            source      TEXT PRIMARY KEY,
-            cursor      TEXT,
-            listed      INTEGER NOT NULL DEFAULT 0,
-            read        INTEGER NOT NULL DEFAULT 0,
-            pending     INTEGER NOT NULL DEFAULT 0,
-            complete    INTEGER NOT NULL DEFAULT 0,
-            last_run_at REAL,
-            last_ok_at  REAL,
-            last_error  TEXT
-        );
 
-        CREATE TABLE IF NOT EXISTS folder_history_files (
-            path    TEXT PRIMARY KEY,
-            size    INTEGER NOT NULL,
-            read_at REAL NOT NULL
-        );
-    """,
-}
+def session_path(observation_id: int) -> str:
+    return f"{SESSIONS}/{int(observation_id)}.proposal"
+
+
+def history_path(history_dir: str) -> str:
+    return f"{HISTORY}/{_no_suffix(history_dir)}"
 
 
 # ── records ──────────────────────────────────────────────────────────────
@@ -317,29 +231,30 @@ class Progress:
     last_error: Optional[str]
 
 
-def _location(row) -> Location:
-    return Location(row["loc_id"], row["node_id"], row["supplied_path"], row["canonical_path"],
-                    row["fs_identity"], row["loc_revision"], row["availability"],
-                    row["last_checked_at"], row["last_seen_at"], row["error_code"])
+# ── documents to records ────────────────────────────────────────────────
+
+def _current(doc: dict) -> Optional[dict]:
+    """The folder's current location (the one not retired) with a scope."""
+    for loc in doc.get("locations") or []:
+        if loc.get("retired_at") is None and loc.get("scopes"):
+            return loc
+    return None
 
 
-def _folder(row) -> Folder:
-    return Folder(row["id"], row["owner_id"], row["display_name"], row["role"], row["lifecycle"],
-                  row["revision"], row["created_at"], row["updated_at"], row["removed_at"],
-                  _location(row),
-                  Scope(row["scope_id"], row["reader_kind"], row["permitted_subtree"],
-                        row["policy_version"], bool(row["enabled"])))
-
-
-_FOLDER_SELECT = """
-    SELECT f.*, l.id AS loc_id, l.node_id, l.supplied_path, l.canonical_path, l.fs_identity,
-           l.revision AS loc_revision, l.availability, l.last_checked_at, l.last_seen_at,
-           l.error_code, s.id AS scope_id, s.reader_kind, s.permitted_subtree,
-           s.policy_version, s.enabled
-      FROM folders f
-      JOIN folder_locations l ON l.folder_id = f.id AND l.retired_at IS NULL
-      JOIN folder_access_scopes s ON s.location_id = l.id
-"""
+def _folder(doc: Optional[dict]) -> Optional[Folder]:
+    if not doc:
+        return None
+    loc = _current(doc)
+    if loc is None:
+        return None
+    s = loc["scopes"][0]
+    return Folder(doc["id"], doc.get("owner_id"), doc["display_name"], doc["role"], doc["lifecycle"],
+                  doc["revision"], doc["created_at"], doc["updated_at"], doc.get("removed_at"),
+                  Location(loc["id"], loc["node_id"], loc["supplied_path"], loc["canonical_path"],
+                           loc.get("fs_identity"), loc["revision"], loc["availability"],
+                           loc.get("last_checked_at"), loc.get("last_seen_at"), loc.get("error_code")),
+                  Scope(s["id"], s["reader_kind"], s["permitted_subtree"], s["policy_version"],
+                        bool(s["enabled"])))
 
 
 def _location_json(loc: Location) -> dict:
@@ -349,113 +264,151 @@ def _location_json(loc: Location) -> dict:
             "revision": loc.revision, "availability": loc.availability}
 
 
-def _like(text: str) -> str:
-    """`text` as a literal inside a LIKE pattern (escape character `\\`)."""
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+def _candidate(doc: dict) -> Candidate:
+    return Candidate(doc["id"], doc["node_id"], doc["path_key"], doc["proposed_role"], doc["state"],
+                     doc["first_seen_at"], doc["last_observed_at"], doc.get("registered_folder_id"),
+                     list(doc.get("providers") or []), int(doc.get("sessions") or 0))
+
+
+def _nocase(text: str) -> str:
+    """SQLite's NOCASE: ASCII letters folded, nothing else."""
+    return "".join(c.lower() if c.isascii() else c for c in str(text))
+
+
+def _fingerprint(observations: Iterable[dict], cand_id: str) -> str:
+    """Which providers and kinds of evidence name a candidate: one entry per
+    distinct (provider, evidence, as cwd) among its observations."""
+    seen = {(o["provider"], o["evidence"], o.get("cwd_candidate_id") == cand_id)
+            for o in observations
+            if o.get("cwd_candidate_id") == cand_id or o.get("history_candidate_id") == cand_id}
+    return "|".join(sorted(f"{p}:{'cwd' if as_cwd else 'history'}" for p, _e, as_cwd in seen))
+
+
+def _counted(observations: Iterable[dict], cand_id: str) -> tuple[list[str], int]:
+    mine = [o for o in observations
+            if o.get("cwd_candidate_id") == cand_id or o.get("history_candidate_id") == cand_id]
+    return sorted({o["provider"] for o in mine}), len(mine)
+
+
+def _changed(before: Optional[dict], after: dict) -> bool:
+    return before is None or before != after
 
 
 class FolderStore:
-    """The catalog over SQLite. `path` is for a store given its own file
-    (tests); JARVIS's is `data_paths.db_path()`."""
+    """The catalog over the record engine. `path` is accepted for callers
+    that gave a store its own SQLite file before; the records are the
+    engine's (`records.uds`) whichever is given."""
 
     def __init__(self, path: Optional[Path] = None):
-        self.path = Path(path) if path is not None else data_paths.db_path()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._tx() as conn:
-            run_store.migrate(conn, "folder_schema", _MIGRATIONS, "folder catalog")
-
-    @contextmanager
-    def _tx(self) -> Iterator[sqlite3.Connection]:
-        """One transaction: committed when the block ends, rolled back if
-        it raises."""
-        with closing(run_store._connect(self.path)) as conn:
-            with conn:
-                yield conn
+        self.path = Path(path) if path is not None else None
 
     def schema_version(self) -> int:
-        with self._tx() as conn:
-            return conn.execute("SELECT version FROM folder_schema").fetchone()[0]
+        return SCHEMA_VERSION
 
     # ── reading folders ─────────────────────────────────────────────────
 
-    def get(self, folder_id: str) -> Optional[Folder]:
-        with self._tx() as conn:
-            return self._get(conn, folder_id)
-
     @staticmethod
-    def _get(conn, folder_id: str) -> Optional[Folder]:
-        row = conn.execute(_FOLDER_SELECT + " WHERE f.id = ?", (folder_id,)).fetchone()
-        return _folder(row) if row else None
+    def _docs(unit: Optional[records.Unit] = None) -> list[dict]:
+        found = (unit.scan(FOLDERS, parent=FOLDERS, types=["folder"], where=_LIVE) if unit is not None
+                 else records.scan(FOLDERS, parent=FOLDERS, types=["folder"], where=_LIVE))
+        return [r.data for r in found if "locations" in r.data]
+
+    def _all(self) -> list[Folder]:
+        return [f for f in (_folder(d) for d in self._docs()) if f is not None]
+
+    def get(self, folder_id: str) -> Optional[Folder]:
+        if not folder_id:
+            return None
+        rec = records.get(folder_path(folder_id))
+        return _folder(rec.data) if rec is not None and rec.data.get("id") == folder_id else None
 
     def list(self, *, lifecycle: Optional[str] = Lifecycle.ACTIVE, query: str = "",
              role: Optional[str] = None, availability: Optional[str] = None,
              after: Optional[tuple[str, str]] = None, limit: int = 100) -> list[Folder]:
         """Folders by name then ID, after `after` ((name, id) of the last one
         of the previous page). `query` matches the name or the path."""
-        sql, args = _FOLDER_SELECT + " WHERE 1=1", []
-        if lifecycle:
-            sql += " AND f.lifecycle = ?"
-            args.append(lifecycle)
-        if query:
-            sql += (" AND (f.display_name LIKE ? ESCAPE '\\' COLLATE NOCASE"
-                    " OR l.canonical_path LIKE ? ESCAPE '\\' COLLATE NOCASE"
-                    " OR l.supplied_path LIKE ? ESCAPE '\\' COLLATE NOCASE)")
-            args += [f"%{_like(query)}%"] * 3
-        if role:
-            sql += " AND f.role = ?"
-            args.append(role)
-        if availability:
-            sql += " AND l.availability = ?"
-            args.append(availability)
-        if after:
-            sql += (" AND (f.display_name > ? COLLATE NOCASE"
-                    " OR (f.display_name = ? COLLATE NOCASE AND f.id > ?))")
-            args += [after[0], after[0], after[1]]
-        sql += " ORDER BY f.display_name COLLATE NOCASE, f.id LIMIT ?"
-        args.append(limit)
-        with self._tx() as conn:
-            return [_folder(r) for r in conn.execute(sql, args)]
+        q = _nocase(query)
+        out = []
+        for f in self._all():
+            if lifecycle and f.lifecycle != lifecycle:
+                continue
+            if q and not any(q in _nocase(t) for t in (f.display_name, f.location.canonical_path,
+                                                        f.location.supplied_path)):
+                continue
+            if role and f.role != role:
+                continue
+            if availability and f.location.availability != availability:
+                continue
+            if after:
+                name, fid = _nocase(f.display_name), _nocase(after[0])
+                if not (name > fid or (name == fid and f.id > after[1])):
+                    continue
+            out.append(f)
+        out.sort(key=lambda f: (_nocase(f.display_name), f.id))
+        return out[:max(0, int(limit))]
 
     def find_location(self, node_id: str, canonical_path: str,
                       fs_identity: Optional[str]) -> Optional[Folder]:
         """The folder, active or removed, whose current location on `node_id`
         is this path or, failing that, this same directory by filesystem
         identity (a validated alias: another spelling of one directory)."""
-        with self._tx() as conn:
-            return self._find_location(conn, node_id, canonical_path, fs_identity)
+        return self._find_location(self._all(), node_id, canonical_path, fs_identity)
 
-    @classmethod
-    def _find_location(cls, conn, node_id, canonical_path, fs_identity) -> Optional[Folder]:
-        row = conn.execute(_FOLDER_SELECT + " WHERE l.node_id = ? AND l.canonical_path = ? "
-                           "ORDER BY f.lifecycle = 'active' DESC LIMIT 1",
-                           (node_id, canonical_path)).fetchone()
-        if row is None and fs_identity:
-            row = conn.execute(_FOLDER_SELECT + " WHERE l.node_id = ? AND l.fs_identity = ? "
-                               "ORDER BY f.lifecycle = 'active' DESC LIMIT 1",
-                               (node_id, fs_identity)).fetchone()
-        return _folder(row) if row else None
+    @staticmethod
+    def _find_location(folders: list[Folder], node_id, canonical_path, fs_identity) -> Optional[Folder]:
+        def best(match) -> Optional[Folder]:
+            found = [f for f in folders if f.location.node_id == node_id and match(f)]
+            found.sort(key=lambda f: f.lifecycle != Lifecycle.ACTIVE)
+            return found[0] if found else None
+        hit = best(lambda f: f.location.canonical_path == canonical_path)
+        if hit is None and fs_identity:
+            hit = best(lambda f: f.location.fs_identity == fs_identity)
+        return hit
 
     def located(self, node_id: str) -> list[Folder]:
         """Every active folder on `node_id`, for the availability pass."""
-        with self._tx() as conn:
-            return [_folder(r) for r in conn.execute(
-                _FOLDER_SELECT + " WHERE f.lifecycle = 'active' AND l.node_id = ?", (node_id,))]
+        return [f for f in self._all()
+                if f.lifecycle == Lifecycle.ACTIVE and f.location.node_id == node_id]
 
     def counts(self) -> dict[str, int]:
         """Active folders by availability."""
-        with self._tx() as conn:
-            rows = conn.execute(
-                "SELECT l.availability AS a, COUNT(*) AS n FROM folders f JOIN folder_locations l "
-                "ON l.folder_id = f.id AND l.retired_at IS NULL WHERE f.lifecycle = 'active' "
-                "GROUP BY l.availability").fetchall()
-        return {r["a"]: r["n"] for r in rows}
+        out: dict[str, int] = {}
+        for f in self._all():
+            if f.lifecycle == Lifecycle.ACTIVE:
+                out[f.location.availability] = out.get(f.location.availability, 0) + 1
+        return out
+
+    # ── ids ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _catalog(unit: records.Unit) -> dict:
+        rec = unit.get(CATALOG)
+        data = dict(rec.data) if rec is not None else {}
+        data.setdefault("last_event_id", 0)
+        data.setdefault("last_observation_id", 0)
+        data.setdefault("orphans", {})
+        data["area"] = CATALOG_AREA
+        data["events"] = []
+        return data
+
+    def _event(self, unit: records.Unit, catalog: dict, doc: dict, location_id: Optional[str],
+               event: str, prior: dict, new: dict, now: float) -> None:
+        catalog["last_event_id"] += 1
+        doc.setdefault("events", []).append(
+            {"id": catalog["last_event_id"], "location_id": location_id, "event": event,
+             "prior": prior, "new": new, "at": float(now)})
+        unit.put(CATALOG, catalog)
+
+    @staticmethod
+    def _put(unit: records.Unit, doc: dict, change: str, summary: str = "") -> None:
+        unit.put(folder_path(doc["id"]), doc, change=change, summary=summary or doc["display_name"])
 
     # ── registering ─────────────────────────────────────────────────────
 
     def register(self, *, request_key: str, fingerprint: str, owner_id: Optional[str],
                  display_name: str, role: str, location: NewLocation, reactivate: bool,
                  now: Optional[float] = None) -> Registered:
-        """Register one validated location, in one transaction:
+        """Register one validated location, in one write:
 
           - a request key seen before returns that registration's folder if
             the request was the same, and is refused if it was not;
@@ -465,130 +418,156 @@ class FolderStore:
             which brings that folder and its ID back with its scope again;
           - otherwise a new folder, location and scope.
         """
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            seen = conn.execute("SELECT * FROM folder_registrations WHERE request_key = ?",
-                                (request_key,)).fetchone()
-            if seen is not None:
-                if seen["fingerprint"] != fingerprint:
-                    raise FolderError("idempotency_conflict")
-                return Registered(self._get(conn, seen["folder_id"]), "replayed")
+        now = float(time.time() if now is None else now)
 
-            existing = self._find_location(conn, location.node_id, location.canonical_path,
+        def run(unit: records.Unit) -> Registered:
+            docs = self._docs(unit)
+            for d in docs:
+                for reg in d.get("registrations") or []:
+                    if reg["request_key"] == request_key:
+                        if reg["fingerprint"] != fingerprint:
+                            raise FolderError("idempotency_conflict")
+                        return Registered(_folder(d), "replayed")
+            folders = [f for f in (_folder(d) for d in docs) if f is not None]
+            existing = self._find_location(folders, location.node_id, location.canonical_path,
                                            location.fs_identity)
+            catalog = self._catalog(unit)
             if existing is not None and existing.lifecycle == Lifecycle.ACTIVE:
-                outcome, folder_id = "existing", existing.id
+                outcome = "existing"
+                doc = next(d for d in docs if d["id"] == existing.id)
+                doc["events"] = []
+                change = "registration"
             elif existing is not None:
                 if not reactivate:
                     raise FolderError("removed_exists", folder_id=existing.id)
-                folder_id, outcome = existing.id, "reactivated"
-                self._reactivate(conn, existing, location, now)
+                outcome = "reactivated"
+                doc = next(d for d in docs if d["id"] == existing.id)
+                doc["events"] = []
+                self._reactivate(unit, catalog, doc, existing, location, now)
+                change = "reactivated"
             else:
-                folder_id, outcome = str(uuid.uuid4()), "created"
-                conn.execute(
-                    "INSERT INTO folders (id, owner_id, display_name, role, lifecycle, revision, "
-                    "created_at, updated_at) VALUES (?, ?, ?, ?, 'active', 1, ?, ?)",
-                    (folder_id, owner_id, display_name, role, now, now))
-                loc = self._insert_location(conn, folder_id, location, 1, now)
-                self._event(conn, folder_id, loc.id, "registered", {}, _location_json(loc), now)
-            conn.execute("INSERT INTO folder_registrations (request_key, fingerprint, folder_id, "
-                         "created_at) VALUES (?, ?, ?, ?)",
-                         (request_key, fingerprint, folder_id, now))
-            self._link_candidate(conn, location.node_id, location.canonical_path, folder_id)
-            return Registered(self._get(conn, folder_id), outcome)
+                outcome = "created"
+                doc = {"id": str(uuid.uuid4()), "owner_id": owner_id, "display_name": display_name,
+                       "role": role, "lifecycle": Lifecycle.ACTIVE.value, "revision": 1,
+                       "created_at": now, "updated_at": now, "removed_at": None,
+                       "locations": [], "registrations": [], "events": []}
+                loc = self._new_location(doc, location, 1, now)
+                self._event(unit, catalog, doc, loc["id"], "registered", {},
+                            _location_json(_folder(doc).location), now)
+                change = "registered"
+            doc.setdefault("registrations", []).append(
+                {"request_key": request_key, "fingerprint": fingerprint, "created_at": now})
+            self._put(unit, doc, change)
+            self._link_candidate(unit, location.node_id, location.canonical_path, doc["id"])
+            return Registered(_folder(doc), outcome)
 
-    def _reactivate(self, conn, folder: Folder, location: NewLocation, now: float) -> None:
+        with _LOCK:
+            return records.atomic(run, change="registered", summary=display_name)
+
+    def _reactivate(self, unit, catalog: dict, doc: dict, folder: Folder, location: NewLocation,
+                    now: float) -> None:
         """A removed folder brought back at a location validated again, with
         the policy's scope for it now."""
-        conn.execute("UPDATE folders SET lifecycle = 'active', removed_at = NULL, "
-                     "revision = revision + 1, updated_at = ? WHERE id = ?", (now, folder.id))
-        conn.execute("UPDATE folder_locations SET availability = ?, last_checked_at = ?, "
-                     "last_seen_at = ?, error_code = NULL WHERE id = ?",
-                     (location.availability, now, now, folder.location.id))
-        conn.execute("UPDATE folder_access_scopes SET reader_kind = ?, permitted_subtree = ?, "
-                     "policy_version = ?, enabled = 1, updated_at = ? WHERE id = ?",
-                     (location.reader_kind, location.permitted_subtree, location.policy_version,
-                      now, folder.scope.id))
-        self._event(conn, folder.id, folder.location.id, "reactivated",
+        doc.update(lifecycle=Lifecycle.ACTIVE.value, removed_at=None, revision=doc["revision"] + 1,
+                   updated_at=now)
+        loc = _current(doc)
+        loc.update(availability=location.availability, last_checked_at=now, last_seen_at=now,
+                   error_code=None)
+        scope = loc["scopes"][0]
+        scope.update(reader_kind=location.reader_kind, permitted_subtree=location.permitted_subtree,
+                     policy_version=location.policy_version, enabled=1, updated_at=now)
+        self._event(unit, catalog, doc, folder.location.id, "reactivated",
                     {"lifecycle": Lifecycle.REMOVED.value},
-                    {"lifecycle": Lifecycle.ACTIVE.value, "reader_kind": location.reader_kind},
-                    now)
-
-    def _insert_location(self, conn, folder_id: str, location: NewLocation, revision: int,
-                         now: float) -> Location:
-        loc_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO folder_locations (id, folder_id, node_id, supplied_path, canonical_path, "
-            "fs_identity, revision, availability, last_checked_at, last_seen_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (loc_id, folder_id, location.node_id, location.supplied_path, location.canonical_path,
-             location.fs_identity, revision, location.availability, now, now, now))
-        conn.execute(
-            "INSERT INTO folder_access_scopes (id, location_id, reader_kind, permitted_subtree, "
-            "policy_version, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-            (str(uuid.uuid4()), loc_id, location.reader_kind, location.permitted_subtree,
-             location.policy_version, now, now))
-        return Location(loc_id, location.node_id, location.supplied_path, location.canonical_path,
-                        location.fs_identity, revision, location.availability, now, now, None)
+                    {"lifecycle": Lifecycle.ACTIVE.value, "reader_kind": location.reader_kind}, now)
 
     @staticmethod
-    def _event(conn, folder_id: str, location_id: Optional[str], event: str, prior: dict,
-               new: dict, now: float) -> None:
-        conn.execute("INSERT INTO folder_location_events (folder_id, location_id, event, prior, "
-                     "new, at) VALUES (?, ?, ?, ?, ?, ?)",
-                     (folder_id, location_id, event, json.dumps(prior), json.dumps(new), now))
+    def _new_location(doc: dict, location: NewLocation, revision: int, now: float) -> dict:
+        loc = {"id": str(uuid.uuid4()), "node_id": location.node_id,
+               "supplied_path": location.supplied_path, "canonical_path": location.canonical_path,
+               "fs_identity": location.fs_identity, "revision": revision,
+               "availability": location.availability, "last_checked_at": now, "last_seen_at": now,
+               "error_code": None, "created_at": now, "retired_at": None,
+               "scopes": [{"id": str(uuid.uuid4()), "reader_kind": location.reader_kind,
+                           "permitted_subtree": location.permitted_subtree,
+                           "policy_version": location.policy_version, "enabled": 1,
+                           "created_at": now, "updated_at": now}]}
+        doc.setdefault("locations", []).append(loc)
+        return loc
 
     @staticmethod
-    def _link_candidate(conn, node_id: str, path_key: str, folder_id: str) -> None:
-        conn.execute("UPDATE folder_candidates SET state = ?, registered_folder_id = ? "
-                     "WHERE node_id = ? AND path_key = ?",
-                     (CandidateState.REGISTERED.value, folder_id, node_id, path_key))
+    def _candidates_at(unit: records.Unit, node_id: str, path_key: str) -> list[records.Rec]:
+        return [r for r in unit.scan(CANDIDATES, types=["proposal"], watch=False,
+                                     where=[["node_id", "=", node_id]])
+                if r.data.get("node_id") == node_id and r.data.get("path_key") == path_key]
+
+    def _link_candidate(self, unit: records.Unit, node_id: str, path_key: str, folder_id: str) -> None:
+        for r in self._candidates_at(unit, node_id, path_key):
+            data = dict(r.data, state=CandidateState.REGISTERED.value, registered_folder_id=folder_id,
+                        events=[])
+            if data != r.data:
+                unit.put(r.path, data, change="registered", summary=path_key[-200:])
 
     # ── changing one ────────────────────────────────────────────────────
 
-    def _current(self, conn, folder_id: str, expected_revision: Optional[int]) -> Folder:
-        folder = self._get(conn, folder_id)
+    @staticmethod
+    def _held(unit: records.Unit, folder_id: str,
+              expected_revision: Optional[int]) -> tuple[dict, Folder]:
+        rec = unit.get(folder_path(folder_id)) if folder_id else None
+        folder = _folder(rec.data) if rec is not None and rec.data.get("id") == folder_id else None
         if folder is None:
             raise FolderError("not_found")
         if expected_revision is not None and expected_revision != folder.revision:
             raise FolderError("stale_revision", revision=folder.revision)
-        return folder
+        doc = rec.data
+        doc["events"] = []
+        return doc, folder
 
     def edit(self, folder_id: str, expected_revision: int, *, display_name: Optional[str] = None,
              role: Optional[str] = None, now: Optional[float] = None) -> Folder:
         """Its label and role, if it is still at `expected_revision`."""
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            folder = self._current(conn, folder_id, expected_revision)
+        now = float(time.time() if now is None else now)
+
+        def run(unit: records.Unit) -> Folder:
+            doc, folder = self._held(unit, folder_id, expected_revision)
             if folder.lifecycle != Lifecycle.ACTIVE:
                 raise FolderError("removed")
-            conn.execute("UPDATE folders SET display_name = ?, role = ?, revision = revision + 1, "
-                         "updated_at = ? WHERE id = ?",
-                         (display_name if display_name is not None else folder.display_name,
-                          role if role is not None else folder.role, now, folder_id))
-            return self._get(conn, folder_id)
+            doc.update(display_name=display_name if display_name is not None else folder.display_name,
+                       role=role if role is not None else folder.role,
+                       revision=doc["revision"] + 1, updated_at=now)
+            self._put(unit, doc, "edited")
+            return _folder(doc)
+
+        with _LOCK:
+            return records.atomic(run, change="edited")
 
     def unregister(self, folder_id: str, expected_revision: Optional[int],
                    now: Optional[float] = None) -> Folder:
         """Removed from the catalog: kept, its scope disabled, its sessions'
         provenance kept. No file is touched."""
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            folder = self._current(conn, folder_id, expected_revision)
+        now = float(time.time() if now is None else now)
+
+        def run(unit: records.Unit) -> Folder:
+            doc, folder = self._held(unit, folder_id, expected_revision)
             if folder.lifecycle == Lifecycle.REMOVED:
                 return folder
-            conn.execute("UPDATE folders SET lifecycle = 'removed', removed_at = ?, "
-                         "revision = revision + 1, updated_at = ? WHERE id = ?",
-                         (now, now, folder_id))
-            conn.execute("UPDATE folder_access_scopes SET enabled = 0, updated_at = ? WHERE id = ?",
-                         (now, folder.scope.id))
-            conn.execute("UPDATE folder_candidates SET state = ? WHERE registered_folder_id = ? "
-                         "AND state = ?", (CandidateState.DISCOVERED.value, folder_id,
-                                           CandidateState.REGISTERED.value))
-            self._event(conn, folder_id, folder.location.id, "unregistered",
+            doc.update(lifecycle=Lifecycle.REMOVED.value, removed_at=now,
+                       revision=doc["revision"] + 1, updated_at=now)
+            scope = _current(doc)["scopes"][0]
+            scope.update(enabled=0, updated_at=now)
+            for r in unit.scan(CANDIDATES, types=["proposal"], watch=False,
+                               where=[["registered_folder_id", "=", folder_id]]):
+                if (r.data.get("registered_folder_id") == folder_id
+                        and r.data.get("state") == CandidateState.REGISTERED):
+                    unit.put(r.path, dict(r.data, state=CandidateState.DISCOVERED.value, events=[]),
+                             change="unregistered", summary=r.data["path_key"][-200:])
+            self._event(unit, self._catalog(unit), doc, folder.location.id, "unregistered",
                         {"lifecycle": Lifecycle.ACTIVE.value},
                         {"lifecycle": Lifecycle.REMOVED.value}, now)
-            return self._get(conn, folder_id)
+            self._put(unit, doc, "unregistered")
+            return _folder(doc)
+
+        with _LOCK:
+            return records.atomic(run, change="unregistered")
 
     def reconnect(self, folder_id: str, expected_revision: int, location: NewLocation,
                   now: Optional[float] = None) -> Folder:
@@ -596,297 +575,569 @@ class FolderStore:
         the caller confirmed: the old location retired, a new one with the
         next location revision (so a page of the old one is refused), and
         the policy's scope for the new one."""
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            folder = self._current(conn, folder_id, expected_revision)
+        now = float(time.time() if now is None else now)
+
+        def run(unit: records.Unit) -> Folder:
+            doc, folder = self._held(unit, folder_id, expected_revision)
             if folder.lifecycle != Lifecycle.ACTIVE:
                 raise FolderError("removed")
-            other = self._find_location(conn, location.node_id, location.canonical_path,
+            others = [f for f in (_folder(d) for d in self._docs(unit)) if f is not None]
+            other = self._find_location(others, location.node_id, location.canonical_path,
                                         location.fs_identity)
             if other is not None and other.id != folder_id:
                 raise FolderError("path_registered", folder_id=other.id)
-            conn.execute("UPDATE folder_locations SET retired_at = ? WHERE id = ?",
-                         (now, folder.location.id))
-            conn.execute("UPDATE folder_access_scopes SET enabled = 0, updated_at = ? WHERE id = ?",
-                         (now, folder.scope.id))
-            loc = self._insert_location(conn, folder_id, location, folder.location.revision + 1, now)
-            conn.execute("UPDATE folders SET revision = revision + 1, updated_at = ? WHERE id = ?",
-                         (now, folder_id))
-            self._event(conn, folder_id, loc.id, "reconnected", _location_json(folder.location),
-                        _location_json(loc), now)
-            self._link_candidate(conn, location.node_id, location.canonical_path, folder_id)
-            return self._get(conn, folder_id)
+            old = _current(doc)
+            old["retired_at"] = now
+            old["scopes"][0].update(enabled=0, updated_at=now)
+            new = self._new_location(doc, location, folder.location.revision + 1, now)
+            doc.update(revision=doc["revision"] + 1, updated_at=now)
+            new_loc = Location(new["id"], new["node_id"], new["supplied_path"], new["canonical_path"],
+                               new["fs_identity"], new["revision"], new["availability"], now, now, None)
+            self._event(unit, self._catalog(unit), doc, new["id"], "reconnected",
+                        _location_json(folder.location), _location_json(new_loc), now)
+            self._put(unit, doc, "reconnected")
+            self._link_candidate(unit, location.node_id, location.canonical_path, folder_id)
+            return _folder(doc)
+
+        with _LOCK:
+            return records.atomic(run, change="reconnected")
 
     def record_availability(self, location_id: str, availability: str,
                             error_code: Optional[str], now: Optional[float] = None) -> bool:
         """A check of one location: always its time, its time seen when it
         was there, and an event when its availability moved. True if it
         moved. Not a metadata change: the folder's revision stays."""
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            row = conn.execute("SELECT folder_id, availability FROM folder_locations WHERE id = ?",
-                               (location_id,)).fetchone()
-            if row is None:
-                return False
-            seen = availability == Availability.AVAILABLE
-            conn.execute("UPDATE folder_locations SET availability = ?, error_code = ?, "
-                         "last_checked_at = ?, last_seen_at = CASE WHEN ? THEN ? "
-                         "ELSE last_seen_at END WHERE id = ?",
-                         (availability, error_code, now, seen, now, location_id))
-            moved = row["availability"] != availability
-            if moved:
-                self._event(conn, row["folder_id"], location_id, "availability",
-                            {"availability": row["availability"]},
-                            {"availability": availability, "error_code": error_code}, now)
-            return moved
+        now = float(time.time() if now is None else now)
+
+        def run(unit: records.Unit) -> bool:
+            for doc in self._docs(unit):
+                loc = next((l for l in doc["locations"] if l["id"] == location_id), None)
+                if loc is None:
+                    continue
+                doc["events"] = []
+                before = loc["availability"]
+                loc.update(availability=availability, error_code=error_code, last_checked_at=now)
+                if availability == Availability.AVAILABLE:
+                    loc["last_seen_at"] = now
+                moved = before != availability
+                if moved:
+                    self._event(unit, self._catalog(unit), doc, location_id, "availability",
+                                {"availability": before},
+                                {"availability": availability, "error_code": error_code}, now)
+                self._put(unit, doc, "availability" if moved else "checked", availability)
+                return moved
+            return False
+
+        with _LOCK:
+            return records.atomic(run, change="checked")
 
     def events(self, folder_id: str, limit: int = 20) -> list[LocationEvent]:
-        with self._tx() as conn:
-            rows = conn.execute("SELECT * FROM folder_location_events WHERE folder_id = ? "
-                                "ORDER BY id DESC LIMIT ?", (folder_id, limit)).fetchall()
-        return [LocationEvent(r["id"], r["event"], json.loads(r["prior"]), json.loads(r["new"]),
-                              r["at"]) for r in rows]
+        found = []
+        for v in records.history(folder_path(folder_id), fields=["events"]):
+            found += (v.data or {}).get("events") or []
+        found.sort(key=lambda e: e["id"], reverse=True)
+        return [LocationEvent(e["id"], e["event"], dict(e.get("prior") or {}), dict(e.get("new") or {}),
+                              e["at"]) for e in found[:max(0, int(limit))]]
 
     # ── discovery ───────────────────────────────────────────────────────
 
     def observe(self, node_id: str, seen: list[Observation], now: Optional[float] = None) -> int:
-        """Record what discovery saw, in one transaction: each session's
-        observation (made or brought up to date, never dropped), and a
-        candidate for each path it names, its cwd and its history folder.
-        An ignored candidate whose evidence changed is discovered again.
-        Returns how many candidates are new or changed state."""
-        now = time.time() if now is None else now
+        """Record what discovery saw: each session's observation (made or
+        brought up to date, never dropped), and a candidate for each path it
+        names, its cwd and its history folder. An ignored candidate whose
+        evidence changed is discovered again. Returns how many candidates
+        are new or changed state. Written in batches of at most `BATCH`
+        documents (the engine's limit on one write), under the store's lock."""
+        now = float(time.time() if now is None else now)
+        if not seen:
+            return 0
+        with _LOCK:
+            return self._observe(node_id, seen, now)
+
+    def _observe(self, node_id: str, seen: list[Observation], now: float) -> int:
+        cands = {r.data["id"]: r.data for r in records.scan(CANDIDATES, types=["proposal"])}
+        loaded_c = _copy.deepcopy(cands)
+        by_key = {(c["node_id"], c["path_key"]): cid for cid, c in cands.items()}
+        obs = {r.data["id"]: r.data for r in records.scan(SESSIONS, types=["proposal"])}
+        loaded_o = _copy.deepcopy(obs)
+        obs_by_key = {(o["node_id"], o["provider"], o["profile_root"], o["native_session_id"]): oid
+                      for oid, o in obs.items()}
+        active = {(f.location.node_id, f.location.canonical_path): f.id for f in self._all()
+                  if f.lifecycle == Lifecycle.ACTIVE}
+        catalog_rec = records.get(CATALOG)
+        catalog = dict(catalog_rec.data) if catalog_rec is not None else {}
+        catalog.setdefault("last_event_id", 0)
+        catalog.setdefault("last_observation_id", 0)
+        catalog.setdefault("orphans", {})
+        catalog["area"] = CATALOG_AREA
+        last_obs = catalog["last_observation_id"]
         changed = 0
-        with self._tx() as conn:
-            touched: set[str] = set()
-            for o in seen:
-                cwd_cand, new = self._candidate(conn, node_id, o.cwd_key, o.cwd_role, now)
+
+        def candidate(path_key: str, role: str) -> tuple[str, int]:
+            cid = by_key.get((node_id, path_key))
+            if cid is not None:
+                cands[cid]["last_observed_at"] = now
+                return cid, 0
+            folder_id = active.get((node_id, path_key))
+            cid = str(uuid.uuid4())
+            cands[cid] = {"id": cid, "node_id": node_id, "path_key": path_key, "proposed_role": role,
+                          "state": (CandidateState.REGISTERED if folder_id
+                                    else CandidateState.DISCOVERED).value,
+                          "fingerprint": "", "ignored_fingerprint": None, "first_seen_at": now,
+                          "last_observed_at": now, "registered_folder_id": folder_id,
+                          "providers": [], "sessions": 0}
+            by_key[(node_id, path_key)] = cid
+            return cid, 1
+
+        touched: set[str] = set()
+        recount: set[str] = set()
+        for o in seen:
+            cwd_cand, new = candidate(o.cwd_key, o.cwd_role)
+            changed += new
+            hist_cand = None
+            if o.history_dir:
+                hist_cand, new = candidate(o.history_dir, "history")
                 changed += new
-                hist_cand = None
-                if o.history_dir:
-                    hist_cand, new = self._candidate(conn, node_id, o.history_dir, "history", now)
-                    changed += new
-                conn.execute(
-                    "INSERT INTO folder_observations (node_id, provider, profile_root, "
-                    "native_session_id, observed_cwd, cwd_key, history_dir, history_file, "
-                    "evidence, associated, cwd_candidate_id, history_candidate_id, "
-                    "first_observed_at, observed_at, last_live_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT (node_id, provider, profile_root, native_session_id) DO UPDATE SET "
-                    "observed_cwd = excluded.observed_cwd, cwd_key = excluded.cwd_key, "
-                    "history_dir = CASE WHEN excluded.history_dir != '' THEN excluded.history_dir "
-                    "  ELSE history_dir END, "
-                    "history_file = CASE WHEN excluded.history_file != '' THEN excluded.history_file "
-                    "  ELSE history_file END, "
-                    # A record's evidence is kept over a sighting's: that
-                    # it is live says nothing new about where it ran.
-                    "evidence = CASE WHEN excluded.evidence IN ('live', 'roster') "
-                    "  AND evidence NOT IN ('live', 'roster') THEN evidence "
-                    "  ELSE excluded.evidence END, "
-                    "associated = CASE WHEN excluded.associated != '{}' THEN excluded.associated "
-                    "  ELSE associated END, "
-                    "cwd_candidate_id = excluded.cwd_candidate_id, "
-                    "history_candidate_id = COALESCE(excluded.history_candidate_id, "
-                    "  history_candidate_id), "
-                    "observed_at = excluded.observed_at, "
-                    "last_live_at = COALESCE(excluded.last_live_at, last_live_at)",
-                    (node_id, o.provider, o.profile_root, o.native_session_id, o.observed_cwd,
-                     o.cwd_key, o.history_dir, o.history_file, o.evidence,
-                     json.dumps(o.associated, sort_keys=True), cwd_cand, hist_cand, now, now,
-                     now if o.live else None))
-                touched.update(c for c in (cwd_cand, hist_cand) if c)
-            for cand_id in touched:
-                changed += self._refresh_fingerprint(conn, cand_id)
+            key = (node_id, o.provider, o.profile_root, o.native_session_id)
+            oid = obs_by_key.get(key)
+            associated = dict(o.associated)
+            if oid is None:
+                last_obs += 1
+                oid = last_obs
+                obs[oid] = {"id": oid, "node_id": node_id, "provider": o.provider,
+                            "profile_root": o.profile_root, "native_session_id": o.native_session_id,
+                            "observed_cwd": o.observed_cwd, "cwd_key": o.cwd_key,
+                            "history_dir": o.history_dir, "history_file": o.history_file,
+                            "evidence": o.evidence, "associated": associated,
+                            "cwd_candidate_id": cwd_cand, "history_candidate_id": hist_cand,
+                            "first_observed_at": now, "observed_at": now,
+                            "last_live_at": now if o.live else None}
+                obs_by_key[key] = oid
+            else:
+                row = obs[oid]
+                recount.update(c for c in (row.get("cwd_candidate_id"), row.get("history_candidate_id")) if c)
+                # A record's evidence is kept over a sighting's: that it is
+                # live says nothing new about where it ran.
+                keep = o.evidence in ("live", "roster") and row["evidence"] not in ("live", "roster")
+                row.update(observed_cwd=o.observed_cwd, cwd_key=o.cwd_key,
+                           history_dir=o.history_dir or row["history_dir"],
+                           history_file=o.history_file or row["history_file"],
+                           evidence=row["evidence"] if keep else o.evidence,
+                           associated=associated if associated else row["associated"],
+                           cwd_candidate_id=cwd_cand,
+                           history_candidate_id=hist_cand if hist_cand is not None
+                           else row.get("history_candidate_id"),
+                           observed_at=now,
+                           last_live_at=now if o.live else row.get("last_live_at"))
+            touched.update(c for c in (cwd_cand, hist_cand) if c)
+
+        rows = list(obs.values())
+        for cid in touched:
+            c = cands[cid]
+            fp = _fingerprint(rows, cid)
+            c["fingerprint"] = fp
+            if c["state"] == CandidateState.IGNORED and c.get("ignored_fingerprint") != fp:
+                c["state"], c["ignored_fingerprint"] = CandidateState.DISCOVERED.value, None
+                changed += 1
+        for cid in touched | recount:
+            if cid in cands:
+                cands[cid]["providers"], cands[cid]["sessions"] = _counted(rows, cid)
+
+        writes: list[tuple[str, dict, str]] = []
+        for cid, c in cands.items():
+            c.setdefault("events", [])
+            before = loaded_c.get(cid)
+            if before is not None:
+                c["events"] = []
+            if _changed(before, c):
+                writes.append((candidate_path(cid), c, "observed"))
+        for oid, o in obs.items():
+            o.setdefault("events", [])
+            before = loaded_o.get(oid)
+            if before is not None:
+                o["events"] = []
+            if _changed(before, o):
+                writes.append((session_path(oid), o, "observed"))
+        if last_obs != catalog["last_observation_id"]:
+            catalog["last_observation_id"] = last_obs
+            catalog["events"] = []
+            writes.append((CATALOG, catalog, "observed"))
+        for i in range(0, len(writes), BATCH):
+            chunk = writes[i:i + BATCH]
+
+            def run(unit: records.Unit, chunk=chunk) -> None:
+                for path, data, change in chunk:
+                    unit.put(path, data, change=change)
+            records.atomic(run, change="observed", summary=f"discovery on {node_id}"[:200])
         return changed
-
-    @staticmethod
-    def _candidate(conn, node_id: str, path_key: str, role: str, now: float) -> tuple[str, int]:
-        """(candidate ID, 1 if it is new) for a path, made if needed; a path
-        an active folder already has is registered from the start."""
-        row = conn.execute("SELECT id FROM folder_candidates WHERE node_id = ? AND path_key = ?",
-                           (node_id, path_key)).fetchone()
-        if row is not None:
-            conn.execute("UPDATE folder_candidates SET last_observed_at = ? WHERE id = ?",
-                         (now, row["id"]))
-            return row["id"], 0
-        folder = conn.execute(
-            "SELECT f.id FROM folders f JOIN folder_locations l ON l.folder_id = f.id "
-            "AND l.retired_at IS NULL WHERE f.lifecycle = 'active' AND l.node_id = ? "
-            "AND l.canonical_path = ?", (node_id, path_key)).fetchone()
-        cand_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO folder_candidates (id, node_id, path_key, proposed_role, state, "
-            "first_seen_at, last_observed_at, registered_folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (cand_id, node_id, path_key, role,
-             (CandidateState.REGISTERED if folder else CandidateState.DISCOVERED).value,
-             now, now, folder["id"] if folder else None))
-        return cand_id, 1
-
-    @staticmethod
-    def _refresh_fingerprint(conn, cand_id: str) -> int:
-        """A candidate's evidence in one string: which providers and kinds of
-        evidence name it. An ignored one whose evidence is now different
-        comes back as discovered. 1 if it did."""
-        rows = conn.execute(
-            "SELECT DISTINCT provider, evidence, cwd_candidate_id = ? AS as_cwd "
-            "FROM folder_observations WHERE cwd_candidate_id = ? OR history_candidate_id = ?",
-            (cand_id, cand_id, cand_id)).fetchall()
-        fingerprint = "|".join(sorted(f"{r['provider']}:{'cwd' if r['as_cwd'] else 'history'}"
-                                      for r in rows))
-        row = conn.execute("SELECT state, ignored_fingerprint FROM folder_candidates WHERE id = ?",
-                           (cand_id,)).fetchone()
-        conn.execute("UPDATE folder_candidates SET fingerprint = ? WHERE id = ?",
-                     (fingerprint, cand_id))
-        if row["state"] == CandidateState.IGNORED and row["ignored_fingerprint"] != fingerprint:
-            conn.execute("UPDATE folder_candidates SET state = ?, ignored_fingerprint = NULL "
-                         "WHERE id = ?", (CandidateState.DISCOVERED.value, cand_id))
-            return 1
-        return 0
-
-    _CANDIDATE_SELECT = """
-        SELECT c.*,
-               (SELECT GROUP_CONCAT(DISTINCT o.provider) FROM folder_observations o
-                 WHERE o.cwd_candidate_id = c.id OR o.history_candidate_id = c.id) AS providers,
-               (SELECT COUNT(*) FROM folder_observations o
-                 WHERE o.cwd_candidate_id = c.id OR o.history_candidate_id = c.id) AS sessions
-          FROM folder_candidates c
-    """
-
-    @staticmethod
-    def _cand(row) -> Candidate:
-        return Candidate(row["id"], row["node_id"], row["path_key"], row["proposed_role"],
-                         row["state"], row["first_seen_at"], row["last_observed_at"],
-                         row["registered_folder_id"],
-                         sorted((row["providers"] or "").split(",")) if row["providers"] else [],
-                         row["sessions"])
 
     def candidates(self, *, state: Optional[str] = CandidateState.DISCOVERED, query: str = "",
                    role: Optional[str] = None, after: Optional[tuple[float, str]] = None,
                    limit: int = 100) -> list[Candidate]:
         """Candidates, most recently observed first, after `after`
         ((last observed, ID) of the previous page's last)."""
-        sql, args = self._CANDIDATE_SELECT + " WHERE 1=1", []
-        if state:
-            sql += " AND c.state = ?"
-            args.append(state)
-        if query:
-            sql += " AND c.path_key LIKE ? ESCAPE '\\' COLLATE NOCASE"
-            args.append(f"%{_like(query)}%")
-        if role:
-            sql += " AND c.proposed_role = ?"
-            args.append(role)
-        if after:
-            sql += " AND (c.last_observed_at < ? OR (c.last_observed_at = ? AND c.id > ?))"
-            args += [after[0], after[0], after[1]]
-        sql += " ORDER BY c.last_observed_at DESC, c.id LIMIT ?"
-        args.append(limit)
-        with self._tx() as conn:
-            return [self._cand(r) for r in conn.execute(sql, args)]
+        q = _nocase(query)
+        out = []
+        for r in records.scan(CANDIDATES, types=["proposal"]):
+            c = r.data
+            if state and c["state"] != state:
+                continue
+            if q and q not in _nocase(c["path_key"]):
+                continue
+            if role and c["proposed_role"] != role:
+                continue
+            if after and not (c["last_observed_at"] < after[0]
+                              or (c["last_observed_at"] == after[0] and c["id"] > after[1])):
+                continue
+            out.append(c)
+        out.sort(key=lambda c: (-c["last_observed_at"], c["id"]))
+        return [_candidate(c) for c in out[:max(0, int(limit))]]
 
     def candidate(self, candidate_id: str) -> Optional[Candidate]:
-        with self._tx() as conn:
-            row = conn.execute(self._CANDIDATE_SELECT + " WHERE c.id = ?",
-                               (candidate_id,)).fetchone()
-        return self._cand(row) if row else None
+        rec = records.get(candidate_path(candidate_id)) if candidate_id else None
+        return _candidate(rec.data) if rec is not None and rec.data.get("id") == candidate_id else None
 
     def set_candidate_state(self, candidate_id: str, ignored: bool) -> Candidate:
         """Ignore a discovered candidate (it stays ignored until its evidence
         changes), or take it back to discovered. A registered one is
         refused: unregister the folder instead."""
-        with self._tx() as conn:
-            row = conn.execute("SELECT * FROM folder_candidates WHERE id = ?",
-                               (candidate_id,)).fetchone()
-            if row is None:
+        def run(unit: records.Unit) -> Candidate:
+            rec = unit.get(candidate_path(candidate_id)) if candidate_id else None
+            if rec is None or rec.data.get("id") != candidate_id:
                 raise FolderError("candidate_not_found")
-            if row["state"] == CandidateState.REGISTERED:
+            c = rec.data
+            if c["state"] == CandidateState.REGISTERED:
                 raise FolderError("unsupported")
             if ignored:
-                conn.execute("UPDATE folder_candidates SET state = ?, ignored_fingerprint = ? "
-                             "WHERE id = ?", (CandidateState.IGNORED.value, row["fingerprint"],
-                                              candidate_id))
+                c.update(state=CandidateState.IGNORED.value, ignored_fingerprint=c["fingerprint"])
             else:
-                conn.execute("UPDATE folder_candidates SET state = ?, ignored_fingerprint = NULL "
-                             "WHERE id = ?", (CandidateState.DISCOVERED.value, candidate_id))
-        return self.candidate(candidate_id)
+                c.update(state=CandidateState.DISCOVERED.value, ignored_fingerprint=None)
+            c["events"] = []
+            unit.put(rec.path, c, change="ignored" if ignored else "restored",
+                     summary=c["path_key"][-200:])
+            return _candidate(c)
+
+        with _LOCK:
+            return records.atomic(run, by=records.TIM)
+
+    def _observations(self, node_id: str) -> list[dict]:
+        return [r.data for r in records.scan(SESSIONS, types=["proposal"],
+                                             where=[["node_id", "=", node_id]])
+                if r.data.get("node_id") == node_id]
 
     def related_sessions(self, node_id: str, canonical_path: str, now: Optional[float] = None,
                          limit: int = 50) -> list[RelatedSession]:
         """The sessions whose metadata named this path: as their cwd, a cwd
         inside it, or their history folder. Most recently observed first;
         each with the agent name JARVIS lists it by, where it has one."""
+        from jarvis import run_store
         now = time.time() if now is None else now
-        inside = _like(canonical_path.rstrip("/")) + "/%"
-        with self._tx() as conn:
-            # The agents list's names (run_store), where that table is here.
-            named = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                                 "AND name = 'agents'").fetchone() is not None
-            agent = ("(SELECT a.name FROM agents a WHERE a.session_id = o.native_session_id)"
-                     if named else "NULL")
-            rows = conn.execute(
-                f"SELECT o.*, {agent} AS agent_name, "
-                "CASE WHEN o.cwd_key = ? THEN 'cwd' WHEN o.history_dir = ? THEN 'history' "
-                "ELSE 'inside' END AS relation "
-                "FROM folder_observations o "
-                "WHERE o.node_id = ? AND (o.cwd_key = ? OR o.history_dir = ? "
-                "OR o.cwd_key LIKE ? ESCAPE '\\') ORDER BY o.observed_at DESC LIMIT ?",
-                (canonical_path, canonical_path, node_id, canonical_path, canonical_path,
-                 inside, limit)).fetchall()
-        return [RelatedSession(r["provider"], r["profile_root"], r["native_session_id"],
-                               r["observed_cwd"], r["history_file"], r["evidence"],
-                               json.loads(r["associated"] or "{}"), r["first_observed_at"],
-                               r["observed_at"],
-                               r["last_live_at"] is not None and now - r["last_live_at"]
+        inside = canonical_path.rstrip("/") + "/"
+        found = []
+        for o in self._observations(node_id):
+            if o["cwd_key"] == canonical_path:
+                relation = "cwd"
+            elif o["history_dir"] == canonical_path:
+                relation = "history"
+            elif o["cwd_key"].startswith(inside):
+                relation = "inside"
+            else:
+                continue
+            found.append((o, relation))
+        found.sort(key=lambda x: x[0]["observed_at"], reverse=True)
+        found = found[:max(0, int(limit))]
+        names = run_store.agent_names() if found else {}
+        return [RelatedSession(o["provider"], o["profile_root"], o["native_session_id"],
+                               o["observed_cwd"], o["history_file"], o["evidence"],
+                               dict(o.get("associated") or {}), o["first_observed_at"],
+                               o["observed_at"],
+                               o.get("last_live_at") is not None and now - o["last_live_at"]
                                < LIVE_WITHIN_SEC,
-                               r["agent_name"], r["relation"]) for r in rows]
+                               names.get(o["native_session_id"]), relation) for o, relation in found]
 
     def observed_cwds(self, node_id: str, history_dir: str) -> list[str]:
         """The cwds the sessions kept in one history folder recorded."""
-        with self._tx() as conn:
-            return [r["observed_cwd"] for r in conn.execute(
-                "SELECT DISTINCT observed_cwd FROM folder_observations WHERE node_id = ? "
-                "AND history_dir = ? ORDER BY observed_cwd", (node_id, history_dir))]
+        return sorted({o["observed_cwd"] for o in self._observations(node_id)
+                       if o["history_dir"] == history_dir})
 
     # ── discovery's own progress ────────────────────────────────────────
 
     def history_files_read(self, paths: list[str]) -> dict[str, int]:
         """Of `paths`, those discovery has read, with the size each had."""
+        wanted = set(paths)
+        if not wanted:
+            return {}
         out: dict[str, int] = {}
-        with self._tx() as conn:
-            for start in range(0, len(paths), 500):
-                chunk = paths[start:start + 500]
-                for r in conn.execute("SELECT path, size FROM folder_history_files WHERE path IN "
-                                      f"({','.join('?' * len(chunk))})", chunk):
-                    out[r["path"]] = r["size"]
+        for r in records.scan(HISTORY, parent=HISTORY):
+            for f in r.data.get("files") or []:
+                if f["path"] in wanted:
+                    out[f["path"]] = f["size"]
         return out
 
     def mark_history_files(self, read: list[tuple[str, int]], now: Optional[float] = None) -> None:
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            conn.executemany("INSERT INTO folder_history_files (path, size, read_at) VALUES (?, ?, ?) "
-                             "ON CONFLICT (path) DO UPDATE SET size = excluded.size, "
-                             "read_at = excluded.read_at", [(p, s, now) for p, s in read])
+        now = float(time.time() if now is None else now)
+        if not read:
+            return
+        by_dir: dict[str, dict[str, int]] = {}
+        for p, s in read:
+            by_dir.setdefault(os.path.dirname(p), {})[p] = int(s)
+
+        def run(unit: records.Unit, part: list[tuple[str, dict[str, int]]]) -> None:
+            for d, marks in part:
+                rec = unit.get(history_path(d))
+                data = rec.data if rec is not None else {"history_dir": d, "files": []}
+                files = {f["path"]: f for f in data.get("files") or []}
+                for p, s in marks.items():
+                    files[p] = {**files.get(p, {}), "path": p, "size": s, "read_at": now}
+                data["files"] = sorted(files.values(), key=lambda f: f["path"])
+                data["events"] = []
+                unit.put(history_path(d), data, change="read", summary=d[-200:])
+
+        items = list(by_dir.items())
+        with _LOCK:
+            for i in range(0, len(items), BATCH // 2):
+                part = items[i:i + BATCH // 2]
+                records.atomic(lambda unit, part=part: run(unit, part), change="read")
 
     def record_progress(self, source: str, *, listed: int, read: int, pending: int,
                         complete: bool, error: Optional[str], cursor: Optional[str] = None,
                         now: Optional[float] = None) -> None:
         """One source's pass: how much it listed and read, how much is left,
         and where it got to (`cursor`, kept when a pass gives none)."""
-        now = time.time() if now is None else now
-        with self._tx() as conn:
-            conn.execute(
-                "INSERT INTO folder_discovery (source, cursor, listed, read, pending, complete, "
-                "last_run_at, last_ok_at, last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (source) DO UPDATE SET "
-                "cursor = COALESCE(excluded.cursor, cursor), listed = excluded.listed, "
-                "read = excluded.read, pending = excluded.pending, complete = excluded.complete, "
-                "last_run_at = excluded.last_run_at, "
-                "last_ok_at = COALESCE(excluded.last_ok_at, last_ok_at), "
-                "last_error = excluded.last_error",
-                (source, cursor, listed, read, pending, int(complete), now,
-                 None if error else now, error))
+        now = float(time.time() if now is None else now)
+
+        def change(data: Optional[dict]) -> dict:
+            data = dict(data or {"sources": []})
+            data["area"] = DISCOVERY_AREA
+            sources = {s["source"]: s for s in data.get("sources") or []}
+            old = sources.get(source) or {}
+            sources[source] = {"source": source,
+                               "cursor": cursor if cursor is not None else old.get("cursor"),
+                               "listed": int(listed), "read": int(read), "pending": int(pending),
+                               "complete": int(bool(complete)), "last_run_at": now,
+                               "last_ok_at": now if not error else old.get("last_ok_at"),
+                               "last_error": error,
+                               **({"rowid": old["rowid"]} if "rowid" in old else {})}
+            data["sources"] = sorted(sources.values(), key=lambda s: s["source"])
+            data["events"] = []
+            return data
+
+        with _LOCK:
+            records.update(DISCOVERY, change, change="progress", summary=source[:200])
 
     def progress(self) -> list[Progress]:
-        with self._tx() as conn:
-            return [Progress(r["source"], r["cursor"], r["listed"], r["read"], r["pending"], bool(r["complete"]),
-                             r["last_run_at"], r["last_ok_at"], r["last_error"])
-                    for r in conn.execute("SELECT * FROM folder_discovery ORDER BY source")]
+        rec = records.get(DISCOVERY)
+        sources = (rec.data.get("sources") or []) if rec is not None else []
+        return [Progress(s["source"], s.get("cursor"), s["listed"], s["read"], s["pending"],
+                         bool(s["complete"]), s.get("last_run_at"), s.get("last_ok_at"),
+                         s.get("last_error"))
+                for s in sorted(sources, key=lambda s: s["source"])]
+
+
+# ── the move: these documents and the tables they replaced ───────────────
+
+from jarvis import catalog_rows as _rows  # noqa: E402
+
+TABLES = {
+    "folders": ("id", "owner_id", "display_name", "role", "lifecycle", "revision", "created_at",
+                "updated_at", "removed_at"),
+    "folder_locations": ("id", "folder_id", "node_id", "supplied_path", "canonical_path",
+                         "fs_identity", "revision", "availability", "last_checked_at",
+                         "last_seen_at", "error_code", "created_at", "retired_at"),
+    "folder_access_scopes": ("id", "location_id", "reader_kind", "permitted_subtree",
+                             "policy_version", "enabled", "created_at", "updated_at"),
+    "folder_location_events": ("id", "folder_id", "location_id", "event", "prior", "new", "at"),
+    "folder_registrations": ("request_key", "fingerprint", "folder_id", "created_at"),
+}
+DISCOVERY_TABLES = {
+    "folder_candidates": ("id", "node_id", "path_key", "proposed_role", "state", "fingerprint",
+                          "ignored_fingerprint", "first_seen_at", "last_observed_at",
+                          "registered_folder_id"),
+    "folder_observations": ("id", "node_id", "provider", "profile_root", "native_session_id",
+                            "observed_cwd", "cwd_key", "history_dir", "history_file", "evidence",
+                            "associated", "cwd_candidate_id", "history_candidate_id",
+                            "first_observed_at", "observed_at", "last_live_at"),
+    "folder_discovery": ("source", "cursor", "listed", "read", "pending", "complete",
+                         "last_run_at", "last_ok_at", "last_error"),
+    "folder_history_files": ("path", "size", "read_at"),
+}
+REAL = {"created_at", "updated_at", "removed_at", "last_checked_at", "last_seen_at", "retired_at",
+        "at", "first_seen_at", "last_observed_at", "first_observed_at", "observed_at",
+        "last_live_at", "last_run_at", "last_ok_at", "read_at"}
+INTEGER = {"revision", "policy_version", "enabled", "listed", "read", "pending", "complete", "size"}
+ALIASED = {"folder_location_events", "folder_observations"}   # INTEGER PRIMARY KEY: the id is the rowid
+_EVENT_KEYS = ("location_id", "node_id", "supplied_path", "canonical_path", "fs_identity",
+               "revision", "availability", "lifecycle", "reader_kind", "error_code")
+
+
+def _event_text(value: dict) -> str:
+    """An event's prior or new as the store first wrote it: its keys in the
+    order the writer put them (the engine keeps documents' keys sorted)."""
+    order = {k: i for i, k in enumerate(_EVENT_KEYS)}
+    return json.dumps({k: value[k] for k in sorted(value, key=lambda k: (order.get(k, len(order)), k))})
+
+
+def _with_rowid(table: dict, name: str) -> tuple[str, ...]:
+    return ("rowid",) + table[name]
+
+
+class FolderMapping:
+    """`folders` and their locations, scopes, registrations and location
+    events: one `folder` document each, the events as its versions. A row
+    with no folder to belong to is kept whole in the catalog document."""
+
+    name = "folder"
+    tables = tuple(TABLES)
+    under = (FOLDERS, "/settings")
+    select = {FOLDERS: {"parent": FOLDERS, "types": ["folder"], "where": _LIVE},
+              "/settings": {"where": [["area", "=", CATALOG_AREA]]}}
+    history = True
+
+    def documents(self, conn):
+        from jarvis.knowledge_move import Doc, Revision
+        t = {name: _rows.read(conn, name, cols) for name, cols in TABLES.items()}
+        orphans: dict[str, list] = {}
+        docs: dict[str, dict] = {}
+        for r in t["folders"]:
+            docs[r["id"]] = {**_rows.plain(r, _with_rowid(TABLES, "folders")),
+                             "locations": [], "registrations": [], "events": []}
+        locs: dict[str, dict] = {}
+        for r in t["folder_locations"]:
+            if r["folder_id"] in docs:
+                entry = {**_rows.plain(r, _with_rowid(TABLES, "folder_locations"), drop=("folder_id",)),
+                         "scopes": []}
+                docs[r["folder_id"]]["locations"].append(entry)
+                locs[r["id"]] = entry
+            else:
+                orphans.setdefault("folder_locations", []).append(_rows.raw(r))
+        for r in t["folder_access_scopes"]:
+            if r["location_id"] in locs:
+                locs[r["location_id"]]["scopes"].append(
+                    _rows.plain(r, _with_rowid(TABLES, "folder_access_scopes"), drop=("location_id",)))
+            else:
+                orphans.setdefault("folder_access_scopes", []).append(_rows.raw(r))
+        for r in t["folder_registrations"]:
+            if r["folder_id"] in docs:
+                docs[r["folder_id"]]["registrations"].append(
+                    _rows.plain(r, _with_rowid(TABLES, "folder_registrations"), drop=("folder_id",)))
+            else:
+                orphans.setdefault("folder_registrations", []).append(_rows.raw(r))
+        events: dict[str, list] = {}
+        for r in t["folder_location_events"]:
+            e = _rows.plain(r, TABLES["folder_location_events"], drop=("folder_id",))
+            e["prior"], e["new"] = _rows.json_or_text(r["prior"]), _rows.json_or_text(r["new"])
+            same = all(isinstance(e[k], dict) and _event_text(e[k]) == r[k] for k in ("prior", "new"))
+            if r["folder_id"] in docs and same:
+                events.setdefault(r["folder_id"], []).append(e)
+            else:
+                orphans.setdefault("folder_location_events", []).append(_rows.raw(r))
+        for fid, doc in docs.items():
+            history = tuple(Revision(dict(doc, events=[e]), by=records.JARVIS, change=e["event"],
+                                     summary=str(doc["display_name"])[:200])
+                            for e in sorted(events.get(fid, []), key=lambda e: e["id"]))
+            yield Doc(folder_path(fid), doc, history=history)
+        seq = _rows.sequences(conn)
+        observations = _rows.read(conn, "folder_observations", ("id",))
+        yield Doc(CATALOG, {
+            "area": CATALOG_AREA,
+            "last_event_id": max([r["id"] for r in t["folder_location_events"]]
+                                 + [seq.get("folder_location_events", 0)]),
+            "last_observation_id": max([r["id"] for r in observations]
+                                       + [seq.get("folder_observations", 0)]),
+            "orphans": orphans, "events": []})
+
+    def rows(self, docs) -> dict:
+        out = _rows.Tables(TABLES, REAL, INTEGER, ALIASED)
+        for doc in docs:
+            p, d = doc.path, doc.data
+            if p == CATALOG:
+                for table, kept in (d.get("orphans") or {}).items():
+                    for one in kept:
+                        out.add_raw(table, one)
+                continue
+            if _rows.parent(p) != FOLDERS or "locations" not in d:
+                continue
+            out.add("folders", d)
+            for loc in d.get("locations") or []:
+                out.add("folder_locations", {**loc, "folder_id": d["id"]})
+                for s in loc.get("scopes") or []:
+                    out.add("folder_access_scopes", {**s, "location_id": loc["id"]})
+            for reg in d.get("registrations") or []:
+                out.add("folder_registrations", {**reg, "folder_id": d["id"]})
+            for v in list(doc.history) + [doc]:
+                for e in v.data.get("events") or []:
+                    out.add("folder_location_events", {**e, "folder_id": d["id"],
+                                                       "prior": _event_text(e.get("prior") or {}),
+                                                       "new": _event_text(e.get("new") or {})})
+        return out.rows()
+
+
+class DiscoveryMapping:
+    """What discovery found: `folder_candidates` and `folder_observations`
+    as `proposal` documents, `folder_history_files` one `folder` document
+    per history folder, `folder_discovery` the discovery settings. A row
+    that cannot be a document as it is is kept whole in the settings."""
+
+    name = "folder-discovery"
+    tables = tuple(DISCOVERY_TABLES)
+    under = (CANDIDATES, SESSIONS, HISTORY, "/settings")
+    select = {"/settings": {"where": [["area", "=", DISCOVERY_AREA]]}}
+    history = False
+
+    def documents(self, conn):
+        from jarvis.knowledge_move import Doc
+        t = {name: _rows.read(conn, name, cols) for name, cols in DISCOVERY_TABLES.items()}
+        orphans: dict[str, list] = {}
+        obs = []
+        for r in t["folder_observations"]:
+            o = _rows.plain(r, DISCOVERY_TABLES["folder_observations"])
+            o["associated"] = _rows.json_or_text(r["associated"])
+            if not (isinstance(o["associated"], dict)
+                    and json.dumps(o["associated"], sort_keys=True) == r["associated"]):
+                orphans.setdefault("folder_observations", []).append(_rows.raw(r))
+                continue
+            o["events"] = []
+            obs.append(o)
+        for r in t["folder_candidates"]:
+            c = _rows.plain(r, _with_rowid(DISCOVERY_TABLES, "folder_candidates"))
+            c["providers"], c["sessions"] = _counted(obs, c["id"])
+            c["events"] = []
+            yield Doc(candidate_path(c["id"]), c)
+        for o in obs:
+            yield Doc(session_path(o["id"]), o)
+        hist: dict[str, list] = {}
+        for r in t["folder_history_files"]:
+            hist.setdefault(os.path.dirname(r["path"]), []).append(
+                _rows.plain(r, _with_rowid(DISCOVERY_TABLES, "folder_history_files")))
+        for d, files in hist.items():
+            yield Doc(history_path(d), {"history_dir": d, "events": [],
+                                        "files": sorted(files, key=lambda f: f["path"])})
+        sources = [_rows.plain(r, _with_rowid(DISCOVERY_TABLES, "folder_discovery"))
+                   for r in t["folder_discovery"]]
+        yield Doc(DISCOVERY, {"area": DISCOVERY_AREA, "events": [], "orphans": orphans,
+                              "sources": sorted(sources, key=lambda s: s["source"])})
+
+    def rows(self, docs) -> dict:
+        out = _rows.Tables(DISCOVERY_TABLES, REAL, INTEGER, ALIASED)
+        for doc in docs:
+            p, d = doc.path, doc.data
+            if p == DISCOVERY:
+                for s in d.get("sources") or []:
+                    out.add("folder_discovery", s)
+                for table, kept in (d.get("orphans") or {}).items():
+                    for one in kept:
+                        out.add_raw(table, one)
+            elif p.startswith(HISTORY + "/"):
+                for f in d.get("files") or []:
+                    out.add("folder_history_files", f)
+            elif p.startswith(CANDIDATES + "/"):
+                out.add("folder_candidates", d)
+            elif p.startswith(SESSIONS + "/"):
+                out.add("folder_observations",
+                        {**d, "associated": json.dumps(d.get("associated") or {}, sort_keys=True)})
+        return out.rows()
+
+
+MAPPINGS = [FolderMapping(), DiscoveryMapping()]
+
+

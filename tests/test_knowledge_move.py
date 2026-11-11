@@ -170,7 +170,16 @@ def _jarvis_db(tmp_path: Path, monkeypatch) -> Path:
                 (voice_diagnostics, "voice_schema"), (work_store, "work_schema")]
     with closing(run_store._connect()) as conn, conn:
         for module, schema in migrated:
-            run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+            if hasattr(module, "_MIGRATIONS"):
+                run_store.migrate(conn, schema, module._MIGRATIONS, module.__name__)
+        # A store whose records are documents now has no schema of its own:
+        # its tables are the ones recorded when the records moved.
+        import json
+        recorded = json.loads((Path(move.__file__).parent / "sqlite_schema.json").read_text())
+        have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+        for o in recorded["schema"]["objects"]:
+            if o["sql"] and o["name"] not in have and not o["name"].startswith("sqlite_"):
+                conn.execute(o["sql"])
     db = data_paths.db_path()
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA foreign_keys=OFF")

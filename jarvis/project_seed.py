@@ -2,10 +2,12 @@
 
 It makes candidates, never projects (I9): one per registered SOURCE folder,
 named by the folder, with evidence counted from the legacy project strings
-(`runs.project_name`, matched through `runs.project_path` to a folder's
-canonical location first, then by key; `workflows.project`;
-`messages.project`; `session_messages.project`; and the memory
-`projects/*.md` slugs). Folders whose names fold to the same key become ONE
+(a run's `project_name`, matched through its `project_path` to a folder's
+canonical location first, then by key; a workflow's `project`; a message
+to a session's `project`; and the memory `projects/*.md` slugs), each read
+through its own store (`run_store.list_runs`, `workflow_store.recent`,
+`run_store.list_messages`). The old session messages (dropped files, before
+the signed route) are not read: no store lists them now. Folders whose names fold to the same key become ONE
 candidate listing every such folder, so he says which belong and which is
 home. Legacy keys that match no folder become candidates with no folder. A
 key already resolved to one of his projects (by alias or name) is not
@@ -17,7 +19,6 @@ ignored one stays ignored until its evidence changes.
 from __future__ import annotations
 
 import os
-from contextlib import closing
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -25,25 +26,31 @@ from jarvis import data_paths, run_store
 from jarvis.agent_directory import spoken_key
 from jarvis.project_store import Candidate, ProjectStore
 
-LEGACY_QUERIES = (
-    ("run_project", "SELECT project_name, project_path, COUNT(*) FROM runs GROUP BY project_name, project_path"),
-    ("workflow_project", "SELECT project, NULL, COUNT(*) FROM workflows GROUP BY project"),
-    ("message_project", "SELECT project, NULL, COUNT(*) FROM messages GROUP BY project"),
-    ("session_project", "SELECT project, NULL, COUNT(*) FROM session_messages GROUP BY project"),
-)
+EVERY = 1_000_000_000      # every record a store lists
+
+
+def _legacy_strings() -> Iterable[tuple[str, str, Optional[str]]]:
+    """(source, name, path or None) of every record that names a project by
+    a string, read through each record's own store."""
+    from jarvis import workflow_store
+    for r in run_store.list_runs(limit=EVERY):
+        yield "run_project", r.get("project_name"), r.get("project_path")
+    for w in workflow_store.recent(limit=EVERY):
+        yield "workflow_project", w.project, None
+    for m in run_store.list_messages(limit=EVERY):
+        yield "message_project", m.project, None
 
 
 def _legacy_rows() -> list[tuple[str, str, Optional[str], int]]:
-    """(source, name, path or None, count) from every legacy table there is."""
+    """(source, name, path or None, count) from every legacy record there is."""
     out = []
-    with closing(run_store._connect()) as conn:
-        for source, sql in LEGACY_QUERIES:
-            try:
-                for name, path, count in conn.execute(sql):
-                    if name:
-                        out.append((source, str(name), path, int(count)))
-            except Exception:  # noqa: BLE001 - a table this JARVIS has not made yet
-                continue
+    counted: dict[tuple[str, str, Optional[str]], int] = {}
+    for source, name, path in _legacy_strings():
+        if name:
+            key = (source, str(name), path)
+            counted[key] = counted.get(key, 0) + 1
+    for (source, name, path), count in counted.items():
+        out.append((source, name, path, count))
     notes = data_paths.projects_dir()
     if notes.is_dir():
         for p in sorted(notes.glob("*.md")):

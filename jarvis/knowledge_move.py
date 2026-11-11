@@ -631,8 +631,12 @@ def _chunks(writes: list, batch: int) -> Iterator[list]:
 
 def _engine_docs(uds, mapping: Mapping) -> Iterator[Doc]:
     streams = {Stream.ENTRY, Stream.DATA, Stream.CONTENT, Stream.SECTIONS}
+    select = getattr(mapping, "select", None) or {}
     for under in mapping.under:
-        for item in uds.scan(MOVE_CALLER, under, limit=1000, streams=streams):
+        # A mapping may narrow what it reads under a prefix it shares
+        # (`select`: parent, types, where), e.g. its folder items among the
+        # Content files below them.
+        for item in uds.scan(MOVE_CALLER, under, limit=1000, streams=streams, **select.get(under, {})):
             content = _content_of(item)
             history: tuple[Revision, ...] = ()
             if mapping.history:

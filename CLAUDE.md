@@ -1464,19 +1464,20 @@ only). Recording never raises into the caller. At most
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
 where they are and nothing here creates, moves, edits or deletes one. The
-record is in the existing database (`data_paths.db_path()`) under its own
-schema version (`folder_schema`, migrated with `run_store.migrate`, the
-helper human messaging uses too): `folders` (label, role, active or removed,
-a revision), `folder_locations` (node from `data_paths.node_id()`, path as
-given and canonical, filesystem identity as evidence, availability; one
-current location per folder, a reconnect retires it and adds the next
-location revision), `folder_access_scopes` (the reader and policy version;
-discovery never writes one), `folder_candidates` and `folder_observations`
-(what discovery found and why, kept after a session ends),
-`folder_location_events`, `folder_registrations` (request keys) and
-discovery's progress. There are no project tables yet: projects come in a
-later migration and refer to these IDs. `folder_store.py` is the only writer,
-one transaction per change, the revision moved inside it; it reads no
+record is documents in the engine (`records.py`): one `folder` document per
+folder at `/folders/<id>` (its files' Content items are below it), holding
+its label, role, active or removed and a revision, its locations (node from
+`data_paths.node_id()`, path as given and canonical, filesystem identity as
+evidence, availability; one current location, a reconnect retires it and
+adds the next location revision), each with its access scopes (the reader
+and policy version; discovery never writes one), its registration request
+keys, and its location events as its versions; `proposal` documents for
+what discovery found and why (`/proposals/folders/`,
+`/proposals/folder-sessions/`, kept after a session ends); and discovery's
+progress (`/settings/folder-discovery.settings`, the transcripts read under
+`/folders/discovery-history/`). Projects refer to these IDs.
+`folder_store.py` is the only writer, one write per change, the revision
+moved inside it; it reads no
 transcript and checks no permission.
 
 Which reader may read a folder is decided by where it is, never by its role
@@ -1528,18 +1529,19 @@ centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
 ## Project records
-His projects are records of truth in JARVIS's database under their own
-schema (`project_schema`), with `project_store.py` the only writer, one
-transaction per change and a `project_events` line for each: projects
-(name, spoken key, notes slug, summary, lifecycle), the legacy names that
-resolve to one (`project_aliases`, `project_for_legacy`), the registered
-folders each is made of (`project_folders`: part, at most one home, what
-the knowledge engine may read), pieces of work spanning projects (`works`,
-one primary project), accomplishments (`proposed`, then `confirmed` or
-`withdrawn`; only confirmed ones count) and bindings. `project_seed.py`
+His projects are records of truth, one `project` document each
+(`/projects/<id>.project`), with `project_store.py` the only writer, one
+write per change, each a version carrying its events: the project (name,
+spoken key, notes slug, summary, lifecycle), the legacy names that resolve
+to it (`aliases`, `project_for_legacy`), the registered folders it is made
+of (`folders`: part, at most one home, what the knowledge engine may read),
+its accomplishments (`proposed`, then `confirmed` or `withdrawn`; only
+confirmed ones count) and bindings; pieces of work spanning projects are
+`work` documents at `/work/works/<id>.work` (one primary project), and
+candidates `/proposals/projects/<id>.proposal`. `project_seed.py`
 makes candidates, never projects: one per registered source folder, with
-the legacy project strings (runs, workflows, messages, session messages,
-memory slugs) as evidence; each is an attention item and becomes a project
+the legacy project strings (runs, workflows, messages to sessions, memory
+slugs, read through their stores) as evidence; each is an attention item and becomes a project
 only on his Accept (the Folders tab's Projects, `ProjectsSection.tsx`) or
 his word (`change_project_candidate`). `project_service.py` is the one
 service the page's `/api/project-records*` and `/api/works*`
