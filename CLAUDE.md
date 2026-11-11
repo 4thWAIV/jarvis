@@ -254,9 +254,12 @@ again. The refusal tells the brain to ask and wait for his yes, or to read it
 back again.
 
 ## Messages to sessions
-Every message JARVIS sends a session (`steer_session`) is one row of the
-`messages` table in `run_store.py`, written when it is staged and BEFORE it is
-sent, then updated at each step; its status is `run_store.MessageStatus`
+Every message JARVIS sends a session (`steer_session`) is one `message`
+document (`message_records.py`, `/agents/<session id>/messages/m<id>.message`,
+through `run_store.py`'s message functions), written when it is staged and
+BEFORE it is sent, then written again at each step, each step a version; its
+conversation items (the TO_AGENT, the agent's ANSWER) are in the same
+document; its status is `run_store.MessageStatus`
 (`staged`, `queued`, `cancelled`, `sent`, `delivered`, `working`, `answered`,
 `failed`). Messages go one per turn: one to a session that is mid-turn, or
 that has an earlier message queued or still open, is `queued` on record
@@ -296,8 +299,10 @@ message (no session, no capture) stay in the `steers` table.
 Tim in one record. Phase 1 is in: `conversation_log` keeps each item's
 counterpart (`Counterpart`: agent, person, workflow, work, package; its
 ref), and each message to him the proof that admitted it (`PROOFS`) and its
-source row (`conversation_schema` migration 2 put the items already on
-record in their agent's thread). `conversation_log.inbound` is the one way
+source row. A message to or from a counterpart and its items are one
+`message` document; what Tim and JARVIS said is one `turn` each
+(`/conversation/<date>/<id>.turn`); threads, the conversation and recall are
+queries over both (`message_records.py`). `conversation_log.inbound` is the one way
 a message to him is recorded and refuses one without proof (`Unproven`);
 `outbound`, `thread_of` and `threads` are its other half. An agent's answer
 (proof `watcher`) and a session message (its own proof) go through it
@@ -1397,7 +1402,7 @@ which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 `team_client`'s status and is never worse than `degraded`, since JARVIS works
 without a team server; the left column shows it too (`TeamServerTile.tsx`). Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
-from records that already exist (the `messages` table, the workflow record,
+from records that already exist (the message documents, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
 session watcher's last poll and failures in a row, the brain, each Fish
 synthesis and each `/internal/tool` request, and a heartbeat per `_every`
@@ -2218,7 +2223,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
   subsystem rows and one subsystem in full (see "Subsystem diagnostics")
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
-  the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
+  the message functions over message documents (see "Messages to sessions",
+  `message_records.py`) and `steers` (keystrokes,
   commands)
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
