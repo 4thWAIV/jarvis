@@ -10,14 +10,16 @@ import re
 import shutil
 import tempfile
 import threading
-import time
 from collections import OrderedDict
-from contextlib import closing
 from pathlib import Path
 
 from jarvis import language_documents as docs, language_kit as kit
 
 IDENTITY = ("document_id", "revision", "source_revision", "kit_digest")
+# The one authored Markdown member a projection carries, and the origin of a
+# fresh author's (make_package --document) as canonical.json binds it.
+MEMBER = "UNDERSTANDING.md"
+FRESH_AUTHOR = "fresh-author"
 _publish_lock = threading.RLock()
 _checked_projections: OrderedDict[str, None] = OrderedDict()
 _gate_lock = threading.Lock()
@@ -50,13 +52,11 @@ def gate(read, communication: dict | None) -> None:
             or evidence.get("kit_digest") != canonical.get("kit_digest")
             or evidence.get("view_sha256") != canonical.get("view_sha256") or evidence.get("ok") is not True):
         raise docs.DocumentError("The architecture source, checker evidence and rendered page must belong to one checked revision.")
-    readable = canonical["metadata"].get("readable")
+    readable = understanding_of(canonical)
     if communication.get("readable", False) is not bool(readable):
         raise docs.DocumentError("The readable view availability differs from its canonical provenance.")
     readable_bytes = []
     if readable is not None:
-        if not isinstance(readable, dict) or readable.get("origin") != "author-supplied":
-            raise docs.DocumentError("The readable view provenance is malformed.")
         member = readable.get("member", "readable.md")
         if member not in {"UNDERSTANDING.md", "readable.md"}:
             raise docs.DocumentError("The authored understanding member is not a canonical package member.")
@@ -146,6 +146,68 @@ def folder_gate(folder: Path, communication: dict | None) -> None:
     gate(read, communication)
 
 
+def understanding_of(canonical: dict) -> dict | None:
+    """Which authored Markdown explains this projection, and its hash: the
+    fresh author's (`understanding` in canonical.json, make_package
+    --document) or else the one supplied with the revision itself
+    (metadata `readable`, the brain's publish). None when there is none."""
+    package = canonical.get("understanding")
+    if package is not None:
+        if (not isinstance(package, dict) or set(package) != {"origin", "member", "markdown_sha256"}
+                or package.get("origin") != FRESH_AUTHOR or package.get("member") != MEMBER
+                or not isinstance(package.get("markdown_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", package["markdown_sha256"])):
+            raise docs.DocumentError("The fresh author's understanding binding is malformed.")
+        return package
+    readable = canonical["metadata"].get("readable")
+    if readable is not None and (not isinstance(readable, dict) or readable.get("origin") != "author-supplied"):
+        raise docs.DocumentError("The readable view provenance is malformed.")
+    return readable
+
+
+def project(envelope: dict, folder: Path, understanding: bytes | None = None) -> dict:
+    """THE projection of one checked revision into a page package folder,
+    for the brain's publish and make_package --document alike: the exact
+    source, its checker evidence, its rendered page, its canonical identity
+    and the authored Markdown explaining it, with package.json naming them.
+    `understanding` is a fresh author's Markdown (bound in canonical.json),
+    else the revision's own author-supplied view is used. The package.json
+    written (its version still to be worked out by the factory)."""
+    if not envelope["check"]["ok"] or not envelope.get("view_sha256"):
+        raise docs.DocumentError("This draft has no validated render; inspect its checker diagnostics.")
+    canonical = {key: envelope[key] for key in (*IDENTITY, "parent_revision", "language", "work_id", "view_sha256", "metadata")}
+    if understanding is not None:
+        if not understanding.strip() or len(understanding) > kit.MAX_SOURCE_BYTES:
+            raise docs.DocumentError("The authored understanding must contain text and fit within 1 MiB.")
+        canonical["understanding"] = {"origin": FRESH_AUTHOR, "member": MEMBER,
+                                      "markdown_sha256": kit.sha256(understanding)}
+    elif envelope["metadata"].get("readable"):
+        understanding = Path(envelope["references"]["readable_markdown"]).read_bytes()
+    else:
+        raise docs.DocumentError("Publication needs an author-supplied readable Markdown view; submit a proposed revision with readable_markdown.")
+    communication = {"kind": "architecture", "title": envelope["metadata"]["title"], "readable": True, **{key: canonical[key] for key in IDENTITY}}
+    folder.mkdir(parents=True, exist_ok=True)
+    for source_name, destination in (("source", "source.yaml"), ("check", "check.json"), ("view", "index.html")):
+        shutil.copyfile(envelope["references"][source_name], folder / destination)
+    (folder / MEMBER).write_bytes(understanding)
+    (folder / "canonical.json").write_text(json.dumps(canonical, sort_keys=True))
+    from jarvis import make_package
+    manifest = {
+        "name": make_package.dp.slug(envelope["metadata"]["title"], "architecture") + "-" + envelope["document_id"][-8:],
+        "runs": "page", "entry": "index.html",
+        "purpose": "Inspect the checked architecture and discuss its exact canonical source revision.",
+        "returns": ["results/**"], "communication": communication, "brief": MEMBER,
+        "understanding": {member: MEMBER for member in ("source.yaml", "check.json", "canonical.json", "index.html")}}
+    (folder / "package.json").write_text(json.dumps(manifest))
+    return manifest
+
+
+def checked_revision(service: docs.Documents, document_id: str, revision: str) -> dict:
+    """The envelope of one exact checked revision, ready to project."""
+    envelope = service.retrieve(document_id=document_id, revision=revision)
+    return service.render(document_id=document_id, revision=revision, source_revision=envelope["source_revision"])
+
+
 def publish(service: docs.Documents, *, document_id: str, revision: str, source_revision: str) -> dict:
     with _publish_lock:
         return _publish(service, document_id=document_id, revision=revision, source_revision=source_revision)
@@ -154,39 +216,21 @@ def publish(service: docs.Documents, *, document_id: str, revision: str, source_
 def _publish(service: docs.Documents, *, document_id: str, revision: str, source_revision: str) -> dict:
     from jarvis import make_package, work_packages
     envelope = service.render(document_id=document_id, revision=revision, source_revision=source_revision)
-    with closing(docs._connect()) as conn:
-        previous = conn.execute("SELECT * FROM language_publications WHERE document_id=? AND revision=?",
-                                (document_id, revision)).fetchone()
+    previous = docs.publication(document_id, revision)
     if previous:
         path = Path(previous["archive_path"])
         if not path.is_file() or kit.sha256(path.read_bytes()) != previous["archive_sha256"]:
             raise docs.DocumentError("The published archive changed; restore its immutable package.")
         package, _ = work_packages.unpack(path, previous["archive_sha256"], clear_mark=lambda p: None)
         return {**envelope, "package_id": package.id, "archive": str(path)}
-    if not envelope["metadata"].get("readable"):
-        raise docs.DocumentError("Publication needs an author-supplied readable Markdown view; submit a proposed revision with readable_markdown.")
-    canonical = {key: envelope[key] for key in (*IDENTITY, "parent_revision", "language", "work_id", "view_sha256", "metadata")}
-    communication = {"kind": "architecture", "title": envelope["metadata"]["title"], "readable": True, **{key: canonical[key] for key in IDENTITY}}
     output = docs.storage() / revision / "publication"
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="architecture-package-") as name:
         folder = Path(name) / "architecture"
-        folder.mkdir()
-        for source_name, destination in (("source", "source.yaml"), ("check", "check.json"), ("view", "index.html"),
-                                         ("readable_markdown", "UNDERSTANDING.md")):
-            shutil.copyfile(envelope["references"][source_name], folder / destination)
-        (folder / "canonical.json").write_text(json.dumps(canonical, sort_keys=True))
-        package_name = make_package.dp.slug(envelope["metadata"]["title"], "architecture") + "-" + document_id[-8:]
-        (folder / "package.json").write_text(json.dumps({
-            "name": package_name, "version": make_package.next_version(package_name), "runs": "page", "entry": "index.html",
-            "purpose": "Inspect the checked architecture and discuss its exact canonical source revision.",
-            "returns": ["results/**"], "communication": communication, "brief": "UNDERSTANDING.md",
-            "understanding": {member: "UNDERSTANDING.md" for member in ("source.yaml", "check.json", "canonical.json", "index.html")}}))
+        project(envelope, folder)
         made = make_package.make_folder(folder, output)
     digest = kit.sha256(made.archive.read_bytes())
     package, _ = work_packages.unpack(made.archive, digest, clear_mark=lambda p: None)
-    with closing(docs._connect()) as conn, conn:
-        conn.execute("INSERT OR IGNORE INTO language_publications VALUES (?,?,?,?,?)",
-                     (document_id, revision, digest, str(made.archive), time.time()))
+    docs.record_publication(document_id, revision, digest, str(made.archive))
     return {**service.retrieve(document_id=document_id, revision=revision), "package_id": package.id,
             "archive": str(made.archive)}

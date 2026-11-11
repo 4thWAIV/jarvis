@@ -209,14 +209,31 @@ def _rels(targets: dict[str, str]) -> bytes:
         + "</Relationships>")
 
 
-def docx_bytes(paragraphs: list[str], macros: bool = False) -> bytes:
+def _core(title: Optional[str]) -> dict[str, bytes]:
+    """docProps/core.xml with a dc:title, when one is given."""
+    if title is None:
+        return {}
+    return {"docProps/core.xml": _xml_part(
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
+        'metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f"<dc:title>{_esc(title)}</dc:title></cp:coreProperties>")}
+
+
+def docx_bytes(paragraphs: list[str], macros: bool = False,
+               styles: Optional[list[Optional[str]]] = None,
+               title: Optional[str] = None) -> bytes:
+    """Paragraphs, each with its style id from `styles` (None: body text)."""
     w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    body = "".join(f"<w:p><w:r><w:t xml:space=\"preserve\">{_esc(p)}</w:t></w:r></w:p>"
-                   for p in paragraphs)
+    styles = styles or [None] * len(paragraphs)
+    body = "".join(
+        "<w:p>" + (f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else "")
+        + f"<w:r><w:t xml:space=\"preserve\">{_esc(p)}</w:t></w:r></w:p>"
+        for p, style in zip(paragraphs, styles))
     return _ooxml("word/document.xml",
                   "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
                   {"word/document.xml": _xml_part(f'<w:document xmlns:w="{w}"><w:body>{body}'
-                                                  f'</w:body></w:document>')}, macros)
+                                                  f'</w:body></w:document>'), **_core(title)},
+                  macros)
 
 
 def pptx_bytes(slides: list[list[str]], macros: bool = False) -> bytes:

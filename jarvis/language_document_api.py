@@ -15,6 +15,16 @@ from jarvis import decision_package, language_documents as docs, language_kit as
 from jarvis import package_inbox, package_understanding, work_packages
 
 READ_ONLY_OPERATIONS = frozenset({"capabilities", "retrieve", "render", "ground", "continue"})
+# How an agent's signed request is recorded (reporters.recorded): its own
+# key's principal, or a work-item key's.
+AGENT_PRINCIPALS = ("agent:", "workkey:")
+# An agent's architecture package reaches Tim one way only; a local,
+# unsigned publication would reach nobody.
+AGENTS_PUBLISH_WITH_MAKE_PACKAGE = (
+    "Agents do not publish here: send the checked revision to Tim with python -m "
+    "jarvis.make_package --document <document_id> --revision <revision> --handoff "
+    "<handoff.json> --engine <claude|codex> --session <your session id> --work <item id> "
+    "(docs/making-a-package.md, \"Architecture documents\").")
 
 
 def read_only_operation(arguments: dict | None) -> bool:
@@ -87,7 +97,9 @@ class Adapter:
             raise docs.DocumentError("The package canonical identity differs from this requested revision.")
         if declaration is not None and declaration not in envelope["metadata"]["declarations"]:
             raise docs.DocumentError("That declaration does not belong to the requested canonical revision.")
-        readable = envelope["metadata"].get("readable", {})
+        # The authored view this package binds: its fresh author's
+        # (make_package --document) or the revision's own (publish).
+        readable = language_projection.understanding_of(canonical) or {}
         member = readable.get("member", "readable.md")
         manifest = json.loads(package.manifest.as_json())
         if member not in package_understanding.documents(manifest):
@@ -100,7 +112,8 @@ class Adapter:
                 "package": {"id": package.id, "version": package.manifest.version,
                             "delivered_archive_sha256": work_packages.sha256_of(package)},
                 "source": {"member": "source.yaml", "text": read("source.yaml").decode("utf-8"), "sha256": source_revision},
-                "understanding": {"member": member, "text": authored, "sha256": readable["markdown_sha256"]},
+                "understanding": {"member": member, "text": authored, "sha256": readable["markdown_sha256"],
+                                  "origin": readable.get("origin")},
                 "followup_reference": (f"Canonical document: {document_id}.\nCanonical revision: {revision}."
                                        f"\nCanonical YAML SHA256: {source_revision}."),
                 "unresolved": envelope["metadata"]["coverage"]["unresolved"],
@@ -108,10 +121,14 @@ class Adapter:
                 "observation": "Canonical source and author-supplied understanding only; no current DOM observation is claimed."}
 
     async def call(self, request: dict, *, reported_by: str = "") -> dict:
-        owner = str(self.owner())
+        # A continuation belongs to the caller that started it (the brain,
+        # the page, one agent's key), so no other caller can take its pages.
+        owner = f"{self.owner()}|{reported_by}"
         try:
             body = RequestBody.model_validate(request)
             arguments = dict(body.arguments)
+            if body.operation == "publish" and reported_by.startswith(AGENT_PRINCIPALS):
+                raise docs.DocumentError(AGENTS_PUBLISH_WITH_MAKE_PACKAGE)
             if body.operation == "continue":
                 token = self._pages.get(body.continuation or "")
                 if token is None or token[0] != owner or token[1] <= time.monotonic():

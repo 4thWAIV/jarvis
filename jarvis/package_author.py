@@ -10,6 +10,7 @@ import json
 import os
 import time
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import author_proof, brain_provider, data_paths, session_skill
@@ -41,10 +42,43 @@ def read_handoff(path: Path) -> dict:
     return value
 
 
+@dataclass(frozen=True)
+class Document:
+    """The checked architecture revision a fresh author explains
+    (make_package --document): its identity and the folder holding it as
+    the author reads it (make_package.document_evidence)."""
+    document_id: str
+    revision: str
+    folder: Path
+
+
+def _assignment(document: Document | None) -> str:
+    """What the fresh author writes, and the exact check it runs last."""
+    if document is None:
+        return ("Write a deck to content.json in your working directory, or write a folder "
+                "package under package/ with package.json. Put supporting assets alongside that "
+                "source, and your evidence/review notes in evidence.md. Validate with this "
+                "installation’s exact command: " + session_skill._module("make_package", cert=False)
+                + " <source> --check-only. ")
+    return ("This package explains one checked canonical architecture document. Its exact "
+            "revision is in " + str(document.folder) + ": source.yaml is the canonical YAML, "
+            "view.html its rendered page, check.json the checker's evidence and document.json "
+            "its identity, coverage and what lies outside the language. JARVIS projects that "
+            "exact revision into the package itself; you write only its plain explanation, "
+            "package/UNDERSTANDING.md (nothing else under package/), for the handoff's audience "
+            "and questions: walk one concrete input through the architecture as the skill "
+            "says, and say plainly what its coverage leaves unresolved or outside the language. "
+            "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
+            "installation’s exact command: " + session_skill._module("make_package", cert=False)
+            + " package --check-only --document " + document.document_id + " --revision "
+            + document.revision + ". ")
+
+
 async def author(handoff: Path, engine: str, out: Path, *, source: Path | None = None,
                  timeout: float = 1800, session: str = "", work: str = "",
-                 workflow: str = "") -> Path:
-    """One new session, no resume or fallback; return only its own package source."""
+                 workflow: str = "", document: Document | None = None) -> Path:
+    """One new session, no resume or fallback; return only its own package
+    source (for a `document`, its package/ explanation)."""
     evidence = read_handoff(handoff)
     if engine not in ENGINES:
         raise Refused(["Choose the caller's own engine with --engine claude or --engine codex."])
@@ -63,6 +97,8 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     receipt = {"engine": engine, "origin_session": session, "work": work,
                "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
                "source_folder": str(folder), "status": "started"}
+    if document is not None:
+        receipt["document"] = {"document_id": document.document_id, "revision": document.revision}
     transcript = folder / "author-response.txt"
 
     def event(_session, value):
@@ -88,10 +124,7 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               + " and the production guide " + str(GUIDE) + ". Independently research the "
               "handoff evidence and answer its audience's questions. The handoff is at "
               + str(handoff) + "; resolve its relative evidence paths from " + str(handoff.parent)
-              + ". Write a deck to content.json in your working directory, or write a folder "
-              "package under package/ with package.json. Put supporting assets alongside that "
-              "source, and your evidence/review notes in evidence.md. Validate with this installation’s "
-              "exact command: " + session_skill._module("make_package", cert=False) + " <source> --check-only. "
+              + ". " + _assignment(document) +
               "Run that check yourself last, after your final change: JARVIS admits the "
               "package only when your own final check printed exactly the source delivered. "
               "The supplied skill, guide and command are sufficient even if no user skill copy "
@@ -113,6 +146,9 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         if (folder / "author-blocked.md").exists():
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
         candidates = [p for p in (folder / "content.json", folder / "package") if p.exists()]
+        if document is not None and candidates != [folder / "package"]:
+            raise OSError("Author must produce package/UNDERSTANDING.md, and no content.json, in "
+                          + str(folder))
         if len(candidates) != 1:
             raise OSError("Author must produce exactly one content.json or package/ source in " + str(folder))
         result = candidates[0]

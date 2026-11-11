@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import sqlite3
 import threading
 import time
 import uuid
@@ -84,6 +83,9 @@ from jarvis import actions
 from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
+from jarvis import knowledge_client
+from jarvis import records
+from jarvis import records_cutover
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -2557,9 +2559,11 @@ async def stop_folders() -> None:
 
 # --- The knowledge engine ----------------------------------------------------
 #
-# Off unless JARVIS_KNOWLEDGE is on (knowledge_client.enabled). Started after
-# startup settles and paced by the conversation floor and the machine's CPU
-# (knowledge_runtime.py); nothing on the voice path waits on it.
+# Always up unless JARVIS_ENGINE_AUTOSTART is off: started first thing in
+# `lifespan`, which waits for its health before serving the page, and kept up
+# by the supervisor. JARVIS_KNOWLEDGE (knowledge_client.enabled) governs only
+# ingest, embedding and the knowledge tools. Its background lane is paced by
+# the conversation floor and the machine's CPU (knowledge_runtime.py).
 
 knowledge: Optional["knowledge_runtime.KnowledgeRuntime"] = None
 _knowledge_task: Optional[asyncio.Task] = None
@@ -2596,19 +2600,49 @@ def _offer_knowledge_seeds() -> None:
         log.warning("knowledge seeds could not be offered", exc_info=True)
 
 
-def start_knowledge() -> None:
-    global knowledge, _knowledge_task
-    from jarvis import knowledge_client, knowledge_runtime
-    if not knowledge_client.enabled():
+async def start_knowledge_engine() -> None:
+    """The engine first, before the rest of startup: started, and waited for
+    up to knowledge_client.READY_WAIT_SEC, off the event loop's thread.
+    JARVIS's records live in it, so a server whose engine has not answered
+    by then does not start: it stops with the supervisor's reason and the
+    end of the engine's own log (`EngineNotUp`), rather than serving a page
+    whose every record call would fail, or failing later in the first
+    startup step that reads a record."""
+    global knowledge
+    from jarvis import knowledge_runtime
+    if not knowledge_client.autostart():
         return
     knowledge = knowledge_runtime.KnowledgeRuntime(
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    # Every record goes to the engine this server started, and no other.
+    from jarvis.knowledge.uds import EngineUDS
+    supervisor = getattr(knowledge, "supervisor", None)
+    if supervisor is not None:
+        records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
+    if await knowledge.start_engine():
+        log.info("knowledge engine: up")
+        return
+    sup = knowledge.supervisor.health()
+    words = (f"the knowledge engine did not answer within {knowledge_client.READY_WAIT_SEC:.0f} s "
+             f"(state {sup['state']}, restarts {sup['restarts']}, last reason {sup['reason']}); "
+             f"JARVIS's records live there, so it does not start without it. The engine's log "
+             f"({data_paths.knowledge_engine_log_path()}) ends:\n{knowledge_client.engine_log_tail()}")
+    log.error("%s", words)
+    await knowledge.stop()
+    raise knowledge_client.EngineNotUp(words)
+
+
+def start_knowledge() -> None:
+    """The runtime's watch, once the records it reports to are open."""
+    global _knowledge_task
+    if knowledge is None:
+        return
     knowledge.proposal_listeners.append(_on_knowledge_proposals)
-    _offer_knowledge_seeds()
+    if knowledge_client.enabled():
+        _offer_knowledge_seeds()
     knowledge.change_listeners.append(lambda: _send_to_session_clients({"type": "knowledge"}))
     _knowledge_task = _spawn(knowledge.run())
-    log.info("knowledge engine: starting after startup settles")
 
 
 async def stop_knowledge() -> None:
@@ -3184,17 +3218,28 @@ async def lifespan(application: FastAPI):
     server_address.record()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    # The knowledge engine before anything else; the page waits for it.
+    await start_knowledge_engine()
+    # jarvis.db into the engine, once, proven both ways before any store is
+    # touched (records_cutover.py); a move it cannot prove stops startup.
+    cut = await asyncio.to_thread(records_cutover.cut_over)
+    if cut.state == "cut over":
+        log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
+    # His voice settings held in memory before a page connects, so listening
+    # and speaking never wait on the engine (voice_control.py).
+    try:
+        await asyncio.to_thread(voice_control.read)
+    except Exception:
+        log.warning("voice settings: not read at startup; the defaults until they are",
+                    exc_info=True)
 
     run_store.init_db()
-    try:
-        import importlib
-        _mig = importlib.import_module("jarvis.migrations.001_dispatches_to_runs")
-        moved = _mig.migrate()
-        if moved:
-            log.info("migrated %d legacy dispatch row(s)", moved)
-    except Exception:
-        log.warning("dispatch migration skipped", exc_info=True)
+    # The old `dispatches` -> `runs` migration is retired with SQLite: every
+    # database still in use had moved its dispatches into `runs` long ago
+    # (today's has no `dispatches` table), so there is nothing left for it.
     run_store.sweep_stale_runs()
+    # Every finished run's output stream closed, so the content ingest reads it.
+    await asyncio.to_thread(run_store.close_finished_outputs)
     run_store.sweep_staged_messages()
     # Every review he made in a package before now is on its item.
     await asyncio.to_thread(_apply_package_reviews)
@@ -3244,11 +3289,13 @@ async def lifespan(application: FastAPI):
     await team_api.stop()
     await _stop_attention()
     await transcription_api.stop()
-    await stop_knowledge()
     await language_kit_updates.runtime.stop()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    # The engine last: everything above may still write its records.
+    await stop_knowledge()
+    records.bind(None)
     server_address.forget()
 
 
@@ -3598,7 +3645,7 @@ class RunRequest(BaseModel):
 
 @app.get("/api/runs/stats")
 async def api_run_stats(period: str = "day"):
-    return run_store.stats(period)
+    return await asyncio.to_thread(run_store.stats, period)
 
 
 @app.get("/api/runs")
@@ -3608,14 +3655,14 @@ async def api_list_runs(status: str = "", project: str = "",
     # Clamp both ends: SQLite treats `LIMIT -1` as unlimited, so a negative
     # value must not reach the query unbounded.
     limit = max(1, min(limit, 200))
-    return {"runs": run_store.list_runs(
-        status=statuses, project=project or None,
+    return {"runs": await asyncio.to_thread(
+        run_store.list_runs, status=statuses, project=project or None,
         limit=limit, before=before)}
 
 
 @app.get("/api/runs/{run_id}")
 async def api_get_run(run_id: str):
-    run = run_store.get_run(run_id)
+    run = await asyncio.to_thread(run_store.get_run, run_id)
     if not run:
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     return {"run": run}
@@ -3867,12 +3914,11 @@ def _collect_worker_inventory() -> dict:
     snap = session_watcher.snapshot if session_watcher is not None else session_watch.Snapshot()
     # A missing source is a reported coverage gap, not a failed status read
     # and not proof that there are no workers in that source.
-    import sqlite3
     gaps = []
     def read_source(name, read, missing):
         try:
             return read()
-        except (sqlite3.Error, OSError) as exc:
+        except (knowledge_client.EngineUnavailable, OSError) as exc:
             gaps.append(f'{name} unavailable: {type(exc).__name__}')
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
@@ -5032,11 +5078,11 @@ def _jarvis_run_session_ids() -> frozenset:
         return ids
     try:
         ids = frozenset(run_store.all_run_ids())
-    except sqlite3.OperationalError as e:
-        # Expected before init_db has run (a fresh install, or a test that
-        # never created the schema). Failing OPEN is right — showing the
-        # user's own sessions unfiltered beats showing nothing — but a full
-        # traceback at WARNING for a routine startup ordering is noise.
+    except knowledge_client.EngineUnavailable as e:
+        # Expected while the engine holding the records is down or starting.
+        # Failing OPEN is right — showing the user's own sessions unfiltered
+        # beats showing nothing — but a full traceback at WARNING for a
+        # routine startup ordering is noise.
         log.debug("run ids unavailable (%s); not filtering the roster", e)
         ids = frozenset()
     except Exception:
@@ -5091,8 +5137,8 @@ def _agent_names() -> dict:
         return names
     try:
         names = run_store.agent_names()
-    except sqlite3.OperationalError:
-        names = {}                          # before init_db, as for run ids
+    except knowledge_client.EngineUnavailable:
+        names = {}                          # the engine down, as for run ids
     except Exception:
         log.warning("could not read the agents' names", exc_info=True)
         names = {}
@@ -7235,13 +7281,13 @@ async def _perform_command(item: _StagedCommand) -> None:
     """
     recorded = False
 
-    def record(outcome: str) -> None:
+    async def record(outcome: str) -> None:
         nonlocal recorded
         if recorded:
             return
         recorded = True
-        run_store.record_steer("", COMMAND_AUDIT_NAME, item.project,
-                               item.command, outcome)
+        await asyncio.to_thread(run_store.record_steer, "", COMMAND_AUDIT_NAME,
+                                item.project, item.command, outcome)
 
     def outcome(event: str) -> None:
         # Shown, not spoken: the read-back was the words that mattered.
@@ -7249,7 +7295,7 @@ async def _perform_command(item: _StagedCommand) -> None:
 
     try:
         if speech is None:
-            record("no_voice")
+            await record("no_voice")
             return
         # The caveat is the whole reason `documented` is carried this far: an
         # undocumented command is not refused, it is flagged out loud, and the
@@ -7262,16 +7308,16 @@ async def _perform_command(item: _StagedCommand) -> None:
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
-                record("readback_failed")
+                await record("readback_failed")
                 return
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             outcome("cancelled")
             return
         if not heard:
-            record("readback_failed")
+            await record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             outcome("cancelled")
             return
 
@@ -7282,13 +7328,13 @@ async def _perform_command(item: _StagedCommand) -> None:
         result = await actions.open_terminal(
             f"cd {shlex.quote(item.path)} && {item.command}")
         if result.get("success"):
-            record("ran")
+            await record("ran")
             outcome("ran")
         else:
-            record("failed")
+            await record("failed")
             outcome("terminal_failed")
     except Exception:
-        record("failed")                   # the audit trail must never have a gap
+        await record("failed")             # the audit trail must never have a gap
         raise
 
 
@@ -7350,20 +7396,21 @@ async def _perform_dialog(item: _StagedDialog) -> None:
     recorded = False
     said = dialog.spoken_key(item.key)
 
-    def record(outcome: str) -> None:
+    async def record(outcome: str) -> None:
         nonlocal recorded
         if recorded:
             return
         recorded = True
-        run_store.record_steer(item.session_id, item.voice_name, item.project,
-                               item.key, f"dialog:{outcome}")
+        await asyncio.to_thread(run_store.record_steer, item.session_id,
+                                item.voice_name, item.project, item.key,
+                                f"dialog:{outcome}")
 
     def shown(event: str) -> None:
         _action_outcome("keypress", event, {"agent": _said_name(item)})
 
     try:
         if speech is None:
-            record("no_voice")             # the mouth went away between turns
+            await record("no_voice")       # the mouth went away between turns
             return
         # The read-back names the key AND warns about the focus theft, because
         # the window coming forward is the part that interrupts the user.
@@ -7373,27 +7420,27 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
-                record("readback_failed")
+                await record("readback_failed")
                 return
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             shown("cancelled")
             return
         if not heard:
-            record("readback_failed")
+            await record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            record("cancelled_by_user")
+            await record("cancelled_by_user")
             shown("cancelled")
             return
 
         outcome = await dialog.answer(item.pid, item.key)
-        record(outcome)
+        await record(outcome)
         # Shown, not spoken: the read-back was the words that mattered.
         shown({dialog.SENT: "pressed", dialog.NOT_FOUND: "not_found",
                dialog.NOT_PERMITTED: "not_permitted", dialog.NO_TTY: "no_tty"}
               .get(outcome, "failed"))
     except Exception:
-        record("failed")                   # the audit trail must never have a gap
+        await record("failed")             # the audit trail must never have a gap
         raise
 
 
@@ -7450,8 +7497,8 @@ async def tool_answer_dialog(args: dict) -> str:
     raw_key = str(args.get("key") or "")
     session, problem, reason = _resolve_or_explain(name)
     if problem:
-        run_store.record_steer("", name, "", raw_key,
-                               f"dialog:{reason or 'unresolved'}")
+        await asyncio.to_thread(
+            run_store.record_steer, "", name, "", raw_key, f"dialog:{reason or 'unresolved'}")
         return problem
 
     key = dialog.normalize_key(raw_key)
@@ -7459,8 +7506,9 @@ async def tool_answer_dialog(args: dict) -> str:
         # Refused before anything is staged, and long before any AppleScript
         # exists. JARVIS presses keys, he does not type: there is no
         # best-effort reading of free text, and asking for one is the answer.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, raw_key, "dialog:bad_key")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, raw_key, "dialog:bad_key")
         return ("I can only press Return, Escape, or a single numbered option "
                 "between one and nine — nothing else goes into that terminal. "
                 "Which of those did the user mean?")
@@ -7470,23 +7518,26 @@ async def tool_answer_dialog(args: dict) -> str:
 
     provider = _session_provider_named(session.provider)
     if provider is not None and not provider.can_answer_dialogs:
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:not_supported")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:not_supported")
         return (f"I can't press keys in {_said_name(session)}: it is a Codex "
                 f"session, and Codex's prompts can only be answered in its own "
                 f"window. Ask the user to answer it there.")
 
     pid, _tty, problem = await _tty_for_session_or_explain(session)
     if problem:
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:no_tty")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:no_tty")
         return problem
 
     if speech is None:
         # No voice means no read-back, and no read-back means no gate at all.
         # Pressing a key the user could not hear announced is never acceptable.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, key, "dialog:no_voice")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, key, "dialog:no_voice")
         return (f"I can't read that back to you right now, sir, so I won't press "
                 f"anything in {_said_name(session)} unannounced.")
 
@@ -7533,8 +7584,8 @@ async def tool_steer_session(args: dict) -> str:
         # reference the user gave in place of a resolved voice name) so
         # "did you send that?" always has an answer, even when resolution
         # itself failed.
-        run_store.record_steer("", name, "", str(args.get("prompt") or ""),
-                               reason or "unresolved")
+        await asyncio.to_thread(
+            run_store.record_steer, "", name, "", str(args.get("prompt") or ""), reason or "unresolved")
         return problem
     # The text is never the brain's to write here: it is a capture of Tim's
     # own words, made on his turn (`capture`), named by its number.
@@ -7547,8 +7598,9 @@ async def tool_steer_session(args: dict) -> str:
         (transmission.session_recipient(session.session_id), _said_name(session)))
     if problem:
         # No capture, no message: nothing was formed to record as one.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, "", "no_capture")
+        await asyncio.to_thread(
+            run_store.record_steer, session.session_id, session.voice_name,
+            session.project, "", "no_capture")
         return problem
 
     global last_mentioned_session
@@ -8564,8 +8616,9 @@ async def _open_received_package(message_id: uuid.UUID, attachment_id: uuid.UUID
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, Path(found.local_path),
                                                  attachment_id.hex)
-        context.record_extraction(message_id, attachment_id, package.folder,
-                                  sorted(set(package.manifest.named_files().values())))
+        await asyncio.to_thread(context.record_extraction, message_id, attachment_id,
+                                package.folder,
+                                sorted(set(package.manifest.named_files().values())))
     except (work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     if fresh:
@@ -8791,8 +8844,8 @@ async def tool_run_package_agent(args: dict) -> str:
         return f"{problem} Nothing was started."
     if run_executor_instance is None:
         return "I can't start anything just now, sir."
-    if run_store.list_runs(status=list(run_store.RunStatus.ACTIVE), package_id=package.id,
-                           limit=1):
+    if await asyncio.to_thread(run_store.list_runs, status=list(run_store.RunStatus.ACTIVE),
+                               package_id=package.id, limit=1):
         return (f"{package.id} is already running, sir; you will be told when it has "
                 f"finished. Nothing else was started.")
     try:
@@ -9932,7 +9985,8 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
     if _package_shown is not None and _package_shown.get("id") == package.id:
         # A page that connects now shows his answer in the view's head.
         _package_shown = await asyncio.to_thread(packages_api.describe, package)
-    entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
+    entry = (next((e for e in moved if e.id == entry.id), None)
+             or await asyncio.to_thread(package_inbox.get, entry.id))
     said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
             if entry.decisions_total else "Recorded.")
     if (question.id == work_api.REVIEW_QUESTION and entry.work_id
@@ -11069,7 +11123,7 @@ async def tool_spawn_run(args: dict) -> str:
         return f"I couldn't start that in {name}, sir."
     _hold(handed, f"run:{run_id}")
 
-    run = run_store.get_run(run_id) or {}
+    run = await asyncio.to_thread(run_store.get_run, run_id) or {}
     started_on = run.get("requested_model") or model
     if resume_from:
         where = f"Picked up the last run in {name}"
@@ -11522,7 +11576,7 @@ def _cues_said(settings: dict) -> str:
 async def tool_voice_input_settings(args: dict) -> str:
     """His voice input settings: what the Settings route reads."""
     try:
-        return _voice_input_settings_said(voice_control.read())
+        return _voice_input_settings_said(await asyncio.to_thread(voice_control.read))
     except voice_control.Unreadable as e:
         return f"{e} Listening cannot be started until they can."
 
@@ -11532,9 +11586,9 @@ async def tool_set_voice_input_settings(args: dict) -> str:
     `voice_control.change`, with its validation. An ACTING tool. It starts,
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
-        settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        intervals=args.get("intervals"), sounds=args.get("sounds"),
-                                        cues=args.get("cues"), volume=args.get("volume"))
+        settings = await voice_control.change_off_loop(
+            stop=args.get("stop"), switch=args.get("switch"), intervals=args.get("intervals"),
+            sounds=args.get("sounds"), cues=args.get("cues"), volume=args.get("volume"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
@@ -11665,12 +11719,12 @@ async def tool_quiet_microphone(args: dict) -> str:
             "Only he can unmute it.")
 
 
-def _mute_speech() -> str | None:
+async def _mute_speech() -> str | None:
     """His speech mute on, as the page's speaker and headset turn it on:
     `voice_control.change`, whose publish stops what is sounding. The
     refusal's words, or None once it is on."""
     try:
-        voice_control.change(speech_muted=True)
+        await voice_control.change_off_loop(speech_muted=True)
     except (voice_control.Invalid, voice_control.Unreadable) as e:
         return f"Nothing was changed, sir: {getattr(e, 'message', None) or e}"
     return None
@@ -11679,7 +11733,7 @@ def _mute_speech() -> str | None:
 async def tool_mute_speech(args: dict) -> str:
     """The page's speaker muting JARVIS's speech, by voice or typing. Only
     ever quieter: unmuting is his own click on the speaker or the headset."""
-    refused = _mute_speech()
+    refused = await _mute_speech()
     if refused:
         return refused
     return ("Muted JARVIS's speech, sir: it answers in text only from now on, and anything "
@@ -11690,7 +11744,7 @@ async def tool_turn_audio_off(args: dict) -> str:
     """The page's headset turning all audio off, by voice or typing: Mic off
     on every open page (the quiet frame, as quiet_microphone sends) and his
     speech mute on. Only he turns it back on, with the headset."""
-    refused = _mute_speech()
+    refused = await _mute_speech()
     if refused:
         return refused
     if voice_clients:
@@ -11814,7 +11868,7 @@ async def tool_set_attention_settings(args: dict) -> str:
 
 _KNOWLEDGE_WRAP_NAME = "knowledge"
 knowledge_calls = knowledge_api.Context(
-    lambda: knowledge,
+    lambda: knowledge if knowledge_client.enabled() else None,
     resolved=lambda pid: _attention_resolved("knowledge_proposal", pid),
     seed_resolved=lambda sid: _attention_resolved("knowledge_seed", sid))
 
@@ -11869,7 +11923,7 @@ async def tool_knowledge_search(args: dict) -> str:
     said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
-        kinds=args.get("kinds"), limit=args.get("limit") or 10),
+        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase")),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
     return said
 
@@ -11930,6 +11984,11 @@ async def tool_reindex_knowledge(args: dict) -> str:
     if answer.startswith("{"):
         _hint_knowledge()
     return answer
+
+
+async def tool_folder_document_counts(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.folder_counts(knowledge_calls),
+                                 "", "folder_document_counts", walled=False)
 
 
 async def tool_knowledge_indexes(args: dict) -> str:
@@ -12162,6 +12221,7 @@ TOOL_HANDLERS.update({
     "change_topic": tool_change_topic,
     "reindex_knowledge": tool_reindex_knowledge,
     "knowledge_indexes": tool_knowledge_indexes,
+    "folder_document_counts": tool_folder_document_counts,
     "change_knowledge_index": tool_change_knowledge_index,
     "knowledge_seeds": tool_knowledge_seeds,
     "work_context": tool_work_context,
@@ -12184,6 +12244,7 @@ TAINT_EXEMPT_TOOLS.update({
     "change_topic": "it writes his own topic files on his word, it does not read",
     "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
     "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
+    "folder_document_counts": "it reports folder ids and the engine's own counts, never a name or a word",
     "change_knowledge_index": "it writes his own settings note on his word, it does not read",
     "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
     "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
@@ -13621,7 +13682,7 @@ async def tool_cancel_run(args: dict) -> str:
     if stopped:
         return f"Stopped the work in {_run_project(run)}, sir."
 
-    latest = run_store.get_run(run["id"]) or run
+    latest = await asyncio.to_thread(run_store.get_run, run["id"]) or run
     return f"It finished before I could stop it, sir. {_describe_run(latest)}"
 
 
@@ -14120,7 +14181,7 @@ async def tool_start_build(args: dict) -> str:
     global last_started_run
     last_started_run = run_id
 
-    run = run_store.get_run(run_id) or {}
+    run = await asyncio.to_thread(run_store.get_run, run_id) or {}
     # Read back from the store, never echoed from the argument: what JARVIS
     # says it is running on must be what was actually persisted.
     started_on = run.get("requested_model") or model
@@ -14363,14 +14424,16 @@ async def tool_run_command(args: dict) -> str:
 
     refusal = builds.command_problem(command, path)
     if refusal:
-        run_store.record_steer("", COMMAND_AUDIT_NAME, name, command, "refused")
+        await asyncio.to_thread(
+            run_store.record_steer, "", COMMAND_AUDIT_NAME, name, command, "refused")
         return refusal
 
     if speech is None:
         # Identical to steer_session's rule, and non-negotiable here: with no
         # voice there is no read-back, and with no read-back there is no gate
         # at all between LLM-written text and a running shell.
-        run_store.record_steer("", COMMAND_AUDIT_NAME, name, command, "no_voice")
+        await asyncio.to_thread(
+            run_store.record_steer, "", COMMAND_AUDIT_NAME, name, command, "no_voice")
         return (f"I can't read that back to you right now, sir, so I won't run "
                 f"it in {name} unheard.")
 
@@ -15962,7 +16025,7 @@ async def ws_sessions(websocket: WebSocket):
 
 @app.get("/api/runs/{run_id}/events")
 async def api_get_run_events(run_id: str, after_seq: int = 0, limit: int = 200):
-    if not run_store.get_run(run_id):
+    if not await asyncio.to_thread(run_store.get_run, run_id):
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     # Clamp both ends: SQLite treats `LIMIT -1` as unlimited, so a negative
     # limit must not reach the query unbounded. Same discipline for
@@ -15970,11 +16033,10 @@ async def api_get_run_events(run_id: str, after_seq: int = 0, limit: int = 200):
     # rather than passed to SQL as-is.
     limit = max(1, min(limit, 500))
     after_seq = max(0, after_seq)
-    return {
-        "events": run_store.get_events(run_id, after_seq=after_seq,
-                                       limit=limit),
-        "total": run_store.count_events(run_id),
-    }
+    def read() -> dict:
+        return {"events": run_store.get_events(run_id, after_seq=after_seq, limit=limit),
+                "total": run_store.count_events(run_id)}
+    return await asyncio.to_thread(read)
 
 
 @app.post("/api/runs")
@@ -16007,7 +16069,7 @@ async def api_create_run(req: RunRequest):
 
 @app.delete("/api/runs/{run_id}")
 async def api_cancel_run(run_id: str):
-    if not run_store.get_run(run_id):
+    if not await asyncio.to_thread(run_store.get_run, run_id):
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     cancelled = await run_executor_instance.cancel(run_id)
     if not cancelled:
@@ -16067,7 +16129,7 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
 
 @app.post("/api/runs/{run_id}/retry")
 async def api_retry_run(run_id: str):
-    original = run_store.get_run(run_id)
+    original = await asyncio.to_thread(run_store.get_run, run_id)
     if not original:
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     new_id, problem = await _retry_run(original, "api")
@@ -16136,8 +16198,8 @@ async def ws_runs(ws: WebSocket):
 
     run_executor_instance.subscribe(on_message)
     try:
-        await ws.send_json({"type": "hello", "active": run_store.list_runs(
-            status=list(run_store.RunStatus.ACTIVE), limit=50)})
+        await ws.send_json({"type": "hello", "active": await asyncio.to_thread(
+            run_store.list_runs, status=list(run_store.RunStatus.ACTIVE), limit=50)})
         while True:
             message = await queue.get()
             await ws.send_json(message)

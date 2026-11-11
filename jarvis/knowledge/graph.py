@@ -24,13 +24,20 @@ import json
 import time
 from typing import Iterable, Iterator, Optional
 
-from jarvis.knowledge import encoding, kinds
+from jarvis.knowledge import encoding, kinds, paths
 from jarvis.knowledge.documents import DocumentError, DocumentStore, Predicate
 from jarvis.knowledge.store import DOCS, EDGES_IN, EDGES_OUT, prefix_end
 from jarvis.knowledge.wal import Op
 
 SEP = b"\x00"
 ORIGINS = ("record", "authored", "extracted", "imported")
+# An item's links (UDS): hierarchy is worked out from paths and never
+# stored; a reference is written from the item's fields; a derived link is
+# found in content and records the model that made it and when.
+HIERARCHY = "hierarchy"
+REFERENCE = "reference"
+DERIVED = "derived"
+ITEM_ORIGINS = (HIERARCHY, REFERENCE, DERIVED)
 STEPS_MAX = 4
 STEP_LIMIT_MAX = 2000
 MAX_NODES_MAX = 5000
@@ -123,6 +130,8 @@ class Graph:
                        pending: dict[str, Optional[dict]]) -> list[Op]:
         """The record edges a document's reference properties make, and
         deletes for those an earlier version made and this one does not."""
+        if stored.get("_kind") == kinds.ITEM:
+            return self._item_reference_ops(stored)
         kind = kinds.kind_of(stored["_kind"])
         if not kind.references:
             return []
@@ -144,12 +153,37 @@ class Graph:
                                           {"origin": "record", "weight": 1.0, "digest": stored["_hash"]}))
         return ops
 
+    def _item_reference_ops(self, stored: dict) -> list[Op]:
+        """An item's reference links: one per field value that is an item
+        path, the field's path as the link's kind (`project`,
+        `pieces[].owner`), origin `reference`. The other end need not
+        exist yet: a link is shown only while both ends are items. Links an
+        earlier version made and this one does not are deleted."""
+        key = stored["_key"]
+        wanted: set[tuple[str, str]] = set()
+        for field_path, value in kinds.flatten({k: v for k, v in stored.items() if not k.startswith("_")}):
+            if isinstance(value, str) and value != key and paths.is_path(value):
+                wanted.add((field_path, value))
+        ops: list[Op] = []
+        for v in self.store.prefix(EDGES_OUT, key.encode() + SEP):
+            _, kind, dst = split_key(v.key)
+            if json.loads(v.value).get("origin") == REFERENCE and (kind, dst) not in wanted:
+                ops.extend(self._edge_ops(key, kind, dst, None))
+        for kind, dst in sorted(wanted):
+            ops.extend(self._edge_ops(key, kind, dst, {"origin": REFERENCE, "weight": 1.0,
+                                                       "digest": stored["_hash"]}))
+        return ops
+
     def _delete_ops(self, key: bytes, ordinal: Optional[int] = None) -> list[Op]:
         node = key.decode()
         ops: list[Op] = []
         for v in self.store.prefix(EDGES_OUT, key + SEP):
             _, kind, dst = split_key(v.key)
             ops.extend(self._edge_ops(node, kind, dst, None))
+        if kinds.is_item_key(key):
+            # Links other items hold to it stay theirs: shown again if the
+            # path is written again, hidden while it is not an item.
+            return ops
         for v in self.store.prefix(EDGES_IN, key + SEP):
             _, kind, src = split_key(v.key)
             ops.extend(self._edge_ops(src, kind, node, None))

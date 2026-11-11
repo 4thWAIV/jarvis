@@ -18,6 +18,7 @@
  */
 
 
+import { knowledgeChanged } from "./knowledge";
 import { liveRead } from "./liveRead";
 import { codeWords, formatNumber, t, type Said } from "./locale";
 import { createStore } from "./store";
@@ -290,6 +291,38 @@ export const catalog = liveRead<CatalogState>(async () => {
   return { folders: active.items, removed: removed.items, counts: active.last.counts,
            nodeId: active.last.node_id, complete: active.complete };
 }, [foldersChanged]);
+
+/** One folder's documents in the knowledge engine (knowledge_api.folder_counts):
+ *  each file once, and of them how many have their vectors and how many wait. */
+export interface FolderCount { items: number; embedded: number; waiting: number }
+export interface FolderCounts {
+  available: boolean;
+  reason?: string;
+  partial?: boolean;
+  folders: Record<string, FolderCount>;
+}
+
+/** Moves every few seconds while any folder has documents waiting for
+ *  their vectors, so "3 waiting" counts down. */
+const countsTick = createStore(0);
+const COUNTS_WAITING_MS = 5000;
+
+/** Each registered folder's document count, read again with the catalog,
+ *  on every "knowledge" hint and while vectors are being made. The engine
+ *  off or down is an answer (`available` false), and the rows then show no
+ *  count; it never fails the catalog. */
+export const folderCounts = liveRead<FolderCounts>(
+  () => call<FolderCounts>("GET", "/api/knowledge/folder-counts"),
+  [foldersChanged, knowledgeChanged, countsTick]);
+let countsTicking: ReturnType<typeof setTimeout> | null = null;
+folderCounts.subscribe(() => {
+  const now = folderCounts.get().value;
+  const waiting = !!now?.available && Object.values(now.folders).some((c) => c.waiting > 0);
+  if (waiting && countsTicking === null) {
+    countsTicking = setTimeout(() => { countsTicking = null; countsTick.set(countsTick.get() + 1); },
+                               COUNTS_WAITING_MS);
+  }
+});
 
 export interface CandidateState {
   discovered: Candidate[];

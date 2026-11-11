@@ -128,11 +128,34 @@ class _Package:
         return found
 
 
-def _docx(pkg: _Package) -> tuple[list[_paging.Unit], Extent]:
+_HEADING_STYLE = re.compile(r"^(?:heading|berschrift|titre|t[ií]tulo)\s*([1-9])$", re.I)
+
+
+def _heading_level(para: ET.Element) -> Optional[int]:
+    """A paragraph's heading level from its style id (Heading1..Heading9,
+    Title as 1) or its outline level; None for body text."""
+    props = para.find(f"{_W}pPr")
+    if props is None:
+        return None
+    style = props.find(f"{_W}pStyle")
+    name = (style.get(f"{_W}val") or "") if style is not None else ""
+    if name.lower() == "title":
+        return 1
+    match = _HEADING_STYLE.match(name.replace(" ", ""))
+    if match:
+        return int(match.group(1))
+    outline = props.find(f"{_W}outlineLvl")
+    value = outline.get(f"{_W}val") if outline is not None else None
+    return int(value) + 1 if value is not None and value.isdigit() and int(value) < 9 else None
+
+
+def paragraphs(pkg: _Package) -> list[tuple[str, Optional[int]]]:
+    """A Word document's paragraphs in order: each one's text and its
+    heading level (None for body text)."""
     root = pkg.xml("word/document.xml")
     if root is None:
         raise Unsupported("corrupt")
-    lines = []
+    found = []
     for para in root.iter(f"{_W}p"):
         words = []
         for node in para.iter():
@@ -142,7 +165,30 @@ def _docx(pkg: _Package) -> tuple[list[_paging.Unit], Extent]:
                 words.append("\t")
             elif node.tag in (f"{_W}br", f"{_W}cr"):
                 words.append(" ")
-        lines.append("".join(words))
+        found.append(("".join(words), _heading_level(para)))
+    return found
+
+
+_DC_TITLE = "{http://purl.org/dc/elements/1.1/}title"
+
+
+def core_title(pkg: _Package) -> Optional[str]:
+    """The document's own title (docProps/core.xml's dc:title), if set."""
+    root = pkg.xml("docProps/core.xml")
+    title = " ".join((root.findtext(_DC_TITLE) or "").split()) if root is not None else ""
+    return title or None
+
+
+def open_package(data: bytes) -> _Package:
+    """An Office file's bytes opened for `paragraphs` and `core_title`
+    (Unsupported when it is not one, or is encrypted)."""
+    if len(data) > OFFICE_MAX_BYTES:
+        raise Unsupported("too_large")
+    return _Package(data)
+
+
+def _docx(pkg: _Package) -> tuple[list[_paging.Unit], Extent]:
+    lines = [text for text, _ in paragraphs(pkg)]
     units = [_paging.Unit(None, n, n, line + "\n") for n, line in enumerate(lines, start=1)]
     return units, Extent(lines=len(lines))
 

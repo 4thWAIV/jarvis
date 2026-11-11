@@ -581,9 +581,9 @@ def test_an_envelope_stored_with_null_bundle_fields_sends_without_them(tmp_path)
     store.save_approved(ports.ApprovedSend(server_id=SERVER, owner_github_id=TIM,
                                            request=request, via="gui",
                                            approved_at=fakes.T0))
-    with store._tx() as conn:
-        stored = json.loads(conn.execute("SELECT body FROM human_approved")
-                            .fetchone()["body"])["request"]
+    from jarvis import records
+    (doc,) = records.all_of(store.root + "/people", types=["message"])
+    stored = doc.data["approved"][0]["body"]["request"]
     assert stored["task"] is None and stored["supersedes"] == []
     approved = store.approved(SERVER, TIM, request.message_id, request.content_revision)
     body = _send_body(approved.request)

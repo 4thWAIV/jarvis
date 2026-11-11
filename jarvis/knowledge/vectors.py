@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import logging
 import mmap
 import os
@@ -43,10 +44,11 @@ from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
 from jarvis.knowledge import embedder as emb
-from jarvis.knowledge import kinds, vecmath
+from jarvis.knowledge import items as item_texts
+from jarvis.knowledge import kinds, lanes, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
-from jarvis.knowledge.store import DOCS, Store, newest_only
+from jarvis.knowledge.store import CONTENT, DOCS, Store, newest_only
 from jarvis.knowledge.wal import Op, fsync_dir, full_fsync
 
 log = logging.getLogger("jarvis.knowledge.vectors")
@@ -59,6 +61,10 @@ GATHER_MAX = 4096
 DEADLINE_SEC = 0.100
 QUERY_EMBED_SEC = 0.150
 NONE = 0
+WHOLE = 0                       # an item's whole-item row; section i is prop i + 1
+ITEM_SPACE_SUFFIX = "#items"
+SECTIONS_EMBEDDED_MAX = 2000    # past this many sections an item's later ones get no vector
+WHERE_SECTIONS = 3              # the sections a vector hit names as where it matched
 
 
 def vec_key(space: str, ordinal: int, prop: str) -> bytes:
@@ -71,11 +77,31 @@ def parse_vec_key(key: bytes) -> tuple[str, int, str]:
 
 
 def prop_id(prop: str) -> int:
+    """A row's prop as stored: an item row's own number (`#0` the whole
+    item, `#<i + 1>` section i), a chunk-era property's hash."""
+    if prop[:1] == "#" and prop[1:].isdigit():
+        return int(prop[1:])
     return int.from_bytes(hashlib.blake2b(prop.encode(), digest_size=4).digest(), "little") & 0x7FFFFFFF
 
 
+def item_prop(p: int) -> str:
+    return f"#{p}"
+
+
+def item_space(embedder_id: str) -> str:
+    """The space an embedder's item rows live in, apart from chunk rows."""
+    return embedder_id + ITEM_SPACE_SUFFIX
+
+
+def is_item_space(name: str) -> bool:
+    return name.endswith(ITEM_SPACE_SUFFIX)
+
+
 def embedded_prop(kind_name: str) -> Optional[str]:
-    """The one embedded property of a kind (the schema keeps it to one)."""
+    """The one embedded property of a kind (the schema keeps it to one).
+    An item has none yet: its whole-item and section vectors are round 2."""
+    if kind_name == kinds.ITEM:
+        return None
     found = kinds.kind_of(kind_name).embedded
     return found[0] if found else None
 
@@ -219,6 +245,14 @@ class SpaceFile:
             self.mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_COPY)
             self.rows = (c_float * (self.n * self.d)).from_buffer(self.mm)
 
+    def whole_mask(self):
+        """0 for whole-item rows, refused for section rows: an item search
+        ranks items by their whole-item vectors alone."""
+        if getattr(self, "_whole", None) is None:
+            self._whole = (c_float * max(self.n, 1))(
+                *[0.0 if (self.flags[i] & ~DELETED) == WHOLE else vecmath.REFUSED for i in range(self.n)])
+        return self._whole
+
     def warm(self) -> None:
         if self.mm is not None and hasattr(mmap, "MADV_WILLNEED"):
             try:
@@ -228,61 +262,77 @@ class SpaceFile:
 
 
 class Space:
-    """The resident map of one space: ordinal -> (slot << 32 | row) + 1,
-    with the LSN of that row, and the files by slot."""
+    """The resident map of one space: (ordinal, prop) -> (slot << 32 | row)
+    + 1, with the LSN of that row, the props each ordinal has a current row
+    for, and the files by slot. A chunk-era document has one prop; an item
+    has its whole-item row (prop 0) and one per section (prop i + 1)."""
 
     def __init__(self, name: str, dim: int = 0) -> None:
         self.name = name
         self.dim = dim
-        self.where = array("Q", [0])
-        self.lsn = array("Q", [0])
+        self.where: dict[tuple[int, int], int] = {}
+        self.lsn: dict[tuple[int, int], int] = {}
+        self.props: dict[int, set[int]] = {}
         self.files: dict[int, SpaceFile] = {}
-        self.mem: dict[int, tuple[int, bytes]] = {}       # ordinal -> (lsn, vector) unflushed
+        self.mem: dict[tuple[int, int], tuple[int, bytes]] = {}   # unflushed rows
 
-    def _ensure(self, o: int) -> None:
-        if o >= len(self.where):
-            grow = o + 1 - len(self.where)
-            self.where.extend([0] * grow)
-            self.lsn.extend([0] * grow)
+    def has(self, o: int, p: int) -> bool:
+        return (o, p) in self.where or (o, p) in self.mem
 
-    def _refuse_old(self, o: int) -> None:
-        loc = self.where[o] if o < len(self.where) else 0
+    def has_any(self, o: int) -> bool:
+        return bool(self.props.get(o))
+
+    def _mark(self, key: tuple[int, int]) -> None:
+        o, p = key
+        if key in self.where or key in self.mem:
+            self.props.setdefault(o, set()).add(p)
+        else:
+            found = self.props.get(o)
+            if found is not None:
+                found.discard(p)
+                if not found:
+                    del self.props[o]
+
+    def _refuse_old(self, key: tuple[int, int]) -> None:
+        loc = self.where.pop(key, 0)
         if loc:
             slot, row = (loc - 1) >> 32, (loc - 1) & 0xFFFFFFFF
             f = self.files.get(slot)
             if f is not None and row < f.n:
                 f.penalty[row] = vecmath.REFUSED
-        self.where[o] = 0
 
-    def set_mem(self, o: int, lsn: int, vector: Optional[bytes]) -> None:
-        self._ensure(o)
-        if lsn < self.lsn[o]:
+    def set_mem(self, o: int, p: int, lsn: int, vector: Optional[bytes]) -> None:
+        key = (o, p)
+        if lsn < self.lsn.get(key, 0):
             return
-        self._refuse_old(o)
-        self.lsn[o] = lsn
+        self._refuse_old(key)
+        self.lsn[key] = lsn
         if vector is None:
-            self.mem.pop(o, None)
+            self.mem.pop(key, None)
         else:
-            self.mem[o] = (lsn, vector)
+            self.mem[key] = (lsn, vector)
             self.dim = len(vector) // 4
+        self._mark(key)
 
     def add_file(self, f: SpaceFile) -> None:
         self.files[f.gen] = f
         if f.d:
             self.dim = f.d
         for row in range(f.n):
-            o, lsn = f.ordinals[row], f.lsns[row]
-            self._ensure(o)
-            if lsn < self.lsn[o] or (lsn == self.lsn[o] and self.where[o]):
+            key = (f.ordinals[row], f.flags[row] & ~DELETED)
+            lsn = f.lsns[row]
+            held_lsn = self.lsn.get(key, 0)
+            if lsn < held_lsn or (lsn == held_lsn and key in self.where):
                 continue           # a newer row is current, or this one is placed
-            self._refuse_old(o)
-            self.lsn[o] = lsn
-            held = self.mem.get(o)
+            self._refuse_old(key)
+            self.lsn[key] = lsn
+            held = self.mem.get(key)
             if held is not None and held[0] <= lsn:
-                del self.mem[o]    # flushed: the file row takes over
+                del self.mem[key]  # flushed: the file row takes over
             if not f.flags[row] & DELETED:
-                self.where[o] = ((f.gen << 32) | row) + 1
+                self.where[key] = ((f.gen << 32) | row) + 1
                 f.penalty[row] = 0.0
+            self._mark(key)
 
     def drop_files(self, gens: Iterable[int]) -> None:
         for gen in gens:
@@ -290,12 +340,18 @@ class Space:
             if f is None:
                 continue
             for row in range(f.n):
-                o = f.ordinals[row]
-                if o < len(self.where) and self.where[o] and ((self.where[o] - 1) >> 32) == gen:
-                    self.where[o] = 0
+                key = (f.ordinals[row], f.flags[row] & ~DELETED)
+                loc = self.where.get(key)
+                if loc and ((loc - 1) >> 32) == gen:
+                    del self.where[key]
+                    self._mark(key)
 
     def rows(self) -> int:
-        return sum(1 for loc in self.where if loc) + len(self.mem)
+        return len(self.where) + sum(1 for k in self.mem if k not in self.where)
+
+    def items(self) -> int:
+        """Ordinals with a whole-item row: the items embedded."""
+        return sum(1 for props in self.props.values() if WHOLE in props)
 
 
 class VectorIndex:
@@ -307,10 +363,13 @@ class VectorIndex:
         self.spaces: dict[str, Space] = {}
         self._lock = threading.RLock()
         self._todo: dict[int, tuple[str, str]] = {}       # ordinal -> (key, _hash) waiting to embed
+        self._items_todo: dict[int, tuple[str, str]] = {}  # item ordinal -> (path, content sha256)
         self._todo_cond = threading.Condition()
         self.paused = False
         self._stop = False
         self.embedded = 0
+        self.items_embedded = 0
+        self._working = False
         self._load()
         self.store.listeners.append(self._on_apply)
         self.store.generation_listeners.append(self._on_generation)
@@ -342,6 +401,10 @@ class VectorIndex:
     def space_id(self) -> Optional[str]:
         return self.embedder.id if self.embedder is not None else None
 
+    @property
+    def item_space_id(self) -> Optional[str]:
+        return item_space(self.embedder.id) if self.embedder is not None else None
+
     def _space(self, name: str) -> Space:
         if name not in self.spaces:
             self.spaces[name] = Space(name)
@@ -354,27 +417,37 @@ class VectorIndex:
         mems, _ = self.store._sources(VECS)
         for mem in mems:
             for v in newest_only(mem.all_versions(VECS)):
-                space, o, _ = parse_vec_key(v.key)
-                self._space(space).set_mem(o, v.lsn, v.value)
+                space, o, prop = parse_vec_key(v.key)
+                self._space(space).set_mem(o, prop_id(prop), v.lsn, v.value)
 
     def _on_apply(self, lsn: int, ops: list[Op]) -> None:
         with self._lock:
             for op in ops:
                 if op.family == VECS:
-                    space, o, _ = parse_vec_key(op.key)
-                    self._space(space).set_mem(o, lsn, op.value)
+                    space, o, prop = parse_vec_key(op.key)
+                    self._space(space).set_mem(o, prop_id(prop), lsn, op.value)
+            if self.queue is None:
+                return
             # Documents after the rows: a changed text's rows are deleted in
             # the same transaction, so it is seen as missing and queued.
+            space = self.spaces.get(self.space_id)
+            items = self.spaces.get(self.item_space_id)
             for op in ops:
-                if op.family == DOCS and op.value is not None and self.queue is not None:
-                    o, doc = decode_doc(op.value)
-                    prop = embedded_prop(doc["_kind"])
-                    space = self.spaces.get(self.space_id)
-                    has = space is not None and o < len(space.where) and (space.where[o] or o in space.mem)
-                    if prop and doc.get(prop) and not has:
+                if op.family != DOCS or op.value is None:
+                    continue
+                o, doc = decode_doc(op.value)
+                if doc["_kind"] == kinds.ITEM:
+                    summary = item_texts.embedded_summary(doc)
+                    if summary and not (items is not None and items.has(o, WHOLE)):
                         with self._todo_cond:
-                            self._todo[o] = (doc["_key"], doc["_hash"])
+                            self._items_todo[o] = (doc["_key"], summary["sha256"])
                             self._todo_cond.notify()
+                    continue
+                prop = embedded_prop(doc["_kind"])
+                if prop and doc.get(prop) and not (space is not None and space.has_any(o)):
+                    with self._todo_cond:
+                        self._todo[o] = (doc["_key"], doc["_hash"])
+                        self._todo_cond.notify()
 
     def _on_generation(self, gen: int, replaced: list[int]) -> None:
         entries = [e for e in self.store.external_entries(VECS) if int(e["gen"]) == gen]
@@ -402,13 +475,30 @@ class VectorIndex:
             if v.value is not None:
                 doc = decode_doc(v.value)[1]
                 break
+        if doc is not None and doc["_kind"] == kinds.ITEM:
+            return self.item_tombstones(ordinal)
         prop = embedded_prop(doc["_kind"]) if doc else None
         return self._tombstones(ordinal, prop) if prop else []
 
     def _tombstones(self, ordinal: int, prop: str) -> list[Op]:
+        p = prop_id(prop)
         with self._lock:
             return [Op(VECS, vec_key(name, ordinal, prop), None) for name, space in self.spaces.items()
-                    if ordinal < len(space.where) and (space.where[ordinal] or ordinal in space.mem)]
+                    if not is_item_space(name) and space.has(ordinal, p)]
+
+    def item_tombstones(self, ordinal: int) -> list[Op]:
+        """Every row an item has in every item space: written with a change
+        of its content (or its delete), so an old vector never answers for
+        new text, and the item counts as waiting until it is embedded again."""
+        with self._lock:
+            return [Op(VECS, vec_key(name, ordinal, item_prop(p)), None)
+                    for name, space in self.spaces.items() if is_item_space(name)
+                    for p in sorted(space.props.get(ordinal, ()))]
+
+    def item_embedded(self, ordinal: int) -> bool:
+        """Whether the item's vectors exist for its current content."""
+        items = self.spaces.get(self.item_space_id or "")
+        return items is not None and items.has(ordinal, WHOLE)
 
     def _forget_keys(self, keys: set[bytes]) -> dict[int, set[bytes]]:
         out: set[bytes] = set()
@@ -418,9 +508,14 @@ class VectorIndex:
                 continue
             for v in self.store.versions(DOCS, key):
                 if v.value is not None:
-                    prop = embedded_prop(decode_doc(v.value)[1]["_kind"])
+                    kind_name = decode_doc(v.value)[1]["_kind"]
+                    if kind_name == kinds.ITEM:
+                        out |= {vec_key(name, o, item_prop(p)) for name, space in self.spaces.items()
+                                if is_item_space(name) for p in space.props.get(o, ())}
+                        break
+                    prop = embedded_prop(kind_name)
                     if prop:
-                        out |= {vec_key(name, o, prop) for name in self.spaces}
+                        out |= {vec_key(name, o, prop) for name in self.spaces if not is_item_space(name)}
                         if self.space_id:
                             out.add(vec_key(self.space_id, o, prop))
                     break
@@ -429,16 +524,25 @@ class VectorIndex:
     # -- embedding in the background --------------------------------------------
     def _queue_missing(self) -> None:
         """At start, every live document with embedded text and no row in the
-        current space is queued."""
+        current space is queued, and every item with content (or a record's
+        words) and no whole-item row."""
         space = self.spaces.get(self.space_id)
         for kind in kinds.KINDS.values():
             if not kind.embedded:
                 continue
             for doc in self.docs.find(kinds_=[kind.name], limit=1 << 30):
                 o = doc["_ord"]
-                if doc.get(kind.embedded[0]) and not (space and o < len(space.where)
-                                                       and (space.where[o] or o in space.mem)):
+                if doc.get(kind.embedded[0]) and not (space and space.has_any(o)):
                     self._todo[o] = (doc["_key"], doc["_hash"])
+        items = self.spaces.get(self.item_space_id)
+        with self.store.reading() as lsn:
+            for v in self.store.scan(DOCS, b"/", b"0", lsn):
+                if v.value is None:
+                    continue
+                o, doc = decode_doc(v.value)
+                summary = item_texts.embedded_summary(doc)
+                if doc.get("_kind") == kinds.ITEM and summary and not (items and items.has(o, WHOLE)):
+                    self._items_todo[o] = (doc["_key"], summary["sha256"])
 
     def set_paused(self, paused: bool) -> None:
         with self._todo_cond:
@@ -446,22 +550,99 @@ class VectorIndex:
             self._todo_cond.notify_all()
 
     def pending(self) -> int:
-        return len(self._todo)
+        return len(self._todo) + len(self._items_todo)
 
     def _embed_loop(self) -> None:
+        lanes.background()
         while True:
             with self._todo_cond:
-                while not self._stop and (self.paused or not self._todo):
+                while not self._stop and (self.paused or not (self._todo or self._items_todo)):
                     self._todo_cond.wait(1.0)
                 if self._stop:
                     return
+                item = None
                 batch = []
-                for o in list(self._todo)[:emb.INGEST_BATCH]:
-                    batch.append((o, *self._todo.pop(o)))
+                if self._items_todo:
+                    o = next(iter(self._items_todo))
+                    item = (o, *self._items_todo.pop(o))
+                else:
+                    for o in list(self._todo)[:emb.INGEST_BATCH]:
+                        batch.append((o, *self._todo.pop(o)))
+                self._working = True
             try:
-                self._embed_batch(batch)
+                if item is not None:
+                    self._embed_item(*item)
+                else:
+                    self._embed_batch(batch)
             except Exception:
-                log.exception("embedding a batch failed")
+                log.exception("embedding failed")
+            finally:
+                self._working = False
+
+    def _embed_texts(self, texts: list[str]) -> list[array]:
+        """Every text's vector, as ingest batches behind any query, waiting
+        while the pace holds; `_Closing` when the engine closes meanwhile."""
+        out: list[array] = []
+        for i in range(0, len(texts), emb.INGEST_BATCH):
+            box: dict = {}
+            done = threading.Event()
+
+            def finished(vectors, error, box=box, done=done):
+                box["v"], box["e"] = vectors, error
+                done.set()
+            self.queue.submit(texts[i:i + emb.INGEST_BATCH], emb.INGEST, "passage", finished)
+            done.wait()
+            if box.get("e") is not None:
+                raise box["e"]
+            out.extend(box["v"])
+            with self._todo_cond:
+                while self.paused and not self._stop:
+                    self._todo_cond.wait(1.0)
+                if self._stop:
+                    raise _Closing()
+        return out
+
+    def _embed_item(self, o: int, path: str, sha: str) -> None:
+        """An item's whole-item vector and one per section, committed in one
+        write only while its content (a record's words) is still what they
+        were made from; one changed meanwhile is queued again by its write,
+        holding only its newest text (`_items_todo` is by item), so many
+        changes before the background lane reaches it cost one embedding."""
+        doc = self.docs.get(path)
+        summary = item_texts.embedded_summary(doc or {}) or {}
+        if doc is None or doc["_ord"] != o or summary.get("sha256") != sha:
+            return
+        if doc.get("_content") is None:
+            texts = [emb.prepare(t) for t in item_texts.record_texts(doc)]
+        else:
+            raw = self.store.get(CONTENT, path.encode())
+            if raw is None or raw.value is None:
+                return
+            content = json.loads(raw.value)
+            title = item_texts.title_of(doc, content)
+            sections = (content.get("sections") or [])[:SECTIONS_EMBEDDED_MAX]
+            texts = [emb.prepare(item_texts.whole_text(title, content))]
+            texts += [emb.prepare(item_texts.embedded_text(title, s)) for s in sections]
+        if not texts:
+            return
+        try:
+            vectors = self._embed_texts(texts)
+        except _Closing:
+            return
+        for vector in vectors:
+            if len(vector) != self.embedder.dim:
+                raise ValueError(f"the embedder gave {len(vector)} dimensions, not {self.embedder.dim}")
+        space = self.item_space_id
+
+        def prepare(lsn: int) -> list[Op]:
+            now = self.docs.get(path)
+            if now is None or now["_ord"] != o or ((item_texts.embedded_summary(now) or {}).get("sha256")) != sha:
+                return []
+            return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in enumerate(vectors)]
+        with lanes.foreground():
+            self.store.commit(prepare=prepare)
+        if self.item_embedded(o):
+            self.items_embedded += 1
 
     def _embed_batch(self, batch: list[tuple[int, str, str]]) -> None:
         docs = []
@@ -499,12 +680,15 @@ class VectorIndex:
         """For tests and rebuilds: until nothing waits to be embedded."""
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            if not self._todo and (self.queue is None or self.queue._q.empty()):
+            if not self._todo and not self._items_todo and (self.queue is None or self.queue._q.empty()):
                 time.sleep(0.05)
-                if not self._todo:
+                if not self._todo and not self._items_todo and not self._busy():
                     return True
             time.sleep(0.02)
         return False
+
+    def _busy(self) -> bool:
+        return self._working or (self.queue is not None and not self.queue._q.empty())
 
     # -- searching -----------------------------------------------------------
     def embed_query(self, text: str, timeout: float = QUERY_EMBED_SEC) -> Optional[array]:
@@ -558,8 +742,85 @@ class VectorIndex:
         hits.sort(key=lambda h: (-h[0], h[1]))
         return {"hits": [(o, s) for s, o in hits[:k]], "partial": partial, "space": space.name}
 
+    def search_items(self, query: array, k: int = 50, within: Optional[set[int]] = None,
+                     deadline_s: float = DEADLINE_SEC) -> dict:
+        """Items by meaning: ranked by their whole-item vectors, one hit an
+        item, each naming the sections whose vectors come closest (where in
+        the item it matched): (ordinal, score, [section index, ...])."""
+        space = self.spaces.get(self.item_space_id or "")
+        if space is None or not space.dim:
+            return {"hits": [], "partial": False, "space": self.item_space_id}
+        end = time.monotonic() + deadline_s
+        d = space.dim
+        q = (c_float * d)(*query)
+        with self._lock:
+            files = list(space.files.values())
+            mem = dict(space.mem)
+        whole_mem = {key: v for key, v in mem.items() if key[1] == WHOLE}
+        ranked: list[tuple[float, int]] = []
+        partial = False
+        if within is not None and len(within) <= GATHER_MAX:
+            ranked = self._gathered(space, files, whole_mem, q, d, within, k, props=(WHOLE,))
+        else:
+            for f in files:
+                if not f.n or f.rows is None:
+                    continue
+                if time.monotonic() > end:
+                    partial = True
+                    continue
+                scores = (c_float * f.n)()
+                vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
+                vecmath.MATH.add(scores, f.penalty, f.n)
+                vecmath.MATH.add(scores, f.whole_mask(), f.n)
+                if within is not None:
+                    mask = (c_float * f.n)()
+                    for row in range(f.n):
+                        if f.ordinals[row] not in within:
+                            mask[row] = vecmath.REFUSED
+                    vecmath.MATH.add(scores, mask, f.n)
+                for s, row in vecmath.top_k(scores, f.n, k):
+                    ranked.append((s, f.ordinals[row]))
+            ranked.extend(self._score_mem(whole_mem, q, d, within))
+        ranked.sort(key=lambda h: (-h[0], h[1]))
+        hits = []
+        for s, o in ranked[:k]:
+            if s <= vecmath.REFUSED / 2:
+                continue
+            where = sorted(self._section_scores(space, files, mem, q, d, o), key=lambda h: (-h[0], h[1]))
+            hits.append((o, s, [p - 1 for _, p in where[:WHERE_SECTIONS]]))
+        return {"hits": hits, "partial": partial, "space": space.name}
+
+    def _section_scores(self, space: Space, files: list[SpaceFile], mem: dict, q, d: int,
+                        o: int) -> list[tuple[float, int]]:
+        """One item's section rows scored against the query: (score, prop)."""
+        by_gen = {f.gen: f for f in files}
+        picked: list[tuple[int, object, int]] = []
+        held: list[tuple[int, bytes]] = []
+        for p in space.props.get(o, ()):
+            if p == WHOLE:
+                continue
+            if (o, p) in mem:
+                held.append((p, mem[(o, p)][1]))
+                continue
+            loc = space.where.get((o, p), 0)
+            f = by_gen.get((loc - 1) >> 32) if loc else None
+            if f is not None and f.rows is not None:
+                picked.append((p, f, (loc - 1) & 0xFFFFFFFF))
+        n = len(picked) + len(held)
+        if not n:
+            return []
+        buf = (c_float * (n * d))()
+        for i, (_, f, row) in enumerate(picked):
+            ctypes.memmove(ctypes.addressof(buf) + 4 * d * i, ctypes.addressof(f.rows) + 4 * d * row, 4 * d)
+        for j, (_, vec) in enumerate(held):
+            ctypes.memmove(ctypes.addressof(buf) + 4 * d * (len(picked) + j), vec, 4 * d)
+        scores = (c_float * n)()
+        vecmath.MATH.gemv(buf, n, d, q, scores)
+        props = [p for p, _, _ in picked] + [p for p, _ in held]
+        return [(scores[i], props[i]) for i in range(n)]
+
     def _score_mem(self, mem: dict, q, d: int, within: Optional[set[int]]) -> list[tuple[float, int]]:
-        items = [(o, vec) for o, (_, vec) in mem.items() if within is None or o in within]
+        items = [(o, vec) for (o, _), (_, vec) in mem.items() if within is None or o in within]
         if not items:
             return []
         buf = (c_float * (len(items) * d))()
@@ -570,21 +831,23 @@ class VectorIndex:
         return [(scores[i], o) for i, (o, _) in enumerate(items)]
 
     def _gathered(self, space: Space, files: list[SpaceFile], mem: dict, q, d: int,
-                  within: set[int], k: int) -> list[tuple[float, int]]:
+                  within: set[int], k: int, props: Optional[tuple] = None) -> list[tuple[float, int]]:
         """A small allowed set: copy its current rows into one block and
-        score only those."""
+        score only those (all of an ordinal's props, or the ones named)."""
         by_gen = {f.gen: f for f in files}
         picked: list[tuple[int, object, int]] = []
         for o in within:
-            if o in mem:
-                continue
-            loc = space.where[o] if o < len(space.where) else 0
-            if not loc:
-                continue
-            f = by_gen.get((loc - 1) >> 32)
-            if f is not None and f.rows is not None:
-                picked.append((o, f, (loc - 1) & 0xFFFFFFFF))
-        out = self._score_mem(mem, q, d, within)
+            for p in (props if props is not None else space.props.get(o, ())):
+                if (o, p) in mem:
+                    continue
+                loc = space.where.get((o, p), 0)
+                if not loc:
+                    continue
+                f = by_gen.get((loc - 1) >> 32)
+                if f is not None and f.rows is not None:
+                    picked.append((o, f, (loc - 1) & 0xFFFFFFFF))
+        out = self._score_mem({key: v for key, v in mem.items()
+                               if props is None or key[1] in props}, q, d, within)
         if picked:
             buf = (c_float * (len(picked) * d))()
             for i, (_, f, row) in enumerate(picked):
@@ -608,9 +871,11 @@ class VectorIndex:
 
     def health(self) -> dict:
         return {"embedder": self.space_id, "math": vecmath.MATH.name,
-                "spaces": {name: {"dim": s.dim, "rows": s.rows(), "files": len(s.files)}
+                "spaces": {name: {"dim": s.dim, "rows": s.rows(), "files": len(s.files),
+                                  **({"items": s.items()} if is_item_space(name) else {})}
                            for name, s in self.spaces.items()},
-                "waiting": self.pending(), "embedded": self.embedded}
+                "waiting": self.pending(), "embedded": self.embedded,
+                "items_embedded": self.items_embedded}
 
     def close(self) -> None:
         with self._todo_cond:
@@ -620,3 +885,7 @@ class VectorIndex:
             self._worker.join(timeout=5)
         if self.queue is not None:
             self.queue.close()
+
+
+class _Closing(Exception):
+    """The engine closed while an item was being embedded."""

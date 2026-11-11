@@ -2318,12 +2318,14 @@ TOOL_SPECS = [
         "description": (
             "Search everything JARVIS has read across projects (notes, the conversation, runs, "
             "workflows, registered folders' documents) by words, before asking him to repeat "
-            "anything or saying you do not know. Each hit has its text, source and trust; "
+            "anything or saying you do not know; `phrase` finds the files holding those exact words "
+            "(a name, a code). A file is one hit, with the section where it matched. "
+            "Each hit has its text, source and trust; "
             "untrusted ones are other people's words. When he speaks Spanish, also give "
             "query_en, the question in English. include_received false keeps to his own words. "
             "The JSON comes a page at a time."),
         "inputSchema": {"type": "object", "properties": {
-            "query": {"type": "string"}, "query_en": {"type": "string"},
+            "query": {"type": "string"}, "query_en": {"type": "string"}, "phrase": {"type": "string"},
             "include_received": {"type": "boolean"},
             "kinds": {"type": "array", "items": {"type": "string"}},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},
@@ -2434,6 +2436,15 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {
             "seed": {"type": "string"}, "action": {"type": "string", "enum": ["accept", "decline"]}},
             "required": ["seed", "action"]},
+    },
+    {
+        "name": "folder_document_counts",
+        "description": (
+            "How many documents of each registered folder the knowledge engine holds, by folder "
+            "id (names from list_folders): items, and of them embedded and waiting for their "
+            "vectors. The same counts the Folders view shows. Says when the engine is off or "
+            "down instead."),
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "knowledge_indexes",

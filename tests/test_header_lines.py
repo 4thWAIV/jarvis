@@ -228,19 +228,13 @@ MODULES = sorted(p for p in (REPO / "jarvis").glob("*.py"))
 
 
 def _run_text_columns() -> set[str]:
-    """Every TEXT column of the `runs` table, read out of `run_store.py`'s own
-    CREATE TABLE. A run row is the OTHER foreign record in this system —
-    `project_name` comes from `POST /api/runs` and from a directory name on
-    disk — and it reaches the same headers and the same spoken lines as a
-    session does."""
-    src = (REPO / "jarvis" / "run_store.py").read_text()
-    body = src.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
-    out = set()
-    for line in body.splitlines():
-        m = re.match(r"(\w+)\s+TEXT", line.strip().rstrip(","))
-        if m:
-            out.add(m.group(1))
-    return out
+    """Every text field of a run, read out of `run_store.RUN_FIELDS` (the
+    run document's fields and their kinds). A run is the OTHER foreign
+    record in this system — `project_name` comes from `POST /api/runs` and
+    from a directory name on disk — and it reaches the same headers and the
+    same spoken lines as a session does."""
+    from jarvis import run_store
+    return {name for name, (kind, _default) in run_store.RUN_FIELDS.items() if kind == "text"}
 
 
 RUN_FIELDS = _run_text_columns()
@@ -355,10 +349,42 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "content_sections.whole_text": (
+        "it reads an extracted file's own title and text (never a session's) and builds only the "
+        "text the embedding model turns into a vector; nothing it returns is printed, said or put "
+        "in a brain header, and search results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.changed": (
+        "it reads an item's own path-entry fields (file, size, state) that the content child wrote, "
+        "to decide whether a file changed; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.extract": (
+        "it reads a file's extracted title and text and the item's own fields to write them into the "
+        "engine as that file's content; nothing is printed, said or put in a brain header, and search "
+        "results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.folder_roots": (
+        "it reads the folder catalog's own records (id, reader, location, availability) to choose "
+        "which folders to watch; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.scan": (
+        "it compares an item's own path-entry fields (file, state) with the folder on disk to choose "
+        "what to read again; nothing it returns is printed, said or put in a header"),
+    "knowledge_move.copy": (
+        "it reads the move manifest's own fields (state, source path, table names and digests) that "
+        "the move kit wrote, to decide whether the engine holds this move; its refusal is printed by "
+        "the `python -m jarvis.knowledge copy` command to whoever ran it, never a brain header or speech"),
+    "knowledge_move.verify": (
+        "it compares the move manifest's state and schema with the SQLite file's own; the report "
+        "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
+        "never a brain header or speech"),
     "usage_history.append": (
-        "it stores a usage reading's window status as a column of JARVIS's own usage history; the "
-        "only text it builds is its own log line naming the SQLite error, never a session field or "
+        "it stores a usage reading's window status as a field of JARVIS's own usage history; the "
+        "only text it builds is its own log line naming the engine's error, never a session field or "
         "a brain header"),
+    "usage_history._days": (
+        "it builds the record path of one brain's usage documents from the brain's name, made one "
+        "path segment by records.segment, and compares each document's own provider field; nothing "
+        "it returns is printed, said or put in a header"),
+    "usage_history._write": (
+        "it adds readings to their day's usage document; the only text it builds is the write's "
+        "summary, a count of readings, never a session field or a brain header"),
     "server.tool_usage_history": (
         "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
         "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
@@ -391,10 +417,26 @@ EXEMPT = {
         "release names are validated identifiers before use, and remote failures remain fields in update status. "
         "No release text becomes a trusted brain header; capability results use the language-document wrapper "
         "and Settings draws diagnostics as text. Metadata failure paths are driven by test_language_kit_updates.py"),
-    "language_projection._publish": (
-        "document titles pass through the existing package slug function for filenames and remain metadata "
-        "for escaped UI or wrapped brain output; publication returns structured references, not a trusted title "
-        "line. Exact source/check/view publication is driven by test_language_projection.py"),
+    "language_projection.project": (
+        "the document title passes through the package slug function for the package name and "
+        "stays metadata in package.json and canonical.json; nothing it writes is a trusted brain "
+        "header. The projection is driven by test_language_projection.py and "
+        "test_architecture_packages.py"),
+    "language_document_api._ground": (
+        "the canonical source and the author's explanation come back as JSON fields of the "
+        "paged envelope, which the brain adapter escapes and wraps as untrusted; grounding by "
+        "package id is driven by test_language_document_api.py and test_architecture_packages.py"),
+    "language_document.main": (
+        "the agent's own command prints the route's JSON envelope or JARVIS's refusal to that "
+        "agent's terminal; nothing reaches the brain or the voice"),
+    "make_package.document_of": (
+        "it reads the checked revision over the signed route as JSON for the agent's own "
+        "make_package process; a refusal names JARVIS's cause on the agent's terminal, and "
+        "nothing reaches the brain or the voice; driven by test_architecture_packages.py"),
+    "make_package.make_architecture": (
+        "the document title becomes the package's title for the agent's terminal and the "
+        "message's words, which JARVIS records as the agent's (walled wherever it is read); "
+        "driven by test_architecture_packages.py"),
     "language_projection.gate": (
         "the gate compares source-bearing canonical fields and returns no foreign prose on success. Its "
         "coverage rejection uses fixed diagnostic text rather than copying unresolved source statements into "
@@ -411,8 +453,6 @@ EXEMPT = {
     "worker_hooks.observations": "Formats a hook event kind as metadata in the native observer; the resulting inventory is JSON and list_workers is registered as tainting, with no spoken-header path.",
     "worker_hooks.record": "Formats local event filenames only from clock and UUID values. Its JSON contains metadata, never prompts or tool arguments; it produces no hook stdout or human narration.",
     "worker_inventory.build": "Formats stable provider/session IDs and coverage messages inside JSON. React renders these as text, and the identical list_workers tool output is registered as tainting rather than interpolated into a trusted header.",
-    "project_store.answer_accomplishment": (
-        "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
     "project_store.change_work": (
         "it changes a piece of work on his word; its refusals are fixed words, and the title it writes goes to the record, never into a line. Driven by tests/test_project_records.py"),
     "project_store.change": (
@@ -448,10 +488,6 @@ EXEMPT = {
         "(name, summary, folder names, confirmed accomplishments) and his "
         "notes; pack's own trust rule applies to everything it returns. "
         "Driven by tests/test_context_service.py"),
-    "package_inbox.waiting_by_work": (
-        "it returns counts keyed by work item ID, read from the rows' own "
-        "counters; it prints nothing. Driven by tests/test_header_lines.py's "
-        "work status driver"),
     "server._record_work_target": (
         "the name it returns is the project's or folder's behind the "
         "voice-name wall (_said_name); its refusals are the project store's "
@@ -500,8 +536,6 @@ EXEMPT = {
     # purpose and questions are another agent's words; what reaches the
     # brain of them is driven above (_drive_package_inbox). These read a
     # row's `state` or `title` but say none of a package's words:
-    "package_inbox.opened": (
-        "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.arrive": (
         "the only text it builds is _ref's refusal naming which of its own "
         "fields is too long (project, session, agent's name), never the value; "
@@ -510,9 +544,6 @@ EXEMPT = {
         "it joins a row's title, name and sender only to fold them into words "
         "to match his reference against; the joined text is never returned, "
         "only the rows"),
-    "package_inbox.follow_messages": (
-        "it reads a message's status (one of run_store.MessageStatus) and "
-        "builds only SQL from fixed words; nothing is returned but rows"),
     "package_inbox.option_name": (
         "it returns an option's name to its callers, which wall it: the "
         "brain's question list (_inbox_questions, driven) and the workflow "
@@ -550,11 +581,6 @@ EXEMPT = {
         "`detail` is the engine's own wording about a request, and every route "
         "and tool answers it as a refusal, never as a line JARVIS speaks as its "
         "own. Driven by tests/test_knowledge_api.py"),
-    "knowledge_ingest.replace_authored": (
-        "it builds engine route paths from a topic's own key (`topic:<slug>`, "
-        "a slug knowledge_links checks against [a-z0-9-]) and reads edges' "
-        "kinds and keys back from the engine; nothing of anyone's words is "
-        "printed or spoken. Driven by tests/test_knowledge_links.py"),
     "knowledge_links.change_topic": (
         "it changes the owner's own topic front matter; the only text it builds "
         "is a refusal naming the fixed status words and alias classes, never a "
@@ -563,18 +589,6 @@ EXEMPT = {
         "it returns a topic's status only when it is one of the fixed STATUSES "
         "words, else `unknown`, read from the owner's own topic file. Driven by "
         "tests/test_knowledge_links.py"),
-    "knowledge_ingest.files": (
-        "the labels it builds are the names of files in the brain's own note "
-        "folders and paths in folders he registered, read through "
-        "folder_service under the FILES reader; they go only into the "
-        "engine's derived documents, whose hits carry their trust, and the "
-        "server never speaks them. Driven by tests/test_knowledge_ingest.py"),
-    "knowledge_ingest.run": (
-        "the foreign text it reads (an agent's run summary and result, a "
-        "session's workflow events, an agent's conversation items) goes only "
-        "into chunk documents marked untrusted; the labels it builds carry "
-        "only a run's or workflow's id and a date. Driven by "
-        "tests/test_knowledge_ingest.py"),
     "knowledge_client._schedule_restart": (
         "the `reason` it logs and keeps is the supervisor's own wording around "
         "the engine child's exit code or footprint, numbers from its own "
@@ -612,6 +626,12 @@ EXEMPT = {
         "memory block (`_wrap_untrusted(_MEMORY_WRAP_NAME, ...)`); the header "
         "line says only the project, through `_plain_name`. Driven by "
         "tests/test_memory_tools.py"),
+    "server.start_knowledge_engine": (
+        "it logs and raises, at startup, the supervisor's own state words and "
+        "the end of the knowledge engine's own log (JARVIS's process, its "
+        "own lines); nothing of it reaches the brain, the voice or a page, "
+        "only the server's log and the exception that stops startup. Driven "
+        "by tests/test_knowledge_runtime.py"),
     "server.tool_voice_turn": (
         "it checks `action` against TURN_ACTIONS before acting and answers only "
         "with the fixed sentences of _TURN_SAID or a fixed refusal; neither the "
@@ -624,10 +644,14 @@ EXEMPT = {
         "say on this page (or nothing): his own words, given back to the page as "
         "his unsent draft or logged; no session's or other person's words are "
         "ever gathered into a turn"),
-    "attention_store.current_revisions": (
-        "the `state` it reads is the attention record's own column (pending, seen "
-        "or resolved), and the only text it builds is a list of SQL placeholders "
-        "for the items' ids; no session's words reach any string here"),
+    **{f"attention_store.{name}": (
+        "the only text it builds is a version's change tag and summary in the "
+        "engine's own history: the item's kind (a JARVIS code), its source id, its "
+        "event (a JARVIS code), revision and digest numbers and fixed words; the "
+        "item's `untrusted` words are stored as they are and never put into a "
+        "summary, a header or a spoken line. Driven by tests/test_attention_records.py")
+       for name in ("_mark", "_next_id", "begin_digest", "documents", "record", "resolve",
+                    "write")},
     "ui_control.map_lines": (
         "it reads a command's `id` only after checking it is a command declared "
         "in the UI contract, so the id it prints is the contract's own; the "
@@ -683,15 +707,41 @@ EXEMPT = {
         "observation in the folder catalog; its one f-string is the source "
         "label `codex:<Codex home>`, a path JARVIS chose, recorded as discovery "
         "progress and never spoken or put in a note to the brain"),
-    "folder_store._refresh_fingerprint": (
-        "it joins the `provider` and evidence columns of the catalog's own "
+    "folder_store._fingerprint": (
+        "it joins the `provider` and evidence fields of the catalog's own "
         "observations into a fingerprint compared only for equality, to tell "
         "whether an ignored candidate's evidence changed; the string is "
         "stored, never shown, spoken or sent to the brain"),
+    "folder_store._observe": (
+        "it records what discovery saw (a session's provider, cwd and ids) as "
+        "the catalog's own documents; its one f-string is the write's summary "
+        "naming this node's id, kept with the record's versions, never shown, "
+        "spoken or sent to the brain"),
     "folder_store.related_sessions": (
-        "its only built string is a SQL LIKE pattern from the folder's own "
-        "canonical path, passed as a bound parameter; the rows it returns go "
-        "to the page as JSON, rendered as text, and nothing is spoken"),
+        "its only built string is the folder's own canonical path with a "
+        "slash, compared as a prefix; the rows it returns go to the page as "
+        "JSON, rendered as text, and nothing is spoken"),
+    "project_store.link_folder": (
+        "it links a folder to a project on his word; its refusals are fixed words "
+        "that name no record, and the event detail it writes is the record's own. "
+        "Driven by tests/test_project_records.py"),
+    "project_store.change_folder": (
+        "it changes a project's folder link on his word; its refusals are fixed "
+        "words that name no record, and the event detail it writes is the record's "
+        "own. Driven by tests/test_project_records.py"),
+    "project_store.propose_accomplishment": (
+        "it records an accomplishment in its project's document; its refusals are "
+        "fixed words, and the title it writes goes to the record, never into a line. "
+        "Driven by tests/test_project_records.py"),
+    "project_store.write": (
+        "the changes' inner writers (create, change, a candidate's answer, a work's "
+        "start and change): their refusals are fixed words that name no record, and "
+        "what they write goes to the records, never into a line. Driven by "
+        "tests/test_project_records.py"),
+    "project_store.rows": (
+        "the move's way back: it writes the project documents' own fields as the "
+        "old tables' rows (the event detail as JSON text) for export-sqlite; "
+        "nothing is shown, spoken or sent to the brain"),
     "server._folder_line": (
         "the folder name and path it formats are used only as the BODY of "
         "`_wrap_untrusted` by list_folders, find_folder and register_folder, "
@@ -778,9 +828,50 @@ EXEMPT = {
         "it was heard unchanged, and prints neither: its note to the brain "
         "carries only the capture's number"),
     "run_store.update_message": (
-        "it builds SQL out of column names checked against a fixed list "
-        "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
-        "a bound parameter, and it returns nothing"),
+        "it takes field names checked against a fixed list (`_MESSAGE_UPDATABLE`) "
+        "and writes them into the message's document as data; a session's reply "
+        "is a value there, and it returns nothing"),
+    "run_store.change": (
+        "update_message's write: it puts the checked fields into the message's "
+        "document as data and returns the row as it was; it says nothing"),
+    "conversation_log.append": (
+        "it stores one item as data in its turn or message document and returns "
+        "the record; it says nothing, and the record's readers show it as text "
+        "or wall it for the brain"),
+    "conversation_log.store": (
+        "append's write: it stores the item as data and returns the record"),
+    "conversation_log._message_doc_for": (
+        "it finds the message document an item joins, by ids; it returns a "
+        "record and says nothing"),
+    "conversation_log.message_for": (
+        "it finds the message an update is about, by its source, and returns "
+        "the record; it says nothing, and its readers wall it for the brain"),
+    "conversation_log.move": (
+        "mark's write: it moves one message's state on as data and returns the "
+        "record; it says nothing"),
+    "message_records.message_doc_path": (
+        "it makes a document's path from ids (each through records.segment); "
+        "no words of a message are in it, and it says nothing"),
+    "run_store._event_line": (
+        "it serialises one event of a run's output stream as a JSON line for "
+        "the run's own file (json.dumps escapes every character that could "
+        "break a line); it is stored, never printed, said or put in a header"),
+    "run_store._run_change": (
+        "it names a run write's change kind from the run's own status, one of "
+        "RunStatus's fixed words, for the record's version tag; never "
+        "printed, said or put in a header"),
+    "run_store.update_run": (
+        "it merges fields checked against a fixed list (`_UPDATABLE`) into "
+        "the run's document and tags the version with the run's own status "
+        "word; it returns nothing and prints nothing"),
+    "run_store.finish_run": (
+        "it writes a run's terminal status and tags the version with that "
+        "fixed status word (one of RunStatus); the row it returns goes to "
+        "the run pipeline's hint, which carries data, not header lines"),
+    "run_store.write": (
+        "create_run's unit: it puts the new run's document and tags the "
+        "version summary with its project name, kept in the record's history "
+        "only; nothing it builds is printed, said or put in a brain header"),
     "voice_diagnostics._camel": (
         "it turns this module's own dataclass field names (fixed identifiers "
         "such as `backlog_sec`) into JSON keys; no session, page or brain "
@@ -813,9 +904,6 @@ EXEMPT = {
         "path; the string it returns names the project by `name`, which "
         "`_resolve_project_or_explain` resolved from the user's own list, and "
         "carries no roster field. Driven in test_one_writer_per_project.py"),
-    "run_store.get_messages": (
-        "it reads message rows back by id for the conversation's live status, "
-        "and returns records; it prints nothing at all"),
     "server._approve_on_his_yes": (
         "the `id` it reads is a capture's number, an int JARVIS assigned; the "
         "names in its notes are the capture's `to` (the agent directory's name, "
@@ -863,9 +951,6 @@ EXEMPT = {
         "it records his review (his own words, from the page or his voice) and prints "
         "nothing but its refusals, whose values are checked keys and what holds a piece, "
         "itself only reached by the brain through work_status's wall"),
-    "work_store.answers_for": (
-        "it returns his answers to an access key's own decisions as data for that agent "
-        "(GET /api/work/answers, work_report.py answers); none of it reaches the brain"),
     "server._sender_name": (
         "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
         "through _said_name, which refuses anything but a plain name; never to the brain"),
@@ -887,11 +972,6 @@ EXEMPT = {
     "conversation_log.mark": (
         "it moves one message's state on and returns the record; it says nothing, and the "
         "record's readers show it as text or wall it for the brain"),
-    "conversation_log.messages_where": (
-        "it returns message ids for a source or a carried package; no words leave it"),
-    "conversation_log.work_threads": (
-        "it counts each Work item's messages and returns records; it says nothing, and "
-        "messages_api's readers show them as text or wall them for the brain"),
     "messages_api._held_session": (
         "it returns the session id a key JARVIS holds names, from its own record; the "
         "route uses it only to hold that key's message, and nothing reaches the brain"),
@@ -910,9 +990,6 @@ EXEMPT = {
         "agent's terminal; nothing reaches the brain or the voice"),
     "server.tool_mark_message": (
         "it says only the message's number and its fixed state word, never its words"),
-    "conversation_log.threads": (
-        "it lists threads as records, the counterpart's name as its newest message named "
-        "it; it says nothing, and every reader that shows a name walls it"),
     "server._inbox_sender": (
         "it keeps a package's proven sender on its row, clipped to the row's limit; the "
         "name reaches the page as text and the brain only inside package_inbox's wall"),
@@ -945,9 +1022,6 @@ EXEMPT = {
     "work_store.id": (
         "it is a held item record's id (`ItemRecord.id`), the id JARVIS assigned when it "
         "created the item; it prints nothing"),
-    "work_store.records": (
-        "it reads items' rows into records for the held Work view, keyed by the ids JARVIS "
-        "assigned; it prints nothing, and every reader shows the words as text or walled"),
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
@@ -1931,24 +2005,24 @@ def _drive_package_inbox(server, session, monkeypatch):
     """Packages whose title, sender, purpose and questions are the payload,
     read by the brain through package_inbox (the list and one in full) and
     through work_status's item detail, which lists a work item's packages."""
-    import sqlite3
     import tempfile
     import time
-    from jarvis import data_paths, package_inbox as pi, work_store as ws
+    from jarvis import package_inbox as pi, records, work_store as ws
     item = ws.create("Tea", "folder", tempfile.mkdtemp(prefix="work-"))
     import secrets
-    pi.listing()                        # the inbox's tables, made by its own migration
     ids = [f"pkg-{secrets.token_hex(6)}" for _ in range(2)]
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        conn.execute("DELETE FROM package_inbox")
-        for n, title in enumerate((session.title, f"Second {HOSTILE}")):
-            conn.execute(
-                "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
-                "purpose, runs, decisions_total, decisions_answered, from_project, "
-                "from_session, from_agent, work_id, state, revision, arrived_at) "
-                "VALUES (?, ?, 'x', ?, ?, ?, ?, 'page', 2, 1, ?, 's1', ?, ?, 'answering', 1, ?)",
-                (ids[n], f"pkg{n}", session.project, session.state, title,
-                 session.last_text, session.project, session.voice_name, item.id, time.time()))
+    for old in pi.listing() + pi.listing(closed=True):
+        records.delete(pi.path_of(old.id))
+    for n, title in enumerate((session.title, f"Second {HOSTILE}")):
+        entry = {name: None for name in pi.COLUMNS}
+        entry.update(id=ids[n], package_id=f"pkg{n}", sha256="x", name=session.project,
+                     version=session.state, title=title, purpose=session.last_text,
+                     runs="page", decisions_total=2, decisions_answered=1,
+                     from_project=session.project, from_session="s1",
+                     from_agent=session.voice_name, work_id=item.id, state="answering",
+                     revision=1, arrived_at=time.time(), claimed_session="",
+                     sender_evidence="", reprove=0, events=[], last_seq=0)
+        records.write(pi.path_of(ids[n]), entry)
     asked = [pi.Question("kettle", session.last_prompt, session.needs,
                          [{"id": "electric", "name": HOSTILE, "says": session.title}],
                          "electric", HOSTILE, True,

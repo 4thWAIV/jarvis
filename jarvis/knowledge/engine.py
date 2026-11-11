@@ -16,9 +16,12 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from jarvis.knowledge import lanes
+
 log = logging.getLogger("jarvis.knowledge.engine")
 
 CARDS_REFRESH_SEC = 600.0
+SNAPSHOT_EVERY_SEC = 24 * 3600.0   # a snapshot a day: the engine holds records and their history
 
 
 class EngineLocked(RuntimeError):
@@ -61,6 +64,8 @@ class Engine:
         self.cards = None    # entity cards and the resident tier
         self.advisor = None  # query shapes and the extra indexes
         self.entities = None  # the names a question may name, for the graph
+        self.items = None     # items at paths: the UDS interface (items.py)
+        self.rights = None    # AccessRights at paths (rights.py)
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -90,13 +95,20 @@ class Engine:
         self.docs = DocumentStore(self.store)
         from jarvis.knowledge.graph import Graph
         self.graph = Graph(self.docs)
+        from jarvis.knowledge.items import Items
+        from jarvis.knowledge.rights import Rights
+        self.rights = Rights(self.store)
+        self.items = Items(self.docs, self.graph, self.rights)
         from jarvis.knowledge.lexical import Lexical
         self.lexical = Lexical(self.docs)
         from jarvis.knowledge import embedder
         from jarvis.knowledge.vectors import VectorIndex
         self.vectors = VectorIndex(self.docs, embedder.current())
+        self.items.vectors = self.vectors
+        self.items.lexical = self.lexical
         from jarvis.knowledge.linker import Linker
         self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
+        self.linker.items = self.items
         self._link_lock = threading.Lock()
         from jarvis.knowledge.cards import Cards
         self.cards = Cards(self)
@@ -118,7 +130,8 @@ class Engine:
                 "keyword": {"chunks": self.lexical.live} if self.lexical else {},
                 "vectors": self.vectors.health() if self.vectors else {},
                 "cards": self.cards.health() if self.cards else {},
-                "advisor": self.advisor.health() if self.advisor else {}}
+                "advisor": self.advisor.health() if self.advisor else {},
+                "items": self.items.health() if self.items else {}}
 
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
@@ -154,8 +167,9 @@ class Engine:
                                extra=lambda pending: self.graph.ops(edges, edge_deletes, pending) + mark_ops)
 
     def link(self) -> dict:
-        """Run the linker over every topic; one run at a time."""
-        with self._link_lock:
+        """Run the linker over every topic; one run at a time, in the
+        background lane (lanes.py)."""
+        with lanes.lowered(), self._link_lock:
             return self.linker.run()
 
     RESOLVE_KINDS = ("topic", "project", "work", "folder", "person", "agent", "workflow", "document")
@@ -193,8 +207,8 @@ class Engine:
         return {v.key.decode()[3:]: json.loads(v.value) for v in self.store.prefix(META, b"wm:")}
 
     def maintain(self) -> None:
-        """One maintenance step, run by the engine's own timer while the
-        floor is free: flush on the time rule, then compact a full tier."""
+        """One maintenance step, run by the engine's own timer in the
+        background lane (serve._maintenance) while the floor is free: flush on the time rule, then compact a full tier."""
         if self.pace == "hold" or self.store is None or not self.store.writable:
             return
         self.store.maybe_flush()
@@ -205,6 +219,10 @@ class Engine:
                 from jarvis.knowledge import embedder
                 self.vectors.attach(embedder.current())
             self.vectors.warm()
+        if self.pace == "free":
+            age = self.store.newest_snapshot_age()
+            if age is None or age >= SNAPSHOT_EVERY_SEC:
+                self.store.snapshot()
         if self.pace == "free" and self.cards is not None and \
                 time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:
             self._cards_refreshed = time.monotonic()

@@ -7,8 +7,13 @@ big-endian float64 with the sign flipped (negatives inverted), dates as
 epoch milliseconds the same way, strings folded by `spoken_words.fold` and
 cut to `STRING_MAX` bytes. Byte order being value order is what lets the
 general index answer ranges as well as equality. A cut string can match
-more than it should, so every index answer is checked against the
-document itself.
+more than it should, so an index answer is checked against the document
+itself unless it is exact (`is_cut`: a key shorter than `STRING_MAX` bytes
+of text was never cut). Only a bounded prefix of a long string is ever
+folded (`FOLD_FIRST` characters, more only while the fold is still short),
+so a record field holding 100 KB of text costs the index what 128 bytes
+cost: folding is per character, so the fold of a prefix is a prefix of the
+fold.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ NUMBER = 0x04
 DATE = 0x05
 STRING = 0x06
 STRING_MAX = 128
+FOLD_FIRST = 4 * STRING_MAX      # characters folded first; more only while that folds short
 
 
 def canonical(obj: Any) -> bytes:
@@ -41,7 +47,26 @@ def _sortable_float(x: float) -> bytes:
 
 
 def fold_string(s: str) -> bytes:
-    return spoken_words.fold(s).encode("utf-8")[:STRING_MAX]
+    """The string's index bytes: its fold, cut to `STRING_MAX` bytes,
+    folding only as much of it as that needs."""
+    n = FOLD_FIRST
+    while True:
+        out = spoken_words.fold(s[:n]).encode("utf-8")
+        if len(out) >= STRING_MAX or n >= len(s):
+            return out[:STRING_MAX]
+        n *= 4
+
+
+def is_cut(folded: bytes) -> bool:
+    """Whether a string's index bytes may be a cut of a longer string."""
+    return len(folded) >= STRING_MAX
+
+
+def decode_number(payload: bytes) -> float:
+    """The number a NUMBER encoding's eight bytes hold."""
+    bits = struct.unpack(">Q", payload[:8])[0]
+    bits = bits ^ (1 << 63) if bits >> 63 else bits ^ 0xFFFFFFFFFFFFFFFF
+    return struct.unpack(">d", struct.pack(">Q", bits))[0]
 
 
 def date_millis(value: Any) -> float:

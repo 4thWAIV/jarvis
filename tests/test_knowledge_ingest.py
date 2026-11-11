@@ -1,5 +1,7 @@
-"""Ingest (phase 4): chunking, the adapters through the engine's routes, the
-watermarks, and the pass scheduler."""
+"""Ingest once records and notes are items (UDS round 3): a pass makes no
+chunks, retires what earlier ingest made once, hands the engine his index
+choices and runs the linker; records are found by their own words, as they
+are, within a bound; the pass scheduler; the real children."""
 from __future__ import annotations
 
 import io
@@ -18,6 +20,9 @@ from jarvis import knowledge_client as kc
 from jarvis import knowledge_ingest as ki
 from jarvis import knowledge_runtime as kr
 from jarvis.knowledge.engine import Engine
+from jarvis.knowledge.uds import Caller, EngineUDS, Query, Transaction
+
+TIM = Caller("tim")
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +32,6 @@ def _in_process(monkeypatch):
 
 @pytest.fixture
 def engine(tmp_path):
-    from jarvis import run_store
-    run_store.init_db()
     e = Engine.open(tmp_path / "engine")
     yield e
     e.close()
@@ -47,189 +50,134 @@ def caller(engine):
     return call
 
 
-def keys_matching(engine, words):
-    return [engine.docs.key_of(o) for o, _, _ in engine.lexical.search(words, 50)]
+def uds_of(engine) -> EngineUDS:
+    return EngineUDS(kc.InProcessTransport(engine))
 
 
-def texts_matching(engine, words):
-    return [engine.docs.by_ordinal(o)["text"] for o, _, _ in engine.lexical.search(words, 50)]
+def index_brain(engine) -> None:
+    """What the content child does with the brain's notes: every note under
+    the brain root noted and read into its item."""
+    from jarvis import knowledge_content as kcont
+    root = next(r for r in kcont.jarvis_roots() if r.prefix == kcont.BRAIN)
+    ix = kcont.Indexer(uds_of(engine))
+    for rel in ix.scan(root):
+        ix.extract(root, rel)
 
 
 def only(*adapters):
     return [a() if isinstance(a, type) else a for a in adapters]
 
 
-# --- chunking -----------------------------------------------------------------
-
-def test_markdown_is_chunked_by_heading_within_the_cap_with_overlap():
-    para = "This is one sentence about the bridge engine. " * 30            # ~1,400 characters
-    text = f"# Top\nIntro line.\n\n## Plan\n{para}\n\n## Risks\nShort.\n"
-    chunks = ki.chunk_text(text)
-    assert [c.heading_path for c in chunks][:1] == [["Top"]]
-    assert all(len(c.text) <= ki.CHUNK_MAX for c in chunks)
-    plan = [c for c in chunks if c.heading_path == ["Top", "Plan"]]
-    assert len(plan) >= 2
-    assert plan[1].text.startswith("This is one sentence")     # the last sentence carried over
-    assert chunks[-1].heading_path == ["Top", "Risks"] and "Short." in chunks[-1].text
-    for c in chunks:
-        assert c.text.split()[-1] in text[c.span[0]:c.span[1]]
+def found_by_words(engine, words, caller_=TIM):
+    return [h.path for h in uds_of(engine).search(caller_, Query(words=words, limit=50))]
 
 
-def test_a_line_longer_than_the_cap_is_cut():
-    chunks = ki.chunk_text("x" * 2500, markdown=False)
-    assert all(len(c.text) <= ki.CHUNK_MAX for c in chunks) and len(chunks) == 3
+# --- a pass ---------------------------------------------------------------------
+
+def test_a_pass_makes_no_chunks_and_retires_earlier_ones_once(engine):
+    engine.transaction({"puts": [{"_key": "doc:old", "_kind": "document", "_label": "old",
+                                  "_source": "jref:1:n:note:memory/old.md"},
+                                 {"_key": "chunk:old", "_kind": "chunk", "text": "an old chunk of zebra",
+                                  "document": "doc:old"}],
+                        "watermarks": {"conversation": {"after": 9, "schema": 2}}})
+    first = ki.run_pass(caller(engine), adapters=[], link=False)
+    assert not first.errors and first.forgotten == 2 and first.chunks == 0
+    assert engine.docs.find(kinds_=["chunk", "document"], limit=10) == []
+    marks = engine.watermarks()
+    assert marks[ki.RETIRED]["schema"] == ki.SCHEMA and marks["conversation"] == {"retired": True}
+    again = ki.run_pass(caller(engine), adapters=[], link=False)
+    assert again.forgotten == 0 and not again.errors
 
 
-# --- notes ---------------------------------------------------------------------
-
-def _note(name, text):
-    path = data_paths.brain_home() / "memory" / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    return path
-
-
-def test_notes_are_read_once_changed_ones_again_and_gone_ones_forgotten(engine):
-    call = caller(engine)
-    _note("denice.md", "# Denice\nThe successor direction, planned.\n")
-    _note("orbs.md", "# Orbs\nThe brain orbs sit in the centre.\n")
-    first = ki.run_pass(call, adapters=only(ki.Notes))
-    assert first.documents == 2 and not first.errors
-    assert keys_matching(engine, "successor")
-    again = ki.run_pass(call, adapters=only(ki.Notes))
-    assert again.documents == 0                                # nothing moved
-    path = _note("denice.md", "# Denice\nNow about parris island.\n")
-    os.utime(path, (time.time() + 5, time.time() + 5))
-    ki.run_pass(call, adapters=only(ki.Notes))
-    assert keys_matching(engine, "successor") == [] and keys_matching(engine, "parris")
-    (data_paths.brain_home() / "memory" / "orbs.md").unlink()
-    gone = ki.run_pass(call, adapters=only(ki.Notes))
-    assert gone.forgotten == 1 and keys_matching(engine, "orbs centre") == []
-
-
-def test_a_linked_note_is_never_read(engine, tmp_path):
-    outside = tmp_path / "secret.md"
-    outside.write_text("private words outside")
-    link = data_paths.brain_home() / "memory" / "link.md"
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(outside)
-    ki.run_pass(caller(engine), adapters=only(ki.Notes))
-    assert keys_matching(engine, "private words outside") == []
-
-
-# --- the conversation log ----------------------------------------------------------
-
-def test_the_conversation_is_followed_by_id_with_trust_by_kind(engine):
-    from jarvis import conversation_log as cl
-    cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "what about the zebra roadmap"))
-    cl.append(cl.ConversationItem.new(cl.ItemKind.JARVIS, "the zebra roadmap has four stages"))
-    cl.append(cl.ConversationItem.new(cl.ItemKind.FROM_AGENT, "zebra agent words",
-                                      agent_session_id="s1", agent_name="hammer"))
-    call = caller(engine)
-    ki.run_pass(call, adapters=only(ki.Conversation))
-    trust = {engine.docs.by_ordinal(o)["text"]: engine.docs.by_ordinal(o)["_trust"]
-             for o, _, _ in engine.lexical.search("zebra", 50)}
-    assert trust == {"what about the zebra roadmap": "own",
-                     "the zebra roadmap has four stages": "untrusted",
-                     "zebra agent words": "untrusted"}
-    mark = engine.watermarks()["conversation"]["after"]
-    cl.append(cl.ConversationItem.new(cl.ItemKind.TYPED, "zebra typed later"))
-    ki.run_pass(call, adapters=only(ki.Conversation))
-    assert len(engine.lexical.search("zebra", 50)) == 4
-    assert engine.watermarks()["conversation"]["after"] > mark
-
-
-# --- runs and workflows -----------------------------------------------------------
-
-def test_a_finished_run_is_read_its_prompt_own_its_result_not(engine):
-    from jarvis import run_store
-    rid = run_store.create_run("build the quokka checker", "jarvis", "/tmp/x", "brain")
-    ki.run_pass(caller(engine), adapters=only(ki.Runs))
-    assert keys_matching(engine, "quokka") == []              # still running: not read
-    run_store.update_run(rid, status="succeeded", result_text="the quokka checker is built")
-    ki.run_pass(caller(engine), adapters=only(ki.Runs))
-    trust = {engine.docs.by_ordinal(o)["text"]: engine.docs.by_ordinal(o)["_trust"]
-             for o, _, _ in engine.lexical.search("quokka", 50)}
-    assert trust == {"build the quokka checker": "own", "the quokka checker is built": "untrusted"}
-    run_store.update_run(rid, result_text="rewritten: the wombat checker")
-    ki.run_pass(caller(engine), adapters=only(ki.Runs))
-    assert "the quokka checker is built" not in texts_matching(engine, "quokka")
-    assert keys_matching(engine, "wombat")
-
-
-def test_workflow_events_are_followed_by_seq(engine):
-    from jarvis import workflow_store as ws
-    from jarvis.workflow_store import WorkflowEvent
-    wid = ws.start("Narwhal migration", "jarvis", ["one"])
-    ws.record(WorkflowEvent(wid, "note", None, "The narwhal phase is half done.", {}))
-    ki.run_pass(caller(engine), adapters=only(ki.Workflows))
-    hits = engine.lexical.search("narwhal", 50)
-    assert hits and all(engine.docs.by_ordinal(o)["_trust"] == "untrusted" for o, _, _ in hits)
-    before = len(hits)
-    ki.run_pass(caller(engine), adapters=only(ki.Workflows))
-    assert len(engine.lexical.search("narwhal", 50)) == before
-
-
-# --- registered folders ------------------------------------------------------------
-
-def test_folder_documents_are_read_through_the_folder_service_by_the_rule(engine, tmp_path):
-    from jarvis import folder_service, folder_store
-    root = tmp_path / "proj"
-    (root / "docs" / "deep" / "deeper").mkdir(parents=True)
-    (root / "src" / "a" / "b").mkdir(parents=True)
-    (root / "README.md").write_text("# Proj\nThe ocelot project readme.\n")
-    (root / "docs" / "deep" / "deeper" / "plan.md").write_text("The ocelot plan in docs.\n")
-    (root / "src" / "a" / "b" / "far.md").write_text("ocelot too deep to read\n")
-    (root / "src" / "code.py").write_text("ocelot = 'code is not read'\n")
-    (root / ".env").write_text("OCELOT_KEY=secret\n")
-    service = folder_service.FolderService(folder_store.FolderStore(), data_paths.node_id)
-    service.register(request_key="k1", path=str(root))
-    found = ki.run_pass(caller(engine), adapters=only(ki.Folders(service)))
-    assert not found.errors, found.errors
-    texts = texts_matching(engine, "ocelot")
-    assert sorted(texts) == ["# Proj\nThe ocelot project readme.", "The ocelot plan in docs."]
-
-
-# --- the pass and its watermarks -----------------------------------------------------
-
-def test_a_spent_budget_leaves_more_and_the_next_pass_goes_on(engine):
-    for i in range(5):
-        _note(f"n{i}.md", f"# N{i}\nbudget word{i}\n")
-    call = caller(engine)
-    clock = iter([0.0] + [0.0] * 3 + [100.0] * 1000)
-    tight = ki.Budget(seconds=1, clock=lambda: next(clock))
-    first = ki.run_pass(call, budget=tight, adapters=only(ki.Notes))
-    assert first.more and 0 < first.documents < 5
-    rest = ki.run_pass(call, adapters=only(ki.Notes))
-    assert first.documents + rest.documents == 5 and not rest.more
-
-
-def test_watermarks_are_kept_with_the_documents_across_a_restart(tmp_path):
-    from jarvis import run_store
-    run_store.init_db()
-    from jarvis import conversation_log as cl
-    cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "remember the kestrel"))
+def test_the_retirement_is_kept_across_a_restart(tmp_path):
     e = Engine.open(tmp_path / "e")
-    ki.run_pass(caller(e), adapters=only(ki.Conversation))
+    ki.run_pass(caller(e), adapters=[], link=False)
     mark = e.watermarks()
     e.close()
     e = Engine.open(tmp_path / "e")
     try:
-        assert e.watermarks() == mark and mark["conversation"]["after"] >= 1
-        assert ki.run_pass(caller(e), adapters=only(ki.Conversation)).chunks == 0
+        assert e.watermarks() == mark
+        e.transaction({"puts": [{"_key": "chunk:late", "_kind": "chunk", "text": "late"}]})
+        assert ki.run_pass(caller(e), adapters=[], link=False).forgotten == 0
     finally:
         e.close()
+
+
+def test_a_pass_hands_his_index_choices_and_runs_the_linker(engine):
+    from jarvis import knowledge_links as kl
+    kl.create_topic("Denice", status="planned", pinned=True)
+    kl.choose_index("document|language,media_type", "pin")
+    note = data_paths.brain_home() / "memory" / "orbs.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("# Orbs\nThe orbs sit around Denice.\n\n## More\nDenice again.\n")
+    index_brain(engine)
+    stats = ki.run_pass(caller(engine))
+    assert not stats.errors and stats.linked == 1
+    assert engine.advisor.pinned == {"document|language,media_type"}
+    assert engine.linker.last["topics"] == 1
 
 
 def test_one_failing_source_leaves_the_rest(engine):
     class Broken(ki.Adapter):
         name = "broken"
 
-        def run(self, writer, mark, budget):
+        def run(self, call, mark, budget):
             raise RuntimeError("no")
-    _note("x.md", "# X\nheron\n")
-    stats = ki.run_pass(caller(engine), adapters=[Broken(), ki.Notes()])
-    assert stats.errors and keys_matching(engine, "heron")
+
+    class Fine(ki.Adapter):
+        name = "fine"
+        ran = False
+
+        def run(self, call, mark, budget):
+            Fine.ran = True
+            return False
+    stats = ki.run_pass(caller(engine), adapters=[Broken(), Fine()])
+    assert stats.errors == ["broken: RuntimeError: no"] and Fine.ran
+
+
+def test_a_spent_budget_leaves_more(engine):
+    class Slow(ki.Adapter):
+        name = "slow"
+
+        def run(self, call, mark, budget):
+            budget.spend(10)
+            return False
+    clock = iter([0.0] + [100.0] * 100)
+    tight = ki.Budget(seconds=1, clock=lambda: next(clock))
+    assert ki.run_pass(caller(engine), budget=tight, adapters=[Slow()], link=False).more
+
+
+# --- records are found by their own words ------------------------------------------
+
+def test_records_are_found_by_their_own_words_as_they_are(engine):
+    uds = uds_of(engine)
+    tx = Transaction()
+    tx.put("/conversation/2026-11-10/1.turn", {"kind": "heard", "text": "what about the zebra roadmap"})
+    tx.put("/agents/s1/messages/2.message", {"kind": "from_agent", "text": "zebra agent words"})
+    tx.put("/runs/r1.run", {"prompt": "build the quokka checker", "status": "succeeded",
+                            "result_text": "the start " + "filler words here " * 20000 + "wombat at the end"})
+    uds.transaction(TIM, tx)
+    assert sorted(found_by_words(engine, "zebra")) == ["/agents/s1/messages/2.message",
+                                                     "/conversation/2026-11-10/1.turn"]
+    assert found_by_words(engine, "quokka") == ["/runs/r1.run"]
+    assert found_by_words(engine, "wombat") == []          # past the record words' bound
+    hits = uds.search(TIM, Query(phrase="zebra agent words"))
+    assert [h.path for h in hits] == ["/agents/s1/messages/2.message"]
+    uds.transaction(TIM, Transaction().merge("/conversation/2026-11-10/1.turn", {"text": "about giraffes"}))
+    assert found_by_words(engine, "zebra") == ["/agents/s1/messages/2.message"]
+    assert found_by_words(engine, "giraffes") == ["/conversation/2026-11-10/1.turn"]
+
+
+def test_a_hidden_field_finds_nothing_for_whom_it_is_hidden(engine):
+    uds = uds_of(engine)
+    uds.put(TIM, "/people/p1/messages/1.message", data={"text": "public okapi words",
+                                                       "secret": "private narwhal words"})
+    uds.set_rights(TIM, "/people", [{"person": "ana", "data": True, "content": True, "write": False,
+                                     "hidden": ["secret"]}])
+    assert found_by_words(engine, "narwhal") == ["/people/p1/messages/1.message"]
+    assert found_by_words(engine, "narwhal", Caller("ana")) == []
+    assert found_by_words(engine, "okapi", Caller("ana")) == ["/people/p1/messages/1.message"]
+    assert uds.search(Caller("ana"), Query(phrase="private narwhal")) == []
 
 
 # --- the scheduler ----------------------------------------------------------------
@@ -252,7 +200,7 @@ class FakeProc:
     def kill(self):
         self.returncode = -9
 
-    def wait(self):
+    def wait(self, timeout=None):
         return self.returncode
 
 
@@ -273,7 +221,7 @@ def test_the_scheduler_runs_when_free_stops_and_continues_with_the_pace(monkeypa
     def spawn():
         procs.append(FakeProc(json.dumps({"documents": 3, "chunks": 9, "more": False, "errors": []}).encode()))
         return procs[-1]
-    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0])
+    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
     s("hold")
     assert procs == []                                   # never starts while held
     s("free")
@@ -296,7 +244,8 @@ def test_the_scheduler_never_hands_the_token_to_an_engine_not_its_own():
     from jarvis.knowledge import address as ea
     ea.record(ea.EngineAddress("http", "127.0.0.1", 4100, 555, "b"))
     procs = []
-    s = kr.IngestScheduler(Sup(777), spawn=lambda: procs.append(FakeProc()) or procs[-1])
+    s = kr.IngestScheduler(Sup(777), spawn=lambda: procs.append(FakeProc()) or procs[-1],
+                           enabled=lambda: True)
     s("free")
     assert procs == []
 
@@ -310,7 +259,7 @@ def test_a_pass_that_left_more_runs_again_soon():
     def spawn():
         procs.append(FakeProc(json.dumps({"more": True, "errors": []}).encode()))
         return procs[-1]
-    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0])
+    s = kr.IngestScheduler(Sup(777), spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
     s("free")
     procs[0].returncode = 0
     s("free")
@@ -333,29 +282,108 @@ def test_a_leftover_pass_is_ended_only_when_it_is_an_ingest_pass(tmp_path):
 
 # --- the real child against the real engine ------------------------------------------
 
-@pytest.mark.knowledge_engine
-def test_a_real_pass_in_its_child_against_the_real_engine():
-    from jarvis import run_store
+def _engine_process():
     from jarvis.knowledge import address as ea
-    run_store.init_db()
-    _note("lynx.md", "# Lynx\nThe lynx note for the child pass.\n")
     repo = Path(__file__).resolve().parents[1]
     engine = subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
                               stdin=subprocess.PIPE, cwd=repo)
+    end = time.monotonic() + 20
+    while (ea.running() is None or ea.running().pid != engine.pid) and time.monotonic() < end:
+        time.sleep(0.05)
+    return engine, ea.running(), repo
+
+
+@pytest.mark.knowledge_engine
+def test_a_real_pass_in_its_child_against_the_real_engine():
+    engine, found, repo = _engine_process()
     try:
-        end = time.monotonic() + 20
-        while (ea.running() is None or ea.running().pid != engine.pid) and time.monotonic() < end:
-            time.sleep(0.05)
-        found = ea.running()
+        uds = EngineUDS(kc.HTTPTransport(lambda: engine.pid))
+        uds.put(TIM, "/conversation/2026-11-10/7.turn", data={"kind": "heard",
+                                                              "text": "the lynx line for the child pass"})
         child = subprocess.run([sys.executable, "-m", "jarvis.knowledge_ingest"], cwd=repo,
                                input=json.dumps({"port": found.port,
                                                  "token": data_paths.ensure_knowledge_token()}) + "\n",
                                capture_output=True, text=True, timeout=60)
         stats = json.loads(child.stdout.strip().splitlines()[-1])
-        assert stats["documents"] >= 1, child.stderr[-2000:]
-        client = kc.KnowledgeClient(kc.HTTPTransport(lambda: engine.pid))
-        hits = client.call("POST", "/v1/search", {"text": "lynx"})["hits"]
-        assert hits and hits[0]["trust"] == "own"
+        assert not stats["errors"] and stats["chunks"] == 0, child.stderr[-2000:]
+        assert [h.path for h in uds.search(TIM, Query(words="lynx"))] == ["/conversation/2026-11-10/7.turn"]
     finally:
         engine.stdin.close()
         engine.wait(timeout=20)
+
+
+@pytest.mark.knowledge_engine
+def test_the_content_child_indexes_jarvis_s_own_files_against_the_real_engine():
+    from jarvis import run_store
+    from jarvis.knowledge.uds import Caller, EngineUDS, Stream
+    run_store.init_db()
+    note = data_paths.answers_dir() / "jarvis" / "lynx.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("# Lynx\nThe lynx note for the content child.\n")
+    memo = data_paths.brain_home() / "memory" / "lynx.md"
+    memo.parent.mkdir(parents=True, exist_ok=True)
+    memo.write_text("# Lynx memory\nWhat the brain keeps about the lynx.\n")
+    (data_paths.brain_home() / "CLAUDE.md").write_text("# Persona\nNot a note.\n")
+    engine, found, repo = _engine_process()
+    child = subprocess.Popen([sys.executable, "-m", "jarvis.knowledge_content"], cwd=repo,
+                             stdin=subprocess.PIPE, text=True)
+    try:
+        child.stdin.write(json.dumps({"pid": engine.pid, "token": data_paths.ensure_knowledge_token()}) + "\n")
+        child.stdin.flush()
+        uds = EngineUDS(kc.HTTPTransport(lambda: engine.pid))
+        end = time.monotonic() + 90
+        item = None
+        while time.monotonic() < end:
+            item = uds.get(Caller("tim"), "/jarvis/answers/jarvis/lynx.md", {Stream.DATA, Stream.SECTIONS})
+            if item is not None and item.data.get("state") == "indexed":
+                break
+            time.sleep(0.1)
+        assert item is not None and item.data["state"] == "indexed", item
+        assert item.sections[0].heading == "Lynx" and item.data["trust"] == "own"
+        while time.monotonic() < end:
+            item = uds.get(Caller("tim"), "/jarvis/brain/memory/lynx.md", {Stream.DATA, Stream.CONTENT})
+            if item is not None and item.data.get("state") == "indexed":
+                break
+            time.sleep(0.1)
+        assert item is not None and item.data["state"] == "indexed", item
+        assert item.content["ref"].endswith(":note:memory/lynx.md")
+        assert uds.get(Caller("tim"), "/jarvis/brain/CLAUDE.md") is None     # the brain's home is not a note
+    finally:
+        child.stdin.close()
+        child.wait(timeout=30)
+        engine.stdin.close()
+        engine.wait(timeout=20)
+
+
+# --- the content child's scheduler ------------------------------------------------
+
+def test_the_content_child_is_handed_its_engine_and_told_the_pace(monkeypatch):
+    from jarvis.knowledge import address as ea
+    ea.record(ea.EngineAddress("http", "127.0.0.1", 4100, 777, "b"))
+    procs = []
+    clock = [0.0]
+
+    def spawn():
+        procs.append(FakeProc())
+        return procs[-1]
+    sup = Sup(777)
+    s = kr.ContentScheduler(sup, spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
+    s("hold")
+    assert len(procs) == 1 and procs[0].signals == []          # never stopped whole: told
+    lines = procs[0].stdin.getvalue().decode().splitlines()
+    assert json.loads(lines[0])["pid"] == 777 and lines[1:] == ["hold"]
+    s("hold")
+    s("free")
+    assert procs[0].stdin.getvalue().decode().splitlines()[1:] == ["hold", "free"]
+    procs[0].returncode = 1                                   # it ended: started again after a pause
+    s("free")
+    assert len(procs) == 1 and s.proc is None
+    clock[0] += kr.CONTENT_RESTART_SEC
+    s("free")
+    assert len(procs) == 2
+    sup._pid = 778                                            # a new engine: a new child for it
+    ea.record(ea.EngineAddress("http", "127.0.0.1", 4101, 778, "c"))
+    s("free")
+    assert len(procs) == 3 and s.engine_pid == 778
+    s.stop()
+    assert s.proc is None and not kr.content_pid_path().exists()
