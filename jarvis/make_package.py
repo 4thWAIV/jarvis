@@ -217,7 +217,12 @@ def manifest_of(folder: Path) -> dict:
         if re.search(r"""type\s*=\s*["']?module""", page):
             problems.append(f"{entry.name} loads a script as a module, which the package frame "
                             f"cannot run: use ordinary <script src> tags.")
-        if manifest.get("story") and STORY_HELPER not in page:
+        # An architecture package's page is the kit's own render, checked
+        # byte for byte; its projection refuses a story that points at it
+        # while that page cannot load the helper (language_projection.project).
+        communication = manifest.get("communication")
+        architecture = isinstance(communication, dict) and communication.get("kind") == "architecture"
+        if manifest.get("story") and STORY_HELPER not in page and not architecture:
             problems.append(f"{entry.name} does not load the story helper, so the story points "
                             f"at nothing: add <script src=\"{STORY_HELPER}\"></script>.")
     if not problems:
@@ -310,19 +315,32 @@ def make_folder(folder: Path, out: Path) -> Made:
 
 # -- an architecture document ------------------------------------------------------------
 
-def understanding_in(source: Path) -> bytes:
+@dataclass(frozen=True)
+class Explanation:
+    """A fresh author's explanation of an architecture document: its
+    UNDERSTANDING.md and, when it wrote one, its story's bytes."""
+    markdown: bytes
+    story: bytes | None
+
+
+def understanding_in(source: Path) -> Explanation:
     """The fresh author's explanation of an architecture document: a folder
-    holding UNDERSTANDING.md and nothing else (JARVIS projects the checked
-    revision around it), readable author Markdown within 1 MiB; or Refused."""
-    from jarvis import language_kit, language_projection, package_understanding
+    holding UNDERSTANDING.md, readable author Markdown within 1 MiB, and
+    optionally story.json, a story read strictly (package_story.authored)
+    that composes with the standard vote (package_story.compose), and
+    nothing else (JARVIS projects the checked revision around them); or
+    Refused."""
+    from jarvis import language_kit, language_projection, package_story, package_understanding
     member = language_projection.MEMBER
     try:
         files = author_proof.source_files(source)
     except ValueError as e:
         raise dp.Refused([str(e)]) from None
-    if not source.is_dir() or set(files) != {f"{source.name}/{member}"}:
+    allowed = {f"{source.name}/{member}", f"{source.name}/{STORY_FILE}"}
+    if not source.is_dir() or f"{source.name}/{member}" not in files or set(files) - allowed:
         raise dp.Refused([f"An architecture document's explanation is a folder holding only "
-                          f"{member}; {source} holds {', '.join(sorted(files)) or 'nothing'}."])
+                          f"{member} and, optionally, {STORY_FILE}; {source} holds "
+                          f"{', '.join(sorted(files)) or 'nothing'}."])
     try:
         package_understanding.markdown_text(source, member)
     except ValueError as e:
@@ -330,7 +348,15 @@ def understanding_in(source: Path) -> bytes:
     body = (source / member).read_bytes()
     if len(body) > language_kit.MAX_SOURCE_BYTES:
         raise dp.Refused([f"{member} must fit within 1 MiB."])
-    return body
+    story = None
+    if f"{source.name}/{STORY_FILE}" in files:
+        story = (source / STORY_FILE).read_bytes()
+        try:
+            authored = package_story.authored(story)
+            package_story.compose(authored, authored.get("language") or built_language())
+        except package_story.StoryError as e:
+            raise dp.Refused([f"{STORY_FILE}: {e}"]) from None
+    return Explanation(body, story)
 
 
 def document_of(document_id: str, revision: str, base: str,
@@ -379,15 +405,17 @@ def document_evidence(envelope: dict, out: Path) -> Path:
     return folder
 
 
-def make_architecture(envelope: dict, source: Path, out: Path) -> Made:
+def make_architecture(envelope: dict, source: Path, out: Path, purpose: str) -> Made:
     """JARVIS's projection of the checked revision (language_projection.project,
-    as the brain's publish) around the fresh author's explanation, built and
-    read back as any folder package (make_folder)."""
+    as the brain's publish) around the fresh author's explanation and story,
+    stating the handoff's `purpose`, built and read back as any folder
+    package (make_folder)."""
     from jarvis import language_projection
-    understanding = understanding_in(source)
+    explained = understanding_in(source)
     folder = Path(tempfile.mkdtemp(prefix="projection-", dir=out)) / "architecture"
     try:
-        language_projection.project(envelope, folder, understanding)
+        language_projection.project(envelope, folder, explained.markdown, explained.story,
+                                    purpose, built_language())
     except (ValueError, OSError) as e:
         raise dp.Refused([f"The checked revision cannot be projected: {e}"]) from None
     made = make_folder(folder, out)
@@ -419,6 +447,17 @@ def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
     why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
     if why:
         raise dp.Refused([why])
+    if made.kind == ARCHITECTURE_KIND:
+        # The receiver's gate holds the attached source to the bound
+        # explanation and story; read the zip back as it will.
+        from jarvis import bundle_archive, work_packages
+        try:
+            with bundle_archive.open_archive(made.archive) as z:
+                recognised = work_packages.recognise(z, bundle_archive.list_members(z))
+        except bundle_archive.ArchiveError as e:
+            raise dp.Refused([f"JARVIS would refuse the zip: {e}"]) from None
+        if recognised.manifest is None:
+            raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
     return claim
 
 
@@ -537,9 +576,10 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         if args.check_only and args.document:
             # The author's own check of its explanation; the factory projects
             # and checks the revision around it once the author is done.
-            understanding_in(source)
-            print(f"The explanation is right: {source.name}/UNDERSTANDING.md, for architecture "
-                  f"document {args.document} revision {args.revision}.")
+            explained = understanding_in(source)
+            told = f" and {source.name}/{STORY_FILE}" if explained.story is not None else ""
+            print(f"The explanation is right: {source.name}/UNDERSTANDING.md{told}, for "
+                  f"architecture document {args.document} revision {args.revision}.")
             print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
@@ -580,7 +620,10 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                                         session=args.session, work=args.work, workflow=args.workflow,
                                         document=document)
         if envelope is not None:
-            made = make_architecture(envelope, source, out)
+            # The package states the handoff's purpose: the originating
+            # session's, never the author's (it is bound in canonical.json).
+            made = make_architecture(envelope, source, out,
+                                     package_author.read_handoff(args.handoff)["purpose"])
         else:
             check_vote(source, args.work)
             made = make_folder(source, out) if source.is_dir() else make_deck(source, out)

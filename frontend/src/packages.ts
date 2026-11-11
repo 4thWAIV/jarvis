@@ -41,10 +41,26 @@ import { createStore } from "./store";
 import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
 
-/** The standard vote's answer: Got it, or I have questions with his words. */
+/** What a page asks in the view's head (package_inbox.page_vote): the
+ *  standard vote's answer (Got it, or I have questions with his words;
+ *  `question` is null when it carries none), and the questions its story
+ *  declares, each with whether it applies yet and his answer. */
 export interface PageVote {
-  question: string;
+  question: string | null;
   answer: "got-it" | "questions" | "later" | "none" | null;
+  note: string;
+  asks?: HeaderQuestion[];
+}
+
+export interface HeaderQuestion {
+  id: string;
+  question: string;
+  context: string;
+  options: { id: string; name: string; says: string }[];
+  recommended: string;
+  /** Asked only once another question has one of its answers (asks_when). */
+  applies: boolean;
+  answer: string | null;
   note: string;
 }
 
@@ -262,6 +278,27 @@ export async function tellStory(id: string, action: "tell" | "resume" | "stop",
 /** Where its entry is served, to its frame. */
 export function entryUrl(info: PackageInfo): string {
   return packageFileUrl(info, info.entry ?? "");
+}
+
+/** What a package asks in its head now, as the server reads it again after
+ *  an answer (a follow-up may apply once its parent is answered). */
+export async function packageVote(id: string): Promise<PageVote | null> {
+  const list = (await answer<{ packages: PackageInfo[] }>(await fetch("/api/packages"))).packages;
+  return list.find((p) => p.id === id)?.vote ?? null;
+}
+
+/** A package's Markdown member, read through the same route as its frame's
+ *  files: for an architecture package, through the canonical gate at its
+ *  exact revision (language_projection.checked_member). The text, or an
+ *  Error saying why not. */
+export async function readPackageText(info: PackageInfo, relative: string,
+                                      signal?: AbortSignal): Promise<string> {
+  const response = await fetch(packageFileUrl(info, relative), { signal });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(String(body.error ?? `the server answered ${response.status}`));
+  }
+  return response.text();
 }
 
 export function packageFileUrl(info: PackageInfo, relative: string): string {

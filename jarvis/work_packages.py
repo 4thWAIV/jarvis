@@ -319,7 +319,17 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
             if member is None:
                 raise ValueError(f"The architecture package is missing {name}.")
             return bundle_archive.read_member(archive, member, limit=PAGE_FILE_MAX_BYTES)
-        gate(read_architecture, communication)
+        # The fresh author's source the zip carries (author_proof.attach),
+        # by its path under .jarvis/author/: the gate holds it to the
+        # explanation and story the canonical revision binds.
+        author = None
+        if isinstance(communication, dict) and communication.get("kind") == "architecture":
+            from jarvis.author_proof import FOLDER
+            prefix = f"{root}{'/'.join(FOLDER)}/"
+            author = {path[len(prefix):]: bundle_archive.read_member(
+                          archive, member, limit=PAGE_FILE_MAX_BYTES)
+                      for path, member in files.items() if path.startswith(prefix)}
+        gate(read_architecture, communication, author)
     except (ValueError, OSError, bundle_archive.ArchiveError) as e:
         return Recognition(None, root, f"Architecture publication refused: {e}")
     for key, named in manifest.named_files().items():
