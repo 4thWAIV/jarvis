@@ -2403,6 +2403,15 @@ TOOL_SPECS = [
             "required": ["seed", "action"]},
     },
     {
+        "name": "folder_document_counts",
+        "description": (
+            "How many documents of each registered folder the knowledge engine holds, by folder "
+            "id (names from list_folders): items, and of them embedded and waiting for their "
+            "vectors. The same counts the Folders view shows. Says when the engine is off or "
+            "down instead."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "knowledge_indexes",
         "description": (
             "The extra indexes the knowledge engine made or would make to answer common "

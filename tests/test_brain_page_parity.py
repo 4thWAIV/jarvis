@@ -149,7 +149,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
-                 "knowledge_indexes", "knowledge_seeds", "embedding_model")
+                 "knowledge_indexes", "knowledge_seeds", "embedding_model", "folder_document_counts")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):

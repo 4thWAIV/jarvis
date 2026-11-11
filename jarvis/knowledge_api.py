@@ -16,6 +16,7 @@ section 13), so page and voice do exactly the same thing.
 | `seeds`         | GET  /api/knowledge/seeds              | knowledge_seeds     | read            |
 | `work_context`  | POST /api/knowledge/context            | work_context        | read, walled    |
 | `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
+| `folder_counts` | GET  /api/knowledge/folder-counts      | folder_document_counts | read         |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
 is off or down they refuse with `Unavailable`, and the brain answers from
@@ -27,13 +28,17 @@ Passages carry their trust; whoever shows them to the brain walls them.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+import time
+from typing import Any, Callable, Iterable, Optional
 
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
 RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path", "at"]
 SEARCH_DEADLINE_SEC = 0.5
+FOLDER_COUNTS_DEADLINE_SEC = 2.0
+FOLDER_COUNTS_MAX = 500
+TIM = "tim"
 
 
 class Unavailable(RuntimeError):
@@ -74,6 +79,12 @@ class Context:
             raise Unavailable(f"the knowledge engine did not answer: {e}") from e
         except knowledge_client.KnowledgeRefused as e:
             raise Refused(str((e.payload or {}).get("detail") or (e.payload or {}).get("error") or e)) from e
+
+    def uds(self, deadline: float = SEARCH_DEADLINE_SEC):
+        """The UDS interface over the running engine's transport, for calls
+        made as a `Caller` (uds.py); raises `Unavailable` as `client` does."""
+        from jarvis.knowledge.uds import EngineUDS
+        return EngineUDS(self.client().transport, deadline=deadline)
 
     def wake_ingest(self) -> None:
         rt = self.runtime
@@ -120,6 +131,42 @@ def install_embedding_model(ctx: Context) -> dict:
     from jarvis import embedding_models
     embedding_models.start_install()
     return embedding_model(ctx)
+
+
+def _active_folder_ids() -> list[str]:
+    from jarvis import folder_store
+    return [f.id for f in folder_store.FolderStore().list(limit=FOLDER_COUNTS_MAX)]
+
+
+def folder_counts(ctx: Context, folder_ids: Optional[Iterable[str]] = None,
+                  deadline: float = FOLDER_COUNTS_DEADLINE_SEC) -> dict:
+    """Each active registered folder's document count in the engine, read
+    as Tim through `EngineUDS.count` under `/folders/<folder id>`: `items`
+    (each file once), `embedded` and `waiting` (its vectors). One request a
+    folder, all within `deadline`; a folder not reached by then is left out
+    and the answer says `partial`. The engine switched off or down is said
+    (`available` false and why), never raised, so the Folders view is never
+    failed by it."""
+    from jarvis.knowledge.uds import Caller
+    from jarvis.knowledge_client import EngineUnavailable
+    ids = list(_active_folder_ids() if folder_ids is None else folder_ids)
+    try:
+        uds = ctx.uds()
+    except Unavailable as e:
+        return {"available": False, "reason": str(e), "folders": {}}
+    caller, ends = Caller(TIM), time.monotonic() + deadline
+    out: dict[str, dict] = {}
+    for fid in ids:
+        left = ends - time.monotonic()
+        if left <= 0:
+            return {"available": True, "partial": True, "folders": out}
+        uds.deadline = min(SEARCH_DEADLINE_SEC, left)
+        try:
+            c = uds.count(caller, under=f"/folders/{fid}")
+        except (EngineUnavailable, ValueError) as e:
+            return {"available": False, "reason": f"the knowledge engine did not answer: {e}", "folders": {}}
+        out[fid] = {"items": c.items, "embedded": c.embedded, "waiting": c.waiting}
+    return {"available": True, "partial": False, "folders": out}
 
 
 def _hits(answer: dict) -> list[dict]:

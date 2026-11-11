@@ -20,6 +20,7 @@ is followed by a `knowledge` hint on /ws/sessions (`on_change`).
   POST /api/knowledge/context        {purpose, project, include_received}: the pack
   GET  /api/knowledge/embedder       the embedding model: installed, runnable, embedded so far
   POST /api/knowledge/embedder/install   download, check and install it (in the background)
+  GET  /api/knowledge/folder-counts  each registered folder's document count; never 503 (`available`)
 """
 from __future__ import annotations
 
@@ -136,6 +137,9 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
     async def embedder():
         return await run(lambda: ka.embedding_model(ctx))
 
+    async def folder_counts():
+        return await run(lambda: ka.folder_counts(ctx))
+
     async def install_embedder():
         try:
             return JSONResponse(ka.install_embedding_model(ctx))
@@ -143,6 +147,7 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
 
     app.add_api_route(f"{PREFIX}/embedder", embedder, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/folder-counts", folder_counts, methods=["GET"])
     app.add_api_route(f"{PREFIX}/embedder/install", install_embedder, methods=["POST"])
     app.add_api_route(f"{PREFIX}/context", context, methods=["POST"])
     app.add_api_route(f"{PREFIX}/seeds", seeds, methods=["GET"])

@@ -10,7 +10,9 @@
  * was last checked; a discovered row shows the path, which sessions named
  * it and Register and Ignore. Discovered folders are never mixed into the
  * catalog, and seeing one grants nothing. No project counts: projects come
- * in a later release.
+ * in a later release. A registered row also says how many of its documents
+ * the knowledge engine holds and how many wait for their vectors
+ * (`folderCounts`, requirement 41 ui-top-folders-count), and nothing more.
  *
  * Everything comes from folders.ts, the same store the right panel's
  * Folders tab reads, and the selection is shared with it. The view stays
@@ -23,7 +25,7 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { FolderDetail } from "./FolderDetail";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
-  availabilityWords, candidateAction, candidates, catalog, folderRefusal, matches, nodeWords,
+  availabilityWords, candidateAction, candidates, catalog, folderCounts, folderRefusal, matches, nodeWords,
   PROVIDER_WORDS, readerWords, registerFolder, resolvePath, ROLES, roleWords, selectedFolder,
   type Availability, type Candidate, type Folder, type Resolved, type Role,
 } from "./folders";
@@ -109,11 +111,27 @@ function CatalogRow({ f, selected }: { f: Folder; selected: boolean }) {
               {...bindingProps(bind("folders.open", { folderId: f.id }))}>
         <RoleMark role={f.role} />
         <span className="folder-row-name" title={f.location.canonical_path} ref={ui.part("name")}>{f.display_name}</span>
-        <span className="folder-row-node">{nodeWords(f)}</span>
+        <span className="folder-row-node">{nodeWords(f)}<DocumentCount folderId={f.id} /></span>
         <AvailabilityMark availability={f.location.availability} ref={ui.part("availability")} />
         <span className="folder-row-seen">{t("main.folders.checked", { when: ago(f.location.last_checked_at) })}</span>
       </button>
     </li>
+  );
+}
+
+/** The folder's document count in the knowledge engine, and how many wait
+ *  for their vectors; nothing while the engine is off, down or has not
+ *  answered. A count and nothing more: the files are not browsed here. */
+function DocumentCount({ folderId }: { folderId: string }) {
+  const t = useT();
+  const live = useSyncExternalStore(folderCounts.subscribe, folderCounts.get);
+  const c = live.value?.available ? live.value.folders[folderId] : undefined;
+  if (!c) return null;
+  return (
+    <span className="folder-row-documents" data-folder-documents={c.items}>
+      {" · "}{t("main.folders.documents", { count: c.items })}
+      {c.waiting > 0 ? <> · {t("main.folders.documentsWaiting", { count: c.waiting })}</> : null}
+    </span>
   );
 }
 
