@@ -218,31 +218,66 @@ class Predicate:
     def ranges(self, fid: int, date: bool) -> Optional[list[tuple[bytes, Optional[bytes]]]]:
         """Key ranges of the general index this predicate selects from, or
         None when the index cannot answer it."""
+        plan = self.index_plan(fid, date)
+        return None if plan is None else plan[0]
+
+    def index_plan(self, fid: int, date: bool) -> Optional[tuple[list, bool]]:
+        """The key ranges this predicate selects from, and whether the
+        documents they name are exactly the ones it matches (no document
+        need be read to check), or None when the index cannot answer it.
+
+        Exact: `exists`; `=`, `in` and ranges on a number (below 2^53, where
+        float64 is exact), a bool or null; `=`, `in` and ranges on text whose
+        fold is shorter than `encoding.STRING_MAX` bytes, and `prefix` on
+        text whose fold fits in it (a cut key is a prefix of the value it
+        was cut from). A string range ends exactly at the string (never at
+        every string it begins), so `> "ab"` finds "abc"."""
         base = FID.pack(fid)
         if self.op == "!=" or (self.op == "exists" and self.value is False):
             return None
         if self.op == "exists":
-            return [(base, FID.pack(fid + 1))]
+            return [(base, FID.pack(fid + 1))], True
         try:
-            if self.op == "=":
-                k = base + encoding.encode_value(self.value, date=date)
-                return [(k, k + b"\x00")]
-            if self.op == "in":
-                out = []
-                for x in self.value:
+            if self.op in ("=", "in"):
+                values = self.value if self.op == "in" else [self.value]
+                out, exact = [], not date
+                for x in values:
                     k = base + encoding.encode_value(x, date=date)
                     out.append((k, k + b"\x00"))
-                return out
+                    exact = exact and _exact_value(x)
+                return out, exact
             if self.op == "prefix":
-                start = base + bytes([encoding.STRING]) + encoding.fold_string(str(self.value))
-                return [(start, prefix_end(start))]
+                if not isinstance(self.value, str):
+                    return [], True                      # a prefix of text only
+                folded = encoding.fold_string(self.value)
+                start = base + bytes([encoding.STRING]) + folded
+                return [(start, prefix_end(start))], len(spoken_words.fold(self.value).encode()) <= encoding.STRING_MAX
+            if self.value is None or isinstance(self.value, bool):
+                return [], True                          # null and bools have no order
             enc = encoding.encode_value(self.value, date=date)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         lo, hi = base + bytes([enc[0]]), base + bytes([enc[0] + 1])
         k = base + enc
-        return [{"<": (lo, k), "<=": (lo, prefix_end(k)), ">": (prefix_end(k), hi),
-                 ">=": (k, hi)}[self.op]]
+        if enc[0] == encoding.STRING and encoding.is_cut(enc[1:]):
+            # The query itself is cut: take every key that might hold it,
+            # and check each document.
+            wide = {"<": (lo, prefix_end(k)), "<=": (lo, prefix_end(k)), ">": (k, hi), ">=": (k, hi)}
+            return [wide[self.op]], False
+        after = k + b"\x00"
+        return [{"<": (lo, k), "<=": (lo, after), ">": (after, hi), ">=": (k, hi)}[self.op]], \
+            not date and _exact_value(self.value)
+
+
+def _exact_value(x) -> bool:
+    """Whether a value's index key names exactly the documents equal to it."""
+    if x is None or isinstance(x, bool):
+        return True
+    if isinstance(x, (int, float)):
+        return abs(x) < 2 ** 53
+    if isinstance(x, str):
+        return not encoding.is_cut(encoding.fold_string(x))
+    return False
 
 
 class DocumentStore:
@@ -531,6 +566,43 @@ class DocumentStore:
                         out.add(o)
             return out
         return estimate, build
+
+    def answer(self, pred: Predicate, kind_names: Optional[list[str]]) -> Optional[tuple[set[int], bool]]:
+        """The live documents the general index names for one condition,
+        and whether they are exactly the ones meeting it (see
+        `Predicate.index_plan`); None when the index cannot answer it.
+        Nothing is decoded."""
+        if not self._usable(pred, kind_names):
+            return None
+        fid = self.fields.get(pred.path)
+        if fid is None:
+            if self.fields_full or pred.op == "!=" or (pred.op == "exists" and pred.value is False):
+                return None
+            return set(), True                     # nobody has ever had this field
+        plan = pred.index_plan(fid, self._is_date(pred, kind_names))
+        if plan is None:
+            return None
+        ranges, exact = plan
+        return (self._range_sources(ranges)[1]() if ranges else set()), exact
+
+    def by_key(self, start: bytes, end: Optional[bytes]) -> dict[bytes, set[int]]:
+        """Every general index key in [start, end) with the live documents
+        it names (only entries from the generation holding each document's
+        newest version, or the unflushed ones). Nothing is decoded."""
+        src = self.columns.src
+        out: dict[bytes, set[int]] = {}
+        for gen, seg in self.store.derived(IDX):
+            for v in seg.scan(start, end):
+                live = {o for o in postings.Postings(v.value).ordinals() if o < len(src) and src[o] == gen}
+                if live:
+                    out.setdefault(v.key, set()).update(live)
+        with self._lock:
+            for k, group in self.mem_index.items():
+                if k >= start and (end is None or k < end):
+                    live = {o for o in group if o < len(src) and src[o] == MEM}
+                    if live:
+                        out.setdefault(k, set()).update(live)
+        return out
 
     def candidates(self, preds: list[Predicate], kind_names: Optional[list[str]]) -> Optional[set[int]]:
         """Probe and intersect: the smallest usable posting set, or None
