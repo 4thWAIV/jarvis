@@ -200,16 +200,17 @@ def test_a_state_change_is_stored_and_reported_as_a_change(wired):
     assert store.list_agents()[0]["state"] == "working"
 
 
-def test_an_older_agents_table_gains_the_state_column(wired):
+def test_an_older_agent_record_gains_the_state(wired):
+    """An agent written before the later fields (state, his name, when it
+    was last messaged, when it ended) reads with their defaults, and the
+    next sync fills its state."""
     _server, store = wired
-    import sqlite3
-    from contextlib import closing
-    with closing(store._connect()) as conn:
-        conn.execute("DROP TABLE agents")
-        conn.execute("CREATE TABLE agents (session_id TEXT PRIMARY KEY, "
-                     "name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0)")
-        conn.commit()
-    store.init_db()
+    from jarvis import agent_record, records
+    records.write(agent_record.agent_path("s1"), {
+        **agent_record.new_agent("s1"), "agent": {"name": "hammer", "active": 0}})
+    agent_record.CACHE.forget()
+    assert store.list_agents() == [{"session_id": "s1", "name": "hammer", "active": False,
+                                    "state": ""}]
     store.sync_agents({"s1": ("hammer", "needs_you")})
     assert store.list_agents()[0]["state"] == "needs_you"
 
@@ -340,8 +341,10 @@ def test_busy_agents_come_first_then_the_most_recently_messaged(wired, monkeypat
     assert [a["name"] for a in store.list_agents()] == \
         ["bravo", "delta", "alpha", "charlie", "echo"]
 
+    import itertools
     import time as _time
-    clock = iter([1000.0, 2000.0])
+    # A clock that only goes forward (the record's engine reads it too).
+    clock = itertools.count(1000.0, 1000.0)
     monkeypatch.setattr(_time, "time", lambda: next(clock))
     store.mark_agent_messaged("c")       # idle, messaged first
     store.mark_agent_messaged("d")       # busy, messaged later

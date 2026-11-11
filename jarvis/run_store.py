@@ -459,21 +459,25 @@ def record_steer(session_id: str, voice_name: str, project: str,
                  prompt: str, outcome: str) -> None:
     """Every keystroke, Terminal command and refused send attempt is
     recorded, including the refused ones — 'did you send that?' must have an
-    answer. A message itself is a `messages` row instead (create_message)."""
-    with closing(_connect()) as conn:
-        conn.execute(
-            "INSERT INTO steers (session_id, voice_name, project, prompt, outcome, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, voice_name, project, prompt, outcome, time.time()))
-        conn.commit()
+    answer. A message itself is a message record instead (create_message).
+    Each is one of the `steers` of its session's agent document
+    (agent_record.py; a session not named, the document of the empty id)."""
+    from jarvis import agent_record
+    row = {"id": None, "session_id": session_id, "voice_name": voice_name, "project": project,
+           "prompt": prompt, "outcome": outcome, "created_at": time.time()}
+
+    def run(w) -> None:
+        w.agent(session_id)["steers"].append(dict(row))
+        w.changed(agent_record.agent_path(session_id), "steer")
+    agent_record.change(run)
 
 
 def list_steers(limit: int = 50) -> list[dict]:
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM steers ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [dict(r) for r in rows]
+    """The latest steers across every agent, newest first."""
+    from jarvis import agent_record
+    rows = [s for _p, d in agent_record.CACHE.docs(".agent") for s in d.get("steers") or ()]
+    rows.sort(key=lambda s: (s["created_at"], s["id"] is None, s["id"] or 0), reverse=True)
+    return [{f: s.get(f) for f in agent_record.STEER_FIELDS} for s in rows[:limit]]
 
 
 # --- Messages ----------------------------------------------------------------
@@ -800,10 +804,31 @@ def mark_session_message_read(message_id: int) -> None:
 
 
 # --- Agents ----------------------------------------------------------------
+#
+# Each agent is the `agent` field of its session's agent document
+# (agent_record.py: `/agents/<session id>.agent`, which also holds its keys,
+# rights and steers); None while the session is not on the list. Every read
+# is answered from agent_record.CACHE (agent_names is read every second),
+# every change is one atomic write through agent_record.change.
 
-def _agent_row(row) -> dict:
-    return {"session_id": row["session_id"], "name": row["name"],
-            "active": bool(row["active"]), "state": row["state"]}
+def _agent_row(session_id: str, agent: dict) -> dict:
+    return {"session_id": session_id, "name": agent["name"],
+            "active": bool(agent.get("active")), "state": agent.get("state") or ""}
+
+
+def _listed() -> list[tuple[str, dict]]:
+    """(session id, agent) of every agent on the list, running or ended."""
+    from jarvis import agent_record
+    return [(d["session_id"], d["agent"]) for _p, d in agent_record.CACHE.docs(".agent")
+            if d.get("agent") is not None]
+
+
+def _nocase(text: str) -> str:
+    """SQLite's NOCASE and lower(): ASCII letters folded, nothing else."""
+    return text.translate(_ASCII_LOWER)
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 # How long a stopped session's agent is kept for a resume to find it.
@@ -816,7 +841,7 @@ AGENT_ENDED_KEEP_SEC = 30 * 24 * 3600
 # gets its plain name the next time it is seen running; nothing else ever
 # replaces a stored name (sync_agents).
 # One line only: a stored name with a line break in it is not one of them.
-_ONE_LINE = r"[^\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]+"
+_ONE_LINE = r"[^\r\n\v\f\x1c\x1d\x1e\x85  ]+"
 _MADE_UP_NAME = re.compile(
     rf"the (newer|older|newest|second|third|fourth|fifth) {_ONE_LINE}"
     rf"|the {_ONE_LINE} (that needs you|that's working|that's idle|"
@@ -824,6 +849,36 @@ _MADE_UP_NAME = re.compile(
     r"in an unclear state)"
     rf"|{_ONE_LINE}, the {_ONE_LINE} one"
     rf"|{_ONE_LINE} number \d+")
+
+
+def _sync_one(agent: Optional[dict], running: Optional[tuple[str, str]], now: float) -> tuple:
+    """What sync_agents does to one agent: (its new `agent` field, what
+    changed: added, renamed, changed, ended, forgotten or None)."""
+    if agent is None:
+        if running is None:
+            return None, None
+        name, state = running
+        return {"name": name, "active": 0, "state": state, "custom_name": None,
+                "last_message_at": 0.0, "ended_at": None}, "added"
+    agent = dict(agent)
+    if running is None:
+        if agent.get("ended_at") is None:
+            agent["ended_at"] = float(now)
+            return agent, "ended"
+        if agent["ended_at"] < now - AGENT_ENDED_KEEP_SEC:
+            return None, "forgotten"
+        return agent, None
+    name, state = running
+    what = None
+    if not agent.get("custom_name") and _MADE_UP_NAME.fullmatch(agent.get("name") or "") \
+            and name != agent.get("name"):
+        agent["name"] = name
+        what = "renamed"
+    if agent.get("state", "") != state or agent.get("ended_at") is not None:
+        agent["state"] = state
+        agent["ended_at"] = None
+        what = what or "changed"
+    return agent, what
 
 
 def sync_agents(running: dict[str, tuple[str, str]], now: float | None = None) -> bool:
@@ -841,34 +896,38 @@ def sync_agents(running: dict[str, tuple[str, str]], now: float | None = None) -
     plain name. A known one has its state refreshed. One that is no longer
     running is marked ended, not removed: the same session resumed (same
     session id) comes back with its name and activation. Ended ones are
-    dropped after AGENT_ENDED_KEEP_SEC. Returns whether the running list
-    changed, so the caller only tells the pages when it did.
+    dropped after AGENT_ENDED_KEEP_SEC (the document itself only when nothing
+    else is in it). Returns whether the running list changed, so the caller
+    only tells the pages when it did. Called every poll: nothing is written
+    when nothing changed.
     """
+    from jarvis import agent_record
     now = time.time() if now is None else now
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT session_id, name, state, custom_name, ended_at FROM agents").fetchall()
-        known = {r["session_id"]: (r["name"], r["state"]) for r in rows}
-        stopped = {r["session_id"] for r in rows if r["ended_at"] is not None}
-        made_up = {r["session_id"] for r in rows
-                   if not r["custom_name"] and _MADE_UP_NAME.fullmatch(r["name"] or "")}
-        added = [(sid, name, state) for sid, (name, state) in running.items()
-                 if sid not in known]
-        renamed = [(name, sid) for sid, (name, _state) in running.items()
-                   if sid in made_up and name != known[sid][0]]
-        changed = [(state, sid) for sid, (_name, state) in running.items()
-                   if sid in known and (known[sid][1] != state or sid in stopped)]
-        ended = [(now, sid) for sid in known if sid not in running and sid not in stopped]
-        conn.executemany(
-            "INSERT INTO agents (session_id, name, state, active) VALUES (?, ?, ?, 0)",
-            added)
-        conn.executemany("UPDATE agents SET name=? WHERE session_id=?", renamed)
-        conn.executemany(
-            "UPDATE agents SET state=?, ended_at=NULL WHERE session_id=?", changed)
-        conn.executemany("UPDATE agents SET ended_at=? WHERE session_id=?", ended)
-        conn.execute("DELETE FROM agents WHERE ended_at < ?", (now - AGENT_ENDED_KEEP_SEC,))
-        conn.commit()
-    return bool(added or renamed or changed or ended)
+    known = dict(_listed())
+    due = [sid for sid in set(known) | set(running)
+           if _sync_one(known.get(sid), running.get(sid), now)[1] is not None]
+    if not due:
+        return False
+
+    def run(w) -> bool:
+        moved = False
+        for sid in due:
+            path = agent_record.agent_path(sid)
+            doc = w.agent(sid, create=sid in running)
+            if doc is None:
+                continue
+            agent, what = _sync_one(doc.get("agent"), running.get(sid), now)
+            if what is None:
+                continue
+            moved = moved or what != "forgotten"
+            doc["agent"] = agent
+            if what == "forgotten" and not (doc["keys"] or doc["rights"] or doc["author_proofs"]
+                                            or doc["steers"]) and not agent_record.has_events(path):
+                w.delete(path, change="agent_forgotten")
+            else:
+                w.changed(path, "agent_" + what)
+        return moved
+    return agent_record.change(run)
 
 
 # The states that count as busy: doing something, or waiting on the user.
@@ -879,32 +938,43 @@ BUSY_AGENT_STATES = ("working", "needs_you", "background")
 def list_agents() -> list[dict]:
     """In order of activity: busy agents above idle ones, and within each,
     the one most recently sent a message first, then by name."""
-    busy = ", ".join("?" * len(BUSY_AGENT_STATES))
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM agents WHERE ended_at IS NULL ORDER BY (state IN ({busy})) DESC, "
-            "last_message_at DESC, name COLLATE NOCASE", BUSY_AGENT_STATES).fetchall()
-    return [_agent_row(r) for r in rows]
+    rows = [(sid, a) for sid, a in _listed() if a.get("ended_at") is None]
+    rows.sort(key=lambda r: (r[1].get("state") not in BUSY_AGENT_STATES,
+                             -(r[1].get("last_message_at") or 0.0), _nocase(r[1]["name"])))
+    return [_agent_row(sid, a) for sid, a in rows]
+
+
+def _change_agent(session_id: str, change: str, fn, running_only: bool = False,
+                  his: bool = False) -> Optional[dict]:
+    """`fn(agent)` changes one listed agent in place; the agent's row
+    after, or None when it is not on the list (with `running_only`, or has
+    ended)."""
+    from jarvis import agent_record
+
+    def run(w) -> Optional[dict]:
+        doc = w.agent(session_id, create=False)
+        agent = None if doc is None else doc.get("agent")
+        if agent is None or (running_only and agent.get("ended_at") is not None):
+            return None
+        fn(agent)
+        w.changed(agent_record.agent_path(session_id), change)
+        return _agent_row(session_id, agent)
+    return agent_record.change(run, by=agent_record.records.TIM if his else agent_record.records.JARVIS)
 
 
 def mark_agent_messaged(session_id: str) -> None:
     """JARVIS has just sent this agent a message: it moves up its group."""
-    with closing(_connect()) as conn:
-        conn.execute("UPDATE agents SET last_message_at=? WHERE session_id=?",
-                     (time.time(), session_id))
-        conn.commit()
+    now = time.time()
+    _change_agent(session_id, "agent_messaged",
+                  lambda a: a.update(last_message_at=float(now)))
 
 
 def set_agent_active(session_id: str, active: bool) -> dict | None:
     """The user activating or deactivating one agent. None if it is not in
     the list (it has ended, or was never seen)."""
-    with closing(_connect()) as conn:
-        conn.execute("UPDATE agents SET active=? WHERE session_id=? AND ended_at IS NULL",
-                     (int(bool(active)), session_id))
-        conn.commit()
-        row = conn.execute("SELECT * FROM agents WHERE session_id=? AND ended_at IS NULL",
-                           (session_id,)).fetchone()
-    return _agent_row(row) if row else None
+    return _change_agent(session_id, "agent_activated" if active else "agent_deactivated",
+                         lambda a: a.update(active=int(bool(active))), running_only=True,
+                         his=True)
 
 
 class DuplicateAgentName(ValueError):
@@ -917,31 +987,29 @@ def agent_names() -> dict[str, str]:
     `_MADE_UP_NAME`). The one field an agent's name is read from: the session
     snapshot goes by it (session_watch.Snapshot.named), so every screen,
     record and lookup says the same name."""
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT session_id, name, custom_name FROM agents").fetchall()
     # A made-up label stored before names were made one is not a name: the
     # snapshot keeps the plain derived name, and sync_agents stores it.
-    return {r["session_id"]: r["name"] for r in rows
-            if r["custom_name"] or not _MADE_UP_NAME.fullmatch(r["name"] or "")}
+    return {sid: a["name"] for sid, a in _listed()
+            if a.get("custom_name") or not _MADE_UP_NAME.fullmatch(a.get("name") or "")}
 
 
 def rename_agent(session_id: str, new_name: str) -> dict | None:
     """Set an agent's official name. None if there is no such agent;
     DuplicateAgentName if another agent already has that name (compared
     without regard to case, since names are spoken)."""
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM agents WHERE session_id=?",
-                           (session_id,)).fetchone()
-        if row is None:
+    from jarvis import agent_record
+
+    def run(w) -> Optional[dict]:
+        doc = w.agent(session_id, create=False)
+        if doc is None or doc.get("agent") is None:
             return None
-        clash = conn.execute(
-            "SELECT 1 FROM agents WHERE session_id != ? AND lower(name) = lower(?)",
-            (session_id, new_name)).fetchone()
-        if clash:
-            raise DuplicateAgentName(new_name)
-        conn.execute("UPDATE agents SET custom_name=?, name=? WHERE session_id=?",
-                     (new_name, new_name, session_id))
-        conn.commit()
-        row = conn.execute("SELECT * FROM agents WHERE session_id=?",
-                           (session_id,)).fetchone()
-    return _agent_row(row)
+        wanted = _nocase(new_name)
+        for rec in w.scan(agent_record.AGENTS, parent=agent_record.AGENTS, types=["agent"]):
+            other = rec.data.get("agent")
+            if rec.data.get("session_id") != session_id and other is not None \
+                    and _nocase(other.get("name") or "") == wanted:
+                raise DuplicateAgentName(new_name)
+        doc["agent"].update(custom_name=new_name, name=new_name)
+        w.changed(agent_record.agent_path(session_id), "agent_renamed")
+        return _agent_row(session_id, doc["agent"])
+    return agent_record.change(run, by=agent_record.records.TIM)
