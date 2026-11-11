@@ -97,9 +97,9 @@ def _same_files(found: list[wire.AttachmentRef], approved: list[wire.AttachmentR
 
 class MessageApprovals:
     """The production `ApprovalGuard` over the messaging store and the file
-    snapshots. It has no table of its own: the approval record and the
-    envelope it releases live in the store's approved table, written in one
-    transaction with the send record (`save_approved`)."""
+    snapshots. It has no record of its own: the approval record and the
+    envelope it releases live in the message's document (`approved`),
+    written in one atomic write with the send record (`save_approved`)."""
 
     def __init__(self, store: ports.LocalMessagingStore, snapshots: ports.AttachmentSnapshots,
                  *, ids: ports.IdSource, clock: ports.Clock,
