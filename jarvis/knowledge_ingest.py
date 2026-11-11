@@ -14,18 +14,19 @@ One adapter per source, each built on a reader that already exists:
 
 | source        | read through                          | trust                                   |
 |---------------|---------------------------------------|-----------------------------------------|
-| notes         | the brain's memory, journal, projects | own                                     |
+| topics        | knowledge_links (topic nodes, links)  | own                                     |
 | conversation  | conversation_log (a change feed by id)| his words and his captures own; JARVIS's turns untrusted until the log records a turn's taint; agents' words and notices untrusted |
 | runs          | run_store                             | the prompt own; summary and result untrusted (an agent's words) |
 | workflows     | workflow_store events (by seq)        | untrusted (a session's report)          |
-| folders       | folder_service under the FILES reader | own                                     |
+
+The brain's notes and the registered folders are no longer read here: they
+are files, indexed in place as items at their paths by the content child
+(knowledge_content.py, UDS round 2), watched rather than walked again.
 
 Messages to and from sessions are in the conversation log already, so they
-are read there once. Each source's position (an id, a seq, or a ledger of
-file sizes and times, hashing only what moved) is a watermark the engine
-keeps durably in the same transaction as the documents it produced, so a
-pass after any downtime catches up exactly. A file gone or no longer
-readable is forgotten.
+are read there once. Each source's position (an id or a seq) is a
+watermark the engine keeps durably in the same transaction as the
+documents it produced, so a pass after any downtime catches up exactly.
 
 Documents and chunks: a document is keyed by the hash of its source
 reference; its chunks by the hash of (source, span, text), so unchanged text
@@ -60,8 +61,6 @@ PASS_SECONDS = 20.0
 PASS_BYTES = 64 << 20
 CHUNK_MAX = 1000
 OVERLAP_MAX = 200
-FILE_MAX_BYTES = 512 << 10
-FOLDER_FILES_MAX = 400
 CONVERSATION_BATCH = 200
 DOC_BATCH = 20
 
@@ -338,75 +337,6 @@ class Adapter:
         raise NotImplementedError
 
 
-def _read_note(path: Path) -> Optional[str]:
-    """One note, never through a link, at most FILE_MAX_BYTES."""
-    try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError:
-        return None
-    try:
-        info = os.fstat(fd)
-        if not (info.st_mode & 0o170000 == 0o100000) or info.st_size > FILE_MAX_BYTES:
-            return None
-        return os.read(fd, FILE_MAX_BYTES).decode("utf-8", "replace")
-    finally:
-        os.close(fd)
-
-
-class Ledgered(Adapter):
-    """Files followed by a ledger of (size, modified): only a file that moved
-    is read and hashed; one that is gone is forgotten."""
-
-    def files(self) -> Iterator[tuple[str, Callable[[], Optional[str]], int, float, str, str]]:
-        """(ledger key, read, size, modified, source, label)."""
-        raise NotImplementedError
-
-    def run(self, writer: Writer, mark: dict, budget: Budget) -> bool:
-        ledger: dict = dict(mark.get("files") or {})
-        seen = set()
-        for key, read, size, modified, source, label in self.files():
-            seen.add(key)
-            if ledger.get(key, [None, None])[:2] == [size, modified]:
-                continue
-            if budget.spent:
-                return True
-            text = read()
-            if text is None:
-                continue
-            budget.spend(len(text))
-            ledger[key] = [size, modified, source]
-            writer.put(Item(source, label, "own", text, path=key.split(":", 1)[-1], modified=modified),
-                       {self.name: {"files": ledger}})
-        gone = [k for k in ledger if k not in seen]
-        if gone:
-            sources = [ledger[k][2] for k in gone if len(ledger[k]) > 2]
-            for k in gone:
-                del ledger[k]
-            writer.forget(sources, {self.name: {"files": ledger}})
-        return False
-
-
-class Notes(Ledgered):
-    name = "notes"
-
-    def files(self):
-        home = data_paths.brain_home()
-        for folder in ("memory", "journal", "projects"):     # topics: the Topics adapter
-            base = home / folder
-            if not base.is_dir() or base.is_symlink():
-                continue
-            for path in sorted(base.glob("*.md")):
-                if path.is_symlink():
-                    continue
-                try:
-                    info = path.stat()
-                except OSError:
-                    continue
-                rel = f"{folder}/{path.name}"
-                yield (f"note:{rel}", lambda p=path: _read_note(p), info.st_size, info.st_mtime,
-                       jref("note", folder, path.name), rel)
-
-
 class Topics(Adapter):
     """Topic files (knowledge_links): each a topic document with its aliases
     and status, its words as a document of chunks, and the links he asserted
@@ -450,97 +380,6 @@ class Topics(Adapter):
         writer.call("POST", "/v1/txn", {"watermarks": {self.name: {"digest": digest}}})
         writer.stats.documents += len(found)
         return False
-
-
-class Folders(Ledgered):
-    """Registered folders read under the FILES reader through the folder
-    service: README*, CLAUDE.md and AGENTS.md at the root, Markdown to depth
-    two and everything under docs/, each under FILE_MAX_BYTES, at most
-    FOLDER_FILES_MAX a folder."""
-    name = "folders"
-
-    def __init__(self, service=None) -> None:
-        self.service = service
-
-    def _service(self):
-        if self.service is None:
-            from jarvis import folder_service, folder_store
-            self.service = folder_service.FolderService(folder_store.FolderStore(), data_paths.node_id)
-        return self.service
-
-    @staticmethod
-    def wanted(path: str) -> bool:
-        parts = path.split("/")
-        name = parts[-1]
-        if len(parts) == 1 and (name.upper().startswith("README") or name in ("CLAUDE.md", "AGENTS.md")):
-            return True
-        if not name.lower().endswith(".md"):
-            return False
-        return len(parts) <= 2 or parts[0] == "docs"
-
-    def _walk(self, service, folder_id: str) -> Iterator[dict]:
-        stack = [("", 0)]
-        count = 0
-        while stack:
-            path, depth = stack.pop()
-            cursor = None
-            while True:
-                try:
-                    page = service.entries(folder_id, path=path, cursor=cursor)
-                except Exception:  # noqa: BLE001 - refused or gone: nothing from it
-                    break
-                for e in page["entries"]:
-                    p = e["path"]
-                    if e["kind"] == "dir":
-                        if depth < 1 or p.split("/")[0] == "docs" and depth < 8:
-                            stack.append((p, depth + 1))
-                    elif e["kind"] == "file" and self.wanted(p) and (e.get("size") or 0) <= FILE_MAX_BYTES:
-                        count += 1
-                        if count > FOLDER_FILES_MAX:
-                            return
-                        yield e
-                cursor = page.get("next_cursor")
-                if not cursor:
-                    break
-
-    def _read(self, service, folder_id: str, path: str) -> Optional[str]:
-        out, cursor, total = [], None, 0
-        while True:
-            try:
-                window = service.preview(folder_id, path=path, cursor=cursor)
-            except Exception:  # noqa: BLE001
-                return None
-            if window.get("kind") != "text":
-                return None
-            out.append("\n".join(window.get("lines") or []))
-            total += sum(len(x) for x in window.get("lines") or [])
-            cursor = window.get("next_cursor")
-            if not cursor or total > FILE_MAX_BYTES:
-                return "\n".join(out)
-
-    def files(self):
-        service = self._service()
-        cursor = None
-        while True:
-            listing = service.list_folders(cursor=cursor)
-            for f in listing["folders"]:
-                access = f.get("access") or {}
-                if access.get("reader") != "files" or not f["location"].get("local") \
-                        or f["location"].get("availability") != "available":
-                    continue
-                for e in self._walk(service, f["id"]):
-                    path = e["path"]
-                    try:
-                        workspace_ref.check_path(path)
-                    except workspace_ref.RefError:
-                        continue          # a name no reference can carry is not read
-                    yield (f"{f['id']}:{path}",
-                           lambda fid=f["id"], p=path: self._read(service, fid, p),
-                           e.get("size"), e.get("modified"),
-                           jref("folder_file", f["id"], path), f"{f['display_name']}/{path}")
-            cursor = listing.get("next_cursor")
-            if not cursor:
-                return
 
 
 class Conversation(Adapter):
@@ -638,7 +477,7 @@ class Workflows(Adapter):
         return False
 
 
-ADAPTERS: tuple[type[Adapter], ...] = (Notes, Topics, Conversation, Runs, Workflows, Folders)
+ADAPTERS: tuple[type[Adapter], ...] = (Topics, Conversation, Runs, Workflows)
 
 
 def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Optional[Budget] = None,

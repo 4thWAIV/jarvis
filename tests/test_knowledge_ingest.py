@@ -80,43 +80,6 @@ def test_a_line_longer_than_the_cap_is_cut():
     assert all(len(c.text) <= ki.CHUNK_MAX for c in chunks) and len(chunks) == 3
 
 
-# --- notes ---------------------------------------------------------------------
-
-def _note(name, text):
-    path = data_paths.brain_home() / "memory" / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    return path
-
-
-def test_notes_are_read_once_changed_ones_again_and_gone_ones_forgotten(engine):
-    call = caller(engine)
-    _note("denice.md", "# Denice\nThe successor direction, planned.\n")
-    _note("orbs.md", "# Orbs\nThe brain orbs sit in the centre.\n")
-    first = ki.run_pass(call, adapters=only(ki.Notes))
-    assert first.documents == 2 and not first.errors
-    assert keys_matching(engine, "successor")
-    again = ki.run_pass(call, adapters=only(ki.Notes))
-    assert again.documents == 0                                # nothing moved
-    path = _note("denice.md", "# Denice\nNow about parris island.\n")
-    os.utime(path, (time.time() + 5, time.time() + 5))
-    ki.run_pass(call, adapters=only(ki.Notes))
-    assert keys_matching(engine, "successor") == [] and keys_matching(engine, "parris")
-    (data_paths.brain_home() / "memory" / "orbs.md").unlink()
-    gone = ki.run_pass(call, adapters=only(ki.Notes))
-    assert gone.forgotten == 1 and keys_matching(engine, "orbs centre") == []
-
-
-def test_a_linked_note_is_never_read(engine, tmp_path):
-    outside = tmp_path / "secret.md"
-    outside.write_text("private words outside")
-    link = data_paths.brain_home() / "memory" / "link.md"
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(outside)
-    ki.run_pass(caller(engine), adapters=only(ki.Notes))
-    assert keys_matching(engine, "private words outside") == []
-
-
 # --- the conversation log ----------------------------------------------------------
 
 def test_the_conversation_is_followed_by_id_with_trust_by_kind(engine):
@@ -170,38 +133,20 @@ def test_workflow_events_are_followed_by_seq(engine):
     assert len(engine.lexical.search("narwhal", 50)) == before
 
 
-# --- registered folders ------------------------------------------------------------
-
-def test_folder_documents_are_read_through_the_folder_service_by_the_rule(engine, tmp_path):
-    from jarvis import folder_service, folder_store
-    root = tmp_path / "proj"
-    (root / "docs" / "deep" / "deeper").mkdir(parents=True)
-    (root / "src" / "a" / "b").mkdir(parents=True)
-    (root / "README.md").write_text("# Proj\nThe ocelot project readme.\n")
-    (root / "docs" / "deep" / "deeper" / "plan.md").write_text("The ocelot plan in docs.\n")
-    (root / "src" / "a" / "b" / "far.md").write_text("ocelot too deep to read\n")
-    (root / "src" / "code.py").write_text("ocelot = 'code is not read'\n")
-    (root / ".env").write_text("OCELOT_KEY=secret\n")
-    service = folder_service.FolderService(folder_store.FolderStore(), data_paths.node_id)
-    service.register(request_key="k1", path=str(root))
-    found = ki.run_pass(caller(engine), adapters=only(ki.Folders(service)))
-    assert not found.errors, found.errors
-    texts = texts_matching(engine, "ocelot")
-    assert sorted(texts) == ["# Proj\nThe ocelot project readme.", "The ocelot plan in docs."]
-
-
 # --- the pass and its watermarks -----------------------------------------------------
 
-def test_a_spent_budget_leaves_more_and_the_next_pass_goes_on(engine):
+def test_a_spent_budget_leaves_more_and_the_next_pass_goes_on(engine, monkeypatch):
+    from jarvis import conversation_log as cl
+    monkeypatch.setattr(ki, "CONVERSATION_BATCH", 1)
     for i in range(5):
-        _note(f"n{i}.md", f"# N{i}\nbudget word{i}\n")
+        cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, f"budget word{i}"))
     call = caller(engine)
     clock = iter([0.0] + [0.0] * 3 + [100.0] * 1000)
     tight = ki.Budget(seconds=1, clock=lambda: next(clock))
-    first = ki.run_pass(call, budget=tight, adapters=only(ki.Notes))
-    assert first.more and 0 < first.documents < 5
-    rest = ki.run_pass(call, adapters=only(ki.Notes))
-    assert first.documents + rest.documents == 5 and not rest.more
+    first = ki.run_pass(call, budget=tight, adapters=only(ki.Conversation))
+    assert first.more and 0 < len(engine.lexical.search("budget", 50)) < 5
+    rest = ki.run_pass(call, adapters=only(ki.Conversation))
+    assert len(engine.lexical.search("budget", 50)) == 5 and not rest.more
 
 
 def test_watermarks_are_kept_with_the_documents_across_a_restart(tmp_path):
@@ -227,8 +172,9 @@ def test_one_failing_source_leaves_the_rest(engine):
 
         def run(self, writer, mark, budget):
             raise RuntimeError("no")
-    _note("x.md", "# X\nheron\n")
-    stats = ki.run_pass(caller(engine), adapters=[Broken(), ki.Notes()])
+    from jarvis import conversation_log as cl
+    cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "the heron came back"))
+    stats = ki.run_pass(caller(engine), adapters=[Broken(), ki.Conversation()])
     assert stats.errors and keys_matching(engine, "heron")
 
 
@@ -252,7 +198,7 @@ class FakeProc:
     def kill(self):
         self.returncode = -9
 
-    def wait(self):
+    def wait(self, timeout=None):
         return self.returncode
 
 
@@ -334,29 +280,98 @@ def test_a_leftover_pass_is_ended_only_when_it_is_an_ingest_pass(tmp_path):
 
 # --- the real child against the real engine ------------------------------------------
 
-@pytest.mark.knowledge_engine
-def test_a_real_pass_in_its_child_against_the_real_engine():
-    from jarvis import run_store
+def _engine_process():
     from jarvis.knowledge import address as ea
-    run_store.init_db()
-    _note("lynx.md", "# Lynx\nThe lynx note for the child pass.\n")
     repo = Path(__file__).resolve().parents[1]
     engine = subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
                               stdin=subprocess.PIPE, cwd=repo)
+    end = time.monotonic() + 20
+    while (ea.running() is None or ea.running().pid != engine.pid) and time.monotonic() < end:
+        time.sleep(0.05)
+    return engine, ea.running(), repo
+
+
+@pytest.mark.knowledge_engine
+def test_a_real_pass_in_its_child_against_the_real_engine():
+    from jarvis import conversation_log as cl, run_store
+    run_store.init_db()
+    cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "the lynx note for the child pass"))
+    engine, found, repo = _engine_process()
     try:
-        end = time.monotonic() + 20
-        while (ea.running() is None or ea.running().pid != engine.pid) and time.monotonic() < end:
-            time.sleep(0.05)
-        found = ea.running()
         child = subprocess.run([sys.executable, "-m", "jarvis.knowledge_ingest"], cwd=repo,
                                input=json.dumps({"port": found.port,
                                                  "token": data_paths.ensure_knowledge_token()}) + "\n",
                                capture_output=True, text=True, timeout=60)
         stats = json.loads(child.stdout.strip().splitlines()[-1])
-        assert stats["documents"] >= 1, child.stderr[-2000:]
+        assert stats["chunks"] >= 1, child.stderr[-2000:]
         client = kc.KnowledgeClient(kc.HTTPTransport(lambda: engine.pid))
         hits = client.call("POST", "/v1/search", {"text": "lynx"})["hits"]
         assert hits and hits[0]["trust"] == "own"
     finally:
         engine.stdin.close()
         engine.wait(timeout=20)
+
+
+@pytest.mark.knowledge_engine
+def test_the_content_child_indexes_his_notes_against_the_real_engine():
+    from jarvis import run_store
+    from jarvis.knowledge.uds import Caller, EngineUDS, Stream
+    run_store.init_db()
+    note = data_paths.brain_home() / "memory" / "lynx.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("# Lynx\nThe lynx note for the content child.\n")
+    engine, found, repo = _engine_process()
+    child = subprocess.Popen([sys.executable, "-m", "jarvis.knowledge_content"], cwd=repo,
+                             stdin=subprocess.PIPE, text=True)
+    try:
+        child.stdin.write(json.dumps({"pid": engine.pid, "token": data_paths.ensure_knowledge_token()}) + "\n")
+        child.stdin.flush()
+        uds = EngineUDS(kc.HTTPTransport(lambda: engine.pid))
+        end = time.monotonic() + 30
+        item = None
+        while time.monotonic() < end:
+            item = uds.get(Caller("tim"), "/jarvis/notes/memory/lynx.md", {Stream.DATA, Stream.SECTIONS})
+            if item is not None and item.data.get("state") == "indexed":
+                break
+            time.sleep(0.1)
+        assert item is not None and item.data["state"] == "indexed", item
+        assert item.sections[0].heading == "Lynx" and item.data["trust"] == "own"
+    finally:
+        child.stdin.close()
+        child.wait(timeout=30)
+        engine.stdin.close()
+        engine.wait(timeout=20)
+
+
+# --- the content child's scheduler ------------------------------------------------
+
+def test_the_content_child_is_handed_its_engine_and_told_the_pace(monkeypatch):
+    from jarvis.knowledge import address as ea
+    ea.record(ea.EngineAddress("http", "127.0.0.1", 4100, 777, "b"))
+    procs = []
+    clock = [0.0]
+
+    def spawn():
+        procs.append(FakeProc())
+        return procs[-1]
+    sup = Sup(777)
+    s = kr.ContentScheduler(sup, spawn=spawn, clock=lambda: clock[0], enabled=lambda: True)
+    s("hold")
+    assert len(procs) == 1 and procs[0].signals == []          # never stopped whole: told
+    lines = procs[0].stdin.getvalue().decode().splitlines()
+    assert json.loads(lines[0])["pid"] == 777 and lines[1:] == ["hold"]
+    s("hold")
+    s("free")
+    assert procs[0].stdin.getvalue().decode().splitlines()[1:] == ["hold", "free"]
+    procs[0].returncode = 1                                   # it ended: started again after a pause
+    s("free")
+    assert len(procs) == 1 and s.proc is None
+    clock[0] += kr.CONTENT_RESTART_SEC
+    s("free")
+    assert len(procs) == 2
+    sup._pid = 778                                            # a new engine: a new child for it
+    ea.record(ea.EngineAddress("http", "127.0.0.1", 4101, 778, "c"))
+    s("free")
+    assert len(procs) == 3 and s.engine_pid == 778
+    s.stop()
+    assert s.proc is None and not kr.content_pid_path().exists()

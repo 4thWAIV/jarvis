@@ -192,7 +192,9 @@ def _content(value) -> Optional[dict]:
     return out
 
 
-WHOLE_TEXT_MAX = 1800        # about multilingual-e5-small's 512 tokens
+WHOLE_TEXT_MAX = 1501        # a section's 1,300 characters and its 200-character heading line:
+HEADING_LINE_MAX = 200       # about multilingual-e5-small's 512 tokens
+_PATH_JOIN = " › "
 
 
 def title_of(doc: dict, content: dict) -> str:
@@ -206,35 +208,49 @@ def title_of(doc: dict, content: dict) -> str:
 
 
 def heading_trail(section: dict) -> list[str]:
-    trail = section.get("heading_path")
-    if trail:
-        return [h for h in trail if h]
+    """A section's heading path; a section that names none has its heading."""
+    if "heading_path" in section:
+        return [h for h in section["heading_path"] or () if h]
     return [section["heading"]] if section.get("heading") else []
 
 
-def embedded_text(title: str, section: dict) -> str:
-    """The text a section's vector is made from: the item's title and the
-    section's heading path first, then its text."""
-    head = " › ".join([t for t in [title, *heading_trail(section)] if t])
-    return f"{head}\n\n{section.get('text') or ''}" if head else str(section.get("text") or "")
+def clip(text: str, limit: int) -> str:
+    """At most `limit` characters, ending at a word's end."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit + 1]
+    space = max(cut.rfind(" "), cut.rfind("\n"))
+    return (cut[:space] if space > 0 else text[:limit]).rstrip()
+
+
+def _heading_line(title: str, trail) -> str:
+    parts = [title] if title else []
+    parts += [p for n, p in enumerate(trail) if p and not (n == 0 and p == title)]
+    return clip(" ".join(_PATH_JOIN.join(parts).split()), HEADING_LINE_MAX)
+
+
+def embedded_text(title: str, section: dict, limit: int = WHOLE_TEXT_MAX) -> str:
+    """The text a section's vector is made from: "Title › H1 › H2" (the
+    title not said twice), then its text, within one embedding's budget.
+    The one definition: content_sections gives the same for a file."""
+    head = _heading_line(title, heading_trail(section))
+    text = str(section.get("text") or "")
+    return clip(f"{head}\n{text}" if head else text, limit)
 
 
 def whole_text(title: str, content: dict, limit: int = WHOLE_TEXT_MAX) -> str:
-    """The text the whole-item vector is made from: the title, the outline
-    of its headings, then the start of its text, within one embedding's
-    budget."""
-    outline: list[str] = []
-    for s in content.get("sections") or []:
-        h = " › ".join(heading_trail(s))
-        if h and h not in outline:
-            outline.append(h)
-    head = "\n".join([t for t in [title, "; ".join(outline)] if t])
-    body = content.get("text") or ""
-    room = max(limit - len(head) - 2, 0)
-    if len(body) > room:
-        cut = body.rfind(" ", 0, room)
-        body = body[:cut if cut > room // 2 else room]
-    return f"{head}\n\n{body}" if head else body
+    """The text the whole-item vector is made from: its title, the outline
+    of its headings (`headings` when the content names them, else each
+    section's), then the start of its text, within `limit`."""
+    title = " ".join((title or "").split())
+    headings = content.get("headings")
+    if headings is None:
+        headings = list(dict.fromkeys(h for s in content.get("sections") or () for h in heading_trail(s)[-1:]))
+    outline = clip("; ".join(" ".join(h.split()) for h in headings if h and h != title), limit // 3)
+    head = "\n".join(p for p in (title, outline) if p)
+    room = limit - len(head) - 1
+    start = clip((content.get("text") or "").strip(), room) if room > 0 else ""
+    return clip("\n".join(p for p in (head, start) if p), limit)
 
 
 def _content_summary(content: dict) -> dict:
@@ -1112,7 +1128,7 @@ class Items:
                 if self.vectors is None or self.vectors.embedder is None:
                     notes.append("no embedding model: nothing was searched by meaning")
                 else:
-                    vector = self.vectors.embed_query(meaning)
+                    vector = self.vectors.embed_query(meaning, timeout=max(end - time.monotonic(), 0.05))
                     if vector is None:
                         partial = True
                         notes.append("the question was not embedded in time")

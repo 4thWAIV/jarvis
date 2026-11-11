@@ -39,6 +39,7 @@ from jarvis import bundle_readers
 from jarvis.bundle_contract import PageLocation, SheetLocation, SlideLocation
 from jarvis.bundle_readers import Detected, Unsupported, html, office
 from jarvis.bundle_readers import text as text_reader
+from jarvis.knowledge import items as item_texts
 
 SCOPES = ("docs", "text", "off")
 
@@ -54,7 +55,6 @@ EMBED_MAX = SECTION_MAX + HEADING_LINE_MAX + 1
 FILE_MAX_BYTES = 32 * 1024 * 1024
 # How many characters one reader call may hand back: past any section.
 _READ_ALL = 1 << 30
-_PATH_JOIN = " › "
 
 
 @dataclass(frozen=True)
@@ -397,38 +397,28 @@ def split(text: str, *, title: str, markdown: bool,
 
 # -- the text a vector is made from ---------------------------------------------------------
 
-def _clip(text: str, limit: int) -> str:
-    """At most `limit` characters, ending at a word's end."""
-    if len(text) <= limit:
-        return text
-    cut = text[:limit + 1]
-    space = max(cut.rfind(" "), cut.rfind("\n"))
-    return (cut[:space] if space > 0 else text[:limit]).rstrip()
-
-
-def _heading_line(title: str, path: tuple[str, ...]) -> str:
-    parts = [title] if title else []
-    parts += [p for n, p in enumerate(path) if p and not (n == 0 and p == title)]
-    return _clip(" ".join(_PATH_JOIN.join(parts).split()), HEADING_LINE_MAX)
+def section_json(section: Section) -> dict:
+    """A section as the engine's content stream holds it."""
+    out = {"heading": section.heading, "heading_path": list(section.heading_path), "text": section.text}
+    if section.page is not None:
+        out["page"] = section.page
+    return out
 
 
 def embedded_text(title: str, section: Section) -> str:
     """What a section's vector is made from: "Title › H1 › H2", then its
-    text; within EMBED_MAX."""
-    head = _heading_line(title, section.heading_path)
-    return _clip(f"{head}\n{section.text}" if head else section.text, EMBED_MAX)
+    text; within EMBED_MAX. The engine's one definition
+    (`knowledge.items.embedded_text`), which embeds it."""
+    return item_texts.embedded_text(title, section_json(section), EMBED_MAX)
 
 
 def whole_text(extracted: Extracted, limit: int = EMBED_MAX) -> str:
     """What the whole item's vector is made from: its title, its heading
-    outline, then the start of its text, within `limit`."""
-    title = " ".join(extracted.title.split())
-    outline = _clip("; ".join(" ".join(h.split()) for h in extracted.headings
-                              if h and h != extracted.title), limit // 3)
-    head = "\n".join(p for p in (title, outline) if p)
-    room = limit - len(head) - 1
-    start = _clip(extracted.text.strip(), room) if room > 0 else ""
-    return _clip("\n".join(p for p in (head, start) if p), limit)
+    outline, then the start of its text, within `limit` (the engine's one
+    definition, `knowledge.items.whole_text`)."""
+    return item_texts.whole_text(extracted.title, {"text": extracted.text, "headings": list(extracted.headings),
+                                                   "sections": [section_json(s) for s in extracted.sections]},
+                                 limit)
 
 
 # -- reading a file through bundle_readers ---------------------------------------------------
