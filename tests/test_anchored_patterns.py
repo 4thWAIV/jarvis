@@ -261,6 +261,11 @@ def test_there_are_gates_to_check():
 # below would SKIP, and a skipped check is a check that is not being made.
 SAMPLES = {
     "_ATX": "## A heading",
+    "_FILE_DOC_PATH": "/people/42/files/a1@s1.file",
+    "_MESSAGE_PATH": "/people/42/messages/m1@s1.message",
+    "_THREAD_PATH": "/people/42/threads/t1@s1.thread",
+    "_SYNC_PATH": "/people/42/settings/sync.settings",
+    "_ANNOUNCEMENT_PATH": "/attention/announcements/42@m1@s1.attention",
     "_SETEXT": "===",
     "_TABLE_RULE": "| --- | :-: |",
     "_SOURCES_HEADER": "**Sources:**",
