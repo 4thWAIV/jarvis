@@ -78,10 +78,17 @@ async def test_upstream_architecture_in_real_frame_with_source_evidence(page_pla
             evidence_url = await page.get_by_role("link", name="Read the checker evidence").get_attribute("href")
             raw_source = await http.get(source_url)
             raw_check = (await http.get(evidence_url)).json()
-            readable_url = await page.get_by_role("link", name="Read the authored view").get_attribute("href")
-            assert "canonical_revision=" + checked["revision"] in readable_url
             assert "canonical_revision=" + checked["revision"] in source_url
-            assert (await http.get(readable_url)).text == draft["readable_markdown"]
+            # The explanation is read in place, through the canonical gate,
+            # drawn by the app's Markdown renderer: no raw Markdown tab.
+            await page.get_by_role("button", name="Read the explanation").click()
+            explained = page.locator("#package-explanation")
+            await explained.locator("h3", has_text="A proposed document store").wait_for()
+            assert "This proposed architecture has one declaration, DocumentStore." in await explained.inner_text()
+            assert "# A proposed" not in await explained.inner_text(), "rendered, not raw"
+            await page.screenshot(path=str(out / "explanation-in-place.png"), full_page=True)
+            await page.get_by_role("button", name="Hide the explanation").click()
+            await explained.wait_for(state="detached")
             (out / "UNDERSTANDING.md").write_text(draft["readable_markdown"])
             assert raw_check["ok"] and raw_check["source_sha256"] == checked["source_revision"]
             assert "DocumentStore" in raw_source.text

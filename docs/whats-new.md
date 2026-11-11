@@ -15,6 +15,20 @@ The choice is saved in this browser, applies before the page is drawn and follow
 changes made in another JARVIS tab on the same origin. It does not change server
 settings or anyone else's appearance.
 
+## Architecture packages that walk you through
+
+An architecture package now states the purpose its sender gave, and its
+author's explanation opens in place above the page (Read the explanation),
+drawn as formatted text with safe links rather than as raw Markdown in a new
+tab. Its author may also write a walk-through JARVIS tells over the rendered
+page and ask real questions, not only Got it: each question appears in the
+package's head with its options, is answered by a click or by voice, and
+follow-up questions appear once an answer opens them. The standard vote is
+still asked once, last. Signing off early keeps every unanswered question
+marked unanswered. Pointing at a declaration or a member needs a kit whose
+page loads the story helper; until then a walk-through narrates without
+pointing.
+
 ## Conversation is the main view
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.

@@ -4377,6 +4377,25 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .package-canonical p { margin: 0 0 4px; }
 .package-canonical a { color: var(--ui-accent); text-decoration: underline; }
+.package-canonical .link-button { color: var(--ui-accent); text-decoration: underline; }
+/* The questions a story declares, answered in the head (PackageView.tsx). */
+.package-asks { padding: 8px 16px; display: grid; gap: 8px; border-bottom: 1px solid var(--ui-edge); }
+.package-ask-question { margin: 0 0 4px; font-weight: 600; }
+.package-ask-context { margin: 0 0 4px; color: rgba(255, 255, 255, 0.7); font-size: 0.85rem; }
+.package-ask-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.package-ask-options [aria-pressed="true"] { border-color: rgba(94, 234, 212, 0.8); }
+/* The author's explanation, read in place above the page. */
+.package-explanation {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--ui-edge);
+  overflow-wrap: anywhere;
+}
+.package-explanation .md-link { color: var(--ui-accent); text-decoration: underline; }
+.package-explanation .md-table { border-collapse: collapse; margin: 6px 0; }
+.package-explanation .md-table th,
+.package-explanation .md-table td { border: 1px solid var(--ui-edge); padding: 3px 8px; text-align: left; }
 
 /* A brain's box opens its usage history (UsageHistoryView.tsx). */
 .weekly-usage[role="button"] { cursor: pointer; }

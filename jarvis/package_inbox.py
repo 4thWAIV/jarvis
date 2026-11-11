@@ -391,37 +391,64 @@ def asks_him(package: Package) -> bool:
 
 
 def _story_questions(package: Package) -> list[Question]:
-    """A package with no deck: the standard `understood` its story waits
-    for, with the answer its answers file holds; [] when it has none. A
-    story's other questions are its own page's, never answered here."""
+    """A package with no deck: the questions its story asks in the package
+    view's head, in its slides' order, each with whether it applies yet
+    (`asks_when`) and the answer its answers file holds: the questions it
+    declares (package_story) and the standard `understood`; [] when it has
+    none. A question a slide waits on that the story does not declare is
+    its own page's, never answered here."""
     story = _story_of(package)
-    if story is None or story.answers is None or story.asking(UNDERSTOOD_ID) is None:
+    if story is None or story.answers is None:
         return []
-    entry = _record(package, story.answers.split("/", 1)[1]).get(UNDERSTOOD_ID)
-    vote = understood(story.language)
-    options = [{k: o[k] for k in ("id", "name", "says")} for o in vote["options"]]
-    answer = None
-    if isinstance(entry, dict) and entry.get("answer") in {o["id"] for o in options} | set(SPECIAL):
-        answer = {"answer": entry["answer"], "choice": _text(entry.get("choice")),
-                  "note": _text(entry.get("note")), "at": _text(entry.get("at")),
-                  "recommended": entry["answer"] == GOT_IT}
-    return [Question(UNDERSTOOD_ID, vote["question"], "", options, GOT_IT,
-                     vote["reason"], True, answer)]
+    record = _record(package, story.answers.split("/", 1)[1])
+    asked = []
+    for slide in story.slides:
+        declared = story.declared(slide.waits) if slide.waits else None
+        if declared is not None:
+            options = [{"id": o.id, "name": o.name, "says": o.says} for o in declared.options]
+            asked.append(Question(declared.id, declared.question, declared.context, options,
+                                  declared.recommended, declared.reason,
+                                  story.applies(slide, record),
+                                  _story_answer(record.get(declared.id), options,
+                                                declared.recommended)))
+        elif slide.waits == UNDERSTOOD_ID:
+            vote = understood(story.language)
+            options = [{k: o[k] for k in ("id", "name", "says")} for o in vote["options"]]
+            asked.append(Question(UNDERSTOOD_ID, vote["question"], "", options, GOT_IT,
+                                  vote["reason"], True,
+                                  _story_answer(record.get(UNDERSTOOD_ID), options, GOT_IT)))
+    return asked
+
+
+def _story_answer(entry, options: list[dict], recommended: str) -> Optional[dict]:
+    """An answer the story's answers file holds for one of its questions,
+    or None when it holds none that question takes."""
+    if not isinstance(entry, dict) or entry.get("answer") not in \
+            {o["id"] for o in options} | set(SPECIAL):
+        return None
+    return {"answer": entry["answer"], "choice": _text(entry.get("choice")),
+            "note": _text(entry.get("note")), "at": _text(entry.get("at")),
+            "recommended": entry["answer"] == recommended}
 
 
 def record_story_answer(package: Package, question: Question, option: str,
                         note: str) -> None:
-    """His answer to a story's `understood`, written into its answers file
-    as decide.py writes a deck's (the story waiting on it goes on). Refused
-    (PackageError) for a package whose story does not ask it."""
+    """His answer to a question a story asks in the view's head (one it
+    declares, or its `understood`), written into its answers file as
+    decide.py writes a deck's (the story waiting on it goes on). Refused
+    (PackageError) for a package whose story does not ask it there, or not
+    yet (a question that does not apply)."""
     story = _story_of(package)
-    if story is None or story.answers is None or question.id != UNDERSTOOD_ID:
+    asked = next((q for q in _story_questions(package) if q.id == question.id), None)
+    if story is None or story.answers is None or asked is None:
         raise PackageError(f"{package.id} does not ask {question.id}.")
+    if not asked.applies:
+        raise PackageError(f"{question.id} is not asked yet: it follows another answer.")
     name = story.answers.split("/", 1)[1]
     record = _record(package, name)
-    record[UNDERSTOOD_ID] = {
-        "answer": option, "choice": question.option_name(option), "note": note,
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "recommended": option == GOT_IT}
+    record[asked.id] = {
+        "answer": option, "choice": asked.option_name(option), "note": note,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "recommended": option == asked.recommended}
     work_packages.save_result(package, name, (json.dumps(
         record, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"))
 
@@ -439,16 +466,26 @@ def with_understood_slide(story: Optional[dict], language: str) -> dict:
 
 
 def page_vote(package: Package) -> Optional[dict]:
-    """The standard vote a page package (not a deck, which asks on its own
-    slide) carries, as the package view's head shows it: its question and
-    his answer and words, or None for a package without one."""
+    """What a page package (not a deck, which asks on its own slide) asks
+    in the package view's head: the standard vote, with his answer and
+    words (`question` is None when it carries none), and in `asks` every
+    question its story declares, in order, with its options, whether it
+    applies yet and his answer; None for a package that asks nothing there."""
     if is_decision_package(package):
         return None
-    asked = next((q for q in _story_questions(package) if q.id == UNDERSTOOD_ID), None)
-    if asked is None:
+    asked = _story_questions(package)
+    vote = next((q for q in asked if q.id == UNDERSTOOD_ID), None)
+    declared = [q for q in asked if q.id != UNDERSTOOD_ID]
+    if vote is None and not declared:
         return None
-    return {"question": asked.id, "answer": asked.answer["answer"] if asked.answer else None,
-            "note": asked.answer["note"] if asked.answer else ""}
+    return {"question": vote.id if vote else None,
+            "answer": vote.answer["answer"] if vote and vote.answer else None,
+            "note": vote.answer["note"] if vote and vote.answer else "",
+            "asks": [{"id": q.id, "question": q.question, "context": q.context,
+                      "options": q.options, "recommended": q.recommended,
+                      "applies": q.applies,
+                      "answer": q.answer["answer"] if q.answer else None,
+                      "note": q.answer["note"] if q.answer else ""} for q in declared]}
 
 
 def no_vote(work_id: str, runs: str) -> str:
