@@ -43,6 +43,7 @@ credential.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -456,13 +457,16 @@ class HumanDestination:
         return None
 
     async def deliver(self) -> str:
+        # The store's calls are a worker thread's: the loop is the voice
+        # path's too, and the store waits on the knowledge engine.
         approvals = self.messaging.approvals
-        if approvals.store.approved(*self.who.ns, self.message_id,
-                                    self.bound["content_revision"]) is None \
+        if await asyncio.to_thread(approvals.store.approved, *self.who.ns, self.message_id,
+                                   self.bound["content_revision"]) is None \
                 and not self.recipient.as_heard(self.who):
             return NOT_APPROVED                           # changed in the window
         try:
-            self.approved = self.messaging.approvals.approve(
+            self.approved = await asyncio.to_thread(
+                self.messaging.approvals.approve,
                 *self.who.ns, self.message_id, self.bound["content_revision"],
                 self.bound["content_digest"], self.who.node_id, self.via)
         except ports.SnapshotMissing:
@@ -505,8 +509,8 @@ class HumanDestination:
         if attention is None:
             return
         try:
-            attention.record("human_send", str(self.message_id), outcome,
-                             untrusted={"to": self.label})
+            await asyncio.to_thread(attention.record, "human_send", str(self.message_id),
+                                    outcome, untrusted={"to": self.label})
         except Exception:
             log.warning("could not record message %s not going", self.message_id,
                         exc_info=True)
@@ -640,7 +644,8 @@ class MessagingTools:
         save = {"subject": wire.normalize_subject(str(args.get("subject") or "")),
                 "text": wire.normalize_text(str(args.get("text") or ""))}
         if editing is not None:
-            current = self.messaging.approvals.store.draft(*who.ns, editing)
+            current = await asyncio.to_thread(self.messaging.approvals.store.draft, *who.ns,
+                                              editing)
             if current is None:
                 return "There is no draft by that id; nothing was saved."
             revision = args.get("draft_revision")
@@ -649,7 +654,8 @@ class MessagingTools:
                 kept = kept.model_copy(update={"expected_draft_revision": revision})
             save = kept.model_dump()
         elif args.get("reply_to") is not None:
-            parent = self.messaging.approvals.store.message(*who.ns, _uuid(args["reply_to"])) \
+            parent = await asyncio.to_thread(self.messaging.approvals.store.message, *who.ns,
+                                             _uuid(args["reply_to"])) \
                 if _uuid(args["reply_to"]) else None
             if parent is None:
                 return "There is no message by that id to reply to; nothing was drafted."

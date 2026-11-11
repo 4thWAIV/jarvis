@@ -80,6 +80,7 @@ and nothing is inferred from the failure.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -454,6 +455,33 @@ def change(stop: object = None, switch: object = None, intervals: object = None,
     intervals from the next pause). A change to the cues or the intervals
     is merged into what he chose before; any intervals keep the stages in
     order, since each is measured from the stage before."""
+    saved = _save(stop, switch, intervals, sounds, cues, volume, speech_muted, user)
+    _published()
+    return saved
+
+
+async def change_off_loop(stop: object = None, switch: object = None,
+                          intervals: object = None, sounds: object = None,
+                          cues: object = None, volume: object = None,
+                          speech_muted: object = None, user: Optional[str] = None) -> dict:
+    """`change` for a caller on the event loop: the engine read and write on
+    a worker thread, so the voice path that shares the loop never waits on
+    them, then the publish on the loop (its hook stops what is sounding and
+    tells every page), after the write as every change is."""
+    saved = await asyncio.to_thread(_save, stop, switch, intervals, sounds, cues, volume,
+                                    speech_muted, user)
+    _published()
+    return saved
+
+
+def _published() -> None:
+    if _publish is not None:
+        _publish({"type": FRAME})
+
+
+def _save(stop: object, switch: object, intervals: object, sounds: object, cues: object,
+          volume: object, speech_muted: object, user: Optional[str]) -> dict:
+    """`change`'s validation, read and write: everything but the publish."""
     stop, switch, intervals, sounds, cues, volume, speech_muted = validate(
         stop, switch, intervals, sounds, cues, volume, speech_muted)
     user = user or user_key()
@@ -484,10 +512,7 @@ def change(stop: object = None, switch: object = None, intervals: object = None,
              "volume=%s speech_muted=%s", user, row["stop_mode"], row["switch_mode"],
              row["pause_intervals"], row["capture_sounds"], row["cue_settings"], row["cue_volume"],
              row["speech_muted"])
-    saved = _settings(user, row)
-    if _publish is not None:
-        _publish({"type": FRAME})
-    return saved
+    return _settings(user, row)
 
 
 def patience(user: Optional[str] = None) -> float:
@@ -506,17 +531,17 @@ def _unreadable(e: Unreadable) -> JSONResponse:
 
 async def api_read():
     try:
-        return read()
+        return await asyncio.to_thread(read)
     except Unreadable as e:
         return _unreadable(e)
 
 
 async def api_change(body: dict = Body(default_factory=dict)):
     try:
-        return change(stop=body.get("stop"), switch=body.get("switch"),
-                      intervals=body.get("intervals"), sounds=body.get("sounds"),
-                      cues=body.get("cues"), volume=body.get("volume"),
-                      speech_muted=body.get("speech_muted"))
+        return await change_off_loop(stop=body.get("stop"), switch=body.get("switch"),
+                                     intervals=body.get("intervals"), sounds=body.get("sounds"),
+                                     cues=body.get("cues"), volume=body.get("volume"),
+                                     speech_muted=body.get("speech_muted"))
     except Invalid as e:
         return JSONResponse(status_code=400, content=e.to_json())
     except Unreadable as e:
