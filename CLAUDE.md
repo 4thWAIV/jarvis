@@ -1594,7 +1594,8 @@ process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
 which imports nothing from `server.py`); the design is
 `docs/planning/work-package-bundles/design.md` and the build order
 `build-plan.md` beside it. It is moving to Tim's UDS design in three rounds
-(`docs/planning/knowledge-engine/plan-uds.md`; round 1, engine-core, is in):
+(`docs/planning/knowledge-engine/plan-uds.md`; rounds 1, engine-core, and 2,
+content-and-search, are in):
 an item lives at one path (`knowledge/paths.py`: its type is the suffix, a
 name with none is a folder's) and the path is the key to its streams
 (`knowledge/items.py`): a document of any shape, every field indexed
@@ -1615,9 +1616,56 @@ holding an item path, the field path its kind) and derived (with model
 and time), each shown only while both ends are items. The routes are
 `/v1/items/*`; the Python interface is `knowledge/uds.py` (`EngineUDS`,
 `in_process` for tests; `tests/test_uds_acceptance.py` holds the ten
-acceptance checks, those needing vectors, full text, rights or proposals
-skipped for round 2). Legacy documents of today's ingest (keys that are not
-paths) keep their kinds' schemas until round 2. `python -m jarvis.knowledge
+acceptance checks, all switched on). Legacy documents of today's ingest
+(keys that are not paths) keep their kinds' schemas until round 3.
+Round 2: every item with content has one whole-item vector and one per
+section (`vectors.py`: an item space `<embedder>#items`, rows keyed by
+ordinal and prop, prop 0 the whole item, i + 1 section i, made from
+`items.whole_text` and `items.embedded_text`, the one definition), deleted
+in the same commit as a change of its content, so it counts as waiting
+(`count`'s `embedded` and `waiting`) until made again. The keyword index
+reads items' content too (an item's kept content is written again with
+each new document, so both share a generation); an exact phrase is its
+words' postings intersected, then checked in each section
+(`lexical.phrase_in`). `POST /v1/items/search` (`EngineUDS.search`) takes
+meaning and words (they rank) and where, phrase, linked_to, under and
+types (conditions), one hit an item with `matched_by` and the sections
+where it matched. AccessRights (`knowledge/rights.py`, family `RIGHTS`):
+grants on a path (person or `*`; data, content, write; hidden fields),
+inherited below it and only added to; the owner (`OWNER`, tim) has
+everything and alone sets rights (`/v1/items/rights`). Every items route
+names its `caller` and the gate is inside each one: no data right looks
+missing, content, sections, vectors and full-text hits need the content
+right, a condition on a hidden field matches nothing, a link shows only
+when both ends are readable, the change feed likewise. An AI caller
+(`agent` set) has its person's rights; its links are proposals
+(`/proposals/links/<id>.proposal`, `/v1/items/propose`, with agent,
+person, model and time) until the owner accepts one
+(`/v1/items/proposals/answer`). Files are content items
+(`knowledge_content.py`): every file under a registered folder (FILES
+reader, local, available, under its projects' widest index scope; off on
+every link keeps it out; in no project, docs) at
+`/folders/<folder id>/<rel>`, and JARVIS's answers, packages and received
+files at `/jarvis/<area>/<rel>`; data holds the path entry (`file`,
+`size`, `mtime`, `inode`, `sha256`), `state` (pending, indexed,
+unreadable with `reason`), `trust` and what the reader found; content the
+text and sections from `content_sections.py` (bundle_readers for PDF,
+Office, HTML and text; cut at headings, paragraphs, sentences, never
+mid-word). One long-lived child, `python -m jarvis.knowledge_content`
+(`knowledge_runtime.ContentScheduler`, the engine's pid and token on its
+stdin, then `hold` and `free`): an FSEvents watcher (`fs_watch.py`,
+ctypes on CoreServices, a GCD queue) from the last event handled (the
+engine's `content` watermark) writes path entries at once; dropped events
+scan their subtree; a stat-only backup scan runs at start, after wake and
+every six hours; reading waits while the pace holds and happens only when
+a file's bytes changed. The brain's notes stay with the legacy ingest
+(the linker, topics and the context pack read them there) and are not
+also items. `knowledge_api.search` (the page and `knowledge_search`, with
+`phrase`) and the context pack add the item hits. The move kit
+(`knowledge_move.py`: `Mapping`, `RowMapping`, `copy`, `verify`,
+`export_sqlite`; `python -m jarvis.knowledge copy|verify|export-sqlite`)
+copies a SQLite file into the engine and back, table for table, for round
+3's cut-over. `python -m jarvis.knowledge
 rebuild` builds indexes, vectors and cards again and never drops a
 document; a snapshot is taken before it and every day. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
 it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
@@ -1642,8 +1690,7 @@ runtime paces the background lane every second: hold while the conversation
 floor is not idle or the CPU is over 70 percent. Ingest is a child of its
 own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it reads the brain's notes, the
-conversation log, finished runs, workflow events and registered folders'
-Markdown (through `folder_service`, FILES reader only) and keeps each source's
+conversation log, finished runs and workflow events and keeps each source's
 watermark in the engine (stamped with `knowledge_ingest.SCHEMA`; a source
 written under another schema is read again from the start). Every chunk
 holds `at` (when it was said or written) and an agent's words their speaker
@@ -1682,6 +1729,14 @@ tier 1 with the engine's search; `work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
 `JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
+Each registered folder's files are items under `/folders/<folder id>/` in
+the engine; `knowledge_api.folder_counts` reads each active folder's count
+as Tim (`EngineUDS.count` through `Context.uds`, one request a folder within
+`FOLDER_COUNTS_DEADLINE_SEC`, `partial` past it), shown on each row of the
+centre's Folders view ("12 documents · 3 waiting", `folders.ts`
+`folderCounts`), read by `GET /api/knowledge/folder-counts` and the brain's
+`folder_document_counts`. The engine off or down is `available` false,
+never an error. Only the count: a folder or data browser is later work.
 Its process, crash and budget tests carry the `knowledge_engine` marker.
 
 ## Self-update
@@ -2245,6 +2300,21 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
+- `usage_history.py` — The long-term record of the week: every seven-day
+  reading `usage_store.record` takes (schema `usage_history_schema`; the
+  five-hour window is never kept, Tim's word, and migration 2 dropped it):
+  `usage_readings` keeps each one for `RAW_KEEP_SEC` (14 days) with its
+  provider, account hash (`brain_accounts.history_ref`, NULL while unknown),
+  percentage (NULL: not measured, never 0) and reset; after that
+  `usage_hourly` keeps one summary per hour for good. `read` is
+  `GET /api/usage/history` and the brain's `usage_history` alike: one
+  brain's weeks (the running brain's when none is named), newest first,
+  each its reset, start and readings. Each brain's own box in the left
+  column opens that brain's view alone (`usage.open {provider}`,
+  `UsageHistoryView.tsx`, `usage.ts`): one week's burn-down at a time,
+  drawn as the box draws it (what is left, the dashed straight line, green
+  ahead, red behind), this week first, Earlier week / Later week / This
+  week (`usage.week`), the readings joined as one line, the reset marked
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
   Accessibility, Fish key, cross-session steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
@@ -2409,6 +2479,13 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   record (`running`) that `python -m jarvis.update` uses (see "Self-update")
 - `bundle_contract.py` / `bundle_inspection.py` / `bundle_readers/` — Reading a
   file someone sent (see "Collaboration bundles")
+- `knowledge_content.py` / `fs_watch.py` / `content_sections.py` — Files
+  indexed in place as engine items: the content child, the FSEvents
+  watcher and backup scan, and a file's text and sections through the
+  bundle readers (see "The knowledge engine")
+- `knowledge/rights.py` — AccessRights at paths and the gate's rules
+- `knowledge_move.py` — Copy, verify and export-sqlite between SQLite and
+  the engine (round 3's cut-over kit)
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -2523,7 +2600,8 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
 `test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
-`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`) are marked `page` and deselected too: they build
+`test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`,
+`test_voice_page_usage_history.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

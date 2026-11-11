@@ -137,7 +137,7 @@ from jarvis import usage_scan
 from jarvis import brain_provider
 from jarvis import brains_config
 from jarvis import codex_sessions
-from jarvis import usage_store
+from jarvis import usage_history, usage_store
 from jarvis import web_auth
 from jarvis.run_executor import RunExecutor
 from jarvis import dialog
@@ -3403,6 +3403,30 @@ async def api_usage_week(provider: Optional[str] = None):
     return usage_store.week(service=provider or _brain_provider().name)
 
 
+def _usage_history(provider=None, since=None, until=None, resolution=None) -> dict:
+    """The weekly usage history the page's view and the brain's
+    usage_history both read (usage_history.read): always one brain's,
+    `provider` (only a known one), the running brain's when it is not named."""
+    if provider not in (None, "") and provider not in brains_config.KNOWN:
+        raise usage_history.Refused(f"that is not a brain JARVIS knows; "
+                                    f"the brains are {', '.join(brains_config.KNOWN)}")
+    return usage_history.read(provider=provider or _brain_provider().name,
+                              since=since, until=until, resolution=resolution)
+
+
+@app.get("/api/usage/history")
+async def api_usage_history(provider: Optional[str] = None,
+                            since: Optional[str] = None, until: Optional[str] = None,
+                            resolution: Optional[str] = None):
+    """One brain's weekly usage history: its seven-day readings by week,
+    newest first (every reading over up to two days, one point an hour
+    beyond that) and its latest reading. Not measured is null, never 0."""
+    try:
+        return await asyncio.to_thread(_usage_history, provider, since, until, resolution)
+    except usage_history.Refused as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
 # --- The brains, for the Settings view's Brains section ----------------------
 #
 # Every brain provider JARVIS knows: whether it has been added (brains.json),
@@ -4393,6 +4417,10 @@ TAINT_EXEMPT_TOOLS = {
     "usage_status": (
         "it reports JARVIS's own subscription usage, computed here from "
         "his own store; there is no foreign text in it"),
+    "usage_history": (
+        "it reports JARVIS's own record of the subscription's usage "
+        "readings, numbers and window names it wrote itself; there is no "
+        "foreign text in it"),
     "connections": (
         "it reports the servers the USER declared in his own "
         "connections.json, which is his file and not a stranger's"),
@@ -11809,7 +11837,7 @@ async def tool_knowledge_search(args: dict) -> str:
     said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
-        kinds=args.get("kinds"), limit=args.get("limit") or 10),
+        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase")),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
     return said
 
@@ -11870,6 +11898,11 @@ async def tool_reindex_knowledge(args: dict) -> str:
     if answer.startswith("{"):
         _hint_knowledge()
     return answer
+
+
+async def tool_folder_document_counts(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.folder_counts(knowledge_calls),
+                                 "", "folder_document_counts", walled=False)
 
 
 async def tool_knowledge_indexes(args: dict) -> str:
@@ -12102,6 +12135,7 @@ TOOL_HANDLERS.update({
     "change_topic": tool_change_topic,
     "reindex_knowledge": tool_reindex_knowledge,
     "knowledge_indexes": tool_knowledge_indexes,
+    "folder_document_counts": tool_folder_document_counts,
     "change_knowledge_index": tool_change_knowledge_index,
     "knowledge_seeds": tool_knowledge_seeds,
     "work_context": tool_work_context,
@@ -12124,6 +12158,7 @@ TAINT_EXEMPT_TOOLS.update({
     "change_topic": "it writes his own topic files on his word, it does not read",
     "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
     "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
+    "folder_document_counts": "it reports folder ids and the engine's own counts, never a name or a word",
     "change_knowledge_index": "it writes his own settings note on his word, it does not read",
     "knowledge_seeds": "it quotes JARVIS's own README and roadmap, nobody else's words",
     "change_knowledge_seed": "it writes his own topic files on his word, it does not read",
@@ -15570,6 +15605,23 @@ def tool_usage_status(args: dict) -> str:
 
 
 TOOL_HANDLERS["usage_status"] = tool_usage_status
+
+
+def tool_usage_history(args: dict) -> str:
+    """The usage history, as the page's view reads it (`_usage_history`):
+    the route's own JSON, one page at a time."""
+    try:
+        body = _usage_history(args.get("provider"), args.get("since"),
+                              args.get("until"), args.get("resolution"))
+    except usage_history.Refused as e:
+        return f"Refused: {e}."
+    head, chunk = _paged(json.dumps(body), _int_arg(args, "page", 1),
+                         "The usage history (JSON; used is a percentage, null not measured)",
+                         "usage_history", exact=True)
+    return head if chunk is None else head + "\n" + chunk
+
+
+TOOL_HANDLERS["usage_history"] = tool_usage_history
 # It reads a file and says what it found. "How much have I used" must not
 # depend on who is talking, so it is deliberately NOT an acting tool.
 

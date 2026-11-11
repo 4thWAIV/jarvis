@@ -41,6 +41,7 @@ _BLOCKS = {"p", "div", "br", "li", "ul", "ol", "tr", "table", "section", "articl
            "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote",
            "title", "dt", "dd", "figcaption", "hr", "text", "tspan", "td", "th", "nav",
            "aside", "main", "address", "caption", "summary", "details", "form", "label"}
+_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 # Attributes that load something when the document is shown.
 _LOADS = {"src", "srcset", "poster", "data", "background", "xlink:href", "href"}
 _LOADING_HREF = {"link", "image", "use", "feimage"}
@@ -61,6 +62,11 @@ class _Reader(HTMLParser):
         self.skipping = 0
         self.resources: list[str] = []
         self._in_style = False
+        # Which lines are headings (index -> level 1-6), and the <title>.
+        self.levels: dict[int, int] = {}
+        self.title_line: Optional[int] = None
+        self._in_title = False
+        self.title_parts: list[str] = []
 
     def _add(self, url: str) -> None:
         url = url.strip()
@@ -81,6 +87,10 @@ class _Reader(HTMLParser):
             self._in_style = True
         if tag in _BLOCKS:
             self.lines.append("")
+        if tag in _HEADINGS and not self.skipping:
+            self.levels[len(self.lines) - 1] = int(tag[1])
+        if tag == "title" and self.title_line is None and not self.skipping:
+            self._in_title, self.title_line = True, len(self.lines) - 1
         for name, value in attrs:
             name = (name or "").lower()
             if value is None:
@@ -108,6 +118,8 @@ class _Reader(HTMLParser):
             self.skipping -= 1
         if tag == "style":
             self._in_style = False
+        if tag == "title":
+            self._in_title = False
         if tag in _BLOCKS:
             self.lines.append("")
 
@@ -116,7 +128,21 @@ class _Reader(HTMLParser):
             self._css(data)
         if self.skipping:
             return
+        if self._in_title:
+            self.title_parts.append(data)
         self.lines[-1] += data
+
+
+def outline(data: bytes) -> tuple[list[tuple[str, Optional[int]]], Optional[str]]:
+    """The document's blocks in order, each its text and its heading level
+    (h1-h6; None for any other block), without the <title>; and the title."""
+    parser = _Reader()
+    parser.feed(_paging.decode(data))
+    parser.close()
+    blocks = [(" ".join(line.split()), parser.levels.get(n))
+              for n, line in enumerate(parser.lines) if n != parser.title_line]
+    title = " ".join("".join(parser.title_parts).split())
+    return [b for b in blocks if b[0]], title or None
 
 
 def parse(data: bytes) -> tuple[str, list[str]]:

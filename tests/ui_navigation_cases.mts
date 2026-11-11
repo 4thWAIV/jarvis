@@ -76,6 +76,7 @@ const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
 await import("../frontend/src/knowledge.ts");
 const projects = await import("../frontend/src/projects.ts");
+const usage = await import("../frontend/src/usage.ts");
 const takeoverKey = await import("../frontend/src/takeoverKey.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
@@ -528,6 +529,44 @@ function registerFolderRow(el: unknown) {
   assert.equal((await dispatch("project.close", {}, { actor: "human" })).status, "completed");
   assert.equal(nav.mainView.get(), "conversation");
   passed.push("project: opened by its command, a missing one refused, closed back to Conversation");
+}
+
+{
+  const week = (resets: number) => ({ resets_at: resets, start: resets - 604800, points: [], measured: 0 });
+  answers.set("/api/usage/history?provider=anthropic", { status: 200, body: {
+    provider: "anthropic", window: "seven_day", week_sec: 604800, since: 0, until: 1800000000,
+    resolution: "hour", raw_keep_sec: 1209600, latest: { used: null, resets_at: null, observed_at: null, status: "" },
+    weeks: [week(1800100000), week(1799495200), week(1798890400)] } });
+  assert.equal((await dispatch("usage.close", {}, { actor: "brain" })).status, "unavailable");
+  // No view open: there is no week to move to.
+  assert.equal((await dispatch("usage.week", { to: "earlier" }, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("usage.open", { provider: "anthropic" }, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "usage");
+  assert.equal(usage.openUsage.get(), "anthropic");
+  for (let i = 0; i < 50 && !usage.usageHistory.get().value; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(usage.usageHistory.get().value?.weeks.length, 3);
+  // This week first; nothing later than it.
+  assert.equal(usage.usageWeek.get(), 0);
+  assert.equal((await dispatch("usage.week", { to: "later" }, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("usage.week", { to: "earlier" }, { actor: "human" })).status, "completed");
+  assert.equal((await dispatch("usage.week", { to: "earlier" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.usageWeek.get(), 2);
+  // The earliest week: nothing earlier.
+  assert.equal((await dispatch("usage.week", { to: "earlier" }, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("usage.week", { to: "later" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.usageWeek.get(), 1);
+  assert.equal((await dispatch("usage.week", { to: "current" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.usageWeek.get(), 0);
+  // One brain at a time: the other brain's view takes its place, from its own this week.
+  usage.usageWeek.set(1);
+  assert.equal((await dispatch("usage.open", { provider: "openai" }, { actor: "brain" })).status, "completed");
+  assert.equal(usage.openUsage.get(), "openai");
+  assert.equal(usage.usageWeek.get(), 0);
+  assert.ok(fetched.includes("/api/usage/history?provider=openai"));
+  assert.equal((await dispatch("usage.close", {}, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "conversation");
+  assert.equal(usage.openUsage.get(), null);
+  passed.push("usage history: one brain's weeks, this week first, earlier and later in order, closed back to Conversation");
 }
 
 // ── takeover ────────────────────────────────────────────────────────────

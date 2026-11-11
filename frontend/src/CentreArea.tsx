@@ -92,6 +92,8 @@ import { BundleMemberView } from "./BundleMemberView";
 import { settingsOpen, SettingsView } from "./Settings";
 import { MicCorner, MicPortal } from "./MicControl";
 import { openKnowledge } from "./knowledge";
+import { openUsage } from "./usage";
+import { UsageHistoryView, usageTitle } from "./UsageHistoryView";
 import { KnowledgeView } from "./KnowledgeView";
 import { openProject, projectList } from "./projects";
 import { ProjectView } from "./ProjectView";
@@ -150,6 +152,12 @@ const KNOWLEDGE_VIEW: MainTabView = {
 
 const PROJECT_VIEW: MainTabView = {
   id: "project",
+  icon: null,
+  view: () => null,
+};
+
+const USAGE_VIEW: MainTabView = {
+  id: "usage",
   icon: null,
   view: () => null,
 };
@@ -238,6 +246,7 @@ export function CentreArea() {
   const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
   const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
+  const usageOpen = useSyncExternalStore(openUsage.subscribe, openUsage.get);
   const projectOpen = useSyncExternalStore(openProject.subscribe, openProject.get);
   const projectName = (useSyncExternalStore(projectList.subscribe, projectList.get).value?.projects ?? [])
     .find((p) => p.id === projectOpen)?.display_name;
@@ -265,6 +274,8 @@ export function CentreArea() {
                                                     member={fileOpen} /> }] : []),
     ...(settings ? [titled(SETTINGS_VIEW)] : []),
     ...(knowledgeOpen ? [titled(KNOWLEDGE_VIEW)] : []),
+    ...(usageOpen ? [{ ...USAGE_VIEW, title: usageTitle(t, usageOpen),
+                       view: () => <UsageHistoryView key={usageOpen} provider={usageOpen} /> }] : []),
     ...(projectOpen ? [{ ...PROJECT_VIEW, title: projectName ?? t("tabs.main.project"),
                          view: () => <ProjectView key={projectOpen} id={projectOpen} /> }] : []),
     ...(work ? [{ ...WORK_VIEW, title: workTitle ?? t("tabs.main.work"),

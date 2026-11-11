@@ -6,7 +6,7 @@ origin or the tool token, and no access-key category covers them. A change
 is followed by a `knowledge` hint on /ws/sessions (`on_change`).
 
   GET  /api/knowledge/health         the engine's state, ingest and counts
-  POST /api/knowledge/search         {text, query_en, include_untrusted, kinds, limit}
+  POST /api/knowledge/search         {text, phrase, query_en, include_untrusted, kinds, limit}
   GET  /api/knowledge/entity         ?name= typed matches and a card, or ?key=
   GET  /api/knowledge/proposals      what the linker proposes, waiting for his yes
   POST /api/knowledge/links          {action: link|unlink|accept|reject, topic, kind, target, proposal}
@@ -20,6 +20,7 @@ is followed by a `knowledge` hint on /ws/sessions (`on_change`).
   POST /api/knowledge/context        {purpose, project, include_received}: the pack
   GET  /api/knowledge/embedder       the embedding model: installed, runnable, embedded so far
   POST /api/knowledge/embedder/install   download, check and install it (in the background)
+  GET  /api/knowledge/folder-counts  each registered folder's document count; never 503 (`available`)
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from fastapi.responses import JSONResponse
 from jarvis import knowledge_api as ka
 
 PREFIX = "/api/knowledge"
-_SEARCH = {"text", "query_en", "include_untrusted", "kinds", "limit"}
+_SEARCH = {"text", "phrase", "query_en", "include_untrusted", "kinds", "limit"}
 _LINKS = {"action", "topic", "kind", "target", "proposal"}
 _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
 _MAINTAIN = {"action", "source"}
@@ -76,7 +77,8 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             return bad()
         return await run(lambda: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
                                            include_untrusted=b.get("include_untrusted", True) is not False,
-                                           kinds=b.get("kinds"), limit=b.get("limit") or 10))
+                                           kinds=b.get("kinds"), limit=b.get("limit") or 10,
+                                           phrase=b.get("phrase")))
 
     async def entity(name: Optional[str] = None, key: Optional[str] = None):
         return await run(lambda: ka.entity(ctx, name=name, key=key))
@@ -136,6 +138,9 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
     async def embedder():
         return await run(lambda: ka.embedding_model(ctx))
 
+    async def folder_counts():
+        return await run(lambda: ka.folder_counts(ctx))
+
     async def install_embedder():
         try:
             return JSONResponse(ka.install_embedding_model(ctx))
@@ -143,6 +148,7 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             return JSONResponse({"error": "unavailable", "message": str(e)}, status_code=503)
 
     app.add_api_route(f"{PREFIX}/embedder", embedder, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/folder-counts", folder_counts, methods=["GET"])
     app.add_api_route(f"{PREFIX}/embedder/install", install_embedder, methods=["POST"])
     app.add_api_route(f"{PREFIX}/context", context, methods=["POST"])
     app.add_api_route(f"{PREFIX}/seeds", seeds, methods=["GET"])

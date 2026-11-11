@@ -137,6 +137,7 @@ def _guard(fn):
     from jarvis.knowledge.documents import DocumentError
     from jarvis.knowledge.items import ConditionFailed
     from jarvis.knowledge.paths import PathError
+    from jarvis.knowledge.rights import Denied
     from jarvis.knowledge.store import StoreReadOnly
 
     def wrapped(engine: Engine, request: Request) -> Answer:
@@ -145,6 +146,8 @@ def _guard(fn):
         except ConditionFailed as e:
             return Answer(409, {"error": "conflict", "detail": str(e), "path": e.path,
                                 "expected": e.expected, "found": e.found})
+        except Denied as e:
+            return Answer(403, {"error": "denied", "detail": str(e)})
         except (DocumentError, PathError) as e:
             raise BadRequest(str(e))
         except StoreReadOnly as e:
@@ -321,7 +324,7 @@ def _items_get(engine: Engine, request: Request) -> Answer:
     if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))):
         raise BadRequest("at is a time in seconds")
     item = engine.items.get(body.get("path"), version=_int_or_none(body.get("version"), "version"),
-                            at=at, streams=body.get("streams"))
+                            at=at, streams=body.get("streams"), person=engine.items._reader(body))
     if item is None:
         return Answer(404, {"error": "not_found"})
     return Answer(200, item)
@@ -332,7 +335,8 @@ def _items_get(engine: Engine, request: Request) -> Answer:
 def _items_history(engine: Engine, request: Request) -> Answer:
     body = request.body or {}
     return Answer(200, engine.items.history(body.get("path"), limit=_int_or_none(body.get("limit"), "limit") or 100,
-                                            before=_int_or_none(body.get("before"), "before")))
+                                            before=_int_or_none(body.get("before"), "before"),
+                                            person=engine.items._reader(body)))
 
 
 @route("POST", "/v1/items/diff")
@@ -342,7 +346,8 @@ def _items_diff(engine: Engine, request: Request) -> Answer:
     a = _int_or_none(body.get("from"), "from")
     if a is None:
         raise BadRequest("diff takes the version it is from")
-    return Answer(200, engine.items.diff(body.get("path"), a, _int_or_none(body.get("to"), "to")))
+    return Answer(200, engine.items.diff(body.get("path"), a, _int_or_none(body.get("to"), "to"),
+                                         person=engine.items._reader(body)))
 
 
 @route("POST", "/v1/items/list")
@@ -367,6 +372,36 @@ def _items_changes(engine: Engine, request: Request) -> Answer:
 @_guard
 def _items_links(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.items.links(request.body or {}))
+
+
+@route("POST", "/v1/items/search")
+@_guard
+def _items_search(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.search(request.body or {}))
+
+
+@route("POST", "/v1/items/rights")
+@_guard
+def _items_rights(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.set_rights(request.body or {}))
+
+
+@route("POST", "/v1/items/propose")
+@_guard
+def _items_propose(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.propose_link(request.body or {}))
+
+
+@route("POST", "/v1/items/proposals")
+@_guard
+def _items_proposals(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.proposals(request.body or {}))
+
+
+@route("POST", "/v1/items/proposals/answer")
+@_guard
+def _items_answer(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.items.answer_proposal(request.body or {}))
 
 
 class _HTTPHandler(BaseHTTPRequestHandler):

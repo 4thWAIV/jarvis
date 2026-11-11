@@ -1,0 +1,107 @@
+{
+  "family": "usage",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [
+    {
+      "id": "usage.open",
+      "label": "Open one brain's weekly usage history in the centre: this week's burn-down first, earlier weeks one at a time",
+      "view": "main.usage",
+      "args": {
+        "provider": {
+          "type": "key",
+          "entity": "provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ]
+    },
+    {
+      "id": "usage.close",
+      "label": "Close the usage history",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ]
+    },
+    {
+      "id": "usage.week",
+      "label": "Show the open usage history's earlier or later week, or this week again",
+      "view": "main.usage",
+      "args": {
+        "to": {
+          "type": "enum",
+          "values": [
+            "earlier",
+            "later",
+            "current"
+          ]
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ]
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "usageHistory",
+      "entity": "provider",
+      "label": "One brain's weekly usage history",
+      "parts": [
+        "header",
+        "close",
+        "weeks",
+        "chart",
+        "latest"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {
+              "provider": "$key"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

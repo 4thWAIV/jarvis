@@ -14,6 +14,9 @@ for a backoff and threw it away. This module is where it is kept.
   latest()                  the raw stored record, or None
   snapshot()                what /api/usage returns
 
+Every observation is also appended to the long-term record
+(usage_history.py), which keeps the history this file does not.
+
 Each brain provider's observations are kept apart, by its service name
 ("anthropic", "openai"): every function takes `service`, Anthropic's by
 default.
@@ -216,8 +219,23 @@ def record(info: Any, *, now: Optional[float] = None,
         "provider": _provider(provider) or _provider(stored.get("provider")) or {"service": service},
         **_week_history(stored, incoming.get("seven_day"), when),
     }
+    # The history first: made for the first time, it takes in the readings
+    # this file held before this one, so this one is not counted twice.
+    _keep(service, incoming, when)
     _write(stored_record, service)
     return stored_record
+
+
+def _keep(service: str, incoming: dict[str, dict], when: float) -> None:
+    """The long-term record (usage_history): every window this observation
+    named, with the account it is for. Never takes the reading down."""
+    if not incoming:
+        return
+    try:
+        from jarvis import brain_accounts, usage_history
+        usage_history.append(service, incoming, account=brain_accounts.history_ref(service), now=when)
+    except Exception as e:
+        log.warning(f"usage_store: the reading was not added to the history ({e})")
 
 
 # ── the week, on a straight line ──────────────────────────────────────────────

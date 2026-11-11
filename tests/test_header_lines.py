@@ -355,6 +355,39 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "content_sections.whole_text": (
+        "it reads an extracted file's own title and text (never a session's) and builds only the "
+        "text the embedding model turns into a vector; nothing it returns is printed, said or put "
+        "in a brain header, and search results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.changed": (
+        "it reads an item's own path-entry fields (file, size, state) that the content child wrote, "
+        "to decide whether a file changed; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.extract": (
+        "it reads a file's extracted title and text and the item's own fields to write them into the "
+        "engine as that file's content; nothing is printed, said or put in a brain header, and search "
+        "results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.folder_roots": (
+        "it reads the folder catalog's own records (id, reader, location, availability) to choose "
+        "which folders to watch; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.scan": (
+        "it compares an item's own path-entry fields (file, state) with the folder on disk to choose "
+        "what to read again; nothing it returns is printed, said or put in a header"),
+    "knowledge_move.copy": (
+        "it reads the move manifest's own fields (state, source path, table names and digests) that "
+        "the move kit wrote, to decide whether the engine holds this move; its refusal is printed by "
+        "the `python -m jarvis.knowledge copy` command to whoever ran it, never a brain header or speech"),
+    "knowledge_move.verify": (
+        "it compares the move manifest's state and schema with the SQLite file's own; the report "
+        "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
+        "never a brain header or speech"),
+    "usage_history.append": (
+        "it stores a usage reading's window status as a column of JARVIS's own usage history; the "
+        "only text it builds is its own log line naming the SQLite error, never a session field or "
+        "a brain header"),
+    "server.tool_usage_history": (
+        "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
+        "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
+        "header; a refusal quotes at most 40 characters of an argument after 'Refused:'"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),
@@ -555,12 +588,6 @@ EXEMPT = {
         "it returns a topic's status only when it is one of the fixed STATUSES "
         "words, else `unknown`, read from the owner's own topic file. Driven by "
         "tests/test_knowledge_links.py"),
-    "knowledge_ingest.files": (
-        "the labels it builds are the names of files in the brain's own note "
-        "folders and paths in folders he registered, read through "
-        "folder_service under the FILES reader; they go only into the "
-        "engine's derived documents, whose hits carry their trust, and the "
-        "server never speaks them. Driven by tests/test_knowledge_ingest.py"),
     "knowledge_ingest.run": (
         "the foreign text it reads (an agent's run summary and result, a "
         "session's workflow events, an agent's conversation items) goes only "

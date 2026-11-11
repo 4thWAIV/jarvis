@@ -10,12 +10,14 @@ is the one implementation, which reaches the engine through a
 (`in_process`), which runs exactly the routes HTTP runs, so a test of the
 interface is a test of the wire.
 
-Round 1 (engine-core) builds paths, documents of any shape, content with
+Round 1 (engine-core) built paths, documents of any shape, content with
 sections, transactions with conditions, versions with history, `get_at`
 and `diff`, ordered lists, counts, the change feed, and hierarchy,
-reference and derived links. Search by meaning, phrase and words, vectors,
-AccessRights and the security gate, and AI proposals are round 2: until
-then every caller reads as Tim, and the calls that need them say so.
+reference and derived links. Round 2 (content-and-search) adds search by
+meaning (one whole-item vector and one per section), words and exact
+phrase, AccessRights with the gate inside every call (every read names its
+caller, whose person's rights apply; an AI's are its person's), and AI link
+proposals that wait for the owner's yes.
 """
 from __future__ import annotations
 
@@ -36,8 +38,8 @@ class Stream(enum.Enum):
     DATA = "data"            # structured fields about the item
     CONTENT = "content"      # its text and file reference; folders have none
     SECTIONS = "sections"    # the content split at headings; belongs to the item
-    VECTORS = "vectors"      # one whole-item vector + one per section (round 2)
-    RIGHTS = "rights"        # who may read and write which stream (round 2)
+    VECTORS = "vectors"      # one whole-item vector + one per section: embedded or waiting
+    RIGHTS = "rights"        # who may read and write which stream (the owner's eyes only)
 
 
 class Right(enum.Enum):
@@ -78,6 +80,8 @@ class Item:
     content: Optional[Mapping[str, Any]] = None   # text, ref, sha256, media_type
     sections: Optional[tuple[Section, ...]] = None
     lsn: Optional[int] = None
+    vectors: Optional[Mapping[str, Any]] = None   # {state: embedded or waiting, sections}
+    rights: Optional[Mapping[str, Any]] = None    # {own, inherited}: the grants, for the owner
 
     @property
     def owner(self) -> Optional[str]:
@@ -88,6 +92,7 @@ class Item:
         sections = raw.get("sections")
         return cls(path=raw["path"], kind=raw["type"], version=raw["version"], data=raw.get("data"),
                    entry=raw.get("entry"), content=raw.get("content"), lsn=raw.get("lsn"),
+                   vectors=raw.get("vectors"), rights=raw.get("rights"),
                    sections=None if sections is None else tuple(
                        Section(s["index"], s.get("heading") or "", s["text"]) for s in sections))
 
@@ -133,13 +138,14 @@ class Page:
 
 @dataclass(frozen=True)
 class Query:
-    meaning: Optional[str] = None           # vector index (round 2)
-    where: Mapping[str, Any] = field(default_factory=dict)   # data index: field = value
-    phrase: Optional[str] = None            # full-text index (round 2)
-    words: Optional[str] = None             # full-text index (round 2)
-    linked_to: Optional[Path] = None        # graph index
+    meaning: Optional[str] = None           # vector index: ranks
+    where: Mapping[str, Any] = field(default_factory=dict)   # data index: field = value, a condition
+    phrase: Optional[str] = None            # full-text index: an exact phrase, a condition
+    words: Optional[str] = None             # full-text index: keywords, ranks
+    linked_to: Optional[Path] = None        # graph index: a condition
     under: Path = "/"
     limit: int = 20
+    types: Optional[tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +166,30 @@ class Conflict(RuntimeError):
 
 class NotYet(NotImplementedError):
     """A UDS capability a later round of the plan builds."""
+
+
+class Denied(PermissionError):
+    """A write the caller has no right to make. A denied read is never
+    this: it looks the same as a missing item."""
+
+
+@dataclass(frozen=True)
+class Proposal:
+    path: Path                         # /proposals/links/<id>.proposal
+    source: Path
+    kind: str
+    target: Path
+    person: str
+    model: str
+    at: float
+    state: str                         # proposed, accepted or refused
+    agent: Optional[str] = None
+    weight: float = 1.0
+
+    @classmethod
+    def from_wire(cls, raw: dict) -> "Proposal":
+        return cls(raw["path"], raw["from"], raw["kind"], raw["to"], raw["person"], raw["model"],
+                   float(raw["at"]), raw["state"], raw.get("agent"), float(raw.get("weight", 1.0)))
 
 
 class Transaction:
@@ -220,8 +250,7 @@ class UDS(Protocol):
 
 
 def _streams(streams) -> list[str]:
-    return [s.value if isinstance(s, Stream) else str(s) for s in streams
-            if (s.value if isinstance(s, Stream) else s) not in ("vectors", "rights")]
+    return [s.value if isinstance(s, Stream) else str(s) for s in streams]
 
 
 DEFAULT = frozenset({Stream.ENTRY, Stream.DATA})
@@ -242,6 +271,8 @@ class EngineUDS:
                            payload.get("expected"), payload.get("found"))
         if status == 400:
             raise ValueError((payload or {}).get("detail") or "bad request")
+        if status == 403:
+            raise Denied((payload or {}).get("detail") or "denied")
         if status >= 500:
             raise EngineUnavailable(f"engine answered {status}: {payload}")
         return status, payload
@@ -276,25 +307,26 @@ class EngineUDS:
         return None if status == 404 else Item.from_wire(payload)
 
     def get(self, caller: Caller, path: Path, streams=DEFAULT, version: Optional[int] = None) -> Optional[Item]:
-        return self._get({"path": path, "streams": _streams(streams), "version": version})
+        return self._get({"caller": caller.by(), "path": path, "streams": _streams(streams),
+                          "version": version})
 
     def get_at(self, caller: Caller, path: Path, when, streams=DEFAULT) -> Optional[Item]:
         at = when.timestamp() if isinstance(when, datetime) else float(when)
-        return self._get({"path": path, "streams": _streams(streams), "at": at})
+        return self._get({"caller": caller.by(), "path": path, "streams": _streams(streams), "at": at})
 
     def history(self, caller: Caller, path: Path, limit: int = 1000) -> list[Version]:
-        found = self._call("history", {"path": path, "limit": limit})[1]
+        found = self._call("history", {"caller": caller.by(), "path": path, "limit": limit})[1]
         return [Version(**{k: v.get(k) for k in Version.__dataclass_fields__}) for v in found["versions"]]
 
     def diff(self, caller: Caller, path: Path, a: int, b: Optional[int] = None) -> dict:
-        return self._call("diff", {"path": path, "from": a, "to": b})[1]
+        return self._call("diff", {"caller": caller.by(), "path": path, "from": a, "to": b})[1]
 
     # -- many -----------------------------------------------------------------
     def list(self, caller: Caller, under: Path = "/", *, parent: Optional[Path] = None,
              types: Optional[list[str]] = None, where: Optional[list] = None,
              order: Optional[tuple[str, str]] = None, limit: int = 100, cursor: Optional[str] = None,
              streams=DEFAULT) -> Page:
-        body: dict = {"under": under, "limit": limit, "streams": _streams(streams)}
+        body: dict = {"caller": caller.by(), "under": under, "limit": limit, "streams": _streams(streams)}
         for k, v in (("parent", parent), ("types", types), ("where", where), ("cursor", cursor)):
             if v is not None:
                 body[k] = v
@@ -316,7 +348,7 @@ class EngineUDS:
     def count(self, caller: Caller, under: Path = "/", *, parent: Optional[Path] = None,
               types: Optional[list[str]] = None, where: Optional[list] = None,
               group_by: Optional[str] = None) -> Counts:
-        body: dict = {"under": under}
+        body: dict = {"caller": caller.by(), "under": under}
         for k, v in (("parent", parent), ("types", types), ("where", where), ("group_by", group_by)):
             if v is not None:
                 body[k] = v
@@ -327,14 +359,14 @@ class EngineUDS:
 
     def changes(self, caller: Caller, since: int = 0, *, limit: int = 100,
                 under: Optional[Path] = None) -> dict:
-        body: dict = {"since": since, "limit": limit}
+        body: dict = {"caller": caller.by(), "since": since, "limit": limit}
         if under is not None:
             body["under"] = under
         return self._call("changes", body)[1]
 
     def links(self, caller: Caller, path: Path, kind: Optional[str] = None, *,
               direction: str = "both", origins: Optional[list[str]] = None, limit: int = 100) -> list[Link]:
-        body: dict = {"path": path, "direction": direction, "limit": limit}
+        body: dict = {"caller": caller.by(), "path": path, "direction": direction, "limit": limit}
         if kind is not None:
             body["kind"] = kind
         if origins is not None:
@@ -343,33 +375,53 @@ class EngineUDS:
         return [Link(k["from"], k["kind"], k["to"], k["origin"], k.get("model"), k.get("at"),
                      float(k.get("weight", 1.0))) for k in found["links"]]
 
-    def search(self, caller: Caller, query: Query) -> list[Hit]:
-        """One hit per item. Round 1 answers by data (`where`, `under`) and
-        the graph (`linked_to`); meaning, phrase and words are round 2."""
-        if query.meaning or query.phrase or query.words:
-            raise NotYet("search by meaning, phrase and words is round 2")
-        hits: dict[str, set] = {}
-        if query.where or not query.linked_to:
-            where = [[k, "=", v] for k, v in query.where.items()]
-            for item in self.list(caller, query.under, where=where or None, limit=1000,
-                                  streams={Stream.ENTRY}).items:
-                hits.setdefault(item.path, set()).add("data")
-        if query.linked_to:
-            found = {lk.target if lk.source == query.linked_to else lk.source
-                     for lk in self.links(caller, query.linked_to, limit=1000)}
-            from jarvis.knowledge import paths
-            prefix = paths.under_prefix(query.under)
-            graph = {p for p in found if p.startswith(prefix)}
-            if query.where:
-                hits = {p: m | {"graph"} for p, m in hits.items() if p in graph}
-            else:
-                for p in graph:
-                    hits.setdefault(p, set()).add("graph")
-        ranked = sorted(hits.items(), key=lambda pm: (-len(pm[1]), pm[0]))[:query.limit]
-        return [Hit(p, float(len(m)), (), frozenset(m)) for p, m in ranked]
+    def search(self, caller: Caller, query: Query, *, budget_ms: Optional[int] = None) -> list[Hit]:
+        """One hit per item, from every index the query names: meaning (the
+        whole-item vectors, the section vectors saying where), words and an
+        exact phrase (full text), field values (data) and links (graph),
+        through the caller's rights."""
+        return list(self.search_page(caller, query, budget_ms=budget_ms)["hits"])
 
-    def propose_link(self, caller: Caller, link: Link) -> Any:
-        raise NotYet("AI link proposals wait for the owner's yes: round 2, with rights")
+    def search_page(self, caller: Caller, query: Query, *, budget_ms: Optional[int] = None) -> dict:
+        """`search` with whether the answer is partial and why."""
+        body: dict = {"caller": caller.by(), "under": query.under, "limit": query.limit}
+        for k in ("meaning", "phrase", "words", "linked_to"):
+            if getattr(query, k):
+                body[k] = getattr(query, k)
+        if query.where:
+            body["where"] = [[k, "=", v] for k, v in query.where.items()]
+        if query.types:
+            body["types"] = list(query.types)
+        if budget_ms is not None:
+            body["budget_ms"] = budget_ms
+        found = self._call("search", body)[1]
+        return {"hits": tuple(Hit(h["path"], float(h["score"]), tuple(h["sections"]), frozenset(h["matched_by"]))
+                              for h in found["hits"]),
+                "partial": found.get("partial", False), "notes": tuple(found.get("notes") or ())}
+
+    def propose_link(self, caller: Caller, link: Link, *, why: Optional[str] = None) -> Proposal:
+        """An AI's link, kept as a proposal with the agent, the person, the
+        model and the time until the owner accepts or refuses it."""
+        body: dict = {"by": caller.by(), "from": link.source, "kind": link.kind, "to": link.target,
+                      "weight": link.weight}
+        if link.model:
+            body["model"] = link.model
+        if why:
+            body["why"] = why
+        return Proposal.from_wire(self._call("propose", body)[1])
+
+    def proposals(self, caller: Caller, state: Optional[str] = "proposed") -> list[Proposal]:
+        found = self._call("proposals", {"caller": caller.by(), "state": state})[1]
+        return [Proposal.from_wire(p) for p in found["proposals"]]
+
+    def answer_proposal(self, caller: Caller, path: Path, action: str) -> dict:
+        """The owner's yes (`accept`, which writes the link) or no (`refuse`)."""
+        return self._call("proposals/answer", {"by": caller.by(), "path": path, "action": action})[1]
+
+    def set_rights(self, caller: Caller, path: Path, grants: list) -> dict:
+        """The grants on `path` (each: person, data, content, write, hidden),
+        inherited below it; the owner's act. An empty list clears them."""
+        return self._call("rights", {"by": caller.by(), "path": path, "grants": [dict(g) for g in grants]})[1]
 
 
 @contextlib.contextmanager

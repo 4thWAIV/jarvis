@@ -512,6 +512,17 @@ class ProjectStore:
                                 "ORDER BY is_home DESC, added_at", (project_id,)).fetchall()
         return [self._pf(r) for r in rows]
 
+    def index_scopes(self) -> dict[str, list[str]]:
+        """Every registered folder linked to a project, with the index scope
+        of each of its links (what the knowledge engine may read there)."""
+        with self._tx() as conn:
+            rows = conn.execute("SELECT folder_id, index_scope FROM project_folders "
+                                "WHERE removed_at IS NULL ORDER BY folder_id").fetchall()
+        out: dict[str, list[str]] = {}
+        for r in rows:
+            out.setdefault(r["folder_id"], []).append(r["index_scope"])
+        return out
+
     def projects_of_folder(self, folder_id: str) -> list[Project]:
         with self._tx() as conn:
             rows = conn.execute(
