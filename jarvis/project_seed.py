@@ -28,9 +28,10 @@ from jarvis.project_store import Candidate, ProjectStore
 LEGACY_QUERIES = (
     ("run_project", "SELECT project_name, project_path, COUNT(*) FROM runs GROUP BY project_name, project_path"),
     ("workflow_project", "SELECT project, NULL, COUNT(*) FROM workflows GROUP BY project"),
-    ("message_project", "SELECT project, NULL, COUNT(*) FROM messages GROUP BY project"),
-    ("session_project", "SELECT project, NULL, COUNT(*) FROM session_messages GROUP BY project"),
 )
+# The messages' and session messages' projects are counted by their own
+# store (run_store.message_projects: message documents).
+MESSAGE_SOURCES = (("message_project", "messages"), ("session_project", "session_messages"))
 
 
 def _legacy_rows() -> list[tuple[str, str, Optional[str], int]]:
@@ -44,7 +45,12 @@ def _legacy_rows() -> list[tuple[str, str, Optional[str], int]]:
                         out.append((source, str(name), path, int(count)))
             except Exception:  # noqa: BLE001 - a table this JARVIS has not made yet
                 continue
-    notes = data_paths.projects_dir()
+    counted = run_store.message_projects()
+    for source, table in MESSAGE_SOURCES:
+        for name, count in sorted(counted[table].items()):
+            if name:
+                out.append((source, str(name), None, int(count)))
+    notes =data_paths.projects_dir()
     if notes.is_dir():
         for p in sorted(notes.glob("*.md")):
             if not p.is_symlink():

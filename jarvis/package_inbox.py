@@ -869,14 +869,11 @@ def follow_messages(now: Optional[float] = None) -> list[Entry]:
             for e in [_entry(r) for r in conn.execute(
                     "SELECT * FROM package_inbox WHERE closed_why=? AND capture_id IS NOT NULL "
                     "AND message_id IS NULL", (SIGNED_OFF,))]:
-                m = conn.execute(
-                    f"SELECT id FROM messages WHERE capture_id=? AND session_id=? AND "
-                    f"staged_at>=? AND status IN ({','.join('?' * len(_GONE))}) "
-                    f"ORDER BY id DESC LIMIT 1",
-                    (e.capture_id, e.from_session, e.return_asked_at or 0, *_GONE)).fetchone()
+                m = run_store.last_message_gone(e.capture_id, e.from_session,
+                                                e.return_asked_at or 0, _GONE)
                 if m is not None:
                     moved.append(_change(conn, e, "returned", BY_JARVIS, now, returned_at=now,
-                                         message_id=m["id"]))
+                                         message_id=m))
         except sqlite3.OperationalError:      # no messages table yet: nothing has gone
             return []
     return moved

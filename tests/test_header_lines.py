@@ -535,9 +535,6 @@ EXEMPT = {
         "it joins a row's title, name and sender only to fold them into words "
         "to match his reference against; the joined text is never returned, "
         "only the rows"),
-    "package_inbox.follow_messages": (
-        "it reads a message's status (one of run_store.MessageStatus) and "
-        "builds only SQL from fixed words; nothing is returned but rows"),
     "package_inbox.option_name": (
         "it returns an option's name to its callers, which wall it: the "
         "brain's question list (_inbox_questions, driven) and the workflow "
@@ -797,9 +794,30 @@ EXEMPT = {
         "it was heard unchanged, and prints neither: its note to the brain "
         "carries only the capture's number"),
     "run_store.update_message": (
-        "it builds SQL out of column names checked against a fixed list "
-        "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
-        "a bound parameter, and it returns nothing"),
+        "it takes field names checked against a fixed list (`_MESSAGE_UPDATABLE`) "
+        "and writes them into the message's document as data; a session's reply "
+        "is a value there, and it returns nothing"),
+    "run_store.change": (
+        "update_message's write: it puts the checked fields into the message's "
+        "document as data and returns the row as it was; it says nothing"),
+    "conversation_log.append": (
+        "it stores one item as data in its turn or message document and returns "
+        "the record; it says nothing, and the record's readers show it as text "
+        "or wall it for the brain"),
+    "conversation_log.store": (
+        "append's write: it stores the item as data and returns the record"),
+    "conversation_log._message_doc_for": (
+        "it finds the message document an item joins, by ids; it returns a "
+        "record and says nothing"),
+    "conversation_log.message_for": (
+        "it finds the message an update is about, by its source, and returns "
+        "the record; it says nothing, and its readers wall it for the brain"),
+    "conversation_log.move": (
+        "mark's write: it moves one message's state on as data and returns the "
+        "record; it says nothing"),
+    "message_records.message_doc_path": (
+        "it makes a document's path from ids (each through records.segment); "
+        "no words of a message are in it, and it says nothing"),
     "voice_diagnostics._camel": (
         "it turns this module's own dataclass field names (fixed identifiers "
         "such as `backlog_sec`) into JSON keys; no session, page or brain "
@@ -832,9 +850,6 @@ EXEMPT = {
         "path; the string it returns names the project by `name`, which "
         "`_resolve_project_or_explain` resolved from the user's own list, and "
         "carries no roster field. Driven in test_one_writer_per_project.py"),
-    "run_store.get_messages": (
-        "it reads message rows back by id for the conversation's live status, "
-        "and returns records; it prints nothing at all"),
     "server._approve_on_his_yes": (
         "the `id` it reads is a capture's number, an int JARVIS assigned; the "
         "names in its notes are the capture's `to` (the agent directory's name, "
@@ -906,11 +921,6 @@ EXEMPT = {
     "conversation_log.mark": (
         "it moves one message's state on and returns the record; it says nothing, and the "
         "record's readers show it as text or wall it for the brain"),
-    "conversation_log.messages_where": (
-        "it returns message ids for a source or a carried package; no words leave it"),
-    "conversation_log.work_threads": (
-        "it counts each Work item's messages and returns records; it says nothing, and "
-        "messages_api's readers show them as text or wall them for the brain"),
     "messages_api._held_session": (
         "it returns the session id a key JARVIS holds names, from its own record; the "
         "route uses it only to hold that key's message, and nothing reaches the brain"),
@@ -929,9 +939,6 @@ EXEMPT = {
         "agent's terminal; nothing reaches the brain or the voice"),
     "server.tool_mark_message": (
         "it says only the message's number and its fixed state word, never its words"),
-    "conversation_log.threads": (
-        "it lists threads as records, the counterpart's name as its newest message named "
-        "it; it says nothing, and every reader that shows a name walls it"),
     "server._inbox_sender": (
         "it keeps a package's proven sender on its row, clipped to the row's limit; the "
         "name reaches the page as text and the brain only inside package_inbox's wall"),

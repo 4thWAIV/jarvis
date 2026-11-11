@@ -621,8 +621,9 @@ def test_a_message_before_he_signed_off_is_not_taken_for_his(wired, shown, marks
     inbox_id = opened_deck(wired, tmp_path, session="sess-1")
     early = run_store.create_message("sess-1", "anthropic", "chitauri", "tea", "older",
                                      capture_id=1, status=run_store.MessageStatus.SENT)
-    with __import__("sqlite3").connect(data_paths.db_path()) as conn:
-        conn.execute("UPDATE messages SET staged_at=? WHERE id=?", (time.time() - 3600, early))
+    from jarvis import records
+    records.update(run_store._message_doc(early).path, lambda d: {
+        **d, "message": {**d["message"], "staged_at": time.time() - 3600}})
     _call(wired, "sign_off_package", package=inbox_id)
     wired.server._follow_inbox_messages()
     assert package_inbox.get(inbox_id).message_id is None

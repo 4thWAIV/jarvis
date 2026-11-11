@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis import brain_activity, session_steer
+from jarvis import message_records, records
 from jarvis.data_paths import db_path
 
 log = logging.getLogger("jarvis.run_store")
@@ -476,6 +477,12 @@ def list_steers(limit: int = 50) -> list[dict]:
 
 
 # --- Messages ----------------------------------------------------------------
+#
+# Each message JARVIS sends a session is one `message` document
+# (message_records.py: /agents/<session id>/messages/m<id>.message), written
+# when it is staged, BEFORE it is sent, and written again at every step
+# after, each step a version of it; its conversation items (the TO_AGENT
+# that recorded it, the agent's ANSWER) are in the same document.
 
 class MessageStatus(StrEnum):
     STAGED = "staged"          # waiting out the cancel window
@@ -505,7 +512,7 @@ _MESSAGE_UPDATABLE = frozenset({
 
 @dataclass(frozen=True)
 class Message:
-    """One row of `messages`."""
+    """One message JARVIS sent a session (its document's `message`)."""
     id: int
     session_id: str
     provider: str
@@ -533,8 +540,21 @@ class Message:
         return self.status in OPEN_MESSAGE_STATUSES
 
 
-def _message(row) -> Message:
-    return Message(**{k: row[k] for k in row.keys()})
+def _message(data: dict) -> Message:
+    return Message(**message_records.unpack(data, message_records.MESSAGE_COLUMNS))
+
+
+def _message_docs(where: list, unit=None) -> list:
+    """The message documents holding a messages row that match `where`."""
+    return [r for r in message_records.message_docs([["message.id", "exists", True], *where], unit)
+            if r.data.get("message") is not None]
+
+
+def _message_doc(message_id: int, unit=None):
+    for rec in _message_docs([["message.id", "=", int(message_id)]], unit):
+        if rec.data["message"].get("id") == int(message_id):
+            return rec
+    return None
 
 
 def create_message(session_id: str, provider: str, agent_name: str,
@@ -542,16 +562,23 @@ def create_message(session_id: str, provider: str, agent_name: str,
                    status: str = MessageStatus.STAGED,
                    failure: Optional[str] = None) -> int:
     """Record a message before anything is done with it. Its id."""
-    with closing(_connect()) as conn:
-        cur = conn.execute(
-            "INSERT INTO messages (session_id, provider, agent_name, project, "
-            "capture_id, text, status, staged_at, failure) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (session_id, provider, agent_name, project, capture_id, text,
-             str(status), time.time(), failure))
-        conn.commit()
-        message_id = int(cur.lastrowid)
-    _message_activity(message_id, str(status), session_id, agent_name)
+    status = str(status)
+
+    def make(unit) -> int:
+        message_id = message_records.take_id(unit, "messages", lambda: message_records.last_message_id() + 1)
+        row = {"id": message_id, "session_id": session_id, "provider": provider,
+               "agent_name": agent_name, "project": project, "capture_id": capture_id,
+               "text": text, "status": status, "staged_at": time.time(), "failure": failure}
+        path = message_records.message_path(message_records.doc_id("m", message_id), "agent",
+                                            session_id)
+        found = unit.get(path)
+        data = found.data if found is not None else {"items": []}
+        data.update(message=message_records.pack(row, message_records.MESSAGE_COLUMNS), events=[])
+        unit.put(path, data, change=status, summary=f"message {message_id} to {agent_name}: {status}")
+        return message_id
+
+    message_id = records.atomic(make)
+    _message_activity(message_id, status, session_id, agent_name)
     return message_id
 
 
@@ -571,24 +598,29 @@ def update_message(message_id: int, **fields) -> None:
         raise ValueError(f"not updatable: {sorted(unknown)}")
     if "status" in fields:
         fields["status"] = str(MessageStatus(fields["status"]))
-    assignments = ", ".join(f"{k}=?" for k in fields)
-    with closing(_connect()) as conn:
-        before = (conn.execute("SELECT status, session_id, agent_name FROM messages "
-                               "WHERE id=?", (message_id,)).fetchone()
-                  if "status" in fields else None)
-        conn.execute(f"UPDATE messages SET {assignments} WHERE id=?",
-                     (*fields.values(), message_id))
-        conn.commit()
-    if before is not None and before["status"] != fields["status"]:
+
+    def change(unit):
+        rec = _message_doc(message_id, unit)
+        if rec is None:
+            return None
+        before = message_records.unpack(rec.data["message"], message_records.MESSAGE_COLUMNS)
+        row = {**before, **fields}
+        data = dict(rec.data, message=message_records.pack(row, message_records.MESSAGE_COLUMNS),
+                    events=[])
+        kind = fields.get("status", "updated")
+        unit.put(rec.path, data, change=kind,
+                 summary=f"message {message_id}: {', '.join(sorted(fields))}")
+        return before
+
+    before = records.atomic(change)
+    if before is not None and "status" in fields and before["status"] != fields["status"]:
         _message_activity(message_id, fields["status"], before["session_id"],
                           before["agent_name"])
 
 
 def get_message(message_id: int) -> Optional[Message]:
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM messages WHERE id=?",
-                           (message_id,)).fetchone()
-    return _message(row) if row else None
+    rec = _message_doc(message_id)
+    return _message(rec.data["message"]) if rec else None
 
 
 def get_messages(message_ids) -> dict[int, Message]:
@@ -597,10 +629,37 @@ def get_messages(message_ids) -> dict[int, Message]:
     ids = sorted({int(i) for i in message_ids})
     if not ids:
         return {}
-    with closing(_connect()) as conn:
-        rows = conn.execute(f"SELECT * FROM messages WHERE id IN ({','.join('?' * len(ids))})",
-                            ids).fetchall()
-    return {r["id"]: _message(r) for r in rows}
+    wanted = set(ids)
+    out = {}
+    for rec in _message_docs([["message.id", "in", ids]]):
+        m = _message(rec.data["message"])
+        if m.id in wanted:
+            out[m.id] = m
+    return out
+
+
+def _newest_messages(where: list, test, limit: int) -> list[Message]:
+    """The newest `limit` messages passing `test`, by staged time then id.
+    With a narrowing condition, read in one; else looked for back from the
+    newest id a widening window at a time."""
+    def order(found):
+        return sorted(found, key=lambda m: (m.staged_at, m.id), reverse=True)
+
+    if where:
+        return order([m for m in (_message(r.data["message"]) for r in _message_docs(where))
+                      if test(m)])[:limit]
+    top = message_records.next_value("messages")
+    if top is None:
+        top = message_records.last_message_id() + 1
+    found: list[Message] = []
+    span = max(64, limit * 2)
+    while top > 0 and len(found) < limit:
+        lo = max(0, top - span)
+        found += [m for m in (_message(r.data["message"]) for r in
+                              _message_docs(message_records.window("message.id", lo, top)))
+                  if lo <= m.id < top and test(m)]
+        top, span = lo, span * 4
+    return order(found)[:limit]
 
 
 def list_messages(session_id: Optional[str] = None,
@@ -608,66 +667,97 @@ def list_messages(session_id: Optional[str] = None,
                   open_only: bool = False, limit: int = 20) -> list[Message]:
     """Most recent first. `agent_name` is matched without regard to case,
     since names are spoken."""
-    sql = "SELECT * FROM messages WHERE 1=1"
-    params: list = []
+    where: list = []
     if session_id is not None:
-        sql += " AND session_id = ?"
-        params.append(session_id)
-    if agent_name is not None:
-        sql += " AND lower(agent_name) = lower(?)"
-        params.append(agent_name)
+        where.append(["message.session_id", "=", session_id])
     if open_only:
-        sql += f" AND status IN ({','.join('?' * len(OPEN_MESSAGE_STATUSES))})"
-        params.extend(str(s) for s in OPEN_MESSAGE_STATUSES)
-    sql += " ORDER BY staged_at DESC, id DESC LIMIT ?"
-    params.append(limit)
-    with closing(_connect()) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [_message(r) for r in rows]
+        where.append(["message.status", "in", [str(s) for s in OPEN_MESSAGE_STATUSES]])
+    wanted_name = agent_name.lower() if agent_name is not None else None
+    open_now = {str(s) for s in OPEN_MESSAGE_STATUSES}
+
+    def test(m: Message) -> bool:
+        return ((session_id is None or m.session_id == session_id)
+                and (wanted_name is None or str(m.agent_name).lower() == wanted_name)
+                and (not open_only or m.status in open_now))
+
+    return _newest_messages(where, test, int(limit))
+
+
+def _oldest_first(where: list, test) -> list[Message]:
+    found = [m for m in (_message(r.data["message"]) for r in _message_docs(where)) if test(m)]
+    return sorted(found, key=lambda m: (m.staged_at, m.id))
 
 
 def open_messages() -> list[Message]:
     """Every message sent and not yet answered, oldest first."""
-    marks = ",".join("?" * len(OPEN_MESSAGE_STATUSES))
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM messages WHERE status IN ({marks}) "
-            "ORDER BY staged_at, id", [str(s) for s in OPEN_MESSAGE_STATUSES]
-        ).fetchall()
-    return [_message(r) for r in rows]
+    statuses = [str(s) for s in OPEN_MESSAGE_STATUSES]
+    return _oldest_first([["message.status", "in", statuses]], lambda m: m.status in statuses)
 
 
 def queued_messages() -> list[Message]:
     """Every message waiting its turn, oldest first. Never swept on a
     restart: the queue is durable, and each goes out in order once its
     session is free (session_watch.SessionWatcher.send_queued)."""
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM messages WHERE status=? ORDER BY staged_at, id",
-            (str(MessageStatus.QUEUED),)).fetchall()
-    return [_message(r) for r in rows]
+    queued = str(MessageStatus.QUEUED)
+    return _oldest_first([["message.status", "=", queued]], lambda m: m.status == queued)
 
 
 def sweep_staged_messages() -> int:
     """A message still staged when the server starts was never sent: the
     server stopped inside its cancel window. Failed, and said why."""
-    with closing(_connect()) as conn:
-        cur = conn.execute(
-            "UPDATE messages SET status=?, failure=? WHERE status=?",
-            (str(MessageStatus.FAILED), "the server restarted before it was sent",
-             str(MessageStatus.STAGED)))
-        conn.commit()
-        count = cur.rowcount
+    staged, failed = str(MessageStatus.STAGED), str(MessageStatus.FAILED)
+    why = "the server restarted before it was sent"
+
+    def sweep(unit) -> int:
+        n = 0
+        for rec in _message_docs([["message.status", "=", staged]], unit):
+            row = message_records.unpack(rec.data["message"], message_records.MESSAGE_COLUMNS)
+            if row["status"] != staged:
+                continue
+            row.update(status=failed, failure=why)
+            unit.put(rec.path, dict(rec.data, message=message_records.pack(
+                row, message_records.MESSAGE_COLUMNS), events=[]), change=failed, summary=why)
+            n += 1
+        return n
+
+    count = records.atomic(sweep)
     if count:
         log.warning("swept %d staged message(s) after restart", count)
     return count
+
+
+def last_message_gone(capture_id: int, session_id: str, since: float,
+                      statuses: tuple) -> Optional[int]:
+    """The newest message made from capture `capture_id` to `session_id`,
+    staged at `since` or after, in one of `statuses`: its id, or None
+    (package_inbox follows a sign-off's answers by it)."""
+    found = [m for m in (_message(r.data["message"]) for r in _message_docs(
+        [["message.capture_id", "=", int(capture_id)]]))
+        if m.capture_id == capture_id and m.session_id == session_id and m.staged_at >= since
+        and m.status in statuses]
+    return max((m.id for m in found), default=None)
+
+
+def message_projects() -> dict[str, int]:
+    """How many messages went to each project, and how many session
+    messages came from each (project_seed's legacy evidence): two counts."""
+    def counted(field: str) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for g in records.count("/agents", types=[message_records.MESSAGE], group_by=field).groups or []:
+            out[str(g["value"])] = out.get(str(g["value"]), 0) + int(g["items"])
+        for g in records.count("/messages", types=[message_records.MESSAGE], group_by=field).groups or []:
+            out[str(g["value"])] = out.get(str(g["value"]), 0) + int(g["items"])
+        return out
+    return {"messages": counted("message.project"),
+            "session_messages": counted("session_message.project")}
 
 
 # --- Messages from sessions (as files, before the signed route; read only) ----
 
 @dataclass(frozen=True)
 class SessionMessage:
-    """One row of `session_messages`."""
+    """One message a session sent Tim as a file (its document's
+    `session_message`)."""
     id: int
     project: str
     agent_name: str
@@ -680,19 +770,33 @@ class SessionMessage:
     sender_subagent: Optional[str] = None   # the subagent that wrote it, under its listed parent
 
 
+def _session_message_doc(message_id: int, unit=None):
+    for rec in message_records.message_docs(
+            [["session_message.id", "=", int(message_id)]], unit):
+        s = rec.data.get("session_message")
+        if s is not None and s.get("id") == int(message_id):
+            return rec
+    return None
+
+
 def get_session_message(message_id: int) -> Optional[SessionMessage]:
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM session_messages WHERE id=?",
-                           (message_id,)).fetchone()
-    return SessionMessage(**dict(row)) if row else None
+    rec = _session_message_doc(message_id)
+    if rec is None:
+        return None
+    return SessionMessage(**message_records.unpack(rec.data["session_message"],
+                                                    message_records.SESSION_MESSAGE_COLUMNS))
 
 
 def mark_session_message_read(message_id: int) -> None:
     """The first read only: `read_at` keeps when he was first read it."""
-    with closing(_connect()) as conn:
-        conn.execute("UPDATE session_messages SET read_at=? "
-                     "WHERE id=? AND read_at IS NULL", (time.time(), message_id))
-        conn.commit()
+    def mark(unit) -> None:
+        rec = _session_message_doc(message_id, unit)
+        if rec is None or rec.data["session_message"].get("read_at") is not None:
+            return
+        s = dict(rec.data["session_message"], read_at=time.time())
+        unit.put(rec.path, dict(rec.data, session_message=s, events=[]), change="read",
+                 summary=f"session message {message_id} read")
+    records.atomic(mark)
 
 
 # --- Agents ----------------------------------------------------------------
