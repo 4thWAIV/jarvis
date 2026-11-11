@@ -6,7 +6,7 @@ import type { shellEn } from "./shell.en";
 export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.right.folders": "Carpetas",
   "tabs.right.agents": "Agentes",
-  "tabs.right.queue": "Cola",
+  "tabs.right.queue": "Recibidos",
   "tabs.right.workflows": "Trabajo",
   "tabs.right.network": "Red",
   "tabs.right.diagnostics": "Diagnóstico",

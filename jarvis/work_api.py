@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from jarvis import reporters
+from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
                     web_auth, work_packages, workflow_store, work_store)
 
@@ -188,7 +189,7 @@ DECISION_NEED, PACKAGE_NEED, REVIEW_PACKAGE_NEED, REVIEW_NEED, PIECE_NEED = (
 def needs_of(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None,
              approvable: Optional[bool] = None) -> list[dict]:
     """Each act he is needed for on this item, in the order to do them:
-    its open decisions (on the Decisions tab), the packages sent for it that
+    its open decisions (on the Messages tab), the packages sent for it that
     still ask him something (opened from the item), its review (in its
     header) and a piece waiting on him for something else (what it names)."""
     if item.closed_at is not None or item.state == work_store.DONE:
@@ -227,7 +228,7 @@ def need_words(need: dict) -> str:
     need in its language, main.work.need.*)."""
     kind = need["kind"]
     if kind == DECISION_NEED:
-        return f'Answer "{need["text"]}" on the Decisions tab'
+        return f'Answer "{need["text"]}" on the Messages tab'
     if kind == PACKAGE_NEED:
         return f"Open the {need['text']} package and answer its questions"
     if kind == REVIEW_PACKAGE_NEED:
@@ -640,19 +641,12 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         if req.kind in work_store.HIS_KINDS:
             return refused(ValueError("Only he answers a decision or reviews an item: done is "
                                       "his to give. Report it verifying, with what to check."))
+        if req.kind in (work_store.DECISION_NEEDED, work_store.DECISION_WITHDRAWN):
+            # A decision reaches him only as a package with its background,
+            # carried by a message (one channel round 3).
+            return refused(ValueError(ASK_WITH_A_PACKAGE))
         by = asker(request.scope)
-        if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:
-            return refused(ValueError("Only the agent that asked a decision withdraws it; "
-                                      "he answers it."))
-        # Who asked or withdraws is the route's to say, never the report's.
         detail = {k: v for k, v in req.detail.items() if k not in ("asked_by", "by", "by_any")}
-        if req.kind == work_store.DECISION_NEEDED:
-            detail["asked_by"] = by
-        elif req.kind == work_store.DECISION_WITHDRAWN:
-            detail["by"] = by
-            # Every name its earlier asks may be under (an onboarded agent's
-            # adopted access-key label): those decisions stay its own.
-            detail["by_any"] = list(reporters.aliases(request.scope))
 
         def write():
             if req.kind == work_store.PIECE:

@@ -14,11 +14,19 @@ whichever Python the session has, so it imports nothing outside the standard
 library and the package's own `server_address` and `agent_keys`.
 
     python workflow_report.py [--cert <cert.pem>] start <name> --project <project> [--phase <phase> ...]
+        [--work <item id>]
     python workflow_report.py event <id> <kind> <summary> [--item <slug>] [--key <slug>]
         [--done N] [--total N] [--outcome succeeded|failed|cancelled|skipped]
-        [--phase <slug>] [--title <title>] [--option <option> ...]
-        [--recommendation <text>] [--until <link or when>] [--session <id>] [--provider <name>]
+        [--phase <slug>] [--title <title>] [--until <link or when>] [--session <id>]
+        [--provider <name>]
     python workflow_report.py answer <id> <key>
+
+`--work` names the Work item the workflow is for: anything it needs of him
+is a message on that item (his Inbox with none). A `blocker_raised` is such
+a message as well as the workflow's state. A decision is never an event:
+JARVIS refuses `decision_needed`, since every decision goes to him as a
+decision package (`python -m jarvis.make_package --workflow <id> --work
+<item id>`), whose answers come back as this workflow's decisions.
 
 A `wait_started` names what it waits for with `--until`: a link to his
 answer (`decision:<key>` of this workflow, `work:<item id>:<key>`,
@@ -182,6 +190,7 @@ def main(argv: list[str]) -> int:
     start.add_argument("name")
     start.add_argument("--project", required=True)
     start.add_argument("--phase", action="append", default=[])
+    start.add_argument("--work", default="")
     event = sub.add_parser("event")
     event.add_argument("id")
     event.add_argument("kind")
@@ -201,7 +210,8 @@ def main(argv: list[str]) -> int:
     with _client(args.cert, args.as_session or getattr(args, "session", None) or "") as client:
         if args.command == "start":
             print(_post(client, "/api/workflows", {"name": args.name, "project": args.project,
-                                                   "phases": args.phase})["id"])
+                                                   "phases": args.phase,
+                                                   "work": args.work})["id"])
             return 0
         if args.command == "event":
             w = _post(client, f"/api/workflows/{args.id}/events",

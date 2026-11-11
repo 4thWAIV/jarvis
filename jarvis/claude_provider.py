@@ -171,6 +171,9 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_motion",
     "mcp__jarvis__read_aloud",
     "mcp__jarvis__reply",
+    # His messages by Work item (messages_api.py): the read walled, the mark acting.
+    "mcp__jarvis__messages_to_him",
+    "mcp__jarvis__mark_message",
     # Mute speech and all audio off, never their opposites: only ever quieter.
     "mcp__jarvis__mute_speech",
     "mcp__jarvis__turn_audio_off",

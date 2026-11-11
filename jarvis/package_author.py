@@ -91,7 +91,7 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               + ". Write a deck to content.json in your working directory, or write a folder "
               "package under package/ with package.json. Put supporting assets alongside that "
               "source, and your evidence/review notes in evidence.md. Validate with this installation’s "
-              "exact command: " + session_skill._make_package() + " <source> --check-only. "
+              "exact command: " + session_skill._module("make_package", cert=False) + " <source> --check-only. "
               "Run that check yourself last, after your final change: JARVIS admits the "
               "package only when your own final check printed exactly the source delivered. "
               "The supplied skill, guide and command are sufficient even if no user skill copy "

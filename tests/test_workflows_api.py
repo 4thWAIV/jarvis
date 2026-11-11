@@ -40,7 +40,7 @@ def wired(monkeypatch, tmp_path):
 def _events(store):
     """Every attention event recorded for workflows, in order."""
     return [h["event"] for i in store.items(("pending", "seen", "resolved"))
-            for h in store.history(i.id)]
+            if i.kind == "workflow" for h in store.history(i.id)]
 
 
 def _key(category="workflows"):
@@ -89,14 +89,15 @@ def test_the_steps_worth_an_update_are_recorded_once(wired):
     wid = _start(client, key)
     for body in ({"kind": "phase_started", "item": "plan", "summary": "Planning."},
                  {"kind": "note", "summary": "A note nobody needs to hear."},
-                 {"kind": "decision_needed", "summary": "Which engine?",
-                  "detail": {"key": "engine", "options": ["deepgram", "apple"]}},
                  {"kind": "blocker_raised", "summary": "Tests are red.", "detail": {"key": "red"}}):
         assert client.post(f"/api/workflows/{wid}/events", json=body, auth=key).status_code == 200
     asyncio.run(asyncio.sleep(0))
-    assert _events(store) == ["phase_started", "decision_needed", "blocker_raised"]
-    (item,) = store.items()
+    assert _events(store) == ["phase_started"], \
+        "a blocker is a message to him, not a workflow update (round 3)"
+    (item,) = [i for i in store.items() if i.kind == "workflow"]
     assert item.untrusted == {"workflow": "Speech migration"}, "one item per workflow"
+    assert [i.kind for i in store.items() if i.kind != "workflow"] == ["message"], \
+        "its blocker is his message"
 
 
 def test_the_brain_reads_the_record_and_another_session_s_words_stay_walled(wired):
@@ -144,9 +145,10 @@ def test_he_answers_on_the_page_and_the_reporter_reads_it_back(wired, monkeypatc
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
-    client.post(f"/api/workflows/{wid}/events", auth=key,
-                json={"kind": "decision_needed", "summary": "Which engine?",
-                      "detail": {"key": "engine"}})
+    # A decision asked before round 3 (no reporter asks one now), on record.
+    from jarvis import workflow_store
+    workflow_store.record(workflow_store.WorkflowEvent(wid, "decision_needed", None,
+                                                       "Which engine?", {"key": "engine"}))
 
     from jarvis import workflow_report
     monkeypatch.setattr(workflow_report, "_client",

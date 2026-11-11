@@ -4,27 +4,25 @@
  * page keeps no account of its own: it reads the record again on every
  * `packages` hint (packagesChanged, sessionsSocket.ts).
  *
- * A package arrives silently: listed in the Queue's Packages section
- * (QueuePackages.tsx) and as one reduced line in Updates waiting
- * (UpdatesNotice.tsx), never shown and never spoken. Every action here is
+ * A package arrives silently, as a message that carries it: in its Work
+ * item's Messages tab, or in the Inbox when it belongs to no item
+ * (MessageCard.tsx), never shown and never spoken. Every action here is
  * his own act on it, never navigation, and reaches the server's one
  * function for it, which the brain's tool calls too:
  *   Open        → `_open_inbox_package` (his click: the route checks it);
  *                 a page package then shows in the centre (`package.open`)
  *   an answer   → `_answer_inbox_decision` (the package's own decide.py)
  *   Done        → `_sign_off_package`, for every package (the view's head
- *                 and the Queue row): his answers, or that he reviewed it,
+ *                 and the brain's sign_off_package): his answers, or that he reviewed it,
  *                 to the session that sent it as a capture read back and
  *                 sent only on his yes or Send; its Work item told; closed,
  *                 and its view closed on every page
- *   Dismiss     → `_close_inbox_package`
  *
  * Everything a package says (its title, its questions, its sender's name)
  * is the sender's words, drawn as plain text.
  */
 
-import { liveRead } from "./liveRead";
-import { t, type Said } from "./locale";
+import { type Said } from "./locale";
 import { packagesChanged, showOpenedPackage, type PackageInfo } from "./packages";
 import { workChanged } from "./work";
 
@@ -82,11 +80,6 @@ export interface InboxDetail {
   questions: InboxQuestion[];
 }
 
-interface InboxList {
-  packages: InboxEntry[];
-  closed_count: number;
-}
-
 const base = (id: string) => `/api/packages/inbox/${encodeURIComponent(id)}`;
 
 async function answer<T>(response: Response): Promise<T> {
@@ -94,16 +87,6 @@ async function answer<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error(String(body.error ?? `the server answered ${response.status}`));
   return body as T;
 }
-
-async function read(url: string): Promise<InboxList> {
-  return answer<InboxList>(await fetch(url));
-}
-
-/** The open packages, newest first, and how many are closed. */
-export const inbox = liveRead(() => read("/api/packages/inbox"), [packagesChanged]);
-
-/** The closed ones, most recently closed first, read when shown. */
-export const closedInbox = liveRead(() => read("/api/packages/inbox?closed=1"), [packagesChanged]);
 
 /** A change was made: every view of the inbox, and a work item showing its
  *  packages, read again (the server's hint will say so too). */
@@ -159,31 +142,4 @@ export async function signOff(packageId: string): Promise<Said | null> {
   } catch (e) {
     return original(e);
   }
-}
-
-/** Dismiss it, or close it once its answers have gone back. */
-export async function closeInbox(id: string): Promise<Said | null> {
-  try {
-    await post(`${base(id)}/close`);
-    changed();
-    return null;
-  } catch (e) {
-    return original(e);
-  }
-}
-
-/** Where it stands, in words: "2 of 3 answered" while it asks, else its state. */
-export function inboxProgress(entry: InboxEntry): string {
-  if (entry.state === "closed") return t(`right.packages.closed.${entry.closed_why ?? "dismissed"}`);
-  if (entry.decisions_total > 0) {
-    return t("right.packages.answered", { answered: entry.decisions_answered, total: entry.decisions_total });
-  }
-  return t(`right.packages.state.${entry.state}`);
-}
-
-/** The answer a decision card gives, as decide.py takes it: an option's id
- *  by its name, else "None of these" with his words. */
-export function optionFor(question: InboxQuestion, value: string): { option: string; words: string } {
-  const found = question.options.find((o) => o.name === value || o.id === value);
-  return found ? { option: found.id, words: "" } : { option: "none", words: value };
 }

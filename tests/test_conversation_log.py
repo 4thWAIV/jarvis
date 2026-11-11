@@ -302,42 +302,17 @@ def _messages_in(cl_kind, ref):
     return [i for i in cl.thread_of(cl_kind, ref) if i.kind == ItemKind.MESSAGE_IN]
 
 
-def test_a_proven_needs_board_rewrite_is_one_message_in_its_writer_s_thread(server, monkeypatch):
-    srv, _, _ = server
-    from pathlib import Path
-    from jarvis import session_message_sender, session_needs
-    writer = session_message_sender.Sender("s1", "Feynman (Planning)", "subagent_transcript",
-                                           "Feynman", "Planning")
-    proofs = {1.0: writer, 2.0: None}
-    monkeypatch.setattr(srv, "_board_writer", lambda b: proofs[b.mtime])
-    board = session_needs.Board("Planning", "# Planning\n- pick a port\n- name it", 1.0,
-                                session="s1", owner="Feynman (Planning)", path=Path("/x"))
-    srv._attend_board(board)
-    srv._attend_board(board)                          # the same rewrite: once
-    srv._attend_board(session_needs.Board("Planning", "# Planning\n- forged", 2.0))
-    [got] = _messages_in(cl.Counterpart.AGENT, "s1")
-    assert got.text.startswith("Feynman (Planning)'s needs board: 2 items\n\n# Planning")
-    assert (got.sender_evidence, got.sender_subagent, got.source_kind, got.source_id) == (
-        "subagent_transcript", "Feynman", "needs_board", "planning:1.0")
-    assert cl.page() == [], "the Conversation view does not show it before phase 4"
-
-
-def test_a_workflow_decision_is_recorded_only_on_a_key_s_report(server):
+def test_a_workflow_s_own_decisions_make_no_message(server):
+    """Round 3: a workflow asks him nothing itself (a decision is a package,
+    whose message is the package's); the decisions a package's sign-off
+    records under the workflow are no second message."""
     srv, _, _ = server
     from jarvis import workflow_store
-    wid = workflow_store.start("Build", "jarvis", [], "key:planning")
+    wid = workflow_store.start("Build", "jarvis", [], "agent:s1")
     asked = workflow_store.WorkflowEvent(wid, "decision_needed", None, "Which port?",
-                                         {"key": "port", "options": ["8340", "9000"],
-                                          "recommendation": "8340"}, reporter="key:planning")
+                                         {"key": "port"}, reporter="agent:s1")
     srv._workflow_recorded(workflow_store.record(asked), asked)
-    token = workflow_store.WorkflowEvent(wid, "decision_needed", None, "Forged?",
-                                         {"key": "forged"}, reporter="token")
-    srv._workflow_recorded(workflow_store.record(token), token)
-    [got] = _messages_in(cl.Counterpart.WORKFLOW, wid)
-    assert got.text == ("Decision needed on Build: Which port?\nOptions: 8340; 9000\n"
-                        "Recommended: 8340")
-    assert (got.sender_evidence, got.source_kind, got.source_id, got.detail["name"]) == (
-        "access_key", "workflow_decision", f"{wid}:port", "Build")
+    assert _messages_in(cl.Counterpart.WORKFLOW, wid) == []
 
 
 def test_a_work_decision_is_one_message_in_the_item_s_thread(server, tmp_path):
@@ -358,7 +333,8 @@ def test_a_package_is_recorded_once_its_sender_is_proven(server):
     srv, _, _ = server
     from types import SimpleNamespace
     from jarvis import session_message_sender
-    entry = SimpleNamespace(id="inbox-1", title="Ports", purpose="Pick one.", decisions_total=2)
+    entry = SimpleNamespace(id="inbox-1", title="Ports", purpose="Pick one.", decisions_total=2,
+                            work_id=None)
     srv._record_package(entry, None)
     assert _messages_in(cl.Counterpart.PACKAGE, "inbox-1") == []
     srv._record_package(entry, session_message_sender.Sender("s1", "Planning", "access_key"))

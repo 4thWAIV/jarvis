@@ -255,11 +255,12 @@ def sensitive_reason(relative: Path, named_dotfiles: bool = False) -> str | None
 
 _PRIVATE_ROOTS_CACHE: tuple = (object(), (), (), (), ())
 
-# Folders inside JARVIS's data that `read_file` may read. The needs board is
-# written by other sessions for the user to hear, so it is not JARVIS's
-# private data. Everything else under the data dir stays closed, the tool
-# token and `mcp.json` among it.
-OPEN_DATA_DIRS = ("needs",)
+# Folders inside JARVIS's data that `read_file` may read: none now. The
+# needs boards it once opened are gone (every message to him comes by the
+# signed route, and the boards on record are in the conversation record), so
+# everything under the data dir stays closed, the tool token and `mcp.json`
+# among it.
+OPEN_DATA_DIRS: tuple[str, ...] = ()
 
 
 def _identity(path) -> tuple | None:

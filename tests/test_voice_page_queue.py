@@ -48,12 +48,12 @@ async def _open(p, url, *, viewport=(1440, 900), reduced=False):
                                                                  body=envelope))
     await routes.install(page)
     await page.goto(url)
-    await page.wait_for_selector(".right-tabs [aria-label='Queue']")
+    await page.wait_for_selector(".right-tabs [aria-label='Inbox']")
     return browser, page, world, routes, voice
 
 
 async def _queue_tab(page):
-    await page.click(".right-tabs [aria-label='Queue']")
+    await page.click(".right-tabs [aria-label='Inbox']")
     await page.wait_for_selector('.queue-list[data-list="waiting"] > li')
 
 
@@ -84,9 +84,9 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_playwri
     async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         tabs = await page.evaluate("() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.title)")
-        assert tabs == ["Folders", "Agents", "Queue", "Work", "Network", "Diagnostics"], tabs
+        assert tabs == ["Folders", "Agents", "Inbox", "Work", "Network", "Diagnostics"], tabs
         # Something unread is waiting: the tab is lit while another is open.
-        await async_api.expect(page.locator(".right-tabs [aria-label='Queue']")).to_have_class(
+        await async_api.expect(page.locator(".right-tabs [aria-label='Inbox']")).to_have_class(
             "control-button right-tab labelled-tab lit")
         await _queue_tab(page)
         assert await _rows(page, world, "waiting") == ["newest", "creds", "long", "former", "self-file", "note-self"]

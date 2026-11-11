@@ -11,6 +11,7 @@ Each test has its own JARVIS_DATA_DIR. Nothing is really shown, sent to a
 session, or run but the example deck's own decide.py."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import time
@@ -179,12 +180,19 @@ def test_a_package_for_a_missing_workflow_or_work_item_is_refused(wired, shown, 
     assert package_inbox.listing() == []
 
 
-def test_the_packages_right_opens_the_inbox_route_and_nothing_else(wired, shown, marks):
+def test_the_packages_right_carries_a_package_in_a_message_and_opens_nothing_else(
+        wired, shown, marks):
     from tests.agent_key_fixtures import onboarded_auth
-    auth = onboarded_auth(("packages",))
-    r = wired.client.post(INBOX, content=page_zip(), auth=auth,
-                          headers={"Content-Type": "application/zip"})
+    auth = onboarded_auth(("work", "packages"))
+    assert wired.client.post(INBOX, content=page_zip(), auth=auth, headers={
+        "Content-Type": "application/zip"}).status_code == 403, "an agent's is a message"
+    r = wired.client.post("/api/messages", auth=auth, json={
+        "says": "Notes.", "package": base64.b64encode(page_zip()).decode()})
     assert r.status_code == 200, r.text
+    words_only = onboarded_auth(("work",), "sess-words")
+    refused = wired.client.post("/api/messages", auth=words_only, json={
+        "says": "Notes.", "package": base64.b64encode(page_zip("1.0.1")).decode()})
+    assert refused.status_code == 403 and "packages right" in refused.json()["error"]
     inbox_id, package_id = r.json()["inbox"]["id"], r.json()["package"]["id"]
     for path in (f"{INBOX}/{inbox_id}/open", f"{INBOX}/{inbox_id}/close",
                  f"/api/packages/{package_id}/page", "/api/packages/local"):
@@ -772,16 +780,14 @@ def test_a_claimed_session_nothing_proves_gets_no_answers_and_the_row_says_so(
 
 
 def test_the_signed_request_proves_its_own_agent_s_session_alone(wired, shown, marks, unproven):
+    """An unsigned package carried by a message: the request's own key proves
+    its agent's session, and no other (a message names no session)."""
     from tests.agent_key_fixtures import onboarded_auth
-    auth = onboarded_auth(("packages",), "sess-1")
-    got = wired.client.post(INBOX, content=page_zip(), auth=auth, params={"session": "sess-1"},
-                            headers={"Content-Type": "application/zip"}).json()
+    auth = onboarded_auth(("work", "packages"), "sess-1")
+    got = wired.client.post("/api/messages", auth=auth, params={"session": "sess-2"}, json={
+        "says": "Notes.", "package": base64.b64encode(page_zip()).decode()}).json()
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.sender_evidence) == ("sess-1", "agent_key")
-    other = wired.client.post(INBOX, content=page_zip("1.0.1"), auth=auth,
-                              params={"session": "sess-2"},
-                              headers={"Content-Type": "application/zip"}).json()
-    assert package_inbox.get(other["inbox"]["id"]).from_session == "", "not its own session"
 
 
 def test_migration_5_leaves_no_row_waiting_to_be_proven_again(tmp_path):
