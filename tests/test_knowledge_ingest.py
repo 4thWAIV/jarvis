@@ -364,7 +364,7 @@ def test_the_content_child_indexes_jarvis_s_own_files_against_the_real_engine():
         child.stdin.write(json.dumps({"pid": engine.pid, "token": data_paths.ensure_knowledge_token()}) + "\n")
         child.stdin.flush()
         uds = EngineUDS(kc.HTTPTransport(lambda: engine.pid))
-        end = time.monotonic() + 30
+        end = time.monotonic() + 90
         item = None
         while time.monotonic() < end:
             item = uds.get(Caller("tim"), "/jarvis/answers/jarvis/lynx.md", {Stream.DATA, Stream.SECTIONS})

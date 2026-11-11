@@ -359,6 +359,19 @@ EXEMPT = {
         "it reads an extracted file's own title and text (never a session's) and builds only the "
         "text the embedding model turns into a vector; nothing it returns is printed, said or put "
         "in a brain header, and search results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.changed": (
+        "it reads an item's own path-entry fields (file, size, state) that the content child wrote, "
+        "to decide whether a file changed; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.extract": (
+        "it reads a file's extracted title and text and the item's own fields to write them into the "
+        "engine as that file's content; nothing is printed, said or put in a brain header, and search "
+        "results carrying a file's words stay inside the untrusted wrapper"),
+    "knowledge_content.folder_roots": (
+        "it reads the folder catalog's own records (id, reader, location, availability) to choose "
+        "which folders to watch; nothing it returns is printed, said or put in a header"),
+    "knowledge_content.scan": (
+        "it compares an item's own path-entry fields (file, state) with the folder on disk to choose "
+        "what to read again; nothing it returns is printed, said or put in a header"),
     "knowledge_move.copy": (
         "it reads the move manifest's own fields (state, source path, table names and digests) that "
         "the move kit wrote, to decide whether the engine holds this move; its refusal is printed by "
@@ -575,12 +588,6 @@ EXEMPT = {
         "it returns a topic's status only when it is one of the fixed STATUSES "
         "words, else `unknown`, read from the owner's own topic file. Driven by "
         "tests/test_knowledge_links.py"),
-    "knowledge_ingest.files": (
-        "the labels it builds are the names of files in the brain's own note "
-        "folders and paths in folders he registered, read through "
-        "folder_service under the FILES reader; they go only into the "
-        "engine's derived documents, whose hits carry their trust, and the "
-        "server never speaks them. Driven by tests/test_knowledge_ingest.py"),
     "knowledge_ingest.run": (
         "the foreign text it reads (an agent's run summary and result, a "
         "session's workflow events, an agent's conversation items) goes only "
