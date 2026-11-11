@@ -1255,6 +1255,25 @@ export const UI_CONTRACT = {
       "family": "settings"
     },
     {
+      "id": "updates.messages.shown",
+      "label": "Minimise or bring back Updates waiting's new messages line (minimised, only its count stays)",
+      "view": "main.notice",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "settings"
+    },
+    {
       "id": "updates.review",
       "label": "Open or close the list of updates waiting (Review updates), at the top of the centre",
       "view": "main.notice",
@@ -3201,6 +3220,7 @@ export const UI_CONTRACT = {
       "label": "Updates waiting: how many new messages with Open (the Inbox), JARVIS's own updates' count, Review updates, Mark all seen, Hold spoken updates and the list",
       "parts": [
         "messages",
+        "minimise",
         "openInbox",
         "text",
         "review",
@@ -4953,6 +4973,7 @@ export interface CommandArgs {
   "thread.close": { };
   "thread.earlier": { };
   "thread.open": { sessionId: string; };
+  "updates.messages.shown": { shown: boolean; };
   "updates.review": { open: boolean; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };

@@ -4112,13 +4112,19 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 /* The Inbox's messages from agents (InboxMessages.tsx): a heading with Hide
    messages, the new ones, and Read closed under them. */
 .inbox-agents { gap: 10px; }
-.inbox-agents-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-agents-head { display: flex; align-items: center; gap: 2px; }
 .inbox-agents-head .queue-heading { flex: 1 1 auto; white-space: nowrap; min-width: 0; overflow: hidden; }
-.inbox-agents-head .inbox-hide { flex: none; white-space: nowrap; }
+/* Minimise a list of messages (MessageCard.tsx MinimiseToggle): the page's
+   disclosure mark, as Work's History and the Queue's Dismissed draw it. */
+.minimise-toggle {
+  flex: none; padding: 0 4px; font: inherit; font-size: 12px; line-height: 1;
+  color: var(--ui-secondary); background: none; border: none; cursor: pointer;
+}
+.minimise-toggle:hover, .minimise-toggle:focus-visible { color: var(--ui-text); }
 .inbox-work, .inbox-general { display: flex; flex-direction: column; gap: 6px; }
 .inbox-read .inbox-messages { margin-top: 6px; }
 #updates-notice .updates-messages { display: flex; align-items: center; gap: 8px; flex-basis: 100%; }
-#updates-notice .updates-messages span { flex: 1; }
+#updates-notice .updates-messages > span { flex: 1; }
 
 /* Knowledge (KnowledgeView.tsx): laid out as a subsystem's detail is, with
    each passage marked as his words or someone else's. A project

@@ -3,10 +3,11 @@
  * that was the Queue; QueuePanel.tsx), shown signed in to a team server or
  * not: they come from agents on this Mac, not from people.
  *
- *   - a heading, "From agents", with how many are new and Hide messages /
- *     Show messages (`inbox.messages.shown`, his click and the brain's
- *     request alike): hidden, only the heading stays, so people's messages
- *     and the rest of the Inbox are in view. This browser remembers it;
+ *   - a heading, "From agents", with how many are new and the minimise
+ *     mark (MessageCard.tsx `MinimiseToggle`, named Hide messages / Show
+ *     messages; `inbox.messages.shown`, his click and the brain's request
+ *     alike): minimised, only the heading stays, so people's messages and
+ *     the rest of the Inbox are in view. This browser remembers it;
  *   - each Work item with new messages, one line ("Work tracker: 2 new"),
  *     which opens that item's Messages tab (`work.open`, the brain's
  *     request too); an item with none new has no line;
@@ -26,8 +27,8 @@
 import { useSyncExternalStore } from "react";
 import { inboxMessages, readMessages, type ToHim, type WorkThread } from "./messagesToHim";
 import { useT } from "./locale";
-import { MessageCard } from "./MessageCard";
-import { createStore } from "./store";
+import { MessageCard, MinimiseToggle } from "./MessageCard";
+import { createStore, rememberedFlag } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget } from "./uiRegistry";
@@ -35,32 +36,13 @@ import { RIGHT_SOCKET, row } from "./uiRight";
 
 type PartRef = (el: Element | null) => void;
 
-/** Where this browser keeps whether the messages are hidden. */
-const HIDDEN_KEY = "jarvis.inbox.messagesHidden";
-
-function savedHidden(): boolean {
-  try {
-    return window.localStorage.getItem(HIDDEN_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** Whether the messages from agents are hidden; kept in this browser. */
-const messagesHidden = createStore(savedHidden());
+/** Whether the messages from agents are minimised; kept in this browser. */
+const messagesHidden = rememberedFlag("jarvis.inbox.messagesHidden");
 
 /** Whether Read is open; kept while the tab is switched, closed on load. */
 const readOpen = createStore(false);
 
-function hideMessages(hidden: boolean): void {
-  messagesHidden.set(hidden);
-  try {
-    if (hidden) window.localStorage.setItem(HIDDEN_KEY, "1");
-    else window.localStorage.removeItem(HIDDEN_KEY);
-  } catch {
-    // Storage that cannot be written: hidden for this page load only.
-  }
-}
+const hideMessages = (hidden: boolean) => messagesHidden.set(hidden);
 
 registerCommand("inbox.messages.shown", {
   availability: () => ({ available: true }),
@@ -115,13 +97,12 @@ export function InboxMessages({ workPart, generalPart, togglePart, readPart }: {
         <section className={`queue-section inbox-agents${hidden ? " hidden" : ""}`}
                  aria-labelledby="inbox-agents-heading">
           <div className="inbox-agents-head">
+            <MinimiseToggle shown={!hidden} hideLabel={t("right.inbox.hide")} showLabel={t("right.inbox.show")}
+                            part={togglePart} binding={bindingProps(bind("inbox.messages.shown", { shown: hidden }))} />
             <h3 className="queue-heading" id="inbox-agents-heading">
               {t("right.inbox.fromAgents")}
               {fresh > 0 && <span className="queue-count" title={t("right.inbox.new", { count: fresh })}>{fresh}</span>}
             </h3>
-            <button type="button" className="file-action inbox-hide" aria-expanded={!hidden} ref={togglePart}
-                    {...bindingProps(bind("inbox.messages.shown", { shown: hidden }))}>
-              {hidden ? t("right.inbox.show") : t("right.inbox.hide")}</button>
           </div>
           {!hidden && items.length > 0 && (
             <section className="inbox-work" aria-labelledby="inbox-work-heading" ref={workPart}>

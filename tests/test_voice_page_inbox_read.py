@@ -6,9 +6,11 @@ app (Work item work-b93db25f6aac, piece one-channel-fixes):
     message he is done with is nowhere;
   - Read opens and closes like Work's History;
   - a message marked read leaves the new list for Read at once;
-  - Hide messages folds the messages away under their heading ("From
-    agents"), so the rest of the Inbox is in view, and this browser keeps
-    it hidden after a reload; Show messages brings them back.
+  - the page's minimise mark (named Hide messages) folds the messages away
+    under their heading ("From agents"), so the rest of the Inbox is in
+    view, and Updates waiting's new messages line has the same mark; this
+    browser keeps both minimised after a reload, and the mark (Show
+    messages) brings them back.
 
 Headless Chromium on the built page; every /api/messages request is
 answered by JARVIS's own app (TestClient) over a temporary
@@ -76,25 +78,46 @@ async def test_read_messages_wait_under_read_and_the_messages_can_be_hidden(
         await async_api.expect(toggle).to_have_text("▸ Read (3)")
         assert cl.get(new.id).state == "read"
 
-        # Hide messages: only the heading stays, and the rest of the Inbox is in view.
-        hide = page.locator(".inbox-agents .inbox-hide")
-        await async_api.expect(hide).to_have_text("Hide messages")
+        # The minimise mark: only the heading stays, and the rest of the Inbox is in view.
+        hide = page.locator(".inbox-agents .minimise-toggle")
+        await async_api.expect(hide).to_have_text("▾")
+        await async_api.expect(hide).to_have_attribute("aria-label", "Hide messages")
+        await async_api.expect(hide).to_have_attribute("title", "Hide messages")
+        await page.locator("#right-column").screenshot(path=str(_shots("inbox-minimise-shown.png")))
         await hide.click()
-        await async_api.expect(hide).to_have_text("Show messages")
+        await async_api.expect(hide).to_have_text("▸")
+        await async_api.expect(hide).to_have_attribute("aria-label", "Show messages")
         await async_api.expect(hide).to_have_attribute("aria-expanded", "false")
         await async_api.expect(page.locator(".inbox-agents .message-card")).to_have_count(0)
         await async_api.expect(page.locator(".inbox-read")).to_have_count(0)
         await async_api.expect(heading).to_be_visible()
         await async_api.expect(page.locator(".queue-view .queue-notice")).to_be_visible()
-        await page.locator("#right-column").screenshot(path=str(_shots("inbox-hidden.png")))
+        await page.locator("#right-column").screenshot(path=str(_shots("inbox-minimise-minimised.png")))
 
-        # This browser keeps it hidden after a reload; Show brings them back.
+        # Updates waiting's new messages line has the same mark.
+        line = page.locator("#updates-notice .updates-messages")
+        mark = line.locator(".minimise-toggle")
+        await async_api.expect(line).to_contain_text("1 new message")
+        await async_api.expect(mark).to_have_text("▾")
+        await async_api.expect(mark).to_have_attribute("aria-label", "Hide messages")
+        await page.locator("#updates-notice").screenshot(path=str(_shots("updates-minimise-shown.png")))
+        await mark.click()
+        await async_api.expect(mark).to_have_text("▸")
+        await async_api.expect(mark).to_have_attribute("aria-label", "Show messages")
+        await async_api.expect(line).to_have_text("▸1 new")
+        await async_api.expect(line.get_by_role("button", name="Open")).to_have_count(0)
+        await page.locator("#updates-notice").screenshot(path=str(_shots("updates-minimise-minimised.png")))
+
+        # This browser keeps both minimised after a reload; the marks bring them back.
         await page.reload()
+        await async_api.expect(mark).to_have_text("▸", timeout=10000)
+        await mark.click()
+        await async_api.expect(line.get_by_role("button", name="Open")).to_be_visible()
         await page.click(".right-tabs [aria-label='Inbox']")
-        await async_api.expect(page.locator(".inbox-agents .inbox-hide")).to_have_text(
-            "Show messages", timeout=10000)
+        await async_api.expect(page.locator(".inbox-agents .minimise-toggle")).to_have_attribute(
+            "aria-label", "Show messages", timeout=10000)
         await async_api.expect(page.locator(".inbox-agents .message-card")).to_have_count(0)
-        await page.locator(".inbox-agents .inbox-hide").click()
+        await page.locator(".inbox-agents .minimise-toggle").click()
         await async_api.expect(general).to_have_count(1)
         await async_api.expect(page.locator(".inbox-read .queue-history-toggle")).to_have_text("▸ Read (3)")
         assert errors == [], errors
