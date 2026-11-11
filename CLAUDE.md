@@ -460,10 +460,11 @@ check only reports whether it is there and current.
 
 ## The workflow monitor
 A long workflow (a phased build, a run of several agents) reports every
-step to one durable record, `workflow_store.py`: `workflow_events` is
-append-only and is the truth, and the workflow's status, its phases and
-tasks, and its open waits, decisions and blockers are updated in the same
-transaction as each event, by `record`, the only writer. Going quiet
+step to one durable record, `workflow_store.py`: one document per
+workflow, `/workflows/<id>.workflow` (records), holding its status, its
+phases and tasks and its open waits, decisions and blockers, its events
+the document's versions, each event and the state it brings one write, by
+`record`, the only writer. Going quiet
 (running, with no event for `SILENT_AFTER_SEC`; a workflow that has said it
 is waiting is waiting, not quiet) is worked out when it is read, never
 stored. Sessions report with `workflow_report.py --as <session id>`, signed
@@ -500,9 +501,9 @@ signs it off) or `package:<id>:<decision>`; anything else stays words. His
 answer by any route (the workflow's or a Work item's decision, page or
 voice; a package decision through its decide.py, `_inbox_recount`; his
 finishing with a package) ends every wait linked to it in the same
-transaction as the answer (`wait_links.settle`, called by the store's own
-writer; a package's, recorded by its own script, in a transaction of its
-own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
+write as the answer (`wait_links.settle`, staged in the answer's own
+`records.atomic` unit across the Work, workflow and package documents; a
+package's, recorded by its own script, in a unit of its own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
@@ -554,8 +555,7 @@ decision is answered by Tim alone. The route records the asker of every
 report as its signing key's principal (`work_api.asker`,
 `reporters.recorded`; `answers` also accepts an access-key label the agent
 was onboarded under, `reporters.aliases`), never what the report says
-(`work_events.reporter` and each piece's latest, `work_pieces.reporter`,
-migration 6, shown as "reported by <name>" on pieces and events). A
+(each event's `reporter` and each piece's latest, the piece's `reporter`, shown as "reported by <name>" on pieces and events). A
 withdrawn decision (from before) is no longer open or counted, and is kept
 beside the answered ones (`answered`, `where` = `withdrawn`). An item closed
 (`work_report.py close`, kind `closed`, `closed_at`; nothing more is
@@ -672,10 +672,11 @@ link to an answer". Every answer of his is written for its asker to
 outbound only, nothing watches it), and `work_report.py answers --since
 <time>` (`GET /api/work/answers`, in the `work` key category) lists every
 answer to the calling key's own decisions. The Workflows view stays below the list, under its
-own heading. The record is `work_store.py` (schema `work_schema`, through
-`run_store.migrate`): `work_events` is append-only and the truth;
-`work_items`, `work_pieces` and `work_decisions` are updated in the same
-transaction by `create` and `record`, the only writers. An item wraps a
+own heading. The record is `work_store.py`: one document per item,
+`/work/<id>.work` (records), its pieces and decisions inline and its events
+the document's versions (`records.history(path, fields=["events"])`;
+`latest` reads only the newest versions); every change and its event one
+write, by `create` and `record`, the only writers. An item wraps a
 ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
@@ -1055,10 +1056,9 @@ the route, which checks the signature first and then refuses any other
 package for a work item that asks nothing (`asks_him`). One that names no
 work item may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
-writer of `package_inbox` (one row per arrival) and
-`package_inbox_events` (each change, no words of the package), schema
-`package_inbox_schema` (`run_store.migrate`), each change one transaction
-with its revision, before any hint (`packages`, and `work` when it names a
+writer of its record: one document per arrival,
+`/packages/<inbox id>.package` (records), each change (no words of the
+package) one version of it, one write with its revision, before any hint (`packages`, and `work` when it names a
 work item). States `arrived -> opened -> answering -> answered ->
 closed` (`signed_off`, `dismissed`, `superseded`). The same bytes while open
 are the same row; an open package of the same name from the same sender

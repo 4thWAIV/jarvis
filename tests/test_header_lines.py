@@ -473,10 +473,6 @@ EXEMPT = {
         "(name, summary, folder names, confirmed accomplishments) and his "
         "notes; pack's own trust rule applies to everything it returns. "
         "Driven by tests/test_context_service.py"),
-    "package_inbox.waiting_by_work": (
-        "it returns counts keyed by work item ID, read from the rows' own "
-        "counters; it prints nothing. Driven by tests/test_header_lines.py's "
-        "work status driver"),
     "server._record_work_target": (
         "the name it returns is the project's or folder's behind the "
         "voice-name wall (_said_name); its refusals are the project store's "
@@ -525,8 +521,6 @@ EXEMPT = {
     # purpose and questions are another agent's words; what reaches the
     # brain of them is driven above (_drive_package_inbox). These read a
     # row's `state` or `title` but say none of a package's words:
-    "package_inbox.opened": (
-        "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.arrive": (
         "the only text it builds is _ref's refusal naming which of its own "
         "fields is too long (project, session, agent's name), never the value; "
@@ -901,9 +895,6 @@ EXEMPT = {
         "it records his review (his own words, from the page or his voice) and prints "
         "nothing but its refusals, whose values are checked keys and what holds a piece, "
         "itself only reached by the brain through work_status's wall"),
-    "work_store.answers_for": (
-        "it returns his answers to an access key's own decisions as data for that agent "
-        "(GET /api/work/answers, work_report.py answers); none of it reaches the brain"),
     "server._sender_name": (
         "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
         "through _said_name, which refuses anything but a plain name; never to the brain"),
@@ -975,9 +966,6 @@ EXEMPT = {
     "work_store.id": (
         "it is a held item record's id (`ItemRecord.id`), the id JARVIS assigned when it "
         "created the item; it prints nothing"),
-    "work_store.records": (
-        "it reads items' rows into records for the held Work view, keyed by the ids JARVIS "
-        "assigned; it prints nothing, and every reader shows the words as text or walled"),
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
@@ -1961,24 +1949,24 @@ def _drive_package_inbox(server, session, monkeypatch):
     """Packages whose title, sender, purpose and questions are the payload,
     read by the brain through package_inbox (the list and one in full) and
     through work_status's item detail, which lists a work item's packages."""
-    import sqlite3
     import tempfile
     import time
-    from jarvis import data_paths, package_inbox as pi, work_store as ws
+    from jarvis import package_inbox as pi, records, work_store as ws
     item = ws.create("Tea", "folder", tempfile.mkdtemp(prefix="work-"))
     import secrets
-    pi.listing()                        # the inbox's tables, made by its own migration
     ids = [f"pkg-{secrets.token_hex(6)}" for _ in range(2)]
-    with sqlite3.connect(data_paths.db_path()) as conn:
-        conn.execute("DELETE FROM package_inbox")
-        for n, title in enumerate((session.title, f"Second {HOSTILE}")):
-            conn.execute(
-                "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
-                "purpose, runs, decisions_total, decisions_answered, from_project, "
-                "from_session, from_agent, work_id, state, revision, arrived_at) "
-                "VALUES (?, ?, 'x', ?, ?, ?, ?, 'page', 2, 1, ?, 's1', ?, ?, 'answering', 1, ?)",
-                (ids[n], f"pkg{n}", session.project, session.state, title,
-                 session.last_text, session.project, session.voice_name, item.id, time.time()))
+    for old in pi.listing() + pi.listing(closed=True):
+        records.delete(pi.path_of(old.id))
+    for n, title in enumerate((session.title, f"Second {HOSTILE}")):
+        entry = {name: None for name in pi.COLUMNS}
+        entry.update(id=ids[n], package_id=f"pkg{n}", sha256="x", name=session.project,
+                     version=session.state, title=title, purpose=session.last_text,
+                     runs="page", decisions_total=2, decisions_answered=1,
+                     from_project=session.project, from_session="s1",
+                     from_agent=session.voice_name, work_id=item.id, state="answering",
+                     revision=1, arrived_at=time.time(), claimed_session="",
+                     sender_evidence="", reprove=0, events=[], last_seq=0)
+        records.write(pi.path_of(ids[n]), entry)
     asked = [pi.Question("kettle", session.last_prompt, session.needs,
                          [{"id": "electric", "name": HOSTILE, "says": session.title}],
                          "electric", HOSTILE, True,

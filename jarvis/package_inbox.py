@@ -7,13 +7,12 @@ unpacked as any local zip is (work_packages.unpack_held), recorded here, and
 shown nowhere: it reaches his screen only on his own act (his Open, or
 asking JARVIS on a turn he drove).
 
-One row per arrival, `package_inbox`, and every change to it one line of
-`package_inbox_events` (no words of the package). The rows are the backlog
+One document per arrival in JARVIS's records (`records`, the document
+engine), `/packages/<inbox id>.package`, and every change to it one version
+recording its event (no words of the package). The entries are the backlog
 the Queue's Packages section lists and the brain's `package_inbox` reads.
-This module is the only writer: one transaction per change, the revision
-moved inside it, written before any hint. The tables live in JARVIS's one
-database under their own schema version (`package_inbox_schema`,
-run_store.migrate).
+This module is the only writer: one write per change (`records.atomic`),
+the revision moved inside it, written before any hint.
 
 States, in order:
 
@@ -38,17 +37,16 @@ shown and spoken only through the same walls as any other.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import secrets
-import sqlite3
-import threading
 import time
-from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import decision_stamp, package_story, run_store, wait_links, work_packages
+from jarvis import (decision_stamp, package_story, record_cells, records, wait_links,
+                    work_packages)
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -81,90 +79,6 @@ ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 TITLE_MAX = 120
 REF_MAX = 128
 LIST_MAX = 100
-
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS package_inbox (
-        id                 TEXT PRIMARY KEY,
-        package_id         TEXT NOT NULL,
-        sha256             TEXT NOT NULL,
-        name               TEXT NOT NULL,
-        version            TEXT NOT NULL,
-        title              TEXT NOT NULL,
-        purpose            TEXT NOT NULL,
-        runs               TEXT NOT NULL,
-        decisions_total    INTEGER NOT NULL DEFAULT 0,
-        decisions_answered INTEGER NOT NULL DEFAULT 0,
-        from_project       TEXT NOT NULL DEFAULT '',
-        from_session       TEXT NOT NULL DEFAULT '',
-        from_agent         TEXT NOT NULL DEFAULT '',
-        workflow_id        TEXT,
-        work_id            TEXT,
-        project_id         TEXT,
-        state              TEXT NOT NULL,
-        revision           INTEGER NOT NULL,
-        capture_id         INTEGER,
-        return_asked_at    REAL,
-        message_id         INTEGER,
-        arrived_at         REAL NOT NULL,
-        opened_at          REAL,
-        answered_at        REAL,
-        returned_at        REAL,
-        closed_at          REAL,
-        closed_why         TEXT
-    );
-    CREATE INDEX IF NOT EXISTS package_inbox_by_state ON package_inbox (state, arrived_at);
-    CREATE TABLE IF NOT EXISTS package_inbox_events (
-        seq      INTEGER PRIMARY KEY AUTOINCREMENT,
-        inbox_id TEXT NOT NULL REFERENCES package_inbox(id),
-        kind     TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        at       REAL NOT NULL,
-        how      TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS package_inbox_events_by_entry
-        ON package_inbox_events (inbox_id, seq);
-"""
-
-# 2: when he signed it off (`signed_off`).
-_SIGNED_OFF = """
-    ALTER TABLE package_inbox ADD COLUMN signed_off_at REAL;
-"""
-
-# 3: the session it claimed it came from, apart from the one proven
-# (`from_session`, where his answers go), and how it was proven. A row from
-# before had only the claim: it is a claim still, so its answers go nowhere.
-_PROVEN_SENDER = """
-    ALTER TABLE package_inbox ADD COLUMN claimed_session TEXT NOT NULL DEFAULT '';
-    ALTER TABLE package_inbox ADD COLUMN sender_evidence TEXT NOT NULL DEFAULT '';
-    UPDATE package_inbox SET claimed_session = from_session, from_session = '', from_agent = ''
-        WHERE from_session <> '';
-"""
-
-# 4: the open rows whose claimed session is still unproven, each to be
-# proven again once from the transcripts (`reprove`: 1 until it has been
-# tried, once by the server's re-proof, which agent keys replaced; see
-# migration 5), with no time window, since the
-# proof of a row delivered before 3 could only be looked for after it.
-_REPROVE = """
-    ALTER TABLE package_inbox ADD COLUMN reprove INTEGER NOT NULL DEFAULT 0;
-    UPDATE package_inbox SET reprove = 1
-        WHERE claimed_session <> '' AND from_session = '' AND sender_evidence = ''
-          AND state <> 'closed';
-"""
-
-# Each step is appended, never changed (run_store.migrate).
-# 5: nothing is proven from the transcripts any more (agent keys: a package's
-# sender is its signature's), so no row waits to be proven again; one still
-# unproven keeps its claim, and his answers go nowhere.
-_NO_REPROOF = """
-    UPDATE package_inbox SET reprove = 0;
-"""
-
-_MIGRATIONS = {1: _SCHEMA, 2: _SIGNED_OFF, 3: _PROVEN_SENDER, 4: _REPROVE, 5: _NO_REPROOF}
-
-_migrated: set[str] = set()
-_migrating = threading.Lock()
-
 
 class InboxRefused(ValueError):
     """A change the inbox cannot make, with why, in words he can hear."""
@@ -559,21 +473,43 @@ def summary(package: Package) -> str:
 
 
 # ── the record ────────────────────────────────────────────────────────────
+#
+# One arrival is one document, `/packages/<inbox id>.package` (the id
+# through records.segment): its fields under the names its columns had, and
+# the changes this version records (`events`: kind, the revision it moved
+# to, when and how; no words of the package). Its changes are the
+# document's versions. Kept with it: `last_seq` (its events' own order) and,
+# for a row the move brought, its SQLite rowid (`rowid`). Every arrival also
+# writes `ARRIVALS`, so two arrivals never decide "the same bytes" or "a
+# newer one of the same name" from the same reading.
 
-def _connect() -> sqlite3.Connection:
-    conn = run_store._connect()
-    path = conn.execute("PRAGMA database_list").fetchone()["file"]
-    if path not in _migrated:
-        with _migrating:
-            if path not in _migrated:
-                run_store.migrate(conn, "package_inbox_schema", _MIGRATIONS, "package inbox")
-                conn.commit()
-                _migrated.add(path)
-    return conn
+ROOT, TYPE = "/packages", "package"
+ARRIVALS = f"{ROOT}/arrivals.inbox"
+COLUMNS = tuple(f.name for f in dataclasses.fields(Entry))
+EVENT_COLUMNS = ("seq", "inbox_id", "kind", "revision", "at", "how")
+TABLES = ("package_inbox", "package_inbox_events")
 
 
-def _entry(row) -> Entry:
-    return Entry(**{k: row[k] for k in row.keys()})
+def path_of(inbox_id: str) -> str:
+    return f"{ROOT}/{records.segment(inbox_id)}.{TYPE}"
+
+
+def _is_entry(data) -> bool:
+    return isinstance(data, dict) and "sha256" in data and "package_id" in data
+
+
+def _entry(doc: dict) -> Entry:
+    return Entry(**{k: doc.get(k) for k in COLUMNS})
+
+
+def _caller(how: str, session: str = "") -> "records.Caller":
+    """Who made a change: him (by voice, on the page), the sending agent
+    when its session is proven, else JARVIS."""
+    if how in (BY_VOICE, ON_THE_PAGE):
+        return records.TIM
+    if how == BY_THE_SENDER and session:
+        return records.by(f"agent:{session}")
+    return records.JARVIS
 
 
 def _ref(value, what: str) -> str:
@@ -583,74 +519,101 @@ def _ref(value, what: str) -> str:
     return text
 
 
-def _event(conn, inbox_id: str, kind: str, revision: int, now: float, how: str) -> None:
-    conn.execute("INSERT INTO package_inbox_events (inbox_id, kind, revision, at, how) "
-                 "VALUES (?, ?, ?, ?, ?)", (inbox_id, kind, revision, now, how))
+def _event(doc: dict, kind: str, revision: int, now: float, how: str) -> None:
+    doc.setdefault(record_cells.EVENTS, []).append(
+        {"seq": record_cells.next_seq(doc), "kind": kind, "revision": revision, "at": now,
+         "how": how})
 
 
-def _change(conn, entry: Entry, kind: str, how: str, now: float, **fields) -> Entry:
-    """Move one row on: its fields, its next revision and one event, inside
-    the caller's transaction."""
-    revision = entry.revision + 1
-    sets = ", ".join(f"{k}=?" for k in (*fields, "revision"))
-    conn.execute(f"UPDATE package_inbox SET {sets} WHERE id=?",
-                 (*fields.values(), revision, entry.id))
-    _event(conn, entry.id, kind, revision, now, how)
-    return _entry(conn.execute("SELECT * FROM package_inbox WHERE id=?", (entry.id,)).fetchone())
+def _change(unit, doc: dict, kind: str, how: str, now: float, **fields) -> Entry:
+    """Move one entry on: its fields, its next revision and one event,
+    staged in the caller's unit."""
+    doc.update(fields)
+    doc["revision"] = doc["revision"] + 1
+    _event(doc, kind, doc["revision"], now, how)
+    record_cells.stage(unit, path_of(doc["id"]), doc, change=kind)
+    return _entry(doc)
 
 
-def _one(conn, inbox_id: str) -> Entry:
-    row = conn.execute("SELECT * FROM package_inbox WHERE id=?", (str(inbox_id),)).fetchone()
-    if row is None:
+def _scan(unit=None, **where) -> list[dict]:
+    """The entries whose fields equal `where` (exactly: the engine's text
+    match ignores case), read through `unit` when one is given."""
+    query = [[k, "=", v] for k, v in where.items()]
+    found = (unit.scan if unit is not None else records.scan)(ROOT, types=[TYPE],
+                                                               where=query or None)
+    return [r.data for r in found if _is_entry(r.data)
+            and all(r.data.get(k) == v for k, v in where.items())]
+
+
+def _open_ones(unit=None, **where) -> list[dict]:
+    return [d for d in _scan(unit, **where) if d["state"] in OPEN_STATES]
+
+
+def _take(unit, inbox_id: str) -> dict:
+    doc = record_cells.take(unit, path_of(str(inbox_id)))
+    if not _is_entry(doc):
         raise InboxRefused("There is no package by that id in the inbox; package_inbox lists "
                            "them.")
-    return _entry(row)
+    return doc
+
+
+def _still_open(doc: dict, already: str) -> None:
+    """Refused for an entry already closed, saying why it closed."""
+    entry = _entry(doc)
+    if not entry.is_open:
+        raise InboxRefused(f"{entry.id} is {already}closed ({entry.closed_why}).")
 
 
 def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = "",
            work_id: str = "", now: Optional[float] = None) -> Arrival:
     """Record a package that has just been unpacked here, unshown. The same
-    bytes while their row is still open are that row (fresh False). Any
+    bytes while their entry is still open are that entry (fresh False). Any
     open package of the same name from the same sender is closed as
-    superseded, in the same transaction."""
+    superseded, in the same write."""
     now = time.time() if now is None else now
     sender = Sender(_ref(sender.project, "The project"), _ref(sender.session, "The session"),
                     _ref(sender.agent, "The agent's name"), _ref(sender.claimed, "The session"),
                     _ref(sender.evidence, "The evidence"))
     answered, total = counts(questions(package))
     m = package.manifest
-    with closing(_connect()) as conn, conn:
-        same = conn.execute(
-            f"SELECT * FROM package_inbox WHERE sha256=? AND state IN "
-            f"({','.join('?' * len(OPEN_STATES))}) ORDER BY arrived_at DESC LIMIT 1",
-            (sha256, *OPEN_STATES)).fetchone()
-        if same is not None:
-            return Arrival(_entry(same), False)
+    title = title_of(package)
+    inbox_id = "pkg-" + secrets.token_hex(6)
+
+    def write(unit) -> Arrival:
+        same = sorted(_open_ones(unit, sha256=sha256), key=lambda d: d["arrived_at"],
+                      reverse=True)
+        if same:
+            return Arrival(_entry(same[0]), False)
+        arrivals = unit.get(ARRIVALS)
+        unit.put(ARRIVALS, {"arrivals": int((arrivals.data if arrivals else {}).get(
+            "arrivals") or 0) + 1, "last": inbox_id})
         column, value = {"session": ("from_session", sender.session),
                          "project": ("from_project", sender.project)}[sender.key()[0]]
-        older = [_entry(r) for r in conn.execute(
-            f"SELECT * FROM package_inbox WHERE name=? AND {column}=? AND state IN "
-            f"({','.join('?' * len(OPEN_STATES))})", (m.name, value, *OPEN_STATES))] \
-            if value else []
-        superseded = [_change(conn, e, "closed", BY_THE_SENDER, now, state=CLOSED,
-                              closed_at=now, closed_why=SUPERSEDED) for e in older]
-        inbox_id = "pkg-" + secrets.token_hex(6)
-        conn.execute(
-            "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, purpose, "
-            "runs, decisions_total, decisions_answered, from_project, from_session, "
-            "from_agent, workflow_id, work_id, state, revision, arrived_at, claimed_session, "
-            "sender_evidence, reprove) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-            (inbox_id, package.id, sha256, m.name, m.version, title_of(package), m.purpose,
-             m.runs, total, answered, sender.project, sender.session, sender.agent,
-             workflow_id or None, work_id or None, ARRIVED, now, sender.claimed,
-             sender.evidence,
-             # Nothing proves a claim later: a package's sender is its
-             # signature's, as it arrives (server._package_signer).
-             0))
-        _event(conn, inbox_id, "arrived", 1, now, BY_THE_SENDER)
-        entry = _one(conn, inbox_id)
-    return Arrival(entry, True, superseded)
+        older = [record_cells.take(unit, path_of(d["id"]))
+                 for d in _open_ones(unit, name=m.name, **{column: value})] if value else []
+        superseded = [_change(unit, d, "closed", BY_THE_SENDER, now, state=CLOSED,
+                              closed_at=now, closed_why=SUPERSEDED) for d in older]
+        if unit.get(path_of(inbox_id)) is not None:
+            raise InboxRefused("That inbox id is taken; try again.")
+        doc = {"id": inbox_id, "package_id": package.id, "sha256": sha256, "name": m.name,
+               "version": m.version, "title": title, "purpose": m.purpose, "runs": m.runs,
+               "decisions_total": total, "decisions_answered": answered,
+               "from_project": sender.project, "from_session": sender.session,
+               "from_agent": sender.agent, "workflow_id": workflow_id or None,
+               "work_id": work_id or None, "project_id": None, "state": ARRIVED,
+               "revision": 1, "capture_id": None, "return_asked_at": None,
+               "message_id": None, "arrived_at": now, "opened_at": None,
+               "answered_at": None, "returned_at": None, "closed_at": None,
+               "closed_why": None, "signed_off_at": None,
+               "claimed_session": sender.claimed, "sender_evidence": sender.evidence,
+               # Nothing proves a claim later: a package's sender is its
+               # signature's, as it arrives (server._package_signer).
+               "reprove": 0, record_cells.EVENTS: [], "last_seq": 0}
+        _event(doc, "arrived", 1, now, BY_THE_SENDER)
+        record_cells.stage(unit, path_of(inbox_id), doc)
+        return Arrival(_entry(doc), True, superseded)
+
+    return records.atomic(write, by=_caller(BY_THE_SENDER, sender.session))
 
 
 # The events of the one-time re-proof of a row's claimed session from the
@@ -659,54 +622,46 @@ SENDER_PROVEN, SENDER_NOT_PROVEN = "sender_proven", "sender_not_proven"
 
 
 def get(inbox_id: str) -> Optional[Entry]:
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM package_inbox WHERE id=?", (str(inbox_id),)).fetchone()
-    return _entry(row) if row else None
+    rec = records.get(path_of(str(inbox_id)))
+    return _entry(rec.data) if rec is not None and _is_entry(rec.data) else None
 
 
 def listing(closed: bool = False, limit: int = LIST_MAX) -> list[Entry]:
     """The open packages, newest first; with `closed`, the closed ones,
     most recently closed first."""
-    query = ("SELECT * FROM package_inbox WHERE state=? ORDER BY closed_at DESC LIMIT ?"
-             if closed else
-             f"SELECT * FROM package_inbox WHERE state IN ({','.join('?' * len(OPEN_STATES))}) "
-             f"ORDER BY arrived_at DESC LIMIT ?")
-    args = (CLOSED,) if closed else OPEN_STATES
-    with closing(_connect()) as conn:
-        return [_entry(r) for r in conn.execute(query, (*args, max(1, min(limit, LIST_MAX))))]
+    limit = max(1, min(limit, LIST_MAX))
+    if closed:
+        found = sorted(_scan(state=CLOSED), key=lambda d: d["closed_at"] or 0.0, reverse=True)
+    else:
+        found = sorted(_open_ones(), key=lambda d: d["arrived_at"], reverse=True)
+    return [_entry(d) for d in found[:limit]]
 
 
 def closed_count() -> int:
-    with closing(_connect()) as conn:
-        return conn.execute("SELECT COUNT(*) FROM package_inbox WHERE state=?",
-                            (CLOSED,)).fetchone()[0]
+    return len(_scan(state=CLOSED))
 
 
 def for_package(package_id: str) -> list[Entry]:
-    """The open rows that are this unpacked package."""
-    with closing(_connect()) as conn:
-        return [_entry(r) for r in conn.execute(
-            f"SELECT * FROM package_inbox WHERE package_id=? AND state IN "
-            f"({','.join('?' * len(OPEN_STATES))})", (package_id, *OPEN_STATES))]
+    """The open entries that are this unpacked package."""
+    return [_entry(d) for d in sorted(_open_ones(package_id=package_id),
+                                      key=lambda d: d["arrived_at"])]
 
 
 def for_work(work_id: str) -> list[Entry]:
     """The open packages sent for this work item, oldest first."""
-    with closing(_connect()) as conn:
-        return [_entry(r) for r in conn.execute(
-            f"SELECT * FROM package_inbox WHERE work_id=? AND state IN "
-            f"({','.join('?' * len(OPEN_STATES))}) ORDER BY arrived_at", (work_id, *OPEN_STATES))]
+    return [_entry(d) for d in sorted(_open_ones(work_id=work_id),
+                                      key=lambda d: d["arrived_at"])]
 
 
 def waiting_by_work() -> dict[str, int]:
     """For each work item, how many questions its open packages still wait
-    on him for, from the counts the rows keep (no file is read)."""
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT work_id, SUM(MAX(decisions_total - decisions_answered, 0)) AS waiting "
-            f"FROM package_inbox WHERE work_id IS NOT NULL AND state IN "
-            f"({','.join('?' * len(OPEN_STATES))}) GROUP BY work_id", OPEN_STATES).fetchall()
-    return {r["work_id"]: int(r["waiting"] or 0) for r in rows if r["waiting"]}
+    on him for, from the counts the entries keep (no file is read)."""
+    waiting: dict[str, int] = {}
+    for d in _open_ones():
+        if d["work_id"] is not None:
+            waiting[d["work_id"]] = waiting.get(d["work_id"], 0) + max(
+                d["decisions_total"] - d["decisions_answered"], 0)
+    return {k: v for k, v in waiting.items() if v}
 
 
 def find(reference: str) -> list[Entry]:
@@ -741,14 +696,16 @@ def opened(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
     """He has been shown it (or JARVIS has it in hand, for a package that is
     not a page): an arrived one is opened. Every open is an event."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        entry = _one(conn, inbox_id)
-        if not entry.is_open:
-            raise InboxRefused(f"{entry.id} is closed ({entry.closed_why}).")
-        fields = {"opened_at": entry.opened_at or now}
-        if entry.state == ARRIVED:
+
+    def write(unit) -> Entry:
+        doc = _take(unit, inbox_id)
+        _still_open(doc, "")
+        fields = {"opened_at": doc["opened_at"] or now}
+        if doc["state"] == ARRIVED:
             fields["state"] = OPENED
-        return _change(conn, entry, "opened", how, now, **fields)
+        return _change(unit, doc, "opened", how, now, **fields)
+
+    return records.atomic(write, by=_caller(how))
 
 
 def counted(inbox_id: str, answered: int, total: int, how: str,
@@ -757,23 +714,27 @@ def counted(inbox_id: str, answered: int, total: int, how: str,
     (answering while some wait, answered once none do). A returned or
     closed one keeps its state; an unchanged count changes nothing."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        entry = _one(conn, inbox_id)
-        if (entry.decisions_answered, entry.decisions_total) == (answered, total):
-            return entry
+
+    def write(unit) -> Entry:
+        doc = _take(unit, inbox_id)
+        if (doc["decisions_answered"], doc["decisions_total"]) == (answered, total):
+            return _entry(doc)
         fields: dict = {"decisions_answered": answered, "decisions_total": total}
-        if entry.state in (ARRIVED, OPENED, ANSWERING, ANSWERED) and total:
+        if doc["state"] in (ARRIVED, OPENED, ANSWERING, ANSWERED) and total:
             if answered >= total:
                 state = ANSWERED
             elif answered:
                 state = ANSWERING
             else:
-                state = ARRIVED if entry.state == ARRIVED else OPENED
+                state = ARRIVED if doc["state"] == ARRIVED else OPENED
             fields["state"] = state
             if state == ANSWERED:
                 fields["answered_at"] = now
-        return _change(conn, entry, "answered" if fields.get("state") == ANSWERED else "counted",
+        return _change(unit, doc, "answered" if fields.get("state") == ANSWERED else "counted",
                        how, now, **fields)
+
+    # His answers, counted: written with full sync.
+    return records.atomic(write, by=_caller(how), full_sync=True)
 
 
 def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
@@ -783,43 +744,45 @@ def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
     a capture (the message to its sender, which goes only on his yes), that
     message is followed (`follow_messages`)."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        entry = _one(conn, inbox_id)
-        if not entry.is_open:
-            raise InboxRefused(f"{entry.id} is already closed ({entry.closed_why}).")
-        entry = _change(conn, entry, "signed_off", how, now, state=CLOSED, closed_at=now,
+
+    def write(unit) -> tuple[Entry, "wait_links.Settled"]:
+        doc = _take(unit, inbox_id)
+        _still_open(doc, "already ")
+        entry = _change(unit, doc, "signed_off", how, now, state=CLOSED, closed_at=now,
                         closed_why=SIGNED_OFF, signed_off_at=now, capture_id=capture_id,
                         return_asked_at=now)
         # Everything waiting on the package ends with his sign-off, in this
-        # transaction (wait_links).
-        moved = wait_links.settle(conn, wait_links.answer(
-            wait_links.PACKAGE, _refs(conn, entry.package_id), None, SIGNED_OFF, now), now)
+        # write (wait_links).
+        moved = wait_links.settle(unit, wait_links.answer(
+            wait_links.PACKAGE, _refs(unit, entry.package_id), None, SIGNED_OFF, now), now)
+        return entry, moved
+
+    entry, moved = records.atomic(write, by=_caller(how), full_sync=True)
     wait_links.tell(moved)
     return entry
 
 
-def _refs(conn, package_id: str) -> set:
+def _refs(unit, package_id: str) -> set:
     """Every name a wait may give the package by: its id, and each of its
-    rows' inbox id, name and name-version."""
+    entries' inbox id, name and name-version (read through `unit` when one
+    is given)."""
     found = {package_id}
-    for r in conn.execute("SELECT id, name, version FROM package_inbox WHERE package_id=?",
-                          (package_id,)):
+    for r in _scan(unit, package_id=package_id):
         found |= {r["id"], r["name"], f"{r['name']}-{r['version']}"}
     return found
 
 
 def refs(package_id: str) -> set:
     """The names a wait may give a package by (`_refs`)."""
-    with closing(_connect()) as conn:
-        return _refs(conn, package_id)
+    return _refs(None, package_id)
 
 
 def adopt(package: Package, sha256: str, how: str) -> Entry:
-    """A record for a package with no open row, so it is signed off the
+    """A record for a package with no open entry, so it is signed off the
     same way, opened, since he has it in front of him: one unpacked here
     before the inbox or outside it arrived from no one known; one signed off
-    before and answered since keeps its last row's sender, workflow and work
-    item, so what he answers now still goes where it was sent for."""
+    before and answered since keeps its last entry's sender, workflow and
+    work item, so what he answers now still goes where it was sent for."""
     last = latest_for_package(package.id)
     sender = Sender(last.from_project, last.from_session, last.from_agent) if last else Sender()
     entry = arrive(package, sha256, sender, workflow_id=last.workflow_id or "" if last else "",
@@ -828,24 +791,21 @@ def adopt(package: Package, sha256: str, how: str) -> Entry:
 
 
 def latest_for_package(package_id: str) -> Optional[Entry]:
-    """The newest row of this unpacked package, open or closed, or None."""
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM package_inbox WHERE package_id=? "
-                           "ORDER BY arrived_at DESC LIMIT 1", (package_id,)).fetchone()
-    return _entry(row) if row else None
+    """The newest entry of this unpacked package, open or closed, or None."""
+    found = sorted(_scan(package_id=package_id), key=lambda d: d["arrived_at"])
+    return _entry(found[-1]) if found else None
 
 
 def rows_for_package(package_id: str) -> list[Entry]:
-    """Every row this unpacked package has had, open or closed."""
-    with closing(_connect()) as conn:
-        return [_entry(r) for r in conn.execute(
-            "SELECT * FROM package_inbox WHERE package_id=? ORDER BY arrived_at", (package_id,))]
+    """Every entry this unpacked package has had, open or closed."""
+    return [_entry(d) for d in sorted(_scan(package_id=package_id),
+                                      key=lambda d: d["arrived_at"])]
 
 
 def for_review(package_id: str) -> list[Entry]:
-    """The rows his answers in this package count for: its open rows, else
-    its newest row once he has signed it off (he may answer in it after
-    pressing Done), never one he set aside or that was replaced."""
+    """The entries his answers in this package count for: its open entries,
+    else its newest entry once he has signed it off (he may answer in it
+    after pressing Done), never one he set aside or that was replaced."""
     rows = for_package(package_id)
     if rows:
         return rows
@@ -855,43 +815,109 @@ def for_review(package_id: str) -> list[Entry]:
 
 # A message's statuses once it has gone to its session (run_store.MessageStatus).
 _GONE = ("sent", "undelivered", "delivered", "working", "answered")
+# How many of a session's newest messages are looked through for one.
+
+
+def _carried_by(entry: Entry) -> Optional[int]:
+    """The message that carried a signed-off entry's answers back to its
+    sender, once it has gone: the newest of its session's messages from
+    that capture since he signed it off."""
+    from jarvis import run_store
+    return run_store.last_message_gone(entry.capture_id, entry.from_session,
+                                       entry.return_asked_at or 0, _GONE)
 
 
 def follow_messages(now: Optional[float] = None) -> list[Entry]:
-    """Bring the signed-off rows up to date with the messages that carry
-    their answers back, from the `messages` record: a row whose capture has
-    gone to its sender since he signed it off is given that message's id.
-    The rows that moved."""
+    """Bring the signed-off entries up to date with the messages that carry
+    their answers back, from the messages record: an entry whose capture
+    has gone to its sender since he signed it off is given that message's
+    id. The entries that moved."""
     now = time.time() if now is None else now
-    moved = []
-    with closing(_connect()) as conn, conn:
-        try:
-            for e in [_entry(r) for r in conn.execute(
-                    "SELECT * FROM package_inbox WHERE closed_why=? AND capture_id IS NOT NULL "
-                    "AND message_id IS NULL", (SIGNED_OFF,))]:
-                m = run_store.last_message_gone(e.capture_id, e.from_session,
-                                                e.return_asked_at or 0, _GONE)
-                if m is not None:
-                    moved.append(_change(conn, e, "returned", BY_JARVIS, now, returned_at=now,
-                                         message_id=m))
-        except sqlite3.OperationalError:      # no messages table yet: nothing has gone
-            return []
-    return moved
+    waiting = [d for d in _scan(closed_why=SIGNED_OFF)
+               if d["capture_id"] is not None and d["message_id"] is None]
+    carried = {}
+    for d in waiting:
+        message_id = _carried_by(_entry(d))
+        if message_id is not None:
+            carried[d["id"]] = (d["capture_id"], message_id)
+    if not carried:
+        return []
+
+    def write(unit) -> list[Entry]:
+        moved = []
+        for inbox_id, (capture_id, message_id) in carried.items():
+            doc = _take(unit, inbox_id)
+            if doc["capture_id"] == capture_id and doc["message_id"] is None:
+                moved.append(_change(unit, doc, "returned", BY_JARVIS, now, returned_at=now,
+                                     message_id=message_id))
+        return moved
+
+    return records.atomic(write, by=records.JARVIS)
 
 
 def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
     """He sets it aside without signing it off: dismissed, whatever is
     answered so far kept in its record and nothing sent back."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        entry = _one(conn, inbox_id)
-        if not entry.is_open:
-            raise InboxRefused(f"{entry.id} is already closed ({entry.closed_why}).")
-        return _change(conn, entry, "closed", how, now, state=CLOSED, closed_at=now,
+
+    def write(unit) -> Entry:
+        doc = _take(unit, inbox_id)
+        _still_open(doc, "already ")
+        return _change(unit, doc, "closed", how, now, state=CLOSED, closed_at=now,
                        closed_why=DISMISSED)
+
+    return records.atomic(write, by=_caller(how), full_sync=True)
 
 
 def events(inbox_id: str) -> list[dict]:
-    with closing(_connect()) as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT * FROM package_inbox_events WHERE inbox_id=? ORDER BY seq", (inbox_id,))]
+    """The entry's changes, oldest first, as the table's rows held them."""
+    found = [e for v in records.history(path_of(str(inbox_id)), fields=[record_cells.EVENTS])
+             for e in (v.data or {}).get(record_cells.EVENTS) or []]
+    return [{"seq": e["seq"], "inbox_id": str(inbox_id), "kind": e["kind"],
+             "revision": e["revision"], "at": e["at"], "how": e["how"]}
+            for e in sorted(found, key=lambda e: e["seq"])]
+
+
+# ── the move from SQLite (knowledge_move) ───────────────────────────────
+
+class _InboxMapping:
+    """package_inbox and package_inbox_events as one document per arrival,
+    its changes as the document's versions (each `{id, events: [one]}`: the
+    entry as it stood then was never kept)."""
+    name = "package"
+    tables = TABLES
+    under = (ROOT,)
+    history = True
+
+    def documents(self, conn):
+        from jarvis.knowledge_move import Doc, Revision
+        by_entry: dict[str, list] = {}
+        for r in record_cells.table_rows(conn, "package_inbox_events"):
+            by_entry.setdefault(r.cells["inbox_id"], []).append(r)
+        for row in record_cells.table_rows(conn, "package_inbox"):
+            doc = {k: row.cells[k] for k in COLUMNS}
+            doc.update({"rowid": row.rowid, record_cells.EVENTS: [], "last_seq": 0})
+            history = []
+            for r in sorted(by_entry.get(doc["id"], []), key=lambda r: r.cells["seq"]):
+                e = {c: r.cells[c] for c in EVENT_COLUMNS if c != "inbox_id"}
+                doc["last_seq"] = max(doc["last_seq"], e["seq"])
+                history.append(Revision({"id": doc["id"], record_cells.EVENTS: [e]},
+                                        by=_caller(e["how"], doc["from_session"]),
+                                        change=e["kind"]))
+            yield Doc(path_of(doc["id"]), doc, history=tuple(history))
+
+    def rows(self, docs):
+        from jarvis.knowledge_move import Row
+        entries, logged = [], []
+        for d in docs:
+            if not _is_entry(d.data):
+                continue
+            entries.append(Row({k: d.data.get(k) for k in COLUMNS}, d.data.get("rowid")))
+            logged += [{**e, "inbox_id": d.data["id"]} for e in record_cells.history_events(d)]
+        record_cells.resolve_seqs(logged)
+        return {"package_inbox": entries,
+                "package_inbox_events": [Row({c: e.get(c) for c in EVENT_COLUMNS})
+                                         for e in logged]}
+
+
+MAPPINGS = [_InboxMapping()]

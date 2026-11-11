@@ -7,11 +7,12 @@ Workflows view, `workflow_status`, JARVIS's spoken updates) reads it from
 here, so JARVIS can always say the latest state, after a restart, a brain
 reset or a dropped page alike.
 
-The truth is `workflow_events`, which is only ever appended to. `workflows`,
-`workflow_items` (its phases and tasks) and `workflow_open` (its open waits,
-decisions and blockers) are the snapshot of it, updated in the SAME
-transaction as each event is inserted, so a reader never sees one without
-the other. `record` is the only writer.
+One workflow is one document in JARVIS's records (`records`, the document
+engine), `/workflows/<id>.workflow`: its state, its phases and tasks and its
+open waits, decisions and blockers, with its log as the document's
+versions, each recording its own events. Every event and the state it
+brings are one write of that document (`records.atomic`), so a reader never
+sees one without the other. `record` is the only writer.
 
 Whether a workflow has gone quiet is worked out when it is read, never
 stored: a running workflow with no event for SILENT_AFTER_SEC reads as
@@ -36,14 +37,12 @@ import dataclasses
 import json
 import re
 import secrets
-import sqlite3
 import time
-from contextlib import closing
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, Optional, get_args
 
-from jarvis import run_store, wait_links
+from jarvis import record_cells, records, wait_links
 
 
 class WorkflowState(str, Enum):
@@ -177,89 +176,41 @@ class WorkflowSnapshot:
     work: str = ""                    # the Work item it is for: its messages go there
 
 
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS workflows (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        project TEXT NOT NULL,
-        state TEXT NOT NULL,
-        phase TEXT,
-        agents TEXT NOT NULL DEFAULT '[]',
-        started_at REAL NOT NULL,
-        last_event_at REAL NOT NULL,
-        last_summary TEXT NOT NULL DEFAULT ''
-    );
-    CREATE TABLE IF NOT EXISTS workflow_items (
-        workflow_id TEXT NOT NULL REFERENCES workflows(id),
-        slug TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        phase TEXT,
-        title TEXT NOT NULL,
-        state TEXT NOT NULL,
-        done INTEGER,
-        total INTEGER,
-        position INTEGER NOT NULL,
-        PRIMARY KEY (workflow_id, slug)
-    );
-    CREATE TABLE IF NOT EXISTS workflow_open (
-        workflow_id TEXT NOT NULL REFERENCES workflows(id),
-        kind TEXT NOT NULL,
-        key TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        opened_at REAL NOT NULL,
-        PRIMARY KEY (workflow_id, kind, key)
-    );
-    CREATE TABLE IF NOT EXISTS workflow_events (
-        seq INTEGER PRIMARY KEY AUTOINCREMENT,
-        workflow_id TEXT NOT NULL REFERENCES workflows(id),
-        kind TEXT NOT NULL,
-        item TEXT,
-        summary TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        at REAL NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS workflow_events_by_workflow
-        ON workflow_events (workflow_id, seq);
-"""
+# ── the document ────────────────────────────────────────────────────────
+#
+# One workflow is one document, `/workflows/<id>.workflow` (its id through
+# records.segment): its own fields under the names its columns had, its
+# phases and tasks (`items`, in their order) and its open waits, decisions
+# and blockers (`open`) inline, and the events this version records
+# (`events`, record_cells). Its log is the document's versions. Kept in
+# the same write as each event, worked out from the log: `last_seq`, when
+# each item was last heard from (`heard`), every decision_made (`made`:
+# its key, whether it carried an answer, whether it was his, how and when)
+# and `linked` (an open wait with a link an answer may end). A row the
+# move brought keeps its SQLite rowid (`rowid`).
+
+ROOT, TYPE = "/workflows", "workflow"
+WORKFLOW_COLUMNS = ("id", "name", "project", "state", "phase", "agents", "started_at",
+                    "last_event_at", "last_summary", "finished_at", "dismissed_at", "reporter",
+                    "work")
+ITEM_COLUMNS = ("workflow_id", "slug", "kind", "phase", "title", "state", "done", "total",
+                "position")
+OPEN_COLUMNS = ("workflow_id", "kind", "key", "summary", "detail", "opened_at")
+EVENT_COLUMNS = ("seq", "workflow_id", "kind", "item", "summary", "detail", "at", "reporter")
+TABLES = ("workflows", "workflow_items", "workflow_open", "workflow_events")
+_FINISHED_STATES = frozenset(s.value for s in FINISHED)
 
 
-_LATER_COLUMNS = (("workflows", "finished_at", "REAL"), ("workflows", "dismissed_at", "REAL"),
-                  ("workflows", "reporter", "TEXT NOT NULL DEFAULT ''"),
-                  ("workflow_events", "reporter", "TEXT NOT NULL DEFAULT ''"),
-                  ("workflows", "work", "TEXT NOT NULL DEFAULT ''"))
+def path_of(workflow_id: str) -> str:
+    return f"{ROOT}/{records.segment(workflow_id)}.{TYPE}"
 
 
-def _connect() -> sqlite3.Connection:
-    """The same database as runs and messages, with this module's tables,
-    and the columns added after the first of them shipped."""
-    conn = run_store._connect()
-    conn.executescript(_SCHEMA)
-    have = {(t, r["name"]) for t in ("workflows", "workflow_events")
-            for r in conn.execute(f"PRAGMA table_info({t})")}
-    for table, name, kind in _LATER_COLUMNS:
-        if (table, name) not in have:
-            try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
-            except sqlite3.OperationalError as e:
-                # Another connection opening the same new database added it
-                # between the PRAGMA and here, and did the rest.
-                if "duplicate column name" not in str(e):
-                    raise
-                continue
-            if name == "finished_at":
-                # One finished before the column existed finished at its last event.
-                done = tuple(s.value for s in FINISHED)
-                conn.execute(f"UPDATE workflows SET finished_at=last_event_at WHERE state IN "
-                             f"({','.join('?' * len(done))})", done)
-                conn.commit()
-    return conn
+def _is_workflow(data) -> bool:
+    return isinstance(data, dict) and "project" in data and isinstance(data.get("items"), list)
 
 
 def ready() -> None:
-    """This module's tables exist (another store's transaction may write them)."""
-    with closing(_connect()):
-        pass
+    """Nothing to make: the records are documents in the engine."""
 
 
 def _one_line(value, limit: int) -> str:
@@ -276,6 +227,56 @@ def _check_slug(value, what: str) -> str:
         raise WorkflowRefused(f"{what} must be lowercase letters, digits and dashes, "
                               f"up to 64 characters.")
     return slug
+
+
+def _caller(event: WorkflowEvent) -> "records.Caller":
+    """Who wrote an event: its reporter as the route proved it, else him
+    for his own answer, else JARVIS."""
+    if event.reporter:
+        return records.by(event.reporter)
+    if event.kind == "decision_made" and _his(event.detail):
+        return records.TIM
+    return records.JARVIS
+
+
+def _made(event: WorkflowEvent) -> Optional[dict]:
+    """A decision_made as the document keeps it for `_answered` and
+    `decision_answer`; None for one whose key cannot be read."""
+    try:
+        key = open_key(event)
+    except WorkflowRefused:
+        return None
+    return {"key": key, "answer": "answer" in event.detail, "his": _his(event.detail),
+            "how": str(event.detail.get("how") or "page"), "at": event.at}
+
+
+def _note_event(doc: dict, event: WorkflowEvent) -> None:
+    """What the document keeps of one event besides the event itself."""
+    if event.item is not None:
+        doc["heard"][event.item] = max(doc["heard"].get(event.item, event.at), event.at)
+    if event.kind == "decision_made":
+        made = _made(event)
+        if made is not None:
+            doc["made"].append(made)
+
+
+def _add_event(doc: dict, event: WorkflowEvent, now: float) -> None:
+    """One event of the workflow's log, recorded by the version being written."""
+    kept = dataclasses.replace(event, at=now, seq=record_cells.next_seq(doc))
+    doc.setdefault(record_cells.EVENTS, []).append(
+        {"seq": kept.seq, "kind": kept.kind, "item": kept.item, "summary": kept.summary,
+         "detail": kept.detail, "at": now, "reporter": kept.reporter})
+    _note_event(doc, kept)
+
+
+def _take(unit, workflow_id: str) -> Optional[dict]:
+    doc = record_cells.take(unit, path_of(workflow_id))
+    return doc if _is_workflow(doc) else None
+
+
+def _stage(unit, doc: dict) -> None:
+    doc["linked"] = any(True for _ in _linked_waits(doc))
+    record_cells.stage(unit, path_of(doc["id"]), doc)
 
 
 def start(name: str, project: str, phases: list[str], reporter: str = "",
@@ -296,31 +297,25 @@ def start(name: str, project: str, phases: list[str], reporter: str = "",
         raise WorkflowRefused("Two phases have the same name.")
     workflow_id = "wf-" + secrets.token_hex(6)
     now = time.time()
-    with closing(_connect()) as conn:
-        conn.execute(
-            "INSERT INTO workflows (id, name, project, state, started_at, last_event_at, "
-            "reporter, work) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (workflow_id, name, project, WorkflowState.running.value, now, now, reporter,
-             work))
-        conn.executemany(
-            "INSERT INTO workflow_items (workflow_id, slug, kind, title, state, position) "
-            "VALUES (?, ?, 'phase', ?, ?, ?)",
-            [(workflow_id, slug, title, ItemState.pending.value, i)
-             for i, (slug, title) in enumerate(zip(slugs, titles))])
-        _insert_event(conn, WorkflowEvent(workflow_id, "workflow_started", None,
-                                          f"{name} started.",
-                                          {"phases": slugs}, reporter=reporter), now)
-        conn.commit()
+    started = WorkflowEvent(workflow_id, "workflow_started", None, f"{name} started.",
+                            {"phases": slugs}, reporter=reporter)
+
+    def write(unit) -> None:
+        if unit.get(path_of(workflow_id)) is not None:
+            raise WorkflowRefused("That workflow id is taken; try again.")
+        doc = {"id": workflow_id, "name": name, "project": project,
+               "state": WorkflowState.running.value, "phase": None, "agents": [],
+               "started_at": now, "last_event_at": now, "last_summary": "",
+               "finished_at": None, "dismissed_at": None, "reporter": reporter, "work": work,
+               "items": [{"slug": slug, "kind": "phase", "phase": None, "title": title,
+                          "state": ItemState.pending.value, "done": None, "total": None,
+                          "position": i} for i, (slug, title) in enumerate(zip(slugs, titles))],
+               "open": [], record_cells.EVENTS: [], "last_seq": 0, "heard": {}, "made": []}
+        _add_event(doc, started, now)
+        _stage(unit, doc)
+
+    records.atomic(write, by=_caller(started))
     return workflow_id
-
-
-def _insert_event(conn, event: WorkflowEvent, now: float) -> int:
-    cur = conn.execute(
-        "INSERT INTO workflow_events (workflow_id, kind, item, summary, detail, at, reporter) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (event.workflow_id, event.kind, event.item, event.summary,
-         json.dumps(event.detail), now, event.reporter))
-    return cur.lastrowid
 
 
 def _clean(event: WorkflowEvent) -> WorkflowEvent:
@@ -344,51 +339,56 @@ def _int(value) -> int | None:
 
 
 def record(event: WorkflowEvent) -> WorkflowSnapshot:
-    """Append one event and bring the snapshot up to date with it, in one
-    transaction. The only writer. Refused (WorkflowRefused) if the event is
-    malformed, the workflow unknown or already finished, or it names an item
-    the workflow does not have."""
+    """Record one event and bring the workflow up to date with it, in one
+    write of its document (and of every record his answer releases). The
+    only writer. Refused (WorkflowRefused) if the event is malformed, the
+    workflow unknown or already finished, or it names an item the workflow
+    does not have."""
     event = _clean(event)
-    now = time.time()
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM workflows WHERE id=?", (event.workflow_id,)).fetchone()
-        if row is None:
+
+    def write(unit) -> "wait_links.Settled":
+        now = time.time()
+        doc = _take(unit, event.workflow_id)
+        if doc is None:
             raise WorkflowRefused("There is no workflow with that id.")
-        finished = row["state"] in {s.value for s in FINISHED}
+        finished = doc["state"] in _FINISHED_STATES
         if event.kind == "workflow_dismissed":
             if not finished:
                 raise WorkflowRefused("Only a finished workflow is dismissed.")
-            if row["dismissed_at"] is not None:
+            if doc["dismissed_at"] is not None:
                 raise WorkflowRefused("That workflow is already dismissed.")
-            conn.execute("UPDATE workflows SET dismissed_at=? WHERE id=?",
-                         (now, event.workflow_id))
-            _insert_event(conn, event, now)
-            conn.commit()
-            return snapshot(event.workflow_id)
+            doc["dismissed_at"] = now
+            _add_event(doc, event, now)
+            _stage(unit, doc)
+            return wait_links.Settled()
         if finished:
             raise WorkflowRefused("That workflow has finished; start a new one.")
-        event = _apply(conn, row, event, now) or event
-        _insert_event(conn, event, now)
-        _settle_state(conn, event.workflow_id, event, now)
-        moved = _answered_by(conn, event, now)
-        conn.commit()
+        kept = _apply(doc, event, now) or event
+        _add_event(doc, kept, now)
+        _settle_state(doc, kept, now)
+        _stage(unit, doc)
+        return _answered_by(unit, doc, kept, now)
+
+    his = event.kind == "decision_made" and _his(event.detail)
+    moved = records.atomic(write, by=_caller(event), full_sync=his)
     wait_links.tell(moved)
     return snapshot(event.workflow_id)
 
 
-def _answered_by(conn, event: WorkflowEvent, now: float) -> "wait_links.Settled":
+def _answered_by(unit, doc: dict, event: WorkflowEvent, now: float) -> "wait_links.Settled":
     """His answer ends every wait linked to it, here and in the Work
-    tracker, in this transaction; a wait opened on an answer already given
-    ends at once."""
+    tracker, in this unit; a wait opened on an answer already given ends at
+    once."""
     if event.kind == "decision_made" and _his(event.detail):
         found = wait_links.answer(wait_links.WORKFLOW, {event.workflow_id},
                                   open_key(event), str(event.detail.get("how") or "page"), now)
-        return wait_links.settle(conn, found, now)
+        return wait_links.settle(unit, found, now)
     if event.kind == "wait_started" and event.detail.get("link"):
         link = wait_links.parse(event.detail["link"])
-        found = wait_links.already(conn, link, wait_links.WORKFLOW, event.workflow_id)
+        found = wait_links.already(unit, link, wait_links.WORKFLOW, event.workflow_id)
         if found is not None:
-            _end_wait(conn, event.workflow_id, open_key(event), link, found, now)
+            _end_wait(doc, event.workflow_id, open_key(event), link, found, now)
+            _stage(unit, doc)
             return wait_links.Settled(workflows={event.workflow_id})
     return wait_links.Settled()
 
@@ -399,109 +399,102 @@ def _his(detail: dict) -> bool:
     return detail.get("by") == "user" and "answer" in detail
 
 
-def _item(conn, workflow_id: str, slug: str):
-    return conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? AND slug=?",
-                        (workflow_id, slug)).fetchone()
+def _item(doc: dict, slug: str) -> Optional[dict]:
+    return next((i for i in doc["items"] if i["slug"] == slug), None)
 
 
-def _set_item(conn, workflow_id: str, slug: str, state: ItemState, **counts) -> None:
-    sets = ["state=?"] + [f"{k}=?" for k in counts]
-    conn.execute(f"UPDATE workflow_items SET {', '.join(sets)} WHERE workflow_id=? AND slug=?",
-                 (state.value, *counts.values(), workflow_id, slug))
+def _set_item(doc: dict, slug: str, state: ItemState, **counts) -> None:
+    _item(doc, slug).update(state=state.value, **counts)
 
 
-def _apply(conn, row, event: WorkflowEvent, now: float) -> Optional[WorkflowEvent]:
-    """Bring the snapshot up to date with one event; the event as it is
+def _open_item(doc: dict, kind: str, key: str) -> Optional[dict]:
+    return next((o for o in doc["open"] if o["kind"] == kind and o["key"] == key), None)
+
+
+def _apply(doc: dict, event: WorkflowEvent, now: float) -> Optional[WorkflowEvent]:
+    """Bring the document up to date with one event; the event as it is
     kept when that differs (a wait with its link), else None."""
     wid, kind, slug, detail = event.workflow_id, event.kind, event.item, event.detail
     if kind == "phase_added":
-        if _item(conn, wid, slug) is not None:
+        if _item(doc, slug) is not None:
             raise WorkflowRefused(f"There is already an item {slug}.")
-        phases = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=? "
-                              "AND kind='phase'", (wid,)).fetchone()[0]
-        if phases >= PHASES_MAX:
+        if sum(1 for i in doc["items"] if i["kind"] == "phase") >= PHASES_MAX:
             raise WorkflowRefused(f"A workflow has at most {PHASES_MAX} phases.")
-        position = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=?",
-                                (wid,)).fetchone()[0]
-        conn.execute(
-            "INSERT INTO workflow_items (workflow_id, slug, kind, title, state, position) "
-            "VALUES (?, ?, 'phase', ?, ?, ?)",
-            (wid, slug, _one_line(detail.get("title"), NAME_MAX) or slug,
-             ItemState.pending.value, position))
+        doc["items"].append({"slug": slug, "kind": "phase", "phase": None,
+                             "title": _one_line(detail.get("title"), NAME_MAX) or slug,
+                             "state": ItemState.pending.value, "done": None, "total": None,
+                             "position": len(doc["items"])})
     elif kind.startswith("phase_"):
-        item = _item(conn, wid, slug)
+        item = _item(doc, slug)
         if item is None or item["kind"] != "phase":
             raise WorkflowRefused(f"This workflow has no phase {slug}; add it with phase_added.")
         if kind == "phase_started":
-            _set_item(conn, wid, slug, ItemState.running)
-            conn.execute("UPDATE workflows SET phase=? WHERE id=?", (slug, wid))
+            _set_item(doc, slug, ItemState.running)
+            doc["phase"] = slug
         else:
             failed = detail.get("outcome") == "failed"
-            _set_item(conn, wid, slug, ItemState.failed if failed else ItemState.done)
+            _set_item(doc, slug, ItemState.failed if failed else ItemState.done)
     elif kind == "task_added":
-        if _item(conn, wid, slug) is not None:
+        if _item(doc, slug) is not None:
             raise WorkflowRefused(f"There is already an item {slug}.")
-        phase = detail.get("phase") or row["phase"]
-        if phase is not None and (_item(conn, wid, str(phase)) or {"kind": ""})["kind"] != "phase":
+        phase = detail.get("phase") or doc["phase"]
+        if phase is not None and (_item(doc, str(phase)) or {"kind": ""})["kind"] != "phase":
             raise WorkflowRefused(f"This workflow has no phase {phase}; add it with phase_added.")
-        position = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=?",
-                                (wid,)).fetchone()[0]
-        conn.execute(
-            "INSERT INTO workflow_items (workflow_id, slug, kind, phase, title, state, total, "
-            "position) VALUES (?, ?, 'task', ?, ?, ?, ?, ?)",
-            (wid, slug, phase, _one_line(detail.get("title") or event.summary, NAME_MAX),
-             ItemState.pending.value, _int(detail.get("total")), position))
+        doc["items"].append({"slug": slug, "kind": "task", "phase": phase,
+                             "title": _one_line(detail.get("title") or event.summary, NAME_MAX),
+                             "state": ItemState.pending.value, "done": None,
+                             "total": _int(detail.get("total")), "position": len(doc["items"])})
     elif kind.startswith("task_"):
-        item = _item(conn, wid, slug)
+        item = _item(doc, slug)
         if item is None or item["kind"] != "task":
             raise WorkflowRefused(f"This workflow has no task {slug}; add it with task_added.")
         if kind == "task_started":
-            _set_item(conn, wid, slug, ItemState.running)
+            _set_item(doc, slug, ItemState.running)
         elif kind == "task_progress":
             done, total = _int(detail.get("done")), _int(detail.get("total"))
-            _set_item(conn, wid, slug, ItemState.running,
+            _set_item(doc, slug, ItemState.running,
                       done=done if done is not None else item["done"],
                       total=total if total is not None else item["total"])
         else:
             outcome = {"failed": ItemState.failed, "skipped": ItemState.skipped}.get(
                 detail.get("outcome"), ItemState.done)
-            _set_item(conn, wid, slug, outcome)
+            _set_item(doc, slug, outcome)
     elif kind in _OPENS:
         key = open_key(event)
         if kind == "wait_started":
-            event = _linked(conn, event, key)
+            event = _linked(doc, event, key)
             detail = event.detail
         # An answered key is never asked again: its reporter reads the answer
         # by key (`workflow_report.py answer`), so a new question needs a new key.
-        if kind == "decision_needed" and _answered(conn, wid, key):
+        if kind == "decision_needed" and _answered(doc, key):
             raise WorkflowRefused(f"Decision {key} was already answered; ask with a new key.")
-        conn.execute(
-            "INSERT OR REPLACE INTO workflow_open (workflow_id, kind, key, summary, detail, "
-            "opened_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (wid, _OPENS[kind], key, event.summary, json.dumps(detail), now))
+        # Opened again while open: it replaces the one opened before.
+        doc["open"] = [o for o in doc["open"] if not (o["kind"] == _OPENS[kind]
+                                                       and o["key"] == key)]
+        doc["open"].append({"kind": _OPENS[kind], "key": key, "summary": event.summary,
+                            "detail": detail, "opened_at": now})
         return event
     elif kind in _CLOSES:
         key = open_key(event)
-        gone = conn.execute("DELETE FROM workflow_open WHERE workflow_id=? AND kind=? AND key=?",
-                            (wid, _CLOSES[kind], key)).rowcount
-        if not gone:
+        if _open_item(doc, _CLOSES[kind], key) is None:
             raise WorkflowRefused(f"No {_CLOSES[kind]} {key} is open.")
+        doc["open"] = [o for o in doc["open"] if not (o["kind"] == _CLOSES[kind]
+                                                       and o["key"] == key)]
     elif kind == "agent_attached":
         session_id = _one_line(detail.get("session_id"), 128)
         if not session_id:
             raise WorkflowRefused("agent_attached gives the session_id.")
-        agents = json.loads(row["agents"])
-        if session_id not in agents:
-            conn.execute("UPDATE workflows SET agents=? WHERE id=?",
-                         (json.dumps(agents + [session_id]), wid))
+        if session_id not in doc["agents"]:
+            doc["agents"] = list(doc["agents"]) + [session_id]
     elif kind == "workflow_finished":
         outcome = detail.get("outcome", "succeeded")
-        if outcome not in {s.value for s in FINISHED}:
+        if outcome not in _FINISHED_STATES:
             raise WorkflowRefused("A finished workflow succeeded, failed or was cancelled.")
-        conn.execute("UPDATE workflows SET finished_at=? WHERE id=?", (now, wid))
+        doc["finished_at"] = now
+    return None
 
 
-def _linked(conn, event: WorkflowEvent, key: str) -> WorkflowEvent:
+def _linked(doc: dict, event: WorkflowEvent, key: str) -> WorkflowEvent:
     """A wait whose `until` names an answer keeps it as `link`; a decision
     of its own it names must be one this workflow has asked."""
     try:
@@ -511,92 +504,100 @@ def _linked(conn, event: WorkflowEvent, key: str) -> WorkflowEvent:
     if link is None:
         return event
     if link.kind == wait_links.DECISION and not (
-            _answered(conn, event.workflow_id, link.key) or conn.execute(
-                "SELECT 1 FROM workflow_open WHERE workflow_id=? AND kind='decision' AND key=?",
-                (event.workflow_id, link.key)).fetchone()):
+            _answered(doc, link.key) or _open_item(doc, "decision", link.key)):
         raise WorkflowRefused(f"This workflow has asked no decision {link.key}; ask it with "
                               f"decision_needed first, then wait on it.")
     return dataclasses.replace(event, detail={**event.detail, "link": str(link)})
 
 
-def decision_answer(conn, wid: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
+def decision_answer(unit, wid: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
     """His answer to this workflow's decision `key`, as what it ends, or
-    None while he has not given one."""
+    None while he has not given one. Read through `unit` (a condition of
+    its write) when one is given."""
     if key is None:
         return None
-    try:
-        rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
-                            "AND kind='decision_made' ORDER BY seq", (wid,)).fetchall()
-    except sqlite3.OperationalError:
+    rec = (unit.get if unit is not None else records.get)(path_of(str(wid)))
+    if rec is None or not _is_workflow(rec.data):
         return None
-    for e in map(_event, rows):
-        if _his(e.detail) and open_key(e) == key:
-            return wait_links.answer(wait_links.WORKFLOW, {wid}, key,
-                                     str(e.detail.get("how") or "page"), e.at)
+    for made in rec.data["made"]:
+        if made["his"] and made["key"] == key:
+            return wait_links.answer(wait_links.WORKFLOW, {wid}, key, made["how"], made["at"])
     return None
 
 
-def _end_wait(conn, wid: str, key: str, link, found: "wait_links.Answer", now: float) -> None:
+def _end_wait(doc: dict, wid: str, key: str, link, found: "wait_links.Answer",
+              now: float) -> None:
     """End one wait as his answer: `wait_ended` with when and how, and the
     workflow's state settled again (waiting no longer, unless it has more)."""
-    conn.execute("DELETE FROM workflow_open WHERE workflow_id=? AND kind='wait' AND key=?",
-                 (wid, key))
+    doc["open"] = [o for o in doc["open"] if not (o["kind"] == "wait" and o["key"] == key)]
     event = WorkflowEvent(wid, "wait_ended", None,
                           f"{found.said()} ({link}); the wait is over.",
                           {"key": key, "link": str(link), "by": found.by, "how": found.how,
                            "answered_at": found.at})
-    _insert_event(conn, event, now)
-    _settle_state(conn, wid, event, now)
+    _add_event(doc, event, now)
+    _settle_state(doc, event, now)
 
 
-def _linked_waits(conn):
+def _linked_waits(doc: dict):
     """(workflow id, key, link) for every open linked wait of a workflow
     not finished."""
-    done = tuple(s.value for s in FINISHED)
-    rows = conn.execute(
-        "SELECT o.workflow_id, o.key, o.detail FROM workflow_open o JOIN workflows w "
-        "ON w.id = o.workflow_id WHERE o.kind='wait' AND json_extract(o.detail, '$.link') "
-        f"IS NOT NULL AND w.state NOT IN ({','.join('?' * len(done))})", done).fetchall()
-    for r in rows:
+    if doc["state"] in _FINISHED_STATES:
+        return
+    for o in doc["open"]:
+        if o["kind"] != "wait" or (o.get("detail") or {}).get("link") is None:
+            continue
         try:
-            link = wait_links.parse(json.loads(r["detail"])["link"])
-        except (wait_links.LinkRefused, ValueError, KeyError):
+            link = wait_links.parse(o["detail"]["link"])
+        except wait_links.LinkRefused:
             continue
         if link is not None:
-            yield r["workflow_id"], r["key"], link
+            yield doc["id"], o["key"], link
 
 
-def end_waits(conn, found: "wait_links.Answer", now: float) -> set:
-    """End every open wait `found` answers, in the caller's transaction.
-    The workflows it moved."""
+def _end_answered(unit, answered, now: float) -> set:
+    """End every open wait `answered(link, workflow id)` gives an answer
+    for, in `unit`: the workflows the engine finds with a linked wait, and
+    those this unit has changed. The workflows it moved."""
+    paths = {r.path for r in unit.scan(ROOT, types=[TYPE], where=[["linked", "=", True]])}
+    paths |= record_cells.touched(unit, ROOT, TYPE)
     moved = set()
-    for wid, key, link in list(_linked_waits(conn)):
-        if found.ends(link, wait_links.WORKFLOW, wid):
-            _end_wait(conn, wid, key, link, found, now)
-            moved.add(wid)
+    for path in sorted(paths):
+        doc = record_cells.take(unit, path)
+        if not _is_workflow(doc):
+            continue
+        for wid, key, link in list(_linked_waits(doc)):
+            found = answered(link, wid)
+            if found is not None:
+                _end_wait(doc, wid, key, link, found, now)
+                moved.add(wid)
+        if doc["id"] in moved:
+            _stage(unit, doc)
     return moved
+
+
+def end_waits(unit, found: "wait_links.Answer", now: float) -> set:
+    """End every open wait `found` answers, in the caller's unit. The
+    workflows it moved."""
+    return _end_answered(
+        unit, lambda link, wid: found if found.ends(link, wait_links.WORKFLOW, wid) else None,
+        now)
 
 
 def sweep_waits() -> "wait_links.Settled":
     """End every open wait whose answer was already given (at start, and on
     every read: wait_links.sweep)."""
-    moved = set()
-    with closing(_connect()) as conn:
-        for wid, key, link in list(_linked_waits(conn)):
-            found = wait_links.already(conn, link, wait_links.WORKFLOW, wid)
-            if found is not None:
-                _end_wait(conn, wid, key, link, found, time.time())
-                moved.add(wid)
-        if moved:
-            conn.commit()
+    def run(unit) -> set:
+        return _end_answered(
+            unit, lambda link, wid: wait_links.already(unit, link, wait_links.WORKFLOW, wid),
+            time.time())
+    moved = records.atomic(run, by=records.JARVIS, change="wait_ended",
+                           summary="His answers already given end the waits on them.")
     return wait_links.Settled(workflows=moved)
 
 
-def _answered(conn, wid: str, key: str) -> bool:
+def _answered(doc: dict, key: str) -> bool:
     """Whether a decision_made under `key` carried an answer."""
-    rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
-                        "AND kind='decision_made'", (wid,))
-    return any("answer" in e.detail and open_key(e) == key for e in map(_event, rows))
+    return any(m["answer"] and m["key"] == key for m in doc["made"])
 
 
 def open_key(event: WorkflowEvent) -> str:
@@ -608,17 +609,15 @@ def open_key(event: WorkflowEvent) -> str:
     return event.item or _slug(event.summary)
 
 
-def _settle_state(conn, wid: str, event: WorkflowEvent, now: float) -> None:
+def _settle_state(doc: dict, event: WorkflowEvent, now: float) -> None:
     if event.kind == "workflow_finished":
         state = WorkflowState(event.detail.get("outcome", "succeeded"))
     else:
-        kinds = {r["kind"] for r in conn.execute(
-            "SELECT kind FROM workflow_open WHERE workflow_id=?", (wid,))}
+        kinds = {o["kind"] for o in doc["open"]}
         state = (WorkflowState.needs_you if "decision" in kinds else
                  WorkflowState.blocked if "blocker" in kinds else
                  WorkflowState.waiting if "wait" in kinds else WorkflowState.running)
-    conn.execute("UPDATE workflows SET state=?, last_event_at=?, last_summary=? WHERE id=?",
-                 (state.value, now, event.summary, wid))
+    doc.update(state=state.value, last_event_at=now, last_summary=event.summary)
 
 
 def _read_state(stored: str, last_event_at: float, now: float) -> str:
@@ -630,22 +629,20 @@ def _read_state(stored: str, last_event_at: float, now: float) -> str:
     return stored
 
 
-def _dismissed(row, now: float) -> bool:
+def _dismissed(doc: dict, now: float) -> bool:
     """Dismissed by him, or finished long enough ago to have gone (LINGER_SEC)."""
-    if row["dismissed_at"] is not None:
+    if doc["dismissed_at"] is not None:
         return True
-    return row["finished_at"] is not None and now - row["finished_at"] > LINGER_SEC
+    return doc["finished_at"] is not None and now - doc["finished_at"] > LINGER_SEC
 
 
-def _heard(conn, wid: str, rows) -> dict[str, float]:
+def _heard(doc: dict, items: list[dict]) -> dict[str, float]:
     """Each item's latest event: its own, and for a phase its tasks' too."""
-    own = {r["item"]: r["at"] for r in conn.execute(
-        "SELECT item, MAX(at) AS at FROM workflow_events WHERE workflow_id=? AND item IS NOT NULL "
-        "GROUP BY item", (wid,))}
-    heard = {r["slug"]: own[r["slug"]] for r in rows if r["slug"] in own}
-    for r in rows:
-        if r["kind"] == "task" and r["phase"] and r["slug"] in own:
-            heard[r["phase"]] = max(heard.get(r["phase"], 0.0), own[r["slug"]])
+    own = doc["heard"]
+    heard = {i["slug"]: own[i["slug"]] for i in items if i["slug"] in own}
+    for i in items:
+        if i["kind"] == "task" and i["phase"] and i["slug"] in own:
+            heard[i["phase"]] = max(heard.get(i["phase"], 0.0), own[i["slug"]])
     return heard
 
 
@@ -657,98 +654,115 @@ def _quiet_at(state: str, heard_at: float | None) -> float | None:
     return (heard_at or 0.0) + SILENT_AFTER_SEC
 
 
-def _unlinked(row, now: float) -> bool:
+def _unlinked(o: dict, now: float) -> bool:
     """A wait with no link to an answer, open too long to be left unsaid."""
-    return (row["kind"] == "wait" and "link" not in json.loads(row["detail"])
-            and now - row["opened_at"] > wait_links.UNLINKED_AFTER_SEC)
+    return (o["kind"] == "wait" and "link" not in (o.get("detail") or {})
+            and now - o["opened_at"] > wait_links.UNLINKED_AFTER_SEC)
 
 
-def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
-    wid = row["id"]
-    rows = conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? ORDER BY position",
-                        (wid,)).fetchall()
-    heard = _heard(conn, wid, rows)
+def _snapshot(doc: dict, now: float) -> WorkflowSnapshot:
+    wid = doc["id"]
+    rows = sorted(doc["items"], key=lambda i: i["position"])
+    heard = _heard(doc, rows)
     items = [Item(r["slug"], r["kind"], r["phase"], r["title"], ItemState(r["state"]),
                   r["done"], r["total"], heard_at=heard.get(r["slug"]),
                   quiet_at=_quiet_at(r["state"], heard.get(r["slug"])))
              for r in rows]
-    open_items = [OpenItem(r["kind"], r["key"], r["summary"], json.loads(r["detail"]),
-                           r["opened_at"], unlinked=_unlinked(r, now))
-                  for r in conn.execute("SELECT * FROM workflow_open WHERE workflow_id=? "
-                                        "ORDER BY opened_at", (wid,))]
+    open_items = [OpenItem(o["kind"], o["key"], o["summary"], dict(o.get("detail") or {}),
+                           o["opened_at"], unlinked=_unlinked(o, now))
+                  for o in sorted(doc["open"], key=lambda o: o["opened_at"])]
     phases = [i for i in items if i.kind == "phase"]
     tasks = [i for i in items if i.kind == "task"]
     return WorkflowSnapshot(
-        id=wid, name=row["name"], project=row["project"],
-        state=_read_state(row["state"], row["last_event_at"], now), phase=row["phase"],
+        id=wid, name=doc["name"], project=doc["project"],
+        state=_read_state(doc["state"], doc["last_event_at"], now), phase=doc["phase"],
         phases_done=sum(i.state in _DONE_ITEMS for i in phases), phases_total=len(phases),
         tasks_done=sum(i.state in _DONE_ITEMS for i in tasks), tasks_total=len(tasks),
         open_waits=[o.key for o in open_items if o.kind == "wait"],
         open_decisions=[o.key for o in open_items if o.kind == "decision"],
         open_blockers=[o.key for o in open_items if o.kind == "blocker"],
-        agents=json.loads(row["agents"]), started_at=row["started_at"],
-        last_event_at=row["last_event_at"], last_summary=row["last_summary"],
-        finished_at=row["finished_at"],
-        dismissed=_dismissed(row, now),
-        dismiss_at=(row["finished_at"] + LINGER_SEC
-                    if row["finished_at"] is not None and not _dismissed(row, now) else None),
-        items=items, open=open_items, reporter=row["reporter"], work=row["work"])
+        agents=list(doc["agents"]), started_at=doc["started_at"],
+        last_event_at=doc["last_event_at"], last_summary=doc["last_summary"],
+        finished_at=doc["finished_at"],
+        dismissed=_dismissed(doc, now),
+        dismiss_at=(doc["finished_at"] + LINGER_SEC
+                    if doc["finished_at"] is not None and not _dismissed(doc, now) else None),
+        items=items, open=open_items, reporter=doc["reporter"], work=doc["work"])
+
+
+def _docs() -> list[dict]:
+    """Every workflow's document, the most recently heard from first."""
+    found = [r.data for r in records.scan(ROOT, types=[TYPE]) if _is_workflow(r.data)]
+    return sorted(found, key=lambda d: d["last_event_at"], reverse=True)
 
 
 def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
     wait_links.sweep()
-    with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM workflows WHERE id=?", (workflow_id,)).fetchone()
-        return _snapshot(conn, row, time.time()) if row else None
+    rec = records.get(path_of(str(workflow_id)))
+    if rec is None or not _is_workflow(rec.data):
+        return None
+    return _snapshot(rec.data, time.time())
 
 
 def active() -> list[WorkflowSnapshot]:
     """Every workflow not yet finished, most recently heard from first."""
     wait_links.sweep()
-    finished = tuple(s.value for s in FINISHED)
-    with closing(_connect()) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM workflows WHERE state NOT IN ({','.join('?' * len(finished))}) "
-            "ORDER BY last_event_at DESC", finished).fetchall()
-        now = time.time()
-        return [_snapshot(conn, r, now) for r in rows]
+    now = time.time()
+    return [_snapshot(d, now) for d in _docs() if d["state"] not in _FINISHED_STATES]
 
 
 def recent(limit: int = 20) -> list[WorkflowSnapshot]:
     """Every workflow, finished ones included, most recently heard from first."""
     wait_links.sweep()
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM workflows ORDER BY last_event_at DESC LIMIT ?",
-                            (limit,)).fetchall()
-        now = time.time()
-        return [_snapshot(conn, r, now) for r in rows]
+    now = time.time()
+    return [_snapshot(d, now) for d in _docs()[:limit]]
 
 
-def _event(row) -> WorkflowEvent:
-    return WorkflowEvent(row["workflow_id"], row["kind"], row["item"], row["summary"],
-                         json.loads(row["detail"]), row["at"], row["seq"], row["reporter"])
+def projects() -> dict[str, int]:
+    """How many workflows each project has had (project_seed's evidence)."""
+    found: dict[str, int] = {}
+    for d in _docs():
+        found[d["project"]] = found.get(d["project"], 0) + 1
+    return found
+
+
+def _event(workflow_id: str, e: dict) -> WorkflowEvent:
+    return WorkflowEvent(workflow_id, e["kind"], e.get("item"), e["summary"],
+                         dict(e.get("detail") or {}), e["at"], e["seq"], e.get("reporter") or "")
+
+
+def _logged(workflow_id: str, newest: Optional[int] = None) -> list[dict]:
+    """The workflow's log, oldest first, from its document's versions: all
+    of it, or at least its `newest` events (read from the newest versions
+    on, a few at a time, never more than it needs)."""
+    path = path_of(str(workflow_id))
+    if newest is None:
+        return [e for v in records.history(path, fields=[record_cells.EVENTS])
+                for e in (v.data or {}).get(record_cells.EVENTS) or []]
+    versions = max(newest, 8)
+    while True:
+        found = records.history(path, fields=[record_cells.EVENTS], limit=versions)
+        events = [e for v in found for e in (v.data or {}).get(record_cells.EVENTS) or []]
+        if len(events) >= newest or len(found) < versions:
+            return events
+        versions *= 4
 
 
 def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
            limit: int = 500) -> list[WorkflowEvent]:
     """The log, oldest first, from just after `after` (an event's seq)."""
-    sql = "SELECT * FROM workflow_events WHERE workflow_id=? AND seq>?"
-    args: list = [workflow_id, after]
-    if kinds:
-        sql += f" AND kind IN ({','.join('?' * len(kinds))})"
-        args += sorted(kinds)
-    sql += " ORDER BY seq LIMIT ?"
-    args.append(limit)
-    with closing(_connect()) as conn:
-        return [_event(r) for r in conn.execute(sql, args)]
+    found = sorted((e for e in _logged(workflow_id) if e["seq"] > after
+                    and (not kinds or e["kind"] in kinds)), key=lambda e: e["seq"])
+    return [_event(workflow_id, e) for e in found[:limit]]
 
 
 def latest(workflow_id: str, count: int) -> list[WorkflowEvent]:
-    """A workflow's newest `count` events, oldest of them first."""
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
-                            "ORDER BY seq DESC LIMIT ?", (workflow_id, count)).fetchall()
-    return [_event(r) for r in reversed(rows)]
+    """A workflow's newest `count` events, oldest of them first: read from
+    its newest versions only (bounded by `count`, never its whole log)."""
+    if count <= 0:
+        return []
+    found = sorted(_logged(workflow_id, newest=count), key=lambda e: e["seq"])
+    return [_event(workflow_id, e) for e in found[-count:]]
 
 
 def find(reference: str) -> list[WorkflowSnapshot]:
@@ -767,3 +781,95 @@ def find(reference: str) -> list[WorkflowSnapshot]:
     # Of a name used twice, the one still running is the one he means.
     running = [w for w in matches if w.state not in {s.value for s in FINISHED}]
     return running if len(running) == 1 else matches
+
+
+# ── the move from SQLite (knowledge_move) ───────────────────────────────
+
+def _doc_from_rows(row, items: list, opened: list, logged: list) -> tuple[dict, list]:
+    """A workflow's document from its rows (`knowledge_move.Row`s), and its
+    log as the versions before it (each `{id, events: [one]}`: the workflow
+    as it stood then was never kept), oldest first."""
+    from jarvis.knowledge_move import Revision
+    doc = {c: row.cells[c] for c in WORKFLOW_COLUMNS}
+    doc["agents"] = json.loads(row.cells["agents"])
+    record_cells.keep(doc, "agents", row.cells["agents"], doc["agents"])
+    doc["rowid"] = row.rowid
+    doc["items"] = []
+    for r in sorted(items, key=lambda r: (r.cells["position"], r.rowid or 0)):
+        i = {c: r.cells[c] for c in ITEM_COLUMNS if c != "workflow_id"}
+        i["rowid"] = r.rowid
+        doc["items"].append(i)
+    doc["open"] = []
+    for r in opened:
+        o = {c: r.cells[c] for c in OPEN_COLUMNS if c != "workflow_id"}
+        o["detail"] = json.loads(r.cells["detail"])
+        record_cells.keep(o, "detail", r.cells["detail"], o["detail"])
+        o["rowid"] = r.rowid
+        doc["open"].append(o)
+    doc.update({record_cells.EVENTS: [], "last_seq": 0, "heard": {}, "made": []})
+    history = []
+    for r in sorted(logged, key=lambda r: r.cells["seq"]):
+        e = {c: r.cells[c] for c in EVENT_COLUMNS if c != "workflow_id"}
+        e["detail"] = json.loads(r.cells["detail"])
+        record_cells.keep(e, "detail", r.cells["detail"], e["detail"])
+        event = _event(doc["id"], e)
+        doc["last_seq"] = max(doc["last_seq"], e["seq"])
+        _note_event(doc, event)
+        history.append(Revision({"id": doc["id"], record_cells.EVENTS: [e]},
+                                by=_caller(event), change=e["kind"], summary=e["summary"]))
+    doc["linked"] = any(True for _ in _linked_waits(doc))
+    return doc, history
+
+
+class _WorkflowMapping:
+    """workflows, workflow_items, workflow_open and workflow_events as one
+    workflow's document each, its log as the document's versions."""
+    name = "workflow"
+    tables = TABLES
+    under = (ROOT,)
+    history = True
+
+    def documents(self, conn):
+        from jarvis.knowledge_move import Doc
+        by_workflow: dict[str, dict[str, list]] = {}
+        for table in TABLES[1:]:
+            for r in record_cells.table_rows(conn, table):
+                by_workflow.setdefault(r.cells["workflow_id"], {}).setdefault(table, []).append(r)
+        for row in record_cells.table_rows(conn, "workflows"):
+            mine = by_workflow.get(row.cells["id"], {})
+            doc, history = _doc_from_rows(row, mine.get("workflow_items", []),
+                                          mine.get("workflow_open", []),
+                                          mine.get("workflow_events", []))
+            yield Doc(path_of(doc["id"]), doc, history=tuple(history))
+
+    def rows(self, docs):
+        from jarvis.knowledge_move import Row
+        out: dict[str, list] = {t: [] for t in TABLES}
+        logged: list[dict] = []
+        for d in docs:
+            if not _is_workflow(d.data):
+                continue
+            data, wid = d.data, d.data["id"]
+            cells = {c: data.get(c) for c in WORKFLOW_COLUMNS}
+            cells["agents"] = record_cells.text_of(data, "agents", list(data["agents"]))
+            out["workflows"].append(Row(cells, data.get("rowid")))
+            out["workflow_items"] += [
+                Row({**{c: i.get(c) for c in ITEM_COLUMNS}, "workflow_id": wid}, i.get("rowid"))
+                for i in data["items"]]
+            out["workflow_open"] += [
+                Row({**{c: o.get(c) for c in OPEN_COLUMNS}, "workflow_id": wid,
+                     "detail": record_cells.text_of(o, "detail", o.get("detail") or {})},
+                    o.get("rowid"))
+                for o in data["open"]]
+            logged += [{**e, "workflow_id": wid} for e in record_cells.history_events(d)]
+        record_cells.resolve_seqs(logged)
+        out["workflow_events"] = [
+            Row({"seq": e["seq"], "workflow_id": e["workflow_id"], "kind": e["kind"],
+                 "item": e.get("item"), "summary": e["summary"],
+                 "detail": record_cells.text_of(e, "detail", e.get("detail") or {}),
+                 "at": e["at"], "reporter": e.get("reporter") or ""})
+            for e in logged]
+        return out
+
+
+MAPPINGS = [_WorkflowMapping()]
