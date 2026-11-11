@@ -293,7 +293,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         sessions.ws.send(json.dumps(_frame(_item(False, True), 2)))
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "No recent update", timeout=10000)
-        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Activity unconfirmed")
+        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Not working now")
         assert work.lists == before
         # A frame from before the page's revision changes nothing.
         sessions.ws.send(json.dumps(_frame(_item(True, False), 2)))
@@ -390,7 +390,7 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         for item_id in ("work-r", "work-w"):
             row = page.locator(f".work-row[data-work-id={item_id}]")
             await row.wait_for(timeout=10000)
-            # A long state beside it ("Ready for review", "Activity unconfirmed"):
+            # A long state beside it ("Ready for review", "Not working now"):
             # the title still has its room, and a claim draws no activity.
             await async_api.expect(row.locator(".activity-mark")).to_have_count(0)
             sizes = await row.evaluate("""(r) => ({

@@ -131,5 +131,5 @@ def test_a_rename_to_a_name_that_sounds_like_another_agent_s_is_refused(server):
 def test_the_one_listing_names_every_agent(server):
     out = server.tool_list_agents({})
     assert out.splitlines()[0] == "Three agents:"
-    assert "tokens-for-cash: inactive, activity unknown, in tokens-for-cash." in out
+    assert "tokens-for-cash: inactive, idle, in tokens-for-cash." in out
     assert server.tool_list_agents({"filter": "active"}) == "No agent is active, sir."

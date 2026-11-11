@@ -421,7 +421,7 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           <ActivityMark activity={activity} target={ui.part("activity")} />
           {piece.title}</span>
         <span className="work-piece-who" data-who={piece.who.kind} ref={ui.part("who")}>
-          <WorkOwnerActivity owner={piece.who} />{whoWords(piece.who)}
+          <WorkOwnerActivity piece={piece} />{whoWords(piece.who)}
           {piece.worker && " "}
           {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}

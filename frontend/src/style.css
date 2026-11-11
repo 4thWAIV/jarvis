@@ -1497,6 +1497,13 @@ html, body {
 .work-row-title { grid-area: title; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-row-pills { grid-area: state; display: flex; gap: 4px; align-items: center; min-width: 0; }
 .work-row-pills .work-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A Work row's one orb, at the right end of its line: still and empty while
+   nobody works on the item, else thinking with how many of its agents work. */
+.work-row-orb { position: relative; display: inline-flex; flex: none; margin-left: auto; width: 18px; height: 18px; }
+.work-row-orb .workflow-orb { box-shadow: none; }
+.work-row-orb[data-working="0"] { opacity: 0.45; }
+.work-row-orb-count { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: var(--ui-text); text-shadow: 0 0 3px #000; pointer-events: none; }
 /* How many of its decisions wait on him: a count on the amber. */
 .work-decision-count {
   min-width: 16px;

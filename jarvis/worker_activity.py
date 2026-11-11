@@ -131,6 +131,38 @@ def current(evidence, now):
                            else 'waiting' if state in ('tool_wait', 'human_wait', 'external_wait', 'awaiting_model', 'finishing')
                            else 'stale')}
 
+# What a worker is doing while it works: waiting on the model (its answer
+# being written or awaited) or running a tool.
+_TOOL_PHASES = ('tool_wait', 'external_wait')
+_MODEL_PHASES = ('model_work', 'model_active', 'generating', 'recent_output', 'awaiting_model', 'finishing')
+
+
+def settle(evidence, working, now):
+    """The one activity every surface shows, from the one answer to "is it
+    working?" (`worker_inventory.working`): working means its turn is open,
+    waiting on the model and running a tool included. The evidence only says
+    which of those it is doing (`phase`); it never decides working, and
+    nothing here is ever "unknown"."""
+    live = current(evidence, now)
+    phase = None
+    if working:
+        phase = 'tool' if live.get('last_phase') in _TOOL_PHASES or live['state'] in _TOOL_PHASES else 'model'
+        if live['state'] == 'human_wait':
+            phase = 'tool'
+    state = (live['state'] if working and live['state'] not in ('unknown', 'idle', 'offline', 'queued')
+             else 'working' if working
+             else live['state'] if live['state'] in ('external_wait', 'queued', 'offline')
+             else 'idle')
+    return {**live, 'state': state, 'working': bool(working), 'phase': phase,
+            'active': bool(working), 'turn_open': bool(working),
+            'orb_state': 'thinking' if working else 'idle',
+            'model_work': bool(working) and live['model_work'],
+            'generating': bool(working) and live['generating'],
+            'work_state': ('working' if working
+                           else 'waiting' if state == 'external_wait'
+                           else 'idle')}
+
+
 # Managed runs expose partial messages directly. Keep only their latest
 # observation, in memory, so a restart cannot resurrect a running claim.
 import threading
