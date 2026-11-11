@@ -141,7 +141,7 @@ def test_the_page_reads_and_activates(wired):
     assert {k: row[k] for k in ("session_id", "name", "state", "active")} == {
         "session_id": "s1", "name": "hammer", "state": "idle", "active": False}
     assert row["activity"] is None  # Registration alone is not observed activity.
-    assert row["subagents_working"] == 0 and row["subagents_capped"]
+    assert row["subagents_working"] == 0 and not row["subagents_capped"]  # one definition: no turn open, nothing working
     assert row["snapshot_id"]
     assert (row["key"], row["key_fingerprint"]) == (None, None)  # no key of its own yet
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
@@ -165,11 +165,11 @@ def test_the_brain_lists_and_switches_agents(wired):
     server, store = wired
     store.sync_agents({"s1": ("hammer", "idle"), "s2": ("anvil", "idle")})
 
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: inactive, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: inactive, idle."
     assert server.tool_set_agent_active({"name": "Hammer", "active": True}) == \
         "hammer is now active, sir."
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: active, activity unknown."
-    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: active, idle."
+    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, idle."
 
 
 def test_an_unknown_or_ambiguous_name_is_not_guessed(wired):
@@ -306,7 +306,7 @@ def test_the_brain_renames_by_the_current_name(wired):
         "hammer is now Forge, sir."
     assert "already goes by that name" in server.tool_rename_agent(
         {"name": "anvil", "new_name": "forge"})
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nForge: inactive, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nForge: inactive, idle."
     assert "rename_agent" in server.ACTING_TOOLS
 
 
