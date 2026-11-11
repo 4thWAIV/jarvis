@@ -5486,8 +5486,11 @@ def _read_session_message(number: int):
     return m
 
 
-# How long a message read aloud may take to be heard before it is given up.
-READ_ALOUD_TIMEOUT = 300.0
+# How long a message read aloud may take to be heard before it is given up:
+# an hour, so the longest message is still read when heard to its end (an
+# 8,000-character message takes about nine minutes to say; five minutes
+# gave up on it while it was still being heard).
+READ_ALOUD_TIMEOUT = 3600.0
 
 
 # How each source's message is said when he asks to hear it: who sent it
@@ -5574,15 +5577,14 @@ async def _speak_message(update: Optional[tuple], text: str,
     item = attention_record.get(*update) if attention_record and update else None
     utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
     reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
-    _spawn(_seen_when_heard(reads, utt, message_id))
+    if message_id is not None:
+        reads.append((_MESSAGE_READ, str(message_id), None))
+    _spawn(_seen_when_heard(reads, utt))
 
 
-async def _seen_when_heard(reads: list, utt, message_id: Optional[int] = None) -> None:
+async def _seen_when_heard(reads: list, utt) -> None:
     heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
-    _seen_once_heard(reads, utt, heard)
-    if message_id is not None and _heard_in_full(utt, heard):
-        await asyncio.to_thread(conversation_log.mark, message_id,
-                                conversation_log.MessageState.READ)
+    await asyncio.to_thread(_seen_once_heard, reads, utt, heard)
     _hint_attention()
 
 
@@ -5891,8 +5893,30 @@ async def _mark_message(item_id, state: str, how: str):
         return None, (f"Message {item.id} arrived before messages had a state, so there is "
                       f"nothing to mark.")
     moved = await asyncio.to_thread(conversation_log.mark, item.id, state)
+    await asyncio.to_thread(_update_seen_with, item)
     log.info("messages: message %s marked %s %s", item.id, state, how)
     return moved, ""
+
+
+def _update_seen_with(item) -> None:
+    """A message to him marked read or done: its update is seen too, when
+    the update is about this message (a keyed source's update is about its
+    newest), so the update line and the message say the same. Never
+    raises."""
+    update = conversation_log.update_of(item)
+    if attention_record is None or update is None:
+        return
+    try:
+        pending = attention_record.get(*update)
+        if pending is None or pending.state != attention_store.PENDING:
+            return
+        about = conversation_log.message_for(pending.kind, pending.source_id, pending.event)
+        if about is not None and about.id == item.id:
+            attention_api.mark_seen_source(attention_record, pending.kind, pending.source_id,
+                                           pending.revision)
+    except Exception:
+        log.warning("messages: the update of message %s was not marked seen", item.id,
+                    exc_info=True)
 
 
 def _messages_read(args: dict) -> dict:
@@ -5909,8 +5933,8 @@ def _messages_read(args: dict) -> dict:
         return {"new": new}
     if work:
         return messages_api.work_conversation(work, before)
-    if args.get("general"):
-        return messages_api.general_list(before)
+    if args.get("general") or args.get("read"):
+        return messages_api.general_list(before, bool(args.get("read")))
     return {"by_work": messages_api.work_list(), "general": messages_api.general_list()}
 
 
@@ -6008,26 +6032,49 @@ _capture_ids = itertools.count(1)
 _turn_utt = None
 _turn_heard: Optional[int] = None
 # The updates the brain read to him on this turn, as (kind, source id,
-# revision): each is seen once the turn's reply has been heard in full
-# (`_seen_once_heard`), never on the tool call alone.
+# revision), and the messages to him they are, as (_MESSAGE_READ, its id,
+# None): each update is seen, and each message read, once the turn's reply
+# has been heard in full (`_seen_once_heard`), never on the tool call alone.
 _turn_reads: Optional[list] = None
 _turn_lock = asyncio.Lock()
+# A read that is a message to him in the conversation record, by its id.
+_MESSAGE_READ = "conversation_message"
 
 
 def _read_to_him(kind: str, source_id) -> None:
     """A reading tool has just given the brain this source on a turn he
-    drove: its update, if pending, waits to be seen until he has heard the
-    reply that reads it. Never raises."""
-    if (_turn_reads is None or attention_record is None or brain_instance is None
+    drove: its update, if pending, waits to be seen, and the message to him
+    it is (conversation_log), if any, waits to be read, until he has heard
+    the reply that reads it. Never raises."""
+    if (_turn_reads is None or brain_instance is None
             or brain_instance.current_origin != "user"):
         return
+    if attention_record is not None:
+        try:
+            item = attention_record.get(kind, str(source_id))
+        except Exception:
+            log.warning("attention: %s was not looked up", kind, exc_info=True)
+            item = None
+        if item is not None and item.state == attention_store.PENDING:
+            _turn_reads.append((kind, str(source_id), item.revision))
+    message = _message_of_update(kind, source_id)
+    if message is not None:
+        _turn_reads.append((_MESSAGE_READ, str(message), None))
+
+
+def _message_of_update(kind: str, source_id) -> Optional[int]:
+    """The message to him that the update (kind, source id) carries, by id,
+    or None: an agent's answer for `agent_message`, a person's message for
+    `arrival`. Never raises."""
     try:
-        item = attention_record.get(kind, str(source_id))
+        for source, (update_kind, event, keyed) in conversation_log.UPDATES.items():
+            if update_kind == kind and not keyed:
+                found = conversation_log.message_for(kind, str(source_id), event)
+                return found.id if found is not None and found.is_message else None
     except Exception:
-        log.warning("attention: %s was not looked up", kind, exc_info=True)
-        return
-    if item is not None and item.state == attention_store.PENDING:
-        _turn_reads.append((kind, str(source_id), item.revision))
+        log.warning("messages: the message of %s %s was not looked up", kind, source_id,
+                    exc_info=True)
+    return None
 
 
 def _heard_in_full(utt, heard: bool) -> bool:
@@ -6036,17 +6083,22 @@ def _heard_in_full(utt, heard: bool) -> bool:
 
 
 def _seen_once_heard(reads: list, utt, heard: bool) -> None:
-    """The turn's reply has ended: if he heard every word of it, the
-    updates it read to him are seen (`attention_api.mark_seen_source`), each
-    at the revision that was read. A reply cut off, skipped, failed or with
-    nothing said leaves them pending. Never raises."""
-    if not reads or not _heard_in_full(utt, heard) or attention_record is None:
+    """The reading has ended (a turn's reply, or a message read aloud): if
+    he heard every word of it, the updates it read to him are seen
+    (`attention_api.mark_seen_source`), each at the revision that was read,
+    and the messages to him it read are read (conversation_log.mark). A
+    reading cut off, skipped, failed or with nothing said leaves them as
+    they were. Blocking; never raises."""
+    if not reads or not _heard_in_full(utt, heard):
         return
     for kind, source_id, revision in reads:
         try:
-            attention_api.mark_seen_source(attention_record, kind, source_id, revision)
+            if kind == _MESSAGE_READ:
+                conversation_log.mark(int(source_id), conversation_log.MessageState.READ)
+            elif attention_record is not None:
+                attention_api.mark_seen_source(attention_record, kind, source_id, revision)
         except Exception:
-            log.warning("attention: %s was not marked seen", kind, exc_info=True)
+            log.warning("attention: %s %s was not marked", kind, source_id, exc_info=True)
 
 
 def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:

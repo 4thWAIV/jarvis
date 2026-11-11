@@ -4109,6 +4109,14 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .work-update.message { color: var(--ui-text); }
 .inbox-work-row .row-side { color: rgba(94, 234, 212, 0.95); }
+/* The Inbox's messages from agents (InboxMessages.tsx): a heading with Hide
+   messages, the new ones, and Read closed under them. */
+.inbox-agents { gap: 10px; }
+.inbox-agents-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-agents-head .queue-heading { flex: 1 1 auto; white-space: nowrap; min-width: 0; overflow: hidden; }
+.inbox-agents-head .inbox-hide { flex: none; white-space: nowrap; }
+.inbox-work, .inbox-general { display: flex; flex-direction: column; gap: 6px; }
+.inbox-read .inbox-messages { margin-top: 6px; }
 #updates-notice .updates-messages { display: flex; align-items: center; gap: 8px; flex-basis: 100%; }
 #updates-notice .updates-messages span { flex: 1; }
 

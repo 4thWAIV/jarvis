@@ -23,7 +23,7 @@ The left column holds the orb, the team server's health and brain account usage.
 
 ## Every message from an agent, on its Work item
 
-An agent reaches you one way: a signed message about the Work item it belongs to, shown on that item's Messages tab, or in the Inbox (the tab that was Queue) when it is about no item. Every decision comes as a package with its background, never a bare question; Open shows it and you answer there. Needs boards and message files are gone. Ask JARVIS "what's new?" and it reads your new messages in the Inbox's order, each item's first; "read it", "next", "open it" (a decision package's story is told and waits for your answer) and "reply" act on the message you are on.
+An agent reaches you one way: a signed message about the Work item it belongs to, shown on that item's Messages tab, or in the Inbox (the tab that was Queue) when it is about no item. Every decision comes as a package with its background, never a bare question; Open shows it and you answer there. Needs boards and message files are gone. Ask JARVIS "what's new?" and it reads your new messages in the Inbox's order, each item's first; "read it", "next", "open it" (a decision package's story is told and waits for your answer) and "reply" act on the message you are on. A message read to you to its end (Read, "read it", or JARVIS reading an agent's answer to you) is marked read, and leaves the Inbox's new list for its Read section, closed under it; a message you are done with leaves the Inbox. Hide messages, beside "From agents", folds them away so people's messages stay in view; this browser remembers it.
 
 ## Take over: a workflow or a package gets the page
 

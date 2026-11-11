@@ -1378,6 +1378,55 @@ export const UI_CONTRACT = {
       "family": "queue"
     },
     {
+      "id": "inbox.messages.shown",
+      "label": "Show or hide the Inbox's messages from agents (hidden, only their heading stays)",
+      "view": "right.queue",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "inbox.read.shown",
+      "label": "Show or hide the Inbox's Read section: messages read or answered and not done; showing reads them",
+      "view": "right.queue",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged",
+          "when": {
+            "shown": true
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
       "id": "queue.history.more",
       "label": "Read the next page of the Queue's dismissed items",
       "view": "right.queue",
@@ -3231,8 +3280,10 @@ export const UI_CONTRACT = {
       "entity": null,
       "label": "Inbox",
       "parts": [
+        "hideMessages",
         "workMessages",
         "general",
+        "read",
         "waiting",
         "active",
         "history",
@@ -4855,6 +4906,8 @@ export interface CommandArgs {
   "folders.panel.search": { text?: string; };
   "folders.panel.show": { view: "projects" | "folders"; };
   "folders.search": { text?: string; };
+  "inbox.messages.shown": { shown: boolean; };
+  "inbox.read.shown": { shown: boolean; };
   "knowledge.close": { };
   "knowledge.embedder.install": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
