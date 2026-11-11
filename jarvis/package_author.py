@@ -17,7 +17,7 @@ from jarvis import author_proof, brain_provider, data_paths, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
 
-ENGINES = {"claude": "anthropic", "codex": "openai"}
+ENGINES = brain_provider.ENGINES
 SKILL = data_paths.PACKAGE_DIR / "session_skills" / "human-package-author" / "SKILL.md"
 GUIDE = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 

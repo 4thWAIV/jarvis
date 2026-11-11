@@ -141,6 +141,7 @@ from jarvis import codex_sessions
 from jarvis import usage_history, usage_store
 from jarvis import web_auth
 from jarvis.run_executor import RunExecutor
+from jarvis import codex_engine
 from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
@@ -3122,6 +3123,10 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
 
 # Shared state
 run_executor_instance = RunExecutor(run_store, max_concurrent=3)
+# Its second engine: Codex agents as threads on the Codex app server already
+# running on this Mac (codex_engine.py). It connects on a run's first need.
+codex_run_engine = codex_engine.CodexEngine(run_executor_instance)
+run_executor_instance.add_engine(codex_run_engine)
 # Wired at import, not in lifespan: the voice path's only way of hearing that
 # work it started has ended, and it must not depend on a startup step that a
 # test (or a partial boot) might skip. `subscribe` de-duplicates, and
@@ -3293,6 +3298,7 @@ async def lifespan(application: FastAPI):
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    await codex_run_engine.close()
     # The engine last: everything above may still write its records.
     await stop_knowledge()
     records.bind(None)
@@ -16092,6 +16098,12 @@ def _bound(binding: Optional[dict]) -> dict:
     return {k: v for k, v in (binding or {}).items() if v}
 
 
+def _on_engine(engine: Optional[str]) -> dict:
+    """A run's engine as `spawn`'s keyword, only when it is not Claude's,
+    so a Claude run is spawned exactly as before (as `_bound` does)."""
+    return {"engine": engine} if engine and engine != "claude" else {}
+
+
 async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Optional[str]]:
     """Run a finished run's prompt again, resuming from it, for the page's
     retry route and the brain's `retry_run` alike: (the new run's id, None),
@@ -16116,10 +16128,13 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
         _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
         if problem:
             return None, problem
+    # The same engine it ran on: a run is picked up where it left off,
+    # which only its own engine can do.
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
         resume_from=original["id"], folder_id=folder_id,
-        package_id=original.get("package_id"), **_bound(binding))
+        package_id=original.get("package_id"), **_bound(binding),
+        **_on_engine(original.get("engine")))
     return new_id, None
 
 

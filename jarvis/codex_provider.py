@@ -246,6 +246,52 @@ def usage_report(limits: dict) -> tuple[dict, str]:
     return report, str(limits.get("planType") or "")
 
 
+# ── JSON-RPC ──────────────────────────────────────────────────────────────
+
+class RpcCalls:
+    """The requests outstanding on one connection to a Codex app server,
+    whatever carries it: the brain's own `codex app-server` over stdio
+    (CodexSession) and the running app server's socket (codex_engine). A
+    response settles its request; one with an error raises RuntimeError
+    with the server's own message; the connection ending fails them all."""
+
+    def __init__(self) -> None:
+        self._pending: dict[int, asyncio.Future] = {}
+        self._ids = 0
+
+    async def call(self, send, method: str, params, timeout: float) -> dict:
+        """Send the request with `send` (an async callable taking the
+        message) and wait at most `timeout` seconds for its result."""
+        self._ids += 1
+        rid = self._ids
+        future = asyncio.get_running_loop().create_future()
+        self._pending[rid] = future
+        try:
+            await send({"method": method, "id": rid, "params": params})
+            return await asyncio.wait_for(future, timeout)
+        finally:
+            self._pending.pop(rid, None)
+
+    def resolve(self, msg: dict) -> bool:
+        """True when `msg` is a response (it has no method), having settled
+        the request it answers, if that is still waiting."""
+        if msg.get("method") is not None:
+            return False
+        future = self._pending.get(msg.get("id"))
+        if future is not None and not future.done():
+            if "error" in msg:
+                err = msg.get("error") or {}
+                future.set_exception(RuntimeError(str(err.get("message") or err)))
+            else:
+                future.set_result(msg.get("result") or {})
+        return True
+
+    def end(self, why: str) -> None:
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(RuntimeError(why))
+
+
 # ── the session ───────────────────────────────────────────────────────────
 
 class CodexSession:
@@ -260,8 +306,7 @@ class CodexSession:
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
-        self._pending: dict[int, asyncio.Future] = {}
-        self._ids = 0
+        self._calls = RpcCalls()
         self.thread_id: Optional[str] = None
         self._rollout: Optional[Path] = None      # the thread's transcript
         self._rollout_read = 0                    # bytes of it already read
@@ -386,17 +431,12 @@ class CodexSession:
     def _notify(self, method: str, params: Optional[dict] = None) -> None:
         self._write({"method": method, "params": params})
 
-    async def _call(self, method: str, params: dict, timeout: float) -> dict:
-        self._ids += 1
-        rid = self._ids
-        future = asyncio.get_running_loop().create_future()
-        self._pending[rid] = future
-        self._write({"method": method, "id": rid, "params": params})
+    async def _send(self, msg: dict) -> None:
+        self._write(msg)
         await self.proc.stdin.drain()
-        try:
-            return await asyncio.wait_for(future, timeout)
-        finally:
-            self._pending.pop(rid, None)
+
+    async def _call(self, method: str, params: dict, timeout: float) -> dict:
+        return await self._calls.call(self._send, method, params, timeout)
 
     def _emit(self, event) -> None:
         try:
@@ -424,23 +464,14 @@ class CodexSession:
                 except Exception as e:  # one malformed message must not kill the reader
                     log.warning(f"codex: bad message ignored: {e}")
         finally:
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(RuntimeError("the codex app-server ended"))
+            self._calls.end("the codex app-server ended")
             code = await proc.wait()
             await self._on_exit(self, code)
 
     def _handle(self, msg: dict) -> None:
-        method = msg.get("method")
-        if method is None:                                  # a response
-            future = self._pending.get(msg.get("id"))
-            if future is not None and not future.done():
-                if "error" in msg:
-                    err = msg.get("error") or {}
-                    future.set_exception(RuntimeError(str(err.get("message") or err)))
-                else:
-                    future.set_result(msg.get("result") or {})
+        if self._calls.resolve(msg):                         # a response
             return
+        method = msg.get("method")
         if "id" in msg:                                     # a request to us
             # Approvals are set to never; anything that still asks is refused.
             self._write({"id": msg["id"], "result": {"decision": "decline"}})

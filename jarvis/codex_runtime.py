@@ -74,9 +74,15 @@ def event_evidence(event: dict, now: float, previous: dict | None = None) -> tup
                  'item_type': item_type, 'turn_id': p.get('turnId') or previous.get('turn_id')}
 
 
+def control_socket(home: Path) -> Path:
+    """The running Codex app server's Unix WebSocket in a Codex home: the
+    one this observer watches and codex_engine starts runs on."""
+    return home / 'app-server-control' / 'app-server-control.sock'
+
+
 class RuntimeObserver:
     def __init__(self, home: Path):
-        self.path = home / 'app-server-control' / 'app-server-control.sock'
+        self.path = control_socket(home)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None

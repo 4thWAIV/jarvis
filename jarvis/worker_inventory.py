@@ -5,7 +5,7 @@ worker may belong to several containers without being counted several times.
 """
 from __future__ import annotations
 
-from jarvis import worker_activity
+from jarvis import run_store, worker_activity
 import threading
 import time
 import uuid
@@ -64,8 +64,10 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
             add(s.provider, a.agent_id, a.description or a.agent_type or a.agent_id, s.project,
                 a.worker_activity, a.state, 'subagent', a.parent_agent_id or s.session_id, a.workflow_run, runtime=a.runtime_status)
     for run in runs:
-        key = identity('anthropic', run['id'])
-        row = rows.get(key) or add('anthropic', run['id'], run.get('title') or run.get('task') or 'Run',
+        # A run is its engine's worker: by its provider and its session there.
+        provider, sid = run_store.worker_of(run)
+        key = identity(provider, sid)
+        row = rows.get(key) or add(provider, sid, run.get('title') or run.get('task') or 'Run',
                                   run.get('project_name') or '', {}, 'unknown', 'run')
         row['run_id'] = run['id']
         if run.get('status') == 'queued':

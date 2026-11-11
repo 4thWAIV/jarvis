@@ -51,9 +51,11 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
 - **System**: AppleScript for Terminal and Chrome integration
-- **Runs**: every Claude Code execution goes through one recorded pipeline —
-  `run_store.py` (a document per run, its output a file) + `run_executor.py`, surfaced at `/api/runs`,
-  `/ws/runs`; the React workspace is the focus of user-interface development
+- **Runs**: every agent JARVIS starts, on Claude Code or on Codex, goes
+  through one recorded pipeline — `run_store.py` (a document per run, its
+  output a file) + `run_executor.py` (and its engines, see "The Run
+  Pipeline"), surfaced at `/api/runs`, `/ws/runs`; the React workspace is
+  the focus of user-interface development
 - **Records**: every record JARVIS keeps (runs, messages, Work, workflows,
   packages, agents and keys, attention, folders, projects, language
   documents, usage, settings) is a document in the knowledge engine, reached
@@ -2203,7 +2205,7 @@ Restore layout. A package's `layout` (`centre` or `wide`,
 pressed inside the frame).
 
 ## The Run Pipeline
-Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
+Nothing starts an agent run outside `RunExecutor`. Two invariants govern it:
 
 1. **A run always reaches a terminal state.** `succeeded`, `failed`,
    `timed_out`, or `cancelled` — never left stuck in `running` or `queued`.
@@ -2215,9 +2217,39 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
    any hint; the WebSocket is a cache-invalidation hint, never a source of
    truth; clients reconcile against `/api/runs`.
 
+One pipeline, two engines (`run_executor.RunEngine`). The executor keeps
+everything a run is (the row written first, the permit, the bounds,
+cancelling, the terminal-state rule); an engine does what differs, named by
+the run's `engine` (`runs.engine`, "claude" for a run from before engines)
+with its own session for it in `runs.engine_session`. `ClaudeEngine` is
+`claude -p`, one child a run, its session the run id (`--session-id`).
+`codex_engine.CodexEngine` starts a Codex agent as a thread on the Codex app
+server already running on this Mac, on its Unix socket
+(`codex_runtime.control_socket` of the user's Codex home, the one
+`RuntimeObserver` watches), with the brain's JSON-RPC
+(`codex_provider.RpcCalls`): `thread/start` (the run's folder and model,
+`approvalPolicy: never`, `sandbox: danger-full-access`, as a Claude run
+skips permissions; his answer) then `turn/start`; a retry `thread/fork`s the
+thread it picks up from; cancel is `turn/interrupt`; `RunExecutor.steer`
+is `turn/steer` into the turn under way (a Claude run refuses it); the end
+is `turn/completed`, an error, the wall-clock or idle bound, or the
+connection lost past `LOST_BOUND_SEC` (it connects again and `thread/resume`s
+each running thread, reading back a turn that ended meanwhile with
+`thread/turns/list`). Its items are written as the same run events a Claude
+run writes (`codex_engine.neutral`: assistant text and tool_use blocks named
+as Claude names the act, then `result`), so `stream_parser.assess_outcome`
+and the dashboard read both alike; its tokens go to the run's columns and its
+plan's limits to `usage_store` under "openai". On connecting it reads the app
+server's version from `initialize` and refuses to start a run on one not in
+`TESTED_VERSIONS`, saying so in the run's error. A run is its engine's worker
+(`run_store.worker_of`: a Codex run is OpenAI's thread), which is how the
+inventory, activity and the roster's run filter (`all_run_ids`) know it.
+Tests drive it against a stand-in app server on a socket
+(`tests/fixtures/fake_app_server.py`).
+
 The dashboard's Retry and the brain's acting `retry_run` share `_retry_run`:
-a finished run's prompt again, resuming from it, a folder run re-checked
-through the folder service.
+a finished run's prompt again, resuming from it on the same engine, a
+folder run re-checked through the folder service.
 
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
@@ -2303,8 +2335,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   functions over message documents (see "Messages to sessions",
   `message_records.py`); the agents list and `steers` (keystrokes, commands)
   are each agent's document (`agent_record.py`)
-- `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
-  each run to a terminal state, streaming its events into the store
+- `run_executor.py` — Drives each run to a terminal state on its engine,
+  streaming its events into the store (`RunEvents`); `ClaudeEngine` spawns
+  `claude -p --output-format stream-json`
+- `codex_engine.py` — Codex agents as runs: threads on the running Codex app
+  server (see "The Run Pipeline")
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
 - `builds.py` — The spec/brief/plan pipeline behind real, phased,
   multi-session builds (see "The Run Pipeline" above)

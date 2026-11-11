@@ -1291,6 +1291,28 @@ EXEMPT = {
         "`status` is only ever tested for membership of "
         "BLOCKING_RATE_LIMIT_STATUSES. What this line prints is "
         "`usage_store`\'s own label and a number JARVIS computed"),
+    "run_executor._engine_of": (
+        "it reads a run's `engine` to pick the engine object; the only text "
+        "it builds is a ValueError naming an engine that is not there, logged "
+        "by the executor and never put in a header or spoken"),
+    "run_executor.steer": (
+        "it reads a run's `status` to compare it with RUNNING; what it returns "
+        "is one of session_steer's fixed outcomes"),
+    "run_store.session_of": (
+        "it returns a run's session id (`engine_session`, else its id) as an "
+        "identifier to match sessions by; it builds no sentence"),
+    "codex_engine.drive": (
+        "it reads the app server's own answers (the thread id and the model it "
+        "started) and the forked run's `engine_session` into the run's row; the "
+        "errors it writes are the run's `error` column, which every reader "
+        "wraps, as `run_executor._drive` says"),
+    "codex_engine._follow": (
+        "the same: a Codex turn's own error words go to the run's `error` and "
+        "`result_text` columns, read only through `_wrap_untrusted`"),
+    "codex_engine._ended": (
+        "it reads a Codex turn's `status` and `error` into the run's "
+        "`result_text` and `error` columns, the same columns and wrappers as "
+        "`run_executor._drive`"),
     "server._run_outcome": (
         "it reads `result_text` and `id` and returns one of "
         "`stream_parser`\'s three constants — OK, STALLED, NO_CHANGES. "
@@ -2211,6 +2233,8 @@ ALT_RUN = {
     "context_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
     "project_id": "44444444-4444-4444-8444-444444444444",
     "work_id": "55555555-5555-4555-8555-555555555555",
+    "engine": "codex",
+    "engine_session": "019a6e1c-6f2b-7c31-9a0e-5f6b7c8d9e0f",
 }
 
 
