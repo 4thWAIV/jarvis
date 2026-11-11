@@ -282,7 +282,6 @@ SAMPLES = {
     "ANSWERS": "results/answers.json",
     "_HEX": "0" * 64,
     "_TEXT": "jref:1:node-1:folder:01a0ca40@3/docs/a.md#sha256=" + "0" * 64,
-    "FROM_LINE": "From: 01a0ca40-0ae3-7452",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

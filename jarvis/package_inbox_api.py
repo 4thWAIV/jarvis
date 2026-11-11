@@ -4,12 +4,13 @@ server's one function for it, which the brain's tool calls too.
   POST /api/packages/inbox?project=&session=&source=&workflow=&work=
                                      the zip's bytes: a package for Tim's
                                      inbox, checked, unpacked and recorded,
-                                     never shown. The `packages` access
-                                     key's only route (make_package sends it).
-                                     signed by the sending agent's key (in
-                                     the zip, package_signature.py, and on
-                                     the request); his answers go to the
-                                     session it proves, else nowhere
+                                     never shown. JARVIS's own path (the
+                                     tool token): an agent's package is
+                                     always a message (POST /api/messages,
+                                     which make_package sends and which
+                                     receives it through the same
+                                     function), so a request an agent's key
+                                     signed is refused here
   GET  /api/packages/inbox           the open packages, newest first, and how
                                      many are closed (?closed=1 lists those)
   GET  /api/packages/inbox/{id}      one, with its questions and answers
@@ -49,6 +50,9 @@ from jarvis.work_packages import Package, PackageError
 
 INBOX_PATH = "/api/packages/inbox"
 SIGN_OFF_PATH = "/api/packages/{package_id}/signoff"
+# What an agent posting a package here is told.
+SEND_AS_MESSAGE = ("A package goes to Tim as a message: python -m jarvis.make_package sends it "
+                   "(POST /api/messages). Nothing was delivered.")
 # The most a package zip may be: a received file's limit.
 MAX_BYTES = messaging_wire.FILE_MAX_BYTES
 
@@ -105,19 +109,17 @@ def mount(app: FastAPI, calls: Calls) -> None:
 
     async def receive(request: Request, project: str = "", session: str = "",
                       source: str = "", workflow: str = "", work: str = ""):
+        if web_auth.principal(request.scope):
+            return _refused(SEND_AS_MESSAGE, 403)
         try:
             data = await _body(request)
         except ValueError as e:
             return _refused(str(e), 413)
         if not data:
             return _refused("There is no zip in the request.", 400)
-        # A request signed by a key JARVIS holds but has not onboarded: what
-        # it sends is held (server._unrecognised_key).
-        held_key = "" if web_auth.principal(request.scope) else \
-            (request.scope.get(web_auth.SIGNED_KEY) or "")
         arrival, package, problem = await calls.receive(
             data, Sender(project=project, claimed=session), workflow, work, source,
-            reporters.of_scope(request.scope), held_key)
+            reporters.of_scope(request.scope))
         if arrival is None:
             return _refused(problem)
         return {"inbox": entry_json(arrival.entry), "arrived": arrival.fresh,

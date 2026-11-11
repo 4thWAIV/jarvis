@@ -1,8 +1,7 @@
-"""An agent's key, from the agent's own session: make it, submit it, sign.
+"""An agent's key, from the agent's own session: make it, submit it, grant.
 
     python -m jarvis.agent_key init --session <your session id>
     python -m jarvis.agent_key submit --session <your session id> --fingerprint <SHA256:...>
-    python -m jarvis.agent_key sign <file> --session <your session id>
     python -m jarvis.agent_key status --session <your session id>
     python -m jarvis.agent_key grant --work <item id> --into <folder> --session <your session id>
     python -m jarvis.agent_key renew --work-key <SHA256:...> --session <your session id>
@@ -13,9 +12,9 @@ fingerprint and the exact `submit` line to run. `submit` sends the public
 key to JARVIS, signed by the key itself; JARVIS then looks in that
 session's own transcript for this command naming the session and the
 fingerprint (proof it was this session that ran it), and the key waits for
-Tim to switch the agent on, which onboards it. `sign` writes `<file>.sig`
-beside a message file or needs board, so JARVIS knows it is this agent's.
-`status` says where the key stands. `grant` makes a key limited to one Work
+Tim to switch the agent on, which onboards it. Everything the agent sends
+is signed with it (`python -m jarvis.message`, work_report.py,
+workflow_report.py, make_package). `status` says where the key stands. `grant` makes a key limited to one Work
 item in `<folder>/.jarvis/work-key` for whoever works there (as
 `make_package --work` puts one in an agent package) and has JARVIS record
 it, signed by your key; it ends when the item closes or after 30 days,
@@ -45,16 +44,6 @@ def submit_text(session_id: str, public_key: str) -> bytes:
     """What a submission's self-signature is over."""
     return "\n".join([agent_keys.SUBMIT, session_id, agent_keys.normalise(public_key)]
                      ).encode("utf-8")
-
-
-def message_text(path: Path, data: bytes) -> bytes:
-    """What a message file's signature is over: its name and its bytes, so
-    a signed file cannot pass under another name."""
-    return f"{agent_keys.MESSAGE}\n{path.name}\n".encode("utf-8") + data
-
-
-def sig_path(path: Path) -> Path:
-    return path.with_name(path.name + ".sig")
 
 
 def _key(session_id: str) -> tuple[Path, str]:
@@ -92,19 +81,6 @@ def submit(session_id: str, fingerprint: str, cert: Path | None) -> int:
     print(f"Submitted {fingerprint} for session {session_id}. JARVIS checks your own "
           "transcript for this command, then the key waits for Tim: switching your agent on "
           "in the Agents tab onboards it. Until then nothing you sign is taken as yours.")
-    return 0
-
-
-def sign_file(path: Path, session_id: str) -> int:
-    private, _public = _key(session_id)
-    path = path.resolve()
-    if not path.is_file() or path.is_symlink():
-        raise SystemExit(f"There is no file at {path}.")
-    data = path.read_bytes()
-    sig_path(path).write_text(agent_keys.sign(private, agent_keys.MESSAGE,
-                                              message_text(path, data)), encoding="ascii")
-    print(f"Signed {path.name}: {sig_path(path)}. Do not change the file after this; "
-          "sign it again if you do.")
     return 0
 
 
@@ -155,10 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jarvis.agent_key")
     parser.add_argument("--cert", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "submit", "sign", "status", "grant", "renew"):
+    for name in ("init", "submit", "status", "grant", "renew"):
         p = sub.add_parser(name)
-        if name == "sign":
-            p.add_argument("file", type=Path)
         p.add_argument("--session", required=True)
         if name == "submit":
             p.add_argument("--fingerprint", required=True)
@@ -173,8 +147,6 @@ def main(argv: list[str] | None = None) -> int:
             return init(args.session)
         if args.command == "submit":
             return submit(args.session, args.fingerprint, args.cert)
-        if args.command == "sign":
-            return sign_file(args.file, args.session)
         if args.command == "grant":
             return grant(args.work, args.into, args.session, args.cert)
         if args.command == "renew":

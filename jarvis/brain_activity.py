@@ -28,8 +28,8 @@ The kinds, each recorded where the fact is first known (one writer each):
                     approval), `accepted` (the team server took it) and
                     `arrived` (stored here as his); the counterpart is
                     "a person", never who.
-    session_message a session's message to him arriving
-                    (`run_store.create_session_message`), with the agent.
+    session_message an agent's message to him arriving
+                    (`server._record_message`), with the agent.
     digest          an attention digest (`attention_store`): `started`, then
                     its outcome (silent, discarded, failed, queued, played,
                     interrupted).

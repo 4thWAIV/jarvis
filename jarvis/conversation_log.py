@@ -20,7 +20,17 @@ them newest first. `source_kind`/`source_id` point at the row that is the
 truth for the message's own state (a `messages` row, a session message, a
 work event, an inbox row), as `message_id` always has.
 
-`append` is the only writer. Whoever wants to know an item was added (the
+Every message to him is also one thing (one_channel round 1,
+docs/planning/one-channel/messages-by-work-item.md): from (`sender`, the
+proven sender as a principal, and `sender_name`), about (`about`, the Work
+item it belongs to, or none), says (`text`), carries (`carries`, the package
+inbox row it brings, or none) and state (`state`: new, read, answered, done,
+moved only forward by `mark`). `inbound` writes every one new; the items on
+record before it have no state and are no message. `work_threads`,
+`work_thread` and `general` read them.
+
+`append` is the only writer of items and `mark` of a message's state.
+Whoever wants to know an item was added (the
 server, to tell the pages to read again) is `connect`ed; it is
 told after the row is committed. Items that hold an agent's words (FROM_AGENT,
 ANSWER, and text the brain composed out of them) are another session's words:
@@ -78,6 +88,7 @@ class Source(StrEnum):
     WORK_DECISION = "work_decision"      # "<work item id>:<decision key>"
     PACKAGE = "package"                  # the package inbox row's id
     PERSON_MESSAGE = "person_message"    # the team server's message id
+    SIGNED = "signed"                    # POST /api/messages: the message's own id
 
 
 # Each source's update in the attention record (attention_store: kind, and
@@ -92,7 +103,23 @@ UPDATES: dict[Source, tuple[str, str, bool]] = {
     Source.WORK_DECISION: ("work", "decision_needed", True),
     Source.PACKAGE: ("package", "arrived", False),
     Source.PERSON_MESSAGE: ("arrival", "arrived", False),
+    Source.SIGNED: ("message", "arrived", False),
 }
+
+
+class MessageState(StrEnum):
+    """Where a message to him stands, in order: each `mark` only moves it on."""
+    NEW = "new"              # not yet read
+    READ = "read"            # heard in full, or marked read
+    ANSWERED = "answered"    # his reply went, or his answer is recorded
+    DONE = "done"            # nothing more is wanted: signed off, set aside, closed
+
+
+_STATE_ORDER = {s: i for i, s in enumerate(MessageState)}
+
+# A sender as a principal (reporters.py's forms, and these): who it is from.
+SENDER_AGENT = "agent:"
+SENDER_PERSON = "person:"
 
 
 # Shown in the Conversation view and an agent's thread (`page`, `thread`)
@@ -136,6 +163,13 @@ class ConversationItem:
     # The row that is the truth for its own state.
     source_kind: str | None = None
     source_id: str | None = None
+    # A message to him (one_channel round 1): from, about, carries, state.
+    sender: str | None = None        # the proven sender: agent:<session>, person:<id>, key:<label>
+    sender_name: str | None = None   # the sender as it was named when it arrived
+    about: str | None = None         # the Work item it belongs to (also on his reply to it)
+    carries: str | None = None       # the package inbox row it brings
+    state: str | None = None         # MessageState; None for any other item
+    state_at: float | None = None
 
     @classmethod
     def new(cls, kind: ItemKind, text: str, *, agent_session_id: str | None = None,
@@ -144,7 +178,9 @@ class ConversationItem:
             detail: dict | None = None, counterpart_kind: str | None = None,
             counterpart_ref: str | None = None, sender_evidence: str | None = None,
             sender_subagent: str | None = None, source_kind: str | None = None,
-            source_id: str | None = None) -> "ConversationItem":
+            source_id: str | None = None, sender: str | None = None,
+            sender_name: str | None = None, about: str | None = None,
+            carries: str | None = None, state: str | None = None) -> "ConversationItem":
         """An item not yet appended: `append` gives it its id and time. An
         item to or from an agent is in that agent's thread unless it says
         otherwise."""
@@ -155,12 +191,21 @@ class ConversationItem:
                    str(counterpart_kind) if counterpart_kind else None,
                    str(counterpart_ref) if counterpart_ref else None,
                    sender_evidence, sender_subagent or None, source_kind,
-                   str(source_id) if source_id is not None else None)
+                   str(source_id) if source_id is not None else None, sender or None,
+                   sender_name or None, str(about) if about else None,
+                   str(carries) if carries else None,
+                   str(MessageState(state)) if state else None)
 
     @property
     def inbound(self) -> bool:
         """A message from its counterpart to him."""
         return str(self.kind) in INBOUND_KINDS
+
+    @property
+    def is_message(self) -> bool:
+        """One of his messages (one_channel round 1): a message from a
+        counterpart recorded with a state."""
+        return self.inbound and self.state is not None
 
 
 TEXT_MAX = 20000
@@ -223,8 +268,26 @@ _BY_SOURCE = """
         ON conversation_items (source_kind, source_id, id);
 """
 
+# 4 (one_channel round 1): every message to him is one thing: from, about,
+# carries and state. Items already on record keep no state: they are no
+# message, so nothing old turns up new.
+_MESSAGES = """
+    ALTER TABLE conversation_items ADD COLUMN sender TEXT;
+    ALTER TABLE conversation_items ADD COLUMN sender_name TEXT;
+    ALTER TABLE conversation_items ADD COLUMN about TEXT;
+    ALTER TABLE conversation_items ADD COLUMN carries TEXT;
+    ALTER TABLE conversation_items ADD COLUMN state TEXT;
+    ALTER TABLE conversation_items ADD COLUMN state_at REAL;
+    CREATE INDEX IF NOT EXISTS conversation_items_by_about
+        ON conversation_items (about, id) WHERE about IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS conversation_items_by_state
+        ON conversation_items (state, id) WHERE state IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS conversation_items_by_carries
+        ON conversation_items (carries) WHERE carries IS NOT NULL;
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA, 2: _COUNTERPARTS, 3: _BY_SOURCE}
+_MIGRATIONS = {1: _SCHEMA, 2: _COUNTERPARTS, 3: _BY_SOURCE, 4: _MESSAGES}
 
 _listener: Callable[[ConversationItem], None] | None = None
 
@@ -288,7 +351,9 @@ def _item(row) -> ConversationItem:
                             row["session_message_id"], row["capture_id"],
                             json.loads(row["detail"] or "{}"), row["counterpart_kind"],
                             row["counterpart_ref"], row["sender_evidence"],
-                            row["sender_subagent"], row["source_kind"], row["source_id"])
+                            row["sender_subagent"], row["source_kind"], row["source_id"],
+                            row["sender"], row["sender_name"], row["about"], row["carries"],
+                            row["state"], row["state_at"])
 
 
 def append(item: ConversationItem) -> ConversationItem:
@@ -298,18 +363,21 @@ def append(item: ConversationItem) -> ConversationItem:
     text = str(item.text or "").strip()[:TEXT_MAX]
     if not text:
         raise ValueError("A conversation item has words.")
-    stored = replace(item, text=text, at=time.time())
+    now = time.time()
+    stored = replace(item, text=text, at=now, state_at=now if item.state else None)
     with closing(_connect()) as conn:
         cur = conn.execute(
             "INSERT OR IGNORE INTO conversation_items (at, kind, text, agent_session_id, "
             "agent_name, message_id, session_message_id, capture_id, detail, counterpart_kind, "
-            "counterpart_ref, sender_evidence, sender_subagent, source_kind, source_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "counterpart_ref, sender_evidence, sender_subagent, source_kind, source_id, "
+            "sender, sender_name, about, carries, state, state_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (stored.at, str(stored.kind), stored.text, stored.agent_session_id,
              stored.agent_name, stored.message_id, stored.session_message_id,
              stored.capture_id, json.dumps(stored.detail), stored.counterpart_kind,
              stored.counterpart_ref, stored.sender_evidence, stored.sender_subagent,
-             stored.source_kind, stored.source_id))
+             stored.source_kind, stored.source_id, stored.sender, stored.sender_name,
+             stored.about, stored.carries, stored.state, stored.state_at))
         conn.commit()
         if cur.rowcount:
             stored = replace(stored, id=cur.lastrowid)
@@ -370,11 +438,14 @@ class Unproven(ValueError):
 
 def inbound(kind: ItemKind, counterpart: Counterpart, ref: str, name: str, text: str,
             evidence: str, *, source_kind: str, source_id, subagent: str = "",
+            sender: str = "", sender_name: str = "", about: str = "", carries: str = "",
             **links) -> ConversationItem:
     """Record one message to him from a counterpart, in its thread, with the
     proof that admitted it: the one way in for every channel. Refused
     (Unproven) without a proof JARVIS checked (PROOFS), a counterpart or a
-    source. Recorded once per source."""
+    source. Recorded once per source, as a new message: from `sender` (an
+    agent's or a person's thread is its sender unless told otherwise),
+    about the Work item `about`, carrying the package inbox row `carries`."""
     if str(kind) not in INBOUND_KINDS:
         raise ValueError(f"{kind} is not a message to him.")
     if evidence not in PROOFS:
@@ -385,10 +456,15 @@ def inbound(kind: ItemKind, counterpart: Counterpart, ref: str, name: str, text:
     if counterpart is Counterpart.AGENT:
         links.setdefault("agent_session_id", ref)
         links.setdefault("agent_name", name)
+        sender, sender_name = sender or f"{SENDER_AGENT}{ref}", sender_name or name
+    elif counterpart is Counterpart.PERSON:
+        sender, sender_name = sender or f"{SENDER_PERSON}{ref}", sender_name or name
     return append(ConversationItem.new(
         kind, text, counterpart_kind=counterpart, counterpart_ref=ref, sender_evidence=evidence,
         sender_subagent=subagent, source_kind=source_kind, source_id=source_id,
-        detail={**links.pop("detail", {}), "name": name}, **links))
+        detail={**links.pop("detail", {}), "name": name}, sender=sender,
+        sender_name=sender_name, about=about, carries=carries, state=MessageState.NEW,
+        **links))
 
 
 def outbound(kind: ItemKind, counterpart: Counterpart, ref: str, text: str,
@@ -517,3 +593,151 @@ def statuses(items: list[ConversationItem]) -> dict[int, "run_store.Message"]:
     """The messages these items point at, read now: each message's live
     status and whether it has an answer."""
     return run_store.get_messages(i.message_id for i in items if i.message_id is not None)
+
+
+# --- Messages to him (one_channel round 1) ---------------------------------
+
+# A message is an item with a state (`inbound` gives every new one NEW).
+_MESSAGE = "state IS NOT NULL"
+
+
+def mark(item_id: int, state: MessageState) -> ConversationItem | None:
+    """Move one message on to `state` (the only writer of a message's
+    state): only forward (new, read, answered, done), so a late Read never
+    undoes his answer. The message as it now is, or None when `item_id` is
+    no message. Tells the listener when it moved."""
+    state = MessageState(state)
+    with closing(_connect()) as conn:
+        row = conn.execute(f"SELECT * FROM conversation_items WHERE id=? AND {_MESSAGE}",
+                           (int(item_id),)).fetchone()
+        if row is None:
+            return None
+        if _STATE_ORDER[MessageState(row["state"])] >= _STATE_ORDER[state]:
+            return _item(row)
+        conn.execute("UPDATE conversation_items SET state=?, state_at=? WHERE id=?",
+                     (str(state), time.time(), int(item_id)))
+        conn.commit()
+        row = conn.execute("SELECT * FROM conversation_items WHERE id=?",
+                           (int(item_id),)).fetchone()
+    moved = _item(row)
+    if _listener is not None:
+        try:
+            _listener(moved)
+        except Exception:
+            pass
+    return moved
+
+
+def messages_where(*, source: tuple[str, str] | None = None,
+                   carries: str | None = None) -> list[int]:
+    """The ids of the messages from one source (its kind and id) or
+    carrying one package inbox row: what a `mark` of something settled
+    elsewhere (a decision answered, a package signed off) moves on."""
+    if source is not None:
+        where, args = "source_kind = ? AND source_id = ?", [str(source[0]), str(source[1])]
+    elif carries:
+        where, args = "carries = ?", [str(carries)]
+    else:
+        return []
+    with closing(_connect()) as conn:
+        return [r["id"] for r in conn.execute(
+            f"SELECT id FROM conversation_items WHERE {where} AND {_MESSAGE}", args)]
+
+
+@dataclass(frozen=True)
+class WorkThread:
+    """One Work item's messages, as the Inbox and the item's row count them."""
+    work: str
+    new: int                             # messages not yet read
+    total: int                           # messages about it
+    latest_at: float                     # its newest message's time
+    first_new: ConversationItem | None   # its oldest unread message
+
+
+def work_threads(limit: int = PAGE) -> list[WorkThread]:
+    """Every Work item with messages about it, the one with the newest
+    message first, each with its count of new ones and its first new one."""
+    new = str(MessageState.NEW)
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"SELECT about, SUM(state = ?) AS new, COUNT(*) AS total, MAX(at) AS latest, "
+            f"MIN(CASE WHEN state = ? THEN id END) AS first_new FROM conversation_items "
+            f"WHERE about IS NOT NULL AND {_MESSAGE} GROUP BY about "
+            f"ORDER BY MAX(id) DESC LIMIT ?", (new, new, max(1, int(limit)))).fetchall()
+        firsts = [r["first_new"] for r in rows if r["first_new"] is not None]
+        found = {r["id"]: _item(r) for r in conn.execute(
+            f"SELECT * FROM conversation_items WHERE id IN ({','.join('?' * len(firsts))})",
+            firsts)} if firsts else {}
+    return [WorkThread(r["about"], int(r["new"] or 0), int(r["total"]), float(r["latest"]),
+                       found.get(r["first_new"])) for r in rows]
+
+
+def new_about(work_id: str) -> int:
+    """How many messages about one Work item are new."""
+    with closing(_connect()) as conn:
+        return int(conn.execute(
+            "SELECT COUNT(*) FROM conversation_items WHERE about = ? AND state = ?",
+            (str(work_id), str(MessageState.NEW))).fetchone()[0])
+
+
+def work_thread(work_id: str, before: int | None = None,
+                limit: int = PAGE) -> list[ConversationItem]:
+    """Everything about one Work item, oldest first: the messages to him
+    about it and what he sent back about them, as one conversation."""
+    return _read("about = ?", [str(work_id)], before, limit)
+
+
+def general(before: int | None = None, limit: int = PAGE) -> list[ConversationItem]:
+    """The messages to him that belong to no Work item, newest first. A
+    person's messages stay in their own threads (the Queue), so are not here."""
+    limit = max(1, min(int(limit), PAGE * 5))
+    where = f"about IS NULL AND {_MESSAGE} AND counterpart_kind IS NOT ?"
+    args: list = [str(Counterpart.PERSON)]
+    if before is not None:
+        where += " AND id < ?"
+        args.append(int(before))
+    with closing(_connect()) as conn:
+        rows = conn.execute(f"SELECT * FROM conversation_items WHERE {where} "
+                            f"ORDER BY id DESC LIMIT ?", [*args, limit]).fetchall()
+    return [_item(r) for r in rows]
+
+
+def new_general() -> int:
+    """How many messages that belong to no Work item are new (a person's
+    are counted in their own threads, so not here)."""
+    with closing(_connect()) as conn:
+        return int(conn.execute(
+            f"SELECT COUNT(*) FROM conversation_items WHERE about IS NULL AND state = ? "
+            f"AND counterpart_kind IS NOT ?",
+            (str(MessageState.NEW), str(Counterpart.PERSON))).fetchone()[0])
+
+
+def item_for_message(message_id: int) -> ConversationItem | None:
+    """The item recording a message he sent an agent (TO_AGENT), or None."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM conversation_items WHERE kind=? AND message_id=?",
+                           (str(ItemKind.TO_AGENT), int(message_id))).fetchone()
+    return _item(row) if row else None
+
+
+def new_by_agent() -> dict[str, int]:
+    """Each agent's new messages to him, by its session id: what its box
+    counts (agent_directory's `needs`). Those signed by its own key
+    (`agent:<session id>`)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT sender, COUNT(*) FROM conversation_items WHERE state = ? AND sender LIKE ? "
+            "GROUP BY sender", (str(MessageState.NEW), SENDER_AGENT + "%")).fetchall()
+    return {str(r[0])[len(SENDER_AGENT):]: int(r[1]) for r in rows}
+
+
+def new_messages() -> list[ConversationItem]:
+    """Every new message to him, oldest first: those about a Work item and
+    those about none (a person's with no item are in their own threads, so
+    not here, as `new_general` counts)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM conversation_items WHERE state = ? AND "
+            "(about IS NOT NULL OR counterpart_kind IS NOT ?) ORDER BY id",
+            (str(MessageState.NEW), str(Counterpart.PERSON))).fetchall()
+    return [_item(r) for r in rows]

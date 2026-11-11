@@ -5,6 +5,7 @@ check passed. The check in a real, isolated JARVIS is
 tests/test_voice_page_decision_package.py; here it is a stand-in."""
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import zipfile
@@ -130,8 +131,8 @@ class _Delivery:
 
     def __call__(self, url, token, body, timeout=60, signer=None):
         self.calls.append((url, signer, body))
-        return {"package": {"id": "lunch-decisions-1.0.0-local1"}, "arrived": True,
-                "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
+        return {"message": {"id": 41}, "package": {"id": "lunch-decisions-1.0.0-local1"},
+                "arrived": True, "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
 
 
 def test_refused_content_is_not_built_checked_or_delivered(tmp_path, monkeypatch, capsys):
@@ -186,10 +187,12 @@ def test_a_passed_check_delivers_once_signed_with_the_session_s_key(tmp_path, mo
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, signer, body)] = delivery.calls
-    assert url.startswith("http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc")
+    assert url.startswith("http://127.0.0.1:19999/api/messages?project=lunch"), \
+        "a message carrying it"
     assert signer == (private, public), "the request is signed with the session's own key"
     archive = tmp_path / "out" / "lunch-decisions-1.0.0.zip"
-    assert body == archive.read_bytes()
+    assert base64.b64decode(body["package"]) == archive.read_bytes()
+    assert body["says"] == "Decision package: Team lunch"
     signed = package_signature.read(archive)
     assert signed.session == "abc" and signed.checks(public)
     assert package_signature.DECISION_CHECKED in signed.statements

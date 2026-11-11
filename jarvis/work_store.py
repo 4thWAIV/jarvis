@@ -1718,6 +1718,23 @@ def find(reference: str) -> list[WorkItem]:
     return exact or [i for i in items if said in agent_directory.spoken_key(i.title)]
 
 
+def open_items_of(session_id: str) -> list[tuple[str, str]]:
+    """(id, title) of each open item (not in History) on which the agent of
+    `session_id`, or one of its subagents, has a piece not done: the items
+    a message from it must name (one_channel round 1), oldest first."""
+    if not session_id:
+        return []
+    open_ids = {i.id for i in listing(limit=LIST_MAX * 10)}
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT i.id, i.title, i.created_at FROM work_items i "
+            "JOIN work_pieces p ON p.item_id = i.id WHERE p.who_kind = ? "
+            "AND (p.who_ref = ? OR substr(p.who_ref, 1, ?) = ?) AND p.state <> ? "
+            "ORDER BY i.created_at",
+            (AGENT, session_id, len(session_id) + len(SUB), session_id + SUB, DONE)).fetchall()
+    return [(r["id"], r["title"]) for r in rows if r["id"] in open_ids]
+
+
 # ── his answers, and what waits for them ────────────────────────────────
 
 def decision_answer(conn, item_id: str, key: Optional[str]) -> "Optional[wait_links.Answer]":

@@ -1,5 +1,6 @@
 """The talk-to-jarvis skill ships with the repo and teaches the user's own
-sessions the needs board and session messages. Nothing here touches a real
+sessions the one way to reach him: a signed message (`python -m
+jarvis.message`), every decision a package. Nothing here touches a real
 ~/.claude or ~/.codex."""
 
 import pytest
@@ -27,8 +28,13 @@ def test_the_skill_is_rendered_with_this_install_s_folders(homes):
     text = session_skill.render()
 
     assert "{{" not in text
-    assert str(tmp_path / "data" / "needs") + "/<project>.md" in text
-    assert str(tmp_path / "data" / "messages") + "/<project>/<short-name>.md" in text
+    assert "-P -m jarvis.message --cert " in text, "the one way to send him a message"
+    assert "-P -m jarvis.make_package --handoff" in text
+    assert str(tmp_path / "data" / "answers") + "/<project>/" in text
+    # The two folders, their signatures and the bare decision are gone.
+    for gone in ("/data/needs", "/data/messages", " sign <", "needs board", " decision <id>",
+                 " withdraw <id>", "decision_needed"):
+        assert gone not in text, gone
     assert text.startswith("---\nname: talk-to-jarvis\n")
 
 

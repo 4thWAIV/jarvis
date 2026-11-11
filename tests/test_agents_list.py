@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from jarvis import session_watch as sw
 from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
-from tests.fixtures.waiting import until_async
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -408,37 +407,26 @@ def test_a_claude_code_brain_is_anthropic_s():
     assert brain.BrainConfig(home=Path("/tmp")).provider == "anthropic"
 
 
-# --- the needs-board count ------------------------------------------------------
+# --- each agent's new messages to him ------------------------------------------------
 
-def _wrote(tmp_path, monkeypatch, server, session, path):
-    """`session`'s onboarded agent signed `path` (`<path>.sig`, as `python -m
-    jarvis.agent_key sign` writes it): what proves a board's writer."""
-    from jarvis import agent_key, agent_keys
-    from tests.agent_key_fixtures import onboarded_auth
-    agent = onboarded_auth(session=session.session_id).agent
-    agent_key.sig_path(path).write_text(agent_keys.sign(
-        agent.private, agent_keys.MESSAGE, agent_key.message_text(path, path.read_bytes())))
-
-
-def test_each_agent_carries_the_needs_of_the_board_it_wrote(wired, monkeypatch, tmp_path):
-    """Only the agent whose key signed a board counts it: never every agent
-    in its project."""
+def test_each_agent_carries_the_count_of_its_new_messages(wired, monkeypatch):
+    """An agent's box counts its own new messages to him (round 3: the
+    needs boards are gone), by the key that signed them, never its
+    project's."""
     server, store = wired
-    from jarvis import data_paths
-    folder = data_paths.needs_dir()
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "Hammer.md").write_text(
-        "# hammer\n\n## Decisions\n- one: a\n- two: b\n\n## Questions\n- three: c\n")
-    (folder / "anvil.md").write_text("# anvil\n\n## Decisions\n- x: unproven\n")
-    sessions = [_session("s1", "hammer"), _session("s2", "hammer"), _session("s3", "anvil"),
-                _session("s4", "tongs")]
+    from jarvis import conversation_log as cl
+    sessions = [_session("s1", "hammer"), _session("s2", "hammer")]
     monkeypatch.setattr(server, "session_watcher", _Watcher(sessions))
-    store.sync_agents({sid: (sid, "idle") for sid in ("s1", "s2", "s3", "s4")})
-    _wrote(tmp_path, monkeypatch, server, sessions[0], folder / "Hammer.md")
-
+    store.sync_agents({sid: (sid, "idle") for sid in ("s1", "s2")})
+    for n, sid in enumerate(("s1", "s1", "s2")):
+        cl.inbound(cl.ItemKind.MESSAGE_IN, cl.Counterpart.AGENT, sid, sid, f"m{n}",
+                   "agent_signature", source_kind=cl.Source.SIGNED, source_id=f"x{n}",
+                   sender=f"agent:{sid}")
+    [read] = [i for i in cl.general() if i.text == "m2"]
+    cl.mark(read.id, cl.MessageState.READ)
     got = {a["session_id"]: a["needs"]
            for a in TestClient(server.app).get("/api/agents").json()["agents"]}
-    assert got == {"s1": 3, "s2": 0, "s3": 0, "s4": 0}
+    assert got == {"s1": 2, "s2": 0}
 
 
 def test_each_agent_carries_the_provider_of_the_session_it_is(wired, monkeypatch):
@@ -456,35 +444,3 @@ def test_each_agent_carries_the_provider_of_the_session_it_is(wired, monkeypatch
     assert sw.PROVIDER == "anthropic"
 
 
-@pytest.mark.asyncio
-async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, monkeypatch,
-                                                                       tmp_path):
-    import asyncio
-    server, _store = wired
-    from jarvis import data_paths
-    folder = data_paths.needs_dir()
-    folder.mkdir(parents=True, exist_ok=True)
-    board = folder / "hammer.md"
-    board.write_text("## Decisions\n- one: a\n")
-    hammer = _session("s1", "hammer")
-    monkeypatch.setattr(server, "session_watcher", _Watcher([hammer]))
-    _store.sync_agents({"s1": ("hammer", "idle")})
-    _wrote(tmp_path, monkeypatch, server, hammer, board)
-    hints = []
-    monkeypatch.setattr(server, "_hint_agents_changed", lambda: hints.append(1))
-    monkeypatch.setattr(server, "NEEDS_POLL_SEC", 0.01)
-
-    from jarvis import subsystem_diagnostics as sd
-    monkeypatch.setattr(server, "_attend_board", lambda board: None)
-    earlier = sd.beats.get(sd.NEEDS_LOOP)
-    task = asyncio.ensure_future(server._watch_needs_board())
-
-    def first_look_done():                            # its heartbeat, this loop's own
-        beat = sd.beats.get(sd.NEEDS_LOOP)
-        return beat is not earlier and beat is not None and beat.last_ok_at is not None
-    assert await until_async(first_look_done), "the first look never finished"
-    assert hints == [], "the first look only records"
-    board.write_text("## Decisions\n")                # down to none
-    assert await until_async(lambda: hints), hints
-    task.cancel()
-    assert hints == [1]

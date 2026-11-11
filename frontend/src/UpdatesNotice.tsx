@@ -11,11 +11,13 @@
  * nothing routine is spoken until Resume. None of these speak, send or
  * approve anything.
  *
- * A package an agent sent (kind `package`, package_inbox.py) is one reduced
- * line: a small package mark, who sent it, its title and how many decisions
- * wait, then Open and Seen. Nothing else: no preview, no picture, no sound;
- * it never expands, plays or takes the centre by itself. Open is his click
- * (the inbox's one Open); Seen leaves the package in the backlog.
+ * Messages to him are not listed one by one: one line says how many are
+ * new ("3 new messages": on Work items, on none, and people's waiting
+ * unread; messagesToHim.ts and queue.ts) with Open, which goes to the Inbox
+ * (`right.tab.select`). Only JARVIS's own facts (a run finished,
+ * communications down) are counted and listed as updates; an update that
+ * is a message (an agent's answer, a session's message, a decision, a
+ * package, a person's message) is that line's.
  *
  * On every other view (`compact`, CentreNotices.tsx) it is one small chip in
  * the tab row ("3 updates") that never opens by itself: clicking it opens
@@ -36,9 +38,10 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { attention, itemName, itemWords, markSeen, setAway, type AttentionItem } from "./attention";
-import { SaidText, useT, type Said } from "./locale";
-import { openInbox } from "./packageInbox";
-import { PackageMark } from "./QueuePackages";
+import { inboxMessages, newMessages } from "./messagesToHim";
+import { useT } from "./locale";
+import { queue } from "./queue";
+import { waiting, type QueueState } from "./queueStore";
 import { createStore } from "./store";
 import { bind, bindingProps, mainView } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
@@ -47,7 +50,21 @@ import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
 /** @routeState Whether Review updates' list is open. */
 const reviewOpen = createStore(false);
 
-const anyPending = () => attention.get().value?.items.some((i) => i.state === "pending") ?? false;
+/** An update that is a message to him (its words are someone's): counted
+ *  in the one messages line, never listed as an update. */
+const isMessage = (item: AttentionItem) => item.message != null || item.kind === "package" || item.kind === "message";
+
+/** JARVIS's own facts waiting: what is listed as updates. */
+const factsOf = (items: AttentionItem[] | undefined) =>
+  (items ?? []).filter((i) => i.state === "pending" && !isMessage(i));
+
+/** People's items waiting unread in the Inbox. */
+const unreadPeople = (state: QueueState) => waiting(state).filter((i) => i.work_state.unread_reminder).length;
+
+/** How many messages to him are new: from agents and from people. */
+const messagesNow = () => newMessages(inboxMessages.get().value) + unreadPeople(queue.get());
+
+const anyPending = () => factsOf(attention.get().value?.items).length > 0 || messagesNow() > 0;
 
 registerCommand("updates.review", {
   availability: () => anyPending() ? { available: true } : { available: false, reason: "no-entity" },
@@ -72,10 +89,13 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   const t = useT();
   const live = useSyncExternalStore(attention.subscribe, attention.get);
   const open = useSyncExternalStore(reviewOpen.subscribe, reviewOpen.get);
+  const inbox = useSyncExternalStore(inboxMessages.subscribe, inboxMessages.get).value;
+  const people = useSyncExternalStore(queue.subscribe, queue.get);
   const now = live.value;
-  const pending = now?.items.filter((i) => i.state === "pending") ?? [];
+  const pending = factsOf(now?.items);
+  const fresh = newMessages(inbox) + unreadPeople(people);
   const away = now?.settings.away ?? false;
-  const shown = pending.length > 0 || away;
+  const shown = pending.length > 0 || fresh > 0 || away;
   const listed = open && pending.length > 0;
   const ui = useUiTarget(shown ? { ref: { region: "main", view: "main.notice", kind: "updatesNotice" },
                                    label: t("targets.updatesNotice"), socket: { rail: "rail.main", side: "right" } }
@@ -84,7 +104,7 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   // The dropdown closes on Escape or a click outside it (the chip's own
   // click toggles it). Escape is taken first, so it does not also skip
   // what JARVIS is reading.
-  const dropdown = compact && listed;
+  const dropdown = compact && open && (pending.length > 0 || fresh > 0);
   useEffect(() => {
     if (!dropdown) return;
     const close = () => byHand("updates.review", { open: false });
@@ -107,6 +127,13 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   }, [dropdown]);
 
   if (!shown) return null;
+  const messages = fresh > 0 && (
+    <p className="updates-messages" ref={ui.part("messages")}>
+      <span>{t("main.updates.messages", { count: fresh })}</span>
+      <button type="button" className="settings-btn primary" ref={ui.part("openInbox")}
+              {...bindingProps(bind("right.tab.select", { tab: "queue" }))}>{t("main.updates.openInbox")}</button>
+    </p>
+  );
   const markAll = pending.length > 0 && (
     <button type="button" className="settings-btn" ref={ui.part("markSeen")}
             data-ui-action="domain" onClick={() => void markSeen()}>{t("main.updates.markAllSeen")}</button>
@@ -118,8 +145,7 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   );
   const list = listed && (
     <ul className="updates-list" ref={ui.part("list")}>
-      {pending.map((item) => item.kind === "package" ? <PackageLine key={item.id} item={item} />
-        : item.message != null ? <MessageLine key={item.id} item={item} message={item.message} /> : (
+      {pending.map((item) => (
         <li key={item.id}>
           <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
           <button type="button" className="settings-btn" data-ui-action="domain"
@@ -133,10 +159,10 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   if (compact) {
     return (
       <div id="updates-notice" className="centre-chip" role="status" ref={ui.whole}>
-        {pending.length > 0 ? (
+        {pending.length > 0 || fresh > 0 ? (
           <button type="button" className="centre-chip-button" ref={ui.part("review")} aria-expanded={open}
                   aria-haspopup="true" {...bindingProps(bind("updates.review", { open: !open }))}>
-            <span ref={ui.part("text")}>{t("main.updates.chip", { count: pending.length })}</span>
+            <span ref={ui.part("text")}>{t("main.updates.chip", { count: pending.length + fresh })}</span>
           </button>
         ) : (
           <>
@@ -144,8 +170,9 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
             {hold}
           </>
         )}
-        {listed && (
+        {dropdown && (
           <div className="updates-dropdown">
+            {messages}
             {list}
             <div className="updates-dropdown-actions">{markAll}{hold}</div>
           </div>
@@ -156,9 +183,10 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
   return (
     <div id="updates-notice" role="status" ref={ui.whole}>
-      <p ref={ui.part("text")}>
+      {messages}
+      {(pending.length > 0 || away) && <p ref={ui.part("text")}>
         {pending.length > 0 ? t("main.updates.count", { count: pending.length }) : t("main.updates.held")}
-      </p>
+      </p>}
       {pending.length > 0 && (
         <button type="button" className="settings-btn primary" ref={ui.part("review")}
                 aria-expanded={open} {...bindingProps(bind("updates.review", { open: !open }))}>
@@ -168,64 +196,5 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
       {hold}
       {list}
     </div>
-  );
-}
-
-/** A package's reduced line: who sent it, its title and how many decisions
- *  wait, with Open and Seen. The words are the sender's, drawn as text. */
-/** A message to him, whatever channel it came by (an agent's answer, a
- *  session's message, a needs board, a decision, a person's message): Seen
- *  (as every entry), Read (JARVIS reads that one message aloud, the brain's
- *  read_aloud; the entry stays until it has been heard in full) and Reply
- *  (a capture addressed to its proven sender for what he says or types
- *  next, read back and sent on his yes; for a person, a draft to review;
- *  the brain's reply). Both post to the one route by the message's id. */
-function MessageLine({ item, message }: { item: AttentionItem; message: number }) {
-  const t = useT();
-  const [said, setSaid] = useState<string | null>(null);
-  const post = async (action: "read" | "reply") => {
-    const res = await fetch(`/api/messages/${message}/${action}`, { method: "POST" }).catch(() => null);
-    if (!res?.ok) {
-      const body = res ? ((await res.json().catch(() => ({}))) as { detail?: string }) : {};
-      setSaid(body.detail || t("main.updates.readFailed"));
-      return;
-    }
-    const body = (await res.json()) as { to?: string };
-    setSaid(action === "read" ? t("main.updates.reading")
-                              : t("main.updates.replyTo", { name: body.to ?? "" }));
-  };
-  return (
-    <li className="updates-session-message" data-message-id={message}>
-      <span className="updates-words" title={itemName(item) || undefined}>{itemWords(item)}</span>
-      <button type="button" className="settings-btn" data-ui-action="domain"
-              onClick={() => void post("read")}>{t("main.updates.read")}</button>
-      <button type="button" className="settings-btn" data-ui-action="domain"
-              onClick={() => void post("reply")}>{t("main.updates.reply")}</button>
-      <button type="button" className="settings-btn" data-ui-action="domain"
-              onClick={() => void markSeen([item.id])}>{t("main.updates.markSeen")}</button>
-      {said && <span className="file-state">{said}</span>}
-    </li>
-  );
-}
-
-function PackageLine({ item }: { item: AttentionItem }) {
-  const t = useT();
-  const [said, setSaid] = useState<Said | null>(null);
-  const waiting = Number(item.facts.waiting ?? 0);
-  const words = t("main.updates.package.line", {
-    sender: item.untrusted.agent || t("main.updates.someone"), title: item.untrusted.package ?? "",
-  }) + (waiting > 0 ? `, ${t("main.updates.package.waiting", { count: waiting })}` : "");
-  return (
-    <li className="updates-package" data-inbox-id={item.source_id}>
-      <PackageMark />
-      <span className="updates-words">{words}</span>
-      <button type="button" className="settings-btn" data-ui-action="domain"
-              onClick={() => void openInbox(item.source_id).then(setSaid)}>
-        {t("main.updates.package.open")}</button>
-      <button type="button" className="settings-btn" data-ui-action="domain"
-              onClick={() => void markSeen([item.id])}>
-        {t("main.updates.markSeen")}</button>
-      {said && <SaidText said={said} className="file-state" />}
-    </li>
   );
 }

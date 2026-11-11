@@ -14,11 +14,12 @@ Items are listed under their area, or their source folder's name; an item
 blocked or waiting on him, or with a piece that is, carries a mark in its
 row, with how many decisions wait on him and the first thing holding it up.
 Closed or long-done items are under History, still openable. The detail has
-tabs (Overview, Decisions, Blocking, Pieces, Reports) under a "Decision
-needed" banner that opens Decisions; Decisions answers open ones, opens a
-decision's package and keeps the answered and withdrawn ones; Pieces shows
-each in dependency order with its latest note, the agent's own worker label
-beside its owner, what it waits for and its evidence.
+tabs (Messages first, then Overview, Blocking, Pieces, Reports) under a
+"Decision needed" banner that opens Messages; there an open decision asked
+before it had a message is answered and its package opened (the item's
+conversation itself is test_voice_page_messages.py's); Pieces shows each in
+dependency order with its latest note, the agent's own worker label beside
+its owner, what it waits for and its evidence.
 
 Headless Chromium on the built page, with /api/work*, /api/workflows* and
 both sockets replaced by Playwright.
@@ -210,11 +211,12 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         assert tabs == {"centre": "Speech migration", "right": "Work"}, tabs
         assert await page.locator(".work-row[data-work-id=work-1]").is_visible(), "the list stays in view"
         names = await page.locator("#work-detail .work-tabs [role=tab]").all_text_contents()
-        assert names == ["Overview", "Decisions (1)", "Blocking (3)", "Pieces", "Reports"], names
+        assert names == ["Messages (1)", "Overview", "Blocking (3)", "Pieces", "Reports"], names
         banner = page.locator("#work-detail .work-decision-banner")
         await async_api.expect(banner).to_contain_text("Decision needed (1)")
         await async_api.expect(banner).to_contain_text("Which engine is the default?")
         # Overview: the update, the source and who is on it.
+        await page.click("#work-detail .work-tabs [role=tab]:text('Overview')")
         assert "/Users/someone/code/speech" in await page.locator("#work-detail .work-source").text_content()
         who = await page.locator("#work-detail .work-who li").all_text_contents()
         assert who == ["Agent Builder via “engine build agent”", "You"], who
@@ -228,13 +230,11 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
                          "Review it waits for Wire the engine"], lines
         await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-blocking.png"))
 
-        # The banner, on any tab, opens Decisions.
+        # The banner, on any tab, opens Messages, where a decision asked
+        # before it had a message is answered.
         await banner.click()
         await page.locator("#work-detail .workflow-decision[data-key=engine]").wait_for(timeout=15000)
-        assert await page.locator("#work-detail .work-tabs [aria-selected=true]").text_content() == "Decisions (1)"
-        answered = await page.locator("#work-detail .work-answered-answer").all_text_contents()
-        assert answered[0].startswith("Withdrawn by the agent that asked it: Asked before the designs.")
-        assert answered[1].startswith("You answered on the page: dry")
+        assert await page.locator("#work-detail .work-tabs [aria-selected=true]").text_content() == "Messages (1)"
         await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-decisions.png"))
         # The decision's package opens through the server's one way; its refusal is shown.
         await page.click("#work-detail .work-decision-package button")
@@ -467,10 +467,11 @@ async def test_a_stalled_row_says_so_and_a_needed_one_names_the_act_and_its_plac
         await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-needs.png"))
         await needed.click()
         need = page.locator("#work-detail .work-needs li[data-need=decision]")
-        await async_api.expect(need).to_contain_text("on the Decisions tab", timeout=10000)
+        await async_api.expect(need).to_contain_text("on the Messages tab", timeout=10000)
+        await page.click("#work-detail .work-tabs [role=tab]:text('Overview')")
         await need.locator("button").click()
         await async_api.expect(page.locator("#work-detail .work-tabs [aria-selected=true]")).to_contain_text(
-            "Decisions")
+            "Messages")
         await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-needs.png"))
         assert errors == [], errors
         await browser.close()

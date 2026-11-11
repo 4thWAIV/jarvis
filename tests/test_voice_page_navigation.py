@@ -111,10 +111,10 @@ async def test_a_tab_and_the_brains_request_for_its_command_show_the_same(page_u
                 tab = f".right-tabs [role=tab][title={title}]"
                 command, args = await _marks(page, tab)
                 assert command == "right.tab.select" and args == {"tab": tab_id}
-                await page.click(".right-tabs [role=tab][title=Queue]")
+                await page.click(".right-tabs [role=tab][title=Inbox]")
                 await page.click(tab)
                 by_hand = await page.evaluate(SHOWN)
-                await page.click(".right-tabs [role=tab][title=Queue]")
+                await page.click(".right-tabs [role=tab][title=Inbox]")
                 result = await voice.navigate(command, args)
                 assert result["status"] == "completed", result
                 assert await page.evaluate(SHOWN) == by_hand

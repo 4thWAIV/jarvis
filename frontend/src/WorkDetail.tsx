@@ -7,19 +7,17 @@ import { WorkOwnerActivity } from "./WorkerStatus";
  *   - the head: its title, its state, "In History" when it is, and Close
  *     (`work.close`, back to Conversation);
  *   - while a decision waits on him, a "Decision needed" banner above every
- *     tab, which opens the Decisions tab (`work.tab.select`);
- *   - the tabs (`work.tab.select`, `WORK_TABS`), Decisions and Blocking
+ *     tab, which opens the Messages tab (`work.tab.select`);
+ *   - the tabs (`work.tab.select`, `WORK_TABS`), Messages and Blocking
  *     counted and lit while they have something:
+ *       Messages (first): the item's conversation, oldest first, his
+ *         replies in it; a decision is a message carrying its package,
+ *         opened from there, his answer recorded under it
+ *         (WorkMessages.tsx); counted by its new messages and open
+ *         decisions;
  *       Overview: its latest update ("No recent update" once it has gone
  *         quiet), its source (a stat; nothing is opened or run), its area,
  *         and who is on it;
- *       Decisions: each open decision, answered here (DecisionCard.tsx),
- *         with "Open the package" when it names one (the server's one way
- *         to open a page package, the brain's open_package_page too); then
- *         the questions of the packages sent for it (`make_package --work`,
- *         package_inbox.py), answered here into the package's own record;
- *         then the decided ones: his answers, and those withdrawn by their
- *         asker;
  *       Blocking: everything holding it up, in the server's order;
  *       Pieces: in dependency order, each with exactly who is on it, the
  *         reporting agent's own worker label beside that (quoted, marked as
@@ -41,27 +39,25 @@ import { WorkOwnerActivity } from "./WorkerStatus";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copyPath } from "./attachmentLocation";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { DecisionCard } from "./DecisionCard";
+import { inboxMessages, threadOf } from "./messagesToHim";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
 import { revokeAgentKey } from "./agents";
-import { answerInbox, inboxProgress, openInbox, optionFor, type InboxDetail,
-         type InboxQuestion } from "./packageInbox";
-import { openPackagePage } from "./packages";
-import { PackageMark } from "./QueuePackages";
+import { openInbox } from "./packageInbox";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
-import { answerWorkDecision, blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
+import { WorkMessages } from "./WorkMessages";
+import { blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
          rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
-         workChanged, workItemFrame, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
+         workChanged, workItemFrame, workTab, type WorkBlocker, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
          workStanding, type Activity } from "./nodeActivity";
 import { WorkMarkDot } from "./WorkPanel";
 
-type WorkKind = "workItem" | "workPiece" | "workDecision" | "workBlocker";
+type WorkKind = "workItem" | "workPiece" | "workBlocker";
 
 function useWorkTarget(kind: WorkKind, key: string, label: string) {
   return useUiTarget({ ref: { region: "main", view: "main.work", kind, key }, label, socket: CENTRE_SOCKET });
@@ -82,21 +78,24 @@ export function WorkDetail({ id }: { id: string }) {
   const events = live.value?.events ?? [];
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
   const shownTab = useSyncExternalStore(workTab.subscribe, workTab.get);
-  const tab = shownTab.itemId === id ? shownTab.tab : "overview";
+  const tab = shownTab.itemId === id ? shownTab.tab : "messages";
   const packages = live.value?.packages ?? [];
   const asked = packages.flatMap((p) => p.questions.filter((q) => q.applies && !q.answer)
     .map((q) => ({ question: q.question })));
   const deciding = item ? item.decisions.length + asked.length : 0;
+  // The Messages tab counts its new messages and the decisions still open.
+  const inbox = useSyncExternalStore(inboxMessages.subscribe, inboxMessages.get);
+  const waiting = (threadOf(inbox.value, id)?.new ?? 0) + deciding;
   const views: Record<WorkTab, (item: WorkItem) => ReactNode> = {
+    messages: (i) => <WorkMessages key={i.id} item={i} packages={packages} part={ui.part} />,
     overview: (i) => <Overview item={i} part={ui.part} />,
-    decisions: (i) => <Decisions item={i} packages={packages} part={ui.part} />,
     blocking: (i) => <Blocking item={i} part={ui.part} />,
     pieces: (i) => <Pieces item={i} part={ui.part} />,
     reports: () => <Reports events={events} part={ui.part} />,
   };
   const tabs: Tab[] = item ? WORK_TABS.map((name) => ({
     id: name, icon: null, view: () => views[name](item),
-    title: name === "decisions" && deciding ? t("main.work.tab.decisionsCount", { count: deciding })
+    title: name === "messages" && waiting ? t("main.work.tab.messagesCount", { count: waiting })
       : name === "blocking" && item.blockers.length ? t("main.work.tab.blockingCount", { count: item.blockers.length })
       : t(`main.work.tab.${name}`),
   })) : [];
@@ -125,7 +124,7 @@ export function WorkDetail({ id }: { id: string }) {
       {live.error && <p className="read-failure">{t("main.work.unreadable", { error: live.error })}</p>}
       {item && deciding > 0 && (
         <button type="button" className="work-decision-banner" ref={ui.part("banner")}
-                {...bindingProps(bind("work.tab.select", { itemId: id, tab: "decisions" }))}>
+                {...bindingProps(bind("work.tab.select", { itemId: id, tab: "messages" }))}>
           <strong>{t("main.work.banner.title", { count: deciding })}</strong>
           <span className="work-decision-banner-question">
             {(item.decisions[0] ?? asked[0]).question}</span>
@@ -135,7 +134,7 @@ export function WorkDetail({ id }: { id: string }) {
       {item && selected && <>
         <div ref={row} style={{ flex: "none" }}>
           <TabRow tabs={tabs} selected={selected.id} className="workflow-tabs work-tabs" words box="main.work.tabs"
-                  alert={(x) => (x.id === "decisions" && deciding > 0) || (x.id === "blocking" && item.blockers.length > 0)}
+                  alert={(x) => (x.id === "messages" && waiting > 0) || (x.id === "blocking" && item.blockers.length > 0)}
                   binding={(x) => bind("work.tab.select", { itemId: id, tab: x.id as WorkTab })} />
         </div>
         <div className="work-detail-body" role="tabpanel" aria-label={selected.title}>
@@ -225,7 +224,7 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
 }
 
 /** Every act he is needed for, the first first, each with the way to do
- *  it: a decision opens Decisions, a package opens it (his click), his
+ *  it: a decision opens Messages, a package opens it (his click), his
  *  review is the header's own buttons. Or that nobody is working on it. */
 function NeedsYou({ item, target }: { item: WorkItem; target: (el: Element | null) => void }) {
   const t = useT();
@@ -244,7 +243,7 @@ function NeedsYou({ item, target }: { item: WorkItem; target: (el: Element | nul
             {needWords(need)}{" "}
             {need.kind === "decision" && (
               <button type="button" className="file-action"
-                      {...bindingProps(bind("work.tab.select", { itemId: item.id, tab: "decisions" }))}>
+                      {...bindingProps(bind("work.tab.select", { itemId: item.id, tab: "messages" }))}>
                 {t("main.work.need.go")}</button>
             )}
             {(need.kind === "package" || need.kind === "review_package") && need.inbox && (
@@ -260,8 +259,8 @@ function NeedsYou({ item, target }: { item: WorkItem; target: (el: Element | nul
   );
 }
 
-/** What his act in a review package did, with when: on the Overview and
- *  the Decisions tab alike, so every act of his shows a change. */
+/** What his act in a review package did, with when: on the Overview, so
+ *  every act of his shows a change. */
 function PackageReviewLine({ review }: { review: WorkPackageReview }) {
   return <p className="work-package-review" data-outcome={review.outcome}>{packageReviewWords(review)}</p>;
 }
@@ -331,54 +330,6 @@ function ItemKey({ itemKey }: { itemKey: NonNullable<WorkItem["work_keys"]>[numb
               onClick={() => { setFailed(null); revokeAgentKey(itemKey.fingerprint).catch((e: Error) => setFailed(e.message)); }}>
         {t("main.thread.keyRevoke")}</button>
       {failed && <span className="read-failure"> {t("main.thread.keyFailed", { error: failed })}</span>}
-    </li>
-  );
-}
-
-/** Each open decision, answered here, then the questions of the packages
- *  sent for it, then the answered ones. */
-function Decisions({ item, packages, part }: { item: WorkItem; packages: InboxDetail[]; part: Part }) {
-  const t = useT();
-  return (
-    <>
-      {item.package_review && <PackageReviewLine review={item.package_review} />}
-      <section ref={part("decisions")}>
-        <h3 className="work-section-head">{t("main.work.decisions")}</h3>
-        {item.decisions.length === 0 && packages.length === 0
-          ? <p className="workflow-empty">{t("main.work.noDecisions")}</p>
-          : <ul className="workflow-decisions-list">
-              {item.decisions.map((d) => <Decision key={d.key} itemId={item.id} decision={d} />)}
-            </ul>}
-      </section>
-      {packages.length > 0 && (
-        <section ref={part("packages")}>
-          <h3 className="work-section-head">{t("main.work.packages")}</h3>
-          {packages.map((p) => <PackageQuestions key={p.inbox.id} detail={p} />)}
-        </section>
-      )}
-      <section ref={part("answered")}>
-        <h3 className="work-section-head">{t("main.work.answered")}</h3>
-        {item.answered.length === 0
-          ? <p className="workflow-empty">{t("main.work.noneAnswered")}</p>
-          : <ul className="work-answered">
-              {item.answered.map((a) => <Answered key={a.key} itemId={item.id} answered={a} />)}
-            </ul>}
-      </section>
-    </>
-  );
-}
-
-function Answered({ itemId, answered: a }: { itemId: string; answered: WorkAnswered }) {
-  const t = useT();
-  const ui = useWorkTarget("workDecision", `${itemId}/${a.key}`, a.question);
-  return (
-    <li className="work-answered-item" data-key={a.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-      <p className="work-answered-question">{a.question}</p>
-      <p className="work-answered-answer">
-        {t(`main.work.answeredBy.${a.where}`, { answer: a.answer })}{" "}
-        <span className="work-event-at">{formatDateTime(a.answered_at * 1000,
-          { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-      </p>
     </li>
   );
 }
@@ -534,88 +485,4 @@ function Evidence({ evidence: e }: { evidence: WorkEvidence }) {
           </>}
     </li>
   );
-}
-
-function Decision({ itemId, decision: d }: { itemId: string; decision: WorkDecision }) {
-  const t = useT();
-  const ui = useWorkTarget("workDecision", `${itemId}/${d.key}`, t("main.work.decision"));
-  return <DecisionCard question={d.question} options={d.options} recommendation={d.recommendation || null}
-                       ui={ui} dataKey={d.key} answer={(value) => answerWorkDecision(itemId, d.key, value)}
-                       more={d.package ? <OpenPackage reference={d.package} target={ui.part("package")} /> : null} />;
-}
-
-/** The decision's package, opened on his click through the server's one
- *  way to open a page package (the brain's open_package_page too). */
-function OpenPackage({ reference, target }: { reference: string; target: (el: Element | null) => void }) {
-  const t = useT();
-  const [problem, setProblem] = useState<Said | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <p className="work-decision-package">
-      <button type="button" className="file-action" disabled={busy} ref={target}
-              data-ui-command="package.open" data-ui-args={JSON.stringify({ packageId: reference })}
-              onClick={() => { setBusy(true); void openPackagePage(reference).then((why) => { setProblem(why); setBusy(false); }); }}>
-        {t("main.work.openPackage")}
-      </button>{" "}
-      <code>{reference}</code>
-      {problem && <SaidText said={problem} className="file-state" />}
-    </p>
-  );
-}
-
-/** One package sent for the item: its title and sender, Open the package
- *  (the inbox's one Open, his click), and each question it asks, answered
- *  here through the package's own record (the brain's
- *  answer_package_decision too). The words are the sender's. */
-function PackageQuestions({ detail }: { detail: InboxDetail }) {
-  const t = useT();
-  const [problem, setProblem] = useState<Said | null>(null);
-  const entry = detail.inbox;
-  return (
-    <div className="work-package" data-inbox-id={entry.id}>
-      <p className="work-decision-package">
-        <PackageMark />{" "}
-        <span>{t("main.work.packageFrom", { title: entry.title, sender: entry.sender })}</span>{" "}
-        <span className="package-progress">{inboxProgress(entry)}</span>{" "}
-        <button type="button" className="file-action" data-ui-action="domain"
-                onClick={() => void openInbox(entry.id).then(setProblem)}>
-          {t("main.work.openPackage")}</button>
-        {problem && <SaidText said={problem} className="file-state" />}
-      </p>
-      <ul className="workflow-decisions-list">
-        {detail.questions.map((q) => <PackageQuestion key={q.id} inboxId={entry.id} question={q} />)}
-      </ul>
-    </div>
-  );
-}
-
-function PackageQuestion({ inboxId, question: q }: { inboxId: string; question: InboxQuestion }) {
-  const t = useT();
-  const ui = useUiTarget({ ref: { region: "main", view: "main.work", kind: "workPackageQuestion",
-                                  key: `${inboxId}/${q.id}` }, label: q.question, socket: CENTRE_SOCKET });
-  if (!q.applies || q.answer) {
-    return (
-      <li className="work-answered-item" data-key={q.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-        <p className="work-answered-question">{q.question}</p>
-        <p className="work-answered-answer">
-          {q.answer ? t("main.work.packageAnswered", { answer: answerWords(q, t) }) : t("main.work.packageNotAsked")}
-        </p>
-      </li>
-    );
-  }
-  const recommended = q.options.find((o) => o.id === q.recommended);
-  return <DecisionCard question={q.question} options={q.options.map((o) => o.name)}
-                       recommendation={recommended ? recommended.name : null} ui={ui} dataKey={q.id}
-                       answer={(value) => {
-                         const { option, words } = optionFor(q, value);
-                         return answerInbox(inboxId, q.id, option, words);
-                       }} />;
-}
-
-/** A recorded answer in words: the option's name, or Decide later / None of these. */
-function answerWords(q: InboxQuestion, t: ReturnType<typeof useT>): string {
-  const a = q.answer!;
-  const name = a.choice || q.options.find((o) => o.id === a.answer)?.name
-    || (a.answer === "later" || a.answer === "none" ? t(`main.work.packageSpecial.${a.answer}`) : a.answer);
-  return a.note ? `${name} (${a.note})` : name;
 }

@@ -201,11 +201,15 @@ def test_a_message_to_an_agent_is_each_status_it_takes(store):
     _no_words(since, SECRET)
 
 
-def test_a_session_message_arriving_names_the_agent_only(store):
+def test_an_agent_s_message_arriving_names_the_agent_only(store, monkeypatch):
+    """Recorded by the one writer of an agent's message (round 3: no more
+    session message files)."""
+    from jarvis import server
+    monkeypatch.setattr(server, "_attend", lambda *a, **k: None)
     since = brain_activity.feed.since()["seq"]
-    sid = store.create_session_message("proj", "anvil", SECRET + " subject", SECRET)
+    item = server._record_message("agent:s-anvil", "s-anvil", "anvil", "", SECRET + " subject")
     (e,) = _events(since, "session_message")
-    assert (e["stage"], e["counterpart"], e["id"]) == ("arrived", "anvil", str(sid))
+    assert (e["stage"], e["counterpart"], e["id"]) == ("arrived", "anvil", str(item.id))
     _no_words(since, SECRET)
 
 

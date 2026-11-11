@@ -275,7 +275,7 @@ async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first
 
         tabs = await page.evaluate("""() => [...document.querySelectorAll('.right-tabs [role=tab]')]
                                          .map(t => t.getAttribute('aria-label'))""")
-        assert tabs == ["Folders", "Agents", "Queue", "Work", "Network", "Diagnostics"], tabs
+        assert tabs == ["Folders", "Agents", "Inbox", "Work", "Network", "Diagnostics"], tabs
         await _network_tab(page)
         tiles = await page.evaluate("""() => [...document.querySelectorAll('.node-tile')].map(t => ({
             id: t.dataset.node, h: t.getBoundingClientRect().height, self: t.classList.contains('self-tile')}))""")

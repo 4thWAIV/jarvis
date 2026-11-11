@@ -39,7 +39,7 @@ class Agent:
     provider: str | None
     state: str            # working, idle, needs_you, ...
     active: bool
-    needs: int            # needs-board items
+    needs: int            # new messages from it to him
     # Compatibility fields; the HTTP projection fills these from the
     # canonical worker snapshot, never from directory/file recency.
     subagents_working: int = 0
@@ -74,9 +74,8 @@ def _words(text: str) -> set[str]:
 
 
 def _no_needs() -> dict[str, int]:
-    """No needs-board counts until the server connects its own: a board
-    counts only for the agent a transcript proves wrote it
-    (server._needs_by_session)."""
+    """No counts until the server connects its own: each agent's new
+    messages to him (server._new_by_agent)."""
     return {}
 
 
@@ -100,7 +99,7 @@ def connect(snapshot: Callable[[], session_watch.Snapshot],
             needs: Callable[[], dict[str, int]] = _no_needs) -> None:
     """Where the directory reads from: the sessions running now (going by
     the agents table's names), the agents table (activation and order), and
-    each agent's needs-board items by session id."""
+    each agent's new messages to him by session id."""
     global _snapshot, _rows, _needs
     _snapshot, _rows, _needs = snapshot, rows, needs
 
@@ -111,8 +110,7 @@ def _entries(with_needs: bool = True
     its order (busy first, then most recently messaged), filled in from the
     running conversation; then any running conversation the table has not
     caught up with yet (it syncs about once a second). Without
-    `with_needs` every count is 0: proving who wrote a board reads the
-    directory itself (server._needs_by_session)."""
+    `with_needs` every count is 0: a name lookup needs no counts."""
     sessions = {s.session_id: s for s in _snapshot().sessions
                 if s.state != session_watch.GONE}
     needs = _needs() if with_needs else {}

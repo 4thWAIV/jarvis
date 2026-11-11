@@ -5,7 +5,6 @@ JARVIS saying once when communications go down and once when they are back."""
 
 import asyncio
 import importlib
-import os
 import time
 from types import SimpleNamespace
 
@@ -59,15 +58,8 @@ def live_beat(name, every=5.0, ok_ago=1.0, started_ago=100.0):
     return b
 
 
-def healthy_beats():
-    live_beat(sd.NEEDS_LOOP)
-    live_beat(sd.SESSION_MESSAGES_LOOP)
-    return dict(sd.beats)
-
-
-def comms(w=None, messages=(), beats=None, waiting=0, started_ago=600.0, queued=()):
+def comms(w=None, messages=(), started_ago=600.0, queued=()):
     return sd.communications(w if w is not None else watcher(), list(messages),
-                             healthy_beats() if beats is None else beats, waiting,
                              NOW, NOW - started_ago, list(queued))
 
 
@@ -215,7 +207,7 @@ def test_a_message_held_in_the_queue_says_what_jarvis_takes_its_session_for():
     assert c.detail.endswith("for its turn; JARVIS sees it as working")
 
 
-# ── messages from sessions, the needs board, the loops ────────────────────
+# ── the server's loops ─────────────────────────────────────────────────────
 
 def _loop(b):
     """A loop's state and its English."""
@@ -235,26 +227,6 @@ def test_a_loop_s_states():
     b = live_beat("e", ok_ago=3)
     b.failed("disk full")
     assert _loop(b) == (sd.DEGRADED, "The last look failed: disk full")
-
-
-def test_message_files_left_waiting_are_degraded(tmp_path):
-    from jarvis import session_messages
-    folder = tmp_path / "messages"
-    (folder / "proj").mkdir(parents=True)
-    old, new = folder / "proj" / "a.md", folder / "proj" / "b.md"
-    old.write_text("# hi\nthere")
-    new.write_text("# hi\nthere")
-    os.utime(old, (NOW - 120, NOW - 120))
-    os.utime(new, (NOW - 5, NOW - 5))
-    assert session_messages.waiting(folder, NOW, sd.FILE_WAITING_SEC) == 1
-    assert session_messages.waiting(tmp_path / "none", NOW, sd.FILE_WAITING_SEC) == 0
-    c = sd.incoming_check(live_beat(sd.SESSION_MESSAGES_LOOP), 1, NOW)
-    assert c.state == sd.DEGRADED and c.detail == "1 message waiting over 60 s to be picked up"
-
-
-def test_incoming_is_down_when_its_loop_stops():
-    b = live_beat(sd.SESSION_MESSAGES_LOOP, every=5.0, ok_ago=300)
-    assert sd.incoming_check(b, 3, NOW).state == sd.DOWN
 
 
 def test_the_server_s_loops_beat(monkeypatch):
@@ -287,7 +259,8 @@ def test_the_server_s_loops_beat(monkeypatch):
 def test_communications_working_are_ok():
     s = comms(messages=[message("answered")])
     assert s.state == sd.OK and s.summary.startswith("Watching 1 session")
-    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued", "incoming", "needs"]
+    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued"], \
+        "agents' messages to him come by one signed route: no loop to judge (round 3)"
     assert s.messages[0]["outcome"] == "reached"
 
 
@@ -296,12 +269,7 @@ def test_communications_working_are_ok():
     lambda: comms(w=watcher(last_poll_ok_at=NOW - 120)),
     lambda: comms(w=watcher(poll_failures=5, last_poll_error="boom")),
     lambda: comms(messages=[message("undelivered", "s1"), message("undelivered", "s2")]),
-    lambda: comms(beats={sd.NEEDS_LOOP: live_beat(sd.NEEDS_LOOP),
-                         sd.SESSION_MESSAGES_LOOP: live_beat(sd.SESSION_MESSAGES_LOOP, ok_ago=600)}),
-    lambda: comms(beats={sd.SESSION_MESSAGES_LOOP: live_beat(sd.SESSION_MESSAGES_LOOP),
-                         sd.NEEDS_LOOP: live_beat(sd.NEEDS_LOOP, ok_ago=600)}),
-], ids=["watcher-ended", "watcher-stopped-polling", "watcher-failing", "messages-lost",
-        "incoming-stopped", "needs-board-stopped"])
+], ids=["watcher-ended", "watcher-stopped-polling", "watcher-failing", "messages-lost"])
 def test_every_way_communications_are_down(make):
     s = make()
     assert s.state == sd.DOWN
@@ -310,7 +278,7 @@ def test_every_way_communications_are_down(make):
 
 
 def test_communications_starting_are_unknown_not_down():
-    s = comms(w=watcher(last_poll_ok_at=None), beats={}, started_ago=5)
+    s = comms(w=watcher(last_poll_ok_at=None), started_ago=5)
     assert s.state == sd.UNKNOWN and s.summary == "Starting"
 
 

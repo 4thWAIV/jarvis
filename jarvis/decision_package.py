@@ -8,6 +8,7 @@ same command's old name.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import copy
 import difflib
@@ -22,13 +23,15 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import data_paths
 
 LIVE = "https://127.0.0.1:8340"
-INBOX_ROUTE = "/api/packages/inbox"
+# Every package an agent sends is a message carrying it (messages_api.py).
+MESSAGE_ROUTE = "/api/messages"
 BUILDER = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "new_deck.py"
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
@@ -458,6 +461,7 @@ class Delivered:
     package: dict          # the package as JARVIS describes it (packages_api.describe)
     unpacked: bool         # False: the same bytes were already open in the inbox
     inbox: dict            # its row in the package inbox (package_inbox_api.entry_json)
+    message: dict = dataclasses.field(default_factory=dict)  # the message carrying it
 
 
 def _context(url: str) -> ssl.SSLContext | None:
@@ -495,23 +499,32 @@ def post(url: str, token: str, body: dict | bytes, timeout: float = 60,
         raise OSError(f"{url} could not be reached: {e.reason}") from None
 
 
-def deliver(archive: Path, base: str, token: str, project: str = "", session: str = "",
-            workflow: str = "", work: str = "", source: str = "",
+def says_of(title: str, kind: str = "package") -> str:
+    """What the message carrying a package says when its sender gives no
+    words of its own: its kind and title."""
+    return f"{kind[:1].upper()}{kind[1:]}: {' '.join(str(title).split())}"[:200]
+
+
+def deliver(archive: Path, base: str, says: str, project: str = "", workflow: str = "",
+            work: str = "", source: str = "",
             signer: tuple[Path, str] | None = None) -> Delivered:
-    """Send the zip to the package inbox of the JARVIS at `base`: checked,
-    unpacked and recorded there, never shown (package_inbox.py). `session`
-    is who the answers go back to, once JARVIS has proven it ran the
-    command (its transcript shows make_package run on `source`, as it was
-    given); `workflow` and `work` link it to the workflow or work item it
-    is for."""
+    """Send the zip to the JARVIS at `base` as a message carrying it (POST
+    /api/messages, signed by the agent's key, `signer`): checked, unpacked
+    and recorded in his package inbox there, never shown, and the message
+    on the Work item `work` (else his Inbox) saying `says`. His answers go
+    to the session the signature proves; `workflow` links it to the
+    workflow it is for, `source` is what make_package was given (a
+    subagent that ran it on that is named beside its parent)."""
     query = urllib.parse.urlencode({k: v for k, v in (
-        ("project", project), ("session", session), ("source", source),
-        ("workflow", workflow), ("work", work)) if v})
-    url = base.rstrip("/") + INBOX_ROUTE + (f"?{query}" if query else "")
-    answer = post(url, token, archive.read_bytes(), signer=signer)
+        ("work", work), ("project", project), ("workflow", workflow), ("source", source))
+        if v})
+    url = base.rstrip("/") + MESSAGE_ROUTE + (f"?{query}" if query else "")
+    body = {"says": says, "package": base64.b64encode(archive.read_bytes()).decode("ascii")}
+    answer = post(url, "", body, signer=signer)
     if "package" not in answer or "inbox" not in answer:
         raise OSError(f"JARVIS did not take it: {answer.get('error') or answer}")
-    return Delivered(answer["package"], bool(answer.get("arrived")), answer["inbox"])
+    return Delivered(answer["package"], bool(answer.get("arrived")), answer["inbox"],
+                     answer.get("message") or {})
 
 
 # -- the command -----------------------------------------------------------------------

@@ -8,9 +8,12 @@ below them. On a reading view (any centre view but Conversation) each is a
 small chip in the tab row that reserves no height and covers nothing; the
 updates list opens only when the chip is clicked, as a dropdown closed by
 Escape, a click outside or the chip, and is closed after any view change;
-the microphone's corner box covers nothing there either.
+the microphone's corner box covers nothing there either. A message to him is
+never an update line of its own: every new one is counted in one line whose
+Open goes to the Inbox.
 
-Headless Chromium on the built page, with /api/attention answered by the test.
+Headless Chromium on the built page, with /api/attention (and /api/messages)
+answered by the test.
 """
 
 import json
@@ -221,35 +224,47 @@ async def test_on_a_reading_view_the_notices_are_chips_that_cover_nothing(page_p
         await browser.close()
 
 
+def _said(id, says, about=None):
+    """A message to him as /api/messages reads it."""
+    return {"id": id, "at": 1.0, "kind": "message_in", "says": says, "about": about, "carries": None,
+            "state": "new", "state_at": 1.0, "message": True,
+            "counterpart": {"kind": "agent", "ref": "s-1"}, "source": {"kind": "signed", "id": str(id)},
+            "from": {"sender": "agent:s-1", "name": "Designer", "proof": "agent_signature", "subagent": None}}
+
+
+async def _messages(route):
+    """Two new messages on one Work item and one on none."""
+    general = route.request.url.split("?")[0].endswith("/general")
+    await route.fulfill(status=200, content_type="application/json", body=json.dumps(
+        {"messages": [_said(149, "CI is green.")], "new": 1, "more": False} if general else
+        {"items": [{"work": "work-1", "title": "Speech migration", "new": 2, "total": 2,
+                    "latest_at": 1.0, "first_new": _said(147, "Two pieces are open.", "work-1")}],
+         "new": 2}))
+
+
 @pytest.mark.asyncio(loop_scope="session")
-async def test_a_session_message_has_read_reply_and_seen_and_read_leaves_it_until_heard(
+async def test_messages_are_one_line_with_open_to_the_inbox_and_only_jarvis_s_facts_are_updates(
         page_playwright, page_url):
-    record = _Attention([_item(147, "session_message", "arrived", message=147,
-                               agent="Designer")])
-    posted = []
-
-    async def act(route):
-        posted.append(route.request.url.rsplit("/", 1)[1])
-        reply = route.request.url.endswith("/reply")
-        await route.fulfill(status=200, content_type="application/json", body=json.dumps(
-            {"capture": 7, "to": "Designer"} if reply else {"id": 147, "reading": True}))
-
+    """A message to him (here a session's message on record, number 147) is
+    never an update line of its own: every new message is counted in one
+    line, "3 new messages", whose Open goes to the Inbox; only JARVIS's own
+    facts are counted and listed as updates."""
+    record = _Attention([_item(147, "session_message", "arrived", message=147, agent="Designer"),
+                         _item(148, "package", "arrived", agent="Designer", package="Deck"),
+                         _item(150, "run", "succeeded", project="speech")])
     async with page_playwright as p:
         browser, page = await _open(p, page_url, _Team(_envelope),
-                                    routes=record.routes() + [("**/api/messages/*/*", act)])
+                                    routes=record.routes() + [("**/api/messages/**", _messages)])
         notice = page.locator("#updates-notice")
+        line = notice.locator(".updates-messages")
+        await async_api.expect(line).to_contain_text("3 new messages")
+        await async_api.expect(notice).to_contain_text("1 update waiting")
         await notice.get_by_role("button", name="Review updates").click()
-        row = notice.locator(".updates-list li[data-message-id='147']")
-        await async_api.expect(row).to_contain_text("Designer sent you a message")
-        await row.get_by_role("button", name="Read").click()
-        await async_api.expect(row).to_contain_text("Reading it to you now")
-        assert posted == ["read"]
-        # Read never marks it seen: the entry stays until it has been heard.
-        assert record.posts == []
-        await async_api.expect(row).to_have_count(1)
-        await row.get_by_role("button", name="Reply").click()
-        await async_api.expect(row).to_contain_text("Your reply to Designer")
-        assert posted == ["read", "reply"]
-        await row.get_by_role("button", name="Seen").click()
-        assert await until_async(lambda: ("seen", [147]) in record.posts), record.posts
+        await async_api.expect(notice.locator(".updates-list li")).to_have_count(1)
+        await async_api.expect(notice.locator(".updates-list li")).to_contain_text("The work in speech is done")
+        await line.get_by_role("button", name="Open").click()
+        assert await page.evaluate(
+            "() => document.querySelector('.right-tabs [aria-selected=true]').title") == "Inbox"
+        await async_api.expect(page.locator(".inbox-work-row")).to_contain_text("2 new")
+        await async_api.expect(page.locator(".inbox-general .message-says")).to_have_text("CI is green.")
         await browser.close()
