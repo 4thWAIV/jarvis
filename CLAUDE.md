@@ -1527,9 +1527,33 @@ A document store, a typed graph, a keyword index and a vector index in a
 process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
 which imports nothing from `server.py`); the design is
 `docs/planning/work-package-bundles/design.md` and the build order
-`build-plan.md` beside it. It holds nothing that cannot be rebuilt from
-JARVIS's records, notes and folders, and `python -m jarvis.knowledge rebuild`
-drops it. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
+`build-plan.md` beside it. It is moving to Tim's UDS design in three rounds
+(`docs/planning/knowledge-engine/plan-uds.md`; round 1, engine-core, is in):
+an item lives at one path (`knowledge/paths.py`: its type is the suffix, a
+name with none is a folder's) and the path is the key to its streams
+(`knowledge/items.py`): a document of any shape, every field indexed
+(`_kind` `item`, its system fields `kinds.ITEM_SYSTEM`), and a content
+stream (text, sections, the file's reference and hash; the bytes stay in
+their folder), written in one commit. Every write is a version tagged with
+who (`by`: person, agent, model), what kind of change and its summary, kept
+through compaction (`store.HISTORY_FAMILIES`) with `get` at a version or a
+time, `history` and `diff`; a delete is a version, only forget erases.
+Transactions of several items take conditions (`expect_version`, `absent`)
+checked under the store's commit lock, which every write takes
+(`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and
+`durable: full` empties the drive's cache before the answer. Each item
+transaction is one change-feed record keyed by its LSN. Lists by path
+prefix or parent, ordered by path or any field, with a cursor; counts and
+grouped counts; links are hierarchy (from paths), reference (a field
+holding an item path, the field path its kind) and derived (with model
+and time), each shown only while both ends are items. The routes are
+`/v1/items/*`; the Python interface is `knowledge/uds.py` (`EngineUDS`,
+`in_process` for tests; `tests/test_uds_acceptance.py` holds the ten
+acceptance checks, those needing vectors, full text, rights or proposals
+skipped for round 2). Legacy documents of today's ingest (keys that are not
+paths) keep their kinds' schemas until round 2. `python -m jarvis.knowledge
+rebuild` builds indexes, vectors and cards again and never drops a
+document; a snapshot is taken before it and every day. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
 it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
 through `knowledge_client.Supervisor` (loopback only, its own token,
 `knowledge-address.json`) and waits up to `READY_WAIT_SEC` (30 s), off the

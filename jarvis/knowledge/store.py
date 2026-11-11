@@ -501,7 +501,7 @@ class Store:
         """Flush, then hard-link the live segments and copy the manifest
         into snap/<checkpoint>/; keep the newest `SNAPSHOTS_KEPT`."""
         self.flush()
-        with self._lock:
+        with lanes.foreground(), self._lock:
             current = self.manifest
             target = self.snap_dir / str(current.checkpoint_lsn)
             if not target.exists():
