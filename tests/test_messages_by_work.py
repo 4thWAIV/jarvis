@@ -360,9 +360,10 @@ def test_heard_in_full_a_message_is_read(wired, monkeypatch):
     async def heard(utt, timeout=None):
         return True
     monkeypatch.setattr(server, "speech", SimpleNamespace(wait_for=heard))
-    asyncio.run(server._seen_when_heard([], SimpleNamespace(chunks=[]), m["id"]))
+    reads = [(server._MESSAGE_READ, str(m["id"]), None)]
+    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[])))
     assert cl.get(m["id"]).state == "new", "nothing said is nothing heard"
-    asyncio.run(server._seen_when_heard([], SimpleNamespace(chunks=[1]), m["id"]))
+    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[1])))
     assert cl.get(m["id"]).state == "read"
 
 

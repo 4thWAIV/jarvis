@@ -14,7 +14,9 @@
  * Messages to him are not listed one by one: one line says how many are
  * new ("3 new messages": on Work items, on none, and people's waiting
  * unread; messagesToHim.ts and queue.ts) with Open, which goes to the Inbox
- * (`right.tab.select`). Only JARVIS's own facts (a run finished,
+ * (`right.tab.select`), and the minimise mark (`updates.messages.shown`,
+ * as the Inbox's): minimised, it says only "3 new" beside the mark, and
+ * this browser remembers it. Only JARVIS's own facts (a run finished,
  * communications down) are counted and listed as updates; an update that
  * is a message (an agent's answer, a session's message, a decision, a
  * package, a person's message) is that line's.
@@ -42,7 +44,8 @@ import { inboxMessages, newMessages } from "./messagesToHim";
 import { useT } from "./locale";
 import { queue } from "./queue";
 import { waiting, type QueueState } from "./queueStore";
-import { createStore } from "./store";
+import { MinimiseToggle } from "./MessageCard";
+import { createStore, rememberedFlag } from "./store";
 import { bind, bindingProps, mainView } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
 import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
@@ -65,6 +68,17 @@ const unreadPeople = (state: QueueState) => waiting(state).filter((i) => i.work_
 const messagesNow = () => newMessages(inboxMessages.get().value) + unreadPeople(queue.get());
 
 const anyPending = () => factsOf(attention.get().value?.items).length > 0 || messagesNow() > 0;
+
+/** Whether the new messages line is minimised; kept in this browser. */
+const messagesMinimised = rememberedFlag("jarvis.updates.messagesMinimised");
+
+registerCommand("updates.messages.shown", {
+  availability: () => messagesNow() > 0 ? { available: true } : { available: false, reason: "no-entity" },
+  execute({ shown }) {
+    messagesMinimised.set(!shown);
+    return { status: "completed", effects: [] };
+  },
+});
 
 registerCommand("updates.review", {
   availability: () => anyPending() ? { available: true } : { available: false, reason: "no-entity" },
@@ -89,6 +103,7 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
   const t = useT();
   const live = useSyncExternalStore(attention.subscribe, attention.get);
   const open = useSyncExternalStore(reviewOpen.subscribe, reviewOpen.get);
+  const minimised = useSyncExternalStore(messagesMinimised.subscribe, messagesMinimised.get);
   const inbox = useSyncExternalStore(inboxMessages.subscribe, inboxMessages.get).value;
   const people = useSyncExternalStore(queue.subscribe, queue.get);
   const now = live.value;
@@ -128,10 +143,16 @@ export function UpdatesNotice({ compact = false }: { compact?: boolean }) {
 
   if (!shown) return null;
   const messages = fresh > 0 && (
-    <p className="updates-messages" ref={ui.part("messages")}>
-      <span>{t("main.updates.messages", { count: fresh })}</span>
-      <button type="button" className="settings-btn primary" ref={ui.part("openInbox")}
-              {...bindingProps(bind("right.tab.select", { tab: "queue" }))}>{t("main.updates.openInbox")}</button>
+    <p className={`updates-messages${minimised ? " minimised" : ""}`} ref={ui.part("messages")}>
+      <MinimiseToggle shown={!minimised} hideLabel={t("main.updates.minimise")}
+                      showLabel={t("main.updates.restore")} part={ui.part("minimise")}
+                      binding={bindingProps(bind("updates.messages.shown", { shown: minimised }))} />
+      <span>{minimised ? t("main.updates.messagesShort", { count: fresh })
+                       : t("main.updates.messages", { count: fresh })}</span>
+      {!minimised && (
+        <button type="button" className="settings-btn primary" ref={ui.part("openInbox")}
+                {...bindingProps(bind("right.tab.select", { tab: "queue" }))}>{t("main.updates.openInbox")}</button>
+      )}
     </p>
   );
   const markAll = pending.length > 0 && (

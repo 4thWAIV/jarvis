@@ -52,6 +52,10 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.inbox.byWork": "Trabajos",
   "right.inbox.general": "Mensajes",
   "right.inbox.new": { one: "{count} nuevo", other: "{count} nuevos" },
+  "right.inbox.fromAgents": "De los agentes",
+  "right.inbox.hide": "Ocultar mensajes",
+  "right.inbox.show": "Mostrar mensajes",
+  "right.inbox.readCount": "Leídos ({count})",
   // En qué punto está un paquete que lleva un mensaje.
   "right.packages.answered": "{answered} de {total} respondidas",
   "right.packages.state.arrived": "Sin abrir",

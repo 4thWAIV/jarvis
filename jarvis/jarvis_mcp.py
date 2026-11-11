@@ -177,9 +177,11 @@ TOOL_SPECS = [
         "description": (
             "His messages as one kind of thing, each on its Work item first: with no "
             "arguments, each Work item with messages (how many are new, its first new one) "
-            "and the messages that belong to no item, newest first; with work, that item's "
-            "whole conversation, oldest first, his replies in it; with general, only the "
-            "messages that belong to no item. Each message has from, about (its Work item), "
+            "and the new messages that belong to no item, newest first, with how many are "
+            "read; with work, that item's whole conversation, oldest first, his replies in "
+            "it; with general, only the new messages that belong to no item; with read, the "
+            "ones that belong to no item he has read or answered and is not done with (the "
+            "Inbox's Read section). Each message has from, about (its Work item), "
             "says, carries (a package inbox row) and state (new, read, answered, done). "
             "When he asks what is new, give new: every new message in the Inbox's order "
             "(each Work item with new messages, then the general ones), which puts him on "
@@ -191,7 +193,10 @@ TOOL_SPECS = [
                     "description": "\"What's new?\": every new message, in the Inbox's order."},
             "work": {"type": "string", "description": "A Work item's id: its conversation."},
             "general": {"type": "boolean",
-                        "description": "Only the messages that belong to no item."},
+                        "description": "Only the new messages that belong to no item."},
+            "read": {"type": "boolean",
+                     "description": "The Read section: messages that belong to no item, "
+                                    "read or answered and not done."},
             "before": {"type": "integer",
                        "description": "Page back: messages before this id."},
             "page": {"type": "integer", "minimum": 1}}},

@@ -1062,6 +1062,9 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.readFailed": "No se pudo leer ese mensaje.",
   "main.updates.messages": { one: "{count} mensaje nuevo", other: "{count} mensajes nuevos" },
   "main.updates.openInbox": "Abrir",
+  "main.updates.messagesShort": { one: "{count} nuevo", other: "{count} nuevos" },
+  "main.updates.minimise": "Ocultar mensajes",
+  "main.updates.restore": "Mostrar mensajes",
   // Un mensaje para usted (MessageCard.tsx), en la pestaña Mensajes de un trabajo o en Recibidos.
   "main.messages.you": "Usted",
   "main.messages.subagent": "{name} (de {parent})",

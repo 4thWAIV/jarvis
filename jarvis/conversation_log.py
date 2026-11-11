@@ -707,17 +707,38 @@ def _general(row: dict) -> bool:
             and row["counterpart_kind"] != str(Counterpart.PERSON))
 
 
-def general(before: int | None = None, limit: int = PAGE) -> list[ConversationItem]:
-    """The messages to him that belong to no Work item, newest first. A
-    person's messages stay in their own threads (the Queue), so are not here."""
-    return list(reversed(_newest(_general, _STATED, before, limit, narrow=False)))
+# The states the Inbox's Read section lists: read, and answered (his reply
+# went) but not done.
+READ_STATES = (MessageState.READ, MessageState.ANSWERED)
+
+
+def general(before: int | None = None, limit: int = PAGE,
+            states: tuple[MessageState, ...] | None = None) -> list[ConversationItem]:
+    """The messages to him that belong to no Work item, newest first; only
+    those in `states` when given. A person's messages stay in their own
+    threads (the Queue), so are not here."""
+    if states is None:
+        return list(reversed(_newest(_general, _STATED, before, limit, narrow=False)))
+    wanted = {str(MessageState(st)) for st in states}
+    return list(reversed(_newest(lambda r: _general(r) and r["state"] in wanted,
+                                 [["state", "in", sorted(wanted)]], before, limit, narrow=False)))
 
 
 def new_general() -> int:
     """How many messages that belong to no Work item are new (a person's
     are counted in their own threads, so not here)."""
-    new = str(MessageState.NEW)
-    return len(_found(lambda r: _general(r) and r["state"] == new, [["state", "=", new]]))
+    return _count_general((MessageState.NEW,))
+
+
+def read_general() -> int:
+    """How many messages that belong to no Work item are read or answered
+    and not done: what the Inbox's Read section holds."""
+    return _count_general(READ_STATES)
+
+
+def _count_general(states: tuple[MessageState, ...]) -> int:
+    wanted = sorted({str(MessageState(st)) for st in states})
+    return len(_found(lambda r: _general(r) and r["state"] in wanted, [["state", "in", wanted]]))
 
 
 def item_for_message(message_id: int) -> ConversationItem | None:

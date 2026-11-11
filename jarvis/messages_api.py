@@ -213,11 +213,15 @@ def work_conversation(work_id: str, before: Optional[int] = None) -> dict:
             "more": bool(items) and len(items) >= conversation_log.PAGE}
 
 
-def general_list(before: Optional[int] = None) -> dict:
-    """The messages that belong to no Work item, newest first."""
-    items = conversation_log.general(before)
+def general_list(before: Optional[int] = None, read: bool = False) -> dict:
+    """The messages that belong to no Work item, newest first: the new
+    ones, or with `read` the ones read or answered and not done (the
+    Inbox's Read section). Done ones are in neither. Both counts with each."""
+    states = conversation_log.READ_STATES if read else (conversation_log.MessageState.NEW,)
+    items = conversation_log.general(before, states=states)
     return {"messages": [message_json(i) for i in items],
             "new": conversation_log.new_general(),
+            "read": conversation_log.read_general(),
             "more": len(items) >= conversation_log.PAGE}
 
 
@@ -316,8 +320,9 @@ def mount(app: FastAPI, calls: Calls) -> None:
     async def one_work(work_id: str, before: str = ""):
         return await asyncio.to_thread(work_conversation, work_id, _before(before))
 
-    async def no_work(before: str = ""):
-        return await asyncio.to_thread(general_list, _before(before))
+    async def no_work(before: str = "", read: str = ""):
+        return await asyncio.to_thread(general_list, _before(before),
+                                       read.lower() in ("1", "true", "yes"))
 
     async def mark(item_id: int, request: Request):
         try:

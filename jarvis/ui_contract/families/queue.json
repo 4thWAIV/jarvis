@@ -6,6 +6,12 @@
     {"id": "queue.history", "label": "Show or hide the Queue's dismissed items; showing reads their first page",
      "view": "right.queue", "args": {"shown": {"type": "boolean"}}, "required": ["shown"],
      "actors": ["human", "brain"], "effects": [{"effect": "list.paged", "when": {"shown": true}}]},
+    {"id": "inbox.messages.shown", "label": "Show or hide the Inbox's messages from agents (hidden, only their heading stays)",
+     "view": "right.queue", "args": {"shown": {"type": "boolean"}}, "required": ["shown"],
+     "actors": ["human", "brain"], "effects": [{"effect": "list.filtered"}]},
+    {"id": "inbox.read.shown", "label": "Show or hide the Inbox's Read section: messages read or answered and not done; showing reads them",
+     "view": "right.queue", "args": {"shown": {"type": "boolean"}}, "required": ["shown"],
+     "actors": ["human", "brain"], "effects": [{"effect": "list.paged", "when": {"shown": true}}]},
     {"id": "queue.history.more", "label": "Read the next page of the Queue's dismissed items",
      "view": "right.queue", "args": {}, "required": [], "actors": ["human", "brain"],
      "effects": [{"effect": "list.paged"}]},
@@ -30,7 +36,7 @@
      "actors": ["human", "brain"], "effects": []}
   ],
   "kinds": [
-    {"kind": "queuePanel", "entity": null, "label": "Inbox", "parts": ["workMessages", "general", "waiting", "active", "history", "more", "new"],
+    {"kind": "queuePanel", "entity": null, "label": "Inbox", "parts": ["hideMessages", "workMessages", "general", "read", "waiting", "active", "history", "more", "new"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
     {"kind": "inboxWork", "entity": "workItem", "label": "A Work item with new messages, in the Inbox: opens its Messages tab",
      "parts": ["row", "count"],

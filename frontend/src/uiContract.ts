@@ -1264,6 +1264,25 @@ export const UI_CONTRACT = {
       "family": "settings"
     },
     {
+      "id": "updates.messages.shown",
+      "label": "Minimise or bring back Updates waiting's new messages line (minimised, only its count stays)",
+      "view": "main.notice",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "settings"
+    },
+    {
       "id": "updates.review",
       "label": "Open or close the list of updates waiting (Review updates), at the top of the centre",
       "view": "main.notice",
@@ -1363,6 +1382,55 @@ export const UI_CONTRACT = {
     {
       "id": "queue.history",
       "label": "Show or hide the Queue's dismissed items; showing reads their first page",
+      "view": "right.queue",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged",
+          "when": {
+            "shown": true
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "inbox.messages.shown",
+      "label": "Show or hide the Inbox's messages from agents (hidden, only their heading stays)",
+      "view": "right.queue",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "inbox.read.shown",
+      "label": "Show or hide the Inbox's Read section: messages read or answered and not done; showing reads them",
       "view": "right.queue",
       "args": {
         "shown": {
@@ -3239,6 +3307,7 @@ export const UI_CONTRACT = {
       "label": "Updates waiting: how many new messages with Open (the Inbox), JARVIS's own updates' count, Review updates, Mark all seen, Hold spoken updates and the list",
       "parts": [
         "messages",
+        "minimise",
         "openInbox",
         "text",
         "review",
@@ -3318,8 +3387,10 @@ export const UI_CONTRACT = {
       "entity": null,
       "label": "Inbox",
       "parts": [
+        "hideMessages",
         "workMessages",
         "general",
+        "read",
         "waiting",
         "active",
         "history",
@@ -4970,6 +5041,8 @@ export interface CommandArgs {
   "folders.panel.search": { text?: string; };
   "folders.panel.show": { view: "projects" | "folders"; };
   "folders.search": { text?: string; };
+  "inbox.messages.shown": { shown: boolean; };
+  "inbox.read.shown": { shown: boolean; };
   "knowledge.close": { };
   "knowledge.embedder.install": { };
   "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
@@ -5015,6 +5088,7 @@ export interface CommandArgs {
   "thread.close": { };
   "thread.earlier": { };
   "thread.open": { sessionId: string; };
+  "updates.messages.shown": { shown: boolean; };
   "updates.review": { open: boolean; };
   "usage.close": { };
   "usage.open": { provider: string; };
