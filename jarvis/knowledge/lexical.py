@@ -1,4 +1,8 @@
-"""The keyword index: BM25 over chunk text (design section 7.9).
+"""The keyword index: BM25 over chunk text (design section 7.9), and over
+items: a file's content (its sections) and a record's own words (its text
+fields, bounded: `record_text`, for the `RECORD_TYPES` that hold people's
+words), so a record is found by its words as it is, with no chunk made of
+it (UDS round 3).
 
 Terms come from `spoken_words.folded_words`, the one splitter, so accents
 fold and Spanish words are words, less `jarvis_memory`'s stop words and the
@@ -77,12 +81,48 @@ def content_terms(content: dict) -> Counter:
     return found
 
 
+RECORD_FIELD_WORDS = 2000     # characters of one text field a record is found by
+RECORD_WORDS = 8000           # characters of all its text fields together
+# The record types that hold people's words (UDS round 3's document types):
+# found by them as they are. Other records (settings, attention, usage...)
+# and an item of any other type are found by their content only.
+RECORD_TYPES = frozenset({"turn", "message", "run", "workflow", "work", "package", "project", "thread",
+                          "langdoc"})
+
+
+def record_text(doc: dict, keep=None) -> str:
+    """The words a record (an item without content) is found by: each
+    text field holding words (a space in it), the first
+    `RECORD_FIELD_WORDS` characters of each, `RECORD_WORDS` in all, in
+    field order. Bounded, so a record field of 100 KB costs a write what
+    2,000 characters cost. `keep(field)` leaves out fields a reader may
+    not see."""
+    from jarvis.knowledge.kinds import flatten
+    out: list[str] = []
+    left = RECORD_WORDS
+    for path, value in flatten({k: v for k, v in doc.items() if not k.startswith("_")}):
+        if left <= 0:
+            break
+        if not isinstance(value, str) or " " not in value or (keep is not None and not keep(path)):
+            continue
+        piece = value[:min(RECORD_FIELD_WORDS, left)]
+        out.append(piece)
+        left -= len(piece)
+    return "\n".join(out)
+
+
 def _item_terms(doc: dict, content: Optional[bytes]) -> Optional[Counter]:
-    """An item's terms when it has content (its content stream, written in
-    the same transaction as its document), else None."""
-    if doc.get("_kind") != ITEM or not doc.get("_content") or content is None:
+    """An item's terms: its content's (the content stream, written in the
+    same transaction as its document) when it has content, else its
+    record words (`record_text`); None when it has neither."""
+    if doc.get("_kind") != ITEM:
         return None
-    return content_terms(json.loads(content))
+    if doc.get("_content"):
+        return None if content is None else content_terms(json.loads(content))
+    if doc.get("_type") not in RECORD_TYPES:
+        return None
+    found = Counter(terms(record_text(doc)))
+    return found or None
 
 
 def _terms_of(doc: dict, content: Optional[bytes]) -> Optional[Counter]:

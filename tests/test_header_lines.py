@@ -575,11 +575,6 @@ EXEMPT = {
         "`detail` is the engine's own wording about a request, and every route "
         "and tool answers it as a refusal, never as a line JARVIS speaks as its "
         "own. Driven by tests/test_knowledge_api.py"),
-    "knowledge_ingest.replace_authored": (
-        "it builds engine route paths from a topic's own key (`topic:<slug>`, "
-        "a slug knowledge_links checks against [a-z0-9-]) and reads edges' "
-        "kinds and keys back from the engine; nothing of anyone's words is "
-        "printed or spoken. Driven by tests/test_knowledge_links.py"),
     "knowledge_links.change_topic": (
         "it changes the owner's own topic front matter; the only text it builds "
         "is a refusal naming the fixed status words and alias classes, never a "
@@ -588,12 +583,6 @@ EXEMPT = {
         "it returns a topic's status only when it is one of the fixed STATUSES "
         "words, else `unknown`, read from the owner's own topic file. Driven by "
         "tests/test_knowledge_links.py"),
-    "knowledge_ingest.run": (
-        "the foreign text it reads (an agent's run summary and result, a "
-        "session's workflow events, an agent's conversation items) goes only "
-        "into chunk documents marked untrusted; the labels it builds carry "
-        "only a run's or workflow's id and a date. Driven by "
-        "tests/test_knowledge_ingest.py"),
     "knowledge_client._schedule_restart": (
         "the `reason` it logs and keeps is the supervisor's own wording around "
         "the engine child's exit code or footprint, numbers from its own "

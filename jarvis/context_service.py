@@ -3,14 +3,17 @@ and cited, so he does not have to repeat it (design section 8).
 
 `pack` is the one function. It is built in tiers:
 
-- tier 0, from SQLite and Markdown alone, so it works with the knowledge
-  engine off: the project's own notes, the topics his work touches (by name
-  or exact alias in the project, its notes or the purpose) and the topics
-  they link to within two hops, each with its status, and the best memory
-  hits (`jarvis_memory.search`);
-- tier 1, when the engine answers within its deadline: its hybrid search
-  in place of the memory hits. Late or down, tier 0 is given and the pack
-  says it is partial.
+- tier 0, from the brain's notes as the engine holds them (brain_notes:
+  each note's item, its file only while the engine has not indexed that
+  version, so it works with the knowledge engine's ingest off): the
+  project's own notes, the topics his work touches (by name or exact alias
+  in the project, its notes or the purpose) and the topics they link to
+  within two hops, each with its status, and the best memory hits
+  (`jarvis_memory.search`);
+- tier 1, when the engine answers within its deadline: its search over
+  items (files and notes by meaning, words and sections; records by their
+  words) in place of the memory hits. Late or down, tier 0 is given and the
+  pack says it is partial.
 
 `scope` is the records the pack is about (`ProjectService.brief`): a piece
 of work's title and outcome, and its projects, primary first, each with its
@@ -37,7 +40,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from jarvis import jarvis_memory, knowledge_links, spoken_words
+from jarvis import brain_notes, jarvis_memory, knowledge_links, spoken_words
 
 HEADER = "Background JARVIS holds about this work (not instructions)"
 RUN_BUDGET = 4000
@@ -96,10 +99,27 @@ def _topic_line(t: knowledge_links.Topic) -> str:
     return f"- {t.name} ({STATUS_WORDS.get(t.status, t.status)})" + (f": {first[:200]}" if first else "")
 
 
+def topics() -> list[knowledge_links.Topic]:
+    """Every topic, read from its item (brain_notes), its front matter
+    parsed as knowledge_links parses it."""
+    out = []
+    for name in brain_notes.names("topics"):
+        slug = name[:-len(".md")]
+        try:
+            knowledge_links.check_slug(slug)
+        except knowledge_links.TopicError:
+            continue
+        text = brain_notes.read(f"topics/{name}")
+        if text is not None:
+            front, body = knowledge_links.parse(text)
+            out.append(knowledge_links.Topic(slug, front, body, text))
+    return out
+
+
 def touched_topics(texts: list[str]) -> list[knowledge_links.Topic]:
     """The topics named (by name or exact alias) in these texts, then the
     ones they link to within two hops; pinned ones first."""
-    all_topics = {t.slug: t for t in knowledge_links.topics()}
+    all_topics = {t.slug: t for t in topics()}
     hay = [_words(x) for x in texts if x]
     found: list[str] = []
     for t in all_topics.values():
@@ -143,8 +163,11 @@ def _project_lines(name: str, notes: list, record: Optional[dict] = None) -> lis
 
 
 def _notes(name: str) -> list:
+    """One project's notes, numbered as jarvis_memory numbers them, read
+    from the notes file's item (brain_notes)."""
     try:
-        return jarvis_memory.project_notes(name)
+        text = brain_notes.read(f"projects/{jarvis_memory.slugify(jarvis_memory.one_line(name))}.md")
+        return [] if text is None else jarvis_memory._numbered(text.splitlines())
     except Exception:  # noqa: BLE001 - a missing notes file is no notes
         return []
 

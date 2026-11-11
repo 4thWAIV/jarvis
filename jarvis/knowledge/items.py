@@ -50,7 +50,8 @@ from jarvis.knowledge.documents import (DOC_HEAD, FID, DocumentError, DocumentSt
                                         decode_doc, _sort_key)
 from jarvis.knowledge.graph import (DERIVED, HIERARCHY, REFERENCE, SEP, Graph, edge_key,
                                     split_key)
-from jarvis.knowledge.lexical import phrase_in as lexical_phrase_in, terms as lexical_terms
+from jarvis.knowledge.lexical import RECORD_TYPES as lexical_record_types, phrase_in as lexical_phrase_in, \
+    record_text as lexical_record_text, terms as lexical_terms
 from jarvis.knowledge.rights import FULL, OWNER, Access, Denied, Rights, caller_of, without_hidden
 from jarvis.knowledge.store import CONTENT, DOCS, EDGES_IN, EDGES_OUT, FEED, prefix_end
 from jarvis.knowledge.wal import Op
@@ -1270,13 +1271,23 @@ class Items:
                     matched.setdefault(p, set()).add("graph")
 
             def readable(doc: Optional[dict]) -> bool:
+                """An item found by its content (the content right), or a
+                record found by its own words (the data right)."""
                 if doc is None or doc.get("_kind") != kinds.ITEM or not doc["_key"].startswith(prefix):
                     return False
                 if types is not None and doc.get("_type") not in types:
                     return False
                 if cond is not None and doc["_key"] not in cond:
                     return False
-                return doc.get("_content") is not None and self.access(person, doc["_key"]).content
+                access = self.access(person, doc["_key"])
+                if doc.get("_content") is not None:
+                    return access.content
+                return access.data and doc.get("_type") in lexical_record_types
+
+            def record_words(doc: dict) -> str:
+                """A record's words as this reader may see them."""
+                access = self.access(person, doc["_key"])
+                return lexical_record_text(doc, access.sees_field if access.hidden else None)
 
             def sections_of(path: str) -> list[dict]:
                 c = self.store.get(CONTENT, path.encode(), lsn)
@@ -1297,9 +1308,14 @@ class Items:
                         break
                     if not readable(doc):
                         continue
-                    at = [s["index"] for s in sections_of(doc["_key"])
-                          if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
-                    if at:
+                    if doc.get("_content") is None:
+                        found_in = lexical_phrase_in(phrase, record_words(doc))
+                        at = []
+                    else:
+                        at = [s["index"] for s in sections_of(doc["_key"])
+                              if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
+                        found_in = bool(at)
+                    if found_in:
                         hits.add(doc["_key"])
                         ords[doc["_key"]] = doc.get("_ord", self.docs._ord_from_store(doc["_key"].encode()))
                         where.setdefault(doc["_key"], set()).update(at)
@@ -1314,6 +1330,9 @@ class Items:
                     doc = self.docs.by_ordinal(o, lsn)
                     if not readable(doc):
                         continue
+                    if doc.get("_content") is None and person != OWNER and \
+                            not query_terms & set(lexical_terms(record_words(doc))):
+                        continue                  # found only by a field hidden from this reader
                     path = doc["_key"]
                     ords[path] = o
                     ranked.append(path)

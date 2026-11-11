@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from jarvis import data_paths, embedding_models as em
-from jarvis import knowledge_ingest as ki
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import query as qy
 from jarvis.knowledge import vecmath
@@ -232,47 +231,6 @@ def test_search_fuses_words_meaning_and_the_graph_by_their_weights(engine):
     assert words_only[0]["key"] in ("chunk:0", "chunk:2")
     with pytest.raises(Exception):
         qy.run(engine, {"match": "x", "weights": {"loudness": 2}})
-
-
-# --- ingest ----------------------------------------------------------------------
-
-def test_the_conversation_gives_each_chunk_its_time_and_an_agent_s_words_their_speaker(tmp_path, monkeypatch):
-    from jarvis import conversation_log as cl, run_store
-    from tests.test_knowledge_ingest import caller, only
-    monkeypatch.setattr(emb, "RUNNER", lambda: None)
-    run_store.init_db()
-    e = Engine.open(tmp_path / "k")
-    try:
-        cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "what did hammer say about the zebra"))
-        cl.append(cl.ConversationItem.new(cl.ItemKind.ANSWER, "the zebra parser is done",
-                                          agent_session_id="s1", agent_name="Hammer"))
-        ki.run_pass(caller(e), adapters=only(ki.Conversation))
-        chunks = [d for d in e.docs.find(kinds_=["chunk"], limit=100)]
-        said = next(c for c in chunks if "parser" in c["text"])
-        heard = next(c for c in chunks if "what did" in c["text"])
-        assert said["at"] > 0 and heard["at"] > 0
-        assert [x["to"] for x in e.graph.edges(said["_key"], "out", "said_by")] == ["agent:hammer"]
-        assert not list(e.graph.edges(heard["_key"], "out", "said_by"))
-        assert e.docs.get("agent:hammer")["_trust"] == "untrusted"
-        assert qy.run(e, {"about": {"text": "what did hammer say"}})["hits"][0]["key"] == said["_key"]
-    finally:
-        e.close()
-
-
-def test_a_watermark_from_before_the_schema_reads_its_source_again(tmp_path, monkeypatch):
-    from jarvis import conversation_log as cl, run_store
-    from tests.test_knowledge_ingest import caller, only
-    monkeypatch.setattr(emb, "RUNNER", lambda: None)
-    run_store.init_db()
-    e = Engine.open(tmp_path / "k")
-    try:
-        item = cl.append(cl.ConversationItem.new(cl.ItemKind.HEARD, "an old line"))
-        e.transaction({"watermarks": {"conversation": {"after": item.id}}})       # written before schema 2
-        ki.run_pass(caller(e), adapters=only(ki.Conversation))
-        assert any("old line" in d["text"] for d in e.docs.find(kinds_=["chunk"], limit=10))
-        assert e.watermarks()["conversation"]["schema"] == ki.SCHEMA
-    finally:
-        e.close()
 
 
 # --- the real model (needs it installed, or JARVIS_E5_MODEL_DIR) -----------------

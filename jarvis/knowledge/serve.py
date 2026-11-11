@@ -293,7 +293,16 @@ def _find(engine: Engine, request: Request) -> Answer:
 @route("POST", "/v1/forget")
 @_guard
 def _forget(engine: Engine, request: Request) -> Answer:
-    sources = (request.body or {}).get("refs") or []
+    body = request.body or {}
+    if body.get("retired_kinds"):
+        # What ingest made before records and notes were items (UDS round
+        # 3): every document of these kinds, with its edges and vectors.
+        retired = body["retired_kinds"]
+        if not isinstance(retired, list) or not set(retired) <= {"chunk", "document"}:
+            raise BadRequest("retired_kinds are some of chunk, document")
+        keys = {d["_key"].encode() for d in engine.docs.find(kinds_=retired, limit=1 << 30)}
+        return Answer(200, engine.docs.forget_keys(keys) if keys else {"documents": 0})
+    sources = body.get("refs") or []
     if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
         raise BadRequest("refs is a list of source references")
     return Answer(200, engine.docs.forget_sources(sources))

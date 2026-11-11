@@ -12,7 +12,7 @@ import time
 import pytest
 
 from jarvis import spoken_words
-from jarvis.knowledge import encoding
+from jarvis.knowledge import encoding, lexical
 from jarvis.knowledge.documents import FID
 from jarvis.knowledge.uds import Caller, Transaction, in_process
 
@@ -153,7 +153,9 @@ def test_a_long_field_is_keyed_by_a_bounded_prefix_folded_only_that_far(opened, 
         return real(text)
     monkeypatch.setattr(spoken_words, "fold", fold)
     uds.put(TIM, "/runs/r-1.run", data=_record(1))
-    assert max(longest) <= encoding.FOLD_FIRST * 4
+    # Nothing folds the 100 KB: the index a bounded prefix, the record's
+    # words their own bound.
+    assert max(longest) <= max(encoding.FOLD_FIRST * 4, lexical.RECORD_WORDS + 64)
     monkeypatch.setattr(spoken_words, "fold", real)
     longest_key = max(len(k) for k in engine.docs.mem_index)
     assert longest_key <= FID.size + 1 + encoding.STRING_MAX
