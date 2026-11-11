@@ -45,6 +45,7 @@ its state for Diagnostics to `data_paths.data_dir()/knowledge-content.json`.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -57,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from jarvis import content_sections, data_paths, folder_readers, fs_watch, workspace_ref
+from jarvis import closed_files, content_sections, data_paths, folder_readers, fs_watch, workspace_ref
 from jarvis.brain_notes import BRAIN, BRAIN_NOTES
 from jarvis.knowledge import paths as item_paths
 from jarvis.knowledge.uds import Caller, EngineUDS, Stream, Transaction
@@ -88,6 +89,13 @@ class Root:
     trust: str                   # own (his) or untrusted (an agent's or another person's)
     folder_id: Optional[str] = None
     only: tuple = ()             # when given, the only top-level names indexed in the root
+    # Logs that grow: a file is indexed only once its writer has closed it
+    # (closed_files), so it is read once, whole, never while it grows.
+    closed_only: bool = False
+    # Files kept as their summary fields only, no text and so no vectors:
+    # given the file's relative path and bytes, its fields, or None for a
+    # file read as any other.
+    summarise: Optional[Callable[[str, bytes], Optional[dict]]] = None
 
     @property
     def area(self) -> str:
@@ -111,19 +119,32 @@ def jarvis_roots() -> list[Root]:
     """JARVIS's own folders: the brain's notes (its memory, journal,
     project notes, topics and the knowledge settings note, `BRAIN`; never
     the rest of its home), the answers to agents, the packages, the files
-    people sent once downloaded, and the runs' output streams. Needs boards
-    live in the project folders and come with them. The voice record's day
-    files (data/voice) are Content on disk but not indexed: a sample a
-    second has nothing to search, and reading a file that grows every
-    second again and again would cost the machine while he talks."""
+    people sent once downloaded, the runs' output streams and the voice
+    record. Needs boards live in the project folders and come with them.
+    The runs' streams and the voice record grow, so each file is read once
+    its writer has closed it (a run's when the run ends, a voice file when
+    its half hour has and the next is made), never while it grows: nothing
+    is read again and again while he talks. A voice samples file has
+    nothing to search (a second's numbers): it is kept as its summary
+    fields only (`voice_diagnostics.samples_summary`), with no text; the
+    events files are read as text."""
     found = [Root(BRAIN, str(data_paths.brain_home()), "docs", "own", only=BRAIN_NOTES),
              Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
              Root("/jarvis/packages", str(data_paths.packages_dir()), "docs", "untrusted"),
              Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted"),
              # Each run's output stream (run_store.py): JSON lines, the agent's words.
-             Root("/jarvis/runs", str(data_paths.runs_dir()), "text", "untrusted")]
-    return [Root(r.prefix, os.path.realpath(r.path), r.scope, r.trust, only=r.only)
-            for r in found if os.path.isdir(r.path)]
+             Root("/jarvis/runs", str(data_paths.runs_dir()), "text", "untrusted", closed_only=True),
+             # The voice record (voice_diagnostics.py): counts, timings and
+             # the lines of text the page showed.
+             Root("/jarvis/voice", str(data_paths.voice_dir()), "text", "own", closed_only=True,
+                  summarise=voice_summary)]
+    return [dataclasses.replace(r, path=os.path.realpath(r.path)) for r in found if os.path.isdir(r.path)]
+
+
+def voice_summary(rel: str, data: bytes) -> Optional[dict]:
+    """A voice samples file's summary fields; None for the events files."""
+    from jarvis import voice_diagnostics
+    return voice_diagnostics.samples_summary(data) if voice_diagnostics.is_samples_file(rel) else None
 
 
 def folder_roots(service=None, scopes: Optional[dict[str, list[str]]] = None) -> list[Root]:
@@ -335,7 +356,10 @@ class Indexer:
         for i in range(0, len(changed), WRITE_BATCH):
             tx = Transaction()
             for rel in changed[i:i + WRITE_BATCH]:
-                stat = fs_watch.stat_of(os.path.join(root.path, rel))
+                full = os.path.join(root.path, rel)
+                if root.closed_only and not closed_files.closed(full):
+                    continue                   # still being written: read once closed
+                stat = fs_watch.stat_of(full)
                 if stat is not None and self.note(root, rel, stat, held.get(rel), tx):
                     todo.append(rel)
             if tx.writes:
@@ -361,6 +385,8 @@ class Indexer:
             if path is not None and self.uds.get(WRITER, path) is not None:
                 self.remove(root, [rel])
             return None
+        if root.closed_only and not closed_files.closed(full):
+            return None                        # still being written: read once closed
         item = self.uds.get(WRITER, path, {Stream.DATA})
         held = None if item is None else {**(item.data or {}), "_version": item.version}
         return rel if self.note(root, rel, stat, held) or (held or {}).get("state") == "pending" else None
@@ -381,6 +407,8 @@ class Indexer:
             if item is not None:
                 self.remove(root, [rel])
             return "gone"
+        if root.closed_only and not closed_files.is_closed(info.st_mode):
+            return "open"                      # reopened meanwhile: read once closed again
         import hashlib
         stat = fs_watch.Stat(info.st_size, info.st_mtime_ns, info.st_ino)
         sha = hashlib.sha256(data).hexdigest()
@@ -396,6 +424,10 @@ class Indexer:
             tx.put(path, {**base, "state": "unreadable", "reason": "too_large"}, content=None,
                    expect_version=expect)
             outcome = "unreadable"
+        elif (summary := root.summarise(rel, data) if root.summarise else None) is not None:
+            tx.put(path, {**base, "state": "indexed", "format": "summary", **summary}, content=None,
+                   expect_version=expect)
+            outcome = "indexed"
         else:
             found = content_sections.extract(data, rel.rsplit("/", 1)[-1], root.scope)
             if isinstance(found, content_sections.Unreadable):

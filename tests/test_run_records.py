@@ -160,6 +160,47 @@ def test_the_runs_folder_is_watched_as_content():
     assert root.path == os.path.realpath(data_paths.runs_dir())
     assert knowledge_content.wanted(root, _file(run_id).name)
     assert knowledge_content.item_path(root, _file(run_id).name) == f"/jarvis/runs/{_file(run_id).name}"
+    assert root.closed_only                     # read once the run has finished, never while it grows
+
+
+def test_a_run_s_file_is_closed_when_the_run_finishes():
+    from jarvis import closed_files
+    run_id = run_store.create_run("a", "p", "/tmp/p", "voice")
+    run_store.update_run(run_id, status=run_store.RunStatus.RUNNING)
+    run_store.append_event(run_id, 1, "system", "{}")
+    assert not closed_files.closed(_file(run_id))
+    run_store.finish_run(run_id, run_store.RunStatus.SUCCEEDED)
+    assert closed_files.closed(_file(run_id))
+    # A last event racing the finish still goes in, and the file is closed again.
+    run_store.append_event(run_id, 2, "result", "{}")
+    assert closed_files.closed(_file(run_id))
+    assert [e["seq"] for e in run_store.get_events(run_id)] == [1, 2]
+
+
+def test_a_run_swept_after_a_restart_has_its_file_closed():
+    from jarvis import closed_files
+    run_id = run_store.create_run("a", "p", "/tmp/p", "voice")
+    run_store.update_run(run_id, status=run_store.RunStatus.RUNNING)
+    run_store.append_event(run_id, 1, "system", "{}")
+    assert run_store.sweep_stale_runs() == 1
+    assert closed_files.closed(_file(run_id))
+
+
+def test_finished_runs_files_left_open_are_closed_at_start():
+    """Files from before runs closed them, and a crash between a finish and
+    its close: closed at start, every one but a run still going's."""
+    from jarvis import closed_files
+    going = run_store.create_run("a", "p", "/tmp/p", "voice")
+    done = run_store.create_run("b", "p", "/tmp/p", "voice")
+    for run_id in (going, done):
+        run_store.append_event(run_id, 1, "system", "{}")
+    records.update(f"/runs/{records.segment(done)}.run",
+                   lambda d: {**d, "status": run_store.RunStatus.FAILED}, by=records.JARVIS)
+    orphan = data_paths.runs_dir() / "gone-run.jsonl"
+    orphan.write_text('{"seq":1,"ts":1.0,"kind":"system","payload":"{}"}\n')
+    assert run_store.close_finished_outputs() == 2
+    assert [closed_files.closed(p) for p in (_file(going), _file(done), orphan)] == [False, True, True]
+    assert run_store.close_finished_outputs() == 0
 
 
 # -- the move: runs and run_events to documents and files, and back -----------

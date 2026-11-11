@@ -1399,9 +1399,15 @@ Agents panel shows "2 working" on an agent's box. An `agents` and a
 
 ## Voice diagnostics
 How voice input is doing is one durable record, `voice_diagnostics.py`, kept
-as Content files, a file a day each (`data/voice/<date>.samples.jsonl` and
-`<date>.events.jsonl`, one JSON line each, appended off the audio path and
-indexed in memory as they grow): samples (one a second while a page
+as Content files, a file every half hour on the clock each
+(`data/voice/<local date>/<HHMM>.samples.jsonl` and `<HHMM>.events.jsonl`,
+one JSON line each, appended off the audio path and indexed in memory as
+they grow; a file is closed, made read-only (`closed_files.py`), once the
+next is made, and within a minute of its half hour ending (`Closer`), and
+the content ingest reads it only then, once: the events file as text, the
+samples file as its summary fields only, `samples_summary`, no vectors;
+a run's output stream is closed the same way when the run finishes):
+samples (one a second while a page
 listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and events (each capture's
 start and end, reconnects, every failure with the cause in force and the
@@ -1411,8 +1417,8 @@ speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
-kept 7 days, events 30 (a day's file deleted once all of it is past, the day
-the cut-off falls in written again). The page gets `health` once a second back on the same
+kept 7 days, events 30 (a file deleted once all of it is past, never
+written again). The page gets `health` once a second back on the same
 socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
 `/ws/sessions` says when to read again. The Diagnostics tab draws a summary
 (`VoiceSummary.tsx`) and the centre area's Diagnostics view the detail

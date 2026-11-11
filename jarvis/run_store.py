@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional
 
-from jarvis import brain_activity, data_paths, session_steer
+from jarvis import brain_activity, closed_files, data_paths, session_steer
 from jarvis import message_records, records
 
 log = logging.getLogger("jarvis.run_store")
@@ -61,9 +61,10 @@ def init_db() -> None:
 # (`RUN_FIELDS`, the old `runs` columns), written by JARVIS with each status
 # as its change. Its output is a log read whole, so it is a file of its own,
 # `data/runs/<id>.jsonl` (`data_paths.runs_dir()`): one JSON line per event,
-# appended before any hint about it, and indexed as Content (`/jarvis/runs`,
-# knowledge_content.jarvis_roots). `RunMapping` moves the old tables into
-# both and back.
+# appended before any hint about it, closed (closed_files: made read-only)
+# when the run finishes, and indexed as Content once closed, once
+# (`/jarvis/runs`, knowledge_content.jarvis_roots). `RunMapping` moves the
+# old tables into both and back.
 
 RUNS = "/runs"
 RUN_TYPE = "run"
@@ -246,7 +247,10 @@ def finish_run(run_id: str, status: str, **fields) -> dict | None:
         data = {**rec.data, **typed}
         unit.put(_run_path(run_id), data, change=f"status:{status}", summary=f"run {status}")
         return _run_dict(data)
-    return records.atomic(write, by=records.JARVIS, change=f"status:{status}")
+    finished = records.atomic(write, by=records.JARVIS, change=f"status:{status}")
+    if finished is not None:
+        close_output(run_id)
+    return finished
 
 
 def sweep_stale_runs() -> int:
@@ -260,6 +264,7 @@ def sweep_stale_runs() -> int:
                     "error": "server restarted during run", "ended_at": time.time()}
         if records.update(_run_path(run["id"]), fail, by=records.JARVIS,
                           change="swept", summary="server restarted during run") is not None:
+            close_output(run["id"])
             count += 1
     if count:
         log.warning("swept %d stale run(s) after restart", count)
@@ -375,19 +380,48 @@ def append_events(run_id: str, rows: list[tuple[int, str, str]]) -> None:
             return
         path = _events_file(run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
-        try:
-            body = b"".join(_event_line(run_id, e) for e in added)
-            size = os.fstat(fd).st_size
-            if size and os.pread(fd, 1, size - 1) != b"\n":
-                body = b"\n" + body           # a torn last line stays on its own
-            view = memoryview(body)
-            while view:
-                view = view[os.write(fd, view):]
-            st = os.fstat(fd)
-        finally:
-            os.close(fd)
+        # An event after the run finished (its last lines racing a cancel)
+        # goes in all the same, and the file is closed again after it.
+        with closed_files.reopened(path):
+            fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                body = b"".join(_event_line(run_id, e) for e in added)
+                size = os.fstat(fd).st_size
+                if size and os.pread(fd, 1, size - 1) != b"\n":
+                    body = b"\n" + body           # a torn last line stays on its own
+                view = memoryview(body)
+                while view:
+                    view = view[os.write(fd, view):]
+                st = os.fstat(fd)
+            finally:
+                os.close(fd)
         _remember(str(path), _stat_key(st), events + added)
+
+
+def close_output(run_id: str) -> bool:
+    """Close the run's output stream (closed_files): it has finished, so the
+    content ingest reads it once, whole, now and never while it grows. Never
+    in the middle of an append (the same lock)."""
+    with _EVENTS_LOCK:
+        return closed_files.close(_events_file(run_id))
+
+
+def close_finished_outputs() -> int:
+    """At start: close every output stream left open whose run has finished
+    or is not on record (a run from before files were closed, or a crash
+    between the finish and the close); how many were closed."""
+    folder = data_paths.runs_dir()
+    if not folder.is_dir():
+        return 0
+    count = 0
+    for path in folder.glob("*.jsonl"):
+        if closed_files.closed(path) or path.is_symlink():
+            continue
+        run = get_run(records.unsegment(path.name[:-len(".jsonl")]))
+        if run is None or run["status"] in RunStatus.TERMINAL:
+            with _EVENTS_LOCK:
+                count += closed_files.close(path)
+    return count
 
 
 def get_events(run_id: str, after_seq: int = 0, limit: int = 200) -> list[dict]:
