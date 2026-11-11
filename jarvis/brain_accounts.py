@@ -52,6 +52,9 @@ MAX_WINDOWS = 4
 
 # The last sign-in check per provider, from refresh().
 _accounts: dict[str, Account] = {}
+# The team's key as the last node update gave it (brains()), so the usage
+# history can name the account by the same reference; None until then.
+_team_key: Optional[bytes] = None
 
 
 async def refresh(name: Optional[str] = None) -> None:
@@ -125,11 +128,22 @@ def _ref(secret: bytes, provider: str, account: Optional[Account]) -> str:
     return node_ref(secret, provider, data_paths.node_id())
 
 
+def history_ref(provider: str) -> Optional[str]:
+    """The account reference the usage history keeps with a reading of
+    `provider`: the one the Network view shows (`_ref`), or None while the
+    team's key or the signed-in account is not known."""
+    if _team_key is None or provider not in _accounts:
+        return None
+    return _ref(_team_key, provider, _accounts.get(provider))
+
+
 def brains(key: Optional[str], *, now: Optional[float] = None) -> list[dict]:
     """The node update's `brains`: empty without the team's key. A brain
     whose signed-in account is not known (never checked, or no email) has
     this node's own reference."""
+    global _team_key
     secret = _key_bytes(key)
+    _team_key = secret
     if secret is None:
         return []
     at = time.time() if now is None else float(now)

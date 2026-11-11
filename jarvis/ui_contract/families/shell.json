@@ -186,6 +186,14 @@
       "tab": "knowledge"
     },
     {
+      "id": "main.usage",
+      "region": "main",
+      "kind": "detail",
+      "label": "One brain's usage history",
+      "tab": "usage",
+      "entity": "provider"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -267,7 +275,8 @@
             "file",
             "settings",
             "knowledge",
-            "project"
+            "project",
+            "usage"
           ]
         }
       },

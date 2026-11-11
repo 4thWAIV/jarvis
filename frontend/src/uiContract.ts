@@ -457,6 +457,14 @@ export const UI_CONTRACT = {
       "tab": "knowledge"
     },
     {
+      "id": "main.usage",
+      "region": "main",
+      "kind": "detail",
+      "label": "One brain's usage history",
+      "tab": "usage",
+      "entity": "provider"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -551,7 +559,8 @@ export const UI_CONTRACT = {
             "file",
             "settings",
             "knowledge",
-            "project"
+            "project",
+            "usage"
           ]
         }
       },
@@ -2612,6 +2621,84 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
+      "id": "usage.open",
+      "label": "Open one brain's weekly usage history in the centre: this week's burn-down first, earlier weeks one at a time",
+      "view": "main.usage",
+      "args": {
+        "provider": {
+          "type": "key",
+          "entity": "provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "usage"
+    },
+    {
+      "id": "usage.close",
+      "label": "Close the usage history",
+      "view": "main.usage",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "usage"
+    },
+    {
+      "id": "usage.week",
+      "label": "Show the open usage history's earlier or later week, or this week again",
+      "view": "main.usage",
+      "args": {
+        "to": {
+          "type": "enum",
+          "values": [
+            "earlier",
+            "later",
+            "current"
+          ]
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "usage"
+    },
+    {
       "id": "layout.takeover",
       "label": "Let the workflow, work item or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
       "view": "main.takeover",
@@ -4643,6 +4730,30 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
+      "kind": "usageHistory",
+      "entity": "provider",
+      "label": "One brain's weekly usage history",
+      "parts": [
+        "header",
+        "close",
+        "weeks",
+        "chart",
+        "latest"
+      ],
+      "presentations": [
+        {
+          "view": "main.usage",
+          "reveal": {
+            "command": "usage.open",
+            "args": {
+              "provider": "$key"
+            }
+          }
+        }
+      ],
+      "family": "usage"
+    },
+    {
       "kind": "takeoverBar",
       "entity": null,
       "label": "Takeover bar",
@@ -4720,6 +4831,10 @@ export const UI_CONTRACT = {
     {
       "family": "projects",
       "owner": "coverage-right"
+    },
+    {
+      "family": "usage",
+      "owner": "coverage-main"
     },
     {
       "family": "layout",
@@ -4866,7 +4981,7 @@ export interface CommandArgs {
   "layout.restore": { };
   "layout.sheet": { shown: boolean; };
   "layout.takeover": { };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project" | "usage"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -4901,6 +5016,9 @@ export interface CommandArgs {
   "thread.earlier": { };
   "thread.open": { sessionId: string; };
   "updates.review": { open: boolean; };
+  "usage.close": { };
+  "usage.open": { provider: string; };
+  "usage.week": { to: "earlier" | "later" | "current"; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
   "voice.quiet": { quiet: boolean; };

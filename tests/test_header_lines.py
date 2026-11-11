@@ -367,6 +367,14 @@ EXEMPT = {
         "it compares the move manifest's state and schema with the SQLite file's own; the report "
         "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
         "never a brain header or speech"),
+    "usage_history.append": (
+        "it stores a usage reading's window status as a column of JARVIS's own usage history; the "
+        "only text it builds is its own log line naming the SQLite error, never a session field or "
+        "a brain header"),
+    "server.tool_usage_history": (
+        "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
+        "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
+        "header; a refusal quotes at most 40 characters of an argument after 'Refused:'"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),
