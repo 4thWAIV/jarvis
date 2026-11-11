@@ -415,6 +415,9 @@ class CodexEngine:
         except asyncio.TimeoutError:
             await ex._finish(run_id, failed, error="the Codex app server did not answer in time")
             return
+        if run_id in ex._cancelling:
+            # Cancelled while its turn was being started: stopped now.
+            await self._interrupt(run)
         await self._follow(run, timeout_sec, on_model, project_path)
 
     async def _follow(self, run: _Run, timeout_sec: float, model: str, cwd: str) -> None:

@@ -779,7 +779,8 @@ html, body {
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .settings-section-body > .settings-actions { padding-left: calc(min(170px, 30%) + 12px); }
 
-/* The Brains section: a card per brain. */
+/* The Brains section: a card per brain, then who runs each kind of agent. */
+.brain-engines { margin-top: 18px; }
 .brain-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

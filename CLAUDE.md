@@ -2251,6 +2251,30 @@ The dashboard's Retry and the brain's acting `retry_run` share `_retry_run`:
 a finished run's prompt again, resuming from it on the same engine, a
 folder run re-checked through the folder service.
 
+## Which engine each kind of agent goes on
+His design (`engine_choice.py`): every kind of agent JARVIS starts has its
+own "preferred provider and model": the package author (make_package's
+fresh author, `package_author.author`), agent runs (`spawn_run`), builds
+(`start_build`) and agent packages (`run_package_agent`); a retry keeps its
+run's own engine. Each is a brain and one of its models (`fixed`; no model is
+the engine's own default), the same as the requester (`requester`: the agent
+calling make_package, or the brain for what he asks of it), or the least in
+token stress (`least_stress`); and one setting across them, "override if the
+selected agent is in token stress", which moves a choice off a stressed brain
+to the least stressed one. Token stress is the brain board's plus/minus,
+`usage_store.week`'s `ahead` (expected use minus actual, points, seven-day
+window): stressed below 0, least stressed the highest; a brain not measured
+is neither. An engine he names for one agent (the tools' `engine`, or a model
+that names its engine: "opus" is Claude's, "gpt-..." Codex's,
+`server._engine_for`) is kept, override or not. The defaults are what JARVIS
+did before (the author on the requester's engine, the rest on Claude). Kept
+in `<data>/jarvis/engines.json` beside brains.json, so make_package (another
+process) reads the same. Settings, Brains shows each kind and the override
+with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
+`GET`/`POST /api/settings/engines`); the brain's `engine_settings` and acting
+`set_engine_setting` call the same `engine_choice.view` and
+`server._change_engine_setting`.
+
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
 ## Key Files
@@ -2340,6 +2364,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `claude -p --output-format stream-json`
 - `codex_engine.py` — Codex agents as runs: threads on the running Codex app
   server (see "The Run Pipeline")
+- `engine_choice.py` — Which engine and model each kind of agent goes on,
+  token stress and the override (see "Which engine each kind of agent goes on")
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
 - `builds.py` — The spec/brief/plan pipeline behind real, phased,
   multi-session builds (see "The Run Pipeline" above)
@@ -2491,8 +2517,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/Settings.tsx` / `SettingsRow.tsx` — Settings, a centre view
   opened and closed only by `settings.open`, `settings.section` and
   `settings.close` (the menu, Check for updates, the sign-in reminder and
-  first-time setup run them): You, Voice and language, Brains, Team,
-  Updates, Server; every control and reading in it a pointer target
+  first-time setup run them): You, Voice and language, Brains (each brain's
+  card, then which engine each kind of agent goes on), Team, Updates,
+  Server; every control and reading in it a pointer target
 - `frontend/src/TeamSignInReminder.tsx` / `teamSignIn.ts` / `team_reminder.py`
   — The sign-in reminder at the top of the centre area, its Sign in, and the
   one spoken reminder per start (see "The sign-in reminder")

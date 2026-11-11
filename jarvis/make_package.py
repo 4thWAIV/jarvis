@@ -24,7 +24,8 @@ docs/making-a-package.md is the whole of how to use it. In short:
   fresh author's plain explanation, `package/UNDERSTANDING.md`, which is
   what the author proof covers. It goes on the document's own Work item.
 
-The command launches a fresh author on the caller's engine first. Existing source
+The command launches a fresh author first, on the engine his package-author setting gives
+(the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
 The command checks the author's result, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the

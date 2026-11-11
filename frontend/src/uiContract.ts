@@ -3187,7 +3187,12 @@ export const UI_CONTRACT = {
         "installUpdate",
         "languageKit",
         "serverPort",
-        "serverUptime"
+        "serverUptime",
+        "enginePackageAuthor",
+        "engineRun",
+        "engineBuild",
+        "engineAgentPackage",
+        "engineOverride"
       ],
       "presentations": [
         {

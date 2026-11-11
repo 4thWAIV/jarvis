@@ -1301,6 +1301,18 @@ EXEMPT = {
     "run_store.session_of": (
         "it returns a run's session id (`engine_session`, else its id) as an "
         "identifier to match sessions by; it builds no sentence"),
+    "engine_choice.choose": (
+        "it reads his own engine settings (engines.json, written only by the "
+        "Settings route and the brain's set_engine_setting from fixed choices); "
+        "its refusal names an engine the caller gave, never a session field"),
+    "server._engine_for": (
+        "it reads the brain's own `engine` and `model` arguments, mapped to "
+        "fixed engine names and the checked model shapes of `_normalise_model` "
+        "and `_codex_model`; its refusals are fixed sentences"),
+    "server._engine_settings_said": (
+        "it says his engine settings: fixed kind and engine names, a model "
+        "checked against its brain's own list when it was set, and JARVIS's "
+        "own usage numbers"),
     "codex_engine.drive": (
         "it reads the app server's own answers (the thread id and the model it "
         "started) and the forked run's `engine_session` into the run's row; the "
