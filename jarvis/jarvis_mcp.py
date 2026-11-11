@@ -888,6 +888,34 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "usage_history",
+        "description": (
+            "One brain's weekly usage history: its seven-day window, week "
+            "after week, newest week first. Each week has its reset time, its "
+            "start (a week before) and its readings: the percentage used "
+            "(what is left is 100 minus it). With the latest reading. The same "
+            "JSON that brain's usage history view draws as each week's "
+            "burn-down. The five-hour window is not kept. Every reading is "
+            "kept for two weeks, then one summary per hour. A point whose "
+            "`used` is null was not measured: say so, never call it zero. "
+            "Times are epoch seconds; long answers come in pages."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {"type": "string", "enum": ["anthropic", "openai"],
+                             "description": "Which brain; the running brain when left out."},
+                "since": {"type": "number",
+                          "description": "Start, epoch seconds; the start of the record when left out."},
+                "until": {"type": "number", "description": "End, epoch seconds; now when left out."},
+                "resolution": {"type": "string", "enum": ["auto", "raw", "hour"],
+                               "description": "raw: every reading; hour: one point an hour (its "
+                                              "highest reading); auto: raw up to two days, "
+                                              "else by the hour."},
+                "page": {"type": "integer", "minimum": 1, "description": "Which page; 1 first."},
+            },
+        },
+    },
+    {
         "name": "connections",
         "description": (
             "The services the user has connected you to, from what is actually "

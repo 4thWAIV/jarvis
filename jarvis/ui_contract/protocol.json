@@ -145,7 +145,7 @@
     "families/diagnostics.json",
     "families/folders.json",
     "families/conversation.json",
-    "families/packages.json", "families/knowledge.json", "families/projects.json",
+    "families/packages.json", "families/knowledge.json", "families/projects.json", "families/usage.json",
     "families/layout.json"
   ]
 }

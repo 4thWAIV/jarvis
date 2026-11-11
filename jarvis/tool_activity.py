@@ -59,7 +59,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "inspect_attachment", "list_bundle_members", "read_bundle_member",
         "look_at_bundle_page", "list_packages", "package_results",
         "language_document",
-        "diagnostics", "usage_status", "connections", "speech_models",
+        "diagnostics", "usage_status", "usage_history", "connections", "speech_models",
         "voice_input_settings", "attention_updates", "mark_updates_seen",
         "set_attention_settings", "update_status",
         "skip_reading", "stop_speaking", "quiet_microphone", "voice_turn", "set_motion",

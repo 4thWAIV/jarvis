@@ -355,6 +355,14 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "usage_history.append": (
+        "it stores a usage reading's window status as a column of JARVIS's own usage history; the "
+        "only text it builds is its own log line naming the SQLite error, never a session field or "
+        "a brain header"),
+    "server.tool_usage_history": (
+        "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
+        "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
+        "header; a refusal quotes at most 40 characters of an argument after 'Refused:'"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),
