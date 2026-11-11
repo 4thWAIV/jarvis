@@ -42,10 +42,8 @@ def _approve(ws, item):
 
 def _piece_done(ws, item, key):
     """A piece done, as only his approval makes one."""
-    from jarvis import run_store
-    with run_store._connect() as conn:
-        conn.execute("UPDATE work_pieces SET state='done' WHERE item_id=? AND key=?", (item.id, key))
-        conn.commit()
+    from tests import work_records
+    work_records.piece(item.id, key, state="done")
     return ws.get(item.id)
 
 
@@ -151,13 +149,19 @@ def test_every_change_is_one_event_and_a_bad_one_changes_nothing(ws, folder):
     assert [e.kind for e in ws.events(item.id)] == ["created"]
 
 
-def test_the_schema_is_its_own_and_versioned(ws, folder):
-    ws.create("Speech", "folder", folder)
-    from contextlib import closing
-
-    from jarvis import run_store
-    with closing(run_store._connect()) as conn:
-        assert conn.execute("SELECT version FROM work_schema").fetchone()[0] == max(ws._MIGRATIONS)
+def test_an_item_is_one_document_and_its_log_is_its_versions(ws, folder):
+    from jarvis import records
+    item = ws.create("Speech", "folder", folder)
+    _ev(ws, item, "piece", "Tests run.", key="tests", who={"kind": "tim"})
+    _ev(ws, item, "decision_needed", "Which?", key="which", options=["A"])
+    doc = records.get(ws.path_of(item.id))
+    assert doc.path == f"/work/{item.id}.work"
+    assert [p["key"] for p in doc.data["pieces"]] == ["tests"]
+    assert [d["key"] for d in doc.data["decisions"]] == ["which"]
+    logged = records.history(doc.path, fields=["events"])
+    assert [[e["kind"] for e in v.data["events"]] for v in logged] == [
+        ["created"], ["piece"], ["decision_needed"]]
+    assert [v.change for v in logged] == ["created", "piece", "decision_needed"]
 
 
 def test_verifying_sits_between_working_and_done_and_can_go_quiet(ws, folder, monkeypatch):
@@ -246,23 +250,6 @@ def test_blocked_and_waiting_pieces_are_counted_on_the_item(ws, folder):
         until="decision:which")
     item = _ev(ws, item, "piece", "Fine.", key="c", who=tim, state="working")
     assert (item.blocked_pieces, item.waiting_pieces) == (1, 1)
-
-
-def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, tmp_path):
-    from contextlib import closing
-
-    from jarvis import run_store
-    with closing(run_store._connect()) as conn:
-        run_store.migrate(conn, "work_schema", {1: ws._SCHEMA}, "work tracker")
-        conn.execute("INSERT INTO work_items VALUES ('w1', 'T', 'folder', '/tmp', 'working', '', 1, 0, 0)")
-        conn.execute("INSERT INTO work_pieces VALUES ('w1', 'a', 'A', 'tim', NULL, 'working', 0)")
-        for at, said in ((5, "first"), (6, "second")):
-            conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at) "
-                         "VALUES ('w1', 'piece', ?, '{\"key\": \"a\"}', ?)", (said, at))
-        conn.commit()
-    piece = ws.get("w1").pieces[0]
-    assert (piece.note, piece.note_at, piece.worker, piece.after, piece.evidence) == (
-        "second", 6.0, "", [], [])
 
 
 def test_blockers_list_decisions_then_the_item_then_pieces(ws, folder):
@@ -386,8 +373,8 @@ def test_unrelated_session_activity_and_tools_cannot_promote_work(ws, folder):
 
 def test_legacy_database_claim_is_projected_and_history_is_preserved(ws, folder):
     item = ws.create("Legacy", "folder", folder)
-    with ws._connect() as conn:
-        conn.execute("UPDATE work_items SET state='working' WHERE id=?", (item.id,))
+    from tests import work_records
+    work_records.item(item.id, state="working")
     loaded = ws.get(item.id)
     assert loaded.state == "activity_unknown"
     assert loaded.reported_state == "working"
