@@ -4,24 +4,18 @@ import type { CatalogOf } from "../locale";
 import type { leftEn } from "./left.en";
 
 export const leftEs: CatalogOf<typeof leftEn> = {
-  "left.workers.active": "{count} activos",
-  "left.workers.modelWork": "{count} en trabajo del modelo",
-  "left.workers.unconfirmed": "{count} sin confirmar",
+  "left.workers.active": "{count} trabajando",
   "left.workers.tools": "{count} en herramientas",
   "left.workers.queued": "{count} en cola",
   "left.workers.parentCycle": "Ciclo de padres: {name}",
-  "left.workers.lastPhase": "Última fase: {phase}.",
-  "left.workers.lastEvidence": "Última evidencia hace {count} segundos.",
-  "left.workers.runtime": "Ejecución: {status}. Espacio: {allocation}.",
-  "left.workers.hooksMissing": "Aún no se han observado eventos del ciclo de vida nativo.",
   "left.workers.workflow": "Flujo de trabajo: {id}",
-  "left.workers.children": "{count} registros hijos",
   "left.workers.unavailable": "Actividad no disponible",
-  "left.workers.unknown": "Actividad desconocida",
+  "left.workers.working": "Trabajando",
+  "left.workers.inTool": "Trabajando, en una herramienta",
+  "left.workers.idle": "En reposo",
   "left.workers.label": "Actividad de agentes de {account}: {activity}",
   "left.workers.all": "Todos",
   "left.workers.allWorkers": "Todos los trabajadores",
-  "left.workers.runtimeActive": "{count} activos en ejecución",
   "left.workers.capacity": "Espacios de ejecución administrados: {occupied} ocupados, {queued} en cola, {free} libres. Se desconocen las reservas de espacios de CLI externas.",
 
   "left.common.server": "Servidor",

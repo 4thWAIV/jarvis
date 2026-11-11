@@ -14,7 +14,7 @@ the page is a word an agent typed into a state.
 | Ready | Nothing holds it up any more (his answer is in); its agent has yet to pick it up. | Blue "Ready" pill. After his answer with no report since: "Answered — waiting for *agent* to start". |
 | Working | A subagent on the piece is writing right now: JARVIS sees its own files. | Blue "Working" pill that glows; under the piece, "*Release agent* is working now · Using Bash" (its last tool or line). |
 | Waiting on *name*'s background work | The subagent on a piece has ended its turn but a command or monitor it started (CI, say) is still running. Never Stalled. | Pale blue pill "Waiting on Release agent's background work"; the row and header say "Release agent is waiting on its own background work". |
-| Activity unconfirmed | An agent says it is working on it. JARVIS cannot see the work happening, so it does not claim it is. | "Activity unconfirmed" pill, no animation; hovering says why. On a subagent's piece: "*name* has finished", "*name* has not written anything for a while", or "*name* is waiting on its own background work" (its turn is over but a command or monitor it started is still running). |
+| Not working now | An agent says it is working on it, but the agent or subagent on it is not in a turn now. | "Not working now" pill, no animation; hovering says why. On a subagent's piece: "*name* has finished", "*name* has not written anything for a while", or "*name* is waiting on its own background work" (its turn is over but a command or monitor it started is still running). |
 | Waiting on you | Nothing can go on until you answer: a decision, a held piece, or a package question. | Amber pill and amber edge; the update line is the question; "Decision needed" banner. |
 | Blocked | Held by something that is not you (CI, a licence), named. | Red pill and red edge; Blocking names what holds it. |
 | Ready for review | The work is in and nothing stands in the way: yours to approve. | Purple "Ready for review" pill; **Approve** shows in the item's header. |
@@ -35,9 +35,9 @@ Beside the state, the item also says:
 
 | Action | Who and where | Before | After | What Tim sees change |
 |---|---|---|---|---|
-| Report a piece working | Agent (`work_report.py piece --state working`) | Planned or Ready | Activity unconfirmed | The pill reads "Activity unconfirmed"; nothing animates. |
-| Put a subagent on a piece | Coordinator (`piece --who agent:<session id>/sub:<agent id> --state working`) | Planned or Ready | Working while the subagent writes | The piece glows "Working" with the subagent's name and what it is doing now; once it finishes or goes quiet, the piece says so and reads Activity unconfirmed. |
-| Report a piece ready for review | Agent (`--state verifying --evidence …`) | Activity unconfirmed | Ready for review (once nothing else is open) | Pill turns purple, **Approve** appears in the header. |
+| Report a piece working | Agent (`work_report.py piece --state working`) | Planned or Ready | Working while its agent's turn is open, else Not working now | The pill reads "Working" while the agent on the piece is in a turn, else "Not working now"; nothing animates then. |
+| Put a subagent on a piece | Coordinator (`piece --who agent:<session id>/sub:<agent id> --state working`) | Planned or Ready | Working while the subagent's turn is open | The piece glows "Working" with the subagent's name and what it is doing now; once it finishes or goes quiet, the piece says so and reads Not working now. |
+| Report a piece ready for review | Agent (`--state verifying --evidence …`) | Not working now | Ready for review (once nothing else is open) | Pill turns purple, **Approve** appears in the header. |
 | Report a piece waiting on him | Agent (`--state waiting_on_tim --until decision:<key>`) | any but held | Waiting on you | Amber pill; Blocking names the decision it waits for. Refused if it names nothing. |
 | Report a piece blocked | Agent (`--state blocked --until "<what>"`) | any but held | Blocked | Red pill; Blocking names the blocker. |
 | Try to move a held piece on | Agent | Waiting on you or Blocked | unchanged | Nothing: refused, naming what holds it. |
@@ -47,11 +47,11 @@ Beside the state, the item also says:
 | Answer a decision | Tim: Decisions tab, or by voice | Waiting on you | Ready (the pieces that waited on it) | Banner goes; pieces that waited read Ready; "Answered — waiting for *agent* to start". |
 | Withdraw a decision | Agent that asked it | Waiting on you | Ready | It moves to the answered list as withdrawn; pieces that waited read Ready. |
 | Approve | Tim: header, or by voice (`review_work`) | Ready for review | Done | Green "Done", "You approved it: done, *time*". |
-| Not done yet | Tim: header, or by voice | Ready for review or Done | Activity unconfirmed (back to work) | "Not done yet, you said: *note*"; the agent gets the note. |
+| Not done yet | Tim: header, or by voice | Ready for review or Done | Not working now (back to work) | "Not done yet, you said: *note*"; the agent gets the note. |
 | Add work | Tim: header, or by voice | any | Ready (the new piece) | A new piece in his words; the agent is told. |
 | Answer a review package: approve | Tim: package by click, voice or Decisions tab | Ready for review | Done | "Approved by you in the package, *time*". If it cannot be applied: "Your answer in the package was not applied: *why*". |
-| Answer a review package: not done / add work | Tim: package | Ready for review | Activity unconfirmed / Ready | "Not done yet, you said in the package…" / "Work added by you in the package…". |
+| Answer a review package: not done / add work | Tim: package | Ready for review | Not working now / Ready | "Not done yet, you said in the package…" / "Work added by you in the package…". |
 | Sign off a review package unanswered | Tim: Done on the package | Ready for review | unchanged | "Review closed without a verdict", with Approve, Not done yet and Add work beside it (said nothing if he reviewed it another way since). |
 | Restart JARVIS | — | any | answers already on record applied once | The items move as if he had just answered. |
-| Nobody reports for ten minutes | — (time passing) | Activity unconfirmed, Ready or Planned, nothing waiting on him | Stalled | Orange "Stalled: nobody is working on this"; a silent update. |
+| Nobody reports for ten minutes | — (time passing) | Not working now, Ready or Planned, nothing waiting on him | Stalled | Orange "Stalled: nobody is working on this"; a silent update. |
 | An agent reports again | Agent | Stalled | the state its report gives | The orange goes; the silent update is resolved. |

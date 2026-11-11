@@ -1,4 +1,4 @@
-import { useWorker } from "./workers";
+import { isWorking, useWorker } from "./workers";
 /**
  * The Workflows view of the right panel: a summary of every long workflow,
  * one compact two-line row each at the panel's fixed width, read at a
@@ -236,7 +236,7 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
     <button type="button" data-subagent-key={a.key} data-state={a.state}
             className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
               selected ? " selected" : ""}`}
-            title={`${name}: ${worker?.activity.orb_state ?? t("left.workers.unknown")}`}
+            title={`${name}: ${isWorking(worker) ? t("left.workers.working") : t("left.workers.idle")}`}
             ref={(el) => { ui.whole(el); ui.part("row")(el); }}
             {...bindingProps(bind("subagent.open", { sessionId: a.session_id, agentId: a.id }))}>
       <WorkflowOrb workerId={a.id} state={look} size={30} />

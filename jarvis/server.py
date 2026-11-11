@@ -3918,7 +3918,7 @@ def _session_rows(snapshot, wanted=()):
         row['activity'] = worker['activity'] if worker else None
         row['snapshot_id'] = inventory.get('snapshot_id')
         row['agents_active'] = worker['descendant_counts']['active'] if worker else 0
-        row['agents_capped'] = session.agents_capped or worker is None or bool(worker['descendant_counts']['unknown'])
+        row['agents_capped'] = session.agents_capped
         rows.append(row)
     return rows
 
@@ -3965,7 +3965,7 @@ def _agents_for_page() -> list[dict]:
         row['activity'] = worker['activity'] if worker else None
         row['snapshot_id'] = inventory.get('snapshot_id')
         row['subagents_working'] = worker['descendant_counts']['active'] if worker else 0
-        row['subagents_capped'] = worker is None or bool(worker['descendant_counts']['unknown'])
+        row['subagents_capped'] = False
         key = keys.get(agent.session_id)
         row['key'] = key.state if key else None
         row['key_fingerprint'] = key.fingerprint if key else None
@@ -12265,8 +12265,12 @@ def _subagent_now(session_id: str, agent_id: str):
         return None
     worker = matches[0]
     activity = worker['activity']
+    # Working is the one definition's (worker_inventory.working): an open
+    # turn. A long tool call writes nothing, so its last write is not when it
+    # was last seen working; the inventory's own time is.
     return work_store.LiveAgent(name=worker['name'], state=activity['work_state'],
-                                written=activity.get('observed_at') or 0,
+                                written=(inventory.get('taken_at') if activity['working']
+                                         else activity.get('observed_at')) or 0,
                                 doing=activity['state'],
                                 active_within=worker_activity.MODEL_REQUEST_LEASE_SECONDS,
                                 activity=activity, snapshot_id=inventory.get("snapshot_id"))
@@ -13106,8 +13110,8 @@ def _agent_said(agent) -> str:
 def _worker_phase_words(provider, session_id):
     worker = next((row for row in _worker_inventory()['workers']
                    if row['id'] == worker_inventory.identity(provider, session_id)), None)
-    phase = worker['activity']['orb_state'] if worker else 'activity unknown'
-    return _plain_name(phase, 'activity unknown')
+    phase = 'working' if worker and worker['activity']['working'] else 'idle'
+    return _plain_name(phase, 'idle')
 
 
 def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
@@ -13117,7 +13121,7 @@ def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
     `session_detail` is where they are read."""
     activity = _worker_phase_words(a.provider, a.session_id)
     bits = [f"{_agent_said(a)}: {'active' if a.active else 'inactive'}",
-            _plain_name(activity, 'activity unknown')]
+            _plain_name(activity, 'idle')]
     if s is not None and s.needs:
         bits.append(_phrase_needs(s.needs)
                     + (" that needs your own keystroke" if s.needs_a_human_hand else ""))
@@ -13146,7 +13150,7 @@ def tool_list_agents(args: dict) -> str:
         agents = [a for a in agents if a.active == (wanted == "active")]
     elif wanted == "working":
         workers = {row['id']: row for row in _worker_inventory()['workers']}
-        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('active')]
+        agents = [a for a in agents if workers.get(worker_inventory.identity(a.provider, a.session_id), {}).get('activity', {}).get('working')]
     elif wanted:
         agents = [a for a in agents if a.state == wanted]
     if not agents:

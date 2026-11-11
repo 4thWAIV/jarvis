@@ -579,7 +579,8 @@ names its `subagents/agent-<id>.jsonl`; `work_store.subagent_of`), and its
 own files are live evidence: the server's `_subagent_now` (the sessions
 snapshot's `read_subagents` state and its last tool or line, through
 `work_store.look_up_live_with`) makes the piece, and so its item, read
-`working` (it glows) while it is written within `AGENT_ACTIVE_WITHIN_SEC`,
+`working` (it glows) while it is working by the one definition (see
+"Agent activity"),
 with its name and what it is doing now (`live`); finished or stale, the
 piece reads activity_unknown and says so. It is read from its own file by
 id (`session_watch.read_subagent`), never from the snapshot's capped list
@@ -592,8 +593,10 @@ stopped task:", a monitor counting at most `MONITOR_MAX_SEC`), it is
 (`work_store._item_live`): a subagent working on a piece makes the item
 Working, one waiting on its background work keeps the item moving (never
 Stalled) and reads "Waiting on <name>'s background work"; either way the
-item's `live` line is that subagent's, on its row and in its header. Any other working report is a
-claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Activity unconfirmed",
+item's `live` line is that subagent's, on its row and in its header. A
+piece on a session (`agent:<session id>`) reads Working the same way, while
+that session's turn is open. Any other working report is a
+claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Not working now",
 `work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
 piece and on an item alike. An item reads activity_unknown while a piece
 claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
@@ -1353,8 +1356,9 @@ Workflow tool starts one level deeper, a folder per run, in
 each one's `workflow_run`, None for the rest; the workflows folder and each
 run folder are entered only when not a symlink). Finished means its last
 message is the assistant's with `stop_reason: end_turn`; otherwise it is
-`working` while written within `AGENT_ACTIVE_WITHIN_SEC`, else `stale`, which
-claims neither. Deduped by name across roots, capped at `MAX_AGENT_FILES`
+`working` while written within `SUBAGENT_TURN_SILENT_SEC` (ten minutes: a
+tool call or a long answer writes nothing meanwhile), else `stale`, its
+turn taken as stopped. Deduped by name across roots, capped at `MAX_AGENT_FILES`
 (a floor when capped, counting both levels), never through a symlink,
 never raising. They ride on
 the sessions snapshot (`subagents`), and `/api/sessions/{id}/transcript
@@ -1365,6 +1369,30 @@ to a running workflow is in that workflow's detail (`subagents` on
 (`subagents` on `/api/workflows`), lingering `LINGER_SEC` once it stops. The
 Agents panel shows "2 working" on an agent's box. An `agents` and a
 `workflows` hint go out when any session's subagents change.
+
+## Agent activity
+Working has one definition, `worker_inventory.working`: a turn is open,
+waiting on the model and running a tool included. A session works while
+`session_status` says `working` (its transcript's turn markers), a subagent
+while `session_watch._subagent_at` says so (not finished, written within
+`SUBAGENT_TURN_SILENT_SEC`), JARVIS's brain while a turn of it is open
+(`brain_activity`'s open turns, which is the main orb's thinking), a managed
+run while it runs. Waiting on his permission is not working. The inventory
+(`/api/workers`, `worker_inventory.build`, read by every page each second)
+gives each worker `activity.working` and `phase` (`model` or `tool`), and
+`worker_activity.settle` makes every other field agree with it; nothing is
+`unknown`. Every surface reads that answer and none works it out again
+(`workers.ts` `isWorking`, `workingOnItem`): the main orb (`jarvis.ts`), the
+Agents list's orbs and "N working" line (`WorkerFamily`: its subagents
+working, nothing while none are), the brain count in the left column (the
+provider's working count: sessions, subagents, the brain and runs), each
+Work row's one orb at its right end (`WorkRowActivity`: still while nobody
+works on the item, else how many of its pieces' owners work), the piece
+owners' orbs, Work's Working (`server._subagent_now`), workflows and
+`list_agents`. A late session snapshot keeps its last states (a gap says it
+is late). `session_watch._background_tasks` keeps every subagent file in its
+cache and reads only what a transcript appended, so a poll stays well under
+a second with hundreds of subagent files.
 
 ## Voice diagnostics
 How voice input is doing is one durable record, `voice_diagnostics.py`:

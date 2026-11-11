@@ -14,7 +14,7 @@
  *   - AgeBar: how long something has been open, as a filling bar.
  */
 
-import { useWorkers, findWorker } from "./workers";
+import { useWorkers, findWorker, isWorking } from "./workers";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { isQuiet, quietUntil } from "./voiceHealth";
@@ -72,9 +72,11 @@ export function ParticleOrb({ palette, look, dataState, className, size, particl
 export function WorkflowOrb({ state, size, particles = 300, workflowId, workerId }: {
   state: WorkflowState; size: number; particles?: number; workflowId?: string; workerId?: string }) {
   const {value} = useWorkers();
-  const activity = workerId ? findWorker(value, workerId)?.activity : undefined;
-  const orbState = activity?.orb_state ?? (workflowId ? value?.workflow_counts?.[workflowId]?.orb_state : undefined);
-  const look = workerId || state === "running" || orbState === "thinking" ? {...ORB_LOOK[state], state: orbState === "thinking" ? "thinking" as const : "idle" as const, gray: !orbState || orbState === "unknown"} : ORB_LOOK[state];
+  // Thinking only while the one answer says it works (worker_inventory.working).
+  const working = workerId ? isWorking(findWorker(value, workerId))
+    : workflowId ? (value?.workflow_counts?.[workflowId]?.active ?? 0) > 0 : false;
+  const look = workerId || state === "running" || working
+    ? {...ORB_LOOK[state], state: working ? "thinking" as const : "idle" as const, gray: false} : ORB_LOOK[state];
   return <ParticleOrb palette={WORKFLOW_PALETTE} look={look} dataState={state}
                       className="workflow-orb" size={size} particles={particles} />;
 }

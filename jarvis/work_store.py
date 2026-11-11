@@ -90,24 +90,20 @@ ERROR = "error"
 HELD = (WAITING, BLOCKED)
 # The states that should be reporting: silent for QUIET_AFTER_SEC is quiet.
 ACTIVE = (VERIFYING,)
-# WORKING is retained only as a legacy reporter claim. No provider currently
-# supplies exact assignment-bound, current token-generation evidence. Fail closed.
+# A working report is a claim. WORKING is shown only while the piece's owner
+# is working by the one definition (worker_inventory.working: its turn is
+# open, waiting on the model or running a tool); otherwise the claim reads
+# activity_unknown.
 ACTIVITY_UNKNOWN = "activity_unknown"
-# WORKING is shown only on live evidence (a subagent on the piece writing now).
 PUBLIC_STATES = (PLANNED, READY, WORKING, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE,
                  ERROR)
-ACTIVITY_REASON = ("The agent says it is working on this; JARVIS cannot see that work "
-                   "happening, so it does not say it is.")
+ACTIVITY_REASON = ("The agent says it is working on this, but JARVIS does not see its "
+                   "agent in a turn now.")
 
 
 def public_state(reported: str) -> str:
-    """A report is not telemetry. Never promote a stored claim to Working.
-
-    CLI turn starts, transcript freshness, run state and session-wide tokens
-    cannot establish current generation on this particular assignment.
-    Do not add a positive path until that evidence is supplied by a trusted
-    provider adapter with exact assignment identity and end/disconnect handling.
-    """
+    """A report is not telemetry: a stored claim alone is never Working
+    (`_pieces` shows Working only while its owner's turn is open)."""
     return ACTIVITY_UNKNOWN if reported == WORKING else reported
 
 # Where an item's work is: a ZIP work package or a folder, on this Mac.
@@ -752,7 +748,7 @@ LIVE_WORKING = "working"
 LIVE_WAITING = "waiting"
 # Why a piece on a subagent is not shown working, in his terms.
 _LIVE_REASON = {"finished": "Its subagent has finished.",
-                "stale": "Current token generation for this assignment is not confirmed.",
+                "idle": "Its agent is not in a turn now.",
                 LIVE_WAITING: "Its subagent is waiting on its own background work."}
 
 
@@ -1339,8 +1335,9 @@ def _pieces(rows, now: float, live: Callable[[Who], Optional[LiveAgent]]) -> lis
         after = json.loads(r["after_keys"])
         person = Who(r["who_kind"], r["who_ref"])
         agent = live(person)
-        # Working is shown only on live evidence: a subagent on the piece
-        # writing now. Any other working report reads activity_unknown.
+        # Working is shown only while its owner is working (an open turn,
+        # worker_inventory.working). Any other working report reads
+        # activity_unknown.
         evidenced = r["state"] == WORKING and agent is not None and agent.state == LIVE_WORKING
         shown = WORKING if evidenced else public_state(r["state"])
         reason = ""

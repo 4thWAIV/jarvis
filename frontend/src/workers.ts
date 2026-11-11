@@ -5,8 +5,8 @@ export interface WorkerCounts { orb_state?: "thinking" | "idle" | "unknown"; act
 export interface Worker {
   id: string; session_id: string; provider: string; name: string; project: string;
   native_hook_coverage?: string; parent_id: string | null; kind: string; workflow_id: string | null;
-  activity: { orb_state?: "thinking" | "idle" | "unknown"; active?: boolean; turn_open?: boolean | null; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
-  counts: WorkerCounts; runtime?: { status?: string }; allocation?: string;
+  activity: { working: boolean; phase?: "model" | "tool" | null; orb_state?: "thinking" | "idle" | "unknown"; active?: boolean; turn_open?: boolean | null; work_state?: string; state: string; last_phase?: string; generating: boolean; observed_at?: number; source?: string; evidence_age_seconds?: number; model_work?: boolean };
+  counts: WorkerCounts; descendant_counts?: WorkerCounts; runtime?: { status?: string }; allocation?: string;
 }
 export interface Inventory {
   snapshot_id?: string;
@@ -63,6 +63,35 @@ export function findWorker(value: Inventory | null, sessionId: string, provider?
   const matches = value?.workers.filter(w => w.session_id === sessionId && (!provider || w.provider === provider)) ?? [];
   return matches.length === 1 ? matches[0] : undefined;
 }
+/** Whether a worker is working: the server's one answer
+ *  (worker_inventory.working, an open turn: waiting on the model, running a
+ *  tool, or JARVIS's brain thinking). Nothing here works it out again. */
+export function isWorking(worker: Worker | undefined): boolean {
+  return worker?.activity.working === true;
+}
+
+export interface WorkOwner { kind: string; ref: string | null }
+
+/** How many of a Work item's owners are working now: each distinct owner of
+ *  a piece not done, by the one answer; a workflow counts its working members. */
+export function workingOnItem(value: Inventory | null, owners: WorkOwner[]): number {
+  const seen = new Set<string>();
+  let count = 0;
+  for (const owner of owners) {
+    if (!owner.ref || owner.kind === "tim") continue;
+    const key = `${owner.kind}:${owner.ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (owner.kind === "workflow") {
+      count += value?.workflow_counts?.[owner.ref]?.active ?? 0;
+      continue;
+    }
+    const sub = owner.ref.split("/sub:");
+    if (isWorking(findWorker(value, sub[1] ?? sub[0]))) count += 1;
+  }
+  return count;
+}
+
 export function useWorker(sessionId: string, provider?: string | null): Worker | undefined {
   return findWorker(useWorkers().value, sessionId, provider);
 }

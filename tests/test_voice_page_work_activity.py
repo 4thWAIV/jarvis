@@ -203,7 +203,13 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.click(".right-tabs [role=tab][title=Work]")
         row = ".work-row[data-work-id=work-1]"
         await page.locator(row).wait_for(timeout=10000)
-        await page.locator(row + ' canvas[data-orb-state="thinking"]').wait_for()
+        # One orb at the row's right end: s1 works on it, so it thinks and says 1.
+        await page.locator(row + ' .work-row-orb canvas[data-orb-state="thinking"]').wait_for()
+        await async_api.expect(page.locator(row + ' .work-row-orb-count')).to_have_text("1")
+        await async_api.expect(page.locator(row + ' .work-row-orb')).to_have_count(1)
+        # Nobody works on work-2: one still orb, no number.
+        await async_api.expect(page.locator('.work-row[data-work-id=work-2] .work-row-orb')).to_have_attribute("data-working", "0")
+        await async_api.expect(page.locator('.work-row[data-work-id=work-2] .work-row-orb-count')).to_have_count(0)
         assert await page.locator(row + ' [data-worker-snapshot]').get_attribute('data-worker-snapshot') == worker_snapshot['snapshot_id']
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.work-row')]
             .map(r => [r.dataset.workId, r.dataset.activity ?? null]))""")

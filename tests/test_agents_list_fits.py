@@ -176,7 +176,7 @@ async def test_agent_orbs_use_observed_turns_and_keep_activation_colour(page_pla
             "off working": ["true", "thinking"],
             "on idle": ["false", "idle"],
             "on working": ["false", "thinking"],
-            "on needs you": ["false", "thinking"],
+            "on needs you": ["false", "idle"],   # waiting on him is not working
         }
         try:
             await page.wait_for_function(f"""(e) => {{ const got = ({ORB_LOOKS})();

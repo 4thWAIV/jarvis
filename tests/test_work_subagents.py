@@ -2,10 +2,10 @@
 
 A piece may name one of a session's subagents by the agent id the Agent
 tool gave its dispatcher, which is the id that names its transcript
-(`subagents/agent-<id>.jsonl`). Its own files are live evidence: while the
-session watcher sees it written within AGENT_ACTIVE_WITHIN_SEC the piece
-reads Working (it glows, no activity_unknown); finished or gone quiet, the
-piece says so. The piece shows the subagent's name (its description) and
+(`subagents/agent-<id>.jsonl`). Its own files are live evidence: while its
+turn is open (worker_inventory.working: not finished, written within
+SUBAGENT_TURN_SILENT_SEC) the piece reads Working (it glows, no
+activity_unknown); finished or gone quiet, the piece says so. The piece shows the subagent's name (its description) and
 what it is doing now (its last tool or line, walled for the brain)."""
 from __future__ import annotations
 
@@ -80,38 +80,39 @@ def test_a_subagent_jarvis_cannot_find_is_refused(wired, item, subagent):
     assert "JARVIS has no agent" in r["error"]
 
 
-def test_model_request_is_visible_but_does_not_prove_assignment_generation(wired, item, subagent):
+def test_a_subagent_in_its_turn_makes_its_claimed_piece_working(wired, item, subagent):
     _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
     [piece] = got["pieces"]
-    assert piece["state"] == "activity_unknown"
-    assert piece["live"]["activity"]["model_work"]
-    assert not piece["live"]["activity"]["generating"]
+    assert piece["state"] == "working"
+    assert piece["live"]["activity"]["working"] is True
+    assert piece["live"]["activity"]["phase"] == "model"
     assert piece["live"]["activity"]["orb_state"] == "thinking"
     assert piece["live"]["snapshot_id"]
-    assert got["state"] == "activity_unknown"
+    assert got["state"] == "working"
 
 
 @pytest.mark.parametrize("state,reason", [
     (session_watch.AGENT_FINISHED, "Its subagent has finished."),
-    (session_watch.AGENT_STALE, "Current token generation for this assignment is not confirmed."),
+    (session_watch.AGENT_STALE, "Its agent is not in a turn now."),
 ])
 def test_finished_or_gone_quiet_the_piece_says_so(wired, item, subagent, state, reason):
     subagent["state"] = state
     _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
     [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
     assert (piece["state"], piece["activity_reason"], piece["live"]["state"]) == (
-        "activity_unknown", reason, state)
+        "activity_unknown", reason, "finished" if state == session_watch.AGENT_FINISHED else "idle")
 
 
-def test_a_session_s_own_working_claim_is_still_unconfirmed(wired, item, subagent, monkeypatch):
-    """The session itself (between turns) is no evidence; only a subagent is."""
+def test_a_session_between_turns_does_not_make_its_claim_working(wired, item, subagent, monkeypatch):
+    """The session itself between turns is not working; its subagent's turn
+    does not count for it."""
     monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
                         lambda: {SESSION: "coordinator"})
     _piece(wired, item.id, "plan", auth=_key(), state="working",
            who={"kind": "agent", "ref": SESSION})
     [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
-    assert piece["state"] == "activity_unknown" and piece["live"]["state"] == "finished"
+    assert piece["state"] == "activity_unknown" and piece["live"]["state"] == "idle"
 
 
 def test_the_agent_id_is_the_one_that_names_its_transcript(tmp_path):
@@ -197,8 +198,9 @@ def test_an_agent_named_by_id_is_found_whatever_the_cap(wired, real_session):
     listed, capped = session_watch.read_subagents(real_session, CWD, SESSION, time.time())
     assert capped and all(a.agent_id != "zlate0000000001" for a in listed)
     live = wired.server._subagent_now(SESSION, "zlate0000000001")
-    assert (live.name, live.state) == ("Agent zlate0000000001", "waiting")
-    assert not live.activity["active"]  # Timestamp-free prompt is no current turn evidence.
+    # Just written and its turn not ended: working, by the one definition.
+    assert (live.name, live.state) == ("Agent zlate0000000001", "working")
+    assert live.activity["working"]
 
 
 def test_ended_its_turn_but_waiting_on_its_monitor_says_so(wired, real_session, item):
@@ -252,8 +254,16 @@ def test_a_subagent_waiting_on_background_work_is_the_item_s_line_never_stalled(
     assert "Waiting on Release agent's background work." in _call(wired, "work_status")["text"]
 
 
-def test_a_request_phase_does_not_change_work_business_state(wired, item, subagent):
-    _piece(wired, item.id, "pr77", auth=_key(), state="working", who=WHO)
-    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
-    assert got["state"] == "activity_unknown"
-    assert got["pieces"][0]["live"]["activity"]["orb_state"] == "thinking"
+def test_a_session_in_its_turn_makes_its_claimed_piece_working(wired, item, subagent, monkeypatch):
+    """One definition for a session too: its turn is open (session_status
+    `working`), so its own claimed piece reads Working."""
+    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
+                        lambda: {SESSION: "coordinator"})
+    snap = wired.server._snapshot_or_empty()
+    snap.sessions[0].state = session_watch.WORKING
+    monkeypatch.setattr(wired.server, "_worker_inventory",
+                        lambda: worker_inventory.build(snap, now=time.time()))
+    _piece(wired, item.id, "plan", auth=_key(), state="working",
+           who={"kind": "agent", "ref": SESSION})
+    [piece] = wired.client.get(f"/api/work/{item.id}").json()["item"]["pieces"]
+    assert piece["state"] == "working" and piece["live"]["state"] == "working"
