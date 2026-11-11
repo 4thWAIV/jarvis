@@ -52,6 +52,22 @@ class Document:
     folder: Path
 
 
+def _pointing(document: Document) -> str:
+    """Whether this revision's rendered page can be pointed at: only a kit
+    page that loads the story helper can (language_projection.project
+    refuses a pointing story otherwise)."""
+    from jarvis import package_story
+    try:
+        view = (document.folder / "view.html").read_bytes()
+    except OSError:
+        view = b""
+    if package_story.HELPER_PATH.encode() in view:
+        return ("Its view.html loads the story helper, so a beat may point at the targets the "
+                "guide lists, each matching exactly one element of view.html.")
+    return ("Its view.html does not load the story helper, so the story may not point: "
+            "give beats no targets or actions.")
+
+
 def _assignment(document: Document | None) -> str:
     """What the fresh author writes, and the exact check it runs last."""
     if document is None:
@@ -71,8 +87,8 @@ def _assignment(document: Document | None) -> str:
             "language. You may also write package/story.json, the walk-through JARVIS tells "
             "over the rendered page, with any questions the reader should answer declared in "
             "its `questions` (the guide's Architecture documents section has the format; the "
-            "factory adds the standard vote last, so never ask it). Nothing else goes under "
-            "package/. "
+            "factory adds the standard vote last, so never ask it). " + _pointing(document)
+            + " Nothing else goes under package/. "
             "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
             "installation’s exact command: " + session_skill._module("make_package", cert=False)
             + " package --check-only --document " + document.document_id + " --revision "
