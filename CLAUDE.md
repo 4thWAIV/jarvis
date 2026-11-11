@@ -1804,16 +1804,18 @@ a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its
 sign-in or at its usage limit; a shell command's or keypress's outcome after
 its exact read-back) is first an item in
-`attention_store.py` (JARVIS's database, schema `attention_schema`): one
-item per source object (kind, source id), each change its next revision and
-a line of `attention_events`, JARVIS's own facts apart from other people's
-words (`untrusted`). `server._attend` is the one way in. `attention.py` is
+`attention_store.py` (documents in the engine, `records.py`): one
+`/attention/<kind>/<source id>.attention` per source object (kind, source
+id), each change its next revision and a version whose `events` holds it,
+every digest it was shown in on it (`presentations`), JARVIS's own facts
+apart from other people's words (`untrusted`); each digest is
+`/attention/digests/<id>.digest`. `server._attend` is the one way in. `attention.py` is
 the one admission policy: engaged (his last trusted interaction within
 `engagement_sec`, not away; a connected page is not engagement), the
 conversation controller's floor `idle`, `settled_exchange_sec` since it was
 last busy and since his last interaction, `digest_cooldown_sec` since the
 last digest attempt, and the oldest candidate at least `oldest_event_sec`
-old (trial values 120, 10, 120 and 60 s, settings in `attention_settings`).
+old (trial values 120, 10, 120 and 60 s, settings in `/settings/attention.settings`, held in memory).
 What changed while he was away or unknown is counted, never played. When
 all pass, one digest: the candidates' facts to the brain with other
 people's words walled, under the `digest` origin, where `/internal/tool`
