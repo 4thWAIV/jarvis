@@ -751,6 +751,7 @@ class ItemMapping:
     name = "attention"
     tables = ("attention_items", "attention_events", "attention_presentations")
     under = (ROOT,)
+    types = ("attention", "orphans")
     history = True
 
     def documents(self, conn) -> Iterator[move.Doc]:

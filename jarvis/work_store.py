@@ -1924,6 +1924,7 @@ class _WorkMapping:
     name = "work"
     tables = TABLES
     under = (ROOT,)
+    types = ("work",)
     history = True
 
     def documents(self, conn):

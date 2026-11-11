@@ -635,8 +635,12 @@ def _chunks(writes: list, batch: int) -> Iterator[list]:
 
 def _engine_docs(uds, mapping: Mapping) -> Iterator[Doc]:
     streams = {Stream.ENTRY, Stream.DATA, Stream.CONTENT, Stream.SECTIONS}
+    # A mapping that shares a folder with another type's documents names
+    # its own types, so the other's (and their histories) are never read.
+    types = getattr(mapping, "types", None)
     for under in mapping.under:
-        for item in uds.scan(MOVE_CALLER, under, limit=1000, streams=streams):
+        for item in uds.scan(MOVE_CALLER, under, limit=1000, streams=streams,
+                             types=None if types is None else list(types)):
             content = _content_of(item)
             history: tuple[Revision, ...] = ()
             if mapping.history:

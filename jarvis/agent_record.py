@@ -410,6 +410,7 @@ class AgentMapping:
     tables = ("agents", "steers", "agent_keys", "agent_rights", "agent_key_events",
               "agent_author_proofs")
     under = (AGENTS, WORK_KEYS, OTHER_KEYS)
+    types = ("agent", "workkey", "keyholder")
     history = True
 
     def documents(self, conn: sqlite3.Connection) -> Iterator:
