@@ -3215,6 +3215,13 @@ async def lifespan(application: FastAPI):
     cut = await asyncio.to_thread(records_cutover.cut_over)
     if cut.state == "cut over":
         log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
+    # His voice settings held in memory before a page connects, so listening
+    # and speaking never wait on the engine (voice_control.py).
+    try:
+        await asyncio.to_thread(voice_control.read)
+    except Exception:
+        log.warning("voice settings: not read at startup; the defaults until they are",
+                    exc_info=True)
 
     run_store.init_db()
     # The old `dispatches` -> `runs` migration is retired with SQLite: every
