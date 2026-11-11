@@ -172,11 +172,19 @@ def _data_dir(path: Path):
 
 
 class Isolated:
-    """One JARVIS of our own: its folder, port, token and process."""
+    """One JARVIS of our own: its folder, port, token and process. It runs
+    its own knowledge engine in its own data folder (JARVIS_ENGINE_AUTOSTART
+    on, whatever the caller's environment says), which holds its records;
+    `before`, when given, writes records there first (`seed`), before its
+    server and engine start."""
 
-    def __init__(self, folder: Path, language: str, page: Path):
+    def __init__(self, folder: Path, language: str, page: Path,
+                 before=None):
         self.folder = folder
         self.data = folder / "data"
+        self.data.mkdir(parents=True, exist_ok=True)
+        if before is not None:
+            before(self.data)
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         self.log = folder / "jarvis.log"
@@ -191,7 +199,9 @@ class Isolated:
         env = {**os.environ,
                "JARVIS_DATA_DIR": str(self.data), "JARVIS_ENV_FILE": str(env_copy),
                "JARVIS_STT_MODEL_DIR": str(folder / "models"),
-               "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_ENGINE_AUTOSTART": "0",
+               "JARVIS_BRAIN_AUTOSTART": "0",
+               # Its records live in an engine of its own, in its own folder.
+               "JARVIS_ENGINE_AUTOSTART": "1", "JARVIS_KNOWLEDGE": "0",
                "JARVIS_FOLDER_DISCOVERY": "0",
                "JARVIS_REFUSE_UNTRUSTED_ACTIONS": "0", "JARVIS_TTS_PROVIDER": "fish",
                # It is the check: a deck signed by the key it is seeded with
@@ -931,8 +941,10 @@ def check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
 
 
 def seed(data: Path, public_key: str, session: str) -> None:
-    """The agent's public key, onboarded in the isolated JARVIS's record."""
-    with _data_dir(data):
+    """The agent's public key, onboarded in the isolated JARVIS's record:
+    written into its engine's folder before its server starts there."""
+    from jarvis import records
+    with _data_dir(data), records.opened_at(data_paths.knowledge_dir()):
         key = agent_key_store.submit(public_key, session)
         agent_key_store.proven(key.fingerprint, "decision check")
         agent_key_store.onboard(session, "decision check")
@@ -946,12 +958,12 @@ def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
     jarvis = None
     try:
         dist = built_page()
-        jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
-                          deck.get("language", "en"), dist)
         # Signed by the agent's key, which the isolated JARVIS knows as an
-        # onboarded agent's, as the live one does.
+        # onboarded agent's, as the live one does (seeded before it starts).
+        jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
+                          deck.get("language", "en"), dist,
+                          before=lambda data: seed(data, signer[1], session))
         checked = folder / f"checked-{archive.name}"
-        seed(jarvis.data, signer[1], session)
         package_signature.sign(archive, checked, signer[0], signer[1], session)
         delivered = deliver(checked, jarvis.base, says_of(deck.get("title") or archive.stem),
                             signer=signer)
