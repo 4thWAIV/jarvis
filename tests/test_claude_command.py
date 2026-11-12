@@ -64,9 +64,8 @@ def test_the_brain_and_the_run_pipeline_both_start_from_it(monkeypatch, tmp_path
     session = claude_provider.ClaudeSession(BrainConfig(home=tmp_path, claude_path="c"),
                                             lambda *a: None, None)
     assert session.command("i")[:2] == ["PREFIX", "c"]
-    executor = run_executor.RunExecutor.__new__(run_executor.RunExecutor)
-    executor._claude_path = "c"
-    assert executor._command("run-1", None, "opus")[:2] == ["PREFIX", "c"]
+    engine = run_executor.ClaudeEngine(None, "c")
+    assert engine._command("run-1", None, "opus")[:2] == ["PREFIX", "c"]
 
 
 def test_on_windows_npm_s_launcher_is_traded_for_the_exe_it_runs(monkeypatch, tmp_path):

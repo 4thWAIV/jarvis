@@ -41,7 +41,8 @@ class _Executor:
 
     async def spawn(self, prompt, project_name, project_path, origin,
                     resume_from=None, timeout_sec=0, model=None,
-                    folder_id=None, package_id=None, project_id=None, work_id=None):
+                    folder_id=None, package_id=None, project_id=None, work_id=None,
+                    engine="claude"):
         if self.boom:
             raise RuntimeError("no slots")
         run_id = self.store.create_run(prompt, project_name, project_path,
@@ -51,7 +52,8 @@ class _Executor:
                              "project_name": project_name,
                              "project_path": project_path, "origin": origin,
                              "model": model, "folder_id": folder_id,
-                             "project_id": project_id, "work_id": work_id})
+                             "project_id": project_id, "work_id": work_id,
+                             "engine": engine})
         return run_id
 
 
@@ -114,6 +116,39 @@ async def test_a_watcher_turn_cannot_start_a_run(ready, monkeypatch):
     assert "not_allowed_from_event" in r.json()["text"]
     assert ex.spawned == [], "nothing was started"
     assert store.list_runs(limit=10) == []
+
+
+# --- The engine: what he named, else his setting for agent runs ---------
+
+@pytest.mark.asyncio
+async def test_it_goes_on_the_engine_he_names(ready):
+    server, _store, ex = ready
+    out = await server.tool_spawn_run({"project": "chitauri", "prompt": "fix it",
+                                       "engine": "codex"})
+    assert ex.spawned[-1]["engine"] == "codex" and "on Codex" in out, out
+
+
+@pytest.mark.asyncio
+async def test_with_nothing_named_his_setting_for_agent_runs_decides(ready):
+    from jarvis import brains_config, engine_choice
+    server, _store, ex = ready
+    out = await server.tool_spawn_run({"project": "chitauri", "prompt": "fix it"})
+    assert ex.spawned[-1]["engine"] == "claude" and "Codex" not in out
+    brains_config.add("openai")
+    engine_choice.set_kind("run", "fixed", "codex", "gpt-test")
+    await server.tool_spawn_run({"project": "chitauri", "prompt": "fix it"})
+    assert (ex.spawned[-1]["engine"], ex.spawned[-1]["model"]) == ("codex", "gpt-test")
+    # A model names its engine: "opus" is Claude's, whatever the setting.
+    await server.tool_spawn_run({"project": "chitauri", "prompt": "fix it", "model": "opus"})
+    assert (ex.spawned[-1]["engine"], ex.spawned[-1]["model"]) == ("claude", "opus")
+
+
+@pytest.mark.asyncio
+async def test_an_engine_it_does_not_know_starts_nothing(ready):
+    server, _store, ex = ready
+    out = await server.tool_spawn_run({"project": "chitauri", "prompt": "fix it",
+                                       "engine": "gemini"})
+    assert out == "Claude or Codex, sir?" and ex.spawned == []
 
 
 # --- Resolution: ask, never guess ----------------------------------------

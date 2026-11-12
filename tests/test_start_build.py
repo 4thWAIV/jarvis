@@ -348,14 +348,15 @@ class _Executor:
         self.spawned: list[dict] = []
 
     async def spawn(self, prompt, project_name, project_path, origin,
-                    resume_from=None, timeout_sec=0, model=None):
+                    resume_from=None, timeout_sec=0, model=None, engine="claude"):
         run_id = self.store.create_run(prompt, project_name, project_path,
-                                       origin, resume_from)
+                                       origin, resume_from, engine=engine)
         self.store.update_run(run_id, requested_model=model or self.model)
         self.spawned.append({"run_id": run_id, "prompt": prompt,
                              "project_name": project_name,
                              "project_path": project_path,
-                             "timeout_sec": timeout_sec, "model": model})
+                             "timeout_sec": timeout_sec, "model": model,
+                             "engine": engine})
         return run_id
 
 
@@ -545,6 +546,20 @@ async def test_no_model_defaults_to_sonnet_and_never_asks(ready, project):
     assert ex.spawned[0]["model"] == "sonnet"
     assert "which model" not in out.lower()
     assert "sonnet" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_build_goes_on_his_setting_for_builds(ready):
+    from jarvis import brains_config, engine_choice
+    server, _store, ex = ready
+    brains_config.add("openai")
+    engine_choice.set_kind("build", "fixed", "codex", None)
+    out = await server.tool_start_build({"project": "chitauri", "spec": SPEC})
+    assert (ex.spawned[0]["engine"], ex.spawned[0]["model"]) == ("codex", None)
+    assert "on Codex" in out, out
+    # He names Claude for this one: kept, and on Sonnet as ever.
+    await server.tool_start_build({"project": "chitauri", "spec": SPEC, "engine": "claude"})
+    assert (ex.spawned[1]["engine"], ex.spawned[1]["model"]) == ("claude", "sonnet")
 
 
 @pytest.mark.asyncio

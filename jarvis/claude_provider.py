@@ -160,6 +160,8 @@ ALLOWED_TOOLS = [
     # acting change the Settings route also calls.
     "mcp__jarvis__voice_input_settings",
     "mcp__jarvis__set_voice_input_settings",
+    "mcp__jarvis__engine_settings",
+    "mcp__jarvis__set_engine_setting",
     "mcp__jarvis__play_cue",
     # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
     "mcp__jarvis__skip_reading",

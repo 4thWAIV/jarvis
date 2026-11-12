@@ -1,4 +1,10 @@
-"""Spawns Claude Code runs and records everything they do.
+"""Runs agents on their engines and records everything they do.
+
+One run pipeline, two engines. `RunExecutor` owns everything a run is:
+its row, written first, its concurrency permit, its bounds, cancelling
+and the terminal-state rule below. What differs between engines is a
+`RunEngine`: `ClaudeEngine` here (`claude -p`, one process a run) and
+`codex_engine.CodexEngine` (a thread on the running Codex app server).
 
 Invariant: every state transition is written to the store *before* it is
 published to subscribers. The WebSocket is a cache-invalidation hint, never
@@ -15,11 +21,10 @@ import asyncio
 import logging
 import math
 import os
-import shutil
 import time
-from typing import Callable
+from typing import Callable, Protocol
 
-from jarvis import claude_env, owned_process
+from jarvis import claude_env, owned_process, session_steer
 from jarvis import stream_parser, worker_activity
 
 log = logging.getLogger("jarvis.run_executor")
@@ -199,15 +204,95 @@ class _IdleTimeout(Exception):
     """
 
 
+class RunEvents:
+    """A run's events, as its engine reads them: appended to the run's file
+    in batches off the event loop, and each announced (`run_event`) only
+    once its batch is in the file, written before it is announced like
+    every other transition.
+
+    Store writes are synchronous. Doing one per event on the loop thread
+    would stutter the voice path on a chatty build, so events are buffered
+    and flushed via a worker thread."""
+
+    def __init__(self, ex: "RunExecutor", run_id: str, seq: int):
+        self._ex = ex
+        self._run_id = run_id
+        self.seq = seq
+        self._pending: list[tuple[int, str, str]] = []
+        self._unannounced: list[dict] = []
+        self._last_flush = time.monotonic()
+
+    @classmethod
+    async def open(cls, ex: "RunExecutor", run_id: str) -> "RunEvents":
+        return cls(ex, run_id, await asyncio.to_thread(ex._store.next_seq, run_id))
+
+    def add(self, kind: str, event: dict, line: str) -> None:
+        # Capped, not stored verbatim: STREAM_LINE_LIMIT is 64 MiB
+        # and jarvis.db is permanent. See stream_parser.cap_payload —
+        # it shrinks the long strings inside the event rather than
+        # the line, so the payload still parses and still carries the
+        # tool names `assess_outcome` reads.
+        self._pending.append((self.seq, kind, stream_parser.cap_payload(line, event)))
+        self._unannounced.append({"type": "run_event", "run_id": self._run_id,
+                                  "seq": self.seq, "kind": kind, "payload": event})
+        self.seq += 1
+
+    def due(self) -> bool:
+        return (len(self._pending) >= _EVENT_BATCH
+                or time.monotonic() - self._last_flush >= _EVENT_FLUSH_SEC)
+
+    async def flush(self) -> None:
+        if self._pending:
+            batch, self._pending = self._pending, []
+            hints, self._unannounced = self._unannounced, []
+            await asyncio.to_thread(self._ex._store.append_events, self._run_id, batch)
+            for hint in hints:
+                self._ex._publish(hint)
+        self._last_flush = time.monotonic()
+
+
+class RunEngine(Protocol):
+    """What differs between the engines a run can go on. The executor owns
+    the rest: the row written first, the permit, the bounds, cancelling,
+    and the rule that every run reaches a terminal state, written to the
+    store before it is announced.
+
+    `drive` takes a QUEUED run, already holding its permit, through RUNNING
+    to its terminal status, through the executor's `_start_write`,
+    `_finish`, `_publish` and `_publish_run_updated`. It may raise: the
+    executor then records the run FAILED (CANCELLED when it was being
+    cancelled) and calls `release`. `stop` ends the work it has going for a
+    run being cancelled and returns the fields to record with CANCELLED, or
+    None when it has nothing going. `forget` drops what it kept of a run,
+    on every way out."""
+
+    name: str          # the run's `engine`
+    provider: str      # its brain provider: whose plan it uses, whose activity it is
+
+    def resolve_model(self, model: str | None) -> str: ...
+
+    async def drive(self, run_id: str, prompt: str, project_path: str,
+                    resume_from: str | None, timeout_sec: float,
+                    model: str | None = None) -> None: ...
+
+    async def stop(self, run_id: str) -> dict | None: ...
+
+    async def steer(self, run_id: str, text: str) -> str: ...
+
+    async def release(self, run_id: str) -> None: ...
+
+    def forget(self, run_id: str) -> None: ...
+
+
 class RunExecutor:
     def __init__(self, store, claude_path: str | None = None,
                  max_concurrent: int = 3, grace_sec: float = 10.0,
                  eof_grace_sec: float = _EOF_EXIT_GRACE_SEC,
                  default_timeout_sec: float | None = None,
                  idle_sec: float | None = None,
-                 poll_sec: float = _READ_POLL_SEC):
+                 poll_sec: float = _READ_POLL_SEC,
+                 engines: tuple = ()):
         self._store = store
-        self._claude_path = claude_path or claude_env.find_claude() or "claude"
         self._occupied_slots = 0
         self._max_concurrent = max_concurrent
         self._grace_sec = grace_sec
@@ -216,7 +301,6 @@ class RunExecutor:
         self._poll_sec = poll_sec if poll_sec and poll_sec > 0 \
             else _READ_POLL_SEC
         self._default_timeout = _resolve_default_timeout(default_timeout_sec)
-        self._procs: dict[str, asyncio.subprocess.Process | owned_process.OwnedProcess] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._subscribers: list[Callable[[dict], None]] = []
         # Concurrency gate. A counting semaphore, not a poll over
@@ -229,6 +313,12 @@ class RunExecutor:
         # signal is sent, so whichever coroutine reaches the terminal write
         # first still records CANCELLED and not "failed, exit -15".
         self._cancelling: set[str] = set()
+        # The engines a run can go on, by name (`runs.engine`). Claude's is
+        # always here; another is added by whoever owns its connection.
+        self.claude = ClaudeEngine(self, claude_path)
+        self._engines: dict[str, RunEngine] = {self.claude.name: self.claude}
+        for engine in engines:
+            self.add_engine(engine)
 
     # -- pub/sub ----------------------------------------------------------
 
@@ -266,20 +356,27 @@ class RunExecutor:
                 "free": max(0, self._max_concurrent - occupied),
                 "external_slots": "unknown"}
 
-    def _resolve_model(self, model: str | None) -> str:
-        """Explicit argument, else JARVIS_RUN_MODEL, else 'sonnet'.
+    # -- engines ----------------------------------------------------------
 
-        Never returns falsy: the CLI's own default must never be relied on,
-        so a --model flag is always emitted (brain.py sets this precedent
-        for the voice path already).
-        """
-        return model or os.getenv("JARVIS_RUN_MODEL") or _DEFAULT_MODEL
+    def add_engine(self, engine: "RunEngine") -> None:
+        self._engines[engine.name] = engine
+
+    def engine(self, name: str | None) -> "RunEngine | None":
+        """The engine called `name` (a run's `engine`), Claude's for none."""
+        return self._engines.get(name or ClaudeEngine.name)
+
+    def _engine_of(self, run: dict) -> "RunEngine":
+        engine = self.engine(run.get("engine"))
+        if engine is None:
+            raise ValueError(f"no {run.get('engine')!r} engine to run on")
+        return engine
 
     async def start_existing(self, run_id: str, prompt: str,
                              project_path: str,
                              resume_from: str | None = None,
                              timeout_sec: float = 0,
-                             model: str | None = None) -> str:
+                             model: str | None = None,
+                             engine: str | None = None) -> str:
         """Drive a run row that was created by the caller.
 
         This is the body previously inlined in spawn(); the done-callback
@@ -293,7 +390,8 @@ class RunExecutor:
         # about, with this module as the offender.
         coro = None
         try:
-            resolved_model = self._resolve_model(model)
+            runner = self._engine_of({"engine": engine})
+            resolved_model = runner.resolve_model(model)
             # A caller that names no bound (every production caller does not)
             # gets the default one. See _resolve_default_timeout.
             bound = timeout_sec if timeout_sec and timeout_sec > 0 \
@@ -303,7 +401,7 @@ class RunExecutor:
             await asyncio.to_thread(self._store.update_run, run_id,
                                     requested_model=resolved_model)
             coro = self._drive(run_id, prompt, project_path, resume_from,
-                               bound, resolved_model)
+                               bound, resolved_model, runner)
             task = asyncio.create_task(coro)
             coro = None                     # the task owns it now
         except BaseException as e:
@@ -345,20 +443,26 @@ class RunExecutor:
                     folder_id: str | None = None,
                     package_id: str | None = None,
                     project_id: str | None = None,
-                    work_id: str | None = None) -> str:
+                    work_id: str | None = None,
+                    engine: str | None = None) -> str:
+        engine = engine or ClaudeEngine.name
+        self._engine_of({"engine": engine})      # refused before any row exists
         run_id = await asyncio.to_thread(
             self._store.create_run, prompt, project_name, project_path,
-            origin, resume_from, folder_id, package_id, project_id, work_id)
+            origin, resume_from, folder_id, package_id, project_id, work_id,
+            engine)
         return await self.start_existing(run_id, prompt, project_path,
-                                         resume_from, timeout_sec, model)
+                                         resume_from, timeout_sec, model,
+                                         engine)
 
     async def cancel(self, run_id: str) -> bool:
         """Cancel a run, queued or running.
 
         False only for an unknown run id or one already in a terminal state.
 
-        True is a promise, not a status write: it means the child was either
-        signalled and confirmed dead, or confirmed never to have been started.
+        True is a promise, not a status write: it means the run's work was
+        either stopped and confirmed gone (the engine's `stop`), or confirmed
+        never to have been started.
         It is never returned for a process that is still alive — that was the
         bug in the post-EOF window, where `_procs` had already been emptied
         and this method cheerfully reported a kill it had not performed.
@@ -379,24 +483,24 @@ class RunExecutor:
         # set, so the first writer still writes CANCELLED.
         self._cancelling.add(run_id)
 
-        proc = self._procs.get(run_id)
-        if proc is not None:
-            try:
-                await self._terminate(proc)
-            except owned_process.ContainmentError as error:
-                await self._finish(run_id, self._store.RunStatus.FAILED,
-                                   error=str(error))
-                raise
-            # Either way the child is now reaped: `_terminate` does not return
-            # until `proc.wait()` has (or has demonstrably stopped being able
-            # to), and a non-None returncode already means it is gone.
+        # The engine stops what it has going (Claude's: the child, reaped,
+        # and on Windows its whole owned Job confirmed empty; Codex's: the
+        # turn, interrupted) and says what to record of it. A Job that cannot
+        # be confirmed empty is FAILED, never a successful cancellation.
+        try:
+            stopped = await self._engine_of(run).stop(run_id)
+        except owned_process.ContainmentError as error:
+            await self._finish(run_id, self._store.RunStatus.FAILED,
+                               error=str(error))
+            raise
+        if stopped is not None:
             await self._finish(run_id, self._store.RunStatus.CANCELLED,
-                               exit_code=proc.returncode)
+                               **stopped)
             return True
 
-        # No registered process can also mean create_subprocess_exec is
-        # still in flight. Cancel its driver, but retain and await ownership
-        # until the eventual child has been stopped. Never report a queued
+        # Nothing registered can also mean the engine's spawn is still in
+        # flight. Cancel its driver, but retain and await ownership until
+        # whatever it started has been stopped. Never report a queued
         # cancellation while a late spawn can still start doing work.
         task = self._tasks.get(run_id)
         if task is not None:
@@ -414,6 +518,260 @@ class RunExecutor:
             return latest["status"] == self._store.RunStatus.CANCELLED
         await self._finish(run_id, self._store.RunStatus.CANCELLED)
         return True
+
+    async def wait_for(self, run_id: str, timeout: float = 30) -> dict:
+        task = self._tasks.get(run_id)
+        if task is not None:
+            # shield(): a caller's timeout must never cancel the run itself.
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except asyncio.CancelledError:
+                # The *run* was cancelled (queued-cancel path) — report its
+                # recorded terminal state. If instead *we* were cancelled,
+                # propagate.
+                if not task.cancelled():
+                    raise
+        return await asyncio.to_thread(self._store.get_run, run_id)
+
+    async def steer(self, run_id: str, text: str) -> str:
+        """Steer a running run mid-turn with `text`, on its engine: one of
+        `session_steer`'s outcomes. Only an engine that can (Codex's
+        `turn/steer`) does; any other refuses, naming why."""
+        run = await asyncio.to_thread(self._store.get_run, run_id)
+        if run is None or run["status"] != self._store.RunStatus.RUNNING:
+            return session_steer.failed("that run is not running")
+        return await self._engine_of(run).steer(run_id, text)
+
+
+    # -- internals --------------------------------------------------------
+
+    async def _publish_run_updated(self, run_id: str) -> None:
+        """Announce a field change on a still-running run.
+
+        Only for changes that alter the row a client renders — the model from
+        `system/init`, the accumulated token usage from each `assistant`
+        turn, and cost/usage from `result`. NOT per streamed event: that
+        would be one message per line of output (three quarters of them hook
+        plumbing), and `run_event` already covers the stream. Like every
+        other transition, the store write has already happened; this is the
+        cache-invalidation hint after it, and carries the full row so the
+        client never has to merge a delta.
+        """
+        run = await asyncio.to_thread(self._store.get_run, run_id)
+        if run is not None:
+            self._publish({"type": "run_updated", "run": run})
+
+    def _start_write(self, run_id: str, pid: int | None, **fields) -> dict | None:
+        """The RUNNING transition, as one unit on a worker thread: with the
+        engine's own session for the run, when it has one, in the same write."""
+        self._store.update_run(run_id,
+                               status=self._store.RunStatus.RUNNING,
+                               pid=pid, started_at=time.time(), **fields)
+        return self._store.get_run(run_id)
+
+    def _finish_write(self, run_id: str, status: str, **fields) -> dict | None:
+        """The terminal transition, as one conditioned write in the store.
+
+        Runs on a worker thread. Returns the finished row, or None when the
+        run was already terminal and nothing was written — the first writer
+        wins, which is what keeps a cancel racing `_drive` to a single status.
+        """
+        return self._store.finish_run(run_id, status, **fields)
+
+    async def _finish(self, run_id: str, status: str, **fields) -> None:
+        """Terminal transition: written off the loop, published on it.
+
+        The write is a synchronous store call; on the loop thread it could
+        stall the voice path, which shares this thread, so like every other
+        store call in this module it is `to_thread`'d. The publish stays on the loop:
+        `_publish` fans out to WebSocket subscribers.
+        """
+        row = await asyncio.to_thread(self._finish_write, run_id, status,
+                                      **fields)
+        if row is not None:
+            self._publish({"type": "run_finished", "run": row})
+
+    def _finish_blocking(self, run_id: str, status: str, **fields) -> None:
+        """`_finish` for a path that may not be able to await.
+
+        The error handlers below run inside `except BaseException`, where the
+        task may already be cancelled — an `await` there raises
+        CancelledError immediately and the terminal write would never happen,
+        which is the exact failure this module exists to prevent. Blocking
+        the loop for one write on a failure path is the lesser evil, and only
+        error paths use it.
+        """
+        row = self._finish_write(run_id, status, **fields)
+        if row is not None:
+            self._publish({"type": "run_finished", "run": row})
+
+    async def _drive(self, run_id: str, prompt: str, project_path: str,
+                     resume_from: str | None, timeout_sec: float,
+                     model: str | None = None,
+                     engine: "RunEngine | None" = None) -> None:
+        engine = engine or self.claude
+        slot_held = False
+        try:
+            await self._slots.acquire()
+            slot_held = True
+            self._occupied_slots += 1
+
+            if run_id in self._cancelling:
+                # Cancelled while queued: never spawn anything.
+                await self._finish(run_id, self._store.RunStatus.CANCELLED)
+                return
+
+            await engine.drive(run_id, prompt, project_path, resume_from,
+                               timeout_sec, model)
+        except BaseException as e:
+            # Anything unexpected — a store write raising "database is
+            # locked", a decode error, CancelledError on shutdown — must
+            # still leave the run terminal and the child reaped, and must be
+            # logged rather than swallowed as "never retrieved".
+            cancelled = run_id in self._cancelling
+            if cancelled and isinstance(e, asyncio.CancelledError):
+                # cancel() cancels the queued driver task on purpose. That
+                # arrives here as CancelledError; it is a normal user action,
+                # not a driver failure, and must not be logged at ERROR.
+                log.info("run %s cancelled while queued", run_id)
+            else:
+                log.exception("run %s driver failed", run_id)
+            # The engine lets go of whatever it still holds for the run:
+            # Claude's child, killed and reaped (on Windows its whole owned
+            # Job, confirmed empty), before the terminal write.
+            cleanup_error = None
+            try:
+                await engine.release(run_id)
+            except BaseException as error:
+                cleanup_error = error
+                log.exception("run %s cleanup failed", run_id)
+            containment_failed = (isinstance(cleanup_error, owned_process.ContainmentError)
+                                  or isinstance(e, owned_process.ContainmentError))
+            status = (self._store.RunStatus.CANCELLED
+                      if cancelled and not containment_failed
+                      else self._store.RunStatus.FAILED)
+            try:
+                self._finish_blocking(run_id, status,
+                                      error=repr(cleanup_error or e)[:_STDERR_CHARS])
+            except Exception:
+                log.exception("run %s could not be marked terminal", run_id)
+            if containment_failed:
+                raise cleanup_error or e
+            if isinstance(e, (asyncio.CancelledError, SystemExit,
+                              KeyboardInterrupt)):
+                # The run is terminal and the child reaped; interpreter
+                # shutdown and cancellation must still propagate.
+                raise
+        finally:
+            engine.forget(run_id)
+            self._cancelling.discard(run_id)
+            if slot_held:
+                # Released only after the child has been reaped, and on every
+                # exit path: a leaked permit permanently shrinks capacity.
+                self._occupied_slots -= 1
+                self._slots.release()
+
+
+class ClaudeEngine:
+    """`claude -p --output-format stream-json`, one child process a run, on
+    the user's Claude subscription (claude_env scrubs any API key)."""
+
+    name = "claude"
+    provider = "anthropic"
+
+    def __init__(self, ex: "RunExecutor", claude_path: str | None = None):
+        self._ex = ex
+        self._claude_path = claude_path or claude_env.find_claude() or "claude"
+        self._procs: dict[str, asyncio.subprocess.Process | owned_process.OwnedProcess] = {}
+
+    @property
+    def _grace_sec(self) -> float:
+        return self._ex._grace_sec
+
+    @property
+    def _eof_grace_sec(self) -> float:
+        return self._ex._eof_grace_sec
+
+    @property
+    def _idle_sec(self) -> float:
+        return self._ex._idle_sec
+
+    @property
+    def _poll_sec(self) -> float:
+        return self._ex._poll_sec
+
+    def resolve_model(self, model: str | None) -> str:
+        """Explicit argument, else JARVIS_RUN_MODEL, else 'sonnet'.
+
+        Never returns falsy: the CLI's own default must never be relied on,
+        so a --model flag is always emitted (brain.py sets this precedent
+        for the voice path already).
+        """
+        return model or os.getenv("JARVIS_RUN_MODEL") or _DEFAULT_MODEL
+
+    def _command(self, run_id: str, resume_from: str | None,
+                model: str | None = None) -> list[str]:
+        base = claude_env.command_prefix(self._claude_path)
+        cmd = base + ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                      "--session-id", run_id]
+        if resume_from:
+            # Verified against CLI 2.1.251: --session-id is rejected alongside
+            # --resume unless --fork-session is also passed. Forking is also the
+            # semantics we want — the retry inherits context but owns its own id.
+            cmd += ["--resume", resume_from, "--fork-session"]
+        # Always explicit, never the CLI's own default — same reasoning as
+        # brain.py always passing --model.
+        cmd += ["--model", self.resolve_model(model)]
+        if _SKIP_PERMISSIONS:
+            # Matches the five existing call sites. Without this a run blocks on
+            # a permission prompt it has no TTY to answer, and hangs forever.
+            cmd.append("--dangerously-skip-permissions")
+        return cmd
+
+    async def stop(self, run_id: str) -> dict | None:
+        """The child of a run being cancelled, signalled and reaped; None
+        when there is no child (queued, or already reaped)."""
+        proc = self._procs.get(run_id)
+        if proc is None:
+            return None
+        # `_terminate` stops an owned process's whole Job even when its root
+        # has already exited (a dead parent does not mean its descendants
+        # are gone), and raises ContainmentError when it cannot confirm it.
+        await self._terminate(proc)
+        # Either way the child is now reaped: `_terminate` does not return
+        # until `proc.wait()` has (or has demonstrably stopped being able
+        # to), and a non-None returncode already means it is gone.
+        return {"exit_code": proc.returncode}
+
+    async def steer(self, run_id: str, text: str) -> str:
+        # `claude -p` reads its one prompt from stdin, which is closed once
+        # it is written: there is nothing to steer a running turn through.
+        return session_steer.failed("a Claude run cannot be steered mid-turn")
+
+    async def release(self, run_id: str) -> None:
+        """Kill and reap the child of a run whose driver failed. An owned
+        process (Windows) has its whole Job stopped, held through repeated
+        cancellation; ContainmentError when that cannot be confirmed."""
+        proc = self._procs.get(run_id)
+        if isinstance(proc, owned_process.OwnedProcess):
+            await owned_process._settle(asyncio.create_task(
+                proc.stop(timeout=self._grace_sec)))
+            return
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(proc.wait()),
+                                       timeout=self._grace_sec)
+            except BaseException:
+                log.debug("run %s could not be reaped", run_id,
+                          exc_info=True)
+
+    def forget(self, run_id: str) -> None:
+        worker_activity.forget_managed(self.provider, run_id)
+        self._procs.pop(run_id, None)
 
     async def _terminate(self, proc) -> None:
         """SIGTERM, then SIGKILL after the grace period.
@@ -462,100 +820,6 @@ class RunExecutor:
                       "giving up the wait rather than holding its permit",
                       getattr(proc, "pid", "?"), self._grace_sec)
 
-    async def wait_for(self, run_id: str, timeout: float = 30) -> dict:
-        task = self._tasks.get(run_id)
-        if task is not None:
-            # shield(): a caller's timeout must never cancel the run itself.
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-            except asyncio.CancelledError:
-                # The *run* was cancelled (queued-cancel path) — report its
-                # recorded terminal state. If instead *we* were cancelled,
-                # propagate.
-                if not task.cancelled():
-                    raise
-        return await asyncio.to_thread(self._store.get_run, run_id)
-
-    # -- internals --------------------------------------------------------
-
-    def _command(self, run_id: str, resume_from: str | None,
-                model: str | None = None) -> list[str]:
-        base = claude_env.command_prefix(self._claude_path)
-        cmd = base + ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                      "--session-id", run_id]
-        if resume_from:
-            # Verified against CLI 2.1.251: --session-id is rejected alongside
-            # --resume unless --fork-session is also passed. Forking is also the
-            # semantics we want — the retry inherits context but owns its own id.
-            cmd += ["--resume", resume_from, "--fork-session"]
-        # Always explicit, never the CLI's own default — same reasoning as
-        # brain.py always passing --model.
-        cmd += ["--model", self._resolve_model(model)]
-        if _SKIP_PERMISSIONS:
-            # Matches the five existing call sites. Without this a run blocks on
-            # a permission prompt it has no TTY to answer, and hangs forever.
-            cmd.append("--dangerously-skip-permissions")
-        return cmd
-
-    async def _publish_run_updated(self, run_id: str) -> None:
-        """Announce a field change on a still-running run.
-
-        Only for changes that alter the row a client renders — the model from
-        `system/init`, the accumulated token usage from each `assistant`
-        turn, and cost/usage from `result`. NOT per streamed event: that
-        would be one message per line of output (three quarters of them hook
-        plumbing), and `run_event` already covers the stream. Like every
-        other transition, the store write has already happened; this is the
-        cache-invalidation hint after it, and carries the full row so the
-        client never has to merge a delta.
-        """
-        run = await asyncio.to_thread(self._store.get_run, run_id)
-        if run is not None:
-            self._publish({"type": "run_updated", "run": run})
-
-    def _start_write(self, run_id: str, pid: int) -> dict | None:
-        """The RUNNING transition, as one unit on a worker thread."""
-        self._store.update_run(run_id,
-                               status=self._store.RunStatus.RUNNING,
-                               pid=pid, started_at=time.time())
-        return self._store.get_run(run_id)
-
-    def _finish_write(self, run_id: str, status: str, **fields) -> dict | None:
-        """The terminal transition, as one conditioned write in the store.
-
-        Runs on a worker thread. Returns the finished row, or None when the
-        run was already terminal and nothing was written — the first writer
-        wins, which is what keeps a cancel racing `_drive` to a single status.
-        """
-        return self._store.finish_run(run_id, status, **fields)
-
-    async def _finish(self, run_id: str, status: str, **fields) -> None:
-        """Terminal transition: written off the loop, published on it.
-
-        The write is a synchronous store call; on the loop thread it could
-        stall the voice path, which shares this thread, so like every other
-        store call in this module it is `to_thread`'d. The publish stays on the loop:
-        `_publish` fans out to WebSocket subscribers.
-        """
-        row = await asyncio.to_thread(self._finish_write, run_id, status,
-                                      **fields)
-        if row is not None:
-            self._publish({"type": "run_finished", "run": row})
-
-    def _finish_blocking(self, run_id: str, status: str, **fields) -> None:
-        """`_finish` for a path that may not be able to await.
-
-        The error handlers below run inside `except BaseException`, where the
-        task may already be cancelled — an `await` there raises
-        CancelledError immediately and the terminal write would never happen,
-        which is the exact failure this module exists to prevent. Blocking
-        the loop for one write on a failure path is the lesser evil, and only
-        error paths use it.
-        """
-        row = self._finish_write(run_id, status, **fields)
-        if row is not None:
-            self._publish({"type": "run_finished", "run": row})
-
     async def _drain_stderr(self, proc, sink: bytearray) -> None:
         """Keep the stderr pipe empty so the child never blocks writing to it.
 
@@ -590,23 +854,23 @@ class RunExecutor:
                 log.debug("stderr drain failed", exc_info=True)
         return bytes(sink).decode(errors="replace")[-_STDERR_CHARS:]
 
+    async def drive(self, run_id: str, prompt: str, project_path: str,
+                    resume_from: str | None, timeout_sec: float,
+                    model: str | None = None) -> None:
+        await self._drive(run_id, prompt, project_path, resume_from,
+                          timeout_sec, model)
+
     async def _drive(self, run_id: str, prompt: str, project_path: str,
                      resume_from: str | None, timeout_sec: float,
                      model: str | None = None) -> None:
+        """One `claude -p` child, from its spawn to the run's verdict. The
+        executor holds the permit and the unexpected-exception rule around
+        it (RunExecutor._drive); this is today's code, moved."""
+        ex = self._ex
         proc = None
-        slot_held = False
         stderr_task = None
         stderr_sink = bytearray()
         try:
-            await self._slots.acquire()
-            slot_held = True
-            self._occupied_slots += 1
-
-            if run_id in self._cancelling:
-                # Cancelled while queued: never spawn anything.
-                await self._finish(run_id, self._store.RunStatus.CANCELLED)
-                return
-
             try:
                 proc = await owned_process.create_subprocess_exec(
                     *self._command(run_id, resume_from, model),
@@ -629,7 +893,7 @@ class RunExecutor:
                     limit=claude_env.STREAM_LINE_LIMIT,
                 )
             except (FileNotFoundError, NotADirectoryError, PermissionError) as e:
-                await self._finish(run_id, self._store.RunStatus.FAILED,
+                await ex._finish(run_id, ex._store.RunStatus.FAILED,
                                    error=f"could not start claude: {e}")
                 return
 
@@ -643,8 +907,8 @@ class RunExecutor:
             # Off the loop like every other store call here: this is two
             # synchronous store calls.
             started = await asyncio.to_thread(
-                self._start_write, run_id, proc.pid)
-            self._publish({"type": "run_started", "run": started})
+                ex._start_write, run_id, proc.pid)
+            ex._publish({"type": "run_started", "run": started})
 
             try:
                 proc.stdin.write(prompt.encode())
@@ -665,7 +929,7 @@ class RunExecutor:
                 error = f"exceeded timeout of {timeout_sec}s"
                 if stderr:
                     error = f"{error}\n{stderr}"
-                await self._finish(run_id, self._store.RunStatus.TIMED_OUT,
+                await ex._finish(run_id, ex._store.RunStatus.TIMED_OUT,
                                    error=error)
                 return
             except _IdleTimeout as e:
@@ -683,7 +947,7 @@ class RunExecutor:
                          f"and was still running; killed")
                 if stderr:
                     error = f"{error}\n{stderr}"
-                await self._finish(run_id, self._store.RunStatus.TIMED_OUT,
+                await ex._finish(run_id, ex._store.RunStatus.TIMED_OUT,
                                    error=error)
                 return
             # NOT `self._procs.pop(run_id)` here. `_procs` is what `cancel()`
@@ -713,14 +977,14 @@ class RunExecutor:
                 await proc.stop(timeout=self._grace_sec)
             stderr = await self._collect_stderr(stderr_task, stderr_sink)
 
-            run = await asyncio.to_thread(self._store.get_run, run_id)
-            if run and run["status"] in self._store.RunStatus.TERMINAL:
+            run = await asyncio.to_thread(ex._store.get_run, run_id)
+            if run and run["status"] in ex._store.RunStatus.TERMINAL:
                 return
 
-            if run_id in self._cancelling:
+            if run_id in ex._cancelling:
                 # We won the race with cancel(). The exit code is whatever the
                 # signal produced (-15); the *intent* was cancellation.
-                await self._finish(run_id, self._store.RunStatus.CANCELLED,
+                await ex._finish(run_id, ex._store.RunStatus.CANCELLED,
                                    exit_code=proc.returncode)
             elif eof_hang:
                 # Whatever it did before EOF, the process itself misbehaved
@@ -731,7 +995,7 @@ class RunExecutor:
                          f"{self._eof_grace_sec}s; killed")
                 if stderr:
                     error = f"{error}\n{stderr}"
-                await self._finish(run_id, self._store.RunStatus.FAILED,
+                await ex._finish(run_id, ex._store.RunStatus.FAILED,
                                    exit_code=proc.returncode, error=error)
             elif proc.returncode == 0 and run and run["is_error"]:
                 # Exit 0 is not a verdict. The CLI reports an auth failure as
@@ -743,75 +1007,18 @@ class RunExecutor:
                 # A run whose own final event says it errored is FAILED.
                 error = (run["result_text"] or stderr
                          or "claude reported is_error on its result event")
-                await self._finish(run_id, self._store.RunStatus.FAILED,
+                await ex._finish(run_id, ex._store.RunStatus.FAILED,
                                    exit_code=0, error=error[:_STDERR_CHARS])
             elif proc.returncode == 0:
-                await self._finish(run_id, self._store.RunStatus.SUCCEEDED,
+                await ex._finish(run_id, ex._store.RunStatus.SUCCEEDED,
                                    exit_code=0)
             else:
-                await self._finish(run_id, self._store.RunStatus.FAILED,
+                await ex._finish(run_id, ex._store.RunStatus.FAILED,
                                    exit_code=proc.returncode,
                                    error=stderr or f"exit code {proc.returncode}")
-        except BaseException as e:
-            # Anything unexpected — a store write raising "database is
-            # locked", a decode error, CancelledError on shutdown — must
-            # still leave the run terminal and the child reaped, and must be
-            # logged rather than swallowed as "never retrieved".
-            cancelled = run_id in self._cancelling
-            if cancelled and isinstance(e, asyncio.CancelledError):
-                # cancel() cancels the queued driver task on purpose. That
-                # arrives here as CancelledError; it is a normal user action,
-                # not a driver failure, and must not be logged at ERROR.
-                log.info("run %s cancelled while queued", run_id)
-            else:
-                log.exception("run %s driver failed", run_id)
-            cleanup_error = None
-            if isinstance(proc, owned_process.OwnedProcess):
-                try:
-                    await owned_process._settle(asyncio.create_task(
-                        proc.stop(timeout=self._grace_sec)))
-                except BaseException as error:
-                    cleanup_error = error
-                    log.exception("run %s owned tree cleanup failed", run_id)
-            elif proc is not None and proc.returncode is None:
-                try:
-                    proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-                try:
-                    await asyncio.wait_for(asyncio.shield(proc.wait()),
-                                           timeout=self._grace_sec)
-                except BaseException:
-                    log.debug("run %s could not be reaped", run_id,
-                              exc_info=True)
-            containment_failed = (cleanup_error is not None
-                                  or isinstance(e, owned_process.ContainmentError))
-            status = (self._store.RunStatus.CANCELLED
-                      if cancelled and not containment_failed
-                      else self._store.RunStatus.FAILED)
-            try:
-                self._finish_blocking(run_id, status,
-                                      error=repr(cleanup_error or e)[:_STDERR_CHARS])
-            except Exception:
-                log.exception("run %s could not be marked terminal", run_id)
-            if containment_failed:
-                raise cleanup_error or e
-            if isinstance(e, (asyncio.CancelledError, SystemExit,
-                              KeyboardInterrupt)):
-                # The run is terminal and the child reaped; interpreter
-                # shutdown and cancellation must still propagate.
-                raise
         finally:
-            worker_activity.forget_managed("anthropic", run_id)
-            self._procs.pop(run_id, None)
-            self._cancelling.discard(run_id)
             if stderr_task is not None and not stderr_task.done():
                 stderr_task.cancel()
-            if slot_held:
-                # Released only after the child has been reaped, and on every
-                # exit path: a leaked permit permanently shrinks capacity.
-                self._occupied_slots -= 1
-                self._slots.release()
 
     async def _consume(self, run_id: str, proc) -> None:
         """Read the JSONL stream, persisting in batches off the event loop.
@@ -821,9 +1028,8 @@ class RunExecutor:
         and flushed via a worker thread, and each is announced (`run_event`)
         only once its batch is in the run's file.
         """
-        seq = await asyncio.to_thread(self._store.next_seq, run_id)
-        pending: list[tuple[int, str, str]] = []
-        last_flush = time.monotonic()
+        ex = self._ex
+        events = await RunEvents.open(ex, run_id)
         # Tokens accumulated from the per-turn usage on `assistant` events, so
         # the dashboard can watch them climb. Dollars are NOT derived from
         # these: cost is recorded from `result`, never estimated.
@@ -837,21 +1043,7 @@ class RunExecutor:
         # not by the model, so this is robustness rather than a live attack;
         # it is still the wrong direction to be wrong in. Once true, true.
         saw_error = False
-
-        # Each event's `run_event` hint waits here until its line is in the
-        # run's file: written before it is announced, like every other
-        # transition.
-        unannounced: list[dict] = []
-
-        async def flush():
-            nonlocal pending, unannounced, last_flush
-            if pending:
-                batch, pending = pending, []
-                hints, unannounced = unannounced, []
-                await asyncio.to_thread(self._store.append_events, run_id, batch)
-                for hint in hints:
-                    self._publish(hint)
-            last_flush = time.monotonic()
+        flush = events.flush
 
         # The reader is never simply awaited. EOF is only one of the ways a
         # child stops producing output and it is the rarest of them (see
@@ -931,23 +1123,15 @@ class RunExecutor:
                 # not duplicate every token in the permanent run-event log.
                 if kind == "stream_event" or (kind == "system" and event.get("subtype") == "thinking_tokens"):
                     continue
-                # Capped, not stored verbatim: STREAM_LINE_LIMIT is 64 MiB
-                # and jarvis.db is permanent. See stream_parser.cap_payload —
-                # it shrinks the long strings inside the event rather than
-                # the line, so the payload still parses and still carries the
-                # tool names `assess_outcome` reads.
-                pending.append((seq, kind,
-                                stream_parser.cap_payload(line.strip(), event)))
-                unannounced.append({"type": "run_event", "run_id": run_id, "seq": seq,
-                                    "kind": kind, "payload": event})
+                events.add(kind, event, line.strip())
 
                 if kind == "system" and event.get("subtype") == "init":
                     meta = stream_parser.extract_init_metadata(event)
                     if meta["model"]:
                         await flush()
-                        await asyncio.to_thread(self._store.update_run, run_id,
+                        await asyncio.to_thread(ex._store.update_run, run_id,
                                                 model=meta["model"])
-                        await self._publish_run_updated(run_id)
+                        await ex._publish_run_updated(run_id)
                 elif kind == "assistant":
                     # The CLI reports token usage on EVERY assistant turn but
                     # the dollar cost only once, in the terminal `result`. So
@@ -962,15 +1146,15 @@ class RunExecutor:
                         for key, value in usage.items():
                             totals[key] += value
                         await flush()
-                        await asyncio.to_thread(self._store.update_run,
+                        await asyncio.to_thread(ex._store.update_run,
                                                 run_id, **totals)
-                        await self._publish_run_updated(run_id)
+                        await ex._publish_run_updated(run_id)
                 elif kind == "result":
                     metrics = stream_parser.extract_result_metrics(event)
                     saw_error = saw_error or bool(metrics["is_error"])
                     await flush()
                     await asyncio.to_thread(
-                        self._store.update_run, run_id,
+                        ex._store.update_run, run_id,
                         cost_usd=metrics["cost_usd"],
                         input_tokens=metrics["input_tokens"],
                         output_tokens=metrics["output_tokens"],
@@ -987,12 +1171,10 @@ class RunExecutor:
                         # not un-say an earlier failure.
                         is_error=int(saw_error),
                     )
-                    await self._publish_run_updated(run_id)
+                    await ex._publish_run_updated(run_id)
 
-                if (len(pending) >= _EVENT_BATCH
-                        or time.monotonic() - last_flush >= _EVENT_FLUSH_SEC):
+                if events.due():
                     await flush()
-                seq += 1
         finally:
             if line_task is not None:
                 # Only ever pending on a path that is ending the run anyway

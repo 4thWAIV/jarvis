@@ -38,7 +38,7 @@ async def test_cancel_during_spawn_does_not_report_success_until_child_reaped(ex
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
     marker = tmp_path / "work-started"
-    ex._command = lambda *args: [sys.executable, "-c",
+    ex.claude._command = lambda *args: [sys.executable, "-c",
                                 "from pathlib import Path; import time; "
                                 f"Path({str(marker)!r}).write_text('started'); time.sleep(30)"]
     run_id = await ex.spawn("prompt", "fixture", str(tmp_path), "test")
@@ -54,7 +54,7 @@ async def test_cancel_during_spawn_does_not_report_success_until_child_reaped(ex
         if os.name == "nt":
             assert not marker.exists(), "a cancelled suspended child executed work"
         assert (await ex.wait_for(run_id))["status"] == store.RunStatus.CANCELLED
-        assert ex._procs == {}
+        assert ex.claude._procs == {}
         assert ex._slots._value == ex._max_concurrent
     finally:
         release.set()
@@ -86,7 +86,7 @@ async def test_cancel_does_not_claim_success_when_tree_stop_fails(executor, tmp_
         raise owned.ContainmentError("TerminateJobObject refused")
 
     job = SimpleNamespace(terminate=refused, close=lambda: None)
-    ex._procs[run_id] = owned.OwnedProcess(SimpleNamespace(returncode=None), job)
+    ex.claude._procs[run_id] = owned.OwnedProcess(SimpleNamespace(returncode=None), job)
     with pytest.raises(owned.ContainmentError, match="TerminateJobObject refused"):
         await ex.cancel(run_id)
     run = store.get_run(run_id)
@@ -104,7 +104,7 @@ async def test_native_executor_cancel_stops_witness_grandchild(executor, tmp_pat
               f"Path({str(ready)!r}).write_text(str(p.pid))\n"
               "time.sleep(30)\n")
     # Launch contract only: the native branch owns Windows CLI argv parsing.
-    ex._command = lambda *args: [sys.executable, "-c", script]
+    ex.claude._command = lambda *args: [sys.executable, "-c", script]
     run_id = await ex.spawn("prompt", "fixture", str(tmp_path), "test")
     handle = None
     api = owned._WinAPI()

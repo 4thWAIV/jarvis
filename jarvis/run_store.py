@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional
 
-from jarvis import brain_activity, closed_files, data_paths, session_steer
+from jarvis import brain_activity, brain_provider, closed_files, data_paths, session_steer
 from jarvis import message_records, records
 from jarvis.knowledge import oscompat
 
@@ -45,6 +45,7 @@ _UPDATABLE = frozenset({
     "cost_usd", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_creation_tokens", "num_turns", "model", "requested_model",
     "started_at", "ended_at", "project_path", "project_name", "is_error", "context_sha256",
+    "engine_session",
 })
 
 
@@ -96,8 +97,16 @@ RUN_FIELDS: dict[str, tuple[str, object]] = {
     # The project record and the piece of work it was started for
     # (project_store.py), when the brain named them.
     "project_id": (_TEXT, None), "work_id": (_TEXT, None),
+    # The engine it runs on (run_executor's RunEngine: "claude" or
+    # "codex"), and that engine's own session for it: a Codex run's thread
+    # id. A Claude run's session is its run id (`--session-id`), so it has
+    # none. A run recorded before engines existed reads as Claude's.
+    "engine": (_TEXT, "claude"), "engine_session": (_TEXT, None),
 }
 _RUN_DEFAULTS = {k: d for k, (_kind, d) in RUN_FIELDS.items()}
+# The fields added since SQLite was retired, which its `runs` table never
+# had: an export to it (RunMapping.rows) leaves them out.
+_SINCE_SQLITE = frozenset({"engine", "engine_session"})
 # A moved run keeps the rowid SQLite gave it (the move kit counts it); the
 # store never writes or returns it.
 _ROWID = "rowid"
@@ -145,13 +154,15 @@ def _run_change(fields: dict) -> str:
 def create_run(prompt: str, project_name: str, project_path: str,
                origin: str, resume_from: str | None = None,
                folder_id: str | None = None, package_id: str | None = None,
-               project_id: str | None = None, work_id: str | None = None) -> str:
+               project_id: str | None = None, work_id: str | None = None,
+               engine: str = "claude") -> str:
     run_id = str(uuid.uuid4())
     data = _run_data({
         "id": run_id, "project_name": project_name, "project_path": project_path,
         "prompt": prompt, "origin": origin, "status": RunStatus.QUEUED,
         "resume_from": resume_from, "folder_id": folder_id, "package_id": package_id,
-        "project_id": project_id, "work_id": work_id, "created_at": time.time()})
+        "project_id": project_id, "work_id": work_id, "engine": engine or "claude",
+        "created_at": time.time()})
 
     def write(unit: records.Unit) -> None:
         if unit.get(_run_path(run_id)) is not None:      # an id once in a universe
@@ -171,15 +182,30 @@ def _all_runs() -> list[dict]:
     return [_run_dict(r.data) for r in records.scan(RUNS, types=[RUN_TYPE])]
 
 
-def all_run_ids() -> set[str]:
-    """Every run id ever recorded.
+def session_of(run: dict) -> str:
+    """The session a run is on its engine. A Claude run's id is ALSO its
+    Claude Code session id (`run_executor.ClaudeEngine._command` passes it
+    as `--session-id`); a Codex run's is the thread it started
+    (`engine_session`), its run id until that thread exists."""
+    return run.get("engine_session") or run["id"]
 
-    A run id is ALSO the Claude Code session id: `run_executor._command`
-    passes it as `--session-id`. That makes this the exact set of roster
-    sessions JARVIS started himself, which is what lets the voice path tell
-    its own one-shot runs apart from the user's real conversations.
+
+def worker_of(run: dict) -> tuple[str, str]:
+    """A run as a worker: its engine's brain provider and its session on
+    that engine. A run from before engines is Claude's."""
+    return (brain_provider.ENGINES.get(run.get("engine") or "claude",
+                                       brain_provider.DEFAULT_PROVIDER),
+            session_of(run))
+
+
+def all_run_ids() -> set[str]:
+    """Every session a run was ever recorded on (`session_of`).
+
+    That makes this the exact set of roster sessions JARVIS started
+    himself, which is what lets the voice path tell its own one-shot runs
+    apart from the user's real conversations.
     """
-    return {r["id"] for r in _all_runs()}
+    return {session_of(r) for r in _all_runs()}
 
 
 def list_runs(status: list[str] | None = None, project: str | None = None,
@@ -507,7 +533,8 @@ class RunMapping:
         runs = []
         for doc in docs:
             data = doc.data
-            cells = {k: km.uncell(data.get(k, _RUN_DEFAULTS[k])) for k in RUN_FIELDS}
+            cells = {k: km.uncell(data.get(k, _RUN_DEFAULTS[k])) for k in RUN_FIELDS
+                     if k not in _SINCE_SQLITE}
             runs.append(km.Row(cells, data.get(_ROWID)))
         # The moved runs (with their rowids) first, so an export inserts them
         # before the runs written since, which then take new rowids after them.

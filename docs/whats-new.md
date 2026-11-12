@@ -2,6 +2,10 @@
 
 Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Agents on Codex as well as Claude
+
+JARVIS can start an agent on Codex as well as on Claude Code: an agent run, a build or an agent package goes on the Codex app server already running on this Mac, in your own Codex setup, never asking and with no sandbox, as Claude agents run. JARVIS watches it, stops it and retries it on the same engine. Say "on Codex" or "on Claude" for one agent; otherwise Settings → Brains decides, under "Who runs each kind of agent": for the package author, agent runs, builds and agent packages, a brain and one of its models, the same as the agent asking, or the brain with the least token stress. Token stress is the plus or minus the brain board shows against the week's pace, shown there beside each brain; "Override if the chosen brain is in token stress" moves an agent off a brain that is behind its pace. JARVIS refuses to start a Codex agent on an app server version it has not been checked against, and says so.
+
 ## Two appearances across the app
 
 Settings → Server → Appearance offers Classic Refined, a quiet navy palette, and

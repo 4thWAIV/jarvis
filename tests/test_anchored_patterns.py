@@ -273,6 +273,7 @@ SAMPLES = {
     "_GITHUB_URL": "https://github.com/owner/name.git",
     "FULL_NAME_RE": "owner/name",
     "_MODEL_ID_RE": "claude-sonnet-5",
+    "_CODEX_MODEL_RE": "gpt-5.6-terra",
     "_URL_RE": "https://github.com/owner/name",
     "_INDEX_LINE_RE": "- [a fact](a-fact.md) — the hook",
     "_NOTE_LINE_RE": "_2026-11-05 14:02_ — the store is Postgres",
