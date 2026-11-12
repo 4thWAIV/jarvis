@@ -21,6 +21,48 @@ The centre opens on Conversation. It combines earlier conversation with live spe
 
 The left column holds the orb, the team server's health and brain account usage. The microphone controls (Start listening, Mute, Mic off) sit at the lower right of the Conversation's message box, right of Send, with Stop and the voice health dot to Send's left (on any other centre view the microphone controls stay in the same lower-right corner); what JARVIS is doing (thinking, speaking) is the row above the message box. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Work, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
 
+## Your records move into the new engine once
+
+The first start after the update that brought the knowledge engine's records
+moves them out of `data/jarvis.db` into the engine (`data/knowledge`): it
+copies every table, checks the copy against the file, and checks that the
+file can be made again from the engine. On a large file this takes a few
+minutes (about two and a half for 240,000 rows). JARVIS answers meanwhile: the
+page shows "Moving your records into the new engine", the step it is on
+(copying, checking, checking the way back) and about how long is left, and
+JARVIS's voice and agents wait until it is done. JARVIS first checks there is
+enough free disk for the engine and its temporary copies, and refuses with how
+much it needs if there is not, before anything is written.
+
+`data/jarvis.db` is never changed by the move; it stays beside the engine.
+
+**Stopping during the move is safe.** Ctrl-C, closing the terminal or shutting
+the Mac down part way loses nothing: the next start clears what was copied and
+copies again from the beginning, even if `jarvis.db` changed in between.
+
+### If the records move fails
+
+The page says that it failed and why, and the server stays up saying so. Start
+JARVIS again to try once more. To go back to the version you had before:
+
+1. Stop JARVIS.
+2. Find the version you had: `git reflog` lists the update as
+   `merge ...: Fast-forward`; the line below it is the commit you had.
+3. Go back to it: `git reset --keep <that commit>`. If the update changed the
+   dependencies, install them again: `.venv/bin/pip install -r requirements.txt`
+   and `cd frontend && npm ci` (and `npm run build` if the page is served from
+   built files).
+4. Move the engine's folder aside, since the version before may not read it:
+   `mv data/knowledge data/knowledge.moved-aside`.
+5. Start JARVIS. It runs on `data/jarvis.db`, exactly as before the update.
+
+After a move that succeeded, JARVIS writes its records to the engine only. To
+take what it wrote since back to an earlier version, write the records out as a
+SQLite file first, with JARVIS running:
+`.venv/bin/python -m jarvis.knowledge export-sqlite --out data/jarvis-from-engine.db`,
+then stop it, go back as above and put that file in place of `data/jarvis.db`
+(keep the old one).
+
 ## Every message from an agent, on its Work item
 
 An agent reaches you one way: a signed message about the Work item it belongs to, shown on that item's Messages tab, or in the Inbox (the tab that was Queue) when it is about no item. Every decision comes as a package with its background, never a bare question; Open shows it and you answer there. Needs boards and message files are gone. Ask JARVIS "what's new?" and it reads your new messages in the Inbox's order, each item's first; "read it", "next", "open it" (a decision package's story is told and waits for your answer) and "reply" act on the message you are on. A message read to you to its end (Read, "read it", or JARVIS reading an agent's answer to you) is marked read, and leaves the Inbox's new list for its Read section, closed under it; a message you are done with leaves the Inbox. Hide messages, beside "From agents", folds them away so people's messages stay in view; this browser remembers it.

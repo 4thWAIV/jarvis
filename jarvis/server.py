@@ -86,6 +86,7 @@ from jarvis import knowledge_api
 from jarvis import knowledge_client
 from jarvis import records
 from jarvis import records_cutover
+from jarvis import records_move
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -3200,31 +3201,28 @@ def _announce_bind(bind: web_auth.Bind) -> None:
     print(flush=True)
 
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    global cached_projects
-    cached_projects = []
+_records_task: Optional[asyncio.Task] = None
+_on_records_begun = False
 
-    # FIRST, before anything reads JARVIS_PORT / JARVIS_BIND_HOST — the
-    # origin allowlist, the Host allowlist, and the URL the brain's MCP
-    # child dials all do. `main()` records those variables and this is a
-    # no-op behind it; the point is the other launch path. `uvicorn
-    # server:app --port 9000` set none of them, so the allowlist was built
-    # for 8340 and the operator's own browser was refused by JARVIS's own
-    # guard, and the `--host 0.0.0.0` warning — printed only from
-    # `__main__` — was never seen by the launch that most needed it.
-    _announce_bind(web_auth.detect_bind())
-    # Where this server is, for `python -m jarvis.update` (server_address.py).
-    server_address.record()
-    global _main_loop
-    _main_loop = asyncio.get_running_loop()
-    # The knowledge engine before anything else; the page waits for it.
-    await start_knowledge_engine()
-    # jarvis.db into the engine, once, proven both ways before any store is
-    # touched (records_cutover.py); a move it cannot prove stops startup.
-    cut = await asyncio.to_thread(records_cutover.cut_over)
-    if cut.state == "cut over":
-        log.info("records moved into the engine: %d rows, %s", cut.rows, cut.seconds)
+
+async def _move_records_then_start() -> None:
+    """The records moved (records_move.run), then everything that needs
+    them; a failure of either leaves the server up saying why."""
+    if not await records_move.run():
+        return
+    try:
+        await _start_on_records()
+    except Exception as e:
+        log.exception("startup after the records move failed")
+        records_move.failed(f"JARVIS could not start after its records moved: {type(e).__name__}: {e}")
+        return
+    records_move.started()
+
+
+async def _start_on_records() -> None:
+    """Everything that needs the records, once they are in the engine."""
+    global _on_records_begun
+    _on_records_begun = True
     # His voice settings held in memory before a page connects, so listening
     # and speaking never wait on the engine (voice_control.py).
     try:
@@ -3283,8 +3281,52 @@ async def lifespan(application: FastAPI):
                  "the refusal is now opt-in via JARVIS_REFUSE_UNTRUSTED_ACTIONS.")
     log.info("JARVIS server starting")
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    global cached_projects
+    cached_projects = []
+
+    # FIRST, before anything reads JARVIS_PORT / JARVIS_BIND_HOST — the
+    # origin allowlist, the Host allowlist, and the URL the brain's MCP
+    # child dials all do. `main()` records those variables and this is a
+    # no-op behind it; the point is the other launch path. `uvicorn
+    # server:app --port 9000` set none of them, so the allowlist was built
+    # for 8340 and the operator's own browser was refused by JARVIS's own
+    # guard, and the `--host 0.0.0.0` warning — printed only from
+    # `__main__` — was never seen by the launch that most needed it.
+    _announce_bind(web_auth.detect_bind())
+    # Where this server is, for `python -m jarvis.update` (server_address.py).
+    server_address.record()
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+    # The knowledge engine before anything else; the page waits for it.
+    await start_knowledge_engine()
+    # jarvis.db into the engine, once, proven both ways before any store is
+    # touched (records_cutover.py). It takes minutes on a large file, so the
+    # server serves meanwhile, saying the records are moving, and starts
+    # everything that needs them once they are (records_move.py); a move it
+    # cannot prove leaves the server up saying why.
+    global _records_task, _on_records_begun
+    _on_records_begun = False
+    records_move.reset()
+    if await asyncio.to_thread(records_cutover.needed):
+        records_move.begin()
+        _records_task = _spawn(_move_records_then_start())
+    else:
+        await _start_on_records()
+
     yield
 
+    if _records_task is not None and not _records_task.done():
+        _records_task.cancel()
+        await asyncio.gather(_records_task, return_exceptions=True)
+    _records_task = None
+    if not _on_records_begun:      # stopped during the move: nothing else began
+        await stop_knowledge()
+        records.bind(None)
+        server_address.forget()
+        return
     await _stop_messaging()
     await team_api.stop()
     await _stop_attention()
@@ -3321,7 +3363,11 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 # the responses to the GETs that cannot be gated.
 #
 # See web_auth.OriginGuard for what replaces it.
+# Inside the gate: while the records move, every route that needs them
+# answers 503 saying so (records_move.py).
+app.add_middleware(records_move.Gate)
 app.add_middleware(web_auth.OriginGuard)
+records_move.mount(app)
 transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
@@ -17015,6 +17061,18 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.add("update_jarvis")
 TAINTING_TOOLS["update_status"] = "the new commits' messages, written by the team"
 TAINT_EXEMPT_TOOLS["update_jarvis"] = "it updates and restarts JARVIS, it does not read"
+
+
+async def tool_records_move(args: dict) -> str:
+    """Where the records move into the engine stands, as the page shows it
+    while it runs (records_move.status), and once done the cut-over's own
+    record."""
+    record = await asyncio.to_thread(records_cutover.done) if records_move.ready() else None
+    return records_move.said(record)
+
+
+TOOL_HANDLERS["records_move"] = tool_records_move
+TAINT_EXEMPT_TOOLS["records_move"] = "it reports JARVIS's own move of its records"
 
 
 # ---------------------------------------------------------------------------
