@@ -28,6 +28,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -223,10 +224,19 @@ def key_folder(session_id: str, home: Optional[Path] = None) -> Path:
 
 def _private_folder(folder: Path) -> None:
     """Make `folder` and its parents, the last levels 0700; a link anywhere
-    on the way is refused, never followed."""
+    on the way is refused, never followed. On Windows, which has no modes or
+    uid, private_files makes them owner-only by their ACL and refuses a
+    junction, a link or another owner the same way."""
     for level in (folder.parent.parent, folder.parent, folder):
         if level.is_symlink():
             raise AgentKeyError(f"{level} is a link; the key is not kept through one.")
+    if sys.platform == "win32":
+        from jarvis import private_files
+        try:
+            private_files.ensure_dir(folder)
+        except OSError as e:
+            raise AgentKeyError(f"{folder} is not a private folder of this user's: {e}")
+        return
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     for level in (folder, folder.parent):
         st = os.lstat(level)
@@ -242,6 +252,16 @@ def _check_private(private: Path) -> None:
         st = os.lstat(private)
     except OSError:
         raise AgentKeyError(f"There is no key at {private}.")
+    if sys.platform == "win32":
+        # This user's own regular file, one link, no reparse point, made
+        # owner-only again by its ACL (private_files.adopt's checks).
+        from jarvis import private_files
+        try:
+            _, writer = private_files.adopt(private, 0)
+            writer.close()
+        except OSError as e:
+            raise AgentKeyError(f"{private} is not a key file of this user's: {e}")
+        return
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         raise AgentKeyError(f"{private} is not a key file of this user's.")
     if st.st_mode & 0o077:

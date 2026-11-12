@@ -89,6 +89,18 @@ jobs:
         working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe scripts\startup_smoke.py lifecycle
 
+      # Informational: GitHub's runner is an elevated administrator, and
+      # files made there the ordinary way can be owned by Administrators,
+      # which the key check refuses (seen with test_private_files on this
+      # runner). It shows what the real ssh-keygen and the check do here;
+      # an ordinary account is the real case.
+      - name: Agent key on this runner (informational, elevated account)
+        continue-on-error: true
+        working-directory: ${{ env.SRC }}
+        run: |
+          Get-Command ssh-keygen | Format-List Source
+          .\.venv\Scripts\python.exe -m jarvis.agent_key init --session windows-ci-smoke
+
       - name: Logs
         if: always() && env.SRC != ''
         working-directory: ${{ env.SRC }}
