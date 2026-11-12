@@ -38,40 +38,60 @@ jobs:
         with:
           node-version: "22"
 
+      # The README's clone is under the user's profile: JARVIS keeps its
+      # token in the checkout's data folder and refuses a folder others can
+      # change, and the runner's own D:\ lets a service account move what it
+      # holds (measured, run 43144837914). The checkout is cloned there.
+      - name: README - a clone under the user profile
+        run: |
+          $Src = Join-Path $env:USERPROFILE "src\jarvis"
+          git clone --quiet "$env:GITHUB_WORKSPACE" $Src
+          "SRC=$Src" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Versions
+        working-directory: ${{ env.SRC }}
         run: |
           python --version; node --version; npm --version; git --version
           [System.Environment]::OSVersion.VersionString
           "runner: $env:RUNNER_NAME $env:RUNNER_OS $env:RUNNER_ARCH $env:ImageOS $env:ImageVersion"
+          git log -1 --format="source %H"
 
       - name: README - Python environment
+        working-directory: ${{ env.SRC }}
         run: |
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
       - name: README - frontend dependencies
-        run: npm --prefix frontend ci
+        working-directory: ${{ env.SRC }}
+        run: npm.cmd --prefix frontend ci
 
       - name: README - Claude Code (installed, not signed in)
+        working-directory: ${{ env.SRC }}
         run: |
-          npm install -g @anthropic-ai/claude-code
+          npm.cmd install -g @anthropic-ai/claude-code
           Get-Command claude | Format-List Source
 
       - name: README - development certificate
+        working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe -m jarvis.background certs
 
       - name: README - start in the background
+        working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe -m jarvis.background start
 
       - name: Running after the starting shell has gone
+        working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe scripts\startup_smoke.py running
 
       - name: Lifecycle - duplicate start, self-restart, stop, occupied port, start again
+        working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe scripts\startup_smoke.py lifecycle
 
       - name: Logs
-        if: always()
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
         run: |
           .\.venv\Scripts\python.exe -m jarvis.background status
           "----- backend.log"; .\.venv\Scripts\python.exe -m jarvis.background logs backend -n 200
@@ -79,16 +99,17 @@ jobs:
           if (Test-Path data\knowledge-engine.log) { "----- knowledge-engine.log"; Get-Content data\knowledge-engine.log -Tail 80 }
 
       - name: Stop anything left
-        if: always()
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
         run: .\.venv\Scripts\python.exe -m jarvis.background stop
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && env.SRC != ''
         with:
           name: windows-startup-logs
           path: |
-            data/logs/
-            data/knowledge-engine.log
+            ${{ env.SRC }}/data/logs/
+            ${{ env.SRC }}/data/knowledge-engine.log
           retention-days: 14
           if-no-files-found: warn
 

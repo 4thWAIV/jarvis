@@ -215,6 +215,10 @@ class Store:
         self._compact_lock = threading.Lock()
         self._pins: dict[int, int] = {}
         self._retired: list[Segment] = []
+        # Files a compaction or forget replaced while a segment still had
+        # them open: Windows refuses to delete an open file, so they go once
+        # their segments are closed (_close_retired). Empty elsewhere.
+        self._doomed: list[Path] = []
         self.mem = Memtable()
         self.frozen: list[Memtable] = []
         self.segments: dict[int, list[tuple[int, Segment]]] = {}
@@ -495,6 +499,20 @@ class Store:
         retired, self._retired = self._retired, []
         for seg in retired:
             seg.close()
+        doomed, self._doomed = self._doomed, []
+        for path in doomed:
+            self._remove(path)
+
+    def _remove(self, path: Path) -> None:
+        """Delete a file the manifest no longer names. On Windows one a
+        retired segment still holds open cannot be deleted yet; it is
+        removed when that segment closes."""
+        try:
+            path.unlink(missing_ok=True)
+        except PermissionError:
+            if not oscompat.WINDOWS:
+                raise
+            self._doomed.append(path)
 
     # -- snapshots --------------------------------------------------------
     def snapshot(self) -> Path:
@@ -548,7 +566,7 @@ class Store:
             self.manifest = new
         for entry in gone:
             for path in entry_files(self.directory, entry):
-                path.unlink(missing_ok=True)
+                self._remove(path)
         return len(gone)
 
     def snapshots(self) -> list[Path]:
@@ -613,7 +631,7 @@ class Store:
                 self._add_segments(entries)
                 for entry in inputs:
                     for path in entry_files(self.directory, entry):
-                        path.unlink(missing_ok=True)
+                        self._remove(path)
                 if not self._pins:
                     self._close_retired()
             self._announce(out_gen, gens)

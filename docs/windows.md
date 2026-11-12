@@ -84,6 +84,11 @@ from Settings):
   knowledge engine, which holds JARVIS's records, logs to
   `data\knowledge-engine.log`.
 
+If `start` says they did not come up, read `logs backend` and
+`data\knowledge-engine.log`. "not a safe place for a secret" there means
+the checkout sits in a folder other accounts can change (a drive's root, a
+shared folder): clone it again under your user profile.
+
 To run in the foreground instead, two windows:
 
 ```powershell

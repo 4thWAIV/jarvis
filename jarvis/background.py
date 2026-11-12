@@ -220,7 +220,7 @@ def start(wait: bool = True) -> int:
     deadline = time.monotonic() + START_WAIT_SEC
     while time.monotonic() < deadline:
         backend, vite = find_backend(), find_vite()
-        if backend.running and vite.running and _port_open(VITE_PORT):
+        if backend.running and vite.running and _port_open(BACKEND_PORT) and _port_open(VITE_PORT):
             print(backend.line())
             print(vite.line())
             print(f"Open http://localhost:{VITE_PORT} in Chrome.")
