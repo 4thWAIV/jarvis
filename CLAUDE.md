@@ -78,7 +78,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
   once it is done; meanwhile `records_move.Gate` answers every `/api`,
   `/ws` and `/internal` route but `/api/health`, `/api/records/move` and
   the language setting 503 (a socket closed 1013) with the reason, and the
-  page draws `RecordsMove.tsx` in place of the workspace: the step
+  page covers the workspace with `RecordsMove.tsx` (loading again once moved): the step
   (`records_cutover.STEPS`), the time left by the plan
   (`records_cutover.plan`: rows times `STEP_SEC_PER_ROW`, measured) and
   that stopping is safe; a failed move or start leaves the server up

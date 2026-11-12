@@ -1,7 +1,8 @@
 """The records move, by what the user sees (RecordsMove.tsx): while the
 server moves the records it shows "Moving your records into the new
-engine", the step, the time left and that stopping is safe, in place of the
-workspace; once moved, the workspace; a move that failed says so and why.
+engine", the step, the time left and that stopping is safe, over the whole
+workspace; once moved, the page loads again on the records; a move that
+failed says so and why.
 
 Headless Chromium on the built page; /api/records/move is answered here in
 the shapes records_move.status returns.
@@ -67,10 +68,13 @@ async def test_the_move_is_shown_step_by_step_then_the_workspace(page_url):
             await async_api.expect(shown.locator(".records-move-left")).to_have_text("About 1 minute left")
             await async_api.expect(shown.locator(".records-move-safe")).to_contain_text("safe to stop JARVIS")
             await async_api.expect(shown.locator("li.done")).to_have_text("Copying")
-            assert await page.locator(".right-tabs [role=tab]").count() == 0
-            # Moved and checked: the workspace, with nothing left of the move.
+            # It covers the whole page: nothing of the workspace is in reach.
+            box = await shown.bounding_box()
+            assert box["width"] == 1440 and box["height"] == 900
+            # Moved and checked: the page loads again on the records, the
+            # workspace with nothing left of the move.
+            await async_api.expect(page.locator("#records-move")).to_have_count(0, timeout=15000)
             await page.wait_for_selector(".right-tabs [role=tab]", timeout=15000)
-            assert await page.locator("#records-move").count() == 0
         finally:
             await browser.close()
 
