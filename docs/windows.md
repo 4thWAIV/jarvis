@@ -150,8 +150,9 @@ Small gaps that do not stop the source workflow, with what they mean for you:
 - **Checked with you, not by CI**: a live Claude turn, JarvisNet sign-in,
   receiving and answering a package, and a real microphone and speakers.
   CI holds no credentials and no audio devices.
-- **Cancelling a run** may leave a process the run started still running;
-  end it from Task Manager if one lingers.
+- **Cancelling a run** ends its process tree through a Windows Job Object,
+  which has not yet been seen working on Windows itself; if a process the
+  run started lingers, end it from Task Manager.
 - **Pausing the record engine's background work** (ingest, compaction)
   while you talk has no effect on Windows; it only costs some CPU then.
 

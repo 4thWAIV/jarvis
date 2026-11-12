@@ -350,7 +350,7 @@ def test_every_team_problem_is_in_the_page_catalog_with_the_same_english():
     out = subprocess.run([node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
                           "import { shellEn } from './frontend/src/messages/shell.en.ts';"
                           "console.log(JSON.stringify(shellEn))"],
-                         capture_output=True, text=True, cwd=root, timeout=60)
+                         capture_output=True, text=True, encoding="utf-8", cwd=root, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
     catalog = json.loads(out.stdout)
     said = team_client.TEAM_SAID

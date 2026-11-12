@@ -67,10 +67,8 @@ if _POSIX_WALK:
 def pread(fd: int, n: int, offset: int) -> bytes:
     """At most `n` bytes of the descriptor `fd` from `offset`, leaving its
     position alone: os.pread, or ReadFile at an offset on Windows."""
-    if _WINDOWS:
-        from jarvis import _win_handles
-        return _win_handles.pread(fd, n, offset)
-    return os.pread(fd, n, offset)
+    from jarvis.knowledge import oscompat
+    return oscompat.pread(fd, n, offset)
 
 
 def _win_refusal(e: OSError) -> FolderError:

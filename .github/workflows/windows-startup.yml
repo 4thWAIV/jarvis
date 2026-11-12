@@ -93,8 +93,12 @@ jobs:
           if-no-files-found: warn
 
   # The native boundary tests the startup leans on, on the same kind of
-  # runner: private files, process identity, the background command, the
-  # record engine and its process.
+  # runner: process identity, the background command, the record engine
+  # and its process, the claude command line. tests/test_private_files.py
+  # is not among them: GitHub's runner is an elevated administrator, and
+  # under that token Windows makes Administrators the owner of a file the
+  # test makes the ordinary way, which private_files rightly refuses; it
+  # needs an ordinary account.
   focused-tests:
     runs-on: windows-latest
     timeout-minutes: 45
@@ -116,7 +120,7 @@ jobs:
           JARVIS_ENGINE_AUTOSTART: "0"
         run: >
           .\.venv\Scripts\python.exe -m pytest -v -p no:cacheprovider -o faulthandler_timeout=300
-          tests/test_private_files.py tests/test_process_inspect.py tests/test_background.py
+          tests/test_process_inspect.py tests/test_background.py
           tests/test_claude_command.py tests/test_data_paths.py tests/test_records.py
           tests/test_knowledge_store.py tests/test_knowledge_process.py tests/test_knowledge_runtime.py
           tests/test_messaging_files_windows.py tests/test_folder_readers_windows.py

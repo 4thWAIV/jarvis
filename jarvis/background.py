@@ -358,6 +358,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     logs_p.add_argument("name", nargs="?", choices=NAMES, default="backend")
     logs_p.add_argument("-n", "--lines", type=int, default=60)
     args = parser.parse_args(argv)
+    # A Windows console's code page cannot show every character Vite logs
+    # (its arrow, measured); a character it cannot show is replaced, never
+    # an error that hides the rest of the log.
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
     if args.command == "certs":
         return certs()
     if args.command == "start":

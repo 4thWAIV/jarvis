@@ -70,7 +70,7 @@ def memory_budget_mb() -> int:
         return int(raw)
     try:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError):
+    except (ValueError, OSError, AttributeError):   # Windows has no sysconf
         total = 0
     from jarvis import embedding_models
     return (256 if 0 < total < 16 * (1 << 30) else 384) + embedding_models.extra_memory_mb()

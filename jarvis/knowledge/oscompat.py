@@ -70,6 +70,15 @@ def full_fsync(fd: int) -> None:
     os.fsync(fd)
 
 
+def pread(fd: int, n: int, offset: int) -> bytes:
+    """At most `n` bytes of `fd` from `offset`, its position not relied on:
+    os.pread, or ReadFile at that offset on Windows, which has no pread."""
+    if WINDOWS:
+        from jarvis import _win_handles
+        return _win_handles.pread(fd, n, offset)
+    return os.pread(fd, n, offset)
+
+
 def fsync_dir(directory) -> None:
     if WINDOWS:
         return
