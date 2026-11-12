@@ -993,6 +993,9 @@ EXEMPT = {
     "messages_api.mount": (
         "its routes answer the page and the sending agent with JSON; the brain reads the "
         "same JSON only through messages_to_him, inside its wall"),
+    "retrieve_attachment.main": (
+        "the agent's own command prints the location JSON, the inspection JSON or JARVIS's "
+        "refusal to that agent's terminal; nothing reaches the brain or the voice"),
     "message.main": (
         "the sending agent's own command prints the message id or JARVIS's refusal to that "
         "agent's terminal; nothing reaches the brain or the voice"),
