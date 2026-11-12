@@ -4441,3 +4441,25 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   font-size: 12px; color: var(--ui-text); background: var(--ui-raised); border: 1px solid var(--ui-divider);
   pointer-events: none;
 }
+
+/* The records move, in place of the workspace while it runs (RecordsMove.tsx). */
+.records-move {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow-y: auto;
+  background: var(--ui-ground);
+  padding: 12vh max(16px, calc((100vw - 560px) / 2)) 16px;
+  color: var(--ui-text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.records-move h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; }
+.records-move-step { font-size: 17px; margin: 0 0 12px; }
+.records-move-steps { margin: 0 0 16px; padding-left: 20px; color: var(--ui-secondary); }
+.records-move-steps li.now { color: var(--ui-text); font-weight: 600; }
+.records-move-steps li.done { color: var(--ui-muted); text-decoration: line-through; }
+.records-move-left { color: var(--ui-accent); margin: 0 0 16px; }
+.records-move-safe { color: var(--ui-secondary); }
+.records-move.failed h1, .records-move-reason { color: var(--ui-error); }
+.records-move-reason { white-space: pre-wrap; overflow-wrap: anywhere; }

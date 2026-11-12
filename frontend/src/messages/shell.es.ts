@@ -120,4 +120,20 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "time.minutes": { one: "{count} minuto", other: "{count} minutos" },
   "time.hours": { one: "{count} hora", other: "{count} horas" },
   "time.days": { one: "{count} día", other: "{count} días" },
+
+  // El traslado de los registros (RecordsMove.tsx, records_move.py).
+  "move.title": "Trasladando sus registros al nuevo motor",
+  "move.stepOf": "Paso {n} de {total}: {step}",
+  "move.step.space": "Comprobando el espacio libre en el disco",
+  "move.step.clear": "Borrando un traslado que se detuvo",
+  "move.step.copy": "Copiando",
+  "move.step.check": "Comprobando",
+  "move.step.checkBack": "Comprobando el camino de vuelta",
+  "move.step.starting": "Trasladados y comprobados. Iniciando JARVIS",
+  "move.left": "Quedan aproximadamente {time}",
+  "move.longer": "Está tardando un poco más de lo previsto",
+  "move.safe": "Puede detener JARVIS sin riesgo: el próximo inicio empieza el traslado de nuevo, y jarvis.db nunca se modifica.",
+  "move.failed.title": "JARVIS no pudo iniciar con sus registros",
+  "move.failed.kept": "jarvis.db está intacto. Al iniciar JARVIS de nuevo, se intenta el traslado otra vez.",
+  "move.failed.back": "Para volver a la versión que tenía antes, consulte “If the records move fails” en docs/whats-new.md.",
 };
