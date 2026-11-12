@@ -203,6 +203,12 @@ class BrainProvider(Protocol):
 
 DEFAULT_PROVIDER = "anthropic"
 
+# Each provider as an engine agents run on (a run's `engine`, make_package's
+# `--engine`), and back: "claude" is Anthropic's Claude Code, "codex"
+# OpenAI's Codex.
+ENGINES = {"claude": "anthropic", "codex": "openai"}
+ENGINE_OF = {provider: engine for engine, provider in ENGINES.items()}
+
 
 def provider(name: str = DEFAULT_PROVIDER) -> BrainProvider:
     """The provider by name. Imported here, not at the top, so a provider's

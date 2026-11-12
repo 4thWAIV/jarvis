@@ -77,10 +77,27 @@ function sectionShown(id: SectionId, step = setup.get()): boolean {
   return step === null || SETUP_STEPS[step] === id;
 }
 
+// How long a section brought to the top is kept there while the sections
+// above it are still being read (the Brains section draws its cards and the
+// engine settings once they arrive): long enough for those reads, ended at
+// once by his own scrolling.
+const HOLD_SECTION_MS = 3000;
+
 /** Bring a section to the top of the view (at once: the pointer measures
- *  it straight after). */
+ *  it straight after), and keep it there while what is above it grows. */
 function goTo(id: SectionId): void {
-  document.getElementById(`settings-${id}`)?.scrollIntoView({ block: "start" });
+  const section = document.getElementById(`settings-${id}`);
+  section?.scrollIntoView({ block: "start" });
+  const body = section?.closest(".settings-body");
+  if (!section || !body) return;
+  const again = new ResizeObserver(() => section.scrollIntoView({ block: "start" }));
+  for (const child of Array.from(body.children)) again.observe(child);
+  const stop = () => {
+    again.disconnect();
+    for (const kind of ["wheel", "touchstart", "keydown", "pointerdown"]) body.removeEventListener(kind, stop);
+  };
+  for (const kind of ["wheel", "touchstart", "keydown", "pointerdown"]) body.addEventListener(kind, stop, { once: true });
+  window.setTimeout(stop, HOLD_SECTION_MS);
 }
 
 /** Show Settings, at `section` if one is asked for: the body of open and

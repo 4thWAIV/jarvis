@@ -73,6 +73,14 @@ TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_messag
                "look_at_bundle_page": 60.0, "add_companion_files": 120.0,
                "prepare_repair": 120.0}
 
+# The engine one agent goes on (spawn_run, start_build, run_package_agent).
+_ENGINE_PROPERTY = {
+    "type": "string", "enum": ["claude", "codex"],
+    "description": ("The engine for this agent, ONLY when he names one for it ('on Codex', "
+                    "'with Claude'). Omit it otherwise: his setting for this kind of agent "
+                    "decides (engine_settings), which may move it off a brain in token "
+                    "stress. Never ask which engine.")}
+
 TOOL_SPECS = [
     {
         "name": "session_detail",
@@ -529,8 +537,8 @@ TOOL_SPECS = [
     {
         "name": "spawn_run",
         "description": (
-            "Start NEW Claude Code work in a project, as a recorded run the user "
-            "can watch on the dashboard. For a SMALL, self-contained task — a fix, "
+            "Start NEW agent work in a project, on Claude Code or Codex, as a "
+            "recorded run the user can watch on the dashboard. For a SMALL, self-contained task — a fix, "
             "a tweak, a question about the code that needs changing. A real "
             "project, something being built from scratch or in phases, is "
             "start_build instead, after you have brainstormed it with the user. "
@@ -543,8 +551,9 @@ TOOL_SPECS = [
             "folder's location, and only in an ordinary folder that is "
             "available, never a session history or notes folder. "
             "Write the prompt as a complete instruction: the run "
-            "is unattended and cannot ask a follow-up. NEVER ASK WHICH MODEL: "
-            "omit `model` and it runs on Sonnet; pass one only if the user named "
+            "is unattended and cannot ask a follow-up. NEVER ASK WHICH MODEL OR "
+            "ENGINE: omit both and his setting for agent runs decides (Claude on "
+            "Sonnet unless he set otherwise); pass a model only if the user named "
             "it, or Opus with a short reason stated up front. Returns as soon as the run has started; the user is "
             "told when it finishes."),
         "inputSchema": {
@@ -590,6 +599,7 @@ TOOL_SPECS = [
                                           "you heard it and it is normalised "
                                           "for you. Omit it for Sonnet, "
                                           "never ask.")},
+                "engine": _ENGINE_PROPERTY,
                 "resume": {"type": "boolean",
                            "description": ("True when this continues work a "
                                            "previous run did in that project — "
@@ -623,9 +633,10 @@ TOOL_SPECS = [
             "it is for, what it must do, what he feels strongly about, what is "
             "explicitly out of scope, and which of two or three approaches he "
             "wants. THEN confirm, and only then call this. "
-            "NEVER ASK WHICH MODEL: omit `model` and the build runs on Sonnet. "
-            "Pass Opus only with a short reason stated up front, or the model "
-            "the user named. "
+            "NEVER ASK WHICH MODEL OR ENGINE: omit both and his setting for "
+            "builds decides (Claude on Sonnet unless he set otherwise). Pass "
+            "Opus only with a short reason stated up front, or the model or "
+            "engine the user named. "
             "`spec` is everything the two of you settled, written out properly — "
             "it is saved into the project as a design document and is the only "
             "thing that survives if that session is replaced or compacted, so put "
@@ -665,10 +676,12 @@ TOOL_SPECS = [
                 "model": {
                     "type": "string",
                     "description": ("The model this build runs on. Never ask: "
-                                    "omit for Sonnet, pass what the user named "
-                                    "('opus', 'opus 5', 'sonnet'), or Opus with "
-                                    "a reason stated up front."),
+                                    "omit for his setting, pass what the user named "
+                                    "('opus', 'opus 5', 'sonnet', or a Codex model "
+                                    "such as 'gpt-5.6-terra'), or Opus with a reason "
+                                    "stated up front."),
                 },
+                "engine": _ENGINE_PROPERTY,
             },
             "required": ["project", "spec"],
         },
@@ -1788,13 +1801,17 @@ TOOL_SPECS = [
     {
         "name": "run_package_agent",
         "description": (
-            "Start an open package whose package.json runs it as an agent: one Claude Code "
-            "run on its brief, in the package's folder, only on his go-ahead. It returns at "
-            "once; you are told when the run has finished, and then draft the reply with "
+            "Start an open package whose package.json runs it as an agent: one agent run "
+            "on its brief, in the package's folder, only on his go-ahead, on the engine his "
+            "setting for agent packages gives unless he names one. It returns at once; you "
+            "are told when the run has finished, and then draft the reply with "
             "package_results."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "properties": {"package": {"type": "string", "description": "The package's id."},
+                           "engine": _ENGINE_PROPERTY,
+                           "model": {"type": "string",
+                                     "description": "A model only when he names one."}},
             "required": ["package"],
         },
     },
@@ -2142,6 +2159,41 @@ TOOL_SPECS = [
             "patience, whether capture sounds play at all, each capture cue's on or off and "
             "tone, and the cue volume."),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "engine_settings",
+        "description": (
+            "Settings, Brains: which engine and model each kind of agent JARVIS starts goes on "
+            "(the package author, agent runs, builds, agent packages): a brain and model, the "
+            "same as the agent asking, or the least in token stress; whether a brain in token "
+            "stress is overridden; and each brain's plus or minus against its pace this week "
+            "(token stress is below zero)."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_engine_setting",
+        "description": (
+            "Change one kind of agent's engine setting, or the override, only when he asks. "
+            "It starts nothing; it applies to the next agent of that kind."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string",
+                         "enum": ["package_author", "run", "build", "agent_package"]},
+                "pick": {"type": "string", "enum": ["fixed", "requester", "least_stress"],
+                         "description": ("fixed: the engine and model given; requester: the "
+                                         "same engine as the agent asking; least_stress: the "
+                                         "brain with the most plan left against its pace.")},
+                "engine": {"type": "string", "enum": ["claude", "codex"],
+                           "description": "With fixed: the brain."},
+                "model": {"type": "string",
+                          "description": "With fixed: one of that brain's models; omit for its default."},
+                "override_stressed": {"type": "boolean",
+                                      "description": ("Alone, instead of a kind: whether a "
+                                                      "chosen brain in token stress gives way "
+                                                      "to the least stressed.")},
+            },
+        },
     },
     {
         "name": "set_voice_input_settings",

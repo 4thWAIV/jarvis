@@ -14,15 +14,23 @@
  * Each card is a target by its brain, with its model, checks, sign-in,
  * start choice and Remove as parts; each Add button is one too
  * (SettingsRow.tsx).
+ *
+ * Below the cards, which engine each kind of agent JARVIS starts goes on
+ * (engine_choice.py, /api/settings/engines; the brain's engine_settings and
+ * set_engine_setting are the same): a brain and one of its models, the same
+ * as the agent asking, or the least in token stress, and whether a brain in
+ * token stress gives way. Token stress is each brain's plus or minus against
+ * its pace this week, shown beside it.
  */
 
 import { useState } from "react";
-import { addBrain, brainsChanged, brainsMayHaveChanged, listBrains, removeBrain, setDefault,
-         setModel, startSignIn, type BrainCard, type BrainCheck } from "./brains";
+import { addBrain, brainsChanged, brainsMayHaveChanged, changeEngines, ENGINE_PROVIDER, listBrains,
+         readEngines, removeBrain, setDefault, setModel, startSignIn, type BrainCard, type BrainCheck,
+         type Engine, type EngineKind, type EngineSetting, type EngineSettings } from "./brains";
 import { useLiveRead } from "./liveRead";
 import { useT, type Translate } from "./locale";
 import { PROVIDERS } from "./providers";
-import { SettingsRow, useSettingsRow } from "./SettingsRow";
+import { SettingsRow, useSettingsItem, useSettingsRow, type SettingsItem } from "./SettingsRow";
 import { StatusDot } from "./StatusDot";
 
 // How each setup check is named on its card, by the check's name; a
@@ -72,7 +80,114 @@ export function BrainsSection() {
           {others.map((card) => <AddBrain key={card.name} card={card} act={act} />)}
         </div>
       )}
+      <EngineChoices cards={added} />
     </div>
+  );
+}
+
+const KIND_ITEM: Record<EngineKind, SettingsItem> = {
+  package_author: "enginePackageAuthor", run: "engineRun", build: "engineBuild",
+  agent_package: "engineAgentPackage",
+};
+
+/** A setting as one select's value, and back. */
+function settingValue(setting: EngineSetting): string {
+  return setting.pick === "fixed" ? `fixed:${setting.engine}:${setting.model ?? ""}` : setting.pick;
+}
+
+function settingOf(value: string): EngineSetting {
+  if (!value.startsWith("fixed:")) return { pick: value as EngineSetting["pick"] };
+  const [, engine, model] = value.split(":");
+  return { pick: "fixed", engine: engine as Engine, model: model || null };
+}
+
+function EngineChoices({ cards }: { cards: BrainCard[] }) {
+  const t = useT();
+  const live = useLiveRead(() => readEngines(), [brainsChanged]);
+  const [shown, setShown] = useState<EngineSettings | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const read = shown ?? live.value;
+  // Until they are read the same rows are drawn, idle, so nothing below
+  // moves when they arrive (a section scrolled to stays in view).
+  const settings = read ?? waiting(cards);
+  const overrideUi = useSettingsItem("engineOverride", t("left.brains.engines.override"));
+  const title = (engine: Engine) =>
+    cards.find((c) => c.name === ENGINE_PROVIDER[engine])?.title ?? engine;
+  const change = (work: Promise<EngineSettings>) =>
+    work.then((next) => { setShown(next); setProblem(null); })
+      .catch((e: Error) => setProblem(e.message));
+  return (
+    <div className="brain-engines">
+      <h4>{t("left.brains.engines.heading")}</h4>
+      {problem && <p className="settings-hint read-failure">{problem}</p>}
+      {settings.kinds_order.map((kind) => (
+        <EngineKindRow key={kind} kind={kind} setting={settings.kinds[kind]} cards={cards}
+                       title={title} disabled={!read}
+                       onChange={(next) => change(changeEngines({ kind, ...next }))} />
+      ))}
+      <SettingsRow label={t("left.brains.engines.override")} labelRef={overrideUi.part("label")}
+                   htmlFor="engine-override">
+        <input id="engine-override" type="checkbox" data-ui-action="domain" ref={overrideUi.whole}
+               disabled={!read}
+               checked={settings.override_stressed}
+               onChange={(e) => change(changeEngines({ override_stressed: e.target.checked }))} />
+      </SettingsRow>
+      <p className="settings-hint">
+        {settings.engines.map((e) => e.ahead === null
+          ? t("left.brains.engines.notMeasured", { brain: title(e.engine) })
+          : t(e.stressed ? "left.brains.engines.stressed" : "left.brains.engines.pace",
+              { brain: title(e.engine), ahead: (e.ahead > 0 ? "+" : "") + e.ahead.toFixed(1) }))
+          .join(" ")}
+      </p>
+    </div>
+  );
+}
+
+/** The settings' shape before they are read: every kind, every brain the
+ *  cards show, nothing measured. */
+function waiting(cards: BrainCard[]): EngineSettings {
+  const kinds_order: EngineKind[] = ["package_author", "run", "build", "agent_package"];
+  return {
+    kinds: Object.fromEntries(kinds_order.map((k) => [k, { pick: "requester" }])) as
+      Record<EngineKind, EngineSetting>,
+    kinds_order, override_stressed: false, least_stressed: null,
+    engines: (Object.keys(ENGINE_PROVIDER) as Engine[])
+      .filter((engine) => cards.some((c) => c.name === ENGINE_PROVIDER[engine]))
+      .map((engine) => ({ engine, provider: ENGINE_PROVIDER[engine], ahead: null, stressed: false })),
+  };
+}
+
+function EngineKindRow({ kind, setting, cards, title, disabled, onChange }: {
+  kind: EngineKind;
+  setting: EngineSetting;
+  cards: BrainCard[];
+  title: (engine: Engine) => string;
+  disabled: boolean;
+  onChange: (setting: EngineSetting) => void;
+}) {
+  const t = useT();
+  const label = t(`left.brains.engines.kind.${kind}`);
+  const ui = useSettingsItem(KIND_ITEM[kind], label);
+  const engines = (Object.keys(ENGINE_PROVIDER) as Engine[])
+    .filter((engine) => cards.some((c) => c.name === ENGINE_PROVIDER[engine]));
+  return (
+    <SettingsRow label={label} labelRef={ui.part("label")} htmlFor={`engine-${kind}`}>
+      <select id={`engine-${kind}`} data-ui-action="domain" ref={ui.whole} disabled={disabled}
+              value={settingValue(setting)} onChange={(e) => onChange(settingOf(e.target.value))}>
+        <option value="requester">{t("left.brains.engines.requester")}</option>
+        <option value="least_stress">{t("left.brains.engines.leastStress")}</option>
+        {engines.map((engine) => {
+          const card = cards.find((c) => c.name === ENGINE_PROVIDER[engine]);
+          return [
+            <option key={`${engine}:`} value={`fixed:${engine}:`}>
+              {t("left.brains.engines.defaultModel", { brain: title(engine) })}</option>,
+            ...(card?.models ?? []).map((model) => (
+              <option key={`${engine}:${model}`} value={`fixed:${engine}:${model}`}>
+                {t("left.brains.engines.model", { brain: title(engine), model })}</option>)),
+          ];
+        })}
+      </select>
+    </SettingsRow>
   );
 }
 

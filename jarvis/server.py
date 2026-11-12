@@ -142,6 +142,7 @@ from jarvis import codex_sessions
 from jarvis import usage_history, usage_store
 from jarvis import web_auth
 from jarvis.run_executor import RunExecutor
+from jarvis import codex_engine, engine_choice
 from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
@@ -3123,6 +3124,10 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
 
 # Shared state
 run_executor_instance = RunExecutor(run_store, max_concurrent=3)
+# Its second engine: Codex agents as threads on the Codex app server already
+# running on this Mac (codex_engine.py). It connects on a run's first need.
+codex_run_engine = codex_engine.CodexEngine(run_executor_instance)
+run_executor_instance.add_engine(codex_run_engine)
 # Wired at import, not in lifespan: the voice path's only way of hearing that
 # work it started has ended, and it must not depend on a startup step that a
 # test (or a partial boot) might skip. `subscribe` de-duplicates, and
@@ -3335,6 +3340,7 @@ async def lifespan(application: FastAPI):
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    await codex_run_engine.close()
     # The engine last: everything above may still write its records.
     await stop_knowledge()
     records.bind(None)
@@ -3610,6 +3616,47 @@ async def api_brains_sign_in(name: str):
             await brain_accounts.refresh(name)
     _spawn(finish())
     return {"url": started.url, "sign_in_id": started.sign_in_id}
+
+
+# --- Which engine each kind of agent goes on (Settings, Brains) --------------
+#
+# engine_choice.py holds his setting per kind; the page's route and the
+# brain's `engine_settings` / `set_engine_setting` read and change it
+# through `_change_engine_setting` and `engine_choice.view`.
+
+async def _change_engine_setting(change: dict) -> dict:
+    """One change to the engine settings, from the page or the brain:
+    `{"kind", "pick", "engine"?, "model"?}` or `{"override_stressed"}`.
+    A model is checked against its brain's own list. Raises
+    engine_choice.Refused."""
+    if "override_stressed" in change:
+        await asyncio.to_thread(engine_choice.set_override, _truthy(change["override_stressed"]))
+    else:
+        engine = change.get("engine") or None
+        model = str(change.get("model") or "").strip() or None
+        models = None
+        if model and engine in engine_choice.ENGINES:
+            models = await asyncio.to_thread(
+                brain_provider.provider(engine_choice.ENGINES[engine]).models)
+        await asyncio.to_thread(engine_choice.set_kind, str(change.get("kind") or ""),
+                                str(change.get("pick") or ""), engine, model, models)
+    return await asyncio.to_thread(engine_choice.view)
+
+
+@app.get("/api/settings/engines")
+async def api_engine_settings():
+    """Each kind of agent's engine setting, the override, and every brain's
+    plus/minus this week (engine_choice.view)."""
+    return await asyncio.to_thread(engine_choice.view)
+
+
+@app.post("/api/settings/engines")
+async def api_change_engine_setting(request: Request):
+    try:
+        return await _change_engine_setting(await request.json())
+    except engine_choice.Refused as e:
+        raise HTTPException(status_code=400,
+                            detail={"message": str(e), "code": e.code, "values": e.values})
 
 
 # --- Per-session usage -----------------------------------------------------
@@ -8888,6 +8935,9 @@ async def tool_run_package_agent(args: dict) -> str:
     package, problem = _package_or_problem(args, work_packages.AGENT)
     if package is None:
         return f"{problem} Nothing was started."
+    choice, problem = _engine_for("agent_package", args)
+    if choice is None:
+        return problem
     if run_executor_instance is None:
         return "I can't start anything just now, sir."
     if await asyncio.to_thread(run_store.list_runs, status=list(run_store.RunStatus.ACTIVE),
@@ -8910,15 +8960,16 @@ async def tool_run_package_agent(args: dict) -> str:
     try:
         run_id = await run_executor_instance.spawn(
             compose_run_prompt(brief + _handed_text(handed)), package.id, str(package.folder),
-            "voice", package_id=package.id)
+            "voice", package_id=package.id, **_on_engine(choice.engine),
+            **({"model": choice.model} if choice.model else {}))
     except Exception as e:
         log.error(f"run_package_agent failed for {package.id}: {e}", exc_info=True)
         return f"I couldn't start {package.id}, sir."
     global last_started_run
     last_started_run = run_id
     _hold(handed, f"run:{run_id}")
-    return (f"Started {package.id} as an agent run in its folder, sir. You will be told when "
-            f"it has finished.")
+    return (f"Started {package.id} as an agent run in its folder{_engine_said(choice)}, sir. "
+            f"You will be told when it has finished.")
 
 
 async def _open_package_page(reference: str
@@ -11033,6 +11084,61 @@ def _normalise_model(raw: str) -> str | None:
     return close[0] if close else None
 
 
+# The words an engine is named by (spawn_run's, start_build's and
+# run_package_agent's `engine`), each to the engine it names.
+_ENGINE_WORDS = {"claude": "claude", "anthropic": "claude", "claude code": "claude",
+                 "codex": "codex", "openai": "codex", "chatgpt": "codex", "gpt": "codex"}
+_CODEX_MODEL_RE = re.compile(r"gpt-[a-z0-9][a-z0-9.\-]{0,62}")
+ENGINE_SAID = {"claude": "Claude", "codex": "Codex"}
+
+
+def _codex_model(raw: str) -> Optional[str]:
+    """A Codex model id as the brain typed it ("gpt-5.6-terra"), made
+    plain, or None when it does not have the shape of one."""
+    spoken = " ".join((raw or "").split()).lower()
+    if not _CODEX_MODEL_RE.fullmatch(spoken):
+        return None
+    return _plain_name(spoken, "") or None
+
+
+def _brain_engine() -> str:
+    """The engine of the brain running: the requester of what he asks it.
+    Claude's while no brain with a provider is there to say."""
+    provider = getattr(brain_instance, "provider", None) if brain_instance is not None \
+        else _brain_provider()
+    return brain_provider.ENGINE_OF.get(getattr(provider, "name", ""), "claude")
+
+
+def _engine_for(kind: str, args: dict) -> tuple[Optional[engine_choice.Choice], str]:
+    """The engine and model one agent of `kind` goes on: what he named for
+    it (`engine`, or a model that names its engine: "opus" is Claude's,
+    "gpt-..." Codex's), else his setting for the kind (engine_choice), the
+    brain asking being the requester. (the choice, "") or (None, why not)."""
+    named = " ".join(str(args.get("engine") or "").split()).lower()
+    engine = _ENGINE_WORDS.get(named) if named else None
+    if named and engine is None:
+        return None, "Claude or Codex, sir?"
+    words = str(args.get("model") or "")
+    claude, codex = _normalise_model(words), _codex_model(words)
+    if engine is None and (claude or codex):
+        engine = "claude" if claude else "codex"
+    model = claude if engine == "claude" else codex if engine == "codex" else None
+    try:
+        return engine_choice.choose(kind, engine=engine, model=model,
+                                    requester=_brain_engine()), ""
+    except engine_choice.Refused as e:
+        return None, f"{e}, sir."
+
+
+def _engine_said(choice: engine_choice.Choice) -> str:
+    """" on Codex", and why when his setting moved it; nothing for Claude
+    as he set it, so a Claude run is said as before."""
+    if choice.why == "override":
+        return (f" on {ENGINE_SAID[choice.engine]}, since the brain he set is behind its "
+                f"pace this week")
+    return "" if choice.engine == "claude" else f" on {ENGINE_SAID[choice.engine]}"
+
+
 def _truthy(value) -> bool:
     """The brain sends JSON, but a `true` that arrived as the string "true"
     must not silently mean False."""
@@ -11041,7 +11147,8 @@ def _truthy(value) -> bool:
     return bool(value)
 
 
-def _last_run_to_resume(project_name: str, project_path: str) -> dict | None:
+def _last_run_to_resume(project_name: str, project_path: str,
+                        engine: str = "claude") -> dict | None:
     """The most recent FINISHED run in this exact directory, or None.
 
     Resuming the wrong session is worse than starting cold, so this is
@@ -11054,6 +11161,8 @@ def _last_run_to_resume(project_name: str, project_path: str) -> dict | None:
             continue
         if run.get("project_path") != project_path:
             continue
+        if (run.get("engine") or "claude") != engine:
+            continue                     # only its own engine can pick it up
         if run.get("status") in run_store.RunStatus.TERMINAL:
             return run
     return None
@@ -11061,7 +11170,8 @@ def _last_run_to_resume(project_name: str, project_path: str) -> dict | None:
 
 async def _spawn_placed(prompt: str, name: str, path: str, folder_id: Optional[str],
                         binding: Optional[dict], origin: str, *, model: Optional[str] = None,
-                        resume_from: Optional[str] = None, with_context: bool = True) -> str:
+                        resume_from: Optional[str] = None, with_context: bool = True,
+                        engine: Optional[str] = None) -> str:
     """Start a run already placed (where, and for which project and work):
     the brain's spawn_run and the Work view's Start an agent here alike.
     The user's own words, framed for a process nobody can answer (see
@@ -11077,7 +11187,7 @@ async def _spawn_placed(prompt: str, name: str, path: str, folder_id: Optional[s
             context = ""
     run_id = await run_executor_instance.spawn(
         compose_run_prompt(prompt, context), name, path, origin, resume_from=resume_from,
-        model=model, folder_id=folder_id, **_bound(binding))
+        model=model, folder_id=folder_id, **_bound(binding), **_on_engine(engine))
     # "cancel that" and "how's it going" have to work: nobody can say a UUID
     # out loud, so the run JARVIS just started is remembered as the referent
     # for a back-reference. Same idea as `last_mentioned_session`.
@@ -11114,7 +11224,10 @@ async def tool_spawn_run(args: dict) -> str:
                 "Which should it run in?")
     if not (reference or in_folder or by_record):
         return "Which project should I start that in, sir?"
-    model = _normalise_model(str(args.get("model") or ""))
+    choice, problem = _engine_for("run", args)
+    if choice is None:
+        return problem
+    model = choice.model
 
     # A project record or a piece of work is placed by the project service,
     # a registered folder by the folder service alone, so where a run may
@@ -11149,7 +11262,7 @@ async def tool_spawn_run(args: dict) -> str:
     resume_from = None
     asked_to_resume = _truthy(args.get("resume"))
     if asked_to_resume:
-        previous = _last_run_to_resume(name, path)
+        previous = _last_run_to_resume(name, path, choice.engine)
         resume_from = previous["id"] if previous else None
 
     # Received files he named go with it as paths it can read (a run whose
@@ -11163,7 +11276,8 @@ async def tool_spawn_run(args: dict) -> str:
     try:
         run_id = await _spawn_placed(prompt + _handed_text(handed), name, path, folder_id, binding,
                                      "voice", model=model, resume_from=resume_from,
-                                     with_context=args.get("context", True) is not False)
+                                     with_context=args.get("context", True) is not False,
+                                     engine=choice.engine)
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
@@ -11177,7 +11291,8 @@ async def tool_spawn_run(args: dict) -> str:
         where = f"Nothing to pick up in {name}, so I started fresh"
     else:
         where = f"Started on {name}"
-    said = f"{where}, running {started_on}." if started_on else f"{where}, sir."
+    on = _engine_said(choice)
+    said = f"{where}, running {started_on}{on}." if started_on else f"{where}{on}, sir."
     return said + _files_said(handed)
 
 
@@ -11642,6 +11757,62 @@ async def tool_set_voice_input_settings(args: dict) -> str:
     return ("Saved. " + _voice_input_settings_said(settings)
             + " It applies from the next time he stops the microphone or leaves the page, the "
               "intervals from his next pause.")
+
+
+_KIND_SAID = {"package_author": "The package author", "run": "Agent runs",
+              "build": "Builds", "agent_package": "Agent packages"}
+
+
+def _engine_settings_said(view: dict) -> str:
+    """The settings as the brain reads them: JARVIS's own words and numbers."""
+    lines = []
+    for kind in engine_choice.KINDS:
+        setting = view["kinds"][kind]
+        if setting["pick"] == "requester":
+            how = "the same engine as the agent asking"
+        elif setting["pick"] == "least_stress":
+            how = "whichever brain is least in token stress"
+        else:
+            how = (f"{ENGINE_SAID[setting['engine']]}, "
+                   + (setting["model"] or "its default model"))
+        lines.append(f"{_KIND_SAID[kind]}: {how}.")
+    lines.append("Override when the chosen brain is in token stress: "
+                 + ("on." if view["override_stressed"] else "off."))
+    for e in view["engines"]:
+        ahead = e["ahead"]
+        lines.append(f"{ENGINE_SAID[e['engine']]} this week: "
+                     + ("not measured." if ahead is None
+                        else f"{ahead:+.1f} points against its pace"
+                        + (", in token stress." if e["stressed"] else ".")))
+    if view["least_stressed"]:
+        lines.append(f"Least in token stress: {ENGINE_SAID[view['least_stressed']]}.")
+    return " ".join(lines)
+
+
+async def tool_engine_settings(args: dict) -> str:
+    """Settings, Brains: which engine each kind of agent goes on."""
+    return _engine_settings_said(await asyncio.to_thread(engine_choice.view))
+
+
+async def tool_set_engine_setting(args: dict) -> str:
+    """Change one kind's engine setting, or the override, as the page's
+    route does. An ACTING tool: it changes a setting; it starts nothing."""
+    try:
+        view = await _change_engine_setting(args)
+    except engine_choice.Refused as e:
+        return f"Nothing was changed, sir: {e}."
+    return "Saved. " + _engine_settings_said(view)
+
+
+TOOL_HANDLERS.update({
+    "engine_settings": tool_engine_settings,
+    "set_engine_setting": tool_set_engine_setting,
+})
+ACTING_TOOLS.add("set_engine_setting")
+TAINT_EXEMPT_TOOLS.update({
+    "engine_settings": "it reads his own engine settings and JARVIS's own usage figures",
+    "set_engine_setting": "it changes his engine settings to fixed values, it does not read",
+})
 
 
 # A cue played once on his page, as Settings' Test button plays it.
@@ -14176,8 +14347,12 @@ async def tool_start_build(args: dict) -> str:
     if not reference:
         return "Which project should I build that in, sir?"
 
-    # No model, or one that is nothing like a model, is Sonnet — never a question.
-    model = _normalise_model(str(args.get("model") or "")) or "sonnet"
+    # Its engine: what he named, else his setting for builds. On Claude, no
+    # model, or one that is nothing like a model, is Sonnet — never a question.
+    choice, problem = _engine_for("build", args)
+    if choice is None:
+        return problem
+    model = choice.model or ("sonnet" if choice.engine == "claude" else None)
 
     name, path, problem = _resolve_project_or_explain(reference)
     if problem:
@@ -14218,7 +14393,7 @@ async def tool_start_build(args: dict) -> str:
 
     try:
         run_id = await run_executor_instance.spawn(composed, name, path, "voice",
-                                                   model=model)
+                                                   model=model, **_on_engine(choice.engine))
     except Exception as e:
         log.error(f"start_build failed for {name}: {e}", exc_info=True)
         return (f"I couldn't start the build in {name}, sir — the spec is "
@@ -14231,8 +14406,8 @@ async def tool_start_build(args: dict) -> str:
     # Read back from the store, never echoed from the argument: what JARVIS
     # says it is running on must be what was actually persisted.
     started_on = run.get("requested_model") or model
-    return (f"Building {name} on {started_on}, sir — the spec's written down "
-            f"and it's planning now.")
+    return (f"Building {name} on {started_on}{_engine_said(choice)}, sir — the spec's "
+            f"written down and it's planning now.")
 
 
 def _build_progress_clause(progress) -> str:
@@ -16142,6 +16317,12 @@ def _bound(binding: Optional[dict]) -> dict:
     return {k: v for k, v in (binding or {}).items() if v}
 
 
+def _on_engine(engine: Optional[str]) -> dict:
+    """A run's engine as `spawn`'s keyword, only when it is not Claude's,
+    so a Claude run is spawned exactly as before (as `_bound` does)."""
+    return {"engine": engine} if engine and engine != "claude" else {}
+
+
 async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Optional[str]]:
     """Run a finished run's prompt again, resuming from it, for the page's
     retry route and the brain's `retry_run` alike: (the new run's id, None),
@@ -16166,10 +16347,13 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
         _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
         if problem:
             return None, problem
+    # The same engine it ran on: a run is picked up where it left off,
+    # which only its own engine can do.
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
         resume_from=original["id"], folder_id=folder_id,
-        package_id=original.get("package_id"), **_bound(binding))
+        package_id=original.get("package_id"), **_bound(binding),
+        **_on_engine(original.get("engine")))
     return new_id, None
 
 
