@@ -322,7 +322,7 @@ async def test_a_received_file_is_verified_before_it_can_be_revealed():
     assert [p.name for p in path.parent.iterdir()] == [ref.filename]
     if sys.platform != "win32":   # Windows marks it with the Mark of the Web instead
         assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
-    assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
+        assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
     w.matt.files.reveal(SERVER, MATT, draft.message_id, ref.attachment_id)
     assert w.revealed == [path]
     # Asking again neither fetches nor duplicates anything.
