@@ -17,9 +17,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--attachment', type=UUID, required=True)
     parser.add_argument('--inspect', action='store_true')
     args = parser.parse_args(argv)
-    base = f'/api/team/messages/{args.message}'
+    messages = f'/api/team/messages/{args.message}'
     with signed_client(args.cert, args.session, 'packages') as client:
-        result = client.post(f'{base}/files/{args.attachment}/location', {})
+        result = client.post(f'{messages}/files/{args.attachment}/location', {})
         if result.status_code != 200:
             print(f'Retrieval refused ({result.status_code}): {result.text}')
             return 1
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(output, indent=2))
             return 1
         if args.inspect:
-            result = client.post(f'{base}/attachments/{args.attachment}/bundle', {})
+            result = client.post(f'{messages}/attachments/{args.attachment}/bundle', {})
             if result.status_code != 200:
                 output['inspection_error'] = {'status': result.status_code, 'detail': result.text}
                 print(json.dumps(output, indent=2))
