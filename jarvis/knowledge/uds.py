@@ -280,9 +280,10 @@ class EngineUDS:
         self.transport = transport
         self.deadline = deadline
 
-    def _call(self, route: str, body: dict) -> tuple[int, Any]:
+    def _call(self, route: str, body: dict, deadline: Optional[float] = None) -> tuple[int, Any]:
         from jarvis.knowledge_client import EngineUnavailable
-        status, payload = self.transport.request("POST", "/v1/items/" + route, body, self.deadline)
+        status, payload = self.transport.request("POST", "/v1/items/" + route, body,
+                                                 deadline or self.deadline)
         if status == 409:
             raise Conflict(payload.get("detail", "conflict"), payload.get("path"),
                            payload.get("expected"), payload.get("found"))
@@ -440,6 +441,12 @@ class EngineUDS:
     def answer_proposal(self, caller: Caller, path: Path, action: str) -> dict:
         """The owner's yes (`accept`, which writes the link) or no (`refuse`)."""
         return self._call("proposals/answer", {"by": caller.by(), "path": path, "action": action})[1]
+
+    def forget(self, caller: Caller, paths: list[Path], *, deadline: Optional[float] = None) -> dict:
+        """Erase every version of items already deleted (the owner's act):
+        see items.Items.forget. It compacts what held them, so it may take
+        longer than an ordinary call (`deadline`)."""
+        return self._call("forget", {"by": caller.by(), "paths": list(paths)}, deadline)[1]
 
     def set_rights(self, caller: Caller, path: Path, grants: list) -> dict:
         """The grants on `path` (each: person, data, content, write, hidden),

@@ -231,6 +231,8 @@ ALLOWED_TOOLS = [
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
+    # The records move into the engine (records_move.py), as the page shows it.
+    "mcp__jarvis__records_move",
     "mcp__jarvis__agent_keys",
     "mcp__jarvis__revoke_agent_key",
     # The page's navigation and white attention (ui_control.py): ui_map reads

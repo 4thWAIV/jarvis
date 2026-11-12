@@ -694,8 +694,12 @@ class DocumentStore:
                                                        limit=1 << 30)}
         return self.forget_keys(keys)
 
-    def forget_keys(self, keys: set[bytes]) -> dict:
+    def forget_keys(self, keys: set[bytes], also: Optional[dict[int, set[bytes]]] = None) -> dict:
+        """Forget `keys` in DOCS (and `also`, family -> keys, alike), with
+        what every part hangs on them."""
         families: dict[int, set[bytes]] = {DOCS: set(keys)}
+        for family, more in (also or {}).items():
+            families.setdefault(family, set()).update(more)
         for hook in self.forget_hooks:
             for family, more in hook(keys).items():
                 families.setdefault(family, set()).update(more)

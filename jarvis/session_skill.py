@@ -57,6 +57,7 @@ def render(name: str = NAME, relative: str = "SKILL.md") -> str:
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
             .replace("{{work_report}}", _reporter("work_report.py"))
             .replace("{{message}}", _module("message"))
+            .replace("{{retrieve_attachment}}", _module("retrieve_attachment"))
             .replace("{{language_document}}", _module("language_document"))
             .replace("{{make_package}}", _module("make_package", cert=False))
             .replace("{{agent_key}}", _module("agent_key"))

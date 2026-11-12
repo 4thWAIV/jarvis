@@ -65,7 +65,28 @@ this presents as "the UI is up but nothing works" rather than as an error.
   SQLite is retired. A record's events are its versions (`events` on each,
   tagged with who acted and the kind of change). The first start after the
   move copies `data/jarvis.db` into the engine once and proves it both ways
-  (`records_cutover.py`), leaving the file untouched;
+  (`records_cutover.py`), leaving the file untouched. A move stopped part
+  way (during the copy or either check) never blocks a start: without the
+  cut-over's record it is erased (`knowledge_move.clear`: every item
+  written since its manifest began, under the paths a move writes, deleted
+  and then forgotten with every version, `EngineUDS.forget`, the owner's
+  `/v1/items/forget` for deleted items only; the files it wrote; the
+  manifest last) and the file copied again in full, whatever was written
+  to it in between; a different finished (`copied`) move, or `/sqlite/`
+  items with no manifest, is still refused. The server serves during the
+  move (`records_move.py`): `lifespan` starts the engine and, when
+  `records_cutover.needed`, runs the move in a daemon thread of its own and
+  starts everything that needs the records (`server._start_on_records`)
+  once it is done; meanwhile `records_move.Gate` answers every `/api`,
+  `/ws` and `/internal` route but `/api/health`, `/api/records/move` and
+  the language setting 503 (a socket closed 1013) with the reason, and the
+  page covers the workspace with `RecordsMove.tsx` (loading again once moved): the step
+  (`records_cutover.STEPS`), the time left by the plan
+  (`records_cutover.plan`: rows times `STEP_SEC_PER_ROW`, measured) and
+  that stopping is safe; a failed move or start leaves the server up
+  saying why. The plan refuses too little free disk first
+  (`NotEnoughSpace`, `space_needed`). The brain's `records_move` reads the
+  same status, and after the move the cut-over's record;
   `python -m jarvis.knowledge export-sqlite --out <file>` writes the records
   back to SQLite. Tests get a throwaway in-process engine each
   (`conftest._records_in_a_throwaway_engine`).
@@ -2668,7 +2689,13 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   bundle readers (see "The knowledge engine")
 - `knowledge/rights.py` — AccessRights at paths and the gate's rules
 - `knowledge_move.py` — Copy, verify and export-sqlite between SQLite and
-  the engine (round 3's cut-over kit)
+  the engine (round 3's cut-over kit), and `clear`, which erases a move
+  stopped part way
+- `records_cutover.py` / `records_move.py` — The one-time move of
+  jarvis.db into the engine (planned, space checked, each step told), and
+  the server answering while it runs: its status, the 503 gate and the
+  `/api/records/move` route; `frontend/src/RecordsMove.tsx` is the page's
+  side
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -2785,7 +2812,7 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
 `test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
 `test_voice_page_capture_cues.py`, `test_voice_page_knowledge.py`,
-`test_voice_page_usage_history.py`) are marked `page` and deselected too: they build
+`test_voice_page_usage_history.py`, `test_voice_page_records_move.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

@@ -2768,6 +2768,15 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "records_move",
+        "description": (
+            "The move of JARVIS's records from jarvis.db into the knowledge engine (the "
+            "first start after the update that brought it): where it is while it runs, why "
+            "it failed if it did, or when it happened, how many rows and how long it took. "
+            "THE way to answer \"did my records move\" or \"what happened to jarvis.db\"."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "update_jarvis",
         "description": (
             "Update JARVIS from GitHub and restart on the new code, only when he asks: "

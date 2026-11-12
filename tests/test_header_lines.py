@@ -374,6 +374,14 @@ EXEMPT = {
         "it compares the move manifest's state and schema with the SQLite file's own; the report "
         "names tables and keys for the `python -m jarvis.knowledge verify` command's terminal, "
         "never a brain header or speech"),
+    "records_move.__call__": (
+        "the records move's gate reads its own status (state, step, the failure's reason, which is "
+        "JARVIS's own exception text from the move kit) to answer a route 503 with JSON; no "
+        "session's words are in it, and it is never a brain header or speech"),
+    "records_move.said": (
+        "it words the records move's own status for the brain's records_move tool: the state, step "
+        "and failure reason JARVIS's own move wrote, and the cut-over's own record (counts, times); "
+        "no session, agent or person wrote any of it"),
     "usage_history.append": (
         "it stores a usage reading's window status as a field of JARVIS's own usage history; the "
         "only text it builds is its own log line naming the engine's error, never a session field or "
@@ -985,6 +993,9 @@ EXEMPT = {
     "messages_api.mount": (
         "its routes answer the page and the sending agent with JSON; the brain reads the "
         "same JSON only through messages_to_him, inside its wall"),
+    "retrieve_attachment.main": (
+        "the agent's own command prints the location JSON, the inspection JSON or JARVIS's "
+        "refusal to that agent's terminal; nothing reaches the brain or the voice"),
     "message.main": (
         "the sending agent's own command prints the message id or JARVIS's refusal to that "
         "agent's terminal; nothing reaches the brain or the voice"),
