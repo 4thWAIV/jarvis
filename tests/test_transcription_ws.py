@@ -3,6 +3,7 @@ capture at a time, finish and abort, failures, teardown, and the web
 boundary. No model weights and no microphone are involved."""
 
 import json
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -396,7 +397,12 @@ def test_a_missing_model_is_reported_with_the_setup_command():
             # a page that connects first is told "loading" before the error.
             msg = _until(ws, "error")[-1]
             assert msg["code"] == "model-unavailable"
-            assert transcriber.SETUP_COMMAND in msg["message"]
+            if sys.platform == "win32":
+                assert ("Install it in JARVIS's Settings, Voice and language "
+                        "(English speech model)") in msg["message"]
+                assert transcriber.SETUP_COMMAND not in msg["message"]
+            else:
+                assert transcriber.SETUP_COMMAND in msg["message"]
 
 
 def _connect_once(client):

@@ -3138,6 +3138,7 @@ export const UI_CONTRACT = {
         "saveYou",
         "steady",
         "language",
+        "englishModel",
         "spanishModel",
         "voiceInputStop",
         "voiceInputSwitch",

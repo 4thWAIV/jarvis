@@ -283,7 +283,7 @@ async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first
         assert all(t["h"] == 76 for t in tiles), tiles
         assert [t["self"] for t in tiles] == [True, False]
         shown = await page.evaluate(NODE, SELF_ID)
-        assert shown["title"] == "TIM’S I9 · THIS MAC", shown["title"]
+        assert shown["title"] == "TIM’S I9 · THIS DEVICE", shown["title"]
         assert (await page.evaluate(NODE, MINI_ID))["title"] == "TIM’S MAC MINI"
         assert await page.text_content(".roster-count") == "2 online"
         assert re.fullmatch(r"From Team Server · updated [3-6]s ago", await page.text_content(".roster-freshness"))
@@ -538,7 +538,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.wait_for_selector(f"#network-detail[data-node='{SELF_ID}']")
         assert await page.get_attribute(f'.node-tile[data-node="{SELF_ID}"]', "aria-pressed") == "true"
         detail = await page.text_content("#network-detail")
-        for words in ("Tim’s i9 · This Mac", "Values from Team Server", "tistocks", "JARVIS 0.9.0 · macOS 15.6",
+        for words in ("Tim’s i9 · This device","Values from Team Server", "tistocks", "JARVIS 0.9.0 · macOS 15.6",
                       "Online", "2 minutes ago", "on screen", "32% · host", "24.0 GB of 64.0 GB (38%) · host",
                       "+3.0% · 3.0 points ahead of an even pace (average of 2)", "2/2 measured",
                       "Anthropic · Brain", "at this rate 20% left at reset",
@@ -604,7 +604,7 @@ async def test_the_real_route_shows_the_stand_ins_values_and_keeps_them_stale(pa
         await _network_tab(page)
         mine = await page.evaluate(NODE, SELF_ID)
         assert mine["figures"][0] == "77%" and mine["human"] == "9m" and mine["figures"][2] == f"{MINUS}2.0%", mine
-        assert "THIS MAC" in mine["title"].upper(), mine
+        assert "THIS DEVICE" in mine["title"].upper(), mine
 
         stand_in.down = True
         await conn.exchange_once()

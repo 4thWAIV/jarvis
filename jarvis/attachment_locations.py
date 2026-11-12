@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -143,12 +144,20 @@ def _at(when: Optional[float]) -> Optional[datetime]:
 
 class Verifier:
     """(size, sha256) of a file, hashed again whenever the file's identity
-    or times differ from the last time it was hashed; never through a link."""
+    or times differ from the last time it was hashed; never through a link.
+    `digest_of` hashes (a received download's own, `download_digest`, for
+    a lookup). On Windows every look hashes again: the times there (write
+    and change time alike) can be put back by anyone who can write the
+    file, so a same-size edit with its times restored would look unchanged."""
 
-    def __init__(self):
+    def __init__(self, digest_of: Callable[[Path], Optional[tuple[int, str]]] =
+                 messaging_files.file_digest):
         self._seen: dict[str, tuple[tuple, tuple[int, str]]] = {}
+        self._digest_of = digest_of
 
     def digest(self, path: Path) -> Optional[tuple[int, str]]:
+        if sys.platform == "win32":
+            return self._digest_of(path)
         try:
             info = os.lstat(path)
         except OSError:
@@ -158,7 +167,7 @@ class Verifier:
         seen = self._seen.get(str(path))
         if seen is not None and seen[0] == key:
             return seen[1]
-        got = messaging_files.file_digest(path)
+        got = self._digest_of(path)
         if got is None:
             self._seen.pop(str(path), None)
         else:
@@ -175,7 +184,7 @@ class AttachmentLocations:
                  active: Callable[[str], bool] = holder_active,
                  now: Callable[[], float] = time.time):
         self.files, self._node_id, self._active, self._now = files, node_id, active, now
-        self._verify = Verifier()
+        self._verify = Verifier(messaging_files.download_digest)
         init_db()
 
     def node_id(self) -> UUID:
@@ -214,6 +223,11 @@ class AttachmentLocations:
                     extraction=self._extraction(record))
         fetch_again: list[LocationAction] = ["make_local"]
 
+        if known.state == "downloading" and sys.platform == "win32" and \
+                not self.files.fetching(server_id, owner_github_id, attachment_id):
+            # A fetch that died: nothing is fetching it, so it can be retried.
+            return AttachmentLocation(**base, state="failed", intended_path=str(destination),
+                                      reason="interrupted", actions=fetch_again)
         if known.state == "downloading":
             return AttachmentLocation(**base, state="downloading", bytes_done=known.bytes_done,
                                       intended_path=str(destination), reason="downloading")

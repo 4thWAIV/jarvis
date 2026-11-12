@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -20,12 +21,54 @@ log = logging.getLogger("jarvis.data_paths")
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 
+def _windows_local_app_data() -> Path:
+    """The user's local (not roaming) application data folder, from the
+    shell's known-folder record rather than an environment variable; the
+    usual place only if the shell cannot say."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+    # FOLDERID_LocalAppData, {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
+    folder = _GUID(0xF1B32785, 0x6FBA, 0x4FCF,
+                   (ctypes.c_ubyte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91))
+    found = ctypes.c_wchar_p()
+    try:
+        shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32
+        shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD,
+                                                 wintypes.HANDLE,
+                                                 ctypes.POINTER(ctypes.c_wchar_p)]
+        shell32.SHGetKnownFolderPath.restype = ctypes.HRESULT
+        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        try:
+            shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(found))
+            if found.value:
+                return Path(found.value)
+        finally:
+            ole32.CoTaskMemFree(ctypes.cast(found, ctypes.c_void_p))
+    except OSError:
+        pass                                  # a failed HRESULT raises OSError
+    return Path.home() / "AppData" / "Local"
+
+
+def installed_root() -> Path:
+    """Where an installed copy keeps its .env, certificates and data: the
+    user's Application Support on macOS (and, as before, anywhere else
+    that is not Windows), the user's local application data on Windows,
+    which stays on this machine as the database and speech models must."""
+    if sys.platform == "win32":
+        return _windows_local_app_data() / "JARVIS"
+    return Path.home() / "Library" / "Application Support" / "JARVIS"
+
+
 # A checkout (pyproject.toml beside the package) keeps its .env, certificates
 # and data at the repository root, as it always has. An installed copy cannot
-# write into site-packages, so it keeps them in Application Support.
+# write into site-packages, so it keeps them in `installed_root()`.
 CHECKOUT = (PACKAGE_DIR.parent / "pyproject.toml").is_file()
-CONFIG_DIR = (PACKAGE_DIR.parent if CHECKOUT
-              else Path.home() / "Library" / "Application Support" / "JARVIS")
+CONFIG_DIR = PACKAGE_DIR.parent if CHECKOUT else installed_root()
 
 # What JARVIS's own source is, for reading himself: the repository in a
 # checkout, the package when installed.
@@ -274,8 +317,9 @@ def _recorded_seed_hash(seed: Path) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def _write_atomically(path: Path, text: str) -> bool:
-    """Replace `path` in one step, or leave it exactly as it was.
+def _write_atomically(path: Path, text: str | bytes) -> bool:
+    """Replace `path` in one step, or leave it exactly as it was. Bytes are
+    written exactly as given, which a file known by its hash needs.
 
     A half-written CLAUDE.md is a broken persona on the next launch, which is
     a worse outcome than a stale one.
@@ -283,7 +327,7 @@ def _write_atomically(path: Path, text: str) -> bool:
     try:
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-")
         try:
-            with os.fdopen(fd, "w") as fh:
+            with os.fdopen(fd, "wb" if isinstance(text, bytes) else "w") as fh:
                 fh.write(text)
             os.replace(tmp, path)
         except BaseException:
@@ -343,12 +387,17 @@ def _sync_template(template: Path, target: Path, seed: Path,
     home.mkdir(parents=True, exist_ok=True)
     key = str(target)
 
+    # Bytes, never text: the file is known by the hash of its bytes, so what
+    # is hashed must be what is written. Read as text on Windows, the
+    # template was decoded as cp1252 and written back with CRLF line ends,
+    # so the second start took the persona JARVIS had just written for an
+    # edit of the user's and never updated it again (measured, Windows 11).
     try:
-        shipped = template.read_text()
+        shipped = template.read_bytes()
     except OSError as e:                                # pragma: no cover
         log.warning(f"data_paths: cannot read the {what} template ({e})")
         return "kept"
-    shipped_hash = _sha256(shipped.encode("utf-8"))
+    shipped_hash = _sha256(shipped)
 
     try:
         live = target.read_bytes()
@@ -771,6 +820,9 @@ def ensure_tool_token() -> str:
     A path that is not a regular file this user owns raises, rather than
     being quietly replaced: it is somebody else's file, and deleting it is
     not ours to do.
+
+    Both steps are private_files', which does the same on Windows with the
+    file's own security descriptor in place of the modes.
     """
     return _ensure_token(tool_token_path())
 
@@ -779,40 +831,24 @@ def _ensure_token(path: Path) -> str:
     """The one safe way to make or adopt a secret token file at `path`
     (ensure_tool_token's rules, shared with ensure_knowledge_token)."""
     import secrets
-    import stat as _stat
+    from jarvis import private_files
     path.parent.mkdir(parents=True, exist_ok=True)
 
     token = secrets.token_urlsafe(32)
     try:
-        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        private_files.create_new(path, token.encode("utf-8"))
+        return token
     except FileExistsError:
         pass
-    else:
-        try:
-            os.write(fd, token.encode("utf-8"))
-        finally:
-            os.close(fd)
-        return token
 
-    fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW)
-    try:
-        info = os.fstat(fd)
-        if not _stat.S_ISREG(info.st_mode):
-            raise OSError(f"{path} is not a regular file")
-        if info.st_uid != os.getuid():
-            raise OSError(f"{path} is owned by uid {info.st_uid}, not by us")
-        os.fchmod(fd, 0o600)
-        existing = os.read(fd, 4096).decode("utf-8", "ignore").strip()
-        if existing:
-            return existing
-        # An empty file: ours to fill, and only ours — the fd is already
-        # proven to be a regular file we own.
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, token.encode("utf-8"))
-        return token
-    finally:
-        os.close(fd)
+    data, write = private_files.adopt(path, 4096)
+    existing = data.decode("utf-8", "ignore").strip()
+    if existing:
+        return existing
+    # An empty file: ours to fill, and only ours — the handle is already
+    # proven to be a regular file we own.
+    write(token.encode("utf-8"))
+    return token
 
 
 def knowledge_dir() -> Path:

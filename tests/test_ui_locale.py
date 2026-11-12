@@ -24,7 +24,7 @@ SRC = ROOT / "frontend" / "src"
 
 
 def _code(name: str) -> str:
-    text = (SRC / name).read_text()
+    text = (SRC / name).read_text(encoding="utf-8")
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     return re.sub(r"(?m)^\s*//.*$", "", text)
 
@@ -36,7 +36,7 @@ def test_the_catalogs_and_the_store_hold_under_node():
     if not (ROOT / "frontend" / "node_modules" / "react").is_dir():
         pytest.skip("the frontend's node_modules are needed (npm ci)")
     out = subprocess.run([node, "--experimental-strip-types", "--no-warnings",
-                          "--import", str(ROOT / "tests" / "ui_ts_loader.mjs"),
+                          "--import", (ROOT / "tests" / "ui_ts_loader.mjs").as_uri(),
                           str(ROOT / "tests" / "ui_locale_cases.mts")],
                          capture_output=True, text=True, cwd=ROOT, timeout=60)
     assert out.returncode == 0, out.stderr[-4000:]

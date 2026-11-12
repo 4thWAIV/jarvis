@@ -94,6 +94,7 @@ from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
+from jarvis import private_files
 from jarvis import project_maker
 from jarvis import projects_view
 from jarvis import history_read
@@ -1123,7 +1124,9 @@ def _fmt_reset(ts) -> str:
         when = datetime.fromtimestamp(float(ts))
     except (TypeError, ValueError, OSError, OverflowError):
         return "later"
-    clock = when.strftime("%-I:%M %p").replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
+    # The hour and day unpadded by hand: strftime's "%-I" / "%-d" are POSIX-only.
+    hour = when.hour % 12 or 12
+    clock = f"{hour}:{when.strftime('%M %p')}".replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
     days = (when.date() - datetime.now().date()).days
     if days <= 0:
         return clock
@@ -1131,7 +1134,7 @@ def _fmt_reset(ts) -> str:
         return f"tomorrow at {clock}"
     if days < 7:
         return f"{when.strftime('%A')} at {clock}"
-    return f"{when.strftime('%A %-d %B')} at {clock}"
+    return f"{when.strftime('%A')} {when.day} {when.strftime('%B')} at {clock}"
 
 
 # "Down" names neither cause nor remedy: a failure classified "auth" (the
@@ -1397,12 +1400,9 @@ def _write_mcp_config(home: Path) -> Path:
     # it has been 0600 since it was created and there was never a reason for
     # this to be looser. Chmod after the write as well as before, so a file
     # another local process pre-created with looser permissions does not keep
-    # read access to what we just put in it.
-    path.write_text(json.dumps(config, indent=2))
-    try:
-        path.chmod(0o600)
-    except OSError as e:                             # pragma: no cover
-        log.warning("could not tighten mcp.json's permissions: %s", e)
+    # read access to what we just put in it. Written beside and renamed over
+    # (private_files.replace), which is owner-only on Windows too.
+    private_files.replace(path, json.dumps(config, indent=2).encode("utf-8"))
     return path
 
 
@@ -1455,6 +1455,11 @@ def _live_session_redirect(name: str, path, args: dict, tool: str) -> Optional[s
 
     Only `name` is printed — the project as `_resolve_project_or_explain`
     resolved it from the user's own list — never a field off the roster.
+
+    On Windows a Claude Code session's inbox is a named pipe JARVIS cannot
+    send to, so when every live session there is one of those, pointing the
+    brain at steer_session is a dead end: the user is told to work in that
+    session's own terminal, or end it, instead.
     """
     if _truthy(args.get("override")):
         return None
@@ -1463,16 +1468,33 @@ def _live_session_redirect(name: str, path, args: dict, tool: str) -> Optional[s
     except (OSError, TypeError):
         return None
     dormant = {session_watch.GONE, session_watch.FRESH}
+    windows = sys.platform == "win32"
+    matches = []
     for s in _snapshot_or_empty().sessions:
         if s.state in dormant or not s.cwd:
             continue
         try:
-            if Path(s.cwd).resolve() == target:
-                break
-        except OSError:
+            if Path(s.cwd).resolve() != target:
+                continue
+        except (OSError, ValueError, RuntimeError):
+            # A roster cwd that cannot be resolved (a NUL, a symlink loop)
+            # names no folder, so it is no session here.
             continue
-    else:
+        matches.append(s)
+        # The first live session settles it; on Windows only one that can be
+        # sent to does, since an unsteerable one may sit beside a steerable.
+        if not windows or s.steerable:
+            break
+    if not matches:
         return None
+    if (windows and not any(s.steerable for s in matches)
+            and any(s.provider == session_watch.PROVIDER for s in matches)):
+        return (f"{name} already has a live Claude Code session, so I have not "
+                f"started a separate run there, but I can't deliver messages to "
+                f"that session from here. Tell the user to give it the work in "
+                f"that session's own Claude terminal, or to end that session "
+                f"before I start a new run. Only if the user has said to start "
+                f"a separate run anyway, call {tool} again with override true.")
     return (f"{name} already has a live session, so I have not started a "
             f"separate run there. Send the work to that session with "
             f"steer_session, naming {name}. Only if the user has said to start "
@@ -10812,6 +10834,16 @@ TAINT_EXEMPT_TOOLS.update(_BUNDLE_CLEAN)
 # residual is prose in a header line, for the price of two same-named
 # directories; it is accepted, and it is not parity with the name wall.
 _PLAIN_PATH_RE = _action_re.compile(r"/[^\x00-\x1f\x7f-\x9f<>\"=\u2028\u2029]{0,299}")
+# On Windows a project lives at a rooted drive path, `C:\Users\...` or
+# `C:/Users/...`, and the slash-only shape above refused every one, so no
+# cached or live project there reached the resolver. The same walls stand,
+# same total length, no line, no tag, and a Windows path's own hazards are
+# shut as well: only the drive's colon (another names an alternate data
+# stream), no `\\?\` or `\\.\` namespace and no UNC share (none starts with a
+# drive letter), no drive-relative `C:foo`, and none of `? * |`, which no
+# ordinary file name there holds.
+_WINDOWS_DRIVE_PATH_RE = _action_re.compile(
+    r"[A-Za-z]:[\\/][^\x00-\x1f\x7f-\x9f<>\"=:?*|\u2028\u2029]{0,297}")
 
 
 def _project_name_speakable(name) -> bool:
@@ -10819,7 +10851,15 @@ def _project_name_speakable(name) -> bool:
 
 
 def _project_path_speakable(path) -> bool:
-    return bool(_PLAIN_PATH_RE.fullmatch(str(path)))
+    text = str(path)
+    if sys.platform != "win32":
+        return bool(_PLAIN_PATH_RE.fullmatch(text))
+    if _WINDOWS_DRIVE_PATH_RE.fullmatch(text):
+        return True
+    # A slash-rooted path still passes there as it always did, unless Windows
+    # reads it as a share or namespace (`//host`, `/\?\`) or a stream (`:`).
+    return (bool(_PLAIN_PATH_RE.fullmatch(text)) and text[1:2] not in ("/", "\\")
+            and ":" not in text)
 
 
 def _project_candidates() -> dict[str, set[str]]:

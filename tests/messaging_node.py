@@ -47,6 +47,7 @@ def main() -> None:
     from jarvis import team_client
     team_client.connection = team_client.TeamConnection(store=_Secrets(secret))
     team_client.KeychainStore = None          # nothing may reach the real Keychain
+    team_client.CredentialManagerStore = None  # nor Windows' Credential Manager
     from jarvis import server
     server.start_session_watcher = _nothing
     server.stop_session_watcher = _nothing

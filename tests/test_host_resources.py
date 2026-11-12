@@ -1,6 +1,9 @@
 """host_resources: whole-machine CPU and memory for the node update."""
+import ctypes
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -104,6 +107,79 @@ def test_this_mac_reports_its_own_cpu_and_memory():
     assert now["state"] in ("measured", "warming_up")   # no tick yet is still honest
     if now["state"] == "measured":
         assert 0.0 <= now["cpu_percent"] <= 100.0
+
+
+# -- Windows -------------------------------------------------------------------
+
+class _FakeKernel32:
+    """GetSystemTimes and GlobalMemoryStatusEx filling in fixed figures."""
+
+    def __init__(self, idle, kernel, user, total, available, ok=True):
+        self.times, self.total, self.available, self.ok = (idle, kernel, user), total, available, ok
+
+    def GetSystemTimes(self, *out):
+        for ref, ticks in zip(out, self.times):
+            ref._obj.low, ref._obj.high = ticks & 0xFFFFFFFF, ticks >> 32
+        return self.ok
+
+    def GlobalMemoryStatusEx(self, ref):
+        assert ref._obj.length == ctypes.sizeof(host_resources._MemoryStatusEx)
+        ref._obj.total_phys, ref._obj.avail_phys = self.total, self.available
+        return True
+
+
+def _windows_reader(kernel) -> "host_resources.WindowsReader":
+    reader = host_resources.WindowsReader.__new__(host_resources.WindowsReader)
+    reader._k = kernel
+    return reader
+
+
+def test_a_windows_host_is_busy_over_kernel_and_user_time_with_idle_taken_out():
+    """Kernel time includes idle time: busy is kernel + user - idle."""
+    big = 1 << 40                                    # past 32 bits: both halves read
+    first = _windows_reader(_FakeKernel32(big + 700, big + 1000, 200, 16 << 30, 12 << 30)).read()
+    later = _windows_reader(_FakeKernel32(big + 1300, big + 2000, 600, 16 << 30, 12 << 30)).read()
+    assert first.scope == "host"
+    assert first.memory_total == 16 << 30 and first.memory_used == 4 << 30
+    busy = (later.cpu_busy - first.cpu_busy) / (later.cpu_capacity - first.cpu_capacity)
+    assert busy == pytest.approx((1000 + 400 - 600) / 1400)
+
+
+def test_a_failed_windows_call_is_a_sampler_error(monkeypatch):
+    import ctypes
+    # ctypes has get_last_error only on Windows; the fake kernel stands in there.
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 0, raising=False)
+    s = HostResources(reader=lambda: _windows_reader(_FakeKernel32(0, 0, 0, 1, 1, ok=False)))
+    s.sample()
+    assert s.current()["state"] == "error" and s.last_error == "OSError"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="reads this Windows machine")
+def test_this_windows_machine_reports_its_own_cpu_and_memory():
+    assert isinstance(host_resources.default_reader(), host_resources.WindowsReader)
+    s = HostResources()
+    s.sample()
+    first = s.current()
+    assert first["state"] == "warming_up" and first["scope"] == "host"
+    visible_kib = int(subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize"],
+        capture_output=True, text=True, check=True).stdout)
+    assert abs(first["memory_total_bytes"] - visible_kib * 1024) < 1024
+    assert 0 < first["memory_used_bytes"] <= first["memory_total_bytes"]
+    burner = subprocess.Popen([sys.executable, "-c", "while True: pass"])
+    try:
+        time.sleep(0.3)
+        s.sample()                                   # the window starts with it busy
+        time.sleep(1.5)
+        s.sample()
+    finally:
+        burner.kill()
+        burner.wait()
+    now = s.current()
+    assert now["state"] == "measured"
+    # one processor of all of them was kept busy the whole time
+    assert 50.0 / (os.cpu_count() or 1) <= now["cpu_percent"] <= 100.0
 
 
 # -- Linux, from files laid out as /proc and /sys/fs/cgroup ------------------

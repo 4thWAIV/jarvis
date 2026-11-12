@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import re
-import shlex
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -384,7 +383,7 @@ class ClaudeSession:
     # ── what it runs ─────────────────────────────────────────────────────
     def command(self, instructions: str) -> list[str]:
         c = self.config
-        cmd = shlex.split(self.claude) + [
+        cmd = claude_env.command_prefix(self.claude) + [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages",
             "--name", "package-author" if c.authoring else "jarvis",

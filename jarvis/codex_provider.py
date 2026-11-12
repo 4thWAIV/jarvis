@@ -35,12 +35,15 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from jarvis import claude_env
 from jarvis import data_paths
 from jarvis import preflight
+from jarvis import private_files
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
                             ToolFailed, ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
@@ -207,11 +210,7 @@ def write_config(mcp_config: Optional[Path]) -> Path:
         except (OSError, ValueError) as e:
             log.warning(f"codex: could not read {mcp_config}: {e}")
     path = data_paths.codex_home() / "config.toml"
-    path.write_text(config_toml(servers))
-    try:
-        path.chmod(0o600)
-    except OSError as e:                             # pragma: no cover
-        log.warning("could not tighten config.toml's permissions: %s", e)
+    private_files.replace(path, config_toml(servers).encode("utf-8"))
     return path
 
 
@@ -255,7 +254,7 @@ class CodexSession:
         self.config = config
         self._on_event = on_event
         self._on_exit = on_exit
-        self.codex = getattr(config, "codex_path", None) or shutil.which("codex") or "codex"
+        self.codex = getattr(config, "codex_path", None)
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
@@ -280,7 +279,7 @@ class CodexSession:
                 and proc.stdin is not None)
 
     def _cmd(self, *args: str) -> list[str]:
-        return shlex.split(self.codex) + list(args)
+        return _codex_binary(self.codex) + list(args)
 
     async def open(self, instructions: str) -> None:
         home = self.config.home if self.config.authoring else data_paths.codex_home()
@@ -538,7 +537,27 @@ class CodexSession:
 # ── usage, history and checks ─────────────────────────────────────────────
 
 def _codex_binary(path: Optional[str] = None) -> list[str]:
-    return shlex.split(path or shutil.which("codex") or "codex")
+    """The argv `codex` begins with, for the brain and Settings alike.
+
+    One found on PATH is a path, one element whatever it holds: shlex's
+    POSIX rules took the backslashes out of the C:\\Users\\...\\npm\\codex.cmd
+    shutil.which gives on Windows. A configured one (JARVIS_CODEX_PATH) may
+    carry arguments: shell-quoted on macOS and Linux, as always, and on
+    Windows split as claude_env.command_prefix splits one, an existing file
+    named whole being the one element. Unlike claude's, a .cmd launcher is
+    allowed: npm installs codex as one, and every argument here is a fixed
+    word (the conversation goes over stdin)."""
+    if not path:
+        found = shutil.which("codex")
+        return [found] if found else ["codex"]
+    if sys.platform != "win32":
+        return shlex.split(path)
+    text = path.strip()
+    whole = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == '"' else text
+    argv = [whole] if os.path.isfile(whole) else claude_env._windows_split(text)
+    if not argv:
+        raise FileNotFoundError("no codex executable is configured")
+    return argv
 
 
 class AppServer:
