@@ -78,3 +78,52 @@ def test_export_sqlite_on_an_install_that_never_had_jarvis_db(tmp_path):
         assert conn.execute("SELECT version FROM work_schema").fetchone() is not None
     finally:
         conn.close()
+
+
+def _write_between_starts(path):
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        UPDATE things SET n = 7 WHERE id = 'a';
+        DELETE FROM things WHERE id = 'b';
+        INSERT INTO log (what) VALUES ('written before the next start');
+    """)
+    conn.commit()
+    conn.close()
+
+
+def test_a_start_stopped_mid_copy_never_blocks_the_next(jarvis_db, monkeypatch):
+    real = move._write_docs
+    calls = {"n": 0}
+
+    def stopped(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt      # Ctrl-C, or the server gone
+        return real(*a, **kw)
+
+    monkeypatch.setattr(move, "_write_docs", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        records_cutover.cut_over(snapshot=False)
+    monkeypatch.setattr(move, "_write_docs", real)
+    _write_between_starts(jarvis_db)
+    before = _sha(jarvis_db)
+    out = records_cutover.cut_over(snapshot=False)
+    assert out.state == "cut over" and "cleared" in out.seconds
+    assert move.verify(jarvis_db, records.uds()).ok
+    assert records_cutover.done()["source_sha256"] == before == _sha(jarvis_db)
+
+
+def test_a_start_stopped_during_the_checks_never_blocks_the_next(jarvis_db, monkeypatch):
+    real = move.export_sqlite
+
+    def stopped(*a, **kw):
+        raise KeyboardInterrupt          # stopped while checking back
+
+    monkeypatch.setattr(move, "export_sqlite", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        records_cutover.cut_over(snapshot=False)
+    monkeypatch.setattr(move, "export_sqlite", real)
+    _write_between_starts(jarvis_db)
+    out = records_cutover.cut_over(snapshot=False)
+    assert out.state == "cut over" and "cleared" in out.seconds
+    assert records.uds().get(move.MOVE_CALLER, "/sqlite/things/b.row") is None

@@ -350,6 +350,53 @@ def test_event_rows_become_versions_and_come_back(tmp_path):
     assert _tables(src)["tables"] == _tables(out)["tables"]
 
 
+def test_a_move_stopped_part_way_and_a_file_changed_since_is_cleared_and_copied_again(
+        tmp_path, monkeypatch):
+    """The first start stopped mid-copy, then the file was written before the
+    next: the half-written move is erased (histories included, so no event
+    is doubled) and the file copied again in full."""
+    src = tmp_path / "events.db"
+    with closing(sqlite3.connect(src)) as conn:
+        conn.execute("CREATE TABLE events (record TEXT, seq INTEGER, state TEXT, "
+                     "PRIMARY KEY (record, seq)) WITHOUT ROWID")
+        conn.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, said TEXT)")
+        conn.executemany("INSERT INTO events VALUES (?, ?, ?)",
+                         [(f"w{n}", s, st) for n in range(30) for s, st in ((1, "planned"), (2, "working"))])
+        conn.executemany("INSERT INTO notes VALUES (?, ?)", [(n, f"note {n}") for n in range(50)])
+        conn.commit()
+    mappings = [_History(), move.RowMapping("notes")]
+    monkeypatch.setattr(move, "REGISTERED", [mappings[0]])
+    with in_process(tmp_path / "engine") as (_, uds):
+        real = move._write_docs
+
+        def stopped(uds_, docs, **kw):
+            docs = list(docs)
+            real(uds_, docs[: len(docs) // 2], **kw)    # half written, then the server is gone
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(move, "_write_docs", stopped)
+        with pytest.raises(KeyboardInterrupt):
+            move.copy(src, uds, mappings, batch=7)
+        monkeypatch.setattr(move, "_write_docs", real)
+        assert uds.get(move.MOVE_CALLER, move.MANIFEST_PATH).data["state"] == "copying"
+        with closing(sqlite3.connect(src)) as conn:     # written between the two starts
+            conn.execute("DELETE FROM events WHERE record = 'w3'")
+            conn.execute("INSERT INTO events VALUES ('w1', 3, 'done')")
+            conn.execute("DELETE FROM notes WHERE id < 5")
+            conn.execute("INSERT INTO notes VALUES (99, 'new')")
+            conn.commit()
+        assert move.copy(src, uds, mappings).state == "copied"
+        assert move.verify(src, uds, mappings).ok
+        assert [v.change for v in uds.history(move.MOVE_CALLER, "/records/w1.rec")] == ["move", "event", "event"]
+        assert uds.get(move.MOVE_CALLER, "/records/w3.rec") is None
+        # A finished move of a file that differs is still refused.
+        with closing(sqlite3.connect(src)) as conn:
+            conn.execute("INSERT INTO notes VALUES (100, 'later')")
+            conn.commit()
+        with pytest.raises(move.MoveRefused):
+            move.copy(src, uds, mappings)
+
+
 def test_cli_copy_verify_export(tmp_path, capsys):
     from jarvis.knowledge.__main__ import main
     src = _source(tmp_path / "source.db")

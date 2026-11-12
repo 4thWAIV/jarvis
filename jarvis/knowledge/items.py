@@ -720,6 +720,29 @@ class Items:
             links.append({"op": "link", "from": src, "kind": kind, "to": dst, "model": model})
         return ops, links
 
+    def forget(self, body: dict) -> dict:
+        """Erase every version of items already deleted, as if they had
+        never been written (the owner's act): their documents and content
+        with every edge and vector row that hangs on them. An item still
+        live is refused, so its indexes are always cleared by its delete
+        first. Used to clear a records move stopped part way
+        (knowledge_move.clear_interrupted), whose half-written histories
+        must not stay behind a new copy."""
+        writer = _writer(body)
+        if writer["person"] != OWNER:
+            raise Denied("only the owner forgets items")
+        wanted = body.get("paths")
+        if not isinstance(wanted, list) or not all(isinstance(p, str) for p in wanted):
+            raise DocumentError("paths is a list of item paths")
+        for path in wanted:
+            paths.check(path)
+            if self._current(path)[0] is not None:
+                raise DocumentError(f"{path} is an item; delete it before forgetting it")
+        keys = {p.encode() for p in wanted}
+        if not keys:
+            return {"documents": 0}
+        return self.docs.forget_keys(keys, also={CONTENT: set(keys)})
+
     def set_rights(self, body: dict) -> dict:
         """The grants on one path, set by the owner (empty clears them)."""
         writer = _writer(body)
