@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW, pread
 from jarvis.knowledge.wal import full_fsync
 
 MAGIC = b"KSEG"
@@ -92,7 +93,7 @@ def write_segment(path: Path, family: int, generation: int, versions: Iterable[V
     keys: list[bytes] = []
     lsn_min, lsn_max, count = None, None, 0
     sha = hashlib.sha256()
-    fd = os.open(str(partial), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(str(partial), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | O_BINARY, 0o600)
     pos = 0
 
     def put(data: bytes) -> None:
@@ -243,15 +244,15 @@ class Segment:
         self.file_id = str(path)
         if expect_sha256 is not None and file_sha256(path) != expect_sha256:
             raise SegmentCorrupt(f"{path.name}: SHA-256 does not match the manifest")
-        self.fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        self.fd = os.open(str(path), os.O_RDONLY | O_NOFOLLOW | O_BINARY)
         size = os.fstat(self.fd).st_size
         if size < HEAD.size + TRAILER.size:
             raise SegmentCorrupt(f"{path.name}: too short")
-        magic, fmt, self.family, self.generation = HEAD.unpack(os.pread(self.fd, HEAD.size, 0))
+        magic, fmt, self.family, self.generation = HEAD.unpack(pread(self.fd, HEAD.size, 0))
         if magic != MAGIC or fmt != FORMAT:
             raise SegmentCorrupt(f"{path.name}: not a segment of this format")
-        foff, flen, fcrc, magic2 = TRAILER.unpack(os.pread(self.fd, TRAILER.size, size - TRAILER.size))
-        footer = os.pread(self.fd, flen, foff)
+        foff, flen, fcrc, magic2 = TRAILER.unpack(pread(self.fd, TRAILER.size, size - TRAILER.size))
+        footer = pread(self.fd, flen, foff)
         if magic2 != MAGIC or len(footer) != flen or zlib.crc32(footer) != fcrc:
             raise SegmentCorrupt(f"{path.name}: footer fails its CRC")
         nblocks, self.lsn_min, self.lsn_max, self.count, self.bloom_bits = struct.unpack_from("<IQQQI", footer, 0)
@@ -285,7 +286,7 @@ class Segment:
         if cached is not None:
             return cached
         off, end = self.offsets[index], self.ends[index]
-        data = os.pread(self.fd, end - off, off)
+        data = pread(self.fd, end - off, off)
         comp, stored, raw, crc = BLOCK_HEAD.unpack_from(data, 0)
         body = data[BLOCK_HEAD.size:BLOCK_HEAD.size + stored]
         if len(body) != stored or zlib.crc32(body) != crc:

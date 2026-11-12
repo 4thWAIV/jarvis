@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator, Callable, Optional, Sequence
 from uuid import UUID
@@ -61,9 +62,8 @@ def _within(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def _canonical(raw) -> Path:
-    """The named file's folder resolved, the file itself not: a link named
-    as the file is refused when it is opened."""
+def _named(raw) -> Path:
+    """The path `raw` names, as written, if it is a full path to a file."""
     if not isinstance(raw, str) or not raw:
         raise NotAttached("Give each file as its full path.")
     path = Path(raw)
@@ -71,6 +71,13 @@ def _canonical(raw) -> Path:
         raise NotAttached(f"{raw!r} is not a full path.")
     if path.name in ("", ".", ".."):
         raise NotAttached(f"{raw} is not a file.")
+    return path
+
+
+def _canonical(raw) -> Path:
+    """The named file's folder resolved, the file itself not: a link named
+    as the file is refused when it is opened."""
+    path = _named(raw)
     return Path(os.path.realpath(path.parent)) / path.name
 
 
@@ -79,7 +86,11 @@ def source_path(raw, doing: str = "send") -> Path:
     with `doing`, opened: the same rule, work_packages.unpack_held); else
     NotAttached. Which rule refused is not said: telling a caller that
     is a probing oracle (repo_read.sensitive_reason)."""
-    path = _canonical(raw)
+    return _allowed(_canonical(raw), doing)
+
+
+def _allowed(path: Path, doing: str) -> Path:
+    """`path` if a file there may be attached or opened, else NotAttached."""
     packages = Path(os.path.realpath(data_paths.packages_dir()))
     if _within(path, packages):
         allowed = path != packages and not repo_read.sensitive_reason(path.relative_to(packages))
@@ -115,12 +126,49 @@ class Source:
     @classmethod
     def open(cls, raw, doing: str = "send") -> "Source":
         """Blocking: the check, then the open by the same walk."""
+        if sys.platform == "win32":
+            return cls._open_held(raw, doing)
         path = source_path(raw, doing)
         try:
             fd, info = folder_readers.open_file(_ROOT, path.relative_to(_ROOT))
         except FolderError as e:
             raise NotAttached(_OPEN_REFUSED.get(e.code, _OPEN_REFUSED["missing"])
                               .format(path=path)) from None
+        return cls._within_size(path, fd, info)
+
+    @classmethod
+    def _open_held(cls, raw, doing: str) -> "Source":
+        """Windows: the path as he wrote it, walked from its drive with every
+        folder held (folder_readers.open_named_file), so a junction or link
+        anywhere on it is refused, never resolved first and reopened; then
+        the policy judges the path the open file has, in its own names, and
+        the read uses that same descriptor. When the walk fails, a path the
+        policy refuses as written gets the policy's words, so a refusal
+        never says whether a hidden file is there."""
+        named = _named(raw)
+        refused = dict(_OPEN_REFUSED, access_denied="Windows does not let JARVIS read {path}.")
+        try:
+            fd, info, held = folder_readers.open_named_file(named)
+        except FolderError as e:
+            _allowed(named, doing)
+            raise NotAttached(refused.get(e.code, refused["missing"])
+                              .format(path=named)) from None
+        try:
+            path = _allowed(held, doing)
+        except NotAttached:
+            os.close(fd)
+            # Allowed as written but not as the file it opened: an alias (an
+            # 8.3 name, another case) of a file the policy hides. Said as a
+            # missing file is, so the answer never tells whether it exists.
+            _allowed(named, doing)
+            raise NotAttached(refused["missing"].format(path=named)) from None
+        except BaseException:
+            os.close(fd)
+            raise
+        return cls._within_size(path, fd, info)
+
+    @classmethod
+    def _within_size(cls, path: Path, fd: int, info: os.stat_result) -> "Source":
         source = cls(path, fd, info)
         if info.st_size > wire.FILE_MAX_BYTES:
             source.close()
@@ -149,7 +197,7 @@ class Source:
         done = 0
         while True:
             self._reading = asyncio.ensure_future(asyncio.to_thread(
-                os.pread, self._fd, wire.UPLOAD_CHUNK_BYTES, done))
+                folder_readers.pread, self._fd, wire.UPLOAD_CHUNK_BYTES, done))
             # Shielded: cancelling the copy must not mark the read finished
             # while its thread still holds the descriptor.
             chunk = await asyncio.shield(self._reading)

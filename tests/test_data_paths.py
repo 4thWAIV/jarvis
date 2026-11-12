@@ -2,6 +2,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -10,6 +12,61 @@ def test_data_dir_defaults_to_repo_data(monkeypatch):
     from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.data_dir().name == "data"
+
+
+def test_a_checkout_keeps_everything_at_the_repository_root():
+    from jarvis import data_paths
+    root = Path(__file__).resolve().parent.parent
+    assert data_paths.CHECKOUT is True
+    assert data_paths.CONFIG_DIR == root
+    assert data_paths.DEFAULT_DATA_DIR == root / "data"
+
+
+def test_an_installed_copy_on_macos_keeps_application_support(monkeypatch):
+    from jarvis import data_paths
+    monkeypatch.setattr(data_paths.sys, "platform", "darwin")
+    assert data_paths.installed_root() == (
+        Path.home() / "Library" / "Application Support" / "JARVIS")
+
+
+def test_an_installed_copy_on_windows_keeps_local_application_data(monkeypatch, tmp_path):
+    from jarvis import data_paths
+    local = tmp_path / "Local App Dåta é"
+    monkeypatch.setattr(data_paths.sys, "platform", "win32")
+    monkeypatch.setattr(data_paths, "_windows_local_app_data", lambda: local)
+    assert data_paths.installed_root() == local / "JARVIS"
+
+
+def test_a_copy_outside_a_checkout_uses_the_installed_root(tmp_path):
+    """No pyproject.toml beside the package: an installed copy, here in a
+    folder with spaces and accents. JARVIS_DATA_DIR still decides the data."""
+    import os
+    import subprocess
+    site = tmp_path / "Prog Fïles é" / "site"
+    (site / "jarvis").mkdir(parents=True)
+    (site / "jarvis" / "__init__.py").write_text("")
+    src = Path(__file__).resolve().parent.parent / "jarvis" / "data_paths.py"
+    (site / "jarvis" / "data_paths.py").write_bytes(src.read_bytes())
+    data = tmp_path / "dåta é"
+    code = ("import sys, json; sys.path.insert(0, sys.argv[1]); "
+            "from jarvis import data_paths as d; "
+            "print(json.dumps([d.CHECKOUT, str(d.CONFIG_DIR), str(d.installed_root()), "
+            "str(d.data_dir())]))")
+    env = {**os.environ, "JARVIS_DATA_DIR": str(data), "PYTHONIOENCODING": "utf-8"}
+    out = subprocess.run([sys.executable, "-c", code, str(site)], env=env,
+                         capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    checkout, config, installed, data_dir = __import__("json").loads(out)
+    assert checkout is False and config == installed
+    assert Path(data_dir) == data and data.is_dir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' known folders")
+def test_natively_the_local_application_data_folder_is_the_shell_s():
+    import os
+    from jarvis import data_paths
+    found = data_paths._windows_local_app_data()
+    assert found.is_absolute() and found.is_dir()
+    assert os.path.normcase(str(found)) == os.path.normcase(os.environ["LOCALAPPDATA"])
 
 
 def test_data_dir_honors_env(monkeypatch, tmp_path):
@@ -90,7 +147,7 @@ def _fresh(monkeypatch, tmp_path):
 
 
 def _template_text() -> str:
-    return (Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "CLAUDE.md").read_text()
+    return (Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "CLAUDE.md").read_bytes().decode("utf-8")
 
 
 def _sha(text: str) -> str:
@@ -100,7 +157,7 @@ def _sha(text: str) -> str:
 def test_a_missing_persona_is_seeded_and_the_seed_is_recorded(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     assert dp.sync_persona() == "seeded"
-    assert dp.persona_path().read_text() == _template_text()
+    assert dp.persona_path().read_bytes().decode("utf-8") == _template_text()
     record = json.loads(dp.persona_seed_path().read_text())
     assert record["sha256"] == _sha(_template_text()), (
         "without the record there is no telling an unedited file from an "
@@ -113,11 +170,11 @@ def test_an_unedited_older_persona_is_brought_up_to_date(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     old = "# JARVIS\n\nAn older shipped persona.\n"
-    dp.persona_path().write_text(old)
+    dp.persona_path().write_bytes(old.encode("utf-8"))
     dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}))
 
     assert dp.sync_persona() == "updated"
-    assert dp.persona_path().read_text() == _template_text()
+    assert dp.persona_path().read_bytes().decode("utf-8") == _template_text()
     assert json.loads(dp.persona_seed_path().read_text())["sha256"] == \
         _sha(_template_text()), "the new text is now the thing we compare against"
 
@@ -127,14 +184,35 @@ def test_an_edited_persona_is_never_overwritten_and_names_both_files(
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     mine = _template_text() + "\n\nAlways call me Captain.\n"
-    dp.persona_path().write_text(mine)
+    dp.persona_path().write_bytes(mine.encode("utf-8"))
 
     with caplog.at_level("WARNING"):
         assert dp.sync_persona() == "kept"
-    assert dp.persona_path().read_text() == mine, "the user's words survive"
+    assert dp.persona_path().read_bytes().decode("utf-8") == mine, "the user's words survive"
     said = caplog.text
     assert str(dp.persona_path()) in said and str(dp.persona_template_path()) in said, \
         "a warning that names neither file cannot be acted on"
+
+
+def test_the_persona_is_written_as_the_template_s_exact_bytes(monkeypatch, tmp_path):
+    """Read and written as text on Windows, the template came out cp1252
+    decoded and CRLF ended, and the next start called JARVIS's own copy the
+    user's edit. Bytes in, the same bytes out, on every platform."""
+    dp = _fresh(monkeypatch, tmp_path)
+    template = tmp_path / "template.md"
+    template.write_bytes("# Persona — señor\nline two\n".encode("utf-8"))
+    monkeypatch.setattr(dp, "persona_template_path", lambda: template)
+    assert dp.sync_persona() == "seeded"
+    assert dp.persona_path().read_bytes() == template.read_bytes()
+    assert dp.sync_persona() == "current"
+
+
+def test_the_shipped_templates_are_lf_wherever_they_are_checked_out():
+    """Known by their bytes' hash; .gitattributes keeps a Windows checkout
+    (core.autocrlf) from making them CRLF."""
+    from jarvis import data_paths
+    for path in (data_paths.persona_template_path(), data_paths.connections_template_path()):
+        assert b"\r\n" not in path.read_bytes(), path.name
 
 
 def test_a_persona_already_current_is_left_exactly_alone(monkeypatch, tmp_path):
@@ -168,11 +246,11 @@ def test_first_run_updates_a_persona_it_can_prove_is_a_shipped_template(
     dp = _fresh(monkeypatch, tmp_path)
     old = "# JARVIS\n\nThe persona as it shipped in some earlier release.\n"
     dp.brain_home().mkdir(parents=True, exist_ok=True)
-    dp.persona_path().write_text(old)
+    dp.persona_path().write_bytes(old.encode("utf-8"))
     monkeypatch.setattr(dp, "KNOWN_TEMPLATE_HASHES", frozenset({_sha(old)}))
 
     assert dp.sync_persona() == "updated"
-    assert dp.persona_path().read_text() == _template_text()
+    assert dp.persona_path().read_bytes().decode("utf-8") == _template_text()
     assert json.loads(dp.persona_seed_path().read_text())["sha256"] == \
         _sha(_template_text())
 
@@ -183,10 +261,10 @@ def test_first_run_keeps_a_persona_it_cannot_recognise(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     mine = "# JARVIS\n\nRules I wrote myself before the upgrade.\n"
     dp.brain_home().mkdir(parents=True, exist_ok=True)
-    dp.persona_path().write_text(mine)
+    dp.persona_path().write_bytes(mine.encode("utf-8"))
 
     assert dp.sync_persona() == "kept"
-    assert dp.persona_path().read_text() == mine
+    assert dp.persona_path().read_bytes().decode("utf-8") == mine
 
 
 def test_an_unreadable_record_is_treated_as_no_record(monkeypatch, tmp_path):
@@ -195,11 +273,11 @@ def test_an_unreadable_record_is_treated_as_no_record(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     mine = "# JARVIS\n\nMy own rules.\n"
-    dp.persona_path().write_text(mine)
+    dp.persona_path().write_bytes(mine.encode("utf-8"))
     dp.persona_seed_path().write_text("{not json at all")
 
     assert dp.sync_persona() == "kept"
-    assert dp.persona_path().read_text() == mine
+    assert dp.persona_path().read_bytes().decode("utf-8") == mine
 
 
 def test_ensure_brain_home_runs_the_sync(monkeypatch, tmp_path):
@@ -208,10 +286,10 @@ def test_ensure_brain_home_runs_the_sync(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     old = "# JARVIS\n\nolder\n"
-    dp.persona_path().write_text(old)
+    dp.persona_path().write_bytes(old.encode("utf-8"))
     dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}))
     dp.ensure_brain_home()
-    assert dp.persona_path().read_text() == _template_text()
+    assert dp.persona_path().read_bytes().decode("utf-8") == _template_text()
 
 
 def test_every_template_this_project_has_shipped_is_listed(monkeypatch, tmp_path):

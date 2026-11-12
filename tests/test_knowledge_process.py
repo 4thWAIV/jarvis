@@ -84,6 +84,7 @@ def test_closing_frees_the_lock(tmp_path):
     Engine.open(tmp_path / "k").close()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows keeps the data folder per user")
 def test_the_directory_is_private(engine):
     assert (engine.directory.stat().st_mode & 0o777) == 0o700
 
@@ -150,6 +151,7 @@ def test_the_client_sends_its_token_only_to_its_own_child(http_engine, monkeypat
     assert sent == [True]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows keeps the data folder per user")
 def test_the_address_record_is_private_and_forgotten_only_by_its_engine(tmp_path):
     engine_address.record(engine_address.EngineAddress("http", "127.0.0.1", 1, os.getpid(), "mine"))
     path = data_paths.knowledge_address_path()
@@ -162,7 +164,8 @@ def test_the_address_record_is_private_and_forgotten_only_by_its_engine(tmp_path
 
 def test_the_knowledge_token_is_not_the_tool_token():
     assert data_paths.ensure_knowledge_token() != data_paths.ensure_tool_token()
-    assert (data_paths.knowledge_token_path().stat().st_mode & 0o777) == 0o600
+    if sys.platform != "win32":   # on Windows the token is private_files' ACL
+        assert (data_paths.knowledge_token_path().stat().st_mode & 0o777) == 0o600
     assert data_paths.ensure_knowledge_token() == data_paths.ensure_knowledge_token()
 
 
@@ -426,3 +429,11 @@ def test_the_engine_opens_no_file_outside_its_own_directory(tmp_path):
     finally:
         proc.stdin.close()
         proc.wait(timeout=20)
+
+
+def test_an_engine_started_through_a_launcher_is_the_one_started():
+    """Windows' venv python.exe runs the real interpreter as its child: the
+    engine records the process that started it, and that pid is ours."""
+    found = engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b", parent=100)
+    assert found.started_by == {100, 200}
+    assert engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b").started_by == {200}

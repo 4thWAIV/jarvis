@@ -45,11 +45,14 @@ export const shellEn = {
   // Settings → Voice, the language (LanguageControl.tsx).
   "language.label": "Language",
   "language.loading": "Loading the speech model; this takes a few seconds.",
+  "language.englishModel": "English speech model",
   "language.spanishModel": "Spanish speech model",
   "language.downloading": "Downloading, {done} of {total}",
   "language.verifying": "Checking the download",
   "language.installing": "Installing",
   "language.download": "Download ({size})",
+  "language.retry": "Try again ({size})",
+  "language.relaunch": "The speech model is installed, but speech input still reports a failure. Stop JARVIS and launch it again.",
   "language.unreadable": "The language could not be read ({error}); trying again.",
   "language.reading": "Reading the language…",
 

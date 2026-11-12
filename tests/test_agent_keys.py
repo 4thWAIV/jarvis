@@ -6,6 +6,7 @@ within its rights, and the access keys still work beside them."""
 import importlib
 import json
 import os
+import sys
 import shutil
 import stat
 import subprocess
@@ -58,8 +59,9 @@ def test_the_pair_is_made_once_private_and_signs_only_under_its_namespace(keygen
     folder = agent_keys.key_folder(PLAN)
     assert folder == tmp_path / "claude-home" / "jarvis" / "agent-keys" / PLAN
     private, public = agent_keys.make_pair(folder, "c")
-    assert stat.S_IMODE(os.stat(private).st_mode) == 0o600
-    assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700
+    if sys.platform != "win32":   # Windows: owner-only by ACL (private_files)
+        assert stat.S_IMODE(os.stat(private).st_mode) == 0o600
+        assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700
     assert agent_keys.make_pair(folder, "c") == (private, public), "an existing pair is reused"
     assert sum("-t" in c for c in keygen.calls) == 1
     sig = agent_keys.sign(private, agent_keys.REQUEST, b"hello")
@@ -82,9 +84,10 @@ def test_a_key_is_never_kept_through_a_link_or_readable_by_others(keygen, tmp_pa
         agent_keys.make_pair(agent_keys.key_folder(PLAN), "c")
     (home / "agent-keys").unlink()
     private, _ = agent_keys.make_pair(agent_keys.key_folder(PLAN), "c")
-    os.chmod(private, 0o644)
-    with pytest.raises(agent_keys.AgentKeyError, match="0600"):
-        agent_keys.sign(private, agent_keys.REQUEST, b"x")
+    if sys.platform != "win32":   # Windows has no group or other bits; its ACL is checked
+        os.chmod(private, 0o644)
+        with pytest.raises(agent_keys.AgentKeyError, match="0600"):
+            agent_keys.sign(private, agent_keys.REQUEST, b"x")
     with pytest.raises(agent_keys.AgentKeyError):
         agent_keys.key_folder("../escape")
 

@@ -135,7 +135,7 @@ def _parse_version(text: str) -> Optional[tuple[int, int, int]]:
 
 async def _check_claude_cli(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     """`claude` is on PATH and is at least MIN_CLAUDE_VERSION."""
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return Check(
             name="claude_cli",
@@ -270,7 +270,7 @@ async def _check_claude_login(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     check stays OK (matching prior behaviour) but says so honestly rather
     than implying a guarantee it cannot make.
     """
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return Check(
             name="claude_login",
@@ -284,6 +284,18 @@ async def _check_claude_login(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     where = f"config dir: {config_dir}"
 
     rc, stdout, stderr = await _run_subprocess(claude, "auth", "status", timeout=timeout, env=env)
+    if rc == -1:
+        # `_run_subprocess`'s "could not run it" answer (a timeout or a
+        # spawn failure), not `claude` saying the login is bad: at startup
+        # a slow `claude auth status` timed out while the brain was logged
+        # in and replying, so this is unknown, never a login failure.
+        return Check(
+            name="claude_login",
+            status=STATUS_WARN,
+            message=(f"Could not verify the Claude login ({where}): "
+                     f"{(stderr or stdout).strip() or 'no answer'}"),
+            remedy="Recheck: run `claude auth status` yourself to confirm you're logged in.",
+        )
     if rc != 0:
         return Check(
             name="claude_login",
@@ -685,7 +697,9 @@ def _check_speech_input_sync() -> Check:
     if problem:
         return Check(name="speech_input", status=STATUS_WARN,
                      message=problem + " Typing still works.",
-                     remedy=f"Run: {transcriber.setup_command(model)}")
+                     remedy=(transcriber.install_guidance(model) + "."
+                             if sys.platform == "win32"
+                             else f"Run: {transcriber.setup_command(model)}"))
     return Check(name="speech_input", status=STATUS_OK,
                  message=f"The speech model is installed at {transcriber.model_dir(model)}.")
 

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import pathlib
 import threading
 
 import pytest
@@ -105,6 +106,59 @@ def test_a_session_that_exits_into_unknown_is_still_announced_as_finished(tmp_pa
     assert [e["kind"] for e in events] == ["finished"]
 
 
+def _inspection(monkeypatch, state):
+    """Every process this poll reads as `state`; `unknown` is access denied."""
+    from jarvis import process_inspect as pi
+    found = pi.Inspection(state, None, "access_denied" if state is pi.State.UNKNOWN else "test")
+    monkeypatch.setattr(pi, "inspect_process", lambda pid, expected_identity=None: found)
+
+
+def test_a_working_session_that_cannot_be_inspected_is_not_announced_as_finished(
+        tmp_path, monkeypatch):
+    """`unknown` because the process could not be inspected (access denied)
+    says nothing about its turn: no false "finished", and when it is seen
+    working again nothing is announced either."""
+    from jarvis import process_inspect as pi
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    w = _watcher(root)
+    events = []
+    w.on_event(events.append)
+    w.poll_once(now=1000.0)
+
+    _inspection(monkeypatch, pi.State.UNKNOWN)
+    w.poll_once(now=1000.0 + 45)
+    assert w.snapshot.by_id("s").state == sw.UNKNOWN
+    assert events == []
+
+    _inspection(monkeypatch, pi.State.ALIVE)
+    w.poll_once(now=1000.0 + 50)
+    assert w.snapshot.by_id("s").state == sw.WORKING
+    assert events == []
+
+
+def test_a_finish_after_an_uninspectable_poll_is_still_announced(tmp_path, monkeypatch):
+    """The state it was last known in is kept across the poll that learned
+    nothing, so the real finish after it is announced."""
+    from jarvis import process_inspect as pi
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    w = _watcher(root)
+    events = []
+    w.on_event(events.append)
+    w.poll_once(now=1000.0)
+
+    _inspection(monkeypatch, pi.State.UNKNOWN)
+    w.poll_once(now=1000.0 + 20)
+    _inspection(monkeypatch, pi.State.ALIVE)
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="idle")
+    w.poll_once(now=1000.0 + 45)
+
+    assert [e["kind"] for e in events] == ["finished"]
+
+
 def test_a_brief_flicker_of_work_is_not_announced(tmp_path):
     """A two-second busy blip is not a finished job."""
     root = tmp_path / ".claude"
@@ -118,6 +172,39 @@ def test_a_brief_flicker_of_work_is_not_announced(tmp_path):
     write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="idle")
     w.poll_once(now=1002.0)
 
+    assert events == []
+
+
+# Claude Code's inbox on Windows, as its roster writes it.
+PIPE = "\\\\.\\pipe\\LOCAL\\cc-msg-0123456789abcdef0123456789abcdef"
+
+
+def test_a_busy_windows_inbox_pipe_never_drops_a_working_session_as_finished(
+        tmp_path, monkeypatch):
+    """Measured on Windows: the roster's inbox is a named pipe, and checking
+    whether it existed opened it; when all its instances were busy that
+    raised WinError 231, the whole Claude roster went unread for the poll,
+    and a session working for over a minute was announced as finished. The
+    session stays working and is not steerable, and nothing is announced."""
+    real = pathlib.Path.exists
+
+    def busy_pipe(self, *args, **kwargs):             # as os.stat on a busy pipe fails
+        if str(self).startswith("\\\\.\\pipe\\"):
+            raise OSError(None, "All pipe instances are busy", str(self), 231)
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(pathlib.Path, "exists", busy_pipe)
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy",
+                 extra={"messagingSocketPath": PIPE})
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    w = _watcher(root)
+    events = []
+    w.on_event(events.append)
+    w.poll_once(now=1000.0)
+    snap = w.poll_once(now=1000.0 + 45)
+
+    (s,) = snap.sessions
+    assert (s.state, s.steerable) == (sw.WORKING, False)
     assert events == []
 
 
@@ -160,7 +247,7 @@ def test_a_gone_session_and_a_live_one_in_one_project_share_the_name_not_the_id(
     both "hammer": a name is never turned into "the older hammer" to tell
     them apart. They are two agents by session id, and that is what every
     message and lookup goes by."""
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
     root = tmp_path / ".claude"
     old_pid = os.getpid()
     new_pid = os.getpid() + 1000003

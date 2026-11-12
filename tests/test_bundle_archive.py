@@ -11,6 +11,8 @@ import stat
 import zipfile
 from pathlib import Path
 
+import sys
+
 import pytest
 
 from jarvis import bundle_archive as ba
@@ -196,6 +198,7 @@ def test_extract_takes_the_wrapper_off_and_keeps_no_execute_bit_by_default(tmp_p
     assert not any(p.name.startswith(ba.STAGING) for p in tmp_path.iterdir())
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits; Windows has no execute bit to keep")
 def test_extract_keeps_permission_bits_only_when_asked_and_never_set_id(tmp_path):
     data = raw_zip([("run.sh", b"#!/bin/sh\n", 0o104755)])
     with opened(tmp_path, data) as z:

@@ -5,6 +5,7 @@ and JARVIS makes Tim an error package offering his two acts."""
 
 import base64
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -304,7 +305,9 @@ def test_a_work_key_in_an_agent_package_reports_on_its_item_alone_and_ends_with_
     assert r.status_code == 200, r.text
     package = work_packages.find(r.json()["package"]["id"])
     private = package.folder / ".jarvis" / "work-key"
-    assert private.is_file() and (private.stat().st_mode & 0o777) == 0o600
+    assert private.is_file()
+    if sys.platform != "win32":   # Windows: owner-only by ACL
+        assert (private.stat().st_mode & 0o777) == 0o600
     found = agent_keys.work_key(package.folder)
     assert found is not None and found[1] == grant["public_key"]
     [key] = agent_key_store.work_keys(wid)
