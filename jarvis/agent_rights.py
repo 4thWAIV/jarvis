@@ -57,8 +57,10 @@ RIGHTS: dict[str, Right] = {
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
         "Send Tim packages for his package inbox, and write canonical language documents "
-        "for them; nothing is shown until he asks for it.",
-        (("POST", r"/api/packages/inbox"), ("POST", r"/api/language-documents"))),
+        "for them, and retrieve and inspect received attachments without opening or running them.",
+        (("POST", r"/api/packages/inbox"), ("POST", r"/api/language-documents"),
+         ("POST", r"/api/team/messages/[^/]+/files/[^/]+/(location|download)"),
+         ("POST", r"/api/team/messages/[^/]+/attachments/[^/]+/bundle"))),
     "watch": Right(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),
