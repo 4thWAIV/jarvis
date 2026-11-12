@@ -71,7 +71,11 @@ page and ask real questions, not only Got it: each question appears in the
 package's head with its options, is answered by a click or by voice, and
 follow-up questions appear once an answer opens them. The standard vote is
 still asked once, last. Signing off early keeps every unanswered question
-marked unanswered. Pointing at a declaration or a member needs a kit whose
+marked unanswered. When its sender asks for it, an architecture package also
+asks for your approval of the design, apart from Got it and first in its
+head: Approve, or Request changes with what to change. Your answer is kept
+with the exact checked revision you gave it to, and once a newer revision or
+kit is checked it is shown stale and counts for nothing. Pointing at a declaration or a member needs a kit whose
 page loads the story helper; until then a walk-through narrates without
 pointing.
 
