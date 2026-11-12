@@ -156,9 +156,10 @@ Small gaps that do not stop the source workflow, with what they mean for you:
 - **Checked with you, not by CI**: a live Claude turn, JarvisNet sign-in,
   receiving and answering a package, and a real microphone and speakers.
   CI holds no credentials and no audio devices.
-- **Cancelling a run** ends its process tree through a Windows Job Object,
-  which has not yet been seen working on Windows itself; if a process the
-  run started lingers, end it from Task Manager.
+- **Cancelling a run** ends its process tree through a Windows Job Object
+  (checked natively). One case is not yet covered: when the run's own
+  process has already exited, a process it left behind can outlive the
+  cancel. If one lingers, end it from Task Manager.
 - **A conversation package's shell steps** run under `/bin/bash`, so they
   do not run on Windows yet; page and agent packages, the kinds sent for
   decisions and work, do.
