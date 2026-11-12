@@ -70,14 +70,16 @@ def arguments_of(args) -> dict:
     return given
 
 
-def call(client, operation: str, arguments: dict) -> dict:
-    """One operation, every continuation followed: the whole envelope."""
-    page = _post(client, ROUTE, {"operation": operation, "arguments": arguments})
+def call(post, operation: str, arguments: dict) -> dict:
+    """One operation, every continuation followed: the whole envelope.
+    `post(body)` sends one request body to the route and gives its JSON
+    answer (this command's signed client, or make_package's delivery post)."""
+    page = post({"operation": operation, "arguments": arguments})
     text = page.get("data", "")
     for _ in range(MAX_PAGES):
         if not page.get("next"):
             return json.loads(text)
-        page = _post(client, ROUTE, {"operation": "continue", "continuation": page["next"]})
+        page = post({"operation": "continue", "continuation": page["next"]})
         text += page.get("data", "")
     raise SystemExit("The envelope did not end; run the operation again.")
 
@@ -98,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     with signed_client(args.cert, args.as_session, "packages") as client:
         client.timeout = TIMEOUT_SEC
         try:
-            envelope = call(client, args.operation, arguments)
+            envelope = call(lambda body: _post(client, ROUTE, body),
+                            args.operation, arguments)
         except SystemExit as refused:
             print(refused, file=sys.stderr)
             return 1

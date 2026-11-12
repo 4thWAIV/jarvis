@@ -34,10 +34,14 @@ available (verified on the team server), or failed (with a code) or
 missing (the copy is gone); receiving, available -> downloading ->
 verified, or failed. The send's own state is separate (delivery's).
 
-Records: one table, `messaging_files`, in the shared database, one row per
-(server, owner, attachment, role), role `snapshot` (a file this owner
-chose) or `download` (a file this owner received). Nothing else of a file
-is stored, and never its content.
+Records: one `file` document per (server, owner, attachment) in the record
+engine, `/people/<github id>/files/<attachment id>@<server id>.file`
+(`file_path`), holding one entry per role in `files`: `snapshot` (a file
+this owner chose) or `download` (a file this owner received). The same
+document holds where the file was verified and unpacked (`location`) and
+the agents holding it (`leases`), written by attachment_locations.py
+through `change_file`. Nothing else of a file is stored, and never its
+content.
 
 Cleanup (`cleanup`): partial files older than PARTIAL_AFTER_SEC, and
 snapshots no longer referenced by an editable draft or an approved send
@@ -51,24 +55,24 @@ import asyncio
 import hashlib
 import logging
 import os
-import sqlite3
+import re
 import stat
 import subprocess
 import time
 import uuid
-from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Callable, Iterable, Optional
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator, Optional
 from urllib.parse import unquote
 from uuid import UUID
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from jarvis import data_paths, run_store
+from jarvis import data_paths, records
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis.messaging_store import Docs, doc_id, person
 
 log = logging.getLogger("jarvis.messaging_files")
 
@@ -90,34 +94,62 @@ DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_RETRY_SEC = 1.0
 ON_SERVER = ("verified", "pinned", "published")
 
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS messaging_files (
-        server_id       TEXT NOT NULL,
-        owner_github_id INTEGER NOT NULL,
-        attachment_id   TEXT NOT NULL,
-        role            TEXT NOT NULL,
-        message_id      TEXT NOT NULL,
-        filename        TEXT NOT NULL,
-        media_type      TEXT NOT NULL,
-        size_bytes      INTEGER NOT NULL,
-        sha256          TEXT NOT NULL,
-        state           TEXT NOT NULL,
-        bytes_done      INTEGER NOT NULL DEFAULT 0,
-        failure         TEXT,
-        created_at      REAL NOT NULL,
-        updated_at      REAL NOT NULL,
-        PRIMARY KEY (server_id, owner_github_id, attachment_id, role)
-    );
-    CREATE INDEX IF NOT EXISTS messaging_files_by_message
-        ON messaging_files (server_id, owner_github_id, message_id);
-"""
+# -- the file document --------------------------------------------------------------------
+
+def file_path(server_id: str, owner: int, attachment_id) -> str:
+    return f"{person(owner)}/files/{doc_id(attachment_id, server_id)}.file"
+
+
+def _file_doc(server_id: str, owner: int, attachment_id) -> dict:
+    return {"server_id": server_id, "owner_github_id": owner, "attachment_id": str(attachment_id),
+            "files": [], "location": None, "leases": [], "events": []}
+
+
+def _file_empty(path: str, data: dict) -> bool:
+    return not (data.get("files") or data.get("location") or data.get("leases"))
+
+
+def file_doc(server_id: str, owner: int, attachment_id) -> Optional[dict]:
+    """The file's document, or None."""
+    rec = records.get(file_path(server_id, owner, attachment_id))
+    if rec is None or rec.data.get("server_id") != server_id:
+        return None
+    return rec.data
+
+
+def file_docs(server_id: str, owner: int, where: Optional[list] = None,
+              check: Callable[[dict], bool] = lambda d: True) -> list[dict]:
+    """This owner's file documents on this server (matching `where`)."""
+    found = records.scan(f"{person(owner)}/files", types=["file"],
+                         where=[["server_id", "=", server_id]] + list(where or []))
+    return [r.data for r in found if r.data.get("server_id") == server_id and check(r.data)]
+
+
+def change_file(server_id: str, owner: int, attachment_id, fn: Callable[[dict], Any], *,
+                change: str, summary: Optional[str] = None) -> Any:
+    """`fn(document)` changes the file's document in place (a new one when
+    there is none) in one atomic write; written only if it changed, removed
+    once it holds nothing. Returns what `fn` returned."""
+    path = file_path(server_id, owner, attachment_id)
+
+    def run(unit: records.Unit):
+        docs = Docs(unit, _file_empty)
+        result = fn(docs.get(path, lambda: _file_doc(server_id, owner, attachment_id)))
+        docs.touch(path, change, summary)
+        docs.flush()
+        return result
+    return records.atomic(run)
+
+
+def role_of(doc: Optional[dict], role: str) -> Optional[dict]:
+    """The file's entry for `role`, with its attachment id beside its
+    fields, or None."""
+    part = next((f for f in (doc or {}).get("files", []) if f["role"] == role), None)
+    return None if part is None else {**part, "attachment_id": doc["attachment_id"]}
 
 
 def init_db() -> None:
-    """This module's table, in the same database as runs and messages; made
-    once, with the FileSnapshots that uses it."""
-    with closing(run_store._connect()) as conn:
-        conn.executescript(_SCHEMA)
+    """Kept for callers: the records live in the record engine."""
 
 
 def transient_download_failure(code: Optional[str]) -> bool:
@@ -310,50 +342,51 @@ class FileSnapshots:
     # -- records -----------------------------------------------------------------------
 
     def _row(self, server_id: str, owner: int, attachment_id: UUID,
-             role: str) -> Optional[sqlite3.Row]:
-        with closing(run_store._connect()) as conn:
-            return conn.execute(
-                "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
-                "AND attachment_id=? AND role=?",
-                (server_id, owner, str(attachment_id), role)).fetchone()
+             role: str) -> Optional[dict]:
+        return role_of(file_doc(server_id, owner, attachment_id), role)
 
     def _set(self, server_id: str, owner: int, attachment_id: UUID, role: str, *,
              state: str, bytes_done: Optional[int] = None, failure: Optional[str] = None,
              notify: bool = True) -> None:
-        with closing(run_store._connect()) as conn:
-            conn.execute(
-                "UPDATE messaging_files SET state=?, failure=?, "
-                "bytes_done=COALESCE(?, bytes_done), updated_at=? WHERE server_id=? "
-                "AND owner_github_id=? AND attachment_id=? AND role=?",
-                (state, failure, bytes_done, self.now(), server_id, owner, str(attachment_id),
-                 role))
-            conn.commit()
+        now = self.now()
+
+        def go(doc: dict) -> None:
+            for part in doc["files"]:
+                if part["role"] == role:
+                    part.update(state=state, failure=failure, updated_at=now)
+                    if bytes_done is not None:
+                        part["bytes_done"] = bytes_done
+        change_file(server_id, owner, attachment_id, go, change=f"{role}_{state}",
+                    summary=failure)
         if notify:
             self.on_change()
 
     def _insert(self, server_id: str, owner: int, ref: wire.AttachmentRef, message_id: UUID,
                 role: str, state: str) -> None:
         now = self.now()
-        with closing(run_store._connect()) as conn:
-            conn.execute(
-                "INSERT INTO messaging_files (server_id, owner_github_id, attachment_id, role, "
-                "message_id, filename, media_type, size_bytes, sha256, state, bytes_done, "
-                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?) "
-                "ON CONFLICT (server_id, owner_github_id, attachment_id, role) DO UPDATE SET "
-                "state=excluded.state, bytes_done=0, failure=NULL, updated_at=excluded.updated_at",
-                (server_id, owner, str(ref.attachment_id), role, str(message_id), ref.filename,
-                 ref.media_type, ref.size_bytes, ref.sha256, state, now, now))
-            conn.commit()
+
+        def go(doc: dict) -> None:
+            part = next((f for f in doc["files"] if f["role"] == role), None)
+            if part is None:
+                doc["files"].append({
+                    "role": role, "message_id": str(message_id), "filename": ref.filename,
+                    "media_type": ref.media_type, "size_bytes": ref.size_bytes,
+                    "sha256": ref.sha256, "state": state, "bytes_done": 0, "failure": None,
+                    "created_at": now, "updated_at": now, "rowid": None})
+            else:
+                part.update(state=state, bytes_done=0, failure=None, updated_at=now)
+        change_file(server_id, owner, ref.attachment_id, go, change=f"{role}_{state}",
+                    summary=ref.filename)
         self.on_change()
 
     @staticmethod
-    def _ref(row: sqlite3.Row) -> wire.AttachmentRef:
+    def _ref(row: dict) -> wire.AttachmentRef:
         return wire.AttachmentRef(attachment_id=UUID(row["attachment_id"]),
                                   filename=row["filename"], media_type=row["media_type"],
                                   size_bytes=row["size_bytes"], sha256=row["sha256"])
 
     @staticmethod
-    def _local(row: sqlite3.Row) -> ports.LocalFile:
+    def _local(row: dict) -> ports.LocalFile:
         return ports.LocalFile(attachment_id=UUID(row["attachment_id"]), state=row["state"],
                                bytes_done=row["bytes_done"], failure=row["failure"])
 
@@ -412,7 +445,8 @@ class FileSnapshots:
         on this Mac the brain names (draft_files.py) alike: the draft must
         be there, then the file is snapshotted for it. The draft names it
         once it is saved with its `attachment_ids`."""
-        if self.store.draft(server_id, owner_github_id, message_id) is None:
+        if await asyncio.to_thread(self.store.draft, server_id, owner_github_id,
+                                   message_id) is None:
             raise wire.ContractError("draft_not_found")
         return await self.snapshot(server_id, owner_github_id, message_id, filename,
                                    media_type, chunks)
@@ -549,12 +583,13 @@ class FileSnapshots:
         """What this JARVIS knows of the message's files: a download where
         there is one, else the snapshot (a file this owner sent). Files it
         knows nothing of are not listed; `local_files` fills them in."""
-        with closing(run_store._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
-                "AND message_id=? ORDER BY created_at, role DESC",
-                (server_id, owner_github_id, str(message_id))).fetchall()
-        known: dict[str, sqlite3.Row] = {}
+        rows = [{**f, "attachment_id": d["attachment_id"]}
+                for d in file_docs(server_id, owner_github_id,
+                                   [["files[].message_id", "=", str(message_id)]])
+                for f in d["files"] if f["message_id"] == str(message_id)]
+        rows.sort(key=lambda r: r["role"], reverse=True)
+        rows.sort(key=lambda r: r["created_at"])
+        known: dict[str, dict] = {}
         for row in rows:
             if row["attachment_id"] not in known or row["role"] == DOWNLOAD:
                 known[row["attachment_id"]] = row
@@ -739,10 +774,9 @@ class FileSnapshots:
                     continue
         needed = self._still_needed(server_id, owner_github_id) | self.held(server_id,
                                                                             owner_github_id)
-        with closing(run_store._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
-                "AND role=?", (server_id, owner_github_id, SNAPSHOT)).fetchall()
+        rows = [role_of(d, SNAPSHOT) for d in file_docs(
+            server_id, owner_github_id, [["files[].role", "=", SNAPSHOT]],
+            lambda d: role_of(d, SNAPSHOT) is not None)]
         for row in rows:
             if row["attachment_id"] in needed or self.now() - row["created_at"] < \
                     SNAPSHOT_GRACE_SEC:
@@ -752,12 +786,11 @@ class FileSnapshots:
                     str(a.attachment_id) == row["attachment_id"] for a in draft.attachments):
                 continue
             _unlink(self.snapshots_dir() / row["attachment_id"])
-            with closing(run_store._connect()) as conn:
-                conn.execute(
-                    "DELETE FROM messaging_files WHERE server_id=? AND owner_github_id=? "
-                    "AND attachment_id=? AND role=?",
-                    (server_id, owner_github_id, row["attachment_id"], SNAPSHOT))
-                conn.commit()
+
+            def forget(doc: dict) -> None:
+                doc["files"] = [f for f in doc["files"] if f["role"] != SNAPSHOT]
+            change_file(server_id, owner_github_id, row["attachment_id"], forget,
+                        change="snapshot_removed", summary="an abandoned snapshot")
             removed += 1
         return removed
 
@@ -837,3 +870,74 @@ def router(context: Callable[[], Optional[FilesContext]]) -> APIRouter:
         return await _answer(go())
 
     return routes
+
+
+# -- the move: messaging_files, attachment_locations and attachment_leases ------------------
+
+_FILE_DOC_PATH = re.compile(r"/people/[^/]+/files/[^/]+\.file")
+_FILE_COLUMNS = ("message_id", "filename", "media_type", "size_bytes", "sha256", "state",
+                 "bytes_done", "failure", "created_at", "updated_at")
+_LOCATION_COLUMNS = ("path", "verified_at", "extraction_root", "extraction_sha256",
+                     "extraction_members")
+
+
+class FileMapping:
+    """The three tables of a file (`messaging_files`, and
+    attachment_locations.py's `attachment_locations` and
+    `attachment_leases`) to the `file` documents and back, row for row."""
+
+    name = "file"
+    tables = ("messaging_files", "attachment_locations", "attachment_leases")
+    under = ("/people",)
+    history = False
+
+    def documents(self, conn) -> Iterator:
+        from jarvis.knowledge_move import Doc, cell
+        from jarvis.messaging_store import _rows_of
+        out: dict[str, dict] = {}
+
+        def doc(r) -> dict:
+            key = (r["server_id"], r["owner_github_id"], r["attachment_id"])
+            return out.setdefault(file_path(*key), {**_file_doc(*(cell(k) for k in key)),
+                                                    "attachment_id": cell(r["attachment_id"])})
+
+        for r in _rows_of(conn, "messaging_files"):
+            doc(r)["files"].append({"role": cell(r["role"]),
+                                    **{c: cell(r[c]) for c in _FILE_COLUMNS},
+                                    "rowid": r["__rowid"]})
+        for r in _rows_of(conn, "attachment_locations"):
+            doc(r)["location"] = {**{c: cell(r[c]) for c in _LOCATION_COLUMNS},
+                                  "rowid": r["__rowid"]}
+        for r in _rows_of(conn, "attachment_leases"):
+            doc(r)["leases"].append({"holder": cell(r["holder"]),
+                                     "created_at": cell(r["created_at"]), "rowid": r["__rowid"]})
+        for path, data in out.items():
+            yield Doc(path, data)
+
+    def rows(self, docs) -> dict:
+        from jarvis.knowledge_move import Row, uncell
+        out: dict[str, list] = {t: [] for t in self.tables}
+        for d in docs:
+            if not _FILE_DOC_PATH.fullmatch(d.path):
+                continue
+            data = d.data
+            key = {"server_id": uncell(data["server_id"]),
+                   "owner_github_id": uncell(data["owner_github_id"]),
+                   "attachment_id": uncell(data["attachment_id"])}
+            for f in data.get("files") or []:
+                out["messaging_files"].append(Row(
+                    {**key, "role": uncell(f["role"]),
+                     **{c: uncell(f.get(c)) for c in _FILE_COLUMNS}}, f.get("rowid")))
+            if data.get("location"):
+                loc = data["location"]
+                out["attachment_locations"].append(Row(
+                    {**key, **{c: uncell(loc.get(c)) for c in _LOCATION_COLUMNS}},
+                    loc.get("rowid")))
+            for lease in data.get("leases") or []:
+                out["attachment_leases"].append(Row(
+                    {**key, "holder": uncell(lease["holder"]),
+                     "created_at": uncell(lease["created_at"])}, lease.get("rowid")))
+        return out
+
+
+MAPPINGS = [FileMapping()]

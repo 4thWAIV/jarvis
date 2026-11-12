@@ -1,8 +1,10 @@
 """The record of agents' public keys, their onboarding and their rights.
 
-JARVIS keeps only public keys. Each row of `agent_keys` is one key: whose
-it is (`principal`: `agent:<session id>`, or `workkey:<fingerprint>` for a
-work-item key), the session that submitted it, and where it stands:
+JARVIS keeps only public keys. Each key is one entry of its holder's
+document (agent_record.py): whose it is (`principal`: `agent:<session id>`,
+kept in that session's `agent` document, or `workkey:<fingerprint>` for a
+work-item key, a `workkey` document of its own), the session that
+submitted it, and where it stands:
 
   pending    submitted (POST /api/agent-keys, self-signed); the claimed
              session's own transcript has not yet shown it submitting
@@ -17,26 +19,26 @@ work-item key), the session that submitted it, and where it stands:
 A pending key not proven within PROOF_WINDOW_SEC is dropped. At most
 PENDING_MAX keys are pending at once, the oldest dropped first. A session
 has one onboarded key: onboarding a new one revokes the old in the same
-transaction. Rights are rows of `agent_rights` (agent_rights.py judges
-them), kept by principal, so a session's rights outlive a key it replaces.
-`agent_key_events` keeps each change, with who did it and when.
-(`legacy_admissions` counts access-key use per day while the cut-over guard
-still accepts them, legacy_access.py.)
+write. Rights are the holder's `rights` (agent_rights.py judges them),
+kept by principal, so a session's rights outlive a key it replaces. Each
+change is an event of the holder's document, its version, with who did it
+and when. What an unknown key tried to send is a `hold` document per
+subject, and the cut-over guard's facts and access-key counts are
+`settings` documents (legacy_access.py).
 
-Schema `agent_keys_schema`, through run_store.migrate. This module is the
-only writer of its tables, one transaction per change.
+Every read is answered from agent_record.CACHE (the web gate reads keys
+and rights on every signed request); every write is one atomic write
+through agent_record.change, which refreshes it.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
 import time
-from contextlib import closing
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from jarvis import agent_keys, agent_rights, run_store
+from jarvis import agent_keys, agent_record, agent_rights, records
+from jarvis.agent_record import CACHE
 
 PENDING, WAITING, ONBOARDED, REVOKED = "pending", "waiting", "onboarded", "revoked"
 AGENT, WORK_KEY = "agent:", "workkey:"
@@ -46,107 +48,7 @@ PENDING_MAX = 50
 # How Tim's acts are recorded (`onboarded_by`, `revoked_by`).
 ON_THE_PAGE, BY_VOICE = "page", "voice"
 
-_SCHEMA = """
-    CREATE TABLE agent_keys (
-        fingerprint   TEXT PRIMARY KEY,
-        public_key    TEXT NOT NULL,
-        principal     TEXT NOT NULL,
-        session_id    TEXT NOT NULL DEFAULT '',
-        provider      TEXT NOT NULL DEFAULT '',
-        state         TEXT NOT NULL,
-        submitted_at  REAL NOT NULL,
-        proven_at     REAL,
-        proven_by     TEXT NOT NULL DEFAULT '',
-        onboarded_at  REAL,
-        onboarded_by  TEXT NOT NULL DEFAULT '',
-        revoked_at    REAL,
-        revoked_by    TEXT NOT NULL DEFAULT '',
-        revoked_why   TEXT NOT NULL DEFAULT '',
-        label         TEXT NOT NULL DEFAULT '',
-        work_id       TEXT NOT NULL DEFAULT '',
-        issued_by     TEXT NOT NULL DEFAULT '',
-        expires_at    REAL
-    );
-    CREATE INDEX agent_keys_session ON agent_keys(session_id, state);
-    CREATE TABLE agent_rights (
-        principal   TEXT NOT NULL,
-        "right"     TEXT NOT NULL,
-        scope       TEXT NOT NULL,
-        granted_at  REAL NOT NULL,
-        granted_by  TEXT NOT NULL,
-        PRIMARY KEY (principal, "right", scope)
-    );
-    CREATE TABLE agent_key_events (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        fingerprint  TEXT NOT NULL,
-        kind         TEXT NOT NULL,
-        at           REAL NOT NULL,
-        detail       TEXT NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE legacy_admissions (
-        day    TEXT NOT NULL,
-        label  TEXT NOT NULL,
-        count  INTEGER NOT NULL,
-        PRIMARY KEY (day, label)
-    );
-"""
-
-# 2: what is held because the key that signed it (or the session that
-# claimed it, unsigned) is not an onboarded agent's: the subject (`key:<fp>`
-# or `session:<id>`), what it was and where it is kept, the Work item it
-# was for, and how it was settled (released once the agent is onboarded,
-# refused once its key is refused). The error package that tells Tim is
-# kept per subject.
-_HELD = """
-    CREATE TABLE agent_key_held (
-        id             TEXT PRIMARY KEY,
-        subject        TEXT NOT NULL,
-        fingerprint    TEXT NOT NULL DEFAULT '',
-        session_id     TEXT NOT NULL DEFAULT '',
-        kind           TEXT NOT NULL,
-        what           TEXT NOT NULL,
-        path           TEXT NOT NULL DEFAULT '',
-        detail         TEXT NOT NULL DEFAULT '{}',
-        work_id        TEXT NOT NULL DEFAULT '',
-        held_at        REAL NOT NULL,
-        state          TEXT NOT NULL,
-        settled_at     REAL
-    );
-    CREATE INDEX agent_key_held_subject ON agent_key_held(subject, state);
-    CREATE TABLE agent_key_errors (
-        subject        TEXT PRIMARY KEY,
-        package_id     TEXT NOT NULL DEFAULT '',
-        inbox_id       TEXT NOT NULL DEFAULT '',
-        made_at        REAL NOT NULL
-    );
-"""
-
-# 3: a few named facts of the record's own: when the cut-over guard began
-# watching access-key use, and when access keys stopped being accepted
-# (legacy_access.py).
-_SETTINGS = """
-    CREATE TABLE agent_key_settings (
-        name   TEXT PRIMARY KEY,
-        value  TEXT NOT NULL,
-        at     REAL NOT NULL
-    );
-"""
-
-# 4: which package each fresh author session vouched for (author_proof.py):
-# one author, one package's bytes, so a new revision cannot reuse old
-# evidence.
-_AUTHORS = """
-    CREATE TABLE agent_author_proofs (
-        author       TEXT PRIMARY KEY,
-        package_sha  TEXT NOT NULL,
-        bound_at     REAL NOT NULL
-    );
-"""
-
-_MIGRATIONS = {1: _SCHEMA, 2: _HELD, 3: _SETTINGS, 4: _AUTHORS}
-
-_migrated: set[str] = set()
-_migrating = threading.Lock()
+MAPPINGS = agent_record.MAPPINGS
 
 
 class KeyRefused(ValueError):
@@ -194,25 +96,38 @@ class Grant:
     granted_by: str
 
 
-def _connect() -> sqlite3.Connection:
-    conn = run_store._connect()
-    path = conn.execute("PRAGMA database_list").fetchone()["file"]
-    if path not in _migrated:
-        with _migrating:
-            if path not in _migrated:
-                run_store.migrate(conn, "agent_keys_schema", _MIGRATIONS, "agent keys")
-                conn.commit()
-                _migrated.add(path)
-    return conn
+def _key(k: dict) -> AgentKey:
+    return AgentKey(**{f: k.get(f, agent_record.KEY_DEFAULTS.get(f)) for f in AgentKey.__dataclass_fields__})
 
 
-def _row(r) -> AgentKey:
-    return AgentKey(**{k: r[k] for k in AgentKey.__dataclass_fields__})
+def _new_key(fp: str, public: str, principal: str, state: str, now: float, **fields) -> dict:
+    return {**agent_record.KEY_DEFAULTS, "fingerprint": fp, "public_key": public,
+            "principal": principal, "state": state, "submitted_at": float(now), **fields}
 
 
-def _event(conn, fingerprint: str, kind: str, now: float, **detail) -> None:
-    conn.execute("INSERT INTO agent_key_events (fingerprint, kind, at, detail) VALUES (?,?,?,?)",
-                 (fingerprint, kind, now, json.dumps(detail, sort_keys=True)))
+def _find(doc: Optional[dict], fingerprint: str) -> Optional[dict]:
+    if doc is None:
+        return None
+    return next((k for k in doc["keys"] if k.get("fingerprint") == fingerprint), None)
+
+
+def _doc_of(w: agent_record.Writer, fingerprint: str) -> tuple[Optional[str], Optional[dict]]:
+    """(path, key) of a key held now, read through the writer."""
+    path = CACHE.key_path(fingerprint)
+    if path is None:
+        return None, None
+    return path, _find(w.doc(path), fingerprint)
+
+
+def _event(w: agent_record.Writer, path: str, fingerprint: str, kind: str, now: float,
+           **detail) -> None:
+    ev = agent_record.event(fingerprint, kind, now, **detail)
+    w.event(path, ev, agent_record.event_summary(ev))
+
+
+def _onboarded_on(by: str) -> str:
+    """Who granted an agent's default rights."""
+    return f"default, onboarded on {by}"
 
 
 def agent_principal(session_id: str) -> str:
@@ -223,7 +138,7 @@ def agent_principal(session_id: str) -> str:
 
 def submit(public_key: str, session_id: str, provider: str = "",
            now: Optional[float] = None) -> AgentKey:
-    """Record a key a session submitted as pending, or the row it already
+    """Record a key a session submitted as pending, or the one it already
     has. Refused for a malformed key or session, or a key already revoked."""
     now = time.time() if now is None else now
     try:
@@ -233,62 +148,74 @@ def submit(public_key: str, session_id: str, provider: str = "",
     if not agent_keys.SESSION_ID.fullmatch(str(session_id or "")):
         raise KeyRefused("A session id is letters, digits, dashes and underscores.")
     fp = agent_keys.fingerprint(public)
-    with closing(_connect()) as conn, conn:
-        found = conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?", (fp,)).fetchone()
+
+    def run(w: agent_record.Writer) -> AgentKey:
+        _path, found = _doc_of(w, fp)
         if found is not None:
             if found["session_id"] != session_id:
                 raise KeyRefused("That key was submitted for another session.")
             if found["state"] == REVOKED:
                 raise KeyRefused("That key was revoked; make a new one with init.")
-            return _row(found)
-        pending = conn.execute("SELECT fingerprint FROM agent_keys WHERE state=? ORDER BY "
-                               "submitted_at", (PENDING,)).fetchall()
+            return _key(found)
+        pending = sorted((k for k in CACHE.keys() if k.get("state") == PENDING),
+                         key=lambda k: k["submitted_at"])
         for old in pending[:max(0, len(pending) - PENDING_MAX + 1)]:
-            conn.execute("DELETE FROM agent_keys WHERE fingerprint=?", (old["fingerprint"],))
-            _event(conn, old["fingerprint"], "dropped", now, why="too many pending")
-        conn.execute("INSERT INTO agent_keys (fingerprint, public_key, principal, session_id, "
-                     "provider, state, submitted_at) VALUES (?,?,?,?,?,?,?)",
-                     (fp, public, agent_principal(session_id), session_id,
-                      str(provider or "")[:32], PENDING, now))
-        _event(conn, fp, "submitted", now, session=session_id)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (fp,)).fetchone())
+            path, key = _doc_of(w, old["fingerprint"])
+            if key is None or key["state"] != PENDING:
+                continue
+            w.doc(path)["keys"].remove(key)
+            _event(w, path, key["fingerprint"], "dropped", now, why="too many pending")
+        doc = w.agent(session_id)
+        key = _new_key(fp, public, agent_principal(session_id), PENDING, now,
+                       session_id=session_id, provider=str(provider or "")[:32])
+        doc["keys"].append(key)
+        _event(w, agent_record.agent_path(session_id), fp, "submitted", now, session=session_id)
+        return _key(key)
+    return agent_record.change(run, by=records.by(agent_principal(session_id)))
 
 
 def to_prove(now: Optional[float] = None) -> list[AgentKey]:
     """The pending keys still within their proof window."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_keys WHERE state=? AND submitted_at>=? "
-                            "ORDER BY submitted_at", (PENDING, now - PROOF_WINDOW_SEC)).fetchall()
-    return [_row(r) for r in rows]
+    keys = [k for k in CACHE.keys() if k.get("state") == PENDING
+            and k["submitted_at"] >= now - PROOF_WINDOW_SEC]
+    return [_key(k) for k in sorted(keys, key=lambda k: k["submitted_at"])]
 
 
 def drop_unproven(now: Optional[float] = None) -> list[str]:
     """Drop every pending key past its proof window. Their fingerprints."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        rows = conn.execute("SELECT fingerprint FROM agent_keys WHERE state=? AND "
-                            "submitted_at<?", (PENDING, now - PROOF_WINDOW_SEC)).fetchall()
-        for r in rows:
-            conn.execute("DELETE FROM agent_keys WHERE fingerprint=?", (r["fingerprint"],))
-            _event(conn, r["fingerprint"], "dropped", now, why="not proven in time")
-    return [r["fingerprint"] for r in rows]
+    late = [k["fingerprint"] for k in CACHE.keys() if k.get("state") == PENDING
+            and k["submitted_at"] < now - PROOF_WINDOW_SEC]
+    if not late:
+        return []
+
+    def run(w: agent_record.Writer) -> list[str]:
+        dropped = []
+        for fp in late:
+            path, key = _doc_of(w, fp)
+            if key is None or key["state"] != PENDING or key["submitted_at"] >= now - PROOF_WINDOW_SEC:
+                continue
+            w.doc(path)["keys"].remove(key)
+            _event(w, path, fp, "dropped", now, why="not proven in time")
+            dropped.append(fp)
+        return dropped
+    return agent_record.change(run)
 
 
 def proven(fingerprint: str, evidence: str, now: Optional[float] = None) -> Optional[AgentKey]:
     """A pending key its session's own transcript showed submitting: it now
     waits for Tim. None when it is no longer pending."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        moved = conn.execute("UPDATE agent_keys SET state=?, proven_at=?, proven_by=? WHERE "
-                             "fingerprint=? AND state=?",
-                             (WAITING, now, evidence, fingerprint, PENDING)).rowcount
-        if not moved:
+
+    def run(w: agent_record.Writer) -> Optional[AgentKey]:
+        path, key = _doc_of(w, fingerprint)
+        if key is None or key["state"] != PENDING:
             return None
-        _event(conn, fingerprint, "proven", now, evidence=evidence)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (fingerprint,)).fetchone())
+        key.update(state=WAITING, proven_at=float(now), proven_by=evidence)
+        _event(w, path, fingerprint, "proven", now, evidence=evidence)
+        return _key(key)
+    return agent_record.change(run)
 
 
 # -- Tim's acts --------------------------------------------------------------------------
@@ -298,34 +225,36 @@ def onboard(session_id: str, by: str, label: str = "",
     """Tim switched the agent on: its waiting key is onboarded, recorded as
     his act (`by`: the page or his voice) with the time, given the default
     rights (agent_rights.DEFAULT_RIGHTS) unless the agent already has
-    rights, and any key it had before revoked, all in one transaction.
-    `label` is an access key's label that names exactly this agent, kept so
-    the decisions it asked under that key stay its own. None when no key
+    rights, and any key it had before revoked, all in one write. `label` is
+    an access key's label that names exactly this agent, kept so the
+    decisions it asked under that key stay its own. None when no key
     waits."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        found = conn.execute("SELECT * FROM agent_keys WHERE session_id=? AND state=? AND "
-                             "principal=? ORDER BY proven_at DESC LIMIT 1",
-                             (session_id, WAITING, agent_principal(session_id))).fetchone()
-        if found is None:
+    principal = agent_principal(session_id)
+
+    def run(w: agent_record.Writer) -> Optional[AgentKey]:
+        doc = w.agent(session_id, create=False)
+        if doc is None:
             return None
-        for old in conn.execute("SELECT fingerprint FROM agent_keys WHERE session_id=? AND "
-                                "state=? AND principal=?",
-                                (session_id, ONBOARDED, agent_principal(session_id))):
-            conn.execute("UPDATE agent_keys SET state=?, revoked_at=?, revoked_by=?, "
-                         "revoked_why=? WHERE fingerprint=?",
-                         (REVOKED, now, by, "replaced by a newer key", old["fingerprint"]))
-            _event(conn, old["fingerprint"], "revoked", now, by=by, why="replaced")
-        conn.execute("UPDATE agent_keys SET state=?, onboarded_at=?, onboarded_by=?, label=? "
-                     "WHERE fingerprint=?", (ONBOARDED, now, by, label, found["fingerprint"]))
-        principal = agent_principal(session_id)
-        if conn.execute("SELECT 1 FROM agent_rights WHERE principal=?",
-                        (principal,)).fetchone() is None:
-            _grant(conn, principal, agent_rights.DEFAULT_RIGHTS, agent_rights.ANY_SCOPE,
-                   f"default, onboarded on {by}", now)
-        _event(conn, found["fingerprint"], "onboarded", now, by=by, label=label)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (found["fingerprint"],)).fetchone())
+        mine = [k for k in doc["keys"] if k.get("session_id") == session_id
+                and k.get("principal") == principal]
+        waiting = [k for k in mine if k["state"] == WAITING]
+        if not waiting:
+            return None
+        found = max(waiting, key=lambda k: (k.get("proven_at") is not None, k.get("proven_at") or 0))
+        path = agent_record.agent_path(session_id)
+        for old in mine:
+            if old["state"] == ONBOARDED:
+                old.update(state=REVOKED, revoked_at=float(now), revoked_by=by,
+                           revoked_why="replaced by a newer key")
+                _event(w, path, old["fingerprint"], "revoked", now, by=by, why="replaced")
+        found.update(state=ONBOARDED, onboarded_at=float(now), onboarded_by=by, label=label)
+        if not any(g.get("principal") == principal for g in doc["rights"]):
+            _grant(doc, principal, agent_rights.DEFAULT_RIGHTS, agent_rights.ANY_SCOPE,
+                   _onboarded_on(by), now)
+        _event(w, path, found["fingerprint"], "onboarded", now, by=by, label=label)
+        return _key(found)
+    return agent_record.change(run, by=agent_record.caller_for(by), full_sync=True)
 
 
 def revoke(fingerprint: str, by: str, why: str, now: Optional[float] = None
@@ -333,29 +262,30 @@ def revoke(fingerprint: str, by: str, why: str, now: Optional[float] = None
     """No longer admitted. A pending or waiting key is refused the same
     way. None when there is no such key or it is already revoked."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        moved = conn.execute("UPDATE agent_keys SET state=?, revoked_at=?, revoked_by=?, "
-                             "revoked_why=? WHERE fingerprint=? AND state!=?",
-                             (REVOKED, now, by, why, fingerprint, REVOKED)).rowcount
-        if not moved:
+
+    def run(w: agent_record.Writer) -> Optional[AgentKey]:
+        path, key = _doc_of(w, fingerprint)
+        if key is None or key["state"] == REVOKED:
             return None
-        _event(conn, fingerprint, "revoked", now, by=by, why=why)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (fingerprint,)).fetchone())
+        key.update(state=REVOKED, revoked_at=float(now), revoked_by=by, revoked_why=why)
+        _event(w, path, fingerprint, "revoked", now, by=by, why=why)
+        return _key(key)
+    return agent_record.change(run, by=agent_record.caller_for(by),
+                               full_sync=by in (ON_THE_PAGE, BY_VOICE))
 
 
 def revoke_where(by: str, why: str, sessions: Iterable[str] = (), work_ids: Iterable[str] = (),
                  now: Optional[float] = None) -> list[AgentKey]:
     """Revoke every live key of these sessions or work items."""
     now = time.time() if now is None else now
+    sessions, work_ids = list(sessions), list(work_ids)
+    keys = CACHE.keys()
+    fps = [k["fingerprint"] for s in sessions for k in keys if k.get("session_id") == s
+           and k.get("principal") == agent_principal(s) and k.get("state") != REVOKED]
+    fps += [k["fingerprint"] for w in work_ids for k in keys if k.get("work_id") == w
+            and k.get("state") != REVOKED]
     out = []
-    with closing(_connect()) as conn:
-        rows = [r["fingerprint"] for s in sessions for r in conn.execute(
-            "SELECT fingerprint FROM agent_keys WHERE session_id=? AND principal=? AND state!=?",
-            (s, agent_principal(s), REVOKED))]
-        rows += [r["fingerprint"] for w in work_ids for r in conn.execute(
-            "SELECT fingerprint FROM agent_keys WHERE work_id=? AND state!=?", (w, REVOKED))]
-    for fp in rows:
+    for fp in fps:
         done = revoke(fp, by, why, now)
         if done:
             out.append(done)
@@ -365,10 +295,8 @@ def revoke_where(by: str, why: str, sessions: Iterable[str] = (), work_ids: Iter
 # -- reading -----------------------------------------------------------------------------
 
 def get(fingerprint: str) -> Optional[AgentKey]:
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                         (fingerprint,)).fetchone()
-    return _row(r) if r else None
+    found = CACHE.key(fingerprint)
+    return _key(found) if found is not None else None
 
 
 def admitted(fingerprint: str, now: Optional[float] = None) -> Optional[AgentKey]:
@@ -377,64 +305,84 @@ def admitted(fingerprint: str, now: Optional[float] = None) -> Optional[AgentKey
     return found if found is not None and found.admitted(now) else None
 
 
+_ORDER = {WAITING: 0, ONBOARDED: 1, PENDING: 2}
+
+
 def for_session(session_id: str) -> Optional[AgentKey]:
     """The agent's key that matters now: one waiting for Tim, else its
     onboarded one, else its latest pending one, else None."""
-    order = {WAITING: 0, ONBOARDED: 1, PENDING: 2}
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_keys WHERE session_id=? AND principal=? AND "
-                            "state!=?", (session_id, agent_principal(session_id),
-                                         REVOKED)).fetchall()
-    rows = sorted(rows, key=lambda r: (order[r["state"]], -r["submitted_at"]))
-    return _row(rows[0]) if rows else None
+    doc = CACHE.get(agent_record.agent_path(session_id)) or {}
+    keys = [k for k in doc.get("keys") or () if k.get("session_id") == session_id
+            and k.get("principal") == agent_principal(session_id) and k.get("state") != REVOKED]
+    keys.sort(key=lambda k: (_ORDER[k["state"]], -k["submitted_at"]))
+    return _key(keys[0]) if keys else None
 
 
 def by_session() -> dict[str, AgentKey]:
     """`for_session` for every session with a live key, in one read."""
-    order = {WAITING: 0, ONBOARDED: 1, PENDING: 2}
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_keys WHERE principal LIKE 'agent:%' AND "
-                            "state!=?", (REVOKED,)).fetchall()
+    keys = [k for k in CACHE.keys() if str(k.get("principal", "")).startswith(AGENT)
+            and k.get("state") != REVOKED]
     out: dict[str, AgentKey] = {}
-    for r in sorted(rows, key=lambda r: (order[r["state"]], -r["submitted_at"])):
-        out.setdefault(r["session_id"], _row(r))
+    for k in sorted(keys, key=lambda k: (_ORDER[k["state"]], -k["submitted_at"])):
+        out.setdefault(k["session_id"], _key(k))
     return out
 
 
 def listing(include_revoked: bool = False) -> list[AgentKey]:
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_keys" + ("" if include_revoked else
-                                                          " WHERE state!='revoked'")
-                            + " ORDER BY submitted_at DESC").fetchall()
-    return [_row(r) for r in rows]
+    keys = [k for k in CACHE.keys() if include_revoked or k.get("state") != REVOKED]
+    return [_key(k) for k in sorted(keys, key=lambda k: -k["submitted_at"])]
 
 
 def events(fingerprint: str) -> list[dict]:
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_key_events WHERE fingerprint=? ORDER BY id",
-                            (fingerprint,)).fetchall()
-    return [{"kind": r["kind"], "at": r["at"], **json.loads(r["detail"] or "{}")} for r in rows]
+    """The key's changes, oldest first: the events its holder's versions
+    recorded (a dropped key's, from whichever holder recorded them)."""
+    path = CACHE.key_path(fingerprint)
+    paths = [path] if path else [p for p, _ in CACHE.docs() if agent_record.is_holder(p)]
+    out = []
+    for p in paths:
+        for ev in agent_record.events_of(p):
+            if ev.get("fingerprint") == fingerprint:
+                out.append({"kind": ev["kind"], "at": ev["at"],
+                            **json.loads(ev.get("detail") or "{}")})
+    return out
 
 
 # -- rights ------------------------------------------------------------------------------
 
-def _grant(conn, principal: str, rights: Iterable[str], scope: str, by: str,
+def _grant(doc: dict, principal: str, rights: Iterable[str], scope: str, by: str,
            now: float) -> None:
+    """Grant `rights` to `principal` in its holder's document `doc` (a
+    grant it already has is kept as it is)."""
     for right in rights:
         if right not in agent_rights.RIGHTS:
             raise KeyRefused(f"There is no right {right}.")
-        conn.execute('INSERT OR IGNORE INTO agent_rights (principal, "right", scope, '
-                     'granted_at, granted_by) VALUES (?,?,?,?,?)',
-                     (principal, right, scope, now, by))
+        if any(g.get("principal") == principal and g.get("right") == right
+               and g.get("scope") == scope for g in doc["rights"]):
+            continue
+        doc["rights"].append({"principal": principal, "right": right, "scope": scope,
+                              "granted_at": float(now), "granted_by": by})
+
+
+def _set_rights(principal: str, rights: Iterable[str], scope: str, by: str,
+                now: Optional[float] = None) -> None:
+    """Replace every grant of `principal` with `rights` in `scope` (tests
+    give an agent exactly the rights they mean to)."""
+    now = time.time() if now is None else now
+    rights = list(rights)
+
+    def run(w: agent_record.Writer) -> None:
+        doc = w.holder(principal)
+        doc["rights"] = [g for g in doc["rights"] if g.get("principal") != principal]
+        _grant(doc, principal, rights, scope, by, now)
+        w.changed(agent_record.holder_path(principal), "rights")
+    agent_record.change(run)
 
 
 def grants(principal: str) -> list[Grant]:
-    with closing(_connect()) as conn:
-        rows = conn.execute('SELECT principal, "right", scope, granted_at, granted_by FROM '
-                            'agent_rights WHERE principal=? ORDER BY "right"',
-                            (principal,)).fetchall()
-    return [Grant(r["principal"], r["right"], r["scope"], r["granted_at"], r["granted_by"])
-            for r in rows]
+    doc = CACHE.get(agent_record.holder_path(principal)) or {}
+    held = [g for g in doc.get("rights") or () if g.get("principal") == principal]
+    return [Grant(g["principal"], g["right"], g["scope"], g["granted_at"], g["granted_by"])
+            for g in sorted(held, key=lambda g: g["right"])]
 
 
 # -- what is held for a key not onboarded ------------------------------------------------
@@ -463,85 +411,114 @@ def subject_of(fingerprint: str = "", session_id: str = "") -> str:
     return f"key:{fingerprint}" if fingerprint else f"session:{session_id}"
 
 
-def _held(r) -> Held:
+def _held(r: dict) -> Held:
+    r = {**agent_record.HELD_DEFAULTS, **r}
     return Held(r["id"], r["subject"], r["fingerprint"], r["session_id"], r["kind"], r["what"],
                 r["path"], json.loads(r["detail"] or "{}"), r["work_id"], r["held_at"],
                 r["state"], r["settled_at"])
 
 
+def _all_held() -> list[dict]:
+    return [h for _p, d in CACHE.docs(".hold") for h in d.get("held") or ()]
+
+
+def _held_id() -> str:
+    import secrets
+    return "held-" + secrets.token_hex(6)
+
+
 def hold(kind: str, what: str, fingerprint: str = "", session_id: str = "", path: str = "",
          detail: Optional[dict] = None, work_id: str = "",
          now: Optional[float] = None) -> tuple[Held, bool]:
-    """Record one thing held. (the row, whether it is new): the same kind
-    and words from the same subject while one is still held is that row."""
-    import secrets as _secrets
+    """Record one thing held. (the record, whether it is new): the same kind
+    and words from the same subject while one is still held is that one."""
     now = time.time() if now is None else now
     subject = subject_of(fingerprint, session_id)
-    with closing(_connect()) as conn, conn:
-        found = conn.execute("SELECT * FROM agent_key_held WHERE subject=? AND kind=? AND "
-                             "what=? AND state=?", (subject, kind, what, HELD)).fetchone()
+    where = agent_record.hold_path(subject)
+
+    def run(w: agent_record.Writer) -> tuple[Held, bool]:
+        doc = w.doc(where, lambda: agent_record.new_hold(subject))
+        found = next((h for h in doc["held"] if h.get("subject") == subject and h.get("kind") == kind
+                      and h.get("what") == what and h.get("state") == HELD), None)
         if found is not None:
             return _held(found), False
-        hid = "held-" + _secrets.token_hex(6)
-        conn.execute("INSERT INTO agent_key_held (id, subject, fingerprint, session_id, kind, "
-                     "what, path, detail, work_id, held_at, state) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                     (hid, subject, fingerprint, session_id, kind, what[:300], path,
-                      json.dumps(detail or {}, sort_keys=True), work_id, now, HELD))
-        return _held(conn.execute("SELECT * FROM agent_key_held WHERE id=?",
-                                  (hid,)).fetchone()), True
+        row = {"id": _held_id(), "subject": subject,
+               "fingerprint": fingerprint, "session_id": session_id, "kind": kind,
+               "what": what[:300], "path": path, "detail": json.dumps(detail or {}, sort_keys=True),
+               "work_id": work_id, "held_at": float(now), "state": HELD, "settled_at": None}
+        doc["held"].append(row)
+        w.changed(where, "held")
+        return _held(row), True
+    return agent_record.change(run)
 
 
 def held(subject: Optional[str] = None, state: str = HELD) -> list[Held]:
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=?" +
-                            (" AND subject=?" if subject else "") + " ORDER BY held_at",
-                            (state, subject) if subject else (state,)).fetchall()
-    return [_held(r) for r in rows]
+    rows = [h for h in _all_held() if h.get("state") == state
+            and (not subject or h.get("subject") == subject)]
+    return [_held(h) for h in sorted(rows, key=lambda h: h["held_at"])]
 
 
 def held_for(fingerprint: str = "", session_id: str = "") -> list[Held]:
     """Everything still held that this key signed or this session claimed."""
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_key_held WHERE state=? AND ((fingerprint!='' "
-                            "AND fingerprint=?) OR (session_id!='' AND session_id=?)) ORDER BY "
-                            "held_at", (HELD, fingerprint, session_id)).fetchall()
-    return [_held(r) for r in rows]
+    rows = [h for h in _all_held() if h.get("state") == HELD and (
+        (h.get("fingerprint", "") != "" and h.get("fingerprint") == fingerprint)
+        or (h.get("session_id", "") != "" and h.get("session_id") == session_id))]
+    return [_held(h) for h in sorted(rows, key=lambda h: h["held_at"])]
 
 
 def settle(held_id: str, state: str, now: Optional[float] = None) -> bool:
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        return bool(conn.execute("UPDATE agent_key_held SET state=?, settled_at=? WHERE id=? AND "
-                                 "state=?", (state, now, held_id, HELD)).rowcount)
+    where = next((p for p, d in CACHE.docs(".hold")
+                  if any(h.get("id") == held_id for h in d.get("held") or ())), None)
+    if where is None:
+        return False
+
+    def run(w: agent_record.Writer) -> bool:
+        doc = w.doc(where)
+        row = next((h for h in (doc or {}).get("held") or () if h.get("id") == held_id), None)
+        if row is None or row.get("state") != HELD:
+            return False
+        row.update(state=state, settled_at=float(now))
+        w.changed(where, state)
+        return True
+    return agent_record.change(run)
+
+
+def _error_row(e: dict) -> dict:
+    return {f: e.get(f) for f in agent_record.ERROR_FIELDS}
 
 
 def error_package(subject: str) -> Optional[dict]:
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT * FROM agent_key_errors WHERE subject=?", (subject,)).fetchone()
-    return dict(r) if r else None
+    doc = CACHE.get(agent_record.hold_path(subject)) or {}
+    e = doc.get("error")
+    return _error_row(e) if e is not None and e.get("subject") == subject else None
 
 
 def error_subject(package_id: str) -> Optional[str]:
     """The subject an error package JARVIS made is about, or None."""
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT subject FROM agent_key_errors WHERE package_id=?",
-                         (package_id,)).fetchone()
-    return r["subject"] if r else None
+    for _p, d in CACHE.docs(".hold"):
+        e = d.get("error")
+        if e is not None and e.get("package_id") == package_id:
+            return e["subject"]
+    return None
 
 
 def set_error_package(subject: str, package_id: str, inbox_id: str,
                       now: Optional[float] = None) -> None:
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        conn.execute("INSERT INTO agent_key_errors (subject, package_id, inbox_id, made_at) "
-                     "VALUES (?,?,?,?) ON CONFLICT(subject) DO UPDATE SET package_id=excluded."
-                     "package_id, inbox_id=excluded.inbox_id, made_at=excluded.made_at",
-                     (subject, package_id, inbox_id, now))
+    where = agent_record.hold_path(subject)
+
+    def run(w: agent_record.Writer) -> None:
+        doc = w.doc(where, lambda: agent_record.new_hold(subject))
+        if doc.get("error") is None:
+            doc["error"] = {"subject": subject}
+        doc["error"].update(package_id=package_id, inbox_id=inbox_id, made_at=float(now))
+        w.changed(where, "error_package")
+    agent_record.change(run)
 
 
 def error_packages() -> list[dict]:
-    with closing(_connect()) as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM agent_key_errors")]
+    return [_error_row(d["error"]) for _p, d in CACHE.docs(".hold") if d.get("error") is not None]
 
 
 # -- work-item keys ----------------------------------------------------------------------
@@ -559,30 +536,32 @@ def add_work_key(public_key: str, work_id: str, issued_by: str,
     """A key limited to one Work item, issued by an onboarded agent (its
     principal): onboarded at once, since the agent that holds `work` vouches
     for it, with agent_rights.WORK_KEY_RIGHTS scoped to `work:<id>` and an
-    expiry WORK_KEY_LIFE_SEC on. The same key again is that row."""
+    expiry WORK_KEY_LIFE_SEC on. The same key again is that key."""
     now = time.time() if now is None else now
     try:
         public = agent_keys.normalise(public_key)
     except agent_keys.AgentKeyError as e:
         raise KeyRefused(str(e))
     fp = agent_keys.fingerprint(public)
-    with closing(_connect()) as conn, conn:
-        found = conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?", (fp,)).fetchone()
+    principal = work_principal(fp)
+
+    def run(w: agent_record.Writer) -> AgentKey:
+        _path, found = _doc_of(w, fp)
         if found is not None:
             if found["work_id"] != work_id or found["state"] == REVOKED:
                 raise KeyRefused("That key is already another's, or revoked.")
-            return _row(found)
-        principal = work_principal(fp)
-        conn.execute("INSERT INTO agent_keys (fingerprint, public_key, principal, state, "
-                     "submitted_at, onboarded_at, onboarded_by, work_id, issued_by, expires_at) "
-                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                     (fp, public, principal, ONBOARDED, now, now, issued_by, work_id, issued_by,
-                      now + WORK_KEY_LIFE_SEC))
-        _grant(conn, principal, agent_rights.WORK_KEY_RIGHTS,
-               agent_rights.WORK_SCOPE + work_id, issued_by, now)
-        _event(conn, fp, "issued", now, work=work_id, by=issued_by)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (fp,)).fetchone())
+            return _key(found)
+        doc = w.holder(principal)
+        key = _new_key(fp, public, principal, ONBOARDED, now, onboarded_at=float(now),
+                       onboarded_by=issued_by, work_id=work_id, issued_by=issued_by,
+                       expires_at=float(now + WORK_KEY_LIFE_SEC))
+        doc["keys"].append(key)
+        _grant(doc, principal, agent_rights.WORK_KEY_RIGHTS, agent_rights.WORK_SCOPE + work_id,
+               issued_by, now)
+        _event(w, agent_record.holder_path(principal), fp, "issued", now, work=work_id,
+               by=issued_by)
+        return _key(key)
+    return agent_record.change(run, by=agent_record.caller_for(issued_by))
 
 
 def renew_work_key(fingerprint: str, by: str, now: Optional[float] = None
@@ -590,25 +569,23 @@ def renew_work_key(fingerprint: str, by: str, now: Optional[float] = None
     """Another WORK_KEY_LIFE_SEC for a live work-item key, by its issuer
     alone. None when it is not one, not live, or `by` did not issue it."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        moved = conn.execute("UPDATE agent_keys SET expires_at=? WHERE fingerprint=? AND "
-                             "state=? AND issued_by=? AND principal LIKE 'workkey:%'",
-                             (now + WORK_KEY_LIFE_SEC, fingerprint, ONBOARDED, by)).rowcount
-        if not moved:
+
+    def run(w: agent_record.Writer) -> Optional[AgentKey]:
+        path, key = _doc_of(w, fingerprint)
+        if key is None or key["state"] != ONBOARDED or key.get("issued_by") != by \
+                or not str(key.get("principal", "")).startswith(WORK_KEY):
             return None
-        _event(conn, fingerprint, "renewed", now, by=by)
-        return _row(conn.execute("SELECT * FROM agent_keys WHERE fingerprint=?",
-                                 (fingerprint,)).fetchone())
+        key["expires_at"] = float(now + WORK_KEY_LIFE_SEC)
+        _event(w, path, fingerprint, "renewed", now, by=by)
+        return _key(key)
+    return agent_record.change(run, by=agent_record.caller_for(by))
 
 
 def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
     """The live work-item keys, of one item or all."""
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM agent_keys WHERE principal LIKE 'workkey:%' AND "
-                            "state=?" + (" AND work_id=?" if work_id else "") +
-                            " ORDER BY submitted_at",
-                            (ONBOARDED, work_id) if work_id else (ONBOARDED,)).fetchall()
-    return [_row(r) for r in rows]
+    keys = [k for k in CACHE.keys() if str(k.get("principal", "")).startswith(WORK_KEY)
+            and k.get("state") == ONBOARDED and (not work_id or k.get("work_id") == work_id)]
+    return [_key(k) for k in sorted(keys, key=lambda k: k["submitted_at"])]
 
 
 # -- fresh authors (author_proof.py) -----------------------------------------------------
@@ -617,68 +594,101 @@ def bind_author(author: str, package_sha: str, now: Optional[float] = None) -> s
     """Bind one author session to one package's bytes, the first time it
     vouches; the SHA-256 it is bound to (this one, or the earlier package's)."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        conn.execute("INSERT INTO agent_author_proofs (author, package_sha, bound_at) VALUES "
-                     "(?,?,?) ON CONFLICT(author) DO NOTHING", (author, package_sha, now))
-        return conn.execute("SELECT package_sha FROM agent_author_proofs WHERE author=?",
-                            (author,)).fetchone()["package_sha"]
+    session = agent_record.author_session(author)
+    doc = CACHE.get(agent_record.agent_path(session)) or {}
+    bound = next((p for p in doc.get("author_proofs") or () if p.get("author") == author), None)
+    if bound is not None:
+        return bound["package_sha"]
+
+    def run(w: agent_record.Writer) -> str:
+        doc = w.agent(session)
+        found = next((p for p in doc["author_proofs"] if p.get("author") == author), None)
+        if found is not None:
+            return found["package_sha"]
+        doc["author_proofs"].append({"author": author, "package_sha": package_sha,
+                                     "bound_at": float(now)})
+        w.changed(agent_record.agent_path(session), "author_bound")
+        return package_sha
+    return agent_record.change(run, by=records.by(AGENT + session))
 
 
 # -- the cut-over guard's record (legacy_access.py) --------------------------------------
 
 def setting(name: str) -> Optional[tuple[str, float]]:
     """(value, when it was set) of one named fact, or None."""
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT value, at FROM agent_key_settings WHERE name=?",
-                         (name,)).fetchone()
-    return (r["value"], r["at"]) if r else None
+    doc = CACHE.get(agent_record.KEY_SETTINGS) or {}
+    found = next((s for s in doc.get("settings") or () if s.get("name") == name), None)
+    return (found["value"], found["at"]) if found is not None else None
 
 
 def set_setting(name: str, value: str, now: Optional[float] = None,
                 keep: bool = False) -> None:
     """Set one named fact (with `keep`, only if it is not set yet)."""
     now = time.time() if now is None else now
-    with closing(_connect()) as conn, conn:
-        conn.execute("INSERT INTO agent_key_settings (name, value, at) VALUES (?,?,?) "
-                     + ("ON CONFLICT(name) DO NOTHING" if keep else
-                        "ON CONFLICT(name) DO UPDATE SET value=excluded.value, at=excluded.at"),
-                     (name, value, now))
+    if keep and setting(name) is not None:
+        return
+    path = agent_record.KEY_SETTINGS
+
+    def run(w: agent_record.Writer) -> None:
+        doc = w.doc(path, lambda: agent_record.new_settings(path))
+        found = next((s for s in doc["settings"] if s.get("name") == name), None)
+        if found is not None:
+            if keep:
+                return
+            found.update(value=value, at=float(now))
+        else:
+            doc["settings"].append({"name": name, "value": value, "at": float(now)})
+        w.changed(path, "setting")
+    agent_record.change(run)
 
 
 def count_legacy(label: str, now: Optional[float] = None) -> None:
     """One request admitted on an access key, counted by day. Never raises."""
     day = time.strftime("%Y-%m-%d", time.localtime(time.time() if now is None else now))
+    path = agent_record.LEGACY_SETTINGS
+
+    def run(w: agent_record.Writer) -> None:
+        doc = w.doc(path, lambda: agent_record.new_settings(path))
+        found = next((a for a in doc["admissions"] if a.get("day") == day
+                      and a.get("label") == label), None)
+        if found is not None:
+            found["count"] = int(found["count"]) + 1
+        else:
+            doc["admissions"].append({"day": day, "label": label, "count": 1})
+        w.changed(path, "admitted")
     try:
-        with closing(_connect()) as conn, conn:
-            conn.execute("INSERT INTO legacy_admissions (day, label, count) VALUES (?,?,1) "
-                         "ON CONFLICT(day, label) DO UPDATE SET count=count+1", (day, label))
-    except sqlite3.Error:
+        agent_record.change(run)
+    except Exception:
         pass
+
+
+def _admissions() -> list[dict]:
+    doc = CACHE.get(agent_record.LEGACY_SETTINGS) or {}
+    return list(doc.get("admissions") or ())
 
 
 def legacy_counts(days: int = 7, now: Optional[float] = None) -> dict[str, int]:
     """Access-key admissions by label over the last `days` days."""
     now = time.time() if now is None else now
     since = time.strftime("%Y-%m-%d", time.localtime(now - (days - 1) * 86400))
-    with closing(_connect()) as conn:
-        rows = conn.execute("SELECT label, SUM(count) AS n FROM legacy_admissions WHERE day>=? "
-                            "GROUP BY label ORDER BY label", (since,)).fetchall()
-    return {r["label"]: r["n"] for r in rows}
+    out: dict[str, int] = {}
+    for a in _admissions():
+        if a["day"] >= since:
+            out[a["label"]] = out.get(a["label"], 0) + int(a["count"])
+    return dict(sorted(out.items()))
 
 
 def first_legacy_day() -> Optional[float]:
     """The start of the first day an access-key admission was counted."""
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT MIN(day) AS d FROM legacy_admissions").fetchone()
-    if not r or not r["d"]:
+    days = [a["day"] for a in _admissions() if a.get("day")]
+    if not days:
         return None
-    return time.mktime(time.strptime(r["d"], "%Y-%m-%d"))
+    return time.mktime(time.strptime(min(days), "%Y-%m-%d"))
 
 
 def last_legacy_day_end() -> Optional[float]:
     """The end of the last day an access-key admission was counted."""
-    with closing(_connect()) as conn:
-        r = conn.execute("SELECT MAX(day) AS d FROM legacy_admissions").fetchone()
-    if not r or not r["d"]:
+    days = [a["day"] for a in _admissions() if a.get("day")]
+    if not days:
         return None
-    return time.mktime(time.strptime(r["d"], "%Y-%m-%d")) + 86400
+    return time.mktime(time.strptime(max(days), "%Y-%m-%d")) + 86400

@@ -52,8 +52,21 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **TTS**: Fish Audio with JARVIS voice model
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
-  `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
+  `run_store.py` (a document per run, its output a file) + `run_executor.py`, surfaced at `/api/runs`,
   `/ws/runs`; the React workspace is the focus of user-interface development
+- **Records**: every record JARVIS keeps (runs, messages, Work, workflows,
+  packages, agents and keys, attention, folders, projects, language
+  documents, usage, settings) is a document in the knowledge engine, reached
+  only through `records.py` (`get`, `scan`, `count`, `history`, and
+  `atomic(fn)`: a unit whose every read is a condition of its write, run
+  again when one fails, `unit.after` for what is announced once it landed);
+  SQLite is retired. A record's events are its versions (`events` on each,
+  tagged with who acted and the kind of change). The first start after the
+  move copies `data/jarvis.db` into the engine once and proves it both ways
+  (`records_cutover.py`), leaving the file untouched;
+  `python -m jarvis.knowledge export-sqlite --out <file>` writes the records
+  back to SQLite. Tests get a throwaway in-process engine each
+  (`conftest._records_in_a_throwaway_engine`).
 - **Internal tool channel**: the brain reaches JARVIS's tools (session
   listing, steering, etc.) via a stdio MCP child that forwards
   `tools/call` to `POST /internal/tool` over loopback HTTP, bearing the
@@ -76,11 +89,12 @@ this presents as "the UI is up but nothing works" rather than as an error.
   `/internal/tool`. Access keys, which agents carried before
   (`access_keys.py` is gone), are accepted only while the cut-over guard
   waits (`legacy_access.py`): until none in `access-keys.json` has been
-  used for seven days (counted per day and label in `legacy_admissions`,
+  used for seven days (counted per day and label in the
+  `/settings/legacy-admissions.settings` document,
   watched for at least seven days), each still opens its categories'
   routes as `BY_ACCESS_KEY`, recorded as `key:<label>`; the first look
   that finds the guard satisfied records the cut-over
-  (`agent_key_settings`), for good. `agent_keys` and `GET /api/agent-keys`
+  (`/settings/agent-keys.settings`), for good. `agent_keys` and `GET /api/agent-keys`
   say where it stands. The one route open with
   no credential is `POST /api/agent-keys`, a new agent's key submission,
   which only records a pending key; a key JARVIS holds but has not
@@ -96,9 +110,14 @@ Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
 `ssh_keygen`-marked tests run the real one): the private half is a 0600
 file in `<its config home>/jarvis/agent-keys/<session id>/` and never
 leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
-only public keys (`agent_key_store.py`, schema `agent_keys_schema`: keys,
-`agent_rights`, `agent_key_events`, the held things and error packages;
-`legacy_admissions` counted access-key use until the cut-over). `python -m
+only public keys (`agent_key_store.py` over `agent_record.py`'s documents:
+an agent's keys, rights, author proofs and steers are its one `agent`
+document, `/agents/<session id>.agent`, with its list row as `agent` and
+each key change one version's `events`; a work-item key is
+`/keys/work/<fingerprint>.workkey`; the held things and error package are
+`/keys/holds/<subject>.hold`; every read comes from the in-memory
+`agent_record.CACHE`, refreshed by every write, so the gate never waits on
+the engine). `python -m
 jarvis.agent_key init` makes it and `submit` posts it to `POST
 /api/agent-keys`, signed by itself (`jarvis-key-submit@v1`); a key is
 `pending` until its claimed session's own transcript (never a subagent's,
@@ -144,8 +163,8 @@ holds as onboarded, never one the file names.
 Anything signed by a key that is not an onboarded agent's (unknown,
 pending, waiting, revoked, or a held key's signature that does not check),
 and after the cut-over anything unsigned, goes to ONE function,
-`server._unrecognised_key` (Tim's answer, Q3): held (`agent_key_held`,
-migration 2; a package's zip kept in `data_paths.held_dir()`, a message's
+`server._unrecognised_key` (Tim's answer, Q3): held (the subject's `hold`
+document; a package's zip kept in `data_paths.held_dir()`, a message's
 words in the hold, a report refused), the Work item it is for put in Error
 (`work_store.ERROR`, raised and cleared only by JARVIS, `JARVIS_KINDS`,
 red on the page), and an error package made for Tim (`key_error_package.py`,
@@ -155,7 +174,7 @@ tried, what it tried to send and when, and offering his two acts: switch
 the agent on (only while its key waits) or refuse and revoke the key. The
 page's buttons save `results/act.json` through the frame's bridge, and
 `_key_error_act` does it as his click (only for an error package JARVIS
-made, `agent_key_errors`); by voice they are `set_agent_active` and
+made, the hold's `error`); by voice they are `set_agent_active` and
 `revoke_agent_key`. Onboarding releases the holds (`_release_held`: the
 package received again, the message recorded as sent, `_record_message`), refusing drops them
 (`_refuse_held`); either way the error package closes and the Work item
@@ -254,9 +273,12 @@ again. The refusal tells the brain to ask and wait for his yes, or to read it
 back again.
 
 ## Messages to sessions
-Every message JARVIS sends a session (`steer_session`) is one row of the
-`messages` table in `run_store.py`, written when it is staged and BEFORE it is
-sent, then updated at each step; its status is `run_store.MessageStatus`
+Every message JARVIS sends a session (`steer_session`) is one `message`
+document (`message_records.py`, `/agents/<session id>/messages/m<id>.message`,
+through `run_store.py`'s message functions), written when it is staged and
+BEFORE it is sent, then written again at each step, each step a version; its
+conversation items (the TO_AGENT, the agent's ANSWER) are in the same
+document; its status is `run_store.MessageStatus`
 (`staged`, `queued`, `cancelled`, `sent`, `delivered`, `working`, `answered`,
 `failed`). Messages go one per turn: one to a session that is mid-turn, or
 that has an earlier message queued or still open, is `queued` on record
@@ -289,15 +311,17 @@ follows on from where it stopped. The brain reads the record with
 `list_messages` and a stored answer with `read_message_reply`;
 `read_session_reply` still reads whatever a session said last. Keystrokes
 (`answer_dialog`), Terminal commands and refused attempts that never formed a
-message (no session, no capture) stay in the `steers` table.
+message (no session, no capture) stay in the agent document's `steers`.
 
 ## One channel
 `docs/planning/one-channel/design.md` is the plan: every message to and from
 Tim in one record. Phase 1 is in: `conversation_log` keeps each item's
 counterpart (`Counterpart`: agent, person, workflow, work, package; its
 ref), and each message to him the proof that admitted it (`PROOFS`) and its
-source row (`conversation_schema` migration 2 put the items already on
-record in their agent's thread). `conversation_log.inbound` is the one way
+source row. A message to or from a counterpart and its items are one
+`message` document; what Tim and JARVIS said is one `turn` each
+(`/conversation/<date>/<id>.turn`); threads, the conversation and recall are
+queries over both (`message_records.py`). `conversation_log.inbound` is the one way
 a message to him is recorded and refuses one without proof (`Unproven`);
 `outbound`, `thread_of` and `threads` are its other half. An agent's answer
 (proof `watcher`) and a session message (its own proof) go through it
@@ -455,10 +479,11 @@ check only reports whether it is there and current.
 
 ## The workflow monitor
 A long workflow (a phased build, a run of several agents) reports every
-step to one durable record, `workflow_store.py`: `workflow_events` is
-append-only and is the truth, and the workflow's status, its phases and
-tasks, and its open waits, decisions and blockers are updated in the same
-transaction as each event, by `record`, the only writer. Going quiet
+step to one durable record, `workflow_store.py`: one document per
+workflow, `/workflows/<id>.workflow` (records), holding its status, its
+phases and tasks and its open waits, decisions and blockers, its events
+the document's versions, each event and the state it brings one write, by
+`record`, the only writer. Going quiet
 (running, with no event for `SILENT_AFTER_SEC`; a workflow that has said it
 is waiting is waiting, not quiet) is worked out when it is read, never
 stored. Sessions report with `workflow_report.py --as <session id>`, signed
@@ -495,9 +520,9 @@ signs it off) or `package:<id>:<decision>`; anything else stays words. His
 answer by any route (the workflow's or a Work item's decision, page or
 voice; a package decision through its decide.py, `_inbox_recount`; his
 finishing with a package) ends every wait linked to it in the same
-transaction as the answer (`wait_links.settle`, called by the store's own
-writer; a package's, recorded by its own script, in a transaction of its
-own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
+write as the answer (`wait_links.settle`, staged in the answer's own
+`records.atomic` unit across the Work, workflow and package documents; a
+package's, recorded by its own script, in a unit of its own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
@@ -549,8 +574,7 @@ decision is answered by Tim alone. The route records the asker of every
 report as its signing key's principal (`work_api.asker`,
 `reporters.recorded`; `answers` also accepts an access-key label the agent
 was onboarded under, `reporters.aliases`), never what the report says
-(`work_events.reporter` and each piece's latest, `work_pieces.reporter`,
-migration 6, shown as "reported by <name>" on pieces and events). A
+(each event's `reporter` and each piece's latest, the piece's `reporter`, shown as "reported by <name>" on pieces and events). A
 withdrawn decision (from before) is no longer open or counted, and is kept
 beside the answered ones (`answered`, `where` = `withdrawn`). An item closed
 (`work_report.py close`, kind `closed`, `closed_at`; nothing more is
@@ -579,7 +603,8 @@ names its `subagents/agent-<id>.jsonl`; `work_store.subagent_of`), and its
 own files are live evidence: the server's `_subagent_now` (the sessions
 snapshot's `read_subagents` state and its last tool or line, through
 `work_store.look_up_live_with`) makes the piece, and so its item, read
-`working` (it glows) while it is written within `AGENT_ACTIVE_WITHIN_SEC`,
+`working` (it glows) while it is working by the one definition (see
+"Agent activity"),
 with its name and what it is doing now (`live`); finished or stale, the
 piece reads activity_unknown and says so. It is read from its own file by
 id (`session_watch.read_subagent`), never from the snapshot's capped list
@@ -592,8 +617,10 @@ stopped task:", a monitor counting at most `MONITOR_MAX_SEC`), it is
 (`work_store._item_live`): a subagent working on a piece makes the item
 Working, one waiting on its background work keeps the item moving (never
 Stalled) and reads "Waiting on <name>'s background work"; either way the
-item's `live` line is that subagent's, on its row and in its header. Any other working report is a
-claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Activity unconfirmed",
+item's `live` line is that subagent's, on its row and in its header. A
+piece on a session (`agent:<session id>`) reads Working the same way, while
+that session's turn is open. Any other working report is a
+claim, never telemetry, so it is never shown as Working: it reads `activity_unknown` ("Not working now",
 `work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
 piece and on an item alike. An item reads activity_unknown while a piece
 claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
@@ -667,10 +694,11 @@ link to an answer". Every answer of his is written for its asker to
 outbound only, nothing watches it), and `work_report.py answers --since
 <time>` (`GET /api/work/answers`, in the `work` key category) lists every
 answer to the calling key's own decisions. The Workflows view stays below the list, under its
-own heading. The record is `work_store.py` (schema `work_schema`, through
-`run_store.migrate`): `work_events` is append-only and the truth;
-`work_items`, `work_pieces` and `work_decisions` are updated in the same
-transaction by `create` and `record`, the only writers. An item wraps a
+own heading. The record is `work_store.py`: one document per item,
+`/work/<id>.work` (records), its pieces and decisions inline and its events
+the document's versions (`records.history(path, fields=["events"])`;
+`latest` reads only the newest versions); every change and its event one
+write, by `create` and `record`, the only writers. An item wraps a
 ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
@@ -765,7 +793,7 @@ that does not offer it). The runtime follows the team connection
 (`MessagingRuntime.follow_once`, every `FOLLOW_EVERY_SEC`): it starts its
 loops once signed in to such a server and stops them once signed out.
 Signed out, Settings, Team says in one line that signing in turns messaging
-on. The old `human_switch` table is kept and nothing reads it. A JARVIS
+on. The old `human_switch` row is kept and nothing reads it. A JARVIS
 trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s). A message to a
 person goes the agents' way (`transmission.py`): drafted (the page or the
 brain's `draft_message`), reviewed on a capture of its own whose text is
@@ -776,7 +804,11 @@ reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on
 record as `submitting`; an edit after review makes a new revision that
 must be reviewed again. `messaging_runtime.py` builds the one store
-(`messaging_store.py`), file snapshots (`messaging_files.py`), guard,
+(`messaging_store.py`: one `message` document per message from draft to
+accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
+each step a version; a `thread` document per thread, its work state,
+waiting command and review checklist; the sync position a `settings`
+document), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
 announcer (`arrival_announcer.py`: each arrival an attention item, its
@@ -809,11 +841,14 @@ SHA-256 are the manifest's now, and otherwise its state (`remote_only`,
 `downloading`, `missing`, `changed`, `moved`, `failed`) with `intended_path`,
 which is never a saved file. `ensure_local` fetches through the existing
 downloader and verifies again, on the owner's word; nothing is unpacked,
-opened or run. Its table `attachment_locations` keeps where each file was
-verified (how a changed downloads folder reads as `moved`) and, when a work
-package was unpacked from it, the zip's hash, the folder and the members
-its manifest names; `attachment_leases` keeps a file an agent holds (a run
-while active, a message to a session while open) from `FileSnapshots.cleanup`.
+opened or run. The file's one `file` document
+(`/people/<github id>/files/<id>@<server>.file`, written through
+`messaging_files.change_file`) keeps its snapshot and download states, where
+it was verified (`location`: how a changed downloads folder reads as
+`moved`) and, when a work package was unpacked from it, the zip's hash, the
+folder and the members its manifest names; its `leases` keep a file an agent
+holds (a run while active, a message to a session while open) from
+`FileSnapshots.cleanup`.
 `GET`/`POST /api/team/messages/{m}/files/{a}/location`, the brain's
 `attachment_location` and the acting `make_attachment_local` and
 `reveal_attachment` give the same JSON (name and path in the untrusted
@@ -888,8 +923,8 @@ unchanged. A package runs one of three ways, package.json's `runs`
 (`work_packages.MODES`): `conversation` (the default, as above: the brain
 follows its `skill`), `agent` and `page`. An agent package's `brief` is
 carried out by one run through `RunExecutor` in its folder, started by the
-acting `run_package_agent` and recorded in `runs.package_id` (added by
-`run_store.init_db`'s column backfill; one active run per package, and a
+acting `run_package_agent` and recorded in the run's `package_id` (a run
+written before it reads None; one active run per package, and a
 retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
 he agrees. A page package's
@@ -1043,10 +1078,9 @@ the route, which checks the signature first and then refuses any other
 package for a work item that asks nothing (`asks_him`). One that names no
 work item may ask nothing. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
-writer of `package_inbox` (one row per arrival) and
-`package_inbox_events` (each change, no words of the package), schema
-`package_inbox_schema` (`run_store.migrate`), each change one transaction
-with its revision, before any hint (`packages`, and `work` when it names a
+writer of its record: one document per arrival,
+`/packages/<inbox id>.package` (records), each change (no words of the
+package) one version of it, one write with its revision, before any hint (`packages`, and `work` when it names a
 work item). States `arrived -> opened -> answering -> answered ->
 closed` (`signed_off`, `dismissed`, `superseded`). The same bytes while open
 are the same row; an open package of the same name from the same sender
@@ -1195,7 +1229,7 @@ review and yes is a new digest and a new review. The recipient's
 openability is a receipt kind (`openability`, one `OpenabilityReport` per
 file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
 the inspection service's observations per (message, file, revision)
-(`human_openability`, messaging store schema 3; a listing that already
+(the message document's `openability`; a listing that already
 shows a member with no reader is `partial` before anything is tried on it,
 and a review's progress is only worked out on a thread whose task was asked
 of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
@@ -1210,12 +1244,12 @@ snapshots (`DraftFiles`) with the same inspection service, derives what
 the message needs, and judges each of the recipient's nodes on its own:
 blocked, ready, partial or unknown, with only the gaps the sender can act
 on; a review of a draft with files stores it with the revision
-(`human_preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
+(the message document's `preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
 `LocalMessaging.edit_bundle`), adds companions beside the original
 (`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
 thread with a flattened copy checked member by member, or companions,
 from `FileSnapshots.original_bytes`), and keeps the recipient's review
-checklist (`human_review`, never sent), resumed across a repair: an item
+checklist (the thread document's `review`, never sent), resumed across a repair: an item
 read on the replaced file carries to the repaired copy's member only when
 `BundleInspection.member_digest` (the member's SHA-256, under the archive
 budgets) is the same on both, never on the path alone; each
@@ -1353,8 +1387,9 @@ Workflow tool starts one level deeper, a folder per run, in
 each one's `workflow_run`, None for the rest; the workflows folder and each
 run folder are entered only when not a symlink). Finished means its last
 message is the assistant's with `stop_reason: end_turn`; otherwise it is
-`working` while written within `AGENT_ACTIVE_WITHIN_SEC`, else `stale`, which
-claims neither. Deduped by name across roots, capped at `MAX_AGENT_FILES`
+`working` while written within `SUBAGENT_TURN_SILENT_SEC` (ten minutes: a
+tool call or a long answer writes nothing meanwhile), else `stale`, its
+turn taken as stopped. Deduped by name across roots, capped at `MAX_AGENT_FILES`
 (a floor when capped, counting both levels), never through a symlink,
 never raising. They ride on
 the sessions snapshot (`subagents`), and `/api/sessions/{id}/transcript
@@ -1366,10 +1401,49 @@ to a running workflow is in that workflow's detail (`subagents` on
 Agents panel shows "2 working" on an agent's box. An `agents` and a
 `workflows` hint go out when any session's subagents change.
 
+## Agent activity
+Working has one definition, `worker_inventory.working`: a turn is open,
+waiting on the model and running a tool included. A session works while
+`session_status` says `working` (its transcript's turn markers), a subagent
+while `session_watch._subagent_at` says so (not finished, written within
+`SUBAGENT_TURN_SILENT_SEC`), JARVIS's brain while a turn of it is open
+(`brain_activity`'s open turns, which is the main orb's thinking), a managed
+run while it runs. Waiting on his permission is not working. The inventory
+(`/api/workers`, `worker_inventory.build`, read by every page each second)
+gives each worker `activity.working` and `phase` (`model` or `tool`), and
+`worker_activity.settle` makes every other field agree with it; nothing is
+`unknown`. Every surface reads that answer and none works it out again
+(`workers.ts` `isWorking`, `workingOnItem`): the main orb (`jarvis.ts`), the
+Agents list's orbs and "N working" line (`WorkerFamily`: its subagents
+working, nothing while none are), the brain count in the left column (the
+provider's working count: sessions, subagents, the brain and runs), each
+Work row's one orb at its right end (`WorkRowActivity`: still while nobody
+works on the item, else how many of its agents work on it), the piece
+owners' orbs, Work's Working (`server._subagent_now`), workflows and
+`list_agents`. An agent works on a Work item only through a piece of it in
+progress (`work_store.in_progress`, mirrored by `workers.ts`
+`pieceInProgress`): a piece reported working, or a planned or ready piece a
+subagent was put on, while its owner is in a turn. An agent busy elsewhere
+never makes a piece in review, done, blocked or waiting on him read
+working: not the item's state, its live line, Approve, nor the row's orb
+(no live lookup is made for such a piece). A late session snapshot keeps its last states (a gap says it
+is late). `session_watch._background_tasks` keeps every subagent file in its
+cache and reads only what a transcript appended, so a poll stays well under
+a second with hundreds of subagent files.
+
 ## Voice diagnostics
-How voice input is doing is one durable record, `voice_diagnostics.py`:
-`voice_samples` (one a second while a page listens, taken as the page's
-`telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
+How voice input is doing is one durable record, `voice_diagnostics.py`, kept
+as Content files, a file every half hour on the clock each
+(`data/voice/<local date>/<HHMM>.samples.jsonl` and `<HHMM>.events.jsonl`,
+one JSON line each, appended off the audio path and indexed in memory as
+they grow; a file is closed, made read-only (`closed_files.py`), once the
+next is made, and within a minute of its half hour ending (`Closer`), and
+the content ingest reads it only then, once: the events file as text, the
+samples file as its summary fields only, `samples_summary`, no vectors;
+a run's output stream is closed the same way when the run finishes):
+samples (one a second while a page
+listens, taken as the page's
+`telemetry` arrives on `/ws/transcribe`) and events (each capture's
 start and end, reconnects, every failure with the cause in force and the
 busiest processes, each drop of audio the page held (`dropped`, its reason
 and the seconds lost, reported on the abort and counted as a drop), every line of text the page showed, and each switch of
@@ -1377,7 +1451,8 @@ speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
-kept 7 days, events 30. The page gets `health` once a second back on the same
+kept 7 days, events 30 (a file deleted once all of it is past, never
+written again). The page gets `health` once a second back on the same
 socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
 `/ws/sessions` says when to read again. The Diagnostics tab draws a summary
 (`VoiceSummary.tsx`) and the centre area's Diagnostics view the detail
@@ -1397,7 +1472,7 @@ which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 `team_client`'s status and is never worse than `degraded`, since JARVIS works
 without a team server; the left column shows it too (`TeamServerTile.tsx`). Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
-from records that already exist (the `messages` table, the workflow record,
+from records that already exist (the message documents, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
 session watcher's last poll and failures in a row, the brain, each Fish
 synthesis and each `/internal/tool` request, and a heartbeat per `_every`
@@ -1464,19 +1539,20 @@ only). Recording never raises into the caller. At most
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
 where they are and nothing here creates, moves, edits or deletes one. The
-record is in the existing database (`data_paths.db_path()`) under its own
-schema version (`folder_schema`, migrated with `run_store.migrate`, the
-helper human messaging uses too): `folders` (label, role, active or removed,
-a revision), `folder_locations` (node from `data_paths.node_id()`, path as
-given and canonical, filesystem identity as evidence, availability; one
-current location per folder, a reconnect retires it and adds the next
-location revision), `folder_access_scopes` (the reader and policy version;
-discovery never writes one), `folder_candidates` and `folder_observations`
-(what discovery found and why, kept after a session ends),
-`folder_location_events`, `folder_registrations` (request keys) and
-discovery's progress. There are no project tables yet: projects come in a
-later migration and refer to these IDs. `folder_store.py` is the only writer,
-one transaction per change, the revision moved inside it; it reads no
+record is documents in the engine (`records.py`): one `folder` document per
+folder at `/folders/<id>` (its files' Content items are below it), holding
+its label, role, active or removed and a revision, its locations (node from
+`data_paths.node_id()`, path as given and canonical, filesystem identity as
+evidence, availability; one current location, a reconnect retires it and
+adds the next location revision), each with its access scopes (the reader
+and policy version; discovery never writes one), its registration request
+keys, and its location events as its versions; `proposal` documents for
+what discovery found and why (`/proposals/folders/`,
+`/proposals/folder-sessions/`, kept after a session ends); and discovery's
+progress (`/settings/folder-discovery.settings`, the transcripts read under
+`/folders/discovery-history/`). Projects refer to these IDs.
+`folder_store.py` is the only writer, one write per change, the revision
+moved inside it; it reads no
 transcript and checks no permission.
 
 Which reader may read a folder is decided by where it is, never by its role
@@ -1518,8 +1594,8 @@ a folder through `spawn_run`'s `folder_id` (never together with `project`):
 `FolderService.work_location` gives the folder's current canonical location
 under the same checks as a read (active, enabled, this node's, available,
 the reader the policy still gives it) and only for a FILES reader, never a
-history or notes one. The run records it in `runs.folder_id` (added by
-`run_store.init_db`'s column backfill), and a retry goes through
+history or notes one. The run records it in its `folder_id` (a run written
+before it reads None), and a retry goes through
 `work_location` again. `start_build` takes projects only: `build_status`,
 `review_document` and `approve_document` find a build by its project. Every
 committed change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
@@ -1528,18 +1604,19 @@ centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
 ## Project records
-His projects are records of truth in JARVIS's database under their own
-schema (`project_schema`), with `project_store.py` the only writer, one
-transaction per change and a `project_events` line for each: projects
-(name, spoken key, notes slug, summary, lifecycle), the legacy names that
-resolve to one (`project_aliases`, `project_for_legacy`), the registered
-folders each is made of (`project_folders`: part, at most one home, what
-the knowledge engine may read), pieces of work spanning projects (`works`,
-one primary project), accomplishments (`proposed`, then `confirmed` or
-`withdrawn`; only confirmed ones count) and bindings. `project_seed.py`
+His projects are records of truth, one `project` document each
+(`/projects/<id>.project`), with `project_store.py` the only writer, one
+write per change, each a version carrying its events: the project (name,
+spoken key, notes slug, summary, lifecycle), the legacy names that resolve
+to it (`aliases`, `project_for_legacy`), the registered folders it is made
+of (`folders`: part, at most one home, what the knowledge engine may read),
+its accomplishments (`proposed`, then `confirmed` or `withdrawn`; only
+confirmed ones count) and bindings; pieces of work spanning projects are
+`work` documents at `/work/works/<id>.work` (one primary project), and
+candidates `/proposals/projects/<id>.proposal`. `project_seed.py`
 makes candidates, never projects: one per registered source folder, with
-the legacy project strings (runs, workflows, messages, session messages,
-memory slugs) as evidence; each is an attention item and becomes a project
+the legacy project strings (runs, workflows, messages to sessions, memory
+slugs, read through their stores) as evidence; each is an attention item and becomes a project
 only on his Accept (the Folders tab's Projects, `ProjectsSection.tsx`) or
 his word (`change_project_candidate`). `project_service.py` is the one
 service the page's `/api/project-records*` and `/api/works*`
@@ -1593,22 +1670,140 @@ A document store, a typed graph, a keyword index and a vector index in a
 process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
 which imports nothing from `server.py`); the design is
 `docs/planning/work-package-bundles/design.md` and the build order
-`build-plan.md` beside it. It holds nothing that cannot be rebuilt from
-JARVIS's records, notes and folders, and `python -m jarvis.knowledge rebuild`
-drops it. Off unless `JARVIS_KNOWLEDGE` is on: then `knowledge_runtime.py`
-starts it after startup settles through `knowledge_client.Supervisor`
-(loopback only, its own token, `knowledge-address.json`, restarts after 1, 5
-and 30 s, down after three in ten minutes) and paces it every second: hold
-while the conversation floor is not idle or the CPU is over 70 percent. Ingest
-is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
-stopped and continued with the pace; it reads the brain's notes, the
-conversation log, finished runs, workflow events and registered folders'
-Markdown (through `folder_service`, FILES reader only) and keeps each source's
-watermark in the engine (stamped with `knowledge_ingest.SCHEMA`; a source
-written under another schema is read again from the start). Every chunk
-holds `at` (when it was said or written) and an agent's words their speaker
-(`agent`, a `said_by` edge to an `agent:<name>` node). Diagnostics shows its
-row (`knowledge`).
+`build-plan.md` beside it. It is moving to Tim's UDS design in three rounds
+(`docs/planning/knowledge-engine/plan-uds.md`; rounds 1, engine-core, and 2,
+content-and-search, are in):
+an item lives at one path (`knowledge/paths.py`: its type is the suffix, a
+name with none is a folder's) and the path is the key to its streams
+(`knowledge/items.py`): a document of any shape, every field indexed
+(`_kind` `item`, its system fields `kinds.ITEM_SYSTEM`), and a content
+stream (text, sections, the file's reference and hash; the bytes stay in
+their folder), written in one commit. Every write is a version tagged with
+who (`by`: person, agent, model), what kind of change and its summary, kept
+through compaction (`store.HISTORY_FAMILIES`) with `get` at a version or a
+time, `history` and `diff`; a delete is a version, only forget erases.
+Transactions of several items take conditions (`expect_version`, `absent`)
+checked under the store's commit lock, which every write takes
+(`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and
+`durable: full` empties the drive's cache before the answer. Each item
+transaction is one change-feed record keyed by its LSN. Lists by path
+prefix or parent, ordered by path or any field, with a cursor; counts and
+grouped counts; links are hierarchy (from paths), reference (a field
+holding an item path, the field path its kind) and derived (with model
+and time), each shown only while both ends are items. The routes are
+`/v1/items/*`; the Python interface is `knowledge/uds.py` (`EngineUDS`,
+`in_process` for tests; `tests/test_uds_acceptance.py` holds the ten
+acceptance checks, all switched on). Legacy documents of today's ingest
+(keys that are not paths) keep their kinds' schemas until round 3.
+Round 2: every item with content has one whole-item vector and one per
+section (`vectors.py`: an item space `<embedder>#items`, rows keyed by
+ordinal and prop, prop 0 the whole item, i + 1 section i, made from
+`items.whole_text` and `items.embedded_text`, the one definition), deleted
+in the same commit as a change of its content, so it counts as waiting
+(`count`'s `embedded` and `waiting`) until made again. The keyword index
+reads items' content too (an item's kept content is written again with
+each new document, so both share a generation); an exact phrase is its
+words' postings intersected, then checked in each section
+(`lexical.phrase_in`). `POST /v1/items/search` (`EngineUDS.search`) takes
+meaning and words (they rank) and where, phrase, linked_to, under and
+types (conditions), one hit an item with `matched_by` and the sections
+where it matched. AccessRights (`knowledge/rights.py`, family `RIGHTS`):
+grants on a path (person or `*`; data, content, write; hidden fields),
+inherited below it and only added to; the owner (`OWNER`, tim) has
+everything and alone sets rights (`/v1/items/rights`). Every items route
+names its `caller` and the gate is inside each one: no data right looks
+missing, content, sections, vectors and full-text hits need the content
+right, a condition on a hidden field matches nothing, a link shows only
+when both ends are readable, the change feed likewise. An AI caller
+(`agent` set) has its person's rights; its links are proposals
+(`/proposals/links/<id>.proposal`, `/v1/items/propose`, with agent,
+person, model and time) until the owner accepts one
+(`/v1/items/proposals/answer`). Files are content items
+(`knowledge_content.py`): every file under a registered folder (FILES
+reader, local, available, under its projects' widest index scope; off on
+every link keeps it out; in no project, docs) at
+`/folders/<folder id>/<rel>`, and JARVIS's answers, packages and received
+files at `/jarvis/<area>/<rel>`; data holds the path entry (`file`,
+`size`, `mtime`, `inode`, `sha256`), `state` (pending, indexed,
+unreadable with `reason`), `trust` and what the reader found; content the
+text and sections from `content_sections.py` (bundle_readers for PDF,
+Office, HTML and text; cut at headings, paragraphs, sentences, never
+mid-word). One long-lived child, `python -m jarvis.knowledge_content`
+(`knowledge_runtime.ContentScheduler`, the engine's pid and token on its
+stdin, then `hold` and `free`): an FSEvents watcher (`fs_watch.py`,
+ctypes on CoreServices, a GCD queue) from the last event handled (the
+engine's `content` watermark) writes path entries at once; dropped events
+scan their subtree; a stat-only backup scan runs at start, after wake and
+every six hours; reading waits while the pace holds and happens only when
+a file's bytes changed. The brain's memory, journal, project notes,
+topics and `knowledge.md` are items too, under `/jarvis/brain`
+(`brain_notes.py`, the root's `only`), each content `ref` its note
+reference; the context pack's tier 0 reads a note's item while it is the
+file as it is now (size, mtime, inode), else the file. The linker reads
+topic items (front matter from their content), makes the `topic:<slug>`
+nodes and authored links from them, and writes `mentions` as derived item
+links (model `linker`); `about` proposals are files by section count.
+Records are found by their own words: the keyword index takes an item
+without content by its text fields (`lexical.record_text`, 2,000
+characters a field, 8,000 in all). Those of the types that hold people's
+words (`lexical.RECORD_TYPES`: work, message, turn, package, project, run,
+workflow, thread, langdoc; never attention, settings or JARVIS's other
+facts) are found by meaning too (Tim's answer, option a): a whole-record
+vector and one per part (`items.record_texts`: its own text fields, then
+each object of a list such as a Work item's pieces and decisions,
+`lexical.record_parts`, a part over 1,300 characters cut; never the
+`events` a version records), their hash kept as `_words` and their rows
+deleted in the same write as a change of them, embedded by the item
+space's one background thread as content is (one entry per item, so a busy
+record's many changes cost one embedding; paused while the pace holds),
+and one hit a record in the one search. `knowledge_api.search` (the page and
+`knowledge_search`, with `phrase`) and the context pack search items only,
+each hit's trust from `knowledge_api.item_trust`. Round 3: the owner's
+`count` (with `where`, `under`, `parent`, `types`, `group_by`) comes from
+the general index's postings and the resident key column, decoding only
+items an inexact condition must check (`Items._count_by_index`); any other
+reader's count reads each item. Text is keyed by its fold cut to 128
+bytes, folding only `encoding.FOLD_FIRST` characters of a long value. The move kit
+(`knowledge_move.py`: `Mapping`, `RowMapping`, `copy`, `verify`,
+`export_sqlite`; `python -m jarvis.knowledge copy|verify|export-sqlite`)
+copies a SQLite file into the engine and back, table for table, through
+each store's `MAPPINGS` (`RECORD_MODULES`; a table none owns moves as rows
+under `/sqlite`); `jarvis/sqlite_schema.json` is the schema export-sqlite
+builds on an install that never had jarvis.db. `python -m jarvis.knowledge
+rebuild` builds indexes, vectors and cards again and never drops a
+document; a snapshot is taken before it and every day. Always up unless `JARVIS_ENGINE_AUTOSTART` is off (every test sets
+it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
+through `knowledge_client.Supervisor` (loopback only, its own token,
+`knowledge-address.json`; its stderr appended to its own log,
+`knowledge-engine.log`, kept under 1 MB) and waits up to `READY_WAIT_SEC`
+(60 s), off the event loop, for its health before serving the page. JARVIS's
+records live in it, so past that the server does not start
+(`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
+the engine's log; the decision check's failure carries the same tail). It
+listens through `loopback_http.LoopbackThreadingHTTPServer`, never the
+stdlib's bind, whose reverse lookup of 127.0.0.1 takes about 35 s on the
+macOS CI runner. The supervisor restarts it at once when it
+exits or stops answering, then after 1, 2 and 5 s (capped) while it keeps
+dying, starting over once it has stayed healthy `STABLE_AFTER_SEC`, and never
+gives up; its footprint is reported against the budget, never acted on. An
+engine not running (not up yet, restarting, not answering) is down on its
+Diagnostics row. `JARVIS_KNOWLEDGE` governs only ingest, embedding
+(`embedder.installed` is None while it is off) and the knowledge tools and
+routes (`knowledge_calls` sees no runtime, so they answer "off"). Two lanes
+(`knowledge/lanes.py`): the process runs at normal priority, and record
+reads and writes are never paused; the background lane (the maintenance
+thread: flushes on the time rule, compaction, cards; the embedding threads;
+the linker and a requested compaction) lowers its own threads
+(`QOS_CLASS_BACKGROUND` on macOS) and raises them for `Store.commit`, a
+flush and a compaction's manifest installs (`lanes.foreground`). The
+runtime paces the background lane every second: hold while the conversation
+floor is not idle or the CPU is over 70 percent. Ingest is a child of its
+own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
+stopped and continued with the pace; it makes no documents (no chunks:
+records and notes are items) and reads nothing of JARVIS's records: it
+retires, once, the chunks and documents earlier ingest made (watermark
+`retired`, `knowledge_ingest.SCHEMA` 3), hands the engine his index
+choices and runs the linker. Diagnostics shows its row (`knowledge`).
 
 Vector search: `knowledge/embedder.py`'s `RUNNER` (`installed`) gives the
 embedding model installed under the data folder, run by the runtime its
@@ -1642,6 +1837,14 @@ tier 1 with the engine's search; `work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
 `JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
+Each registered folder's files are items under `/folders/<folder id>/` in
+the engine; `knowledge_api.folder_counts` reads each active folder's count
+as Tim (`EngineUDS.count` through `Context.uds`, one request a folder within
+`FOLDER_COUNTS_DEADLINE_SEC`, `partial` past it), shown on each row of the
+centre's Folders view ("12 documents · 3 waiting", `folders.ts`
+`folderCounts`), read by `GET /api/knowledge/folder-counts` and the brain's
+`folder_document_counts`. The engine off or down is `available` false,
+never an error. Only the count: a folder or data browser is later work.
 Its process, crash and budget tests carry the `knowledge_engine` marker.
 
 ## Self-update
@@ -1709,16 +1912,18 @@ a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its
 sign-in or at its usage limit; a shell command's or keypress's outcome after
 its exact read-back) is first an item in
-`attention_store.py` (JARVIS's database, schema `attention_schema`): one
-item per source object (kind, source id), each change its next revision and
-a line of `attention_events`, JARVIS's own facts apart from other people's
-words (`untrusted`). `server._attend` is the one way in. `attention.py` is
+`attention_store.py` (documents in the engine, `records.py`): one
+`/attention/<kind>/<source id>.attention` per source object (kind, source
+id), each change its next revision and a version whose `events` holds it,
+every digest it was shown in on it (`presentations`), JARVIS's own facts
+apart from other people's words (`untrusted`); each digest is
+`/attention/digests/<id>.digest`. `server._attend` is the one way in. `attention.py` is
 the one admission policy: engaged (his last trusted interaction within
 `engagement_sec`, not away; a connected page is not engagement), the
 conversation controller's floor `idle`, `settled_exchange_sec` since it was
 last busy and since his last interaction, `digest_cooldown_sec` since the
 last digest attempt, and the oldest candidate at least `oldest_event_sec`
-old (trial values 120, 10, 120 and 60 s, settings in `attention_settings`).
+old (trial values 120, 10, 120 and 60 s, settings in `/settings/attention.settings`, held in memory).
 What changed while he was away or unknown is counted, never played. When
 all pass, one digest: the candidates' facts to the brain with other
 people's words walled, under the `digest` origin, where `/internal/tool`
@@ -1773,8 +1978,11 @@ listening. Another tab's change arrives by the `storage` event and never
 arms a tab. Mute suspends PCM to every consumer (the recogniser and a page
 package's listeners), drops the server's gathered turn and keeps its words
 as an unsent draft; Unmute starts a new capture epoch and never sends the
-old draft. His two settings are per user (`voice_control.py`, the node's
-SQLite, keyed by the signed-in member's GitHub id or `local`): "When I stop
+old draft. His two settings are per user (`voice_control.py`, one `settings`
+document a user, `/people/<github id or local>/settings/voice-input.settings`,
+held in memory: read once, refreshed by every read and change through it,
+so the voice path never waits on the engine; one not held yet is the
+defaults while a background read fetches it): "When I stop
 the microphone" (`keep` finishes only audio from before the stop, its words
 under the ordinary turn rules, never a new automatic send; `discard` throws
 away unfinished input) and "When I switch away from JARVIS" (`continue` a
@@ -2036,9 +2244,10 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
    Every exit path out of `_drive` writes a terminal status, and callers that
    create a run then hand it off must fail it if they throw before the
    executor takes ownership.
-2. **Every state transition is a DB write BEFORE it is a notification.** The
-   WebSocket is a cache-invalidation hint, never a source of truth; clients
-   reconcile against `/api/runs`.
+2. **Every state transition is a write BEFORE it is a notification.** The
+   run's document is written (and an event's line is in its file) before
+   any hint; the WebSocket is a cache-invalidation hint, never a source of
+   truth; clients reconcile against `/api/runs`.
 
 The dashboard's Retry and the brain's acting `retry_run` share `_retry_run`:
 a finished run's prompt again, resuming from it, a folder run re-checked
@@ -2122,9 +2331,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/VoiceDiagnosticsView.tsx` — Voice incidents, timeline and notification analysis
 - `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
   subsystem rows and one subsystem in full (see "Subsystem diagnostics")
-- `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
-  the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
-  commands)
+- `run_store.py` — Runs: one document each, `/runs/<id>.run`, six-value
+  status enum; each run's output stream the file `data/runs/<id>.jsonl`,
+  one JSON line per event, indexed as Content (`/jarvis/runs`); the message
+  functions over message documents (see "Messages to sessions",
+  `message_records.py`); the agents list and `steers` (keystrokes, commands)
+  are each agent's document (`agent_record.py`)
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
@@ -2150,7 +2362,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
   names as they are said (`spoken_key`: hyphens and underscores are spaces).
-  An agent has one name, the agents table's `name`
+  An agent has one name, its agent document's `agent.name`
   (`run_store.agent_names`), which the session snapshot goes by, so every
   screen, record, read-back, tool result and lookup says it. It is given
   once, when the agent is first seen (`session_watch.agent_name`: the name
@@ -2180,6 +2392,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   seam and signing, the agent's command, the record of keys and rights,
   the rights and their one check, and checking a signed request (see
   "Agent keys")
+- `agent_record.py` — The agent, work-key, hold and settings documents behind
+  the agents list, steers and agent keys: their shapes and paths, the
+  in-memory copy every hot read comes from, the one atomic write, and their
+  move from and back to SQLite
 - `legacy_access.py` — The cut-over guard: old access keys accepted until
   none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature
@@ -2206,12 +2422,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `usage_history.py` — The long-term record of the week: every seven-day
-  reading `usage_store.record` takes (schema `usage_history_schema`; the
-  five-hour window is never kept, Tim's word, and migration 2 dropped it):
-  `usage_readings` keeps each one for `RAW_KEEP_SEC` (14 days) with its
-  provider, account hash (`brain_accounts.history_ref`, NULL while unknown),
-  percentage (NULL: not measured, never 0) and reset; after that
-  `usage_hourly` keeps one summary per hour for good. `read` is
+  reading `usage_store.record` takes, one `usage` document a brain a day
+  (`/usage/<brain>/<date>.usage`; the five-hour window is never kept, Tim's
+  word): its `readings` keep each one for `RAW_KEEP_SEC` (14 days) with its
+  provider, account hash (`brain_accounts.history_ref`, None while unknown),
+  percentage (None: not measured, never 0) and reset; after that its
+  `hourly` keeps one summary per hour for good. `read` is
   `GET /api/usage/history` and the brain's `usage_history` alike: one
   brain's weeks (the running brain's when none is named), newest first,
   each its reset, start and readings. Each brain's own box in the left
@@ -2384,6 +2600,13 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   record (`running`) that `python -m jarvis.update` uses (see "Self-update")
 - `bundle_contract.py` / `bundle_inspection.py` / `bundle_readers/` — Reading a
   file someone sent (see "Collaboration bundles")
+- `knowledge_content.py` / `fs_watch.py` / `content_sections.py` — Files
+  indexed in place as engine items: the content child, the FSEvents
+  watcher and backup scan, and a file's text and sections through the
+  bundle readers (see "The knowledge engine")
+- `knowledge/rights.py` — AccessRights at paths and the gate's rules
+- `knowledge_move.py` — Copy, verify and export-sqlite between SQLite and
+  the engine (round 3's cut-over kit)
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -2418,8 +2641,9 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `FISH_API_KEY` (required) — Fish Audio TTS
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
-- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
-  database, memory Markdown, usage.json, the tool token, the running
+- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the
+  knowledge engine holding every record (`knowledge/`), runs' output and the
+  voice log as files, memory Markdown, usage.json, the tool token, the running
   server's address (`server-address.json`). Defaults to `data/`
   (`data_paths.py`). Set it to run an isolated instance without touching live
   data — the test suite gives every test a fresh one this way.
@@ -2457,12 +2681,14 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 
 - `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
   the folder catalog's routes and tools off; its records are kept
-- `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
-  engine and its ingest (see "The knowledge engine")
+- `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
+  knowledge engine (every test sets this; see "The knowledge engine")
+- `JARVIS_KNOWLEDGE` (optional, default off) — `1` turns on the knowledge
+  engine's ingest, embedding and tools; the engine itself runs either way
 - `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
   the context pack for its project (see "The knowledge engine")
 - `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
-  — the engine's memory budget; it is restarted past 1.5 times it
+  — the engine's memory budget, which its footprint is reported against
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
   background discovery and availability look (every test sets this)
 
@@ -2531,6 +2757,6 @@ A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to e
   through the same `_restart_server`, once an update is in), and the sign-in
   and connect flows that need a browser approval
 - AppleScript for Terminal and Chrome control (no OAuth needed)
-- SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
-  long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
+- Records are documents in the knowledge engine (`records.py`), never
+  SQL; long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
   the user edits it directly, so it is never a database

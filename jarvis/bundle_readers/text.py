@@ -29,14 +29,14 @@ def _units(fmt: str, text: str) -> tuple[list[_paging.Unit], tuple[str, ...]]:
         except ValueError:
             return _paging.line_units(text), ("corrupt",)
     if fmt in ("csv", "tsv"):
-        rows = _rows(text, "\t" if fmt == "tsv" else ",")
+        rows = csv_rows(text, "\t" if fmt == "tsv" else ",")
         if rows is None:
             return _paging.line_units(text), ("corrupt",)
         return rows, ()
     return _paging.line_units(text), ()
 
 
-def _rows(text: str, delimiter: str) -> Optional[list[_paging.Unit]]:
+def csv_rows(text: str, delimiter: str) -> Optional[list[_paging.Unit]]:
     """Each row's lines as one unit, or None when the csv module refuses it."""
     lines = text.splitlines(keepends=True)
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)

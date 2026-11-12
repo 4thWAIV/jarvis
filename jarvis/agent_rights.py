@@ -1,8 +1,8 @@
 """What an agent may reach: the rights, defined once, and the one check.
 
 A right is a named set of (method, path pattern) routes: the seven that
-were the access keys' categories, unchanged. A grant is one row of
-`agent_rights` (agent_key_store.py's schema): a principal (an onboarded
+were the access keys' categories, unchanged. A grant is one of the
+`rights` of its holder's document (agent_key_store.py): a principal (an onboarded
 agent, `agent:<session id>`, or a work-item key, `workkey:<fingerprint>`),
 a right and a scope. The scope is `*` for every target, or `work:<id>` for
 one Work item; `project:<name>` comes later. `allows` is the only place a

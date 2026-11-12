@@ -213,29 +213,17 @@ def test_he_can_dismiss_a_finished_workflow_at_once_and_only_once():
 
 
 
-def test_a_column_another_connection_added_first_is_not_an_error(monkeypatch):
-    """Two connections opening a new database at once both find the column
-    missing; the second to add it must take it as done, not fail."""
-    import sqlite3
-    from jarvis import run_store
-    ws._connect().close()                      # every column is there now
-    real = run_store._connect
-
-    class Stale(sqlite3.Connection):
-        def execute(self, sql, *args):
-            if sql.startswith("PRAGMA table_info(workflows)"):
-                return [r for r in super().execute(sql, *args) if r["name"] != "dismissed_at"]
-            return super().execute(sql, *args)
-
-    def stale_connect():
-        conn = sqlite3.connect(str(run_store.db_path()), factory=Stale)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    monkeypatch.setattr(run_store, "_connect", stale_connect)
-    ws._connect().close()
-    monkeypatch.setattr(run_store, "_connect", real)
-    assert ws.start("Rebrand", "denice", ["copy"])
+def test_a_workflow_is_one_document_and_its_log_is_its_versions():
+    from jarvis import records
+    wid = ws.start("Rebrand", "denice", ["copy"])
+    ws.record(_ev(wid, "phase_started", item="copy"))
+    doc = records.get(ws.path_of(wid))
+    assert doc.path == f"/workflows/{wid}.workflow"
+    assert [i["slug"] for i in doc.data["items"]] == ["copy"]
+    logged = records.history(doc.path, fields=["events"])
+    assert [[e["kind"] for e in v.data["events"]] for v in logged] == [
+        ["workflow_started"], ["phase_started"]]
+    assert [e.seq for e in ws.events(wid)] == [1, 2]
 
 
 def test_each_item_says_when_it_was_last_heard_from_and_when_a_running_one_goes_quiet():

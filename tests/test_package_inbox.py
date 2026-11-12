@@ -621,8 +621,9 @@ def test_a_message_before_he_signed_off_is_not_taken_for_his(wired, shown, marks
     inbox_id = opened_deck(wired, tmp_path, session="sess-1")
     early = run_store.create_message("sess-1", "anthropic", "chitauri", "tea", "older",
                                      capture_id=1, status=run_store.MessageStatus.SENT)
-    with __import__("sqlite3").connect(data_paths.db_path()) as conn:
-        conn.execute("UPDATE messages SET staged_at=? WHERE id=?", (time.time() - 3600, early))
+    from jarvis import records
+    records.update(run_store._message_doc(early).path, lambda d: {
+        **d, "message": {**d["message"], "staged_at": time.time() - 3600}})
     _call(wired, "sign_off_package", package=inbox_id)
     wired.server._follow_inbox_messages()
     assert package_inbox.get(inbox_id).message_id is None
@@ -789,33 +790,3 @@ def test_the_signed_request_proves_its_own_agent_s_session_alone(wired, shown, m
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.sender_evidence) == ("sess-1", "agent_key")
 
-
-def test_migration_5_leaves_no_row_waiting_to_be_proven_again(tmp_path):
-    import sqlite3
-    conn = sqlite3.connect(tmp_path / "db.sqlite")
-    conn.row_factory = sqlite3.Row
-    run_store.migrate(conn, "package_inbox_schema",
-                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 4}, "inbox")
-    conn.execute("INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
-                 "purpose, runs, state, revision, arrived_at, claimed_session, reprove) VALUES "
-                 "('r', 'p', 'x', 'n', '1', 't', 'p', 'page', 'arrived', 1, 0, 's', 1)")
-    run_store.migrate(conn, "package_inbox_schema", package_inbox._MIGRATIONS, "inbox")
-    assert [r["reprove"] for r in conn.execute("SELECT reprove FROM package_inbox")] == [0]
-
-
-def test_migration_4_marks_only_the_open_claimed_unproven_rows(tmp_path):
-    import sqlite3
-    conn = sqlite3.connect(tmp_path / "db.sqlite")
-    conn.row_factory = sqlite3.Row
-    run_store.migrate(conn, "package_inbox_schema",
-                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 3}, "inbox")
-    for n, (claimed, proven, state) in enumerate((("s", "", "arrived"), ("s", "s", "arrived"),
-                                                  ("", "", "arrived"), ("s", "", "closed"))):
-        conn.execute("INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
-                     "purpose, runs, state, revision, arrived_at, claimed_session, from_session, "
-                     "sender_evidence) VALUES (?, 'p', 'x', 'n', '1', 't', 'p', 'page', ?, 1, 0, "
-                     "?, ?, ?)", (f"r{n}", state, claimed, proven, "transcript" if proven else ""))
-    run_store.migrate(conn, "package_inbox_schema",
-                      {k: v for k, v in package_inbox._MIGRATIONS.items() if k <= 4}, "inbox")
-    marked = [r["id"] for r in conn.execute("SELECT id FROM package_inbox WHERE reprove=1")]
-    assert marked == ["r0"]

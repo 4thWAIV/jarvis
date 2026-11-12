@@ -10,9 +10,7 @@ import re
 import shutil
 import tempfile
 import threading
-import time
 from collections import OrderedDict
-from contextlib import closing
 from pathlib import Path
 
 from jarvis import language_documents as docs, language_kit as kit
@@ -218,9 +216,7 @@ def publish(service: docs.Documents, *, document_id: str, revision: str, source_
 def _publish(service: docs.Documents, *, document_id: str, revision: str, source_revision: str) -> dict:
     from jarvis import make_package, work_packages
     envelope = service.render(document_id=document_id, revision=revision, source_revision=source_revision)
-    with closing(docs._connect()) as conn:
-        previous = conn.execute("SELECT * FROM language_publications WHERE document_id=? AND revision=?",
-                                (document_id, revision)).fetchone()
+    previous = docs.publication(document_id, revision)
     if previous:
         path = Path(previous["archive_path"])
         if not path.is_file() or kit.sha256(path.read_bytes()) != previous["archive_sha256"]:
@@ -235,8 +231,6 @@ def _publish(service: docs.Documents, *, document_id: str, revision: str, source
         made = make_package.make_folder(folder, output)
     digest = kit.sha256(made.archive.read_bytes())
     package, _ = work_packages.unpack(made.archive, digest, clear_mark=lambda p: None)
-    with closing(docs._connect()) as conn, conn:
-        conn.execute("INSERT OR IGNORE INTO language_publications VALUES (?,?,?,?,?)",
-                     (document_id, revision, digest, str(made.archive), time.time()))
+    docs.record_publication(document_id, revision, digest, str(made.archive))
     return {**service.retrieve(document_id=document_id, revision=revision), "package_id": package.id,
             "archive": str(made.archive)}

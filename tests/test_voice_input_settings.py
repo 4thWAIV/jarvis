@@ -2,16 +2,17 @@
 chooses, each choice kept per user in this JARVIS's database (the team
 member signed in, else the local owner), every value checked the same way
 for the route and the brain, a change published once and never otherwise,
-and a store that cannot be read refused rather than guessed at."""
+a store that cannot be read refused rather than guessed at, and the voice
+path served from what this process holds, never waiting on the engine."""
 
-import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from jarvis import run_store, team_client, voice_control
+from jarvis import records, team_client, voice_control
 from jarvis.speech import END_OF_TURN_SEC
 
 # The cues and the pause as a user who has chosen none has them.
@@ -27,6 +28,20 @@ def published(monkeypatch):
     frames: list[dict] = []
     monkeypatch.setattr(voice_control, "_publish", frames.append)
     return frames
+
+
+def _engine_down(monkeypatch):
+    def broken(*_a, **_k):
+        raise records.RecordsUnavailable("the engine is down")
+    monkeypatch.setattr(records, "get", broken)
+    monkeypatch.setattr(records, "update", broken)
+
+
+def _saved(**fields):
+    """His record as it is kept (a moved row's columns), over what is there."""
+    path = voice_control.path_of(voice_control.LOCAL_OWNER)
+    records.update(path, lambda d: {**(d or {c: None for c in voice_control.COLUMNS}),
+                                    "user_key": voice_control.LOCAL_OWNER, "updated_at": 0.0, **fields})
 
 
 def _signed_in(monkeypatch, github_id=7, signed_out=False):
@@ -102,9 +117,7 @@ def test_settings_are_per_user_never_shared(monkeypatch):
 
 
 def test_a_store_that_cannot_be_read_is_refused_not_guessed(monkeypatch, published):
-    def broken(*_a, **_k):
-        raise sqlite3.OperationalError("disk I/O error")
-    monkeypatch.setattr(run_store, "_connect", broken)
+    _engine_down(monkeypatch)
     with pytest.raises(voice_control.Unreadable):
         voice_control.read()
     with pytest.raises(voice_control.Unreadable):
@@ -112,10 +125,8 @@ def test_a_store_that_cannot_be_read_is_refused_not_guessed(monkeypatch, publish
     assert published == []
 
 
-def test_a_newer_schema_than_this_jarvis_is_unreadable():
-    with run_store._connect() as conn:
-        conn.execute("CREATE TABLE voice_control_schema (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO voice_control_schema VALUES (99)")
+def test_a_saved_record_this_jarvis_does_not_understand_is_unreadable():
+    _saved(stop_mode="later", switch_mode="stop")
     with pytest.raises(voice_control.Unreadable):
         voice_control.read()
 
@@ -144,9 +155,7 @@ def test_the_route_refuses_what_the_service_refuses(client, body, code):
 
 
 def test_the_route_says_unreadable_and_the_page_keeps_listening_off(client, monkeypatch):
-    def broken(*_a, **_k):
-        raise sqlite3.OperationalError("locked")
-    monkeypatch.setattr(run_store, "_connect", broken)
+    _engine_down(monkeypatch)
     r = client.get(voice_control.PATH)
     assert (r.status_code, r.json()["code"]) == (503, "unreadable")
 
@@ -186,10 +195,11 @@ def test_every_choice_of_intervals_keeps_the_stages_in_order_before_the_send():
         assert 0 < times[0] < times[1] < times[2] < times[3] == got["patience"]
 
 
-def test_patience_falls_back_to_the_defaults_total_when_the_store_cannot_be_read(monkeypatch):
+def test_patience_is_held_and_falls_back_to_the_defaults_total_when_nothing_is_held(monkeypatch):
     voice_control.change(intervals={"send": 4})
-    monkeypatch.setattr(run_store, "_connect", lambda *_a, **_k: (_ for _ in ()).throw(
-        sqlite3.OperationalError("locked")))
+    _engine_down(monkeypatch)
+    assert voice_control.patience() == 6.5                # held: the engine is never asked
+    voice_control.forget()                                # a JARVIS started again, engine down
     assert voice_control.patience() == 3.0
 
 
@@ -223,15 +233,11 @@ def test_the_route_changes_capture_sounds_and_publishes_once(client, published):
     assert (r.status_code, r.json()["code"]) == (400, "invalid-sounds")
 
 
-def test_a_row_saved_before_capture_sounds_existed_reads_them_on():
-    """A JARVIS updated from schema 2: his saved choices stay, capture
-    sounds read as the default, and his patience saved on its own is
-    dropped for the default intervals' total (migration 7)."""
-    with run_store._connect() as conn:
-        run_store.migrate(conn, "voice_control_schema",
-                          {k: v for k, v in voice_control._MIGRATIONS.items() if k < 3}, "voice control")
-        conn.execute("INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
-                     "updated_at) VALUES ('local', 'discard', 'continue', 3, 0)")
+def test_a_record_saved_before_capture_sounds_existed_reads_them_on():
+    """A row moved from before capture sounds: his saved choices stay,
+    capture sounds read as the default, and a patience saved on its own is
+    not read (the default intervals' total)."""
+    _saved(stop_mode="discard", switch_mode="continue", patience_sec=3.0)
     got = voice_control.read()
     assert (got["stop"], got["switch"], got["sounds"]) == ("discard", "continue", True)
     assert {k: got[k] for k in PAUSE} == PAUSE
@@ -309,12 +315,8 @@ def test_the_deciding_cue_off_silences_only_it():
 
 def test_saved_cues_jarvis_no_longer_takes_read_as_the_defaults():
     voice_control.change(stop="keep")
-    with run_store._connect() as conn:
-        conn.execute("UPDATE voice_input_settings SET cue_settings = ?, cue_volume = 900",
-                     ('{"start": {"tone": "siren"}, "stop": {"on": false}, '
-                      '"tentative": {"percent": 80}}',))
-        conn.execute("UPDATE voice_input_settings SET pause_intervals = ?",
-                     ('{"tentative": 9, "deciding": "x", "likely": 1.5, "late": 2}',))
+    _saved(cue_settings='{"start": {"tone": "siren"}, "stop": {"on": false}, "tentative": {"percent": 80}}',
+           cue_volume=900, pause_intervals='{"tentative": 9, "deciding": "x", "likely": 1.5, "late": 2}')
     got = voice_control.read()
     assert got["cues"]["start"] == voice_control.CUE_DEFAULTS["start"]
     assert got["cues"]["stop"]["on"] is False
@@ -324,11 +326,42 @@ def test_saved_cues_jarvis_no_longer_takes_read_as_the_defaults():
     assert got["volume"] == voice_control.VOLUME_DEFAULT
 
 
-def test_the_voice_path_reads_the_defaults_when_the_store_cannot_be_read(monkeypatch):
+def test_the_voice_path_keeps_what_it_holds_while_the_engine_is_down(monkeypatch):
     voice_control.change(volume=20)
-    monkeypatch.setattr(run_store, "_connect", lambda *_a, **_k: (_ for _ in ()).throw(
-        sqlite3.OperationalError("locked")))
+    _engine_down(monkeypatch)
+    assert voice_control.read_or_defaults()["volume"] == 20
+    assert voice_control.speech_muted() is False
+    voice_control.forget()
     assert voice_control.read_or_defaults() == voice_control.defaults()
+
+
+def test_the_voice_path_never_waits_on_an_engine_in_another_process(monkeypatch):
+    """With the engine in its own process, settings not held yet are the
+    defaults at once while a read in the background fetches them; once
+    held they are his, and every change through the store refreshes them."""
+    voice_control.change(volume=20)
+    voice_control.forget()
+    monkeypatch.setattr(records, "in_process", lambda: False)
+    asked = []
+    real_get = records.get
+
+    def slow_get(path, **kw):
+        asked.append(path)
+        time.sleep(0.2)
+        return real_get(path, **kw)
+    monkeypatch.setattr(records, "get", slow_get)
+    started = time.monotonic()
+    assert voice_control.read_or_defaults() == voice_control.defaults()
+    assert time.monotonic() - started < 0.1
+    deadline = time.monotonic() + 5
+    while voice_control.read_or_defaults()["volume"] != 20:
+        assert time.monotonic() < deadline, "the background read never landed"
+        time.sleep(0.02)
+    assert len(asked) == 1
+    voice_control.change(volume=30)
+    started = time.monotonic()
+    assert voice_control.read_or_defaults()["volume"] == 30
+    assert time.monotonic() - started < 0.1
 
 
 def test_the_route_changes_the_cues_and_refuses_what_the_service_refuses(client, published):
@@ -342,46 +375,15 @@ def test_the_route_changes_the_cues_and_refuses_what_the_service_refuses(client,
     assert (r.status_code, r.json()["code"]) == (400, "invalid-interval")
 
 
-def _a_row_from_schema(version, cue_settings, patience=1.5):
-    """A row saved at `version`, read now (every later migration run)."""
-    with run_store._connect() as conn:
-        run_store.migrate(conn, "voice_control_schema",
-                          {k: v for k, v in voice_control._MIGRATIONS.items() if k <= version},
-                          "voice control")
-        conn.execute("INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
-                     "cue_settings, updated_at) VALUES ('local', 'keep', 'stop', ?, ?, 0)",
-                     (patience, cue_settings))
-    return voice_control.read()
-
-
-@pytest.mark.parametrize("version,saved,patience", [
-    (4, None, 1.5), (4, '{"start": {"tone": "double"}}', 4),
-    (4, '{"tentative": {"before": 3, "tone": "low"}, "likely": {"before": 0.5}}', 1.5),
-    (5, '{"tentative": {"before": 2.5, "tone": "double", "on": false}, '
-        '"deciding": {"before": 1.75, "tone": "rise"}, "likely": {"before": 1.0}}', 1.5),
-    (6, '{"tentative": {"percent": 40, "tone": "double", "on": false}, '
-        '"deciding": {"percent": 65, "tone": "rise"}, "likely": {"percent": 85}}', 1.5),
-    (6, '{"tentative": {"percent": 20, "tone": "low"}}', 10),
-    (6, 'not json', 1.5),
-])
-def test_old_timings_and_a_patience_saved_alone_read_as_the_default_intervals(
-        version, saved, patience):
-    """Migration 7 (after 6 for seconds before): a patience saved on its own
-    and the cues' shares of it are dropped, so the row reads the default
-    intervals, a total of 3.0 s; each cue keeps its tone and on or off."""
-    got = _a_row_from_schema(version, saved, patience)
-    assert {k: got[k] for k in PAUSE} == PAUSE
-    assert all(set(got["cues"][n]) == {"on", "tone"} for n in voice_control.CUES)
-    if saved and '"tone": "low"' in saved:
-        assert got["cues"]["tentative"]["tone"] == "low"
-    if saved and '"on": false' in saved:
-        assert (got["cues"]["tentative"]["on"], got["cues"]["tentative"]["tone"]) == (False, "double")
-        assert got["cues"]["deciding"]["tone"] == "rise"
-    with run_store._connect() as conn:
-        raw, kept = conn.execute("SELECT cue_settings, patience_sec FROM voice_input_settings").fetchone()
-    assert kept is None and (raw is None or ("before" not in raw and "percent" not in raw))
-    got = voice_control.change(intervals={"likely": 1})        # a change saves cleanly after it
-    assert got["patience"] == 3.25
+def test_his_settings_are_one_document_under_him(monkeypatch):
+    voice_control.change(stop="discard")
+    _signed_in(monkeypatch, github_id=7)
+    voice_control.change(sounds=False)
+    local = records.get("/people/local/settings/voice-input.settings").data
+    member = records.get("/people/7/settings/voice-input.settings").data
+    assert (local["user_key"], local["stop_mode"], local["capture_sounds"]) == ("local", "discard", None)
+    assert (member["user_key"], member["capture_sounds"]) == ("github:7", 0)
+    assert set(member) >= set(voice_control.COLUMNS)
 
 
 def test_the_brain_s_schema_offers_the_same_cues_and_tones():

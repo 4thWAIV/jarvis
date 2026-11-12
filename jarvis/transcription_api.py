@@ -55,6 +55,7 @@ RECONNECT_WITHIN_SEC = 10.0
 
 service: Optional[TranscriptionService] = None
 probe = voice_diagnostics.LoopProbe()
+closer = voice_diagnostics.Closer()
 # None until a capture fails: time.monotonic() counts from boot on macOS, so
 # a zero here would make every capture in a boot's first seconds a reconnect.
 _last_failure_at: Optional[float] = None
@@ -70,6 +71,7 @@ def start(engine_factory=None,
     service = TranscriptionService(engine_factory or transcriber.load_engine, model)
     service.start()
     probe.start()
+    closer.start()
     voice_diagnostics.record_soon_prune()
     return service
 
@@ -77,6 +79,7 @@ def start(engine_factory=None,
 async def stop() -> None:
     global service
     await probe.stop()
+    await closer.stop()
     if service is not None:
         await service.close()
         service = None

@@ -24,8 +24,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis import (agent_keys, decision_check, language_kit as lk, package_inbox,
-                    package_signature, work_store)
+from jarvis import (agent_keys, data_paths, decision_check, language_kit as lk, package_inbox,
+                    package_signature, records, work_store)
 from jarvis import decision_package as dp
 from tests import architecture_author
 
@@ -67,7 +67,6 @@ def world(tmp_path):
     with decision_check._data_dir(data):
         lk.activate(lk.stage(Path(asset), lk.Release(lk.PINNED_VERSION, lk.PINNED_COMMIT,
                                                      lk.PINNED_DIGEST, ("gate", "release"))))
-        work = work_store.create("Architecture inbox", "folder", str(tmp_path))
     page = tmp_path / "page"
     page.mkdir()
     (page / "index.html").write_text("<!doctype html><title>JARVIS</title>")
@@ -89,10 +88,19 @@ def world(tmp_path):
                     **extra})
     keys = agent_keys.key_folder(session, home)
     private, public = agent_keys.make_pair(keys, f"jarvis-agent {session}")
-    jarvis = decision_check.Isolated(folder, "en", page, is_the_check=False, extra_env={
-        **extra, "JARVIS_CODEX_SESSIONS_HOME": str(tmp_path / "codex-home")})
-    try:
+    made = {}
+
+    def before(data: Path) -> None:
+        # Its records (the Work item, the agent's key) are written into its
+        # engine's folder before its server and engine start there.
+        with decision_check._data_dir(data), records.opened_at(data_paths.knowledge_dir()):
+            made["work"] = work_store.create("Architecture inbox", "folder", str(tmp_path))
         decision_check.seed(data, public, session)
+
+    jarvis = decision_check.Isolated(folder, "en", page, before, is_the_check=False, extra_env={
+        **extra, "JARVIS_CODEX_SESSIONS_HOME": str(tmp_path / "codex-home")})
+    work = made["work"]
+    try:
         env.update({"JARVIS_URL": jarvis.base, "JARVIS_DATA_DIR": str(data)})
         yield SimpleNamespace(jarvis=jarvis, work=work, env=env, data=data, session=session,
                               key=(private, public))

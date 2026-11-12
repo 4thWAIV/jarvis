@@ -95,7 +95,9 @@ def words(text: str, *, digits: bool = True, apostrophes: bool = False) -> list[
 
 def fold(text: str) -> str:
     """`text` with its accents taken off: "Espérate, señor" -> "Esperate, senor"."""
-    decomposed = unicodedata.normalize("NFKD", text or "")
+    if not text or text.isascii():
+        return text or ""             # nothing to take off (NFKD leaves ASCII as it is)
+    decomposed = unicodedata.normalize("NFKD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 

@@ -29,10 +29,6 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         live = worker_activity.current(latest, now)
         if latest.get('coverage_gap'):
             gaps.append(latest['coverage_gap'])
-        # Session completion/liveness beats any previously observed output.
-        if (not worker_activity.managed(provider, sid) and state in ('gone', 'idle', 'finished')
-                and live['state'] != 'external_wait'):
-            live.update(state='idle' if state != 'gone' else 'offline', generating=False, model_work=False, turn_open=False)
         row = {'id': key, 'session_id': sid, 'provider': provider, 'name': name,
                'project': project, 'parent_id': identity(provider, parent) if parent else None,
                'kind': kind, 'workflow_id': workflow, 'allocation': 'unknown' if kind == 'subagent' else 'observed',
@@ -68,6 +64,7 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         row = rows.get(key) or add('anthropic', run['id'], run.get('title') or run.get('task') or 'Run',
                                   run.get('project_name') or '', {}, 'unknown', 'run')
         row['run_id'] = run['id']
+        row['run_status'] = run.get('status')
         if run.get('status') == 'queued':
             row['allocation'] = 'queued'
             row['activity'] = {'state': 'queued', 'generating': False, 'source': 'run_queue'}
@@ -159,10 +156,8 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         for row in rows.values():
             if row['kind'] == 'brain' and row['provider'] not in open_by_provider:
                 row['activity'] = {**row['activity'], 'state': 'idle', 'turn_open': False}
-    if stale:
-        for row in rows.values():
-            if row['kind'] != 'brain' and not worker_activity.managed(row['provider'], row['session_id']):
-                row['activity'] = {**row['activity'], 'state': 'unknown', 'generating': False, 'model_work': False, 'turn_open': None}
+    # A late snapshot is reported (the gap above) and its last known states
+    # stand: a slow poll is not a reason to call every agent unknown.
     for workflow in workflows:
         for sid in workflow.agents:
             found = [row for row in rows.values() if row['session_id'] == sid]
@@ -188,25 +183,19 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
         if row['parent_id'] and row['parent_id'] not in rows:
             gaps.append(f"Parent not discovered for {row['name']}.")
     # Finalize once after all provider/liveness overrides. Every consumer
-    # receives this same activity, including its presentation projection.
+    # receives this same activity: the one answer to "is it working?"
+    # (`working`), with what it is doing beside it.
     for row in workers:
-        # A stale child file cannot establish that its open turn still exists.
-        # A fresh status may sustain an observed turn, never invent one.
-        runtime = row['runtime']
-        runtime_live = runtime.get('status') == 'active' and 0 <= now - (runtime.get('observed_at') or 0) <= 10
-        evidence = row['activity']
-        evidence_fresh = 0 <= now - (evidence.get('observed_at') or 0) <= worker_activity.MODEL_REQUEST_LEASE_SECONDS
-        if (row.pop('discovery_state', None) == 'stale' and not runtime_live
-                and not evidence_fresh and not worker_activity.managed(row['provider'], row['session_id'])):
-            evidence = {**evidence, 'state': 'unknown', 'turn_open': None}
-        row['activity'] = worker_activity.current(evidence, now)
+        basis = row.pop('discovery_state', None)
+        row['activity'] = worker_activity.settle(row['activity'], working(row, basis, now), now)
+        if basis == 'finished' and row['activity']['work_state'] == 'idle':
+            row['activity']['work_state'] = 'finished'  # Work says "Its subagent has finished."
     def counts(items):
         model_work = sum(r['activity']['model_work'] for r in items)
-        active = sum(r['activity']['active'] for r in items)
-        unknown = sum(r['activity']['turn_open'] is None for r in items)
-        return {'active': active, 'orb_state': 'thinking' if active else 'unknown' if unknown else 'idle',
+        active = sum(r['activity']['working'] for r in items)
+        return {'active': active, 'working': active, 'orb_state': 'thinking' if active else 'idle',
                 'workers': len(items), 'model_work': model_work, 'generating': sum(r['activity']['generating'] for r in items),
-                'unknown': unknown,
+                'unknown': 0,
                 'tool_wait': sum(r['activity']['state'] == 'tool_wait' for r in items),
                 'runtime_active': sum(r['runtime'].get('status') == 'active' and 0 <= now - (r['runtime'].get('observed_at') or 0) <= 10 for r in items),
                 'queued': sum(r['activity']['state'] == 'queued' for r in items)}
@@ -234,7 +223,39 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
     return {'snapshot_id': uuid.uuid4().hex, 'workflow_counts': workflow_counts, 'workers': workers, 'total': counts(workers), 'projects': projects, 'providers': providers,
             'capacity': capacity, 'taken_at': now, 'evidence_window_seconds': worker_activity.EVIDENCE_SECONDS,
             'generation': (brain_events or {}).get('generation'), 'gaps': gaps,
-            'coverage': 'Active means an observed open turn, using the main orb thinking state through model work, tools and waits until the turn ends. It is not instantaneous token generation. Missing turn evidence is unknown. Internal model and tool phases remain available. Native Claude delegation is unchanged.'}
+            'coverage': COVERAGE}
+
+
+COVERAGE = ('Working means its turn is open: waiting on the model or running a tool. '
+            'A session by its transcript\'s turn markers; a subagent while its transcript has not ended '
+            'its turn and was written within the last ten minutes; JARVIS\'s brain while a turn of it '
+            'is open; a managed run while it runs.')
+
+
+def working(row, basis, now) -> bool:
+    """THE one definition of working, for every surface: its turn is open,
+    waiting on the model and running a tool included. `basis` is what
+    discovery said of it: a session's state from `session_watch.session_status`
+    (its transcript's turn markers), a subagent's from
+    `session_watch._subagent_at` (not finished, written within
+    SUBAGENT_TURN_SILENT_SEC)."""
+    kind = row['kind']
+    activity = row['activity']
+    if kind == 'brain':
+        return activity.get('turn_open') is True
+    if row.get('run_status') == 'running':
+        return True
+    if row.get('run_status') == 'queued':
+        return False
+    if (row.get('runtime') or {}).get('source') == 'managed_process':
+        return row['runtime'].get('status') == 'active'
+    if basis == 'working':
+        return True
+    if basis in (None, 'unknown') and row.get('hook_observed_at'):
+        # Seen only through Claude's hooks so far (no transcript yet).
+        return (activity.get('turn_open') is True
+                and 0 <= now - (activity.get('observed_at') or 0) <= worker_activity.MODEL_REQUEST_LEASE_SECONDS)
+    return False
 
 
 class SnapshotReader:

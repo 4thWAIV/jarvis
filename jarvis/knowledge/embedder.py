@@ -4,8 +4,8 @@ The engine reaches an embedder only through `RUNNER`, a factory that
 returns an `Embedder` or None. The default, `installed`, gives the model
 installed under the data folder (embedding_models.py), run by the runtime
 its record names (`RUNTIMES`: `onnx-e5` is multilingual-e5-small through
-onnxruntime, e5_onnx.py), loaded once; with no model installed, or a
-runtime that cannot load, it is None, and then the vector part has nothing
+onnxruntime, e5_onnx.py), loaded once; with `JARVIS_KNOWLEDGE` off, no
+model installed, or a runtime that cannot load, it is None, and then the vector part has nothing
 to search and every query says vectors were not used. Another runtime slots
 in as one more entry of `RUNTIMES`. Tests replace `RUNNER` with
 `FakeEmbedder`, which hashes words into deterministic vectors.
@@ -31,6 +31,7 @@ from array import array
 from typing import Callable, Optional, Protocol
 
 from jarvis import spoken_words
+from jarvis.knowledge import lanes
 
 QUERY = 0
 INGEST = 1
@@ -63,8 +64,11 @@ log = logging.getLogger("jarvis.knowledge.embedder")
 
 def installed() -> Optional["Embedder"]:
     """The installed model's embedder, loaded once per folder; None while
-    none is installed or its runtime cannot load (said once in the log)."""
-    from jarvis import embedding_models
+    `JARVIS_KNOWLEDGE` is off (the engine runs, but embeds nothing), none is
+    installed, or its runtime cannot load (said once in the log)."""
+    from jarvis import embedding_models, knowledge_client
+    if not knowledge_client.enabled():
+        return None
     model = embedding_models.DEFAULT
     folder = embedding_models.model_dir(model)
     key = str(folder)
@@ -160,12 +164,19 @@ class EmbeddingQueue:
         return box["v"]
 
     def _run(self) -> None:
+        # Ingest batches are background work; a query's batch is raised for
+        # its span, since someone is waiting on it.
+        lanes.background()
         while True:
             priority, _, texts, purpose, done = self._q.get()
             if texts is None:
                 return
             try:
-                vectors = self.embedder.embed(list(texts), purpose)
+                if priority == QUERY:
+                    with lanes.foreground():
+                        vectors = self.embedder.embed(list(texts), purpose)
+                else:
+                    vectors = self.embedder.embed(list(texts), purpose)
                 self.batches.append((priority, len(texts)))
                 done(vectors, None)
             except BaseException as e:  # noqa: BLE001 - the caller decides

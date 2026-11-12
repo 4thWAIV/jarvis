@@ -232,57 +232,89 @@ def _supervisor(clock, healthy=lambda: True, footprint=lambda pid: 10 << 20):
     return sup, spawned
 
 
-def test_restarts_with_backoff_then_stays_down(no_previous):
-    clock = Clock()
-    sup, spawned = _supervisor(clock)
-    sup.start()
-    delays = []
-    for _ in range(3):
-        spawned[-1].returncode = 1
-        assert sup.tick() == "restarting"
-        start = clock.t
-        while sup.state == "restarting":
-            clock.t += 0.5
-            sup.tick()
-        delays.append(round(clock.t - start))
-    assert delays == [1, 5, 30]
+def _die_and_restart(sup, spawned, clock):
+    """Kill the running child, tick until it runs again; the delay taken."""
     spawned[-1].returncode = 1
-    assert sup.tick() == "down"
-    assert len(spawned) == 4
+    start = clock.t
+    sup.tick()
+    while sup.state == "restarting":
+        clock.t += 0.5
+        sup.tick()
+    return clock.t - start
 
 
-def test_restarts_spread_over_more_than_ten_minutes_never_give_up(no_previous):
+def test_restarts_at_once_then_backs_off_capped_and_never_gives_up(no_previous):
     clock = Clock()
     sup, spawned = _supervisor(clock)
     sup.start()
-    for _ in range(6):
-        spawned[-1].returncode = 1
-        sup.tick()
-        clock.t += kc.RESTART_WINDOW_SEC + 1
-        sup.tick()
-        assert sup.state == "running"
+    delays = [_die_and_restart(sup, spawned, clock) for _ in range(8)]
+    assert delays == [0, 1, 2, 5, 5, 5, 5, 5]
+    assert sup.state == "running" and len(spawned) == 9 and sup.restarts == 8
+    assert sup.health()["state"] == "running"
 
 
-def test_two_failed_pings_restart_a_hung_engine(no_previous):
+def test_the_backoff_starts_over_once_it_has_stayed_healthy(no_previous):
+    clock = Clock()
+    sup, spawned = _supervisor(clock)
+    sup.start()
+    assert [_die_and_restart(sup, spawned, clock) for _ in range(3)] == [0, 1, 2]
+    clock.t += kc.STABLE_AFTER_SEC
+    assert sup.tick() == "running"
+    assert _die_and_restart(sup, spawned, clock) == 0
+
+
+def test_a_start_that_fails_is_tried_again(no_previous):
+    clock = Clock()
+    fails = {"n": 2}
+    spawned = []
+
+    def spawn():
+        if fails["n"]:
+            fails["n"] -= 1
+            raise OSError("no such file")
+        spawned.append(FakeProc(100 + len(spawned)))
+        return spawned[-1]
+    sup = kc.Supervisor(spawn=spawn, clock=clock, health=lambda: {"state": "ok"},
+                        footprint=lambda pid: None, budget_mb=100)
+    sup.start()
+    assert sup.state == "restarting" and "could not start" in sup.last_reason
+    while sup.state != "running":
+        clock.t += 0.5
+        sup.tick()
+    assert len(spawned) == 1
+
+
+def test_two_failed_pings_restart_a_hung_engine_at_once(no_previous):
     clock = Clock()
     alive = {"ok": True}
     sup, spawned = _supervisor(clock, healthy=lambda: alive["ok"])
     sup.start()
     alive["ok"] = False
     assert sup.tick() == "running"
-    assert sup.tick() == "restarting"
+    sup.tick()
     assert spawned[0].returncode is not None
     assert "health" in sup.last_reason
+    assert len(spawned) == 2 and sup.state == "running"   # the first restart is at once
 
 
-def test_footprint_over_the_limit_restarts(no_previous):
+def test_the_footprint_is_reported_never_acted_on(no_previous):
     clock = Clock()
-    sup, spawned = _supervisor(clock, footprint=lambda pid: 151 << 20)
+    sup, spawned = _supervisor(clock, footprint=lambda pid: 900 << 20)
     sup.start()
-    assert sup.tick() == "restarting"
-    sup2, _ = _supervisor(clock, footprint=lambda pid: 149 << 20)
-    sup2.start()
-    assert sup2.tick() == "running"
+    assert sup.tick() == "running"
+    assert spawned[0].returncode is None and len(spawned) == 1
+    assert sup.health()["footprint_mb"] == 900 and sup.health()["budget_mb"] == 100
+
+
+def test_ready_needs_a_running_engine_that_answers(no_previous):
+    clock = Clock()
+    alive = {"ok": False}
+    sup, spawned = _supervisor(clock, healthy=lambda: alive["ok"])
+    assert not sup.ready()
+    sup.start()
+    assert not sup.ready()
+    alive["ok"] = True
+    assert sup.ready()
 
 
 def test_footprint_reads_a_process():
@@ -302,6 +334,14 @@ def test_memory_budget_setting(monkeypatch):
 def test_off_by_default(monkeypatch):
     monkeypatch.delenv("JARVIS_KNOWLEDGE", raising=False)
     assert not kc.enabled()
+
+
+def test_the_engine_starts_by_default_and_tests_switch_it_off(monkeypatch):
+    assert not kc.autostart()                       # conftest: no test spawns an engine
+    monkeypatch.delenv("JARVIS_ENGINE_AUTOSTART")
+    assert kc.autostart()
+    monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "off")
+    assert not kc.autostart()
 
 
 # --- the real process --------------------------------------------------------

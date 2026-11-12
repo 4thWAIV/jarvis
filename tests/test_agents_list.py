@@ -141,7 +141,7 @@ def test_the_page_reads_and_activates(wired):
     assert {k: row[k] for k in ("session_id", "name", "state", "active")} == {
         "session_id": "s1", "name": "hammer", "state": "idle", "active": False}
     assert row["activity"] is None  # Registration alone is not observed activity.
-    assert row["subagents_working"] == 0 and row["subagents_capped"]
+    assert row["subagents_working"] == 0 and not row["subagents_capped"]  # one definition: no turn open, nothing working
     assert row["snapshot_id"]
     assert (row["key"], row["key_fingerprint"]) == (None, None)  # no key of its own yet
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
@@ -165,11 +165,11 @@ def test_the_brain_lists_and_switches_agents(wired):
     server, store = wired
     store.sync_agents({"s1": ("hammer", "idle"), "s2": ("anvil", "idle")})
 
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: inactive, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: inactive, idle."
     assert server.tool_set_agent_active({"name": "Hammer", "active": True}) == \
         "hammer is now active, sir."
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nhammer: active, activity unknown."
-    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: active, idle."
+    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, idle."
 
 
 def test_an_unknown_or_ambiguous_name_is_not_guessed(wired):
@@ -200,16 +200,17 @@ def test_a_state_change_is_stored_and_reported_as_a_change(wired):
     assert store.list_agents()[0]["state"] == "working"
 
 
-def test_an_older_agents_table_gains_the_state_column(wired):
+def test_an_older_agent_record_gains_the_state(wired):
+    """An agent written before the later fields (state, his name, when it
+    was last messaged, when it ended) reads with their defaults, and the
+    next sync fills its state."""
     _server, store = wired
-    import sqlite3
-    from contextlib import closing
-    with closing(store._connect()) as conn:
-        conn.execute("DROP TABLE agents")
-        conn.execute("CREATE TABLE agents (session_id TEXT PRIMARY KEY, "
-                     "name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0)")
-        conn.commit()
-    store.init_db()
+    from jarvis import agent_record, records
+    records.write(agent_record.agent_path("s1"), {
+        **agent_record.new_agent("s1"), "agent": {"name": "hammer", "active": 0}})
+    agent_record.CACHE.forget()
+    assert store.list_agents() == [{"session_id": "s1", "name": "hammer", "active": False,
+                                    "state": ""}]
     store.sync_agents({"s1": ("hammer", "needs_you")})
     assert store.list_agents()[0]["state"] == "needs_you"
 
@@ -305,7 +306,7 @@ def test_the_brain_renames_by_the_current_name(wired):
         "hammer is now Forge, sir."
     assert "already goes by that name" in server.tool_rename_agent(
         {"name": "anvil", "new_name": "forge"})
-    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, activity unknown.\nForge: inactive, activity unknown."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nForge: inactive, idle."
     assert "rename_agent" in server.ACTING_TOOLS
 
 
@@ -340,8 +341,10 @@ def test_busy_agents_come_first_then_the_most_recently_messaged(wired, monkeypat
     assert [a["name"] for a in store.list_agents()] == \
         ["bravo", "delta", "alpha", "charlie", "echo"]
 
+    import itertools
     import time as _time
-    clock = iter([1000.0, 2000.0])
+    # A clock that only goes forward (the record's engine reads it too).
+    clock = itertools.count(1000.0, 1000.0)
     monkeypatch.setattr(_time, "time", lambda: next(clock))
     store.mark_agent_messaged("c")       # idle, messaged first
     store.mark_agent_messaged("d")       # busy, messaged later

@@ -97,8 +97,10 @@ def refusal_on(monkeypatch):
 @pytest.fixture(autouse=True)
 def _never_spawn_a_real_brain(monkeypatch):
     """jarvis.server.lifespan builds the brain but must not start `claude` under test,
-    nor read the keychain and call Anthropic for the usage limits."""
+    nor read the keychain and call Anthropic for the usage limits, nor start
+    the knowledge engine's process."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "0")
     monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
 
 
@@ -243,6 +245,20 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     # Nor load the real speech model: with no override it is looked for in
     # that empty data folder, so the server starts with speech input failed.
     monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _records_in_a_throwaway_engine(monkeypatch):
+    """Every test's records live in an engine of its own: opened in this
+    process over the test's data folder the first time a store touches it
+    (`records.uds`), with every fsync skipped (it is thrown away), and
+    closed when the test ends."""
+    from jarvis import records
+    monkeypatch.setenv("JARVIS_ENGINE_EPHEMERAL", "1")
+    records.bind(None)
+    yield
+    records.bind(None)
+    records.close_all()
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -332,14 +332,29 @@ def understanding_in(source: Path) -> bytes:
     return body
 
 
-def document_of(document_id: str, revision: str) -> dict:
-    """The exact checked revision named, as JARVIS's record holds it, or
-    Refused saying why it cannot be packaged."""
-    from jarvis import language_documents, language_projection
+def document_of(document_id: str, revision: str, base: str,
+                signer: tuple[Path, str]) -> dict:
+    """The exact checked revision named, as the JARVIS at `base` holds it,
+    or Refused saying why it cannot be packaged. Read over its signed route
+    (retrieve, then render with its source revision), as the agent's own
+    language_document command reads it: the records live in JARVIS's
+    engine, which this process need not reach."""
+    from jarvis import language_document
+
+    def post(body: dict) -> dict:
+        return dp.post(base.rstrip("/") + language_document.ROUTE, "", body,
+                       timeout=language_document.TIMEOUT_SEC, signer=signer)
+
+    def whole(operation: str, arguments: dict) -> dict:
+        envelope = language_document.call(post, operation, arguments)
+        if not envelope.get("ok"):
+            raise ValueError((envelope.get("error") or {}).get("cause") or envelope)
+        return envelope["result"]
     try:
-        return language_projection.checked_revision(language_documents.Documents(),
-                                                    document_id, revision)
-    except (ValueError, OSError) as e:
+        found = whole("retrieve", {"document_id": document_id, "revision": revision})
+        return whole("render", {"document_id": document_id, "revision": revision,
+                                "source_revision": found["source_revision"]})
+    except (ValueError, OSError, KeyError, SystemExit) as e:
         raise dp.Refused([f"Document {document_id} revision {revision} cannot be packaged: "
                           f"{e}"]) from None
 
@@ -548,7 +563,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         from jarvis import package_author
         envelope = document = None
         if args.document:
-            envelope = document_of(args.document, args.revision)
+            from jarvis import agent_keys
+            reader = agent_keys.signer_for(args.session)
+            if reader is None:
+                raise dp.Refused(["The document is read with your key: give --session <your "
+                                  "session id>, once Tim has switched your agent on."])
+            envelope = document_of(args.document, args.revision, args.deliver_to, reader)
             if args.work and args.work != envelope["work_id"]:
                 raise dp.Refused([f"Document {args.document} belongs to Work item "
                                   f"{envelope['work_id']}, not {args.work}: send it there."])

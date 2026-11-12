@@ -33,9 +33,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import sqlite3
 import time
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,28 +104,6 @@ class AttachmentLocation(_Frozen):
         return STATE_SHOWN[self.state]
 
 
-_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS attachment_locations (
-        server_id          TEXT NOT NULL,
-        owner_github_id    INTEGER NOT NULL,
-        attachment_id      TEXT NOT NULL,
-        path               TEXT,
-        verified_at        REAL,
-        extraction_root    TEXT,
-        extraction_sha256  TEXT,
-        extraction_members TEXT,
-        PRIMARY KEY (server_id, owner_github_id, attachment_id)
-    );
-    CREATE TABLE IF NOT EXISTS attachment_leases (
-        server_id       TEXT NOT NULL,
-        owner_github_id INTEGER NOT NULL,
-        attachment_id   TEXT NOT NULL,
-        holder          TEXT NOT NULL,
-        created_at      REAL NOT NULL,
-        PRIMARY KEY (server_id, owner_github_id, attachment_id, holder)
-    );
-"""
-
 # A lease's holder: "run:<run id>" while that run is queued or running,
 # "message:<number>" while that message to a session is still open.
 _OPEN_MESSAGE = frozenset({run_store.MessageStatus.STAGED, run_store.MessageStatus.QUEUED,
@@ -147,9 +123,18 @@ def holder_active(holder: str) -> bool:
 
 
 def init_db() -> None:
-    """This module's table, beside messaging_files in the shared database."""
-    with closing(run_store._connect()) as conn:
-        conn.executescript(_SCHEMA)
+    """Kept for callers: where a file is and who holds it are parts of its
+    `file` document (messaging_files.py), in the record engine."""
+
+
+MAPPINGS: list = []
+"""This module's tables (`attachment_locations`, `attachment_leases`) move
+with the `file` document: messaging_files.FileMapping owns them."""
+
+
+def _no_location() -> dict:
+    return {"path": None, "verified_at": None, "extraction_root": None,
+            "extraction_sha256": None, "extraction_members": None, "rowid": None}
 
 
 def _at(when: Optional[float]) -> Optional[datetime]:
@@ -199,13 +184,10 @@ class AttachmentLocations:
 
     # -- the record ------------------------------------------------------------------
 
-    def _record(self, server_id: str, owner: int, attachment_id: UUID) -> Optional[sqlite3.Row]:
-        with closing(run_store._connect()) as conn:
-            return conn.execute(
-                "SELECT * FROM attachment_locations WHERE server_id=? AND owner_github_id=? "
-                "AND attachment_id=?", (server_id, owner, str(attachment_id))).fetchone()
+    def _record(self, server_id: str, owner: int, attachment_id: UUID) -> Optional[dict]:
+        return (messaging_files.file_doc(server_id, owner, attachment_id) or {}).get("location")
 
-    def _extraction(self, row: Optional[sqlite3.Row]) -> Optional[AttachmentExtraction]:
+    def _extraction(self, row: Optional[dict]) -> Optional[AttachmentExtraction]:
         if row is None or not row["extraction_root"]:
             return None
         members = [m for m in (row["extraction_members"] or "").split("\n") if m]
@@ -293,49 +275,39 @@ class AttachmentLocations:
         record = self._record(server_id, owner, attachment_id)
         if not again and record is not None and record["path"] == path:
             return
-        with closing(run_store._connect()) as conn:
-            conn.execute(
-                "INSERT INTO attachment_locations (server_id, owner_github_id, attachment_id, "
-                "path, verified_at) VALUES (?,?,?,?,?) ON CONFLICT (server_id, "
-                "owner_github_id, attachment_id) DO UPDATE SET path=excluded.path, "
-                "verified_at=excluded.verified_at",
-                (server_id, owner, str(attachment_id), path, self._now()))
-            conn.commit()
+        now = self._now()
+
+        def go(doc: dict) -> None:
+            doc["location"] = {**(doc["location"] or _no_location()), "path": path,
+                               "verified_at": now}
+        messaging_files.change_file(server_id, owner, attachment_id, go, change="verified",
+                                    summary="where it was verified")
 
     def record_extraction(self, server_id: str, owner_github_id: int, message_id: UUID,
                           attachment_id: UUID, root: Path, members: list[str]) -> None:
         """Where a verified zip was unpacked by what already unpacks one (a
         work package): its hash, the folder and the members asked for."""
         ref = self.files.received_ref(server_id, owner_github_id, message_id, attachment_id)
-        with closing(run_store._connect()) as conn:
-            conn.execute(
-                "INSERT INTO attachment_locations (server_id, owner_github_id, attachment_id, "
-                "extraction_root, extraction_sha256, extraction_members) VALUES (?,?,?,?,?,?) "
-                "ON CONFLICT (server_id, owner_github_id, attachment_id) DO UPDATE SET "
-                "extraction_root=excluded.extraction_root, "
-                "extraction_sha256=excluded.extraction_sha256, "
-                "extraction_members=excluded.extraction_members",
-                (server_id, owner_github_id, str(attachment_id), str(root), ref.sha256,
-                 "\n".join(m for m in members if m and "\n" not in m)))
-            conn.commit()
+        kept = "\n".join(m for m in members if m and "\n" not in m)
+
+        def go(doc: dict) -> None:
+            doc["location"] = {**(doc["location"] or _no_location()),
+                               "extraction_root": str(root), "extraction_sha256": ref.sha256,
+                               "extraction_members": kept}
+        messaging_files.change_file(server_id, owner_github_id, attachment_id, go,
+                                    change="extracted", summary="unpacked")
 
     def extracted_from(self, server_id: str, owner_github_id: int,
                        root: Path) -> Optional[tuple[UUID, UUID]]:
         """(message id, attachment id) of the zip unpacked into `root`, or None."""
-        with closing(run_store._connect()) as conn:
-            row = conn.execute(
-                "SELECT attachment_id FROM attachment_locations WHERE server_id=? AND "
-                "owner_github_id=? AND extraction_root=?",
-                (server_id, owner_github_id, str(root))).fetchone()
-        if row is None:
+        found = messaging_files.file_docs(
+            server_id, owner_github_id, [["location.extraction_root", "=", str(root)]],
+            lambda d: bool(d.get("location")) and d["location"]["extraction_root"] == str(root))
+        if not found:
             return None
-        with closing(run_store._connect()) as conn:
-            msg = conn.execute(
-                "SELECT message_id FROM messaging_files WHERE server_id=? AND owner_github_id=? "
-                "AND attachment_id=? AND role=?",
-                (server_id, owner_github_id, row["attachment_id"],
-                 messaging_files.DOWNLOAD)).fetchone()
-        return (UUID(msg["message_id"]), UUID(row["attachment_id"])) if msg else None
+        doc = min(found, key=lambda d: d["location"].get("rowid") or 0)
+        msg = messaging_files.role_of(doc, messaging_files.DOWNLOAD)
+        return (UUID(msg["message_id"]), UUID(doc["attachment_id"])) if msg else None
 
     # -- leases -------------------------------------------------------------------------
 
@@ -343,33 +315,32 @@ class AttachmentLocations:
              holder: str) -> None:
         """An agent has this file in hand: cleanup keeps it until the holder
         (`holder_active`) has finished."""
-        with closing(run_store._connect()) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO attachment_leases (server_id, owner_github_id, "
-                "attachment_id, holder, created_at) VALUES (?,?,?,?,?)",
-                (server_id, owner_github_id, str(attachment_id), holder, self._now()))
-            conn.commit()
+        now = self._now()
+
+        def go(doc: dict) -> None:
+            if not any(lease["holder"] == holder for lease in doc["leases"]):
+                doc["leases"].append({"holder": holder, "created_at": now, "rowid": None})
+        messaging_files.change_file(server_id, owner_github_id, attachment_id, go,
+                                    change="held", summary=holder)
 
     def held(self, server_id: str, owner_github_id: int) -> set[str]:
         """Attachment ids an active lease holds; leases whose holder has
         finished are released as they are found."""
-        with closing(run_store._connect()) as conn:
-            rows = conn.execute(
-                "SELECT attachment_id, holder FROM attachment_leases WHERE server_id=? AND "
-                "owner_github_id=?", (server_id, owner_github_id)).fetchall()
+        docs = messaging_files.file_docs(server_id, owner_github_id,
+                                         [["leases[].holder", "exists"]],
+                                         lambda d: bool(d.get("leases")))
         held, done = set(), []
-        for row in rows:
-            if self._active(row["holder"]):
-                held.add(row["attachment_id"])
-            else:
-                done.append((row["attachment_id"], row["holder"]))
-        if done:
-            with closing(run_store._connect()) as conn:
-                conn.executemany(
-                    "DELETE FROM attachment_leases WHERE server_id=? AND owner_github_id=? "
-                    "AND attachment_id=? AND holder=?",
-                    [(server_id, owner_github_id, a, h) for a, h in done])
-                conn.commit()
+        for doc in docs:
+            for lease in doc["leases"]:
+                if self._active(lease["holder"]):
+                    held.add(doc["attachment_id"])
+                else:
+                    done.append((doc["attachment_id"], lease["holder"]))
+        for attachment_id, holder in done:
+            def release(doc: dict, holder=holder) -> None:
+                doc["leases"] = [lease for lease in doc["leases"] if lease["holder"] != holder]
+            messaging_files.change_file(server_id, owner_github_id, attachment_id, release,
+                                        change="released", summary=holder)
         return held
 
 

@@ -16,6 +16,7 @@ section 13), so page and voice do exactly the same thing.
 | `seeds`         | GET  /api/knowledge/seeds              | knowledge_seeds     | read            |
 | `work_context`  | POST /api/knowledge/context            | work_context        | read, walled    |
 | `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
+| `folder_counts` | GET  /api/knowledge/folder-counts      | folder_document_counts | read         |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
 is off or down they refuse with `Unavailable`, and the brain answers from
@@ -27,13 +28,17 @@ Passages carry their trust; whoever shows them to the brain walls them.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+import json
+import time
+from typing import Any, Callable, Iterable, Optional
 
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
 
 SEARCH_LIMIT_MAX = 50
-RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path", "at"]
 SEARCH_DEADLINE_SEC = 0.5
+FOLDER_COUNTS_DEADLINE_SEC = 2.0
+FOLDER_COUNTS_MAX = 500
+TIM = "tim"
 
 
 class Unavailable(RuntimeError):
@@ -75,6 +80,12 @@ class Context:
         except knowledge_client.KnowledgeRefused as e:
             raise Refused(str((e.payload or {}).get("detail") or (e.payload or {}).get("error") or e)) from e
 
+    def uds(self, deadline: float = SEARCH_DEADLINE_SEC):
+        """The UDS interface over the running engine's transport, for calls
+        made as a `Caller` (uds.py); raises `Unavailable` as `client` does."""
+        from jarvis.knowledge.uds import EngineUDS
+        return EngineUDS(self.client().transport, deadline=deadline)
+
     def wake_ingest(self) -> None:
         rt = self.runtime
         if rt is not None:
@@ -97,7 +108,19 @@ def status(ctx: Context) -> dict:
             "embedder": (engine.get("vectors") or {}).get("embedder"),
             "cards": engine.get("cards"), "writable": store.get("writable"),
             "lsn": store.get("lsn"), "generations": store.get("generations"),
-            "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards)}
+            "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards),
+            "items": _items_counted(ctx), "content": health.get("content")}
+
+
+def _items_counted(ctx: Context) -> Optional[dict]:
+    """Every item, counted once, with its vectors as coverage (embedded and
+    waiting); None when the engine does not answer."""
+    from jarvis.knowledge.uds import Caller
+    try:
+        found = ctx.uds().count(Caller(TIM))
+    except Exception:  # noqa: BLE001 - the status says the rest
+        return None
+    return {"items": found.items, "embedded": found.embedded, "waiting": found.waiting}
 
 
 def embedding_model(ctx: Context) -> dict:
@@ -122,49 +145,155 @@ def install_embedding_model(ctx: Context) -> dict:
     return embedding_model(ctx)
 
 
-def _hits(answer: dict) -> list[dict]:
+def _active_folder_ids() -> list[str]:
+    from jarvis import folder_store
+    return [f.id for f in folder_store.FolderStore().list(limit=FOLDER_COUNTS_MAX)]
+
+
+def folder_counts(ctx: Context, folder_ids: Optional[Iterable[str]] = None,
+                  deadline: float = FOLDER_COUNTS_DEADLINE_SEC) -> dict:
+    """Each active registered folder's document count in the engine, read
+    as Tim through `EngineUDS.count` under `/folders/<folder id>`: `items`
+    (each file once), `embedded` and `waiting` (its vectors). One request a
+    folder, all within `deadline`; a folder not reached by then is left out
+    and the answer says `partial`. The engine switched off or down is said
+    (`available` false and why), never raised, so the Folders view is never
+    failed by it."""
+    from jarvis.knowledge.uds import Caller
+    from jarvis.knowledge_client import EngineUnavailable
+    ids = list(_active_folder_ids() if folder_ids is None else folder_ids)
+    try:
+        uds = ctx.uds()
+    except Unavailable as e:
+        return {"available": False, "reason": str(e), "folders": {}}
+    caller, ends = Caller(TIM), time.monotonic() + deadline
+    out: dict[str, dict] = {}
+    for fid in ids:
+        left = ends - time.monotonic()
+        if left <= 0:
+            return {"available": True, "partial": True, "folders": out}
+        uds.deadline = min(SEARCH_DEADLINE_SEC, left)
+        try:
+            c = uds.count(caller, under=f"/folders/{fid}")
+        except (EngineUnavailable, ValueError) as e:
+            return {"available": False, "reason": f"the knowledge engine did not answer: {e}", "folders": {}}
+        out[fid] = {"items": c.items, "embedded": c.embedded, "waiting": c.waiting}
+    return {"available": True, "partial": False, "folders": out}
+
+
+ITEM_TEXT_MAX = 600
+OWN_TURNS = ("heard", "typed", "capture")
+
+
+def item_trust(kind: str, data: dict) -> str:
+    """Whose words an item holds: a file says so in its data (`trust`, from
+    its folder); a turn of the conversation is his own when he said, typed
+    or captured it, and JARVIS's own when its turn was not tainted; every
+    other record (an agent's message, a run's result, a workflow's events)
+    holds other people's words."""
+    if data.get("trust") in ("own", "untrusted"):
+        return data["trust"]
+    if kind == "turn":
+        said = str(data.get("kind") or "")
+        detail = data.get("detail")
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except ValueError:
+                detail = {}
+        if said in OWN_TURNS or (said == "jarvis" and isinstance(detail, dict) and detail.get("tainted") is False):
+            return "own"
+    return "untrusted"
+
+
+def _passage(data: dict, text: str) -> Optional[str]:
+    """A record's words to show for a search: its text field holding most
+    of the words searched for, else its first."""
+    from jarvis.knowledge.lexical import RECORD_FIELD_WORDS, terms
+    from jarvis.knowledge.kinds import flatten
+    want = set(terms(text or ""))
+    best, score = None, -1
+    for _, value in flatten(data):
+        if not isinstance(value, str) or " " not in value:
+            continue
+        found = len(want & set(terms(value[:RECORD_FIELD_WORDS])))
+        if found > score:
+            best, score = value, found
+    return None if best is None else best[:ITEM_TEXT_MAX]
+
+
+def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_only: bool = False,
+               limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC,
+               types: Optional[list[str]] = None) -> list[dict]:
+    """Items by meaning and words, or holding an exact phrase, one hit an
+    item, read as Tim (the brain's rights are his): a file or note with
+    the text of the section where it matched, a record (a turn, a message,
+    a run...) with its words that matched. Each carries whose words it
+    holds (`item_trust`); `own_only` keeps his own."""
+    from jarvis.knowledge.uds import Caller, Query, Stream
+    uds = ctx.uds(deadline)
+    caller = Caller(TIM, agent="brain")
+    query = Query(meaning=text or None, words=text or None, phrase=phrase or None,
+                  types=tuple(types) if types else None, limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
+    found = uds.search_page(caller, query, budget_ms=max(1, int(deadline * 1000)))
     out = []
-    for h in answer.get("hits") or []:
-        p = h.get("properties") or {}
-        out.append({"key": h["key"], "kind": h["kind"], "label": p.get("_label"), "source": h.get("source"),
-                    "trust": h.get("trust"), "status": p.get("_status"), "text": p.get("text"),
-                    "heading_path": p.get("heading_path"), "score": h.get("score"), "why": h.get("why")})
+    for h in found["hits"]:
+        item = uds.get(caller, h.path, {Stream.DATA, Stream.SECTIONS})
+        if item is None:
+            continue
+        data = dict(item.data or {})
+        trust = item_trust(item.kind, data)
+        if own_only and trust != "own":
+            continue
+        sections = list(item.sections or ())
+        if sections:
+            at = next((s for s in sections if s.index in h.sections), sections[0])
+            words, heading = at.text[:ITEM_TEXT_MAX], ([at.heading] if at.heading else None)
+        else:
+            words, heading = _passage(data, phrase or text), None
+        out.append({"key": h.path, "kind": item.kind,
+                    "label": data.get("title") or data.get("file") or h.path.rsplit("/", 1)[-1],
+                    "source": data.get("file") or h.path, "trust": trust, "status": data.get("state"),
+                    "text": words, "heading_path": heading,
+                    "sections": list(h.sections), "score": h.score, "why": sorted(h.matched_by)})
+        if len(out) >= limit:
+            break
     return out
 
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
-           kinds: Optional[list[str]] = None, limit: int = 10) -> dict:
-    """Hybrid search over what JARVIS has read: the keyword index, the graph
-    (the agents, people, projects and topics the words name, and what the
-    records say they said) and, while an embedding model is installed, the
-    vector index, fused by the engine (query.DEFAULT_WEIGHTS). `query_en`
-    searches again in English (the brain fills it when he speaks Spanish)
-    and the two are merged."""
+           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None) -> dict:
+    """Search over what JARVIS holds, as items (UDS round 3): the files and
+    notes indexed in place (meaning, words, an exact `phrase`, one hit an
+    item, with the section where it matched) and the records, each found by
+    its own words (turns, messages, runs, workflows...). `kinds` keeps the
+    item types named (`md`, `turn`, `run`...). `query_en` searches again in
+    English (the brain fills it when he speaks Spanish) and the answers are
+    merged."""
     text = (text or "").strip()
-    if not text:
+    phrase = (phrase or "").strip() or None
+    if not text and not phrase:
         raise Refused("search needs words")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
-    body: dict = {"match": text, "near": {"text": text, "k": 50}, "about": {"text": text},
-                  "return": {"properties": RETURN, "limit": limit}, "budget_ms": 300}
-    if kinds:
-        body["from"] = {"kinds": list(kinds)}
-    if not include_untrusted:
-        body["visible"] = {"trust": ["own"]}
-    answers = [ctx.call("POST", "/v1/query", body)]
-    if query_en and query_en.strip() and query_en.strip() != text:
-        answers.append(ctx.call("POST", "/v1/query", {**body, "match": query_en.strip(),
-                                                     "near": {"text": query_en.strip(), "k": 50},
-                                                     "about": {"text": query_en.strip()}}))
     merged: dict[str, dict] = {}
-    for answer in answers:
-        for h in _hits(answer):
+    partial = False
+    for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
+        try:
+            found = _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit,
+                               types=kinds or None)
+        except knowledge_client.EngineUnavailable as e:
+            raise Unavailable(f"the knowledge engine did not answer: {e}") from e
+        except ValueError as e:
+            raise Refused(str(e)) from e
+        for h in found:
             held = merged.get(h["key"])
             if held is None or (h.get("score") or 0) > (held.get("score") or 0):
                 merged[h["key"]] = h
+        if phrase:
+            break
     hits = sorted(merged.values(), key=lambda h: -(h.get("score") or 0))[:limit]
-    return {"query": text, "query_en": query_en, "hits": hits,
-            "partial": any(a.get("partial") for a in answers),
-            "notes": sorted({n for a in answers for n in a.get("notes") or []})}
+    return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
+            "partial": partial, "notes": []}
 
 
 def entity(ctx: Context, *, name: Optional[str] = None, key: Optional[str] = None) -> dict:
@@ -299,11 +428,30 @@ def maintain(ctx: Context, *, action: str, source: Optional[str] = None) -> dict
         except workspace_ref.RefError:
             raise Refused("forget takes a source reference (jref:1:...)") from None
         report = ctx.call("POST", "/v1/forget", {"refs": [source]}, deadline=30.0)
+        documents = int(report.get("documents", 0)) + _forget_items(ctx, source)
         rt = ctx.runtime
         if rt is not None:
             rt.hot.clear()
-        return {"done": "forget", "source": source, "documents": report.get("documents", 0)}
+        return {"done": "forget", "source": source, "documents": documents}
     raise Refused("the action is refresh or forget")
+
+
+def _forget_items(ctx: Context, source: str) -> int:
+    """The items indexed from one source (a file whose content's reference
+    it is): taken out of the engine. The file stays; it is indexed again
+    when it changes or the next backup scan finds it."""
+    from jarvis.knowledge.uds import Caller, Stream, Transaction
+    uds = ctx.uds(30.0)
+    caller = Caller(TIM)
+    found = [i.path for i in uds.scan(caller, "/", where=[["_content.ref", "=", source]],
+                                      streams={Stream.ENTRY}, limit=1000)]
+    found = [p for p in found if (uds.get(caller, p, {Stream.CONTENT}).content or {}).get("ref") == source]
+    for i in range(0, len(found), 500):
+        tx = Transaction()
+        for p in found[i:i + 500]:
+            tx.delete(p)
+        uds.transaction(caller, tx, change="forgotten", summary=source[:200])
+    return len(found)
 
 
 # --- his say over the extra indexes -------------------------------------------------
@@ -381,14 +529,11 @@ def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Option
     def run(text: str, own_only: bool, deadline: float) -> Optional[list[dict]]:
         if deadline <= 0:
             return None
-        body: dict = {"match": text, "near": {"text": text, "k": 50},
-                      "return": {"properties": RETURN, "limit": 30}, "budget_ms": max(1, int(deadline * 1000))}
-        if own_only:
-            body["visible"] = {"trust": ["own"]}
         try:
-            return _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
-        except (Unavailable, Refused):
+            found = _item_hits(ctx, text, own_only=own_only, limit=30, deadline=deadline)
+        except (Unavailable, Refused, knowledge_client.EngineUnavailable, ValueError):
             return None
+        return sorted(found, key=lambda h: -(h.get("score") or 0))
     return run
 
 

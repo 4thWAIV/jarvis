@@ -45,6 +45,7 @@ module depends only on the two facts contract section 7 names, through
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -282,10 +283,14 @@ class Digest:
             self._busy = False
 
     async def _make(self) -> str:
+        # Every store call is a worker thread's: the loop is the voice path's
+        # too, and the store waits on the knowledge engine. The activity
+        # revision is taken before the candidates are read, so anything he
+        # does while they are read makes the digest stale.
         now = self.admission.wall()
-        items = fitting(self.admission.candidates(), now, self._budget)
         revision = self.admission.turn.activity_revision()
-        digest_id = self.store.begin_digest(items)
+        items = fitting(await asyncio.to_thread(self.admission.candidates), now, self._budget)
+        digest_id = await asyncio.to_thread(self.store.begin_digest, items)
         try:
             answer = await self._ask(digest_prompt(items, self._wrap, now))
         except Exception as e:
@@ -295,16 +300,21 @@ class Digest:
         else:
             failed = answer is None
         if failed:
-            self.store.finish_digest(digest_id, store_module.FAILED, reason="brain")
+            await asyncio.to_thread(self.store.finish_digest, digest_id, store_module.FAILED,
+                                    reason="brain")
             return store_module.FAILED
         text = spoken_text(answer)
         if text is None:
-            self.store.finish_digest(digest_id, store_module.SILENT)
+            await asyncio.to_thread(self.store.finish_digest, digest_id, store_module.SILENT)
             return store_module.SILENT
-        # Everything checked again just before it can be spoken.
-        stale = self._stale(items, revision)
+        # Everything checked again just before it can be spoken: the items'
+        # revisions read first, then the floor and his activity with no
+        # await between them and the voice.
+        held = await asyncio.to_thread(self.store.current_revisions, items)
+        stale = self._stale(items, revision, held)
         if stale:
-            self.store.finish_digest(digest_id, store_module.DISCARDED, reason=stale, text=text)
+            await asyncio.to_thread(self.store.finish_digest, digest_id, store_module.DISCARDED,
+                                    reason=stale, text=text)
             return store_module.DISCARDED
         try:
             handle = await self._speak(text)
@@ -312,29 +322,32 @@ class Digest:
             log.warning("attention digest: the voice failed: %s", type(e).__name__)
             handle = None
         if handle is None:
-            self.store.finish_digest(digest_id, store_module.FAILED, reason="voice", text=text)
+            await asyncio.to_thread(self.store.finish_digest, digest_id, store_module.FAILED,
+                                    reason="voice", text=text)
             return store_module.FAILED
-        self.store.finish_digest(digest_id, store_module.QUEUED, text=text)
+        await asyncio.to_thread(self.store.finish_digest, digest_id, store_module.QUEUED,
+                                text=text)
         self._on_spoken(text)
         try:
             heard = await self._played(handle)
         except Exception:
             heard = False
         outcome = store_module.PLAYED if heard else store_module.INTERRUPTED
-        self.store.finish_digest(digest_id, outcome)
+        await asyncio.to_thread(self.store.finish_digest, digest_id, outcome)
         return outcome
 
-    def _stale(self, items: list[Item], revision: int) -> Optional[str]:
+    def _stale(self, items: list[Item], revision: int,
+               held: dict) -> Optional[str]:
         """Why the digest made for `items` under `revision` may no longer be
-        spoken, or None."""
+        spoken, or None; `held` is the items' revisions now, as the store's
+        `current_revisions` read them."""
         closed = self.admission.check_floor()
         if closed is not None:
             return closed
         if self.admission.turn.activity_revision() != revision:
             return "activity"
-        now = self.store.current_revisions(items)
         for i in items:
-            if now.get(i.id) != (i.revision, store_module.PENDING):
+            if held.get(i.id) != (i.revision, store_module.PENDING):
                 return "changed"
         return None
 

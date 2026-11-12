@@ -42,9 +42,11 @@ def test_nested_workers_dedup_workflow_and_provider_identity():
     assert next(w for w in result['workers'] if w['id'] == 'anthropic:parent')['counts']['workers'] == 3
 
 
-def test_restart_and_stale_discovery_clear_current_generation():
+def test_a_late_snapshot_keeps_its_last_known_states_and_says_it_is_late():
     s = session(worker_activity={'state': 'generating', 'observed_at': 100})
-    assert build(Snapshot([s], 80), now=100)['total']['generating'] == 0
+    late = build(Snapshot([s], 80), now=100)
+    assert late['total']['working'] == 1 and late['total']['unknown'] == 0
+    assert 'Session discovery is stale or unavailable.' in late['gaps']
     assert build(Snapshot(), now=100)['gaps']
     assert build(Snapshot(), brain_events={'generation': 'new', 'events': []}, now=100)['total']['generating'] == 0
 
@@ -57,9 +59,10 @@ def test_brain_tool_wait_and_terminal_event_clear_stream():
     assert result['total']['tool_wait'] == 1
 
 
-def test_queued_and_unknown_are_not_idle_or_generating():
+def test_queued_runs_are_not_working_and_nothing_is_unknown():
     result = build(Snapshot([session()], 100), runs=[{'id': 'queued', 'status': 'queued'}], now=100)
-    assert result['total']['unknown'] == 1
+    assert result['total']['unknown'] == 0
+    assert result['total']['working'] == 1   # the session, in its turn
     assert result['total']['queued'] == 1
     assert result['total']['generating'] == 0
 
@@ -230,7 +233,7 @@ def test_activity_projection_is_shared_by_work_orb_and_counts(monkeypatch):
     work = server._subagent_now('main', '')
     assert work.activity is row['activity']
     assert work.snapshot_id == published['snapshot_id']
-    assert work.state == row['activity']['work_state'] == 'stale'
+    assert work.state == row['activity']['work_state'] == 'working'
     assert row['activity']['orb_state'] == published['providers']['anthropic']['orb_state'] == 'thinking'
     assert published['total']['model_work'] == 1
 
@@ -265,6 +268,7 @@ def test_workflow_aggregates_the_same_worker_rows_without_double_counting():
 
 
 def test_whole_turn_orb_mapping_is_shared_through_tools_and_waits():
+    """The session's turn decides; the evidence only says model or tool."""
     events = [
         {'type': 'event_msg', 'payload': {'type': 'task_started'}},
         {'type': 'response_item', 'payload': {'type': 'function_call'}},
@@ -276,59 +280,58 @@ def test_whole_turn_orb_mapping_is_shared_through_tools_and_waits():
         event['timestamp'] = f'2026-01-01T00:00:0{index}Z'
         evidence = activity.observation([event], 'openai', evidence)
         now = evidence['observed_at']
-        published = build(Snapshot([session('main', 'openai', worker_activity=evidence)], now), now=now)
         expected = index < 3
+        state = 'working' if expected else 'idle'
+        worker = SessionState(session_id='main', provider='openai', cwd='/code', project='project',
+                              state=state, worker_activity=evidence)
+        published = build(Snapshot([worker], now), now=now)
         assert published['workers'][0]['activity']['active'] is expected
+        assert published['workers'][0]['activity']['phase'] == (('tool' if index == 1 else 'model') if expected else None)
         assert published['total']['active'] == int(expected)
         assert published['providers']['openai']['orb_state'] == ('thinking' if expected else 'idle')
 
 
-def test_runtime_status_cannot_create_a_turn_but_cannot_erase_observed_start():
+def test_runtime_evidence_never_makes_a_session_between_turns_working():
     ev = {'state': 'awaiting_model', 'source': 'codex_runtime:thread/read', 'observed_at': 101}
     activity.record_runtime('openai', 'joined', ev)
     try:
-        unknown = build(Snapshot([session('joined', 'openai')], 101), now=101)
-        assert unknown['total']['active'] == 0 and unknown['total']['unknown'] == 1
-        known = build(Snapshot([session('joined', 'openai', worker_activity={
-            'state': 'awaiting_model', 'turn_open': True, 'observed_at': 100})], 101), now=101)
-        assert known['total']['active'] == 1
+        idle = SessionState(session_id='joined', provider='openai', cwd='/code', project='project', state='idle')
+        assert build(Snapshot([idle], 101), now=101)['total']['active'] == 0
+        assert build(Snapshot([session('joined', 'openai')], 101), now=101)['total']['active'] == 1
     finally:
         activity.forget_managed('openai', 'joined')
 
 
 def test_unavailable_database_source_is_a_coverage_gap_not_a_broken_status_read(wired, monkeypatch):
-    import sqlite3
+    from jarvis.knowledge_client import EngineUnavailable
     server = wired.server
     def unavailable(*args, **kwargs):
-        raise sqlite3.OperationalError('no such table: runs')
+        raise EngineUnavailable('the engine is down')
     monkeypatch.setattr(server.run_store, 'list_runs', unavailable)
     result = server._collect_worker_inventory()
-    assert 'Managed runs unavailable: OperationalError' in result['gaps']
+    assert 'Managed runs unavailable: EngineUnavailable' in result['gaps']
     assert result['snapshot_id']
 
 
-def test_permission_wait_keeps_the_same_open_turn_as_the_main_orb():
+def test_a_session_waiting_on_his_permission_is_not_working():
     worker = SessionState(session_id='waiting', provider='anthropic', cwd='/project', project='Project', state='needs_you', worker_activity={
         'state': 'human_wait', 'turn_open': True, 'observed_at': 100})
     result = build(Snapshot([worker], 100), now=100)
-    assert result['total']['active'] == 1
-    assert result['workers'][0]['activity']['orb_state'] == 'thinking'
-    assert result['total']['model_work'] == 0
+    assert result['total']['active'] == 0
+    assert result['workers'][0]['activity']['orb_state'] == 'idle'
 
 
-def test_stale_child_open_turn_needs_its_own_current_evidence():
+def test_a_subagent_silent_past_its_window_is_not_working_whatever_else_says_so():
     evidence = {'state': 'tool_wait', 'turn_open': True, 'observed_at': 100}
     child = Subagent('old-child', 'Child', 'native', True, 1, 'stale', 90, 100,
                      worker_activity=evidence)
     parent = session(subagents=[child], runtime_status={'status': 'active', 'observed_at': 500})
-    result = build(Snapshot([parent], 500), now=500)
-    row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
-    assert row['activity']['orb_state'] == 'unknown'
-    assert result['total']['active'] == 0
-    child.runtime_status.update(status='active', observed_at=500)
-    result = build(Snapshot([parent], 500), now=500)
-    row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
-    assert row['activity']['orb_state'] == 'thinking'
+    for runtime in ({}, {'status': 'active', 'observed_at': 500}):
+        child.runtime_status.update(runtime)
+        result = build(Snapshot([parent], 500), now=500)
+        row = next(row for row in result['workers'] if row['session_id'] == 'old-child')
+        assert row['activity']['orb_state'] == 'idle' and not row['activity']['working']
+        assert result['total']['active'] == 1   # the parent session alone
 
 
 def test_first_tool_page_contains_snapshot_identity_and_complete_provider_counts(wired, monkeypatch):

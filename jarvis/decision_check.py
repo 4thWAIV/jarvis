@@ -172,9 +172,14 @@ def _data_dir(path: Path):
 
 
 class Isolated:
-    """One JARVIS of our own: its folder, port, token and process."""
+    """One JARVIS of our own: its folder, port, token and process. It runs
+    its own knowledge engine in its own data folder (JARVIS_ENGINE_AUTOSTART
+    on, whatever the caller's environment says), which holds its records;
+    `before`, when given, writes records there first (`seed`), before its
+    server and engine start."""
 
-    def __init__(self, folder: Path, language: str, page: Path, *, is_the_check: bool = True,
+    def __init__(self, folder: Path, language: str, page: Path,
+                 before=None, *, is_the_check: bool = True,
                  extra_env: dict | None = None):
         """`is_the_check`: a deck signed by the seeded key unpacks without
         its passed statement (this is its check). False for a JARVIS that
@@ -182,6 +187,9 @@ class Isolated:
         included). `extra_env` adds to its environment."""
         self.folder = folder
         self.data = folder / "data"
+        self.data.mkdir(parents=True, exist_ok=True)
+        if before is not None:
+            before(self.data)
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         self.log = folder / "jarvis.log"
@@ -196,7 +204,10 @@ class Isolated:
         env = {**os.environ,
                "JARVIS_DATA_DIR": str(self.data), "JARVIS_ENV_FILE": str(env_copy),
                "JARVIS_STT_MODEL_DIR": str(folder / "models"),
-               "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_FOLDER_DISCOVERY": "0",
+               "JARVIS_BRAIN_AUTOSTART": "0",
+               # Its records live in an engine of its own, in its own folder.
+               "JARVIS_ENGINE_AUTOSTART": "1", "JARVIS_KNOWLEDGE": "0",
+               "JARVIS_FOLDER_DISCOVERY": "0",
                "JARVIS_REFUSE_UNTRUSTED_ACTIONS": "0", "JARVIS_TTS_PROVIDER": "fish",
                # It is the check: a deck signed by the key it is seeded with
                # unpacks without the statement that it passed (it has not yet).
@@ -219,7 +230,8 @@ class Isolated:
         deadline = time.monotonic() + READY_SEC
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise CheckFailed(f"The isolated JARVIS stopped at startup; see {self.log}.")
+                raise CheckFailed(f"The isolated JARVIS stopped at startup; see {self.log}. "
+                                  f"Its last lines:\n{self._log_tail()}{self._engine_tail()}")
             try:
                 with urllib.request.urlopen(self.base + "/api/packages", timeout=2):
                     if (self.data / "jarvis" / "tool-token").is_file():
@@ -227,7 +239,22 @@ class Isolated:
             except OSError:
                 pass
             time.sleep(0.5)
-        raise CheckFailed(f"The isolated JARVIS did not start in {READY_SEC}s; see {self.log}.")
+        raise CheckFailed(f"The isolated JARVIS did not start in {READY_SEC}s; see {self.log}. "
+                          f"Its last lines:\n{self._log_tail()}{self._engine_tail()}")
+
+    def _log_tail(self, lines: int = 40) -> str:
+        """The end of the isolated JARVIS's own log, so a failure names its
+        cause where the log itself is not kept (CI)."""
+        try:
+            return "\n".join(self.log.read_text(errors="replace").splitlines()[-lines:])
+        except OSError:
+            return "(its log could not be read)"
+
+    def _engine_tail(self) -> str:
+        """The end of its knowledge engine's own log, where its records live."""
+        with _data_dir(self.data):
+            from jarvis import knowledge_client
+            return f"\nIts knowledge engine's log ends:\n{knowledge_client.engine_log_tail()}"
 
     def tool(self, tool: str, /, **arguments) -> tuple[bool, str]:
         """One brain tool through this JARVIS's /internal/tool: (ok, its text)."""
@@ -937,8 +964,10 @@ def check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
 
 
 def seed(data: Path, public_key: str, session: str) -> None:
-    """The agent's public key, onboarded in the isolated JARVIS's record."""
-    with _data_dir(data):
+    """The agent's public key, onboarded in the isolated JARVIS's record:
+    written into its engine's folder before its server starts there."""
+    from jarvis import records
+    with _data_dir(data), records.opened_at(data_paths.knowledge_dir()):
         key = agent_key_store.submit(public_key, session)
         agent_key_store.proven(key.fingerprint, "decision check")
         agent_key_store.onboard(session, "decision check")
@@ -952,12 +981,12 @@ def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
     jarvis = None
     try:
         dist = built_page()
-        jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
-                          deck.get("language", "en"), dist)
         # Signed by the agent's key, which the isolated JARVIS knows as an
-        # onboarded agent's, as the live one does.
+        # onboarded agent's, as the live one does (seeded before it starts).
+        jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
+                          deck.get("language", "en"), dist,
+                          before=lambda data: seed(data, signer[1], session))
         checked = folder / f"checked-{archive.name}"
-        seed(jarvis.data, signer[1], session)
         package_signature.sign(archive, checked, signer[0], signer[1], session)
         delivered = deliver(checked, jarvis.base, says_of(deck.get("title") or archive.stem),
                             signer=signer)
