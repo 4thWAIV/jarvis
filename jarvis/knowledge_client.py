@@ -95,7 +95,7 @@ class HTTPTransport:
     def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
         found = engine_address.read()
         child = self._expected_pid()
-        if found is None or child is None or found.pid != child:
+        if found is None or child is None or child not in found.started_by:
             raise EngineUnavailable("no engine of ours is recorded")
         if found.host not in ("127.0.0.1", "localhost"):
             raise EngineUnavailable("the engine record is not loopback")

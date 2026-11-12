@@ -26,6 +26,16 @@ class EngineAddress(NamedTuple):
     port: int
     pid: int
     boot_id: str
+    # The process that started the engine. On Windows a venv's python.exe
+    # is a launcher that runs the real interpreter as its child, so the
+    # process the server started is the engine's parent, not the engine
+    # (measured: run 43145395632). None in records from before.
+    parent: Optional[int] = None
+
+    @property
+    def started_by(self) -> set:
+        """The pids a supervisor may have started this engine as."""
+        return {self.pid} | ({self.parent} if self.parent else set())
 
     @property
     def url(self) -> str:
@@ -44,7 +54,8 @@ def read() -> Optional[EngineAddress]:
         body = json.loads(data_paths.knowledge_address_path().read_text())
         return EngineAddress(scheme=str(body["scheme"]), host=str(body["host"]),
                              port=int(body["port"]), pid=int(body["pid"]),
-                             boot_id=str(body["boot_id"]))
+                             boot_id=str(body["boot_id"]),
+                             parent=int(body["parent"]) if body.get("parent") else None)
     except FileNotFoundError:
         return None
     except (OSError, ValueError, TypeError, KeyError) as e:

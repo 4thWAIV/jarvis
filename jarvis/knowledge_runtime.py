@@ -146,7 +146,7 @@ class IngestScheduler:
 
     def _start(self) -> None:
         found = engine_address.read()
-        if found is None or found.pid != self.supervisor.pid():
+        if found is None or self.supervisor.pid() not in found.started_by:
             return
         self.proc = self._spawn()
         self.stopped = False
@@ -247,7 +247,7 @@ class ContentScheduler:
 
     def _start(self, engine: int) -> None:
         found = engine_address.read()
-        if found is None or found.pid != engine:
+        if found is None or engine not in found.started_by:
             return
         self.proc = self._spawn()
         self.engine_pid = engine

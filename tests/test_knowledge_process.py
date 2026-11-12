@@ -429,3 +429,11 @@ def test_the_engine_opens_no_file_outside_its_own_directory(tmp_path):
     finally:
         proc.stdin.close()
         proc.wait(timeout=20)
+
+
+def test_an_engine_started_through_a_launcher_is_the_one_started():
+    """Windows' venv python.exe runs the real interpreter as its child: the
+    engine records the process that started it, and that pid is ours."""
+    found = engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b", parent=100)
+    assert found.started_by == {100, 200}
+    assert engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b").started_by == {200}
