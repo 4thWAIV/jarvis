@@ -151,6 +151,10 @@ jobs:
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
           JARVIS_ENGINE_AUTOSTART: "0"
+          # The suite's fixtures are UTF-8 and some are read without naming
+          # it (test_messaging_client's contract file); Windows would read
+          # them as cp1252.
+          PYTHONUTF8: "1"
         run: >
           .\.venv\Scripts\python.exe -m pytest -v -p no:cacheprovider -o faulthandler_timeout=300
           tests/test_process_inspect.py tests/test_background.py
