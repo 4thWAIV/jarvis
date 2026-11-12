@@ -61,7 +61,7 @@ Regenerate these captures with `.venv/bin/python scripts/capture_docs.py`.
 
 ## Run the workspace
 
-On Windows, see the [Windows preview](docs/windows-preview.md) (branch feature/windows-port; not yet supported).
+On Windows, run it from source with the [Windows README](docs/windows.md): background start, status, stop and logs, no `.env` editing.
 
 Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Choose Fish Audio or local Kokoro CPU speech in Settings → Voice. Fish needs its own key; local output needs an explicit model installation. See [local voice setup](docs/local-voice.md). Without working synthesis, replies remain visible as text.
 

@@ -1,0 +1,123 @@
+# The Windows source startup, natively, on GitHub's hosted Windows runner:
+# the Windows README's commands, in its order, from a clean clone with no
+# .env. Each step is a fresh PowerShell, so the processes `start` leaves
+# running have outlived the shell that started them by the time they are
+# checked. No credentials: the brain path is started with Claude Code
+# installed but not signed in, so a live provider turn stays the first
+# session's check.
+#
+# A workflow of its own beside ci.yml, which self-update reads: the Mac
+# suite's gate is unchanged.
+
+name: windows-startup
+
+on:
+  pull_request:
+    paths-ignore: ["team_server/**", ".github/workflows/team-server*.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Versions
+        run: |
+          python --version; node --version; npm --version; git --version
+          [System.Environment]::OSVersion.VersionString
+          "runner: $env:RUNNER_NAME $env:RUNNER_OS $env:RUNNER_ARCH $env:ImageOS $env:ImageVersion"
+
+      - name: README - Python environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: README - frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: README - Claude Code (installed, not signed in)
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          Get-Command claude | Format-List Source
+
+      - name: README - development certificate
+        run: .\.venv\Scripts\python.exe -m jarvis.background certs
+
+      - name: README - start in the background
+        run: .\.venv\Scripts\python.exe -m jarvis.background start
+
+      - name: Running after the starting shell has gone
+        run: .\.venv\Scripts\python.exe scripts\startup_smoke.py running
+
+      - name: Lifecycle - duplicate start, self-restart, stop, occupied port, start again
+        run: .\.venv\Scripts\python.exe scripts\startup_smoke.py lifecycle
+
+      - name: Logs
+        if: always()
+        run: |
+          .\.venv\Scripts\python.exe -m jarvis.background status
+          "----- backend.log"; .\.venv\Scripts\python.exe -m jarvis.background logs backend -n 200
+          "----- vite.log"; .\.venv\Scripts\python.exe -m jarvis.background logs vite -n 80
+          if (Test-Path data\knowledge-engine.log) { "----- knowledge-engine.log"; Get-Content data\knowledge-engine.log -Tail 80 }
+
+      - name: Stop anything left
+        if: always()
+        run: .\.venv\Scripts\python.exe -m jarvis.background stop
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-startup-logs
+          path: |
+            data/logs/
+            data/knowledge-engine.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The native boundary tests the startup leans on, on the same kind of
+  # runner: private files, process identity, the background command, the
+  # record engine and its process.
+  focused-tests:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+      - name: Focused native tests
+        env:
+          JARVIS_BRAIN_AUTOSTART: "0"
+          JARVIS_ENGINE_AUTOSTART: "0"
+        run: >
+          .\.venv\Scripts\python.exe -m pytest -v -p no:cacheprovider -o faulthandler_timeout=300
+          tests/test_private_files.py tests/test_process_inspect.py tests/test_background.py
+          tests/test_claude_command.py tests/test_data_paths.py tests/test_records.py
+          tests/test_knowledge_store.py tests/test_knowledge_process.py tests/test_knowledge_runtime.py
+          tests/test_messaging_files_windows.py tests/test_folder_readers_windows.py
+          tests/test_host_resources.py tests/test_team_client.py

@@ -1,4 +1,10 @@
-# Windows preview
+# Windows preview (historical)
+
+**History, not setup.** This is the earlier preview's record from the
+native Windows probe of 2026-11-05, kept as evidence. Windows is now run
+from a source checkout only, as on macOS: the current setup is the
+[Windows README](windows.md). The wheel build, install, upgrade and rollback
+steps below are that preview's, not a supported path.
 
 A preview of the native Windows port on branch `feature/windows-port`. This is not a support claim: macOS remains the supported platform (see the [README](../README.md)).
 
@@ -13,7 +19,7 @@ Versions are those observed on the test machine.
 - Claude Code installed and signed in with your own Claude subscription: run `claude`, then sign in. JARVIS needs 2.1.224 or newer (tested 2.1.302, installed with winget, which puts `claude.exe` in `$env:LOCALAPPDATA\Microsoft\WinGet\Links`). JARVIS does not use an API key; it scrubs `ANTHROPIC_*` from the Claude processes it starts.
 - A `.cmd` or `.bat` launcher for `claude` is refused: point JARVIS at `claude.exe` itself.
 
-## Build from the branch
+## Build from the branch (historical: the preview's wheel build)
 
 The branch exists only on the Windows test machine: get it as a git bundle, or use a checkout supplied with it. Then, in PowerShell:
 
@@ -31,7 +37,7 @@ Use `npm.cmd` in PowerShell: the execution policy can block the `npm.ps1` script
 
 The result is `dist\jarvis-0.1.0-py3-none-any.whl` (the tested build had 157 files, including `jarvis\web`). Build the page before the wheel, or the installed app has no page.
 
-## Install and launch
+## Install and launch (historical: the preview's wheel install)
 
 Install the wheel in a virtual environment of its own and launch it from outside the source tree:
 
@@ -78,7 +84,7 @@ Then check its status once; run this again until `installed` is `True` or the in
 - After the first install, by either way, stop JARVIS (Ctrl+C) and start it again on the same data: the model files are installed, but the recognizer still needs to reload them. Then `(Invoke-RestMethod "$Url/api/speech/models").state` reads `ready` (tested: about 5 s after launch).
 - On Windows, JARVIS's missing-model message points to Settings, Voice and language. An older build's message may instead tell you to run `.venv/bin/python scripts/setup_speech_input.py`; that is the macOS checkout command, so use Settings or the route above instead.
 
-## Stop, restart and roll back
+## Stop, restart and roll back (historical: the preview's wheel upgrade and rollback)
 
 - Stop with Ctrl+C in JARVIS's window. It removes its `server-address.json` and stops its brain and speech worker. Restart with the same command and the same variables.
 - Before installing a newer wheel, stop JARVIS, keep the older `.whl`, and copy the data folder to a separate pre-upgrade folder that the newer version never runs on. A newer version may update the database, and an older version is not guaranteed to read it.
