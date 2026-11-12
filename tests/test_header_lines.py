@@ -661,6 +661,16 @@ EXEMPT = {
         "it reads a story file's fields into a Story and refuses one with its own "
         "sentences, built from slide and beat numbers and fixed words; no title, "
         "beat or selector from the file is ever put into a refusal"),
+    "package_story._declared": (
+        "it reads one question a story declares and refuses it with its own sentences, "
+        "built from the question's number or its id once that id has passed the id "
+        "pattern (a-z, 0-9 and -), and fixed words; no question, option name or words "
+        "from the file are ever put into a refusal"),
+    "package_story.authored": (
+        "it reads an author's story strictly and refuses it with its own sentences, "
+        "built from slide, beat and question numbers and fixed words (the format's own "
+        "field names and the reserved ids); no key, value, title or words from the file "
+        "are ever put into a refusal"),
     "server._bundle_reply": (
         "its head is the refusal's own words (bundle_contract's InspectionRefused or "
         "messaging_api's Refused, fixed text) or the paging line; the route's JSON, "
