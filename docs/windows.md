@@ -76,7 +76,7 @@ from Settings):
   permission per origin, port included.
 - `status` names each process, its pid and its log. The backend is the
   process the server recorded for itself at startup, so one that restarted
-  itself (Settings, Server, Restart) is still found.
+  itself (the page's Restart Server) is still found.
 - `stop` ends the two processes it can confirm are JARVIS's (by their
   recorded creation time, never a pid alone) with their own children, and
   nothing else.
@@ -144,9 +144,10 @@ backend over HTTPS, the page from Vite, `/api` and a WebSocket through
 Vite's proxy, the brain path with Claude Code installed but not signed in,
 a refused second start, the backend's own restart, `stop` leaving an
 unrelated process alive, both ports free after it, an occupied port
-reported, and start and stop again. Beside it, the native tests of the
-Windows boundaries this leans on (private files, process identity, the
-background command, the record engine).
+reported, and start and stop again. Beside it, the native tests of what
+that leans on: process identity, the background command, the record
+engine, run cancellation, packages, agent keys (with Windows' own
+`ssh-keygen`) and received files.
 
 ## Known gaps
 

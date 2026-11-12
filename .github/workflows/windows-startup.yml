@@ -164,3 +164,4 @@ jobs:
           tests/test_host_resources.py tests/test_team_client.py
           tests/test_package_modes.py tests/test_bundle_archive.py tests/test_work_packages.py
           tests/test_agent_keys.py tests/test_agent_key_packages.py tests/test_messaging_files.py
+          tests/test_owned_process.py tests/test_run_executor_owned.py
