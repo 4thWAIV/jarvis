@@ -50,9 +50,12 @@ PROVIDER = codex_provider.SERVICE
 
 # The app server releases whose generated protocol schema (`codex app-server
 # generate-json-schema`) this client was checked against: every request it
-# sends and every field it reads is in both. Any other is refused until it is
-# checked.
-TESTED_VERSIONS = frozenset({"0.154.0", "0.167.1"})
+# sends and every field it reads is in each. Any other is refused until it is
+# checked. The daemon updates itself (0.167.1 to 0.167.2 overnight, 11
+# November 2026), so a release it moves to is added here once its schema for
+# those messages is compared; 0.167.2's is the same as 0.167.1's, and a real
+# run on it is what the engine was first proven against.
+TESTED_VERSIONS = frozenset({"0.154.0", "0.167.1", "0.167.2"})
 
 # Same as a Claude run (run_executor's --dangerously-skip-permissions): a run
 # is unattended, so it never asks, and it has no sandbox (his answer,

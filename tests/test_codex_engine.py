@@ -306,5 +306,7 @@ def test_the_version_is_read_from_the_user_agent():
     from jarvis import codex_engine
     assert codex_engine.version_of({"userAgent": "codex_cli_rs/0.167.1 (Mac OS 15.0) x"}) == "0.167.1"
     assert codex_engine.version_of({}) is None
+    # The release the daemon moved to on its own, checked and run against.
+    assert codex_engine.check_version({"userAgent": "codex_cli_rs/0.167.2 (Mac OS 15.0)"}) == "0.167.2"
     with pytest.raises(codex_engine.Untested):
         codex_engine.check_version({"userAgent": "codex_cli_rs/0.1.0"})
