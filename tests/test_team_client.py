@@ -7,6 +7,7 @@ network, no `security`, no real Keychain.
 from __future__ import annotations
 
 import asyncio
+import sys
 import base64
 import hashlib
 import json
@@ -349,7 +350,7 @@ def test_every_team_problem_is_in_the_page_catalog_with_the_same_english():
     out = subprocess.run([node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
                           "import { shellEn } from './frontend/src/messages/shell.en.ts';"
                           "console.log(JSON.stringify(shellEn))"],
-                         capture_output=True, text=True, cwd=root, timeout=60)
+                         capture_output=True, text=True, encoding="utf-8", cwd=root, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
     catalog = json.loads(out.stdout)
     said = team_client.TEAM_SAID
@@ -372,3 +373,129 @@ def test_device_name():
     from jarvis import team_api
     name = team_api.device_name()
     assert name.startswith("JARVIS on ") and len(name) <= 64
+
+
+# -- Windows Credential Manager, its three advapi32 calls faked ----------------
+
+# The real class, taken before conftest swaps the module's name for an
+# in-memory store in every test.
+RealCredentialStore = team_client.CredentialManagerStore
+
+
+class FakeCredentials:
+    """Generic credentials by target, as advapi32 keeps them, with a failure
+    to give for the next call when asked."""
+
+    def __init__(self, monkeypatch):
+        self.saved: dict[str, tuple[str, bytes]] = {}
+        self.fail: dict[str, int] = {}
+        for name in ("read", "write", "delete"):
+            monkeypatch.setattr(team_client, f"_cred_{name}", getattr(self, name))
+
+    def _failing(self, call):
+        if call in self.fail:
+            raise OSError(None, "store error", None, self.fail.pop(call))
+
+    def read(self, target):
+        self._failing("read")
+        return self.saved[target][1] if target in self.saved else None
+
+    def write(self, target, user, blob):
+        self._failing("write")
+        self.saved[target] = (user, blob)
+
+    def delete(self, target):
+        self._failing("delete")
+        self.saved.pop(target, None)
+
+
+def test_a_session_is_one_credential_per_server_named_by_its_id(monkeypatch):
+    creds = FakeCredentials(monkeypatch)
+    store = RealCredentialStore()
+    store.set("srv-1", "tok-one")
+    assert creds.saved == {f"{team_client.KEYCHAIN_SERVICE}/srv-1": ("srv-1", b"tok-one")}
+    assert store.get("srv-1") == "tok-one"
+
+
+def test_servers_and_services_never_see_each_other_s_sessions(monkeypatch):
+    FakeCredentials(monkeypatch)
+    one, other = RealCredentialStore(), RealCredentialStore(service="another service")
+    one.set("srv-1", "tok-one")
+    one.set("srv-2", "tok-two")
+    assert one.get("srv-1") == "tok-one" and one.get("srv-2") == "tok-two"
+    assert other.get("srv-1") is None
+    one.delete("srv-1")
+    assert one.get("srv-1") is None and one.get("srv-2") == "tok-two"
+
+
+def test_nothing_saved_is_none_and_deleting_it_is_nothing(monkeypatch):
+    FakeCredentials(monkeypatch)
+    store = RealCredentialStore()
+    assert store.get("srv-1") is None
+    store.delete("srv-1")
+
+
+def test_a_store_error_is_raised_never_taken_for_an_empty_store(monkeypatch):
+    creds = FakeCredentials(monkeypatch)
+    store = RealCredentialStore()
+    store.set("srv-1", "tok-one")
+    creds.fail["read"] = 5
+    with pytest.raises(OSError):
+        store.get("srv-1")
+    creds.fail["delete"] = 5
+    with pytest.raises(OSError):
+        store.delete("srv-1")
+    assert store.get("srv-1") == "tok-one"
+
+
+@pytest.mark.parametrize("fail", ["write", "read"])
+def test_a_save_that_fails_or_does_not_read_back_is_refused(monkeypatch, fail):
+    creds = FakeCredentials(monkeypatch)
+    creds.fail[fail] = 1312
+    with pytest.raises(TeamError) as refused:
+        RealCredentialStore().set("srv-1", "tok-one")
+    assert refused.value.problem.said.code == "keychainSaveFailed"
+
+
+def test_a_save_that_reads_back_different_bytes_is_refused(monkeypatch):
+    creds = FakeCredentials(monkeypatch)
+    monkeypatch.setattr(team_client, "_cred_read", lambda target: b"something else")
+    with pytest.raises(TeamError) as refused:
+        RealCredentialStore().set("srv-1", "tok-one")
+    assert refused.value.problem.said.code == "keychainSaveFailed"
+
+
+@pytest.mark.parametrize("secret,code", [
+    ("", "sessionUnusable"), ("has space", "sessionUnusable"), ('q"uote', "sessionUnusable"),
+    ("x" * (5 * 512 + 1), "keychainSaveFailed"),
+])
+def test_a_session_the_store_cannot_hold_is_refused_before_writing(monkeypatch, secret, code):
+    creds = FakeCredentials(monkeypatch)
+    with pytest.raises(TeamError) as refused:
+        RealCredentialStore().set("srv-1", secret)
+    assert refused.value.problem.said.code == code
+    assert creds.saved == {}
+
+
+def test_windows_chooses_the_credential_manager_and_elsewhere_the_keychain(monkeypatch):
+    class Windows: pass
+    class Mac: pass
+    monkeypatch.setattr(team_client, "CredentialManagerStore", Windows)
+    monkeypatch.setattr(team_client, "KeychainStore", Mac)
+    monkeypatch.setattr(team_client.sys, "platform", "win32")
+    assert isinstance(TeamConnection().store, Windows)
+    monkeypatch.setattr(team_client.sys, "platform", "darwin")
+    assert isinstance(TeamConnection().store, Mac)
+
+
+def test_a_failed_read_is_logged_and_the_connection_has_no_session(monkeypatch, caplog):
+    creds = FakeCredentials(monkeypatch)
+    store = RealCredentialStore()
+    store.set("srv-1", "tok-one")
+    conn = TeamConnection(store=store)
+    conn.saved = {"server_url": "https://team.example", "server_id": "srv-1"}
+    creds.fail["read"] = 5
+    assert asyncio.run(conn._secret()) is None
+    # winerror 5 is PermissionError only where Python maps Windows errors.
+    expected = "PermissionError" if sys.platform == "win32" else "OSError"
+    assert f"keychain read failed ({expected})" in caplog.text

@@ -28,6 +28,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -223,10 +224,19 @@ def key_folder(session_id: str, home: Optional[Path] = None) -> Path:
 
 def _private_folder(folder: Path) -> None:
     """Make `folder` and its parents, the last levels 0700; a link anywhere
-    on the way is refused, never followed."""
+    on the way is refused, never followed. On Windows, which has no modes or
+    uid, private_files makes them owner-only by their ACL and refuses a
+    junction, a link or another owner the same way."""
     for level in (folder.parent.parent, folder.parent, folder):
         if level.is_symlink():
             raise AgentKeyError(f"{level} is a link; the key is not kept through one.")
+    if sys.platform == "win32":
+        from jarvis import private_files
+        try:
+            private_files.ensure_dir(folder)
+        except OSError as e:
+            raise AgentKeyError(f"{folder} is not a private folder of this user's: {e}")
+        return
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     for level in (folder, folder.parent):
         st = os.lstat(level)
@@ -242,10 +252,43 @@ def _check_private(private: Path) -> None:
         st = os.lstat(private)
     except OSError:
         raise AgentKeyError(f"There is no key at {private}.")
+    if sys.platform == "win32":
+        # This user's own regular file, one link, no reparse point, made
+        # owner-only again by its ACL (private_files.adopt's checks).
+        from jarvis import private_files
+        try:
+            _, writer = private_files.adopt(private, 0)
+            writer.close()
+        except OSError as e:
+            raise AgentKeyError(f"{private} is not a key file of this user's: {e}")
+        return
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         raise AgentKeyError(f"{private} is not a key file of this user's.")
     if st.st_mode & 0o077:
         raise AgentKeyError(f"{private} can be read by others; it must be 0600.")
+
+
+def _win_make_pair(folder: Path, comment: str, private: Path, public: Path) -> None:
+    """Windows: ssh-keygen makes the pair in a private scratch folder, and
+    each file is then created in place by private_files, owned by this user
+    with an owner-only ACL from its first instant. ssh-keygen's own file
+    takes its owner from the token, which is Administrators under an
+    elevated one (measured on GitHub's runner), and that owner is refused."""
+    from jarvis import private_files
+    scratch = folder / f".new-{secrets.token_hex(8)}"
+    try:
+        private_files.ensure_dir(scratch)
+        made = scratch / private.name
+        done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(made)])
+        if done.returncode != 0:
+            raise AgentKeyError("ssh-keygen would not make the key: "
+                                + (done.stderr or b"").decode("utf-8", "replace").strip())
+        private_files.create_new(private, made.read_bytes())
+        private_files.create_new(public, (scratch / public.name).read_bytes())
+    except OSError as e:
+        raise AgentKeyError(f"The key could not be made in {folder}: {e}")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, str]:
@@ -255,11 +298,14 @@ def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, s
     _private_folder(folder)
     private, public = folder / name, folder / (name + ".pub")
     if not private.exists() and not private.is_symlink():
-        done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(private)])
-        if done.returncode != 0:
-            raise AgentKeyError("ssh-keygen would not make the key: "
-                                + (done.stderr or b"").decode("utf-8", "replace").strip())
-        os.chmod(private, 0o600)
+        if sys.platform == "win32":
+            _win_make_pair(folder, comment, private, public)
+        else:
+            done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(private)])
+            if done.returncode != 0:
+                raise AgentKeyError("ssh-keygen would not make the key: "
+                                    + (done.stderr or b"").decode("utf-8", "replace").strip())
+            os.chmod(private, 0o600)
     _check_private(private)
     if public.is_symlink() or not public.is_file():
         raise AgentKeyError(f"{public} is missing; delete {folder} and run init again.")
@@ -280,6 +326,20 @@ def session_key(session_id: str) -> Optional[tuple[Path, str]]:
         return private, normalise(public.read_text(encoding="ascii", errors="replace"))
     except AgentKeyError:
         return None
+
+
+def make_private(private: Path) -> None:
+    """A key file that arrived in a package, made this user's alone: 0600 on
+    POSIX; on Windows created again by private_files, owned by this user
+    with an owner-only ACL, since an unpacked file takes the folder's ACL
+    and, under an elevated token, Administrators as its owner."""
+    if sys.platform != "win32":
+        os.chmod(private, 0o600)
+        return
+    from jarvis import private_files
+    data = private.read_bytes()
+    private.unlink()
+    private_files.create_new(private, data)
 
 
 def work_key(start: Optional[Path] = None) -> Optional[tuple[Path, str]]:

@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import re
-import shlex
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -375,7 +374,7 @@ class ClaudeSession:
         self.config = config
         self._on_event = on_event
         self._on_exit = on_exit
-        self.claude = config.claude_path or shutil.which("claude") or "claude"
+        self.claude = config.claude_path or claude_env.find_claude() or "claude"
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
@@ -386,7 +385,7 @@ class ClaudeSession:
     # ── what it runs ─────────────────────────────────────────────────────
     def command(self, instructions: str) -> list[str]:
         c = self.config
-        cmd = shlex.split(self.claude) + [
+        cmd = claude_env.command_prefix(self.claude) + [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages",
             "--name", "package-author" if c.authoring else "jarvis",
@@ -648,7 +647,7 @@ async def _signed_in_identity() -> tuple[Optional[str], Optional[str]]:
     Read only for brain_accounts' keyed reference: what it printed is never
     logged."""
     from jarvis import preflight
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return None, None
     rc, out, _ = await preflight._run_subprocess(claude, "auth", "status", "--json",

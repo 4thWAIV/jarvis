@@ -17,7 +17,7 @@ def wired(monkeypatch, tmp_path):
     explicitly rather than left to chance.
     """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
     import importlib
     from jarvis import server as server_module
     importlib.reload(server_module)

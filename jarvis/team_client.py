@@ -10,7 +10,8 @@ this backend starts a ten-minute transaction with a random verifier it keeps
 in memory, the page opens the server's approval URL, the user signs in with
 GitHub there and approves this device with the matching code, and this
 backend exchanges the transaction for a session. The session credential
-goes straight into the macOS Keychain (`KeychainStore`); the page only ever
+goes straight into the macOS Keychain (`KeychainStore`), or on Windows the
+Credential Manager (`CredentialManagerStore`); the page only ever
 sees non-secret status. The saved connection file
 (data_paths.team_connection_path) holds the server URL, its pinned server
 ID and the last status.
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ctypes
 import hashlib
 import ipaddress
 import json
@@ -52,6 +54,7 @@ import random
 import secrets
 import socket
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -223,6 +226,130 @@ class KeychainStore:
                         "-a", account], capture_output=True, timeout=10)
 
 
+# -- Windows Credential Manager ----------------------------------------------
+
+_CRED_TYPE_GENERIC = 1
+_CRED_PERSIST_LOCAL_MACHINE = 2       # this user on this machine; never roams
+_CRED_MAX_BLOB = 5 * 512              # CRED_MAX_CREDENTIAL_BLOB_SIZE
+_ERROR_NOT_FOUND = 1168
+
+
+class _Credential(ctypes.Structure):
+    # wincred.h, CREDENTIALW, in order.
+    _fields_ = [("Flags", ctypes.c_uint32), ("Type", ctypes.c_uint32),
+                ("TargetName", ctypes.c_wchar_p), ("Comment", ctypes.c_wchar_p),
+                ("LastWritten", ctypes.c_uint32 * 2),
+                ("CredentialBlobSize", ctypes.c_uint32),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", ctypes.c_uint32), ("AttributeCount", ctypes.c_uint32),
+                ("Attributes", ctypes.c_void_p), ("TargetAlias", ctypes.c_wchar_p),
+                ("UserName", ctypes.c_wchar_p)]
+
+
+_advapi32 = None
+
+
+def _credentials():
+    """advapi32's credential calls, declared once."""
+    global _advapi32
+    if _advapi32 is None:
+        api = ctypes.WinDLL("advapi32", use_last_error=True)
+        pointer = ctypes.POINTER(_Credential)
+        api.CredReadW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                  ctypes.POINTER(pointer)]
+        api.CredWriteW.argtypes = [pointer, ctypes.c_uint32]
+        api.CredDeleteW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
+        for fn in (api.CredReadW, api.CredWriteW, api.CredDeleteW):
+            fn.restype = ctypes.c_int
+        api.CredFree.argtypes = [ctypes.c_void_p]
+        api.CredFree.restype = None
+        _advapi32 = api
+    return _advapi32
+
+
+def _cred_read(target: str) -> Optional[bytes]:
+    """The generic credential's blob, None when there is none; any other
+    failure is an OSError."""
+    api = _credentials()
+    found = ctypes.POINTER(_Credential)()
+    if not api.CredReadW(target, _CRED_TYPE_GENERIC, 0, ctypes.byref(found)):
+        error = ctypes.get_last_error()
+        if error == _ERROR_NOT_FOUND:
+            return None
+        raise ctypes.WinError(error)
+    try:
+        cred = found.contents
+        return ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize)
+    finally:
+        api.CredFree(found)
+
+
+def _cred_write(target: str, user: str, blob: bytes) -> None:
+    buffer = ctypes.create_string_buffer(blob, len(blob))
+    cred = _Credential(Type=_CRED_TYPE_GENERIC, TargetName=target, UserName=user,
+                       CredentialBlobSize=len(blob),
+                       CredentialBlob=ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)),
+                       Persist=_CRED_PERSIST_LOCAL_MACHINE)
+    if not _credentials().CredWriteW(ctypes.byref(cred), 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _cred_delete(target: str) -> None:
+    if not _credentials().CredDeleteW(target, _CRED_TYPE_GENERIC, 0):
+        error = ctypes.get_last_error()
+        if error != _ERROR_NOT_FOUND:
+            raise ctypes.WinError(error)
+
+
+class CredentialManagerStore:
+    """The Windows Credential Manager, through advapi32 (ctypes): one
+    generic credential per server, its target "<service>/<account>" (the
+    account is the server's ID) and its blob the secret in UTF-8, persisted
+    for this Windows user on this machine and never roaming. The secret is
+    passed in memory, never on a command line. A write is confirmed by
+    reading it back, as the Keychain's is. A credential that is not there is
+    None (get) or nothing to do (delete); every other failure of the store
+    raises OSError, which the connection logs, so it is never taken for an
+    empty store."""
+
+    def __init__(self, service: str = KEYCHAIN_SERVICE):
+        self.service = service
+
+    def _target(self, account: str) -> str:
+        if not account or any(ord(c) < 32 for c in account):
+            raise ValueError("a credential needs a server ID")
+        return f"{self.service}/{account}"
+
+    def get(self, account: str) -> Optional[str]:
+        blob = _cred_read(self._target(account))
+        if blob is None:
+            return None
+        try:
+            return blob.decode("utf-8") or None
+        except UnicodeDecodeError:
+            raise OSError("the saved team session is not UTF-8") from None
+
+    def set(self, account: str, secret: str) -> None:
+        # The Keychain's rule, so a session one platform takes the other does.
+        if not secret or any(c in secret for c in " \t\r\n\"'\\"):
+            raise TeamError(problem("sessionUnusable"))
+        blob = secret.encode("utf-8")
+        if len(blob) > _CRED_MAX_BLOB:
+            raise TeamError(problem("keychainSaveFailed"))
+        target = self._target(account)
+        try:
+            _cred_write(target, account, blob)
+            saved = _cred_read(target)
+        except OSError as e:
+            log.warning("team: credential manager save failed (%s)", type(e).__name__)
+            raise TeamError(problem("keychainSaveFailed")) from None
+        if saved != blob:
+            raise TeamError(problem("keychainSaveFailed"))
+
+    def delete(self, account: str) -> None:
+        _cred_delete(self._target(account))
+
+
 # -- URL rules ---------------------------------------------------------------
 
 def _dev_servers() -> set[str]:
@@ -389,7 +516,8 @@ class TeamConnection:
     def __init__(self, store: Optional[SecretStore] = None,
                  transport: Optional[httpx.AsyncBaseTransport] = None,
                  resolver: Resolver = _resolve):
-        self.store = store or KeychainStore()
+        self.store = store or (CredentialManagerStore() if sys.platform == "win32"
+                               else KeychainStore())
         self._transport = transport
         self._resolver = resolver
         self.saved: Optional[dict] = None

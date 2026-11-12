@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from jarvis import bundle_archive, folder_readers, repo_read
+from jarvis.knowledge import oscompat
 from jarvis.folder_contract import FolderError
 
 
@@ -39,7 +40,7 @@ def markdown_text(folder, name) -> str:
         with folder_readers.opened_file(Path(folder), Path(name)) as (fd, info):
             if info.st_size > repo_read.READ_MAX_FILE_BYTES:
                 raise ValueError(f'{name} exceeds the existing 4 MiB text-file read limit.')
-            raw = os.pread(fd, info.st_size + 1, 0)
+            raw = oscompat.pread(fd, info.st_size + 1, 0)
             if len(raw) != info.st_size:
                 raise ValueError(f'{name} changed while its understanding was read.')
         text = raw.decode('utf-8-sig')

@@ -62,6 +62,7 @@ def marks(monkeypatch):
 
 # -- unpacking --------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits; Windows has no execute bit to keep")
 def test_a_package_unpacks_into_its_own_folder_and_runs_as_it_was_packed(tmp_path, marks):
     archive = write_zip(tmp_path, make_zip(
         {"SKILL.md": "# Do the thing", "scripts/record.sh": "#!/bin/bash\necho hi\n"},
@@ -145,6 +146,7 @@ def test_a_file_may_be_attached_from_a_package_or_anywhere_he_names(tmp_path, ma
 
 # -- running a step -------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a conversation package's steps run under /bin/bash; a known gap on Windows (docs/windows.md)")
 def test_a_step_runs_in_the_package_folder_with_its_exit_code_and_output(tmp_path, marks):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
     ran = asyncio.run(work_packages.run(
@@ -156,12 +158,14 @@ def test_a_step_runs_in_the_package_folder_with_its_exit_code_and_output(tmp_pat
     assert long.exit_code == 0 and len(long.output) == work_packages.OUTPUT_TAIL_CHARS
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a conversation package's steps run under /bin/bash; a known gap on Windows (docs/windows.md)")
 def test_a_step_that_runs_too_long_is_stopped(tmp_path, marks):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
     ran = asyncio.run(work_packages.run(package, "echo started; sleep 30", timeout=1))
     assert ran.exit_code is None and "started" in ran.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a conversation package's steps run under /bin/bash; a known gap on Windows (docs/windows.md)")
 def test_a_terminal_step_is_the_same_command_in_the_package_folder(tmp_path, marks):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
     typed = work_packages.terminal_command(package, "bash scripts/record.sh")
@@ -246,6 +250,7 @@ def test_opening_and_running_act_only_on_his_own_turn(wired, tmp_path, marks, to
     assert f"mcp__jarvis__{tool}" in claude_provider.ALLOWED_TOOLS
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a conversation package's steps run under /bin/bash; a known gap on Windows (docs/windows.md)")
 def test_run_package_command_runs_the_step_on_his_word(wired, tmp_path, marks, monkeypatch):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
     got = _call(wired, "run_package_command", package=package.id,

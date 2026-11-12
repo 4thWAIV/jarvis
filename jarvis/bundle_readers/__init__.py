@@ -28,6 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator, Optional, Protocol, runtime_checkable
 
 from jarvis import bundle_archive
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis.bundle_contract import (Extent, FormatId, Location, Operation, Reason,
                                     RenderedPage, RenderOptions, Support)
 
@@ -121,7 +122,7 @@ def private_copy(scratch: Path, write: Callable) -> Iterator[Path]:
     the copy behind every `MemberSource.materialize` (a generator for
     contextlib.contextmanager)."""
     path = scratch / f"member-{uuid.uuid4().hex}"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW | O_BINARY, 0o600)
     try:
         with os.fdopen(fd, "wb", closefd=True) as out:
             write(out)

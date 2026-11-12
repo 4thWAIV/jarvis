@@ -208,12 +208,20 @@ def _agent_keys_never_touch_a_real_home(request, monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def _never_touch_the_real_keychain(monkeypatch):
     """The team connection's credential store is the login Keychain
-    (team_client.KeychainStore, through `security`). Every test gets a fresh
-    connection over an in-memory store instead."""
+    (team_client.KeychainStore, through `security`), or on Windows the
+    Credential Manager (team_client.CredentialManagerStore). Every test gets
+    a fresh connection over an in-memory store instead, and the Credential
+    Manager's own calls refuse, so a test of its store must fake them."""
     from jarvis import team_client
     monkeypatch.setattr(team_client, "connection",
                         team_client.TeamConnection(store=MemorySecrets()))
     monkeypatch.setattr(team_client, "KeychainStore", MemorySecrets)
+    monkeypatch.setattr(team_client, "CredentialManagerStore", MemorySecrets)
+
+    def _refuse(*_):
+        raise AssertionError("a test reached the real Credential Manager")
+    for name in ("_cred_read", "_cred_write", "_cred_delete"):
+        monkeypatch.setattr(team_client, name, _refuse)
 
 
 @pytest.fixture(autouse=True)

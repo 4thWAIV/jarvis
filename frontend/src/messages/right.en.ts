@@ -205,7 +205,7 @@ export const rightEn = {
   "right.network.readiness.signIn": "Sign in",
   "right.network.paceAhead": "{points} points ahead of an even pace",
   "right.network.paceBehind": "{points} points behind an even pace, heading for the limit",
-  "right.node.thisMac": "· THIS MAC",
+  "right.node.thisMac": "· THIS DEVICE",
   "right.node.human": "HUMAN",
   "right.node.memory": "MEM",
   "right.node.brain": "BRAIN",

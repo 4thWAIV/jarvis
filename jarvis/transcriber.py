@@ -127,6 +127,16 @@ def setup_command(model: Optional[SpeechModel] = None) -> str:
     return f"{SETUP_COMMAND} --language {model.language}"
 
 
+def install_guidance(model: Optional[SpeechModel] = None) -> str:
+    """How to install `model` (the default one if None), said as an
+    instruction: on Windows the Settings path, since the setup command is
+    the macOS checkout's; elsewhere the setup command."""
+    if sys.platform == "win32":
+        return ("Install it in JARVIS's Settings, Voice and language "
+                f"({(model or default_model()).label} speech model)")
+    return f"Run {setup_command(model)}"
+
+
 def models_root() -> Path:
     """Where the models' folders are, one per model: JARVIS_STT_MODEL_DIR if
     set, otherwise `<data>/models`."""
@@ -148,15 +158,15 @@ def model_problem(directory: Optional[Path] = None,
     said so the user can fix it, or None when every file it needs is there.
     Checks files only: it never loads the model."""
     directory = directory or model_dir(model)
-    command = setup_command(model)
+    guidance = install_guidance(model)
     if not directory.is_dir():
         return (f"The speech model is not installed ({directory} is missing). "
-                f"Run {command}.")
+                f"{guidance}.")
     missing = [n for n in MODEL_FILES
                if not (directory / n).is_file() or (directory / n).stat().st_size == 0]
     if missing:
         return (f"The speech model in {directory} is incomplete "
-                f"(missing {', '.join(missing)}). Run {command}.")
+                f"(missing {', '.join(missing)}). {guidance}.")
     return None
 
 
