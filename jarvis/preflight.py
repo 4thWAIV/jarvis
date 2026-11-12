@@ -135,7 +135,7 @@ def _parse_version(text: str) -> Optional[tuple[int, int, int]]:
 
 async def _check_claude_cli(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     """`claude` is on PATH and is at least MIN_CLAUDE_VERSION."""
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return Check(
             name="claude_cli",
@@ -270,7 +270,7 @@ async def _check_claude_login(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     check stays OK (matching prior behaviour) but says so honestly rather
     than implying a guarantee it cannot make.
     """
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return Check(
             name="claude_login",

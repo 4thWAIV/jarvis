@@ -372,7 +372,7 @@ class ClaudeSession:
         self.config = config
         self._on_event = on_event
         self._on_exit = on_exit
-        self.claude = config.claude_path or shutil.which("claude") or "claude"
+        self.claude = config.claude_path or claude_env.find_claude() or "claude"
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
@@ -645,7 +645,7 @@ async def _signed_in_identity() -> tuple[Optional[str], Optional[str]]:
     Read only for brain_accounts' keyed reference: what it printed is never
     logged."""
     from jarvis import preflight
-    claude = shutil.which("claude")
+    claude = claude_env.find_claude()
     if not claude:
         return None, None
     rc, out, _ = await preflight._run_subprocess(claude, "auth", "status", "--json",

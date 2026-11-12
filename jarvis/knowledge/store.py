@@ -38,7 +38,6 @@ import json
 import logging
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -48,7 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional, Protocol
 
-from jarvis.knowledge import lanes
+from jarvis.knowledge import lanes, oscompat
 from jarvis.knowledge import manifest as mf
 from jarvis.knowledge import wal as wal_mod
 from jarvis.knowledge.segment import (BlockPool, Segment, SegmentCorrupt, Version,
@@ -633,7 +632,7 @@ class Store:
                 [sys.executable, "-m", "jarvis.knowledge", "compact", str(plan_path), str(result_path)],
                 stdin=subprocess.DEVNULL)
             if self.paused:
-                self.child.send_signal(signal.SIGSTOP)
+                oscompat.hold(self.child, True)
             code = self.child.wait()
             if code != 0:
                 raise RuntimeError(f"the compaction child exited with {code}")
@@ -648,7 +647,7 @@ class Store:
         self.paused = paused
         child = self.child
         if child is not None and child.poll() is None:
-            child.send_signal(signal.SIGSTOP if paused else signal.SIGCONT)
+            oscompat.hold(child, paused)
 
     # -- forgetting -------------------------------------------------------
     def forget(self, keys: dict[int, set[bytes]]) -> dict:

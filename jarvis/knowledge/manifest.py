@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis.knowledge import FORMAT_NAME, FORMAT_VERSION
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis.knowledge.wal import fsync_dir, full_fsync
 
 
@@ -66,7 +67,7 @@ def canonical(body: dict) -> bytes:
 def write_durably(path: Path, data: bytes) -> None:
     """Write-temp, F_FULLFSYNC, rename, fsync the folder."""
     tmp = path.with_name(f".{path.name}.tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | O_BINARY, 0o600)
     try:
         view = memoryview(data)
         while view:

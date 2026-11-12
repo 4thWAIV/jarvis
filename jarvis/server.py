@@ -16915,9 +16915,9 @@ async def api_install_voice_output():
 
 @app.get("/api/settings/status")
 async def api_settings_status():
-    import shutil as _shutil
+    from jarvis import claude_env
     _, env_dict = _read_env()
-    claude_installed = _shutil.which("claude") is not None
+    claude_installed = claude_env.find_claude() is not None
     return {
         "voice_output": _voice_output_status(),
         "claude_code_installed": claude_installed,

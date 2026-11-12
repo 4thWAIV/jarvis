@@ -28,14 +28,13 @@ import http.client
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
 from typing import Any, Callable, Optional, Protocol
 
 from jarvis import data_paths
-from jarvis.knowledge import address as engine_address
+from jarvis.knowledge import address as engine_address, oscompat
 
 log = logging.getLogger("jarvis.knowledge_client")
 
@@ -452,9 +451,9 @@ def end_previous_engine(*, wait_sec: float = PREVIOUS_EXIT_WAIT_SEC,
     if found is None:
         return
     log.warning("ending an earlier knowledge engine, pid %s, that kept the lock", found.pid)
-    for sig, wait in ((signal.SIGTERM, grace_sec), (signal.SIGKILL, grace_sec)):
+    for forcefully, wait in ((False, grace_sec), (True, grace_sec)):
         try:
-            os.kill(found.pid, sig)
+            oscompat.end(found.pid, forcefully)
         except ProcessLookupError:
             return
         spent = 0.0

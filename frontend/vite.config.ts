@@ -24,8 +24,10 @@ const VITE_PORT = Number(process.env.JARVIS_VITE_PORT || 5173);
 export default defineConfig({
   server: {
     port: VITE_PORT,
-    // An asked-for port is that port or nothing: never another page's.
-    strictPort: Boolean(process.env.JARVIS_VITE_PORT),
+    // The port is that port or nothing: Chrome keeps the microphone
+    // permission per origin, port included, so a page that quietly moved to
+    // 5174 would lose it. A port in use is reported, never worked around.
+    strictPort: true,
     headers: SECURITY_HEADERS,
     // The page imports the transcription protocol from the Python package,
     // which both sides read.

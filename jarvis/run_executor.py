@@ -207,7 +207,7 @@ class RunExecutor:
                  idle_sec: float | None = None,
                  poll_sec: float = _READ_POLL_SEC):
         self._store = store
-        self._claude_path = claude_path or shutil.which("claude") or "claude"
+        self._claude_path = claude_path or claude_env.find_claude() or "claude"
         self._occupied_slots = 0
         self._max_concurrent = max_concurrent
         self._grace_sec = grace_sec

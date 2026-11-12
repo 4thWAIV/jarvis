@@ -14,6 +14,7 @@ import os
 from typing import NamedTuple, Optional
 
 from jarvis import data_paths
+from jarvis.process_inspect import State
 from jarvis.server_address import _alive
 
 log = logging.getLogger("jarvis.knowledge.address")
@@ -53,7 +54,9 @@ def read() -> Optional[EngineAddress]:
 
 def running() -> Optional[EngineAddress]:
     found = read()
-    if found is None or found.pid <= 0 or not _alive(found.pid):
+    # Gone only when confirmed gone; `unknown` keeps the record, as
+    # server_address.running does.
+    if found is None or found.pid <= 0 or _alive(found.pid) is State.EXITED:
         return None
     return found
 

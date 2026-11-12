@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import resource
 import shutil
 import signal
 import subprocess
@@ -18,6 +17,11 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+try:
+    import resource   # POSIX only; the kit runs only under the macOS sandbox
+except ImportError:   # Windows: the kit is unavailable there (no sandbox-exec)
+    resource = None
 
 from jarvis import bundle_archive, data_paths
 

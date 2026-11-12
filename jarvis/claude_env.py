@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from typing import Optional
 
 # Every ANTHROPIC_* variable, not just the key: the base URL and the model
 # override redirect a child just as effectively as credentials do.
@@ -48,6 +49,39 @@ SCRUBBED_ENV_KEYS = {"CLAUDECODE"}
 # unboundedly — pass this to every `create_subprocess_exec(..., limit=...)`
 # that reads a Claude Code child's stdout/stderr.
 STREAM_LINE_LIMIT = 64 * 1024 * 1024  # 64 MiB per line
+
+
+def find_claude() -> Optional[str]:
+    """The `claude` JARVIS starts when none is configured: the one on PATH.
+
+    On Windows a launcher on PATH (npm's `claude.cmd` shim) is refused by
+    `command_prefix`, so the executable it launches is found instead: npm's
+    package ships `bin\\claude.exe` beside the shim's `node_modules`. Then
+    the places Claude Code's own installers put `claude.exe` (its native
+    installer's `~\\.local\\bin`, winget's `Links`), so a window opened
+    before the install still finds it."""
+    import shutil
+    found = shutil.which("claude")
+    if sys.platform != "win32":
+        return found
+    from pathlib import Path
+    candidates = []
+    if found and os.path.splitext(found)[1].lower() in (".cmd", ".bat", ".ps1"):
+        candidates.append(Path(found).parent / "node_modules" / "@anthropic-ai"
+                          / "claude-code" / "bin" / "claude.exe")
+    elif found:
+        return found
+    home = Path(os.path.expanduser("~"))
+    local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    appdata = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    candidates += [home / ".local" / "bin" / "claude.exe",
+                   local / "Microsoft" / "WinGet" / "Links" / "claude.exe",
+                   appdata / "npm" / "node_modules" / "@anthropic-ai" / "claude-code"
+                   / "bin" / "claude.exe"]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return found
 
 
 def command_prefix(configured: str) -> list[str]:

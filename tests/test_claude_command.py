@@ -67,3 +67,26 @@ def test_the_brain_and_the_run_pipeline_both_start_from_it(monkeypatch, tmp_path
     executor = run_executor.RunExecutor.__new__(run_executor.RunExecutor)
     executor._claude_path = "c"
     assert executor._command("run-1", None, "opus")[:2] == ["PREFIX", "c"]
+
+
+def test_on_windows_npm_s_launcher_is_traded_for_the_exe_it_runs(monkeypatch, tmp_path):
+    """npm puts claude.cmd on PATH, which command_prefix refuses; the
+    package's own bin\\claude.exe beside it is what is started."""
+    import shutil
+    shim = tmp_path / "npm" / "claude.cmd"
+    exe = tmp_path / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+    exe.parent.mkdir(parents=True)
+    shim.write_text("@echo off\n")
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(claude_env.sys, "platform", "win32")
+    monkeypatch.setattr(shutil, "which", lambda name: str(shim))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "none"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "none"))
+    assert claude_env.find_claude() == str(exe)
+
+
+def test_elsewhere_claude_is_the_one_on_path(monkeypatch):
+    import shutil
+    monkeypatch.setattr(claude_env.sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/claude")
+    assert claude_env.find_claude() == "/usr/local/bin/claude"

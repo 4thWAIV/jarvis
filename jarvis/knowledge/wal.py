@@ -23,7 +23,6 @@ Files are `wal/<first lsn>.log`, rotated past `FILE_MAX_BYTES`.
 """
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import struct
@@ -34,6 +33,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional
+
+from jarvis.knowledge import oscompat
 
 log = logging.getLogger("jarvis.knowledge.wal")
 
@@ -76,24 +77,13 @@ def full_fsync(fd: int) -> None:
     where it does not exist."""
     if ephemeral():
         return
-    op = getattr(fcntl, "F_FULLFSYNC", None)
-    if op is not None:
-        try:
-            fcntl.fcntl(fd, op)
-            return
-        except OSError:
-            pass
-    os.fsync(fd)
+    oscompat.full_fsync(fd)
 
 
 def fsync_dir(directory: Path) -> None:
     if ephemeral():
         return
-    fd = os.open(str(directory), os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    oscompat.fsync_dir(directory)
 
 
 @dataclass(frozen=True)
@@ -281,7 +271,7 @@ class WAL:
         files = wal_files(self.directory)
         if files:
             self._path = files[-1]
-            self._fd = os.open(str(self._path), os.O_WRONLY | os.O_APPEND)
+            self._fd = os.open(str(self._path), os.O_WRONLY | os.O_APPEND | oscompat.O_BINARY)
             self._size = os.fstat(self._fd).st_size
         else:
             self._new_file()
@@ -291,7 +281,7 @@ class WAL:
             full_fsync(self._fd)
             os.close(self._fd)
         self._path = self.directory / f"{self.next_lsn:020d}.log"
-        self._fd = os.open(str(self._path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        self._fd = os.open(str(self._path), os.O_WRONLY | os.O_APPEND | os.O_CREAT | oscompat.O_BINARY, 0o600)
         self._size = 0
         fsync_dir(self.directory)
 
