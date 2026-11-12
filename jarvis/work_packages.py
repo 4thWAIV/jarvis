@@ -677,6 +677,70 @@ def result_name(name: str) -> list[str]:
     return parts
 
 
+def _win_plain_dir(folder: Path, parts: list[str], make: bool) -> Optional[Path]:
+    """Windows: `folder`/`parts`, each a plain folder and never a junction
+    or link (FILE_ATTRIBUTE_REPARSE_POINT), made when `make`; None when one
+    is missing. Windows has no folder descriptor to write through by
+    dir_fd, so each part is checked as it is reached; the package folder is
+    in the user's own data folder (data_paths), which others cannot change."""
+    import stat as _stat
+    here = folder
+    for part in [""] + parts:
+        here = here / part if part else here
+        try:
+            info = os.lstat(here)
+        except FileNotFoundError:
+            if not make:
+                return None
+            os.mkdir(here)
+            info = os.lstat(here)
+        if getattr(info, "st_file_attributes", 0) & _stat.FILE_ATTRIBUTE_REPARSE_POINT \
+                or not _stat.S_ISDIR(info.st_mode):
+            raise NotADirectoryError(f"{here} is not a plain folder")
+    return here
+
+
+def _win_plain_file_or_none(path: Path) -> bool:
+    """Whether `path` is missing or a plain file, never a link or junction."""
+    import stat as _stat
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    return _stat.S_ISREG(info.st_mode) and not (
+        getattr(info, "st_file_attributes", 0) & _stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _win_save_result(package: Package, folders: list[str], leaf: str, data: bytes) -> None:
+    where = _win_plain_dir(package.folder, folders, make=True)
+    temp = where / f"{PARTIAL}{uuid.uuid4()}"
+    out = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_BINARY, 0o644)
+    try:
+        with os.fdopen(out, "wb") as f:
+            f.write(data)
+        target = where / leaf
+        if not _win_plain_file_or_none(target):
+            raise IsADirectoryError(f"{target} is not a plain file")
+        os.replace(temp, target)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def _win_read_result(package: Package, folders: list[str], leaf: str) -> Optional[bytes]:
+    where = _win_plain_dir(package.folder, folders, make=False)
+    if where is None:
+        return None
+    target = where / leaf
+    if not os.path.lexists(target) or not _win_plain_file_or_none(target):
+        return None
+    with open(target, "rb") as f:
+        return f.read(RESULT_MAX_BYTES + 1)
+
+
 def save_result(package: Package, name: str, data: bytes) -> Path:
     """Write `data` as results/<name> in the package's folder, replacing a
     file of that name, and return its path. Every folder on the way is made
@@ -687,6 +751,13 @@ def save_result(package: Package, name: str, data: bytes) -> Path:
         raise PackageError(f"That result is {len(data)} bytes; at most {RESULT_MAX_BYTES} "
                            f"may be saved.")
     folders = [RESULTS, *parts[:-1]]
+    if sys.platform == "win32":
+        try:
+            _win_save_result(package, folders, parts[-1], data)
+        except OSError:
+            raise PackageError(f"{name!r} could not be saved in {package.id}'s results.") from None
+        log.info("package %s: its page saved a result (%d bytes)", package.id, len(data))
+        return package.folder / RESULTS / Path(*parts)
     try:
         for depth, part in enumerate(folders):
             with folder_readers.opened_dir(package.folder, Path(*folders[:depth])) as fd:
@@ -719,6 +790,12 @@ def read_result(package: Package, name: str) -> Optional[bytes]:
     following a link, or None when it is not there (or is over
     RESULT_MAX_BYTES): what a story waits on (story_teller.py)."""
     parts = result_name(name)
+    if sys.platform == "win32":
+        try:
+            data = _win_read_result(package, [RESULTS, *parts[:-1]], parts[-1])
+        except (PackageError, OSError):
+            return None
+        return data if data is not None and len(data) <= RESULT_MAX_BYTES else None
     try:
         with folder_readers.opened_dir(package.folder, Path(RESULTS, *parts[:-1])) as fd:
             handle = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)

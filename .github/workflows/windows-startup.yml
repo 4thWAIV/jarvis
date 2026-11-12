@@ -146,3 +146,4 @@ jobs:
           tests/test_knowledge_store.py tests/test_knowledge_process.py tests/test_knowledge_runtime.py
           tests/test_messaging_files_windows.py tests/test_folder_readers_windows.py
           tests/test_host_resources.py tests/test_team_client.py
+          tests/test_package_modes.py tests/test_bundle_archive.py tests/test_work_packages.py
