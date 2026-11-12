@@ -144,13 +144,14 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
             "change_knowledge_seed", "install_embedding_model", "set_knowledge_settings", "change_project", "change_project_folder",
-            "change_project_candidate", "change_work", "change_accomplishment")
+            "change_project_candidate", "change_work", "change_accomplishment",
+            "set_engine_setting")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
                  "knowledge_indexes", "knowledge_seeds", "embedding_model", "folder_document_counts",
-                 "usage_history")
+                 "usage_history", "engine_settings")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
@@ -210,6 +211,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("change_project_candidate", {"action": "ignore", "candidate": "x"}),
     ("change_work", {"action": "start", "title": "x", "projects": ["x"]}),
     ("change_accomplishment", {"action": "record", "project": "x", "title": "x"}),
+    ("set_engine_setting", {"override_stressed": True}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -710,6 +712,41 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
         "Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
     assert (page_post.status_code, page_post.json()["code"]) == (400, "invalid-stop")
     assert wired.client.get(voice_control.PATH).json() == page
+
+
+# ── which engine each kind of agent goes on ─────────────────────────────
+
+def test_engine_settings_are_the_brains_section_s(wired):
+    """The brain reads and changes what Settings, Brains shows, through the
+    route's own call: a kind's engine and model, the override, and each
+    brain's plus or minus this week."""
+    import time
+    from jarvis import brains_config, data_paths, usage_store
+    brains_config.add("openai")
+    usage_store.record({"status": "allowed", "unifiedWindows": {"seven_day": {
+        "utilization": 0.7, "resetsAt": time.time() + 3.5 * 24 * 3600}}},
+        provider={"service": "anthropic", "subscription": "max"})
+    read = _call(wired, "engine_settings")
+    assert read["ok"] and "Agent runs: Claude, its default model." in read["text"]
+    assert "The package author: the same engine as the agent asking." in read["text"]
+    assert "Claude this week: -20.0 points against its pace, in token stress." in read["text"]
+    assert "Codex this week: not measured." in read["text"]
+    changed = _call(wired, "set_engine_setting", kind="build", pick="least_stress")
+    assert changed["ok"] and changed["text"].startswith("Saved. ")
+    page = wired.client.get("/api/settings/engines").json()
+    assert page["kinds"]["build"] == {"pick": "least_stress"}
+    assert [e["engine"] for e in page["engines"]] == ["claude", "codex"]
+    assert page["engines"][0]["stressed"] is True
+    token = {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
+    posted = wired.client.post("/api/settings/engines", json={"override_stressed": True},
+                               headers=token)
+    assert posted.status_code == 200 and posted.json()["override_stressed"] is True
+    assert "token stress: on." in _call(wired, "engine_settings")["text"]
+    refused = wired.client.post("/api/settings/engines", json={"kind": "lunch", "pick": "fixed"},
+                                headers=token)
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (400, "unknown-kind")
+    said = _call(wired, "set_engine_setting", kind="lunch", pick="requester")
+    assert said["text"].startswith("Nothing was changed, sir: no kind of agent called")
 
 
 # ── Skip the rest and Stop speaking ──────────────────────────────────────

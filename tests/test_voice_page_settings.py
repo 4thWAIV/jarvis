@@ -82,6 +82,17 @@ class _Server:
         self.default = "anthropic"
         self.update = _update_status()
         self.language, self.spanish_installed = "en", False
+        self.engines = {"kinds": {"package_author": {"pick": "requester"},
+                                  "run": {"pick": "fixed", "engine": "claude", "model": None},
+                                  "build": {"pick": "fixed", "engine": "claude", "model": None},
+                                  "agent_package": {"pick": "fixed", "engine": "claude",
+                                                    "model": None}},
+                        "kinds_order": ["package_author", "run", "build", "agent_package"],
+                        "override_stressed": False, "least_stressed": "codex",
+                        "engines": [{"engine": "claude", "provider": "anthropic", "ahead": -20.0,
+                                     "stressed": True},
+                                    {"engine": "codex", "provider": "openai", "ahead": 12.5,
+                                     "stressed": False}]}
 
     def language_status(self):
         models = [{"language": "en", "label": "English", "archiveBytes": 57_267_600,
@@ -183,6 +194,19 @@ class _Server:
             await route.fulfill(status=200, content_type="application/json",
                                 body=json.dumps(self.update))
 
+        async def engines(route):
+            if route.request.method == "POST":
+                body = json.loads(route.request.post_data or "{}")
+                self.posts.append(("engines", body))
+                if "override_stressed" in body:
+                    self.engines["override_stressed"] = body["override_stressed"]
+                else:
+                    setting = dict(body)
+                    self.engines["kinds"][setting.pop("kind")] = setting
+            await route.fulfill(status=200, content_type="application/json",
+                                body=json.dumps(self.engines))
+
+        await page.route("**/api/settings/engines", engines)
         await page.route("**/api/update", update)
         await page.route("**/api/brains**", brains)
         await page.route("**/api/settings/status", status)
@@ -413,6 +437,32 @@ async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(p
         assert await until_async(lambda: ("brains/default", {"name": "openai"}) in server.posts), server.posts
         await page.locator(".brain-card[data-brain='openai'] select").select_option("other-model")
         assert await until_async(lambda: ("brains/openai", {"model": "other-model"}) in server.posts), server.posts
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_each_kind_of_agent_has_its_engine_and_the_override(page_playwright, page_url):
+    server = _Server(codex_added=True, codex_signed_in=True)
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        runs = page.locator("#engine-run")
+        await runs.wait_for()
+        assert await runs.input_value() == "fixed:claude:"
+        assert await page.locator("#engine-package_author").input_value() == "requester"
+        await runs.select_option("fixed:codex:other-model")
+        assert await until_async(lambda: ("engines", {"kind": "run", "pick": "fixed",
+                                                      "engine": "codex", "model": "other-model"})
+                                 in server.posts), server.posts
+        await page.locator("#engine-build").select_option("least_stress")
+        assert await until_async(lambda: ("engines", {"kind": "build", "pick": "least_stress"})
+                                 in server.posts), server.posts
+        await page.locator("#engine-override").click()          # checked once the server takes it
+        assert await until_async(lambda: ("engines", {"override_stressed": True})
+                                 in server.posts), server.posts
+        hint = await page.locator(".brain-engines .settings-hint").text_content()
+        assert "Claude: -20.0 against its pace this week, in token stress." in hint
+        assert "OpenAI (Codex): +12.5 against its pace this week." in hint
         await browser.close()
 
 

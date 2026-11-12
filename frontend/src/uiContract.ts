@@ -3213,7 +3213,12 @@ export const UI_CONTRACT = {
         "knowledgeEnabled",
         "knowledgeModel",
         "knowledgeDetails",
-        "knowledgeFolders"
+        "knowledgeFolders",
+        "enginePackageAuthor",
+        "engineRun",
+        "engineBuild",
+        "engineAgentPackage",
+        "engineOverride"
       ],
       "presentations": [
         {

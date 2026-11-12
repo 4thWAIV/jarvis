@@ -212,6 +212,29 @@ def test_missing_selected_engine_does_not_try_other_engine(tmp_path, monkeypatch
     assert 'No such file' in value['error']
 
 
+def test_the_author_goes_on_his_package_author_setting(tmp_path, monkeypatch):
+    """Set to Codex, a Claude caller's author is launched on Codex (here
+    missing, so it fails saying so) and never on the caller's Claude."""
+    from jarvis import brains_config, engine_choice
+    brains_config.add("openai")
+    engine_choice.set_kind("package_author", "fixed", "codex", "gpt-test")
+    folder = tmp_path / 'bin'
+    folder.mkdir()
+    caller = folder / 'claude'
+    caller.write_text('#!' + sys.executable + '\nraise RuntimeError("wrong engine launched")\n')
+    caller.chmod(0o755)
+    monkeypatch.setenv('PATH', str(folder))
+    monkeypatch.delenv('JARVIS_CODEX_PATH', raising=False)
+    monkeypatch.delenv('JARVIS_CLAUDE_PATH', raising=False)
+    with pytest.raises(dp.Refused, match='Fresh author'):
+        pa.prepare(handoff(tmp_path), 'claude', tmp_path / 'out', session='origin')
+    [receipt] = (tmp_path / 'out').glob('author/*/author-receipt.json')
+    value = json.loads(receipt.read_text())
+    assert (value['engine'], value['requester_engine'], value['chosen_by']) == \
+        ('codex', 'claude', 'fixed')
+    assert 'No such file' in value['error']
+
+
 def test_invalid_generated_content_is_refused_before_delivery(only_engine, tmp_path, monkeypatch):
     monkeypatch.setenv('AUTHOR_TEST_CONTENT', '{"title":"Missing explanation"}')
     monkeypatch.setattr(dp, 'post', lambda *args, **kwargs: pytest.fail('invalid content delivered'))

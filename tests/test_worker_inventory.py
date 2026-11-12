@@ -67,6 +67,22 @@ def test_queued_runs_are_not_working_and_nothing_is_unknown():
     assert result['total']['generating'] == 0
 
 
+def test_a_run_is_its_engine_s_worker():
+    """A Codex run is the app server's thread it started, under OpenAI, the
+    same worker as that thread seen as a session; a Claude run, and one
+    from before engines, is its run id under Anthropic."""
+    thread = session('thread-1', 'openai')
+    result = build(Snapshot([thread], 100), now=100, runs=[
+        {'id': 'run-c', 'status': 'running', 'engine': 'codex', 'engine_session': 'thread-1'},
+        {'id': 'run-a', 'status': 'running', 'engine': 'claude'},
+        {'id': 'run-old', 'status': 'running'}])
+    by = {w['id']: w for w in result['workers']}
+    assert by['openai:thread-1']['run_id'] == 'run-c'
+    assert by['anthropic:run-a']['run_id'] == 'run-a'
+    assert by['anthropic:run-old']['run_id'] == 'run-old'
+    assert 'openai:run-c' not in by and len(by) == 3
+
+
 def test_codex_descendants_use_parent_metadata_not_folder(tmp_path):
     import json
     from jarvis.codex_sessions import child_sessions
