@@ -71,17 +71,17 @@ def test_with_no_story_the_composition_is_the_standard_vote_alone(language):
 
 @pytest.mark.parametrize("bad, said", [
     (b'{"title": "x", "title": "y", "slides": []}', "twice in one object"),
-    (raw({**AUTHORED, "theme": "dark"}), "theme, which the story format does not have"),
+    (raw({**AUTHORED, "theme": "dark"}), "The authored story has a field the story format does not have"),
     (raw({**AUTHORED, "answers": "results/other.json"}), "the factory sets it"),
     (raw({**AUTHORED, "slides": [{**AUTHORED["slides"][0], "colour": "red"}]}),
-     "Slide 1 has colour"),
+     "Slide 1 has a field"),
     (raw({**AUTHORED, "slides": [{"title": "t", "beats": [{"say": "s", "speed": 2}]}]}),
-     "Slide 1, beat 1 has speed"),
+     "Slide 1, beat 1 has a field"),
     (raw({**AUTHORED, "questions": [{**SURFACE, "weight": 1}, FOLLOW]}),
-     "Question 1 has weight"),
+     "Question 1 has a field"),
     (raw({**AUTHORED, "questions": [{**SURFACE, "options": [
         {"id": "sign", "name": "Sign", "says": "s", "colour": "x"}]}, FOLLOW]}),
-     "option 1 has colour"),
+     "option 1 has a field"),
     (raw({**AUTHORED, "slides": [{"title": "Vote", "waits": "understood",
                                   "beats": [{"say": "Got it?"}]}]}), "reserved question"),
     (raw({**AUTHORED, "slides": [{"title": "Page's own", "waits": "elsewhere",
@@ -121,7 +121,7 @@ def test_the_count_is_checked_after_composition():
 
 
 def test_a_story_in_another_language_is_not_composed_in_this_one():
-    with pytest.raises(StoryError, match="in es, not en"):
+    with pytest.raises(StoryError, match="not in en"):
         package_story.compose(package_story.authored(raw({**AUTHORED, "language": "es"})), "en")
 
 

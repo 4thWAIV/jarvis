@@ -262,8 +262,9 @@ def _declared(raw, n: int) -> Declared:
         raise StoryError(f"{where} has {', '.join(unknown)}, which a question does not have.")
     ident = _question(raw.get("id"), f"{where}'s id")
     if ident in RESERVED_QUESTIONS:
-        raise StoryError(f"{where}'s id {ident} is reserved: the standard vote is added by "
-                         f"the factory, and an ordinary question is never a review.")
+        raise StoryError(f"{where}'s id is reserved ({', '.join(RESERVED_QUESTIONS)}): the "
+                         f"standard vote is added by the factory, and an ordinary question is "
+                         f"never a review.")
     where = f"Question {ident}"
     question = _line(raw.get("question"), f"{where}'s question", _dp.CAPS["question"])
     reason = ("" if raw.get("reason") is None
@@ -353,16 +354,15 @@ def _unique_keys(pairs):
     seen = {}
     for key, value in pairs:
         if key in seen:
-            raise StoryError(f"The authored story has {key!r} twice in one object.")
+            raise StoryError("The authored story has one key twice in one object.")
         seen[key] = value
     return seen
 
 
 def _only(raw, fields: tuple[str, ...], where: str) -> None:
-    unknown = sorted(set(raw) - set(fields)) if isinstance(raw, dict) else []
-    if unknown:
-        raise StoryError(f"{where} has {', '.join(unknown)}, which the story format does not "
-                         f"have (it has {', '.join(fields)}).")
+    if isinstance(raw, dict) and set(raw) - set(fields):
+        raise StoryError(f"{where} has a field the story format does not have (it has "
+                         f"{', '.join(fields)}).")
 
 
 def authored(raw: bytes) -> dict:
@@ -389,8 +389,9 @@ def authored(raw: bytes) -> dict:
     for n, q in enumerate(body.get("questions") or [], 1):
         _only(q, QUESTION_FIELDS, f"Question {n}")
         if isinstance(q, dict) and q.get("id") in RESERVED_QUESTIONS:
-            raise StoryError(f"Question {n}'s id {q['id']} is reserved: the factory adds the "
-                             f"standard vote, and an ordinary question is never a review.")
+            raise StoryError(f"Question {n}'s id is reserved ({', '.join(RESERVED_QUESTIONS)}): "
+                             f"the factory adds the standard vote, and an ordinary question is "
+                             f"never a review.")
         for m, o in enumerate((q.get("options") or []) if isinstance(q, dict) else [], 1):
             _only(o, OPTION_FIELDS, f"Question {n}, option {m}")
     declared = {q.get("id") for q in body.get("questions") or [] if isinstance(q, dict)}
@@ -404,11 +405,12 @@ def authored(raw: bytes) -> dict:
         waits, when = slide.get("waits"), slide.get("asks_when")
         on = when.get("question") if isinstance(when, dict) else None
         if waits in RESERVED_QUESTIONS or on in RESERVED_QUESTIONS:
-            raise StoryError(f"Slide {n} uses the reserved question {waits or on}: the "
-                             f"factory adds the standard vote once, last.")
+            raise StoryError(f"Slide {n} uses a reserved question "
+                             f"({', '.join(RESERVED_QUESTIONS)}): the factory adds the "
+                             f"standard vote once, last.")
         if waits is not None and waits not in declared:
-            raise StoryError(f"Slide {n} waits for {waits}, which the story does not declare "
-                             f"in its questions.")
+            raise StoryError(f"Slide {n} waits for a question the story does not declare in "
+                             f"its questions.")
     return body
 
 
@@ -421,7 +423,7 @@ def compose(story: Optional[dict], language: str) -> bytes:
     from jarvis import package_inbox
     if story is not None:
         if story.get("language", language) != language:
-            raise StoryError(f"The story is in {story.get('language')}, not {language}.")
+            raise StoryError(f"The story is not in {language}, the language it is told in.")
         story = {**story, "language": language}
     encoded = encode(package_inbox.with_understood_slide(story, language))
     told = parse(encoded)
