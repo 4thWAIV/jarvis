@@ -268,6 +268,29 @@ def _check_private(private: Path) -> None:
         raise AgentKeyError(f"{private} can be read by others; it must be 0600.")
 
 
+def _win_make_pair(folder: Path, comment: str, private: Path, public: Path) -> None:
+    """Windows: ssh-keygen makes the pair in a private scratch folder, and
+    each file is then created in place by private_files, owned by this user
+    with an owner-only ACL from its first instant. ssh-keygen's own file
+    takes its owner from the token, which is Administrators under an
+    elevated one (measured on GitHub's runner), and that owner is refused."""
+    from jarvis import private_files
+    scratch = folder / f".new-{secrets.token_hex(8)}"
+    try:
+        private_files.ensure_dir(scratch)
+        made = scratch / private.name
+        done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(made)])
+        if done.returncode != 0:
+            raise AgentKeyError("ssh-keygen would not make the key: "
+                                + (done.stderr or b"").decode("utf-8", "replace").strip())
+        private_files.create_new(private, made.read_bytes())
+        private_files.create_new(public, (scratch / public.name).read_bytes())
+    except OSError as e:
+        raise AgentKeyError(f"The key could not be made in {folder}: {e}")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, str]:
     """(the private key's path, the public key) in `folder`: the pair there
     if there is one, else a new one made by ssh-keygen with no passphrase.
@@ -275,11 +298,14 @@ def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, s
     _private_folder(folder)
     private, public = folder / name, folder / (name + ".pub")
     if not private.exists() and not private.is_symlink():
-        done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(private)])
-        if done.returncode != 0:
-            raise AgentKeyError("ssh-keygen would not make the key: "
-                                + (done.stderr or b"").decode("utf-8", "replace").strip())
-        os.chmod(private, 0o600)
+        if sys.platform == "win32":
+            _win_make_pair(folder, comment, private, public)
+        else:
+            done = RUNNER(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(private)])
+            if done.returncode != 0:
+                raise AgentKeyError("ssh-keygen would not make the key: "
+                                    + (done.stderr or b"").decode("utf-8", "replace").strip())
+            os.chmod(private, 0o600)
     _check_private(private)
     if public.is_symlink() or not public.is_file():
         raise AgentKeyError(f"{public} is missing; delete {folder} and run init again.")

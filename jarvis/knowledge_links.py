@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis import data_paths, jarvis_memory, spoken_words
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 
 STATUSES = ("implemented", "active", "planned", "retired", "unknown")
 LINK_KINDS = ("relates_to", "depends_on", "stage_of", "precedes", "same_as")
@@ -203,7 +204,7 @@ class Topic:
 
 def _read_text(path: Path) -> Optional[str]:
     try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(str(path), os.O_RDONLY | O_NOFOLLOW | O_BINARY)
     except OSError:
         return None
     try:

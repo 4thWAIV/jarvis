@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from jarvis import data_paths
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 
 CACHE_MAX_BYTES = 512 * 1024 * 1024
 
@@ -85,7 +86,7 @@ class DerivedCache:
     def get(self, key: CacheKey) -> Optional[bytes]:
         path = self.path_for(key)
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_BINARY)
         except OSError:
             return None
         with os.fdopen(fd, "rb") as f:
@@ -100,7 +101,7 @@ class DerivedCache:
         final = self.path_for(key)
         folder = _private(final.parent)
         partial = folder / f"{PARTIAL}{uuid.uuid4()}"
-        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW | O_BINARY, 0o600)
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)

@@ -35,6 +35,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
+
 # Platform metadata a ZIP made on a Mac carries, set aside when looking for
 # a wrapper folder and never extracted.
 METADATA_FOLDER = "__MACOSX"
@@ -133,9 +135,6 @@ class _Spent:
             raise ArchiveError("too-slow", f"Reading the zip took longer than "
                                            f"{self.budgets.max_seconds:.0f} seconds.")
 
-
-_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_BINARY = getattr(os, "O_BINARY", 0)
 
 
 def open_archive(path: Path) -> zipfile.ZipFile:
@@ -391,7 +390,7 @@ def extract(archive: zipfile.ZipFile, listing: Listing, destination: Path, *,
                 mode |= (member.info.external_attr >> 16) & 0o777
             # O_NOFOLLOW where it exists; on Windows the staging folder was
             # just made empty and O_EXCL refuses anything already there.
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY, 0o600)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW | O_BINARY, 0o600)
             with os.fdopen(fd, "wb") as out:
                 _read_into(archive, member, spent, out.write)
             os.chmod(target, mode)

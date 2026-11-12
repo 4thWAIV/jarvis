@@ -158,6 +158,9 @@ Small gaps that do not stop the source workflow, with what they mean for you:
 - **Cancelling a run** ends its process tree through a Windows Job Object,
   which has not yet been seen working on Windows itself; if a process the
   run started lingers, end it from Task Manager.
+- **A conversation package's shell steps** run under `/bin/bash`, so they
+  do not run on Windows yet; page and agent packages, the kinds sent for
+  decisions and work, do.
 - **Pausing the record engine's background work** (ingest, compaction)
   while you talk has no effect on Windows; it only costs some CPU then.
 

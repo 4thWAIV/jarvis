@@ -46,6 +46,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from jarvis import data_paths, run_store
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis import messaging_api, messaging_files
 
 LocationState = Literal["remote_only", "downloading", "verified", "missing", "changed",
@@ -521,9 +522,9 @@ def _verified_copy(source: str, found: AttachmentLocation, workspace: Path,
     if verify.digest(target) == expected:
         return target
     partial = folder / f"{messaging_files.PARTIAL}{os.getpid()}-{time.monotonic_ns()}"
-    src = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    src = os.open(source, os.O_RDONLY | O_NOFOLLOW | O_BINARY)
     try:
-        dst = os.open(str(partial), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        dst = os.open(str(partial), os.O_CREAT | os.O_EXCL | os.O_WRONLY | O_NOFOLLOW | O_BINARY, 0o600)
         try:
             hasher, size = hashlib.sha256(), 0
             while chunk := os.read(src, 1 << 20):

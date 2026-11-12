@@ -74,6 +74,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from jarvis import data_paths, private_files, records
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.messaging_store import Docs, doc_id, person
@@ -189,7 +190,7 @@ def private_dir(path: Path) -> Path:
 
 
 def _open_new(path: Path) -> int:
-    return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | O_NOFOLLOW | O_BINARY, 0o600)
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -211,7 +212,7 @@ def _hash_file(path: Path) -> Optional[tuple[int, str]]:
     if sys.platform == "win32":
         return _win_hash_file(path)
     try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(str(path), os.O_RDONLY | O_NOFOLLOW | O_BINARY)
     except OSError:
         return None
     try:
@@ -592,7 +593,7 @@ class FileSnapshots:
         """The copy in bounded chunks, hashed again as it is read: bytes that
         changed since the check end the upload as SnapshotMissing."""
         try:
-            fd = os.open(str(self.snapshot_path(ref.attachment_id)), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(str(self.snapshot_path(ref.attachment_id)), os.O_RDONLY | O_NOFOLLOW | O_BINARY)
         except OSError:
             raise ports.SnapshotMissing(ref.attachment_id) from None
         hasher, size, written = hashlib.sha256(), 0, time.monotonic()
