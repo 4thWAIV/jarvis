@@ -9830,7 +9830,7 @@ def _inbox_recount(package, how: str) -> list:
     # Each answer recorded through its decide.py ends what waits for it.
     refs = package_inbox.refs(package.id)
     for q in asked:
-        if q.applies and q.answer:
+        if q.ends_waits():
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
     for entry in package_inbox.for_review(package.id):
         _review_from_package(entry, package)
@@ -9886,7 +9886,9 @@ def _package_answer(ref: str, key: Optional[str]):
     for e in entries:
         refs = package_inbox.refs(e.package_id)
         at = _package_finished_at(e)
-        if at is not None:
+        # A sign-off answers a wait on the package or on any question of it,
+        # but never one on his approval (wait_links.APPROVAL_ONLY).
+        if at is not None and key not in wait_links.APPROVAL_ONLY:
             return wait_links.answer(wait_links.PACKAGE, refs, None, "signed_off", at)
         if key is None:
             continue
@@ -9895,7 +9897,7 @@ def _package_answer(ref: str, key: Optional[str]):
         except work_packages.PackageError:
             continue
         for q in package_inbox.questions(package):
-            if q.id == key and q.applies and q.answer:
+            if q.id == key and q.ends_waits():
                 return wait_links.answer(wait_links.PACKAGE, refs, key, "package")
     return None
 
@@ -10184,7 +10186,7 @@ def _inbox_sign_off_work(entry, package, how: str) -> None:
         match = next((q for q in asked if q.id == d.key), None) or (
             asked[0] if len(asked) == 1 else None)
         try:
-            if match is not None and match.answer and match.applies:
+            if match is not None and match.counts() and match.applies:
                 done = work_api.answer_decision(item.id, d.key, match.answered_words(), where)
             else:
                 done = work_api.signed_off_without_answer(item.id, d.key)
@@ -16381,7 +16383,14 @@ def _opening_frames() -> list[dict]:
     frames = [{"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH},
               {"type": "status", "state": "idle"}]
     if _package_shown is not None:
-        frames.append({"type": "package_page", "package": _package_shown})
+        # Described again: what it asks may have moved since it was shown
+        # (an approval gone stale once a newer revision is checked).
+        shown = _package_shown
+        try:
+            shown = packages_api.describe(work_packages.find(shown["id"], work_packages.PAGE))
+        except (work_packages.PackageError, ValueError, OSError):
+            pass
+        frames.append({"type": "package_page", "package": shown})
     if story_teller.status() is not None:
         frames.append(story_teller.status())
     return frames

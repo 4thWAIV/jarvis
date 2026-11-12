@@ -69,6 +69,32 @@ def test_with_no_story_the_composition_is_the_standard_vote_alone(language):
         package_inbox.with_understood_slide(None, language))
 
 
+@pytest.mark.parametrize("language", ["en", "es"])
+def test_approval_is_composed_once_just_before_the_vote(language):
+    told = package_story.parse(package_story.compose(
+        package_story.authored(raw({**AUTHORED, "language": language})), language, True))
+    assert [s.waits for s in told.slides][-2:] == [package_inbox.APPROVAL_ID,
+                                                   package_inbox.UNDERSTOOD_ID]
+    assert [s.waits for s in told.slides].count(package_inbox.APPROVAL_ID) == 1
+
+
+def test_an_author_never_asks_approval_itself():
+    for story in ({**AUTHORED, "questions": [{**SURFACE, "id": "approve-architecture"}, FOLLOW]},
+                  {**AUTHORED, "slides": [{"title": "Approve?", "waits": "approve-architecture",
+                                           "beats": [{"say": "Approve?"}]}]}):
+        with pytest.raises(StoryError, match="reserved"):
+            package_story.authored(raw(story))
+
+
+def test_a_target_is_written_as_css_strings():
+    assert package_story.target('Odd"Name', member='Get\\It\'s') == \
+        '[data-declaration="Odd\\"Name"] [data-member="Get\\\\It\'s"]'
+    assert package_story.target("IGrantStore", part="members") == \
+        '[data-declaration="IGrantStore"] [data-part="members"]'
+    with pytest.raises(StoryError):
+        package_story.target("two\nlines")
+
+
 @pytest.mark.parametrize("bad, said", [
     (b'{"title": "x", "title": "y", "slides": []}', "twice in one object"),
     (raw({**AUTHORED, "theme": "dark"}), "The authored story has a field the story format does not have"),

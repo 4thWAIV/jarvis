@@ -95,10 +95,13 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
     if readable and readable.get("member") == MEMBER:
         expected = {member: MEMBER for member in ("source.yaml", "check.json", "canonical.json", "index.html")}
         bound_story = readable.get("story_sha256")
+        # His approval is asked only where the binding says the handoff
+        # asked for it, and then always (package_story.compose).
+        approval = readable.get("approval") is True
         story = manifest.get("story")
-        if story or bound_story:
+        if story or bound_story or approval:
             from jarvis import make_package, package_story
-            refused = _COMPOSED if bound_story else _VOTE_ONLY
+            refused = _COMPOSED if bound_story or approval else _VOTE_ONLY
             if story != make_package.STORY_FILE:
                 raise docs.DocumentError(refused)
             told = read(story)
@@ -112,7 +115,7 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
             try:
                 if bound_story:
                     authored = package_story.authored(written)
-                composed = package_story.compose(authored, package_story.parse(told).language)
+                composed = package_story.compose(authored, package_story.parse(told).language, approval)
             except ValueError:
                 raise docs.DocumentError(refused) from None
             if told != composed:
@@ -196,7 +199,8 @@ def understanding_of(canonical: dict) -> dict | None:
     package = canonical.get("understanding")
     if package is not None:
         keys = set(package) if isinstance(package, dict) else set()
-        if (keys not in (LEGACY_BINDING, BINDING, BINDING | {"story_sha256"})
+        if (not (keys == LEGACY_BINDING or BINDING <= keys <= BINDING | {"story_sha256", "approval"})
+                or ("approval" in keys and package["approval"] is not True)
                 or package.get("origin") != FRESH_AUTHOR or package.get("member") != MEMBER
                 or any(not isinstance(package.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", package[key])
                        for key in ("markdown_sha256", "story_sha256") if key in keys)
@@ -207,6 +211,27 @@ def understanding_of(canonical: dict) -> dict | None:
     if readable is not None and (not isinstance(readable, dict) or readable.get("origin") != "author-supplied"):
         raise docs.DocumentError("The readable view provenance is malformed.")
     return readable
+
+
+def current_subject(subject) -> bool:
+    """Whether {document_id, revision, source_revision, kit_digest} is still
+    the revision in force: the newest revision of its document whose check
+    passed, under the kit in force now. False when that cannot be read (an
+    approval of it then satisfies nothing)."""
+    if not isinstance(subject, dict) or not isinstance(subject.get("document_id"), str):
+        return False
+    try:
+        checked = [row for row in docs.revisions(subject["document_id"])
+                   if json.loads(row.get("check_json") or "{}").get("ok") is True]
+        active = kit.active().release.digest
+    except Exception:
+        return False
+    if not checked:
+        return False
+    latest = checked[-1]
+    return (latest.get("revision") == subject.get("revision")
+            and latest.get("source_sha256") == subject.get("source_revision")
+            and latest.get("kit_digest") == subject.get("kit_digest") == active)
 
 
 def purpose_of(text) -> str:
@@ -220,7 +245,7 @@ def purpose_of(text) -> str:
 
 def project(envelope: dict, folder: Path, understanding: bytes | None = None,
             story: bytes | None = None, purpose: str | None = None,
-            language: str | None = None) -> dict:
+            language: str | None = None, approval: bool = False) -> dict:
     """THE projection of one checked revision into a page package folder,
     for the brain's publish and make_package --document alike: the exact
     source, its checker evidence, its rendered page, its canonical identity
@@ -229,9 +254,11 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
     with the trusted handoff's `purpose` (the package's purpose) and, when
     the author wrote one, its `story` (kept as written, AUTHORED_STORY, and
     told as package_story.compose makes it with the standard vote, in its
-    own language or else `language`); else the revision's own
-    author-supplied view is used. The package.json written (its version
-    still to be worked out by the factory)."""
+    own language or else `language`). With `approval` (the handoff asked
+    for it) the binding says so and the story asks his approval of this
+    revision before the vote (package_inbox.APPROVAL_ID). Otherwise the
+    revision's own author-supplied view is used. The package.json written
+    (its version still to be worked out by the factory)."""
     if not envelope["check"]["ok"] or not envelope.get("view_sha256"):
         raise docs.DocumentError("This draft has no validated render; inspect its checker diagnostics.")
     canonical = {key: envelope[key] for key in (*IDENTITY, "parent_revision", "language", "work_id", "view_sha256", "metadata")}
@@ -244,11 +271,16 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
         purpose = purpose_of(purpose)
         canonical["understanding"] = {"origin": FRESH_AUTHOR, "member": MEMBER,
                                       "markdown_sha256": kit.sha256(understanding), "purpose": purpose}
+        if approval:
+            canonical["understanding"]["approval"] = True
+        from jarvis import package_story
+        if story is None and approval:
+            told = package_story.compose(None, language or "en", True)
         if story is not None:
-            from jarvis import package_story
             try:
                 authored = package_story.authored(story)
-                told = package_story.compose(authored, authored.get("language") or language or "en")
+                told = package_story.compose(authored, authored.get("language") or language or "en",
+                                             approval)
             except package_story.StoryError as e:
                 raise docs.DocumentError(f"The authored story cannot be told: {e}") from None
             pointing = any(beat.get("targets") or beat.get("actions")
@@ -260,8 +292,9 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
                     "load the story helper, so nothing could be pointed at: narrate without "
                     "targets or actions until the kit's page loads " + package_story.HELPER_PATH + ".")
             canonical["understanding"]["story_sha256"] = kit.sha256(story)
-    elif story is not None:
-        raise docs.DocumentError("Only a fresh author's explanation carries an authored story.")
+    elif story is not None or approval:
+        raise docs.DocumentError("Only a fresh author's explanation carries an authored story or "
+                                 "asks his approval.")
     elif envelope["metadata"].get("readable"):
         understanding = Path(envelope["references"]["readable_markdown"]).read_bytes()
     else:
@@ -282,10 +315,12 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
     if told is not None:
         # The story told is the composition; the factory's _with_vote leaves
         # a story that asks a question as it is.
-        (folder / AUTHORED_STORY).write_bytes(story)
         (folder / make_package.STORY_FILE).write_bytes(told)
         manifest["story"] = make_package.STORY_FILE
-        manifest["understanding"].update({AUTHORED_STORY: MEMBER, make_package.STORY_FILE: MEMBER})
+        manifest["understanding"][make_package.STORY_FILE] = MEMBER
+        if story is not None:
+            (folder / AUTHORED_STORY).write_bytes(story)
+            manifest["understanding"][AUTHORED_STORY] = MEMBER
     (folder / "package.json").write_text(json.dumps(manifest))
     return manifest
 

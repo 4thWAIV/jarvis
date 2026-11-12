@@ -55,7 +55,8 @@ STORY = {"title": "The document store", "questions": [
          "beats": [{"say": "Which part?"}]}]}
 
 
-def sent(server_base: str, draft, tmp: Path, name: str, markdown: str) -> str:
+def sent(server_base: str, draft, tmp: Path, name: str, markdown: str,
+         approval: bool = False) -> str:
     """An authored projection of the checked draft, made by the factory and
     sent to this JARVIS's inbox: its inbox id."""
     service = language_documents.Documents()
@@ -64,7 +65,7 @@ def sent(server_base: str, draft, tmp: Path, name: str, markdown: str) -> str:
                                                     checked["revision"])
     folder = tmp / name / "architecture"
     language_projection.project(envelope, folder, markdown.encode(), json.dumps(STORY).encode(),
-                                PURPOSE, "en")
+                                PURPOSE, "en", approval)
     manifest = json.loads((folder / "package.json").read_text())
     manifest["name"] = name
     (folder / "package.json").write_text(json.dumps(manifest))
@@ -200,5 +201,79 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 trace.append({"signed_off": first, "answers": {
                     k: (v or {}).get("answer") for k, v in asked.items()}})
             await context.close()
+        await browser.close()
+    (out / "trace.json").write_text(json.dumps(trace, indent=2))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_his_approval_of_the_design_in_the_actual_view(
+        page_playwright, canonical_server, draft, tmp_path):  # noqa: F811
+    """In this test JARVIS only: the factory's approval question shown apart
+    from Got it; Got it leaves it unanswered; Request changes needs his
+    words; Approve is recorded for the revision shown; a newer checked
+    revision of the document shows his approval stale."""
+    from tests import dashboard_page
+    server, _published, _checked, base, tmp = canonical_server
+    await asyncio.to_thread(dashboard_page.build_bundle)
+    out = Path(os.getenv("JARVIS_LANGUAGE_REVIEW_DIR", str(tmp / "review"))) / "approval"
+    out.mkdir(parents=True, exist_ok=True)
+    inbox_id = await asyncio.to_thread(sent, base, draft, tmp, "store-approval", HOSTILE, True)
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    subject = package_inbox.subject_of(package)
+    trace: list[dict] = [{"subject": subject}]
+    window = decision_check.SIZES[-1][0]
+    async with page_playwright as playwright, httpx.AsyncClient(base_url=base, timeout=60) as http:
+        browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
+        page = await browser.new_page(viewport={"width": window[0], "height": window[1]})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.goto(base)
+        for _ in range(100):
+            if server.ui_clients.pages():
+                break
+            await asyncio.sleep(.05)
+        opened = await http.post(f"/api/packages/inbox/{inbox_id}/open", headers={"Origin": base})
+        assert opened.status_code == 200 and not opened.json()["problem"], opened.text
+        approval = page.locator('.package-asks [data-kind="approval"]')
+        await approval.wait_for()
+        assert subject["revision"][:12] in (await approval.locator(".package-approval-head").inner_text()).lower()
+        assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, apart"
+
+        # Got it is acknowledgement: his approval stays unanswered.
+        await page.get_by_role("button", name="Got it").click()
+        await page.locator(".package-vote-recorded", has_text="Got it").wait_for()
+        assert package_inbox.page_vote(package)["asks"][0]["answer"] is None
+        trace.append({"clicked": "got-it", "approval": None})
+
+        # Request changes needs his words.
+        changes = approval.get_by_role("button", name="Request changes")
+        assert await changes.is_disabled()
+        await approval.get_by_role("textbox").fill("Rename the store's revision member.")
+        await changes.click()
+        await approval.locator(".package-vote-recorded", has_text="Changes requested").wait_for()
+        await page.screenshot(path=str(out / "changes-requested.png"))
+        trace.append({"clicked": "request-changes", "words": "Rename the store's revision member."})
+
+        # Approve: recorded for the revision shown.
+        await approval.get_by_role("button", name="Approve").click()
+        await approval.locator(".package-vote-recorded", has_text="Approved").wait_for()
+        record = json.loads(work_packages.read_result(package, "decisions.json"))
+        assert record["approve-architecture"]["answer"] == "approve"
+        assert record["approve-architecture"]["subject"] == subject
+        assert record["understood"]["answer"] == "got-it", "two answers, kept apart"
+        await page.screenshot(path=str(out / "approved.png"))
+        trace.append({"clicked": "approve", "recorded": record["approve-architecture"]})
+
+        # A newer checked revision of the same document: his approval is stale.
+        service = language_documents.Documents()
+        newer = await asyncio.to_thread(
+            service.validate, **{**draft, "source": draft["source"].replace("record", "class")},
+            document_id=subject["document_id"], parent_revision=subject["revision"])
+        assert newer["check"]["ok"]
+        await page.reload()
+        stale = page.locator('.package-asks [data-kind="approval"][data-stale="true"]')
+        await stale.wait_for()
+        assert "counts for nothing" in await stale.locator(".package-approval-stale").inner_text()
+        await page.screenshot(path=str(out / "stale.png"))
+        trace.append({"newer_revision": newer["revision"], "shown": "stale"})
         await browser.close()
     (out / "trace.json").write_text(json.dumps(trace, indent=2))

@@ -37,6 +37,9 @@ def read_handoff(path: Path) -> dict:
         if (not isinstance(value.get(key), list) or not value[key]
                 or any(not isinstance(item, str) or not item.strip() for item in value[key])):
             problems.append(f"Author handoff needs a nonempty {key} list of text.")
+    if "approval" in value and not isinstance(value["approval"], bool):
+        problems.append("Author handoff's approval is true (ask Tim to approve the architecture "
+                        "design) or false.")
     if problems:
         raise Refused(problems)
     return value
