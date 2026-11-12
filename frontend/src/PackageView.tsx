@@ -202,32 +202,59 @@ function HeaderQuestions({ id, asks, onSaid, target }: {
   };
   return (
     <section className="package-asks" aria-label={t("main.package.asks.label")} ref={target}>
-      {shown.filter((q) => q.applies).map((q) => (
-        <div key={q.id} className="package-ask" role="group" aria-label={q.question}
-             data-question={q.id} data-answer={q.answer ?? undefined}>
-          <p className="package-ask-question">{q.question}</p>
-          {q.context && <p className="package-ask-context">{q.context}</p>}
-          <div className="package-ask-options">
-            {q.options.map((o) => (
-              <button key={o.id} type="button" className="settings-btn" data-ui-action="domain"
-                      data-option={o.id} disabled={busy} aria-pressed={q.answer === o.id}
-                      title={o.says} onClick={() => void record(q, o.id)}>
-                {o.name}{q.recommended === o.id ? ` (${t("main.package.asks.recommended")})` : ""}
-              </button>
-            ))}
-            <input type="text" className="package-vote-words" data-ui-action="input"
-                   value={words[q.id] ?? ""} maxLength={500}
-                   placeholder={t("main.package.asks.words")} aria-label={t("main.package.asks.words")}
-                   onChange={(e) => setWords({ ...words, [q.id]: e.target.value })} />
+      {/* His approval of the design first: it is the decision the package is for. */}
+      {[...shown.filter((q) => q.kind === "approval"), ...shown.filter((q) => q.kind !== "approval")]
+        .filter((q) => q.applies).map((q) => {
+        const approval = q.kind === "approval";
+        const typed = (words[q.id] ?? "").trim();
+        return (
+          <div key={q.id} className={approval ? "package-ask package-approval" : "package-ask"}
+               role="group" aria-label={q.question} data-question={q.id}
+               data-kind={q.kind ?? "question"} data-answer={q.answer ?? undefined}
+               data-stale={q.stale ? "true" : undefined}>
+            {approval && (
+              <p className="package-approval-head">
+                {t("main.package.approval.head", { revision: (q.revision ?? "").slice(0, 12) })}
+              </p>
+            )}
+            <p className="package-ask-question">{q.question}</p>
+            {q.context && <p className="package-ask-context">{q.context}</p>}
+            <div className="package-ask-options">
+              {q.options.map((o) => {
+                const needsWords = q.note_required?.includes(o.id) ?? false;
+                return (
+                  <button key={o.id} type="button" className="settings-btn" data-ui-action="domain"
+                          data-option={o.id} disabled={busy || (needsWords && !typed)}
+                          aria-pressed={q.answer === o.id && !q.stale}
+                          title={needsWords && !typed ? t("main.package.approval.needsWords") : o.says}
+                          onClick={() => void record(q, o.id)}>
+                    {o.name}{q.recommended === o.id ? ` (${t("main.package.asks.recommended")})` : ""}
+                  </button>
+                );
+              })}
+              <input type="text" className="package-vote-words" data-ui-action="input"
+                     value={words[q.id] ?? ""} maxLength={500}
+                     placeholder={approval ? t("main.package.approval.words") : t("main.package.asks.words")}
+                     aria-label={approval ? t("main.package.approval.words") : t("main.package.asks.words")}
+                     onChange={(e) => setWords({ ...words, [q.id]: e.target.value })} />
+            </div>
+            {q.answer && q.stale && (
+              <span className="package-approval-stale" role="status">
+                {t("main.package.approval.stale", { revision: (q.answered_revision ?? "").slice(0, 12) })}
+              </span>
+            )}
+            {q.answer && !q.stale && (
+              <span className="package-vote-recorded" role="status">
+                {approval
+                  ? t(q.answer === "approve" ? "main.package.approval.approved" : "main.package.approval.changes",
+                      { revision: (q.answered_revision ?? "").slice(0, 12) })
+                  : t("main.package.asks.recorded", {
+                      choice: q.options.find((o) => o.id === q.answer)?.name ?? q.answer })}
+              </span>
+            )}
           </div>
-          {q.answer && (
-            <span className="package-vote-recorded" role="status">
-              {t("main.package.asks.recorded", {
-                choice: q.options.find((o) => o.id === q.answer)?.name ?? q.answer })}
-            </span>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </section>
   );
 }

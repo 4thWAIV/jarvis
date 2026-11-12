@@ -405,17 +405,19 @@ def document_evidence(envelope: dict, out: Path) -> Path:
     return folder
 
 
-def make_architecture(envelope: dict, source: Path, out: Path, purpose: str) -> Made:
+def make_architecture(envelope: dict, source: Path, out: Path, purpose: str,
+                      approval: bool = False) -> Made:
     """JARVIS's projection of the checked revision (language_projection.project,
     as the brain's publish) around the fresh author's explanation and story,
-    stating the handoff's `purpose`, built and read back as any folder
-    package (make_folder)."""
+    stating the handoff's `purpose` and, when the handoff asks for it
+    (`approval`), asking his approval of this exact revision, built and
+    read back as any folder package (make_folder)."""
     from jarvis import language_projection
     explained = understanding_in(source)
     folder = Path(tempfile.mkdtemp(prefix="projection-", dir=out)) / "architecture"
     try:
         language_projection.project(envelope, folder, explained.markdown, explained.story,
-                                    purpose, built_language())
+                                    purpose, built_language(), approval)
     except (ValueError, OSError) as e:
         raise dp.Refused([f"The checked revision cannot be projected: {e}"]) from None
     made = make_folder(folder, out)
@@ -622,8 +624,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         if envelope is not None:
             # The package states the handoff's purpose: the originating
             # session's, never the author's (it is bound in canonical.json).
-            made = make_architecture(envelope, source, out,
-                                     package_author.read_handoff(args.handoff)["purpose"])
+            handed = package_author.read_handoff(args.handoff)
+            made = make_architecture(envelope, source, out, handed["purpose"],
+                                     handed.get("approval") is True)
         else:
             check_vote(source, args.work)
             made = make_folder(source, out) if source.is_dir() else make_deck(source, out)

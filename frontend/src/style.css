@@ -4381,7 +4381,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-canonical .link-button { color: var(--ui-accent); text-decoration: underline; }
 /* The questions a story declares, answered in the head (PackageView.tsx). */
 .package-asks { padding: 8px 16px; display: grid; gap: 8px; border-bottom: 1px solid var(--ui-edge);
-                flex: 0 1 auto; min-height: 6.5em; overflow: auto; }
+                flex: 0 1 auto; min-height: 8.5em; overflow: auto; }
 /* With the questions and the explanation open, the package's own page keeps
    at least this much of the view; they scroll within the rest. */
 #package-view .package-frame { min-height: 40%; }
@@ -4389,6 +4389,11 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-ask-context { margin: 0 0 4px; color: rgba(255, 255, 255, 0.7); font-size: 0.85rem; }
 .package-ask-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .package-ask-options [aria-pressed="true"] { border-color: rgba(94, 234, 212, 0.8); }
+/* His approval of the design: set apart from the vote and other questions. */
+.package-approval { border-left: 3px solid var(--ui-accent); padding-left: 10px; }
+.package-approval-head { margin: 0 0 2px; font-size: 0.8rem; text-transform: uppercase;
+                         letter-spacing: 0.04em; color: var(--ui-accent); }
+.package-approval-stale { color: #f5a623; }
 /* The author's explanation, read in place above the page. */
 .package-explanation {
   flex: 0 1 auto;

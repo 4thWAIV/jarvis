@@ -190,7 +190,12 @@ class Question:
     recommended: str
     reason: str
     applies: bool                       # a follow-up asked only after its parent's answer
-    answer: Optional[dict]              # {"answer", "choice", "note", "at", "recommended"}
+    answer: Optional[dict]              # {"answer", "choice", "note", "at", "recommended",
+    #                                     and for his approval "subject"}
+    # His approval of an architecture design (APPROVAL_ID) only: the answer
+    # was given to a revision or kit no longer current, so it counts for
+    # nothing (`current_subject`).
+    stale: bool = False
 
     def option_name(self, option_id: str) -> str:
         if option_id in SPECIAL:
@@ -199,11 +204,33 @@ class Question:
 
     def answered_id(self) -> str:
         """His answer by its id (an option's, later or none), with his own
-        words after it; "" while unanswered. Ids only: no word of the deck."""
+        words after it, and for his approval the revision it was given to
+        and whether it is stale; "" while unanswered. Ids and hashes only:
+        no word of the deck."""
         if not self.answer:
             return ""
         return self.answer["answer"] + (f" (his words: {self.answer['note']})"
-                                        if self.answer.get("note") else "")
+                                        if self.answer.get("note") else "") + self._given_to()
+
+    def _given_to(self) -> str:
+        """For his approval: the revision it was given to, and if stale."""
+        subject = (self.answer or {}).get("subject")
+        if not subject:
+            return ""
+        said = f", given to revision {subject.get('revision')} of {subject.get('document_id')}"
+        return said + (" (stale: a newer revision or kit has been checked since)"
+                       if self.stale else "")
+
+    def counts(self) -> bool:
+        """Whether his answer stands: given, and not stale."""
+        return bool(self.answer) and not self.stale
+
+    def ends_waits(self) -> bool:
+        """Whether his answer ends what waits on this question: any answer
+        that stands, except that only his approval of the current revision
+        ends a wait on his approval."""
+        return self.applies and self.counts() and (
+            self.id != APPROVAL_ID or self.answer["answer"] == APPROVE)
 
     def answered_words(self) -> str:
         """His answer in words: the option's name, Decide later or None of
@@ -211,7 +238,8 @@ class Question:
         if not self.answer:
             return ""
         said = self.option_name(self.answer["answer"])
-        return said + (f" ({self.answer['note']})" if self.answer.get("note") else "")
+        return said + (f" ({self.answer['note']})" if self.answer.get("note") else "") \
+            + self._given_to()
 
     def public(self) -> dict:
         return asdict(self)
@@ -305,7 +333,7 @@ def questions(package: Package) -> list[Question]:
 def counts(asked: list[Question]) -> tuple[int, int]:
     """(answered, total) over the questions that apply."""
     applying = [q for q in asked if q.applies]
-    return sum(1 for q in applying if q.answer), len(applying)
+    return sum(1 for q in applying if q.counts()), len(applying)
 
 
 def title_of(package: Package) -> str:
@@ -366,6 +394,69 @@ def understood_slide(language: str) -> dict:
     return {"title": w["short"], "waits": UNDERSTOOD_ID, "beats": [{"say": w["say"]}]}
 
 
+# ── his approval of an architecture design ───────────────────────────────
+# Not the standard vote: `understood` is acknowledgement only and never counts
+# as approval. The factory alone adds this question (package_story.compose),
+# only to an architecture package whose handoff asks for his approval
+# ("approval": true), and the gate holds it there. One answer for the whole
+# design: approve, or request changes with his note (which may name
+# declarations or members). His answer is recorded with the checked canonical
+# revision it was given to (`subject_of`); once a newer revision of the same
+# document is checked, or the kit changes, it is stale and counts for nothing.
+
+APPROVAL_ID, APPROVE, REQUEST_CHANGES = package_story.APPROVAL_QUESTION, "approve", "request-changes"
+_APPROVAL_WORDS = {
+    "en": {"short": "Approve the design?",
+           "question": "Do you approve this architecture design, as checked?",
+           "approve": ("Approve", "You approve this checked revision of the design."),
+           "changes": ("Request changes",
+                       "Say what to change: you may name declarations or members."),
+           "reason": "Approval is of this exact checked revision; a newer one asks again.",
+           "say": "Do you approve this design as it stands, or do you want changes?"},
+    "es": {"short": "¿Aprueba el diseño?",
+           "question": "¿Aprueba este diseño de arquitectura, tal como se verificó?",
+           "approve": ("Aprobar", "Aprueba esta revisión verificada del diseño."),
+           "changes": ("Pedir cambios",
+                       "Diga qué cambiar: puede nombrar declaraciones o miembros."),
+           "reason": "La aprobación es de esta revisión verificada; una más nueva pregunta "
+                     "otra vez.",
+           "say": "¿Aprueba este diseño tal como está, o quiere cambios?"},
+}
+SUBJECT = ("document_id", "revision", "source_revision", "kit_digest")
+
+
+def approval_slide(language: str) -> dict:
+    """His approval as the slide the factory puts before the vote."""
+    w = _APPROVAL_WORDS.get(language, _APPROVAL_WORDS["en"])
+    return {"title": w["short"], "waits": APPROVAL_ID, "beats": [{"say": w["say"]}]}
+
+
+def _approval_question(language: str) -> tuple[str, list[dict], str]:
+    w = _APPROVAL_WORDS.get(language, _APPROVAL_WORDS["en"])
+    return (w["question"],
+            [{"id": APPROVE, "name": w["approve"][0], "says": w["approve"][1]},
+             {"id": REQUEST_CHANGES, "name": w["changes"][0], "says": w["changes"][1]}],
+            w["reason"])
+
+
+def subject_of(package: Package) -> Optional[dict]:
+    """The checked canonical revision an architecture package puts to him:
+    {document_id, revision, source_revision, kit_digest}; None for any
+    other package."""
+    communication = package.manifest.communication or {}
+    if communication.get("kind") != "architecture":
+        return None
+    return {key: communication.get(key) for key in SUBJECT}
+
+
+def asks_approval(package: Package) -> bool:
+    """Whether this is an architecture package the factory asked his
+    approval in (its canonical binding says so; the gate holds the story to
+    it)."""
+    story = _story_of(package) if subject_of(package) is not None else None
+    return story is not None and any(s.waits == APPROVAL_ID for s in story.slides)
+
+
 # Where make_package keeps a page's answers when its story names none.
 STORY_ANSWERS = f"{work_packages.RESULTS}/{RECORD}"
 # The runs that can carry a vote.
@@ -422,7 +513,26 @@ def _story_questions(package: Package) -> list[Question]:
             asked.append(Question(UNDERSTOOD_ID, vote["question"], "", options, GOT_IT,
                                   vote["reason"], True,
                                   _story_answer(record.get(UNDERSTOOD_ID), options, GOT_IT)))
+        elif slide.waits == APPROVAL_ID and subject_of(package) is not None:
+            question, options, reason = _approval_question(story.language)
+            answer = _story_answer(record.get(APPROVAL_ID), options, APPROVE)
+            stale = False
+            if answer is not None:
+                given = record[APPROVAL_ID].get("subject")
+                answer["subject"] = given if isinstance(given, dict) else None
+                stale = not (given == subject_of(package) and current_subject(given))
+            asked.append(Question(APPROVAL_ID, question, "", options, "", reason, True,
+                                  answer, stale))
     return asked
+
+
+def current_subject(subject) -> bool:
+    """Whether a checked canonical revision is still the one in force: the
+    newest checked revision of its document, under the kit in force. False
+    when it cannot be told (fail closed: a stale approval satisfies
+    nothing)."""
+    from jarvis import language_projection
+    return language_projection.current_subject(subject)
 
 
 def _story_answer(entry, options: list[dict], recommended: str) -> Optional[dict]:
@@ -449,11 +559,19 @@ def record_story_answer(package: Package, question: Question, option: str,
         raise PackageError(f"{package.id} does not ask {question.id}.")
     if not asked.applies:
         raise PackageError(f"{question.id} is not asked yet: it follows another answer.")
+    if asked.id == APPROVAL_ID and option not in (APPROVE, REQUEST_CHANGES):
+        raise PackageError(f"{APPROVAL_ID} takes {APPROVE} or {REQUEST_CHANGES}.")
+    if asked.id == APPROVAL_ID and option == REQUEST_CHANGES and not note.strip():
+        raise PackageError("Request changes needs his words: say what to change (you may name "
+                           "declarations or members).")
     name = story.answers.split("/", 1)[1]
     record = _record(package, name)
     record[asked.id] = {
         "answer": option, "choice": asked.option_name(option), "note": note,
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "recommended": option == asked.recommended}
+    if asked.id == APPROVAL_ID:
+        # What he approved (or asked changes to): this exact checked revision.
+        record[asked.id]["subject"] = subject_of(package)
     work_packages.save_result(package, name, (json.dumps(
         record, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"))
 
@@ -474,8 +592,12 @@ def page_vote(package: Package) -> Optional[dict]:
     """What a page package (not a deck, which asks on its own slide) asks
     in the package view's head: the standard vote, with his answer and
     words (`question` is None when it carries none), and in `asks` every
-    question its story declares, in order, with its options, whether it
-    applies yet and his answer; None for a package that asks nothing there."""
+    question its story declares and the factory's approval of an
+    architecture design, in order, with its options, whether it applies yet
+    and his answer; None for a package that asks nothing there. His
+    approval is `kind` "approval", never the vote: with the revision it puts
+    to him, the options that need his words, and whether his answer is
+    stale."""
     if is_decision_package(package):
         return None
     asked = _story_questions(package)
@@ -483,14 +605,23 @@ def page_vote(package: Package) -> Optional[dict]:
     declared = [q for q in asked if q.id != UNDERSTOOD_ID]
     if vote is None and not declared:
         return None
+    subject = subject_of(package) or {}
+
+    def ask(q: Question) -> dict:
+        shown = {"id": q.id, "question": q.question, "context": q.context,
+                 "options": q.options, "recommended": q.recommended, "applies": q.applies,
+                 "answer": q.answer["answer"] if q.answer else None,
+                 "note": q.answer["note"] if q.answer else ""}
+        if q.id == APPROVAL_ID:
+            shown.update(kind="approval", revision=subject.get("revision"),
+                         note_required=[REQUEST_CHANGES], stale=q.stale,
+                         answered_revision=(q.answer.get("subject") or {}).get("revision")
+                         if q.answer else None)
+        return shown
     return {"question": vote.id if vote else None,
             "answer": vote.answer["answer"] if vote and vote.answer else None,
             "note": vote.answer["note"] if vote and vote.answer else "",
-            "asks": [{"id": q.id, "question": q.question, "context": q.context,
-                      "options": q.options, "recommended": q.recommended,
-                      "applies": q.applies,
-                      "answer": q.answer["answer"] if q.answer else None,
-                      "note": q.answer["note"] if q.answer else ""} for q in declared]}
+            "asks": [ask(q) for q in declared]}
 
 
 def no_vote(work_id: str, runs: str) -> str:

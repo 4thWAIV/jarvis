@@ -73,10 +73,15 @@ MAX_QUESTIONS = 20
 MAX_OPTIONS = 6
 QUESTION_FIELDS = ("id", "question", "options", "recommended", "reason", "context")
 OPTION_FIELDS = ("id", "name", "says")
-# Ids no story may declare: the standard vote, which the factory alone adds
-# (package_inbox.UNDERSTOOD_ID), and his review of a Work item
+# Ids no story may declare: the standard vote and his approval of an
+# architecture design, which the factory alone adds (package_inbox
+# UNDERSTOOD_ID, APPROVAL_ID), and his review of a Work item
 # (work_api.REVIEW_QUESTION), which an ordinary question must never become.
-RESERVED_QUESTIONS = ("understood", "approve-item")
+# His approval of an architecture design: package_inbox owns its words and
+# answers; named here so the receiver (work_packages) can hold it to
+# architecture packages without reading the inbox.
+APPROVAL_QUESTION = "approve-architecture"
+RESERVED_QUESTIONS = ("understood", "approve-item", APPROVAL_QUESTION)
 # What an author's story (beside an architecture package's UNDERSTANDING.md)
 # may hold, at each level, and its size.
 AUTHORED_MAX_BYTES = 128 * 1024
@@ -414,20 +419,46 @@ def authored(raw: bytes) -> dict:
     return body
 
 
-def compose(story: Optional[dict], language: str) -> bytes:
+def compose(story: Optional[dict], language: str, approval: bool = False) -> bytes:
     """THE composition of a page's story with the standard vote as its one
     last slide, in `language`, encoded: an author's story (`authored`) or
-    none. Checked as any story is, count and size, after composition; the
-    factory writes these bytes and the gate compares them. With no story it
-    is exactly the standard vote alone, as every such package before had."""
+    none. With `approval` (an architecture package whose handoff asks for
+    his approval) the factory's approval slide (package_inbox.APPROVAL_ID)
+    comes once, just before the vote. Checked as any story is, count and
+    size, after composition; the factory writes these bytes and the gate
+    compares them. With no story and no approval it is exactly the standard
+    vote alone, as every such package before had."""
     from jarvis import package_inbox
     if story is not None:
         if story.get("language", language) != language:
             raise StoryError(f"The story is not in {language}, the language it is told in.")
         story = {**story, "language": language}
-    encoded = encode(package_inbox.with_understood_slide(story, language))
-    told = parse(encoded)
-    if [s.waits for s in told.slides].count(package_inbox.UNDERSTOOD_ID) != 1 \
-            or told.slides[-1].waits != package_inbox.UNDERSTOOD_ID:
+    told = package_inbox.with_understood_slide(story, language)
+    if approval:
+        told["slides"].insert(len(told["slides"]) - 1, package_inbox.approval_slide(language))
+    encoded = encode(told)
+    parsed = parse(encoded)
+    waits = [s.waits for s in parsed.slides]
+    if waits.count(package_inbox.UNDERSTOOD_ID) != 1 or waits[-1] != package_inbox.UNDERSTOOD_ID:
         raise StoryError("The composed story must end with the one standard vote.")
+    if waits.count(package_inbox.APPROVAL_ID) != (1 if approval else 0):
+        raise StoryError("Only the factory asks his approval, once, before the vote.")
     return encoded
+
+
+def target(declaration: str, member: Optional[str] = None, part: Optional[str] = None) -> str:
+    """The selector a beat points with at one declaration of a rendered
+    architecture page, or one member of it, or one part of it: each value
+    written as a CSS string, a backslash and a double quote escaped with a
+    backslash. A value with a line break or other control character is
+    refused (StoryError)."""
+    def quoted(value: str) -> str:
+        if not isinstance(value, str) or not value or any(ord(c) < 32 for c in value):
+            raise StoryError("A target names a declaration, member or part as one line of text.")
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    selector = f"[data-declaration={quoted(declaration)}]"
+    if part is not None:
+        selector += f" [data-part={quoted(part)}]"
+    if member is not None:
+        selector += f" [data-member={quoted(member)}]"
+    return selector

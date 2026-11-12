@@ -62,6 +62,14 @@ export interface HeaderQuestion {
   applies: boolean;
   answer: string | null;
   note: string;
+  /** "approval": his approval of an architecture design (never the vote),
+   *  with the revision it puts to him, the options that need his words, and
+   *  whether his answer was given to a revision or kit no longer in force. */
+  kind?: "approval";
+  revision?: string | null;
+  note_required?: string[];
+  stale?: boolean;
+  answered_revision?: string | null;
 }
 
 export interface PackageInfo {
