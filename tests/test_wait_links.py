@@ -283,7 +283,9 @@ def test_the_work_view_s_tick_sweeps_the_record(wired, item, monkeypatch):
 
 def test_the_server_sweeps_at_start(wired):
     import inspect
-    assert "wait_links.sweep" in inspect.getsource(wired.server.lifespan)
+    # At start, once the records are in the engine (server._start_on_records).
+    assert "_start_on_records()" in inspect.getsource(wired.server.lifespan)
+    assert "wait_links.sweep" in inspect.getsource(wired.server._start_on_records)
 
 
 # -- answered decisions clear the item's waiting ------------------------------------

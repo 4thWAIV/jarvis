@@ -87,7 +87,10 @@ async def test_a_broken_check_never_costs_the_user_their_server(monkeypatch):
 def test_lifespan_actually_calls_it():
     """The bug was never in preflight -- it was that nobody called it."""
     import inspect
-    src = inspect.getsource(server.lifespan)
+    # The startup that needs the records runs once they are in the engine
+    # (server._start_on_records), from lifespan at once or after the move.
+    assert "_start_on_records()" in inspect.getsource(server.lifespan)
+    src = inspect.getsource(server._start_on_records)
     assert "_run_preflight" in src, (
         "lifespan must run the preflight checks; they were dead code for a "
         "whole milestone because this line was missing")
