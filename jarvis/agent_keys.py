@@ -328,6 +328,20 @@ def session_key(session_id: str) -> Optional[tuple[Path, str]]:
         return None
 
 
+def make_private(private: Path) -> None:
+    """A key file that arrived in a package, made this user's alone: 0600 on
+    POSIX; on Windows created again by private_files, owned by this user
+    with an owner-only ACL, since an unpacked file takes the folder's ACL
+    and, under an elevated token, Administrators as its owner."""
+    if sys.platform != "win32":
+        os.chmod(private, 0o600)
+        return
+    from jarvis import private_files
+    data = private.read_bytes()
+    private.unlink()
+    private_files.create_new(private, data)
+
+
 def work_key(start: Optional[Path] = None) -> Optional[tuple[Path, str]]:
     """(private key path, public key) of a work-item key in `start` (the
     current folder) or the folders above it, or None."""

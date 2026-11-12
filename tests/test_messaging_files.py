@@ -320,7 +320,8 @@ async def test_a_received_file_is_verified_before_it_can_be_revealed():
     if sys.platform != "win32":   # Windows: owner-only by ACL
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert [p.name for p in path.parent.iterdir()] == [ref.filename]
-    assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
+    if sys.platform != "win32":   # Windows marks it with the Mark of the Web instead
+        assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
     assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
     w.matt.files.reveal(SERVER, MATT, draft.message_id, ref.attachment_id)
     assert w.revealed == [path]

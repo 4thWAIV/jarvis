@@ -9416,7 +9416,7 @@ def _work_key_from_package(package, signed, key, work_id: str) -> None:
             return
         private = package.folder.joinpath(*agent_keys.WORK_KEY)
         if private.is_file() and not private.is_symlink():
-            os.chmod(private, 0o600)
+            agent_keys.make_private(private)
     except Exception:
         log.warning("package %s: its work key was not issued", package.id, exc_info=True)
 
