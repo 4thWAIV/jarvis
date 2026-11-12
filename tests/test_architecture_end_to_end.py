@@ -188,7 +188,9 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         "purpose": "Explain the proposed architecture inbox", "audience": "Tim",
         "questions": ["What holds an architecture package?",
                       "Walk Tim through the page in a story, and ask him in it, as a declared "
-                      "question, whether the inbox should keep a package after sign-off."],
+                      "question, whether the inbox should keep a package after sign-off.",
+                      "Tim is asked to approve this design: say what he would be approving."],
+        "approval": True,
         "evidence": [str(source)]}))
     out = tmp_path / "out"
     made = agent(env, "jarvis.make_package", "--document", checked["document_id"],
@@ -242,7 +244,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     # the existing path, with nothing edited, closed or consented for him.
     author_story = next((out / "author").glob("*/package/story.json"), None)
     assert author_story is not None, "the handoff asked the author for a walk-through"
-    answered, captures = {}, ""
+    answered, captures, approval_shown = {}, "", {}
     if author_story is not None:
         folder = jarvis.package_folder(record["package"])
         canonical = json.loads((folder / "canonical.json").read_text())
@@ -256,15 +258,34 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         assert [s.waits for s in told.slides].count("understood") == 1
         assert told.slides[-1].waits == "understood", "the standard vote, once, last"
         assert vote["question"] == "understood"
-        for asked in [q for q in vote["asks"] if q["applies"]][:1]:
+        assert [s.waits for s in told.slides][-2:] == ["approve-architecture", "understood"], \
+            "the factory asks his approval, once, just before the vote"
+        for asked in [q for q in vote["asks"] if q["applies"] and q.get("kind") != "approval"][:1]:
             ok, said = jarvis.tool("answer_package_decision", package=record["inbox"],
                                    decision=asked["id"], option=asked["options"][0]["id"],
                                    words="Isolated test answer.")
             assert ok and said.startswith("Recorded."), said
             answered[asked["id"]] = asked["options"][0]["id"]
+        # His approval of this exact revision, given in this JARVIS alone.
+        ok, said = jarvis.tool("answer_package_decision", package=record["inbox"],
+                               decision="approve-architecture", option="approve")
+        assert ok and said.startswith("Recorded."), said
+        answered["approve-architecture"] = "approve"
+        import urllib.request
+        with urllib.request.urlopen(urllib.request.Request(
+                f"{jarvis.base}/api/packages",
+                headers={"Authorization": f"Bearer {jarvis.token}"}), timeout=30) as response:
+            listed = json.loads(response.read())["packages"]
+        shown = next(p for p in listed if p["id"] == record["package"])["vote"]
+        approval = next(q for q in shown["asks"] if q.get("kind") == "approval")
+        assert (approval["answer"], approval["stale"], approval["answered_revision"]) == \
+            ("approve", False, checked["revision"]), approval
+        assert shown["question"] == "understood" and shown["answer"] is None, \
+            "approval is shown apart from Got it, which stays unanswered"
+        approval_shown = {"approval": approval, "vote": {k: shown[k] for k in
+                                                         ("question", "answer", "note")}}
         ok, said = jarvis.tool("sign_off_package", package=record["inbox"])
         assert ok, said
-        import urllib.request
         with urllib.request.urlopen(urllib.request.Request(
                 f"{jarvis.base}/api/work/{work.id}",
                 headers={"Authorization": f"Bearer {jarvis.token}"}), timeout=30) as response:
@@ -280,6 +301,9 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         recorded = json.loads((folder / "results" / "decisions.json").read_text())
         assert {k: recorded[k]["answer"] for k in answered} == answered
         assert "understood" not in recorded
+        assert recorded["approve-architecture"]["subject"] == {
+            k: checked[k] for k in ("document_id", "revision", "source_revision", "kit_digest")}, \
+            "his approval names the exact checked revision it was given to"
         ok, captures = jarvis.tool("list_captures")
         assert ok, captures
         if entry.capture_id:
@@ -336,4 +360,5 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         "admission": {"inbox": record["inbox"], "from_session": entry.from_session,
                       "unproven_claim": entry.unproven_claim, "held_after": "none"},
         "answered_in_isolation": answered, "captures_after_sign_off": captures,
+        "approval_shown": approval_shown,
         "held_forgery": held.what}, indent=2))
