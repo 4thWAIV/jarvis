@@ -26,6 +26,18 @@ def test_a_run_is_one_document_with_every_field():
     assert list(run_store.get_run(run_id)) == list(run_store.RUN_FIELDS)
 
 
+def test_a_run_is_on_its_engine_and_its_session_there():
+    old = run_store.create_run("build", "proj", "/tmp/proj", "voice")
+    codex = run_store.create_run("build", "proj", "/tmp/proj", "voice", engine="codex")
+    assert run_store.get_run(old)["engine"] == "claude"
+    assert run_store.worker_of(run_store.get_run(old)) == ("anthropic", old)
+    # Until its thread exists a Codex run is its run id; then the thread.
+    assert run_store.worker_of(run_store.get_run(codex)) == ("openai", codex)
+    run_store.update_run(codex, engine_session="thread-9")
+    assert run_store.worker_of(run_store.get_run(codex)) == ("openai", "thread-9")
+    assert run_store.all_run_ids() == {old, "thread-9"}
+
+
 def test_each_write_is_tagged_with_its_change():
     run_id = run_store.create_run("build", "proj", "/tmp/proj", "voice")
     run_store.update_run(run_id, status=run_store.RunStatus.RUNNING, pid=7)

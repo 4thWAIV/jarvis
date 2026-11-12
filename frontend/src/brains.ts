@@ -49,7 +49,11 @@ const REFUSALS: Record<string, (values: Record<string, string>) => string> = {
   "unknown-brain": (v) => t("left.brains.refused.unknownBrain", { name: v.name ?? "" }),
   "always-there": () => t("left.brains.refused.alwaysThere"),
   "default-first": () => t("left.brains.refused.defaultFirst"),
-  "not-added": (v) => t("left.brains.refused.notAdded", { name: v.name ?? "" }),
+  "not-added": (v) => t("left.brains.refused.notAdded", { name: v.name ?? v.engine ?? "" }),
+  "unknown-kind": () => t("left.brains.engines.refused.unknownKind"),
+  "unknown-pick": () => t("left.brains.engines.refused.unknownPick"),
+  "unknown-engine": () => t("left.brains.engines.refused.unknownEngine"),
+  "no-such-model": (v) => t("left.brains.engines.refused.noSuchModel", { model: v.model ?? "" }),
 };
 
 async function refusal(res: Response): Promise<Error> {
@@ -91,4 +95,43 @@ export const brains = liveRead(() => listBrains(true), [brainsChanged]);
 /** The brain running now, by provider name, or null when none is known. */
 export function activeBrain(cards: BrainCard[] | null): string | null {
   return cards?.find((b) => b.active)?.name ?? null;
+}
+
+// ── which engine each kind of agent goes on (engine_choice.py) ───────────
+
+export type EngineKind = "package_author" | "run" | "build" | "agent_package";
+export type Engine = "claude" | "codex";
+
+export interface EngineSetting {
+  pick: "fixed" | "requester" | "least_stress";
+  engine?: Engine;
+  model?: string | null;
+}
+
+export interface EngineSettings {
+  kinds: Record<EngineKind, EngineSetting>;
+  kinds_order: EngineKind[];
+  override_stressed: boolean;
+  /** Each brain JARVIS has, with its plus/minus against its pace this week. */
+  engines: { engine: Engine; provider: string; ahead: number | null; stressed: boolean }[];
+  least_stressed: Engine | null;
+}
+
+/** Each engine's brain provider: the cards are by provider. */
+export const ENGINE_PROVIDER: Record<Engine, string> = { claude: "anthropic", codex: "openai" };
+
+export async function readEngines(): Promise<EngineSettings> {
+  const res = await fetch("/api/settings/engines");
+  if (!res.ok) throw new Error(t("left.common.serverAnswered", { status: String(res.status) }));
+  return (await res.json()) as EngineSettings;
+}
+
+/** One kind's setting, or the override; the settings as they now stand. */
+export async function changeEngines(change: { kind: EngineKind; pick: EngineSetting["pick"];
+                                              engine?: Engine; model?: string | null }
+                                     | { override_stressed: boolean }): Promise<EngineSettings> {
+  const res = await fetch("/api/settings/engines", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change) });
+  if (!res.ok) throw await refusal(res);
+  return (await res.json()) as EngineSettings;
 }

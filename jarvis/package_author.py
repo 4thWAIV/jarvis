@@ -13,11 +13,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import author_proof, brain_provider, data_paths, session_skill
+from jarvis import author_proof, brain_provider, data_paths, engine_choice, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
 
-ENGINES = {"claude": "anthropic", "codex": "openai"}
+ENGINES = brain_provider.ENGINES
 SKILL = data_paths.PACKAGE_DIR / "session_skills" / "human-package-author" / "SKILL.md"
 GUIDE = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 
@@ -84,17 +84,22 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         raise Refused(["Choose the caller's own engine with --engine claude or --engine codex."])
     if not session:
         raise Refused(["Give --session for the originating session's answer route."])
+    # The author goes on his setting for package authors (Settings, Brains):
+    # the caller's own engine unless he chose otherwise, or a brain in token
+    # stress gives way (engine_choice).
+    choice = engine_choice.choose("package_author", requester=engine)
     folder = out / "author"
     # A rerun must not accidentally deliver stale output from a failed author.
     folder.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
-    provider = brain_provider.provider(ENGINES[engine])
-    config = BrainConfig(home=folder, provider=provider.name, model=None, effort=None,
+    provider = brain_provider.provider(ENGINES[choice.engine])
+    config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
                          authoring=True, warmup_timeout=60, turn_timeout=60,
                          claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
                          codex_path=os.getenv("JARVIS_CODEX_PATH") or None)
     done = asyncio.get_running_loop().create_future()
-    receipt = {"engine": engine, "origin_session": session, "work": work,
+    receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
+               "origin_session": session, "work": work,
                "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
                "source_folder": str(folder), "status": "started"}
     if document is not None:

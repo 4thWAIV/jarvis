@@ -354,7 +354,7 @@ async def test_store_failure_still_reaches_terminal_state(env):
     assert "database is locked" in run["error"]
 
     # ...and no child left behind.
-    assert ex._procs == {}
+    assert ex.claude._procs == {}
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 
@@ -512,7 +512,7 @@ async def test_timeout_keeps_the_collected_stderr(env, tmp_path):
 def test_command_includes_skip_permissions_by_default(env):
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None)
+    cmd = ex.claude._command("run-1", None)
     assert "--dangerously-skip-permissions" in cmd, (
         "without this flag a run blocks on a permission prompt it has no TTY "
         "to answer, and hangs forever")
@@ -521,7 +521,7 @@ def test_command_includes_skip_permissions_by_default(env):
 def test_command_sets_session_id(env):
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None)
+    cmd = ex.claude._command("run-1", None)
     assert cmd[cmd.index("--session-id") + 1] == "run-1"
     assert "--resume" not in cmd
     assert "--fork-session" not in cmd
@@ -530,7 +530,7 @@ def test_command_sets_session_id(env):
 def test_command_forks_when_resuming(env):
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-2", "run-1")
+    cmd = ex.claude._command("run-2", "run-1")
     assert cmd[cmd.index("--resume") + 1] == "run-1"
     assert "--fork-session" in cmd, (
         "CLI 2.1.251 rejects --session-id with --resume unless --fork-session "
@@ -542,7 +542,7 @@ def test_command_respects_skip_permissions_opt_out(env, monkeypatch):
     monkeypatch.setenv("JARVIS_SKIP_PERMISSIONS", "false")
     importlib.reload(mod)
     ex = mod.RunExecutor(store, claude_path="claude")
-    assert "--dangerously-skip-permissions" not in ex._command("run-1", None)
+    assert "--dangerously-skip-permissions" not in ex.claude._command("run-1", None)
 
 
 # -- explicit model selection ------------------------------------------------
@@ -555,7 +555,7 @@ def test_command_always_includes_an_explicit_model_flag(env, monkeypatch):
     store, mod, tmp = env
     monkeypatch.delenv("JARVIS_RUN_MODEL", raising=False)
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None)
+    cmd = ex.claude._command("run-1", None)
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "sonnet"
 
@@ -563,7 +563,7 @@ def test_command_always_includes_an_explicit_model_flag(env, monkeypatch):
 def test_command_uses_explicit_model_argument(env):
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None, model="haiku")
+    cmd = ex.claude._command("run-1", None, model="haiku")
     assert cmd[cmd.index("--model") + 1] == "haiku"
 
 
@@ -571,7 +571,7 @@ def test_command_falls_back_to_env_model(env, monkeypatch):
     store, mod, tmp = env
     monkeypatch.setenv("JARVIS_RUN_MODEL", "opus")
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None)
+    cmd = ex.claude._command("run-1", None)
     assert cmd[cmd.index("--model") + 1] == "opus"
 
 
@@ -579,7 +579,7 @@ def test_command_explicit_argument_overrides_env(env, monkeypatch):
     store, mod, tmp = env
     monkeypatch.setenv("JARVIS_RUN_MODEL", "opus")
     ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex._command("run-1", None, model="haiku")
+    cmd = ex.claude._command("run-1", None, model="haiku")
     assert cmd[cmd.index("--model") + 1] == "haiku"
 
 
@@ -996,7 +996,7 @@ async def test_post_eof_hang_does_not_leak_the_concurrency_permit(env, tmp_path)
     hung = await ex.spawn("hang after eof", "proj", str(tmp), "api")
     await asyncio.wait_for(ex.wait_for(hung, timeout=20), timeout=25)
 
-    ex._claude_path = _fake_claude(tmp, FIXTURE)
+    ex.claude._claude_path = _fake_claude(tmp, FIXTURE)
     good = await ex.spawn("a normal run", "proj", str(tmp), "api")
     run = await asyncio.wait_for(ex.wait_for(good, timeout=20), timeout=25)
     assert run["status"] == store.RunStatus.SUCCEEDED, run
@@ -1558,7 +1558,7 @@ async def test_no_way_of_going_quiet_leaks_the_concurrency_permit(env, how):
     stuck = await ex.spawn("go quiet", "proj", str(tmp), "api")
     await asyncio.wait_for(ex.wait_for(stuck, timeout=20), timeout=25)
 
-    ex._claude_path = _fake_claude(tmp, FIXTURE)
+    ex.claude._claude_path = _fake_claude(tmp, FIXTURE)
     good = await ex.spawn("a normal run", "proj", str(tmp), "api")
     run = await asyncio.wait_for(ex.wait_for(good, timeout=20), timeout=25)
     assert run["status"] == store.RunStatus.SUCCEEDED, run
@@ -1759,7 +1759,7 @@ async def test_the_wait_after_sigkill_is_bounded(env):
     store, mod, tmp = env
     ex = mod.RunExecutor(store, claude_path="claude", grace_sec=0.2)
     proc = _NeverReaped()
-    await asyncio.wait_for(ex._terminate(proc), timeout=5)
+    await asyncio.wait_for(ex.claude._terminate(proc), timeout=5)
     assert proc.terminated and proc.killed
 
 
