@@ -101,6 +101,8 @@ def _never_spawn_a_real_brain(monkeypatch):
     the knowledge engine's process."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "0")
+    # Indexing is on by default for users; a test that wants it says so.
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
     monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
 
 

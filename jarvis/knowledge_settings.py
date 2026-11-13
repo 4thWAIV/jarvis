@@ -18,11 +18,12 @@ def read(load: Callable[[], dict | None] | None = None) -> dict:
         value = None if rec is None else rec.data
     else:
         value = load()
-    # Compatibility for existing installations only. A saved Settings value
-    # wins, including false, regardless of inherited environment variables.
+    # On by default (Tim, 2026-11-12). A saved Settings value wins, including
+    # false; with none saved, JARVIS_KNOWLEDGE set to 0/false/no/off turns it
+    # off for an installation that relies on the old switch.
     if value is None:
-        return {"enabled": os.getenv("JARVIS_KNOWLEDGE", "0").strip().lower()
-                in ("1", "true", "yes", "on")}
+        return {"enabled": os.getenv("JARVIS_KNOWLEDGE", "1").strip().lower()
+                not in ("0", "false", "no", "off")}
     return {"enabled": value.get("enabled") is True}
 
 

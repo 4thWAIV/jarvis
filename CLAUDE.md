@@ -2780,7 +2780,7 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the folder catalog's routes and tools off; its records are kept
 - `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
   knowledge engine (every test sets this; see "The knowledge engine")
-- `JARVIS_KNOWLEDGE` (optional, default off) — `1` turns on the knowledge
+- `JARVIS_KNOWLEDGE` (optional, default on) — `0` turns off the knowledge
   engine's ingest, embedding and tools; the engine itself runs either way
 - `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
   the context pack for its project (see "The knowledge engine")
