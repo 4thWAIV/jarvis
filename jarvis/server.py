@@ -9952,10 +9952,10 @@ def _package_answer(ref: str, key: Optional[str]):
     """The answer of his that ends a link to package `ref` (decision `key`,
     or the whole package), or None while there is none."""
     for e in package_inbox.named(ref):
+        refs = package_inbox.refs(e.package_id)
         at = _package_finished_at(e)
         if at is not None:
-            return wait_links.answer(wait_links.PACKAGE, package_inbox.refs(e.package_id), None,
-                                     "signed_off", at)
+            return wait_links.answer(wait_links.PACKAGE, refs, None, "signed_off", at)
         if key is None:
             continue
         package = work_packages.by_id(e.package_id)
@@ -9963,8 +9963,7 @@ def _package_answer(ref: str, key: Optional[str]):
             continue
         for q in package_inbox.questions(package):
             if q.id == key and q.applies and q.answer:
-                return wait_links.answer(wait_links.PACKAGE, package_inbox.refs(e.package_id),
-                                         key, "package")
+                return wait_links.answer(wait_links.PACKAGE, refs, key, "package")
     return None
 
 
