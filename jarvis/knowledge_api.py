@@ -4,6 +4,7 @@ section 13), so page and voice do exactly the same thing.
 | call            | route                                  | brain tool          | kind            |
 |-----------------|----------------------------------------|---------------------|-----------------|
 | `status`        | GET  /api/knowledge/health             | knowledge_status    | read            |
+| `build`         | (in status and embedding_model)        | knowledge_status, embedding_model | read |
 | `search`        | POST /api/knowledge/search             | knowledge_search    | read, walled    |
 | `entity`        | GET  /api/knowledge/entity             | knowledge_entity    | read, walled    |
 | `proposals`     | GET  /api/knowledge/proposals          | knowledge_proposals | read, walled    |
@@ -126,7 +127,32 @@ def status(ctx: Context) -> dict:
             "cards": engine.get("cards"), "writable": store.get("writable"),
             "lsn": store.get("lsn"), "generations": store.get("generations"),
             "proposals": len(rt.proposals), "hot_cards": len(rt.hot.cards),
-            "items": _items_counted(ctx), "content": health.get("content")}
+            "items": _items_counted(ctx), "content": health.get("content"), "build": build(ctx, health)}
+
+
+BUILDING, HELD, PAUSED, DONE, OFF = "building", "held", "paused", "done", "off"
+
+
+def build(ctx: Context, health: Optional[dict] = None) -> Optional[dict]:
+    """The index build (vectors.build_health) as Settings, the Knowledge
+    view and the brain read it: what waits (items and the texts they hold),
+    what is done (kept in the engine, so it goes on across restarts), the
+    time left at the build's share of one core, and its state: `building`;
+    `held` while the conversation needs the machine; `paused` in Settings;
+    `done`; `off` with no embedding model. `files_waiting` are files the
+    content reader has still to read before they can wait here. None while
+    the engine has not said (not running, or not yet asked)."""
+    rt = ctx.runtime
+    if rt is None:
+        return None
+    health = rt.health() if health is None else health
+    found = (((health.get("engine") or {}).get("vectors") or {}).get("build"))
+    if not isinstance(found, dict):
+        return None
+    state = found.get("state")
+    if state not in (DONE, OFF):
+        state = PAUSED if health.get("knowledge") is False else HELD if health.get("pace") == "hold" else BUILDING
+    return {**found, "state": state, "files_waiting": (health.get("content") or {}).get("waiting")}
 
 
 def _items_counted(ctx: Context) -> Optional[dict]:
@@ -147,10 +173,12 @@ def embedding_model(ctx: Context) -> dict:
     from jarvis import embedding_models
     out = embedding_models.status()
     rt = ctx.runtime
-    vectors = ((rt.health().get("engine") or {}).get("vectors") or {}) if rt is not None else {}
+    health = rt.health() if rt is not None else {}
+    vectors = (health.get("engine") or {}).get("vectors") or {}
     out["engine"] = {"running": rt is not None, "space": vectors.get("embedder"),
                      "embedded": vectors.get("embedded"), "waiting": vectors.get("waiting"),
-                     "rows": sum(int(s.get("rows") or 0) for s in (vectors.get("spaces") or {}).values())}
+                     "rows": sum(int(s.get("rows") or 0) for s in (vectors.get("spaces") or {}).values()),
+                     "build": build(ctx, health) if rt is not None else None}
     return out
 
 
@@ -309,8 +337,13 @@ def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_u
         if phrase:
             break
     hits = sorted(merged.values(), key=lambda h: -(h.get("score") or 0))[:limit]
+    # While the index is still being built, meaning search sees only what
+    # has its vectors: the answer says so (partial, and how far it is).
+    building = build(ctx)
+    if not (building or {}).get("items_waiting"):
+        building = None
     return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
-            "partial": partial, "notes": []}
+            "partial": partial or building is not None, "building": building, "notes": []}
 
 
 def entity(ctx: Context, *, name: Optional[str] = None, key: Optional[str] = None) -> dict:

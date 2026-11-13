@@ -211,14 +211,25 @@ def look_up_packages_with(lookup: Optional[PackageLookup]) -> None:
     _package_lookup = lookup
 
 
+# Within one sweep each package link is looked up once, however many holds
+# name it (`sweep` sets it for its span, on its own thread).
+_looked = threading.local()
+
+
 def answered_package(ref: str, key: Optional[str]) -> Optional[Answer]:
     if _package_lookup is None:
         return None
+    memo = getattr(_looked, "found", None)
+    if memo is not None and (ref, key) in memo:
+        return memo[(ref, key)]
     try:
-        return _package_lookup(ref, key)
+        found = _package_lookup(ref, key)
     except Exception:
         log.warning("wait links: package %s was not looked up", ref, exc_info=True)
-        return None
+        found = None
+    if memo is not None:
+        memo[(ref, key)] = found
+    return found
 
 
 def already(unit, link: Link, owner_kind: str, owner_id: str) -> Optional[Answer]:
@@ -244,6 +255,7 @@ def sweep() -> Settled:
     at server start and on every read of either record. Never raises."""
     if not _sweeping.acquire(blocking=False):
         return Settled()
+    _looked.found = {}
     try:
         from jarvis import work_store, workflow_store
         moved = Settled()
@@ -253,6 +265,7 @@ def sweep() -> Settled:
         log.warning("wait links: the sweep failed", exc_info=True)
         return Settled()
     finally:
+        _looked.found = None
         _sweeping.release()
     tell(moved)
     return moved

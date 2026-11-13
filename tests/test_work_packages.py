@@ -335,3 +335,14 @@ def test_the_page_s_upload_route_uses_the_same_step(monkeypatch):
     monkeypatch.setattr(FileSnapshots, "add_to_draft", spy)
     test_the_page_routes()
     assert "über.png" in [messaging_files.wire.normalize_filename(n) for n in called]
+
+
+def test_a_package_is_found_by_its_id_without_reading_every_package(tmp_path, marks, monkeypatch):
+    """The Work view and the quiet watch look a package up by its id for
+    each open package of each item: that is its folder, read alone."""
+    package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "# x"})), "ab12cd34ef")
+    monkeypatch.setattr(work_packages, "every", lambda: pytest.fail("every package was read"))
+    assert work_packages.by_id(package.id).folder == package.folder
+    assert work_packages.find(package.id).folder == package.folder
+    for name in ("", ".records", "../packages", "no-such-package", f"{package.id}/SKILL.md"):
+        assert work_packages.by_id(name) is None

@@ -519,6 +519,23 @@ def every() -> list[Package]:
     return out
 
 
+def by_id(package_id: str) -> Optional[Package]:
+    """The package unpacked in the folder named `package_id` (its id), read
+    alone, or None when there is none: an id names its folder, so finding
+    one never loads every package (`every`), which the Work view and the
+    quiet watch did for each open package of each item."""
+    name = str(package_id or "")
+    if not name or name.startswith(".") or "/" in name or "\\" in name:
+        return None
+    folder = data_paths.packages_dir() / name
+    try:
+        if folder.is_symlink() or not folder.is_dir():
+            return None
+        return _load(folder)
+    except (OSError, PackageError):
+        return None
+
+
 def find(reference: str, runs: Optional[str] = None) -> Package:
     """A package by its folder name (its id), by its name and version
     ("denice-pulses-1.0.1"), by its own name, or else by the words he called
@@ -527,8 +544,13 @@ def find(reference: str, runs: Optional[str] = None) -> Package:
     packages name each one's id instead. With `runs`, only one that runs
     that way."""
     reference = str(reference or "").strip()
+    exact = by_id(reference)
+    if exact is not None:
+        if runs and exact.manifest.runs != runs:
+            raise PackageError(f"{exact.id} runs as {exact.manifest.runs}, not as {runs}.")
+        return exact
     packages = every()
-    found = [p for p in packages if p.id == reference]
+    found = []
     named = ([p for p in packages if f"{p.manifest.name}-{p.manifest.version}" == reference]
              or [p for p in packages if p.manifest.name == reference])
     if not found and not named and reference:

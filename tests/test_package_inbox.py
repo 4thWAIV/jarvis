@@ -790,3 +790,19 @@ def test_the_signed_request_proves_its_own_agent_s_session_alone(wired, shown, m
     entry = package_inbox.get(got["inbox"]["id"])
     assert (entry.from_session, entry.sender_evidence) == ("sess-1", "agent_key")
 
+
+
+def test_a_wait_s_package_is_looked_up_by_its_names_without_listing_the_inbox(
+        wired, shown, marks, tmp_path, monkeypatch):
+    """The wait links ask for every held link on every sweep: each of the
+    names a wait gives a package is one lookup, never the whole inbox."""
+    old = send(wired, deck_zip(tmp_path, "1.0.0", "s"), session="s").json()["inbox"]
+    new = send(wired, deck_zip(tmp_path, "1.0.1", "s"), session="s").json()["inbox"]
+    monkeypatch.setattr(package_inbox, "listing", lambda *a, **k: pytest.fail("the inbox was listed"))
+    by = {ref: [e.id for e in package_inbox.named(ref)]
+          for ref in (old["id"], new["package_id"], new["name"], f"{new['name']}-1.0.0", "nothing")}
+    assert by[old["id"]] == [old["id"]]
+    assert by[new["package_id"]] == [new["id"]]
+    assert by[new["name"]] == [new["id"], old["id"]]          # the open one first, then the closed
+    assert by[f"{new['name']}-1.0.0"] == [old["id"]]
+    assert by["nothing"] == []

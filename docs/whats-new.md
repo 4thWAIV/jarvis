@@ -2,6 +2,24 @@
 
 Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## The knowledge index builds itself, and says how far it is
+
+Settings → Knowledge (and the Knowledge view) shows the index being built:
+how many items have their vectors out of how many, how many passages are
+left and about how long that will take; "paused while you talk" while you
+and JARVIS are speaking, and "paused in Settings" when you pause indexing
+there. It builds your messages, conversation and Work first, newest first,
+then JARVIS's notes, then your folders' files, most recently changed first.
+It uses half of one processor core whatever else the Mac is doing, so it
+always moves and never slows the Mac, and a restart carries on where it
+stopped, part way through a long file included. A search made while it is
+still building says that meaning search may miss what is not indexed yet.
+Ask JARVIS "how far is the knowledge index?" for the same figures.
+
+JARVIS's server also does far less on its own when no page is open: it no
+longer reads every package, the whole package inbox or the whole voice
+record every few seconds, and it asks each Codex session for its folder once.
+
 ## Agents on Codex as well as Claude
 
 JARVIS can start an agent on Codex as well as on Claude Code: an agent run, a build or an agent package goes on the Codex app server already running on this Mac, in your own Codex setup, never asking and with no sandbox, as Claude agents run. JARVIS watches it, stops it and retries it on the same engine. Say "on Codex" or "on Claude" for one agent; otherwise Settings → Brains decides, under "Who runs each kind of agent": for the package author, agent runs, builds and agent packages, a brain and one of its models, the same as the agent asking, or the brain with the least token stress. Token stress is the plus or minus the brain board shows against the week's pace, shown there beside each brain; "Override if the chosen brain is in token stress" moves an agent off a brain that is behind its pace. JARVIS refuses to start a Codex agent on an app server version it has not been checked against, and says so.

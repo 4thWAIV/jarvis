@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import heapq
 import json
 import logging
 import mmap
@@ -47,8 +48,9 @@ from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import items as item_texts
 from jarvis.knowledge import kinds, lanes, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
+from jarvis.knowledge.encoding import canonical
 from jarvis.knowledge.segment import Version
-from jarvis.knowledge.store import CONTENT, DOCS, Store, newest_only
+from jarvis.knowledge.store import CONTENT, DOCS, META, Store, newest_only
 from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis.knowledge.wal import Op, fsync_dir, full_fsync
 
@@ -66,6 +68,13 @@ WHOLE = 0                       # an item's whole-item row; section i is prop i 
 ITEM_SPACE_SUFFIX = "#items"
 SECTIONS_EMBEDDED_MAX = 2000    # past this many sections an item's later ones get no vector
 WHERE_SECTIONS = 3              # the sections a vector hit names as where it matched
+# An item's vectors are committed this many texts at a time, its whole-item
+# row last, so a long file goes on where it stopped and counts as embedded
+# only once all of it is.
+COMMIT_EVERY = 64
+# The build's own progress, in META, written in the same commit as the
+# vectors it counts, so a restart goes on from it.
+BUILD_KEY = b"build"
 
 
 def vec_key(space: str, ordinal: int, prop: str) -> bytes:
@@ -355,6 +364,69 @@ class Space:
         return sum(1 for props in self.props.values() if WHOLE in props)
 
 
+def build_rank(doc: dict) -> tuple:
+    """Where an item waits in the build, best first (Tim's order,
+    2026-11-12): the records that hold people's words, newest first; then
+    the brain's notes; then JARVIS's own other files (answers, packages,
+    received files, the voice log), newest first; then registered folders'
+    files, most recently changed first; then anything else."""
+    path = str(doc.get("_key") or "")
+    at = float(doc.get("_at") or 0.0)
+    if item_texts.is_record(doc):
+        return (0, -at)
+    if path.startswith("/jarvis/brain/"):
+        return (1, -at)
+    if path.startswith("/jarvis/"):
+        return (2, -at)
+    if path.startswith("/folders/"):
+        mtime = doc.get("mtime")
+        return (3, -(float(mtime) if isinstance(mtime, (int, float)) else at))
+    return (4, -at)
+
+
+def texts_of(summary: dict) -> int:
+    """How many texts an item's vectors take: its whole-item text and one
+    per section embedded (a record's `sections` already counts its own)."""
+    return 1 + min(int(summary.get("sections") or 0), SECTIONS_EMBEDDED_MAX)
+
+
+class BuildQueue:
+    """The items waiting to be embedded, best first by `build_rank`: one
+    entry an item, holding only its newest content (a heap with the stale
+    entries passed over), with the texts they wait to have embedded
+    counted. Guarded by its owner's lock."""
+
+    def __init__(self) -> None:
+        self._heap: list[tuple[tuple, int, str]] = []
+        self._held: dict[int, tuple[str, str, tuple, int]] = {}   # o -> (path, sha, rank, texts)
+        self.texts = 0
+
+    def put(self, o: int, path: str, sha: str, rank: tuple, texts: int) -> None:
+        old = self._held.get(o)
+        if old is not None:
+            self.texts -= old[3]
+        self._held[o] = (path, sha, rank, texts)
+        self.texts += texts
+        heapq.heappush(self._heap, (rank, o, sha))
+        if len(self._heap) > 2 * len(self._held) + 1024:
+            self._heap = [(r, o2, sh) for o2, (_, sh, r, _) in self._held.items()]
+            heapq.heapify(self._heap)
+
+    def pop(self) -> Optional[tuple[int, str, str, int]]:
+        """The best item waiting, (ordinal, path, sha, texts), or None."""
+        while self._heap:
+            rank, o, sha = heapq.heappop(self._heap)
+            held = self._held.get(o)
+            if held is not None and held[1] == sha and held[2] == rank:
+                del self._held[o]
+                self.texts -= held[3]
+                return o, held[0], sha, held[3]
+        return None
+
+    def __len__(self) -> int:
+        return len(self._held)
+
+
 class VectorIndex:
     def __init__(self, docs: DocumentStore, embedder: Optional[emb.Embedder] = None) -> None:
         self.docs = docs
@@ -364,13 +436,18 @@ class VectorIndex:
         self.spaces: dict[str, Space] = {}
         self._lock = threading.RLock()
         self._todo: dict[int, tuple[str, str]] = {}       # ordinal -> (key, _hash) waiting to embed
-        self._items_todo: dict[int, tuple[str, str]] = {}  # item ordinal -> (path, content sha256)
+        self._items_todo = BuildQueue()                    # items, best first
         self._todo_cond = threading.Condition()
         self.paused = False
         self._stop = False
         self.embedded = 0
         self.items_embedded = 0
         self._working = False
+        self._left = 0          # texts of the item being embedded not yet committed
+        # The CPU and the time (embedding and its rests, never a hold) the
+        # build has spent since its progress was last committed.
+        self._spent = {"cpu_sec": 0.0, "busy_sec": 0.0}
+        self.build = self._read_build()
         self._load()
         self.store.listeners.append(self._on_apply)
         self.store.generation_listeners.append(self._on_generation)
@@ -441,7 +518,8 @@ class VectorIndex:
                     summary = item_texts.embedded_summary(doc)
                     if summary and not (items is not None and items.has(o, WHOLE)):
                         with self._todo_cond:
-                            self._items_todo[o] = (doc["_key"], summary["sha256"])
+                            self._items_todo.put(o, doc["_key"], summary["sha256"], build_rank(doc),
+                                                 texts_of(summary))
                             self._todo_cond.notify()
                     continue
                 prop = embedded_prop(doc["_kind"])
@@ -536,6 +614,7 @@ class VectorIndex:
                 if doc.get(kind.embedded[0]) and not (space and space.has_any(o)):
                     self._todo[o] = (doc["_key"], doc["_hash"])
         items = self.spaces.get(self.item_space_id)
+        found = []
         with self.store.reading() as lsn:
             for v in self.store.scan(DOCS, b"/", b"0", lsn):
                 if v.value is None:
@@ -543,7 +622,11 @@ class VectorIndex:
                 o, doc = decode_doc(v.value)
                 summary = item_texts.embedded_summary(doc)
                 if doc.get("_kind") == kinds.ITEM and summary and not (items and items.has(o, WHOLE)):
-                    self._items_todo[o] = (doc["_key"], summary["sha256"])
+                    found.append((o, doc["_key"], summary["sha256"], build_rank(doc), texts_of(summary)))
+        with self._todo_cond:
+            for entry in found:
+                self._items_todo.put(*entry)
+            self._todo_cond.notify_all()
 
     def set_paused(self, paused: bool) -> None:
         with self._todo_cond:
@@ -561,28 +644,29 @@ class VectorIndex:
                     self._todo_cond.wait(1.0)
                 if self._stop:
                     return
-                item = None
+                item = self._items_todo.pop()
                 batch = []
-                if self._items_todo:
-                    o = next(iter(self._items_todo))
-                    item = (o, *self._items_todo.pop(o))
-                else:
+                if item is None:
                     for o in list(self._todo)[:emb.INGEST_BATCH]:
                         batch.append((o, *self._todo.pop(o)))
                 self._working = True
             try:
                 if item is not None:
-                    self._embed_item(*item)
+                    self._embed_item(*item[:3])
                 else:
                     self._embed_batch(batch)
             except Exception:
                 log.exception("embedding failed")
             finally:
                 self._working = False
+                self._left = 0
 
     def _embed_texts(self, texts: list[str]) -> list[array]:
-        """Every text's vector, as ingest batches behind any query, waiting
-        while the pace holds; `_Closing` when the engine closes meanwhile."""
+        """Every text's vector, as ingest batches behind any query, each
+        followed by its rest (`lanes.BUILD_SHARE`), waiting while the pace holds;
+        `_Closing` when the engine closes meanwhile. The rest is this
+        thread's, never the embedding thread's, so a query never waits
+        behind it."""
         out: list[array] = []
         for i in range(0, len(texts), emb.INGEST_BATCH):
             box: dict = {}
@@ -591,17 +675,58 @@ class VectorIndex:
             def finished(vectors, error, box=box, done=done):
                 box["v"], box["e"] = vectors, error
                 done.set()
+            before, began = self.queue.ingest_cpu, time.monotonic()
             self.queue.submit(texts[i:i + emb.INGEST_BATCH], emb.INGEST, "passage", finished)
             done.wait()
             if box.get("e") is not None:
                 raise box["e"]
             out.extend(box["v"])
+            cpu = max(0.0, self.queue.ingest_cpu - before)
+            rest = lanes.rest_for(cpu)
+            rest_until = time.monotonic() + rest
+            self._spent["cpu_sec"] += cpu
+            self._spent["busy_sec"] += time.monotonic() - began + rest
             with self._todo_cond:
-                while self.paused and not self._stop:
-                    self._todo_cond.wait(1.0)
+                while not self._stop and (self.paused or time.monotonic() < rest_until):
+                    self._todo_cond.wait(1.0 if self.paused else max(0.0, rest_until - time.monotonic()))
                 if self._stop:
                     raise _Closing()
         return out
+
+    # -- the build's progress ----------------------------------------------------
+    def _read_build(self) -> dict:
+        found = self.store.get(META, BUILD_KEY)
+        try:
+            held = json.loads(found.value) if found is not None and found.value else {}
+        except ValueError:
+            held = {}
+        return {"texts": int(held.get("texts") or 0), "items": int(held.get("items") or 0),
+                "cpu_sec": float(held.get("cpu_sec") or 0.0),
+                "busy_sec": float(held.get("busy_sec") or 0.0)}
+
+    def build_health(self) -> dict:
+        """The build: the items embedded now, what waits (items and the
+        texts they hold), what the build has done (kept in the engine
+        across restarts), and the time left at the rate the build has kept
+        while it was free to work. `state` is building,
+        paused (the pace holds, or indexing is paused in Settings) or done;
+        `off` with no embedder."""
+        with self._todo_cond:
+            items = len(self._items_todo) + len(self._todo) + (1 if self._left else 0)
+            texts = self._items_todo.texts + len(self._todo) + self._left
+        with self._lock:
+            space = self.spaces.get(self.item_space_id or "")
+            embedded = space.items() if space is not None else 0
+        done = self.build
+        # Measured: the texts made over the time the build has spent on
+        # them, its rests included and every hold left out.
+        rate = done["texts"] / done["busy_sec"] if done["busy_sec"] > 0 and done["texts"] else None
+        state = ("off" if self.embedder is None else "done" if not items
+                 else "paused" if self.paused else "building")
+        return {"state": state, "items_embedded": embedded, "items_waiting": items, "texts_waiting": texts,
+                "items_done": done["items"], "texts_done": done["texts"], "share": lanes.BUILD_SHARE,
+                "texts_per_sec": round(rate, 2) if rate else None,
+                "seconds_left": 0 if not items else (round(texts / rate) if rate else None)}
 
     def _embed_item(self, o: int, path: str, sha: str) -> None:
         """An item's whole-item vector and one per section, committed in one
@@ -626,24 +751,51 @@ class VectorIndex:
             texts += [emb.prepare(item_texts.embedded_text(title, s)) for s in sections]
         if not texts:
             return
-        try:
-            vectors = self._embed_texts(texts)
-        except _Closing:
-            return
-        for vector in vectors:
-            if len(vector) != self.embedder.dim:
-                raise ValueError(f"the embedder gave {len(vector)} dimensions, not {self.embedder.dim}")
         space = self.item_space_id
+        held = self.spaces.get(space)
+        # The sections first, any already embedded for this content passed
+        # over (a build stopped part way through goes on), the whole last.
+        props = [p for p in range(1, len(texts)) if not (held is not None and held.has(o, p))] + [WHOLE]
+        self._left = len(props)
+        for start in range(0, len(props), COMMIT_EVERY):
+            chosen = props[start:start + COMMIT_EVERY]
+            try:
+                vectors = self._embed_texts([texts[p] for p in chosen])
+            except _Closing:
+                return
+            for vector in vectors:
+                if len(vector) != self.embedder.dim:
+                    raise ValueError(f"the embedder gave {len(vector)} dimensions, not {self.embedder.dim}")
+            last = start + len(chosen) >= len(props)
+            if not self._commit_rows(o, path, sha, space, list(zip(chosen, vectors)), last):
+                return              # its content changed meanwhile; it is queued again
+            self._left = len(props) - start - len(chosen)
+        if self.item_embedded(o):
+            self.items_embedded += 1
+
+    def _commit_rows(self, o: int, path: str, sha: str, space: str, rows: list,
+                     finished: bool) -> bool:
+        """One commit of an item's rows, with the build's progress, only
+        while its content is still what they were made from. Whether it was
+        written."""
+        progress: dict = {}
 
         def prepare(lsn: int) -> list[Op]:
             now = self.docs.get(path)
             if now is None or now["_ord"] != o or ((item_texts.embedded_summary(now) or {}).get("sha256")) != sha:
                 return []
-            return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in enumerate(vectors)]
+            progress.update({"texts": self.build["texts"] + len(rows),
+                             "items": self.build["items"] + (1 if finished else 0),
+                             "cpu_sec": round(self.build["cpu_sec"] + self._spent["cpu_sec"], 6),
+                             "busy_sec": round(self.build["busy_sec"] + self._spent["busy_sec"], 6)})
+            return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in rows] + \
+                [Op(META, BUILD_KEY, canonical(progress))]
         with lanes.foreground():
             self.store.commit(prepare=prepare)
-        if self.item_embedded(o):
-            self.items_embedded += 1
+        if progress:
+            self.build = progress
+            self._spent = {"cpu_sec": 0.0, "busy_sec": 0.0}
+        return bool(progress)
 
     def _embed_batch(self, batch: list[tuple[int, str, str]]) -> None:
         docs = []
@@ -655,18 +807,12 @@ class VectorIndex:
             docs.append((o, prop, digest, key, emb.prepare(str(doc.get(prop) or ""))))
         if not docs:
             return
-        box: dict = {}
-        done = threading.Event()
-
-        def finished(vectors, error):
-            box["v"], box["e"] = vectors, error
-            done.set()
-        self.queue.submit([d[4] for d in docs], emb.INGEST, "passage", finished)
-        done.wait()
-        if box.get("e") is not None:
-            raise box["e"]
+        try:
+            vectors = self._embed_texts([d[4] for d in docs])
+        except _Closing:
+            return
         ops = []
-        for (o, prop, digest, key, _), vector in zip(docs, box["v"]):
+        for (o, prop, digest, key, _), vector in zip(docs, vectors):
             if len(vector) != self.embedder.dim:
                 raise ValueError(f"the embedder gave {len(vector)} dimensions, not {self.embedder.dim}")
             current = self.docs.get(key)
@@ -876,7 +1022,7 @@ class VectorIndex:
                                   **({"items": s.items()} if is_item_space(name) else {})}
                            for name, s in self.spaces.items()},
                 "waiting": self.pending(), "embedded": self.embedded,
-                "items_embedded": self.items_embedded}
+                "items_embedded": self.items_embedded, "build": self.build_health()}
 
     def close(self) -> None:
         with self._todo_cond:

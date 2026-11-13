@@ -2344,7 +2344,10 @@ TOOL_SPECS = [
         "description": (
             "The knowledge engine's state (Diagnostics' Knowledge row): whether it is on, "
             "running, paused for the conversation, how much it has read, its last ingest "
-            "pass and how many link proposals wait."),
+            "pass and how many link proposals wait; and `build`, the index build Settings → "
+            "Knowledge shows: items embedded of the total, passages waiting, the time left "
+            "(seconds_left) and its state (building, held while you two talk, paused in "
+            "Settings, done)."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {

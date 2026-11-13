@@ -637,6 +637,16 @@ _events = _Log("events", lambda c: c)
 _writing = threading.Lock()
 _reading = threading.RLock()
 _next_event_id: dict[str, int] = {}
+# Moved by every write and prune here (the only writers of the voice
+# files), so a summary held while it has not moved, and while none of its
+# time windows has passed a line, is still the summary (`summary`).
+_changes = 0
+_held_summary: dict[str, tuple[int, float, float, dict]] = {}
+
+
+def _changed() -> None:
+    global _changes
+    _changes += 1
 
 
 def record_sample(s: Sample) -> None:
@@ -647,6 +657,7 @@ def record_sample(s: Sample) -> None:
         row[key] = None if row[key] is None else int(row[key])
     with _writing:
         _samples.append({c: row[c] for c in SAMPLE_COLUMNS})
+        _changed()
 
 
 def record_event(event: Event) -> int:
@@ -666,6 +677,7 @@ def record_event(event: Event) -> int:
             "cause_code": event.cause_code,
             "cause_values": json.dumps(event.cause_values) if event.cause_code else None,
             "lost_sec": event.lost_sec})
+        _changed()
         return event_id
 
 
@@ -678,6 +690,7 @@ def prune(now: Optional[float] = None) -> None:
         _events.close_ended(now)
         _samples.prune(now - SAMPLE_KEEP_SEC, now)
         _events.prune(now - EVENT_KEEP_SEC, now)
+        _changed()
 
 
 def close_ended(now: Optional[float] = None) -> int:
@@ -783,12 +796,41 @@ def history(start: float, end: float) -> tuple[list[Sample], list[Event]]:
 def summary(now: Optional[float] = None) -> dict:
     """What the Diagnostics tab shows: the latest state and cause, each
     stage of the pipeline, the last two minutes of samples, and counts of
-    drops, reconnects and errors in the last hour."""
+    drops, reconnects and errors in the last hour.
+
+    The subsystem watch asks every five seconds. While nothing has been
+    written and no line has crossed the edge of a window (the latest
+    sample's five seconds, the two minutes, the hour, midnight), the summary
+    last worked out is the answer, with only its `now` moved on, so an idle
+    record is not read again."""
     now = time.time() if now is None else now
-    samples, events = history(now - 120, now)
-    hour_samples, hour_events = history(now - 3600, now)
+    folder = str(data_paths.voice_dir())
+    held = _held_summary.get(folder)
+    if held is not None and held[0] == _changes and held[1] <= now < held[2]:
+        return {**held[3], "now": now}
+    seen = _changes
+    found, until = _summary(now)
+    _held_summary[folder] = (seen, now, until, found)
+    return found
+
+
+def _summary(now: float) -> tuple[dict, float]:
+    """The summary at `now`, and the time it would change with nothing
+    written."""
+    samples, _ = history(now - 120, now)
+    # The hour's finals and events from the indexes, which keep a sample's
+    # counts and an event's cells: no hour of samples is read and parsed.
+    with _reading:
+        heard = [line for _, line in _samples.between(now - 3600, now) if line[3]]
+        hour_events = [_event(line[3]) for _, line in _events.between(now - 3600, now)]
     latest = samples[-1] if samples and now - samples[-1].at < 5 else None
     drops = [e.at for e in hour_events if e.kind in DROP_KINDS]
+    local = time.localtime(now)
+    until = min([time.mktime((local.tm_year, local.tm_mon, local.tm_mday + 1, 0, 0, 0, 0, 0, -1))]
+                + ([latest.at + 5] if latest else [])
+                + ([samples[0].at + 120] if samples else [])
+                + ([heard[0][0] + 3600] if heard else [])
+                + ([hour_events[0].at + 3600] if hour_events else []))
     return {
         "state": latest.state if latest else "idle",
         "cause": latest.cause if latest else "",
@@ -798,11 +840,11 @@ def summary(now: Optional[float] = None) -> dict:
         "last2min": [sample_json(s) for s in samples],
         "incidentsLastHour": incident_counts(hour_events),
         # The heard share: sentences heard against speech dropped.
-        "lastHour": {"finals": sum(x.finals for x in hour_samples), "drops": len(drops)},
+        "lastHour": {"finals": sum(line[3][0] for line in heard), "drops": len(drops)},
         "lastDropAt": last_drop_at(),
         "today": today(now),
         "now": now,
-    }
+    }, until
 
 
 def today(now: float) -> dict:

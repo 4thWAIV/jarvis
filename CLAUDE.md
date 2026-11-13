@@ -1723,7 +1723,30 @@ section (`vectors.py`: an item space `<embedder>#items`, rows keyed by
 ordinal and prop, prop 0 the whole item, i + 1 section i, made from
 `items.whole_text` and `items.embedded_text`, the one definition), deleted
 in the same commit as a change of its content, so it counts as waiting
-(`count`'s `embedded` and `waiting`) until made again. The keyword index
+(`count`'s `embedded` and `waiting`) until made again. The build of
+what waits (Tim's yes, 2026-11-12) finishes, is paced, goes on across
+restarts and says how far it is: the queue (`vectors.BuildQueue`, one entry
+an item, its newest content only) is taken in `vectors.build_rank` order,
+the records that hold people's words newest first, then the brain's notes,
+then JARVIS's own other files, then registered folders' files most
+recently changed first; the build keeps to `lanes.BUILD_SHARE` (half) of
+one core whatever the Mac's load (`lanes.rest_for`: after each batch the
+embedding's producer rests in proportion to the CPU the batch took on the
+embedding thread, `EmbeddingQueue.ingest_cpu`, so a query never waits
+behind a rest; the content reader rests the same way after each file),
+with one intra-op thread (`e5_onnx.THREADS`; measured 132 ms of CPU a
+1,000-character passage, a short query 11 ms); an item's rows are
+committed `COMMIT_EVERY` texts at a time, its whole-item row last, with the
+build's progress (META `build`: texts, items, CPU seconds and the
+seconds spent building, holds left out) in the same commit, so a restart
+goes on from the part it reached and knows the rate at once. `VectorIndex.build_health` (on the engine's health) says the items
+embedded, the items and texts waiting, the texts a second it has kept
+while free and the time left; `knowledge_api.build` adds the state (building, held while
+the conversation needs the machine, paused in Settings, done, off) and the
+files the content reader has still to read, and is what Settings →
+Knowledge and the Knowledge view show (`KnowledgeView.tsx` `BuildLine`)
+and `knowledge_status` and `embedding_model` say; a search while it builds
+is `partial` with `building`. The keyword index
 reads items' content too (an item's kept content is written again with
 each new document, so both share a generation); an exact phrase is its
 words' postings intersected, then checked in each section
@@ -1828,7 +1851,13 @@ the linker and a requested compaction) lowers its own threads
 (`QOS_CLASS_BACKGROUND` on macOS) and raises them for `Store.commit`, a
 flush and a compaction's manifest installs (`lanes.foreground`). The
 runtime paces the background lane every second: hold while the conversation
-floor is not idle or the CPU is over 70 percent. Ingest is a child of its
+floor is not idle, else free; the Mac's own load does not hold it (the
+build keeps to its share of one core instead; the old hold over 70 percent
+CPU kept it from moving at all). The engine's health is worked out on a
+thread of its own every second (`serve._keep_health`) and `/v1/health`
+answers with it, so a busy engine is never restarted for a slow ping; it is
+worked out on the request only when that is older than `HEALTH_STALE_SEC`.
+Ingest is a child of its
 own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it makes no documents (no chunks:
 records and notes are items) and reads nothing of JARVIS's records: it

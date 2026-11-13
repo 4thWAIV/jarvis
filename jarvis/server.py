@@ -80,7 +80,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
-from jarvis import host_resources
 from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_client
@@ -2636,9 +2635,7 @@ async def start_knowledge_engine() -> None:
     from jarvis import knowledge_runtime
     if not knowledge_client.autostart():
         return
-    knowledge = knowledge_runtime.KnowledgeRuntime(
-        floor_busy=_knowledge_floor_busy,
-        cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    knowledge = knowledge_runtime.KnowledgeRuntime(floor_busy=_knowledge_floor_busy)
     # Every record goes to the engine this server started, and no other.
     from jarvis.knowledge.uds import EngineUDS
     supervisor = getattr(knowledge, "supervisor", None)
@@ -9954,22 +9951,20 @@ def _package_finished_at(entry) -> Optional[float]:
 def _package_answer(ref: str, key: Optional[str]):
     """The answer of his that ends a link to package `ref` (decision `key`,
     or the whole package), or None while there is none."""
-    entries = [e for e in package_inbox.listing() + package_inbox.listing(closed=True)
-               if ref in (e.id, e.package_id, e.name, f"{e.name}-{e.version}")]
-    for e in entries:
-        refs = package_inbox.refs(e.package_id)
+    for e in package_inbox.named(ref):
         at = _package_finished_at(e)
         if at is not None:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, "signed_off", at)
+            return wait_links.answer(wait_links.PACKAGE, package_inbox.refs(e.package_id), None,
+                                     "signed_off", at)
         if key is None:
             continue
-        try:
-            package = work_packages.find(e.package_id)
-        except work_packages.PackageError:
+        package = work_packages.by_id(e.package_id)
+        if package is None:
             continue
         for q in package_inbox.questions(package):
             if q.id == key and q.applies and q.answer:
-                return wait_links.answer(wait_links.PACKAGE, refs, key, "package")
+                return wait_links.answer(wait_links.PACKAGE, package_inbox.refs(e.package_id),
+                                         key, "package")
     return None
 
 
@@ -10214,7 +10209,7 @@ def _sign_off_entry(reference: str, how: str):
     some other way is signed off the same way."""
     reference = " ".join(str(reference or "").split())
     # A package's own id is exact: never taken for words that fit another.
-    by_id = any(p.id == reference for p in work_packages.every())
+    by_id = work_packages.by_id(reference) is not None
     found = [] if by_id else package_inbox.find(reference)
     if len(found) > 1:
         return None, None, (f"That could be any of {_say_number(len(found))} packages: "
