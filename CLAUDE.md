@@ -785,7 +785,13 @@ the write, with the view's revision. The view's lock is never held while
 anything is read or composed: each composition is made outside it and
 swapped in (`_commit`) only when its stamp (the record's revision, then the
 order it began in) is newer than the one held, so an older composition
-never overwrites a newer one. A writer returns its item as written, with no
+never overwrites a newer one. A project or an agent's name changing hands
+the items it touches to the view to be read again (`projects_changed`,
+`names_changed`), so the new one beats any composition under way, and the
+projects a composition begun before a project changed are never kept for
+the next (`_projects_gen`). Items written while the view is built stay
+handed over and are worked out once it is (`drain` waits for `load`). A
+writer returns its item as written, with no
 sweep (`work_store._written`; the tick sweeps every `SWEEP_EVERY_SEC`), and
 the route answers with the view's JSON once it has caught up, else that
 item worked out with what the view holds (`WorkView.shown`). Every report

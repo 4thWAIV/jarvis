@@ -19,14 +19,21 @@ when something it shows has changed, and only that item:
   - its source's stat changing (`tick`, every SOURCE_EVERY_SEC);
   - the packages sent for it, the projects holding its source, or the names
     of the agents on it changing (`packages_changed`, `projects_changed`,
-    `names_changed`).
+    `names_changed`): each hands the items to `refresh`, so they are read
+    again after the change, with a stamp newer than any composition already
+    under way.
 
 The view's lock is never held while anything is read or worked out: each
 of these reads and composes outside it and takes it only to swap the
 results in (`_commit`). Every composition is stamped with the record's
 revision and the order it began in (`_Worked.stamp`), and one is kept only
 when it is newer than the one held, so a newer composition is never
-overwritten by an older one that finished after it.
+overwritten by an older one that finished after it. The projects each item
+was given are kept for the next composition only while no project has
+changed since that composition began (`_projects_gen`), so one under way
+when a project changed never puts the old projects back. Items written
+while the view is being built stay handed over and are worked out once it
+is built (`drain` waits for `load`).
 
 Each item whose JSON changed goes to every page once, as one frame on
 /ws/sessions with the view's revision, which moves by one per frame:
@@ -119,6 +126,8 @@ class _Inputs:
     db: Optional[str]
     waiting: dict
     projects: dict
+    # Which projects the view held (`_projects_gen`) when this began.
+    projects_gen: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,6 +162,7 @@ class WorkView:
         self._due: dict[str, Optional[float]] = {}
         self._stamps: dict[str, tuple[int, int]] = {}
         self._projects: dict[str, list] = {}
+        self._projects_gen = 0
         self._waiting: dict[str, int] = {}
         self._agents: Optional[dict[str, str]] = None
         self._names: dict[tuple, Optional[str]] = {}
@@ -175,22 +185,22 @@ class WorkView:
         """A composition's order and inputs, taken under the lock."""
         with self._lock:
             self._seq += 1
-            return _Inputs(self._seq, self._db, self._waiting, dict(self._projects))
+            return _Inputs(self._seq, self._db, self._waiting, dict(self._projects),
+                           self._projects_gen)
 
     def load(self) -> None:
         """Work out every item once (at startup, or for another database).
         Reads and composes outside the lock; an item a write has moved on
-        since this began keeps the newer composition."""
-        with self._pending_lock:
-            self._pending.clear()          # every record is read below
+        since this began keeps the newer composition. The items handed over
+        meanwhile stay handed over, and are worked out once it is built."""
         with self._lock:
             self._seq += 1
-            seq = self._seq
+            seq, gen = self._seq, self._projects_gen
+            self._agents, self._names = None, {}
         db = str(data_paths.db_path())
-        self._agents, self._names = None, {}
         records = work_store.records()
         waiting = package_inbox.waiting_by_work()
-        inputs = _Inputs(seq, db, waiting, {})
+        inputs = _Inputs(seq, db, waiting, {}, gen)
         now = time.time()
         worked = {i: self._work_out(rec, now, self._live, inputs) for i, rec in records.items()}
         with self._lock:
@@ -206,11 +216,29 @@ class WorkView:
             self._items = {i: w.item for i, w in worked.items()}
             self._json = {i: w.json for i, w in worked.items()}
             self._due = {i: w.due for i, w in worked.items()}
-            self._projects = {i: w.projects for i, w in worked.items()}
+            projects_current = gen == self._projects_gen
+            self._projects = ({i: w.projects for i, w in worked.items()}
+                              if projects_current else {})
             self._stamps = {i: w.stamp for i, w in worked.items()}
             self._where, self._order, self._groups = self._placed()
             self.revision += 1
             self._body = None
+        if not projects_current:           # a project changed while this was built
+            with self._pending_lock:
+                self._pending |= set(worked)
+        self._handed_over()
+
+    def _handed_over(self) -> None:
+        """Work out what writes handed over while the view could not: on its
+        own thread when that runs, else here."""
+        with self._pending_lock:
+            if not self._pending:
+                return
+            wake = self._wake
+        if wake is not None:
+            wake.set()
+        else:
+            self.drain()
 
     def _loaded(self) -> bool:
         """Whether the view holds the database in use now."""
@@ -244,7 +272,7 @@ class WorkView:
                live_of: Callable[[str], Live], inputs: _Inputs) -> None:
         """Compose these records outside the lock, then swap them in."""
         self._commit([self._work_out(rec, now, live_of(i), inputs)
-                      for i, rec in records.items()], inputs.db)
+                      for i, rec in records.items()], inputs)
 
     def _held_again(self, item_ids, now: Optional[float] = None) -> None:
         """These items composed again from the records held, with their
@@ -272,14 +300,16 @@ class WorkView:
 
     # ── changes, and their frames ───────────────────────────────────────
 
-    def _commit(self, worked: list[_Worked], db: Optional[str]) -> None:
+    def _commit(self, worked: list[_Worked], inputs: _Inputs) -> None:
         """Swap in the items just worked out that are newer than those held
         (by stamp), place every item again, and send a frame for each item
         whose JSON changed or that moved. The only step under the lock; it
-        reads nothing."""
+        reads nothing. The projects worked out are kept for the next
+        composition only when no project has changed since this began."""
         with self._lock:
-            if db is None or db != self._db:
+            if inputs.db is None or inputs.db != self._db:
                 return                     # worked out for a view since rebuilt
+            projects_current = inputs.projects_gen == self._projects_gen
             kept: dict[str, dict] = {}
             for w in worked:
                 item_id = w.rec.id
@@ -288,7 +318,8 @@ class WorkView:
                     continue               # older than what is held
                 self._records[item_id], self._items[item_id] = w.rec, w.item
                 self._due[item_id], self._stamps[item_id] = w.due, w.stamp
-                self._projects[item_id] = w.projects
+                if projects_current:
+                    self._projects[item_id] = w.projects
                 kept[item_id] = w.json
             changed = {i for i, out in kept.items()
                        if i not in self._json or _settled(out) != _settled(self._json[i])}
@@ -335,12 +366,14 @@ class WorkView:
 
     def drain(self) -> None:
         """Read and work out every item handed to the view, until none is
-        left. A view not yet built for this database builds itself on first
-        use instead, which no page has seen yet."""
+        left. While the view is not yet built for this database the items
+        stay handed over: `load` works them out once it is built."""
         while True:
+            if not self._loaded():
+                return
             with self._pending_lock:
                 item_ids, self._pending = self._pending, set()
-            if not item_ids or not self._loaded():
+            if not item_ids:
                 return
             inputs = self._begin()
             records = work_store.records(item_ids)
@@ -433,18 +466,21 @@ class WorkView:
         self.refresh(moved | set(item_ids))
 
     def projects_changed(self) -> None:
-        """A project record changed: each item's projects are worked out again."""
-        if not self._loaded():
-            return
+        """A project record changed: each item's projects are worked out
+        again, read afresh so its stamp beats any composition under way, and
+        no composition begun before now keeps its projects (`_commit`)."""
         with self._lock:
             self._projects = {}
+            self._projects_gen += 1        # a `load` under way reads them again
             ids = list(self._records)
-        self._held_again(ids)
+        if self._loaded():
+            self.refresh(ids)
 
     def names_changed(self) -> None:
         """The agents list changed (one came, went or was renamed): the
         agent directory is read again, and only the items with a piece on an
-        agent whose name moved are composed again."""
+        agent whose name moved are read and composed again, so the new name
+        beats any composition under way with the old."""
         if not self._loaded() or self._agents is None:
             return
         from jarvis import agent_directory
@@ -456,7 +492,7 @@ class WorkView:
                    if any(p.who.kind == work_store.AGENT and p.who.ref in moved
                           for p in item.pieces)]
         if ids:
-            self._held_again(ids)
+            self.refresh(ids)
 
     # ── reading ─────────────────────────────────────────────────────────
 

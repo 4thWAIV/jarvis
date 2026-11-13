@@ -288,3 +288,104 @@ def test_a_write_s_answer_is_the_item_it_left_even_before_the_view_has_it(wired,
     assert shown["latest_update"] == "Engine wired." and shown["revision"] == after.revision
     held.refresh({item.id})
     assert held.shown(after) is held.item(item.id)
+
+
+def test_a_write_while_the_view_is_built_is_worked_out_once_it_is(wired, folder, monkeypatch):
+    """A write lands after `load` has read the records and before it swaps
+    them in: its item stays handed over, and is worked out (and sent) once
+    the view is built, never dropped."""
+    frames: list[dict] = []
+    held = work_view.WorkView(frames.append, live=lambda who: None)
+    monkeypatch.setitem(work_store._changed_listeners, "test.view", held.refresh)
+    item = work_store.create("Speech migration", "folder", folder)
+    real, wrote = work_store.records, []
+
+    def records(ids=None):
+        out = real(ids)
+        if ids is None and not wrote:     # load's read: a write lands right after it
+            wrote.append(work_store.record(
+                work_store.WorkEvent(item.id, "update", "Engine wired.", {})))
+        return out
+    monkeypatch.setattr(work_store, "records", records)
+    held.load()
+    assert held.item(item.id)["latest_update"] == "Engine wired."
+    assert held._stamps[item.id][0] == wrote[0].revision
+    assert frames and frames[-1]["item"]["latest_update"] == "Engine wired."
+
+
+def _blocked_drain(held, item_id, monkeypatch):
+    """A drain of `item_id` on a thread of its own, held at the end of its
+    composition (its JSON made, names and projects resolved) until released."""
+    import threading
+    started, release = threading.Event(), threading.Event()
+    real = work_store.next_change
+
+    def next_change(*args):
+        if threading.current_thread().name == "draining":
+            started.set()
+            release.wait(10)
+        return real(*args)
+    monkeypatch.setattr(work_store, "next_change", next_change)
+    thread = threading.Thread(target=held.refresh, args=({item_id},), name="draining")
+    thread.start()
+    assert started.wait(5), "the drain composed the item"
+    return thread, release
+
+
+def _on_a_piece(folder):
+    item = work_store.create("Speech migration", "folder", folder)
+    work_store.record(work_store.WorkEvent(item.id, "piece", "On it.", {
+        "key": "build", "title": "Build", "state": "working",
+        "who": {"kind": "agent", "ref": SESSION}}))
+    return item
+
+
+def test_a_project_change_is_never_undone_by_a_composition_under_way(
+        wired, folder, monkeypatch):
+    """A drain began with the item's old projects (and its newer record);
+    a project changes meanwhile. The drain finishing later neither puts the
+    old projects back nor beats the item composed with the new ones."""
+    from jarvis import work_api
+    shown = {"projects": [{"id": "old"}]}
+    monkeypatch.setattr(work_api, "projects_for_path", lambda path: shown["projects"])
+    held = work_view.WorkView(lambda f: None, live=lambda who: None)
+    item = _on_a_piece(folder)
+    held.load()
+    work_store.record(work_store.WorkEvent(item.id, "update", "Engine wired.", {}))
+    thread, release = _blocked_drain(held, item.id, monkeypatch)
+    try:
+        shown["projects"] = [{"id": "new"}]
+        held.projects_changed()
+    finally:
+        release.set()
+        thread.join(5)
+    assert held.item(item.id)["projects"] == [{"id": "new"}]
+    assert held._projects[item.id] == [{"id": "new"}]
+    work_store.record(work_store.WorkEvent(item.id, "update", "Captions wired.", {}))
+    held.refresh({item.id})
+    assert held.item(item.id)["projects"] == [{"id": "new"}]
+
+
+def test_a_rename_is_never_undone_by_a_composition_under_way(wired, folder, monkeypatch):
+    """A drain began before an agent was renamed, with the item's newer
+    record: the item composed for the rename still wins."""
+    from jarvis import agent_directory
+    names = {SESSION: "Builder"}
+    monkeypatch.setattr(agent_directory, "names_by_session", lambda: dict(names))
+    held = work_view.WorkView(lambda f: None, live=lambda who: None)
+    item = _on_a_piece(folder)
+    held.load()
+
+    def owner_name():
+        [piece] = held.item(item.id)["pieces"]
+        return piece["who"]["name"]
+    assert owner_name() == "Builder"
+    work_store.record(work_store.WorkEvent(item.id, "update", "Engine wired.", {}))
+    thread, release = _blocked_drain(held, item.id, monkeypatch)   # has read the old name
+    try:
+        names[SESSION] = "Planner"
+        held.names_changed()
+    finally:
+        release.set()
+        thread.join(5)
+    assert owner_name() == "Planner"
