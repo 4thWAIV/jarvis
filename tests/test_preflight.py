@@ -166,6 +166,24 @@ async def test_claude_login_nonzero_exit_is_fail(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_claude_login_unavailable_is_could_not_verify_warn_not_fail(monkeypatch, tmp_path):
+    """`_run_subprocess`'s -1 (here a timeout) means the check could not run,
+    not that the login failed: seen live with the brain logged in and replying."""
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/local/bin/claude")
+    _fake_child_env(monkeypatch, tmp_path / ".claude")
+    monkeypatch.setattr(
+        preflight, "_run_subprocess",
+        _fake_run_subprocess({("/usr/local/bin/claude", "auth"):
+                              (-1, "", "/usr/local/bin/claude timed out after 5.0s")}),
+    )
+    check = await preflight._check_claude_login()
+    assert check.status == STATUS_WARN
+    assert "Could not verify the Claude login" in check.message
+    assert "Recheck" in check.remedy
+    assert check.remedy != "Run `claude` and log in."  # the auth-failure remedy
+
+
+@pytest.mark.asyncio
 async def test_claude_login_malformed_json_is_warn(monkeypatch, tmp_path):
     monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/local/bin/claude")
     _fake_child_env(monkeypatch, tmp_path / ".claude")
@@ -535,10 +553,21 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
 # --- speech input ------------------------------------------------------------
 
 def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(preflight.sys, "platform", "darwin")
     monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
     check = preflight._check_speech_input_sync()
     assert check.status == STATUS_WARN
     assert "setup_speech_input.py" in check.remedy
+    assert "Typing still works" in check.message
+
+
+def test_speech_input_on_windows_names_the_settings_path_when_the_model_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(preflight.sys, "platform", "win32")
+    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
+    check = preflight._check_speech_input_sync()
+    assert check.status == STATUS_WARN
+    assert check.remedy == "Install it in JARVIS's Settings, Voice and language (English speech model)."
+    assert "setup_speech_input.py" not in check.message
     assert "Typing still works" in check.message
 
 

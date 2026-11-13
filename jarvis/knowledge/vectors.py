@@ -49,6 +49,7 @@ from jarvis.knowledge import kinds, lanes, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
 from jarvis.knowledge.segment import Version
 from jarvis.knowledge.store import CONTENT, DOCS, Store, newest_only
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 from jarvis.knowledge.wal import Op, fsync_dir, full_fsync
 
 log = logging.getLogger("jarvis.knowledge.vectors")
@@ -116,7 +117,7 @@ def _write_file(path: Path, data_parts: Iterable[bytes]) -> str:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
     sha = hashlib.sha256()
-    fd = os.open(str(partial), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(str(partial), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | O_BINARY, 0o600)
     try:
         for data in data_parts:
             view = memoryview(data)

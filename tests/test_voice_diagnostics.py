@@ -416,6 +416,19 @@ def test_the_busiest_processes_are_names_and_cpu_only(monkeypatch):
     assert vd.top_processes() == []
 
 
+def test_the_load_average_is_unavailable_without_getloadavg(monkeypatch):
+    monkeypatch.setattr(vd.os, "getloadavg", lambda: (2.5, 1.0, 0.5), raising=False)
+    assert vd.load_average() == 2.5
+
+    def fails():
+        raise OSError("unobtainable")
+    monkeypatch.setattr(vd.os, "getloadavg", fails)
+    assert vd.load_average() == 0.0
+
+    monkeypatch.delattr(vd.os, "getloadavg")         # as on Windows
+    assert vd.load_average() == 0.0
+
+
 class FakeCapture:
     def __init__(self):
         self.window = Window(received_bytes=32000, decoded_bytes=16000, decode_sec=0.6, finals=1)

@@ -28,14 +28,13 @@ import http.client
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
 from typing import Any, Callable, Optional, Protocol
 
 from jarvis import data_paths
-from jarvis.knowledge import address as engine_address
+from jarvis.knowledge import address as engine_address, oscompat
 
 log = logging.getLogger("jarvis.knowledge_client")
 
@@ -71,7 +70,7 @@ def memory_budget_mb() -> int:
         return int(raw)
     try:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError):
+    except (ValueError, OSError, AttributeError):   # Windows has no sysconf
         total = 0
     from jarvis import embedding_models
     return (256 if 0 < total < 16 * (1 << 30) else 384) + embedding_models.extra_memory_mb()
@@ -96,7 +95,7 @@ class HTTPTransport:
     def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
         found = engine_address.read()
         child = self._expected_pid()
-        if found is None or child is None or found.pid != child:
+        if found is None or child is None or child not in found.started_by:
             raise EngineUnavailable("no engine of ours is recorded")
         if found.host not in ("127.0.0.1", "localhost"):
             raise EngineUnavailable("the engine record is not loopback")
@@ -452,9 +451,9 @@ def end_previous_engine(*, wait_sec: float = PREVIOUS_EXIT_WAIT_SEC,
     if found is None:
         return
     log.warning("ending an earlier knowledge engine, pid %s, that kept the lock", found.pid)
-    for sig, wait in ((signal.SIGTERM, grace_sec), (signal.SIGKILL, grace_sec)):
+    for forcefully, wait in ((False, grace_sec), (True, grace_sec)):
         try:
-            os.kill(found.pid, sig)
+            oscompat.end(found.pid, forcefully)
         except ProcessLookupError:
             return
         spent = 0.0

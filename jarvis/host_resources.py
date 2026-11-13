@@ -14,6 +14,8 @@ says so.
           the cgroup v2 files when the cgroup has a CPU or memory limit:
           cpu.stat over cpu.max (or every core), memory.current less
           inactive_file over memory.max (or the host's memory).
+  Windows GetSystemTimes and GlobalMemoryStatusEx through ctypes (used =
+          total - available); the host's figures, container or not.
   other   unsupported, and says so.
 
 CPU busy is a difference between two readings, so the first sample has no
@@ -215,12 +217,66 @@ class LinuxReader:
         return Reading("container", busy, capacity, used, total)
 
 
+# -- Windows ---------------------------------------------------------------
+
+class _FileTime(ctypes.Structure):
+    _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+
+    def ticks(self) -> int:
+        return (self.high << 32) | self.low
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    # sysinfoapi.h, MEMORYSTATUSEX; dwLength must be set before the call.
+    _fields_ = [("length", ctypes.c_uint32), ("memory_load", ctypes.c_uint32),
+                ("total_phys", ctypes.c_uint64), ("avail_phys", ctypes.c_uint64),
+                ("total_page_file", ctypes.c_uint64), ("avail_page_file", ctypes.c_uint64),
+                ("total_virtual", ctypes.c_uint64), ("avail_virtual", ctypes.c_uint64),
+                ("avail_extended_virtual", ctypes.c_uint64)]
+
+
+class WindowsReader:
+    """GetSystemTimes (whole-host CPU, every processor, in 100 ns) and
+    GlobalMemoryStatusEx (physical memory) from kernel32. Kernel time
+    includes idle time, so busy is kernel + user - idle over kernel + user.
+    Memory used is total less available (standby, free and zeroed pages),
+    as Linux's MemTotal - MemAvailable is. A Windows container or job limit
+    is not read: the scope is always the host."""
+
+    def __init__(self) -> None:
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetSystemTimes.argtypes = [ctypes.POINTER(_FileTime)] * 3
+        k.GetSystemTimes.restype = wintypes.BOOL
+        k.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MemoryStatusEx)]
+        k.GlobalMemoryStatusEx.restype = wintypes.BOOL
+        self._k = k
+
+    def _check(self, ok: int, what: str) -> None:
+        if not ok:
+            raise OSError(f"{what} failed (error {ctypes.get_last_error()})")
+
+    def read(self) -> Reading:
+        idle, kernel, user = _FileTime(), _FileTime(), _FileTime()
+        self._check(self._k.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel),
+                                           ctypes.byref(user)), "GetSystemTimes")
+        memory = _MemoryStatusEx()
+        memory.length = ctypes.sizeof(_MemoryStatusEx)
+        self._check(self._k.GlobalMemoryStatusEx(ctypes.byref(memory)), "GlobalMemoryStatusEx")
+        capacity = kernel.ticks() + user.ticks()
+        total = int(memory.total_phys)
+        used = min(max(total - int(memory.avail_phys), 0), total)
+        return Reading("host", float(capacity - idle.ticks()), float(capacity), used, total)
+
+
 def default_reader() -> Optional[Reader]:
-    """This platform's reader, or None where there is none yet (Windows)."""
+    """This platform's reader, or None where there is none."""
     if sys.platform == "darwin":
         return MacReader()
     if sys.platform.startswith("linux"):
         return LinuxReader()
+    if sys.platform == "win32":
+        return WindowsReader()
     return None
 
 

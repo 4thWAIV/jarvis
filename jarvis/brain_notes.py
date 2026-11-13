@@ -22,6 +22,7 @@ import os
 from typing import Optional
 
 from jarvis import data_paths
+from jarvis.knowledge.oscompat import O_BINARY, O_NOFOLLOW
 
 BRAIN = "/jarvis/brain"
 BRAIN_NOTES = ("memory", "journal", "projects", "topics", "knowledge.md")
@@ -44,7 +45,7 @@ def _stat(rel: str) -> Optional[os.stat_result]:
 
 def _file_text(rel: str) -> Optional[str]:
     try:
-        fd = os.open(str(data_paths.brain_home() / rel), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(str(data_paths.brain_home() / rel), os.O_RDONLY | O_NOFOLLOW | O_BINARY)
     except OSError:
         return None
     try:

@@ -544,7 +544,8 @@ def run(*, watch_stdin: bool = True) -> int:
         _watch_stdin(stop)
     _maintenance(engine, stopping)
     engine_address.record(engine_address.EngineAddress(
-        scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id))
+        scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id,
+        parent=os.getppid()))
     log.info("knowledge engine listening on %s:%s (pid %s), %.2f s after it started", host, port,
              os.getpid(), time.monotonic() - began)
     try:

@@ -360,7 +360,7 @@ TEXT = "() => document.querySelector('#right-column').innerText"
 # Words of the panel's own that must not be left in English once it is
 # Spanish (names, paths and people's words are not here).
 ENGLISH_LEFT = ["Show agents", "registered", "Open Folders", "Nothing waiting", "Active / Outbox",
-                "Show dismissed", "No workflows", "Done (", " online", "From Team Server", "THIS MAC",
+                "Show dismissed", "No workflows", "Done (", " online", "From Team Server", "THIS DEVICE",
                 "Working", "Communications", "Hearing you", "heard", "speed", "Last sentence voiced"]
 
 

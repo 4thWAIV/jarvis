@@ -22,6 +22,7 @@ from typing import Optional
 
 from jarvis import brain_activity, brain_provider, closed_files, data_paths, session_steer
 from jarvis import message_records, records
+from jarvis.knowledge import oscompat
 
 log = logging.getLogger("jarvis.run_store")
 
@@ -413,7 +414,7 @@ def append_events(run_id: str, rows: list[tuple[int, str, str]]) -> None:
             try:
                 body = b"".join(_event_line(run_id, e) for e in added)
                 size = os.fstat(fd).st_size
-                if size and os.pread(fd, 1, size - 1) != b"\n":
+                if size and oscompat.pread(fd, 1, size - 1) != b"\n":
                     body = b"\n" + body           # a torn last line stays on its own
                 view = memoryview(body)
                 while view:

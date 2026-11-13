@@ -349,6 +349,17 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "background.line": (
+        "it prints one of JARVIS's own two processes for the person at the terminal: its name, pid, "
+        "state word from process_inspect and the server's own recorded address; no session's or "
+        "agent's words, and nothing it prints reaches the brain or a header"),
+    "background._stop_one": (
+        "it prints, to the person at the terminal, which of JARVIS's own two processes it stopped "
+        "or left alone, by name and pid; no session's or agent's words reach it or the brain"),
+    "process_inspect.inspect_process": (
+        "it reads the operating system's own record of a process (state, creation token) and "
+        "returns a reason code; it reads no session's words and nothing it returns is said or put "
+        "in a brain header"),
     "content_sections.whole_text": (
         "it reads an extracted file's own title and text (never a session's) and builds only the "
         "text the embedding model turns into a vector; nothing it returns is printed, said or put "

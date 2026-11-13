@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import sys
 import stat
 import uuid
 from pathlib import Path
@@ -131,10 +132,11 @@ async def test_a_chosen_file_becomes_a_private_immutable_copy():
     folder = data_paths.messaging_snapshots_dir()
     copy = folder / str(ref.attachment_id)
     assert copy.read_bytes() == data
-    assert stat.S_IMODE(os.stat(copy).st_mode) == 0o600
+    if sys.platform != "win32":   # Windows: owner-only by ACL
+        assert stat.S_IMODE(os.stat(copy).st_mode) == 0o600
     w.tim.files.downloads_dir()
     for d in (folder, folder.parent, data_paths.messaging_downloads_dir()):
-        assert stat.S_IMODE(os.stat(d).st_mode) == 0o700, d
+        assert sys.platform == "win32" or stat.S_IMODE(os.stat(d).st_mode) == 0o700, d
     assert [p.name for p in folder.iterdir()] == [str(ref.attachment_id)]   # no partial left
     assert w.tim.files.files(SERVER, TIM, draft.message_id) == [
         ports.LocalFile(attachment_id=ref.attachment_id, state="staged")]
@@ -315,10 +317,12 @@ async def test_a_received_file_is_verified_before_it_can_be_revealed():
     assert (got.state, got.bytes_done) == ("verified", len(data))
     path = data_paths.messaging_downloads_dir() / str(ref.attachment_id) / ref.filename
     assert path.read_bytes() == data
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    if sys.platform != "win32":   # Windows: owner-only by ACL
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert [p.name for p in path.parent.iterdir()] == [ref.filename]
-    assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
-    assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
+    if sys.platform != "win32":   # Windows marks it with the Mark of the Web instead
+        assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
+        assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
     w.matt.files.reveal(SERVER, MATT, draft.message_id, ref.attachment_id)
     assert w.revealed == [path]
     # Asking again neither fetches nor duplicates anything.
@@ -338,6 +342,7 @@ def test_the_quarantine_mark_is_the_one_a_browser_download_carries(monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="the macOS quarantine attribute; Windows' Mark of the Web is test_messaging_files_windows")
 async def test_a_file_that_cannot_be_marked_is_not_kept():
     w = World()
     data = os.urandom(5000)

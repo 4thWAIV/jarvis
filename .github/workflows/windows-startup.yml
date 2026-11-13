@@ -1,0 +1,167 @@
+# The Windows source startup, natively, on GitHub's hosted Windows runner:
+# the Windows README's commands, in its order, from a clean clone with no
+# .env. Each step is a fresh PowerShell, so the processes `start` leaves
+# running have outlived the shell that started them by the time they are
+# checked. No credentials: the brain path is started with Claude Code
+# installed but not signed in, so a live provider turn stays the first
+# session's check.
+#
+# A workflow of its own beside ci.yml, which self-update reads: the Mac
+# suite's gate is unchanged.
+
+name: windows-startup
+
+on:
+  pull_request:
+    paths-ignore: ["team_server/**", ".github/workflows/team-server*.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The README's clone is under the user's profile: JARVIS keeps its
+      # token in the checkout's data folder and refuses a folder others can
+      # change, and the runner's own D:\ lets a service account move what it
+      # holds (measured, run 43144837914). The checkout is cloned there.
+      - name: README - a clone under the user profile
+        run: |
+          $Src = Join-Path $env:USERPROFILE "src\jarvis"
+          git clone --quiet "$env:GITHUB_WORKSPACE" $Src
+          "SRC=$Src" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Versions
+        working-directory: ${{ env.SRC }}
+        run: |
+          python --version; node --version; npm --version; git --version
+          [System.Environment]::OSVersion.VersionString
+          "runner: $env:RUNNER_NAME $env:RUNNER_OS $env:RUNNER_ARCH $env:ImageOS $env:ImageVersion"
+          git log -1 --format="source %H"
+
+      - name: README - Python environment
+        working-directory: ${{ env.SRC }}
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: README - frontend dependencies
+        working-directory: ${{ env.SRC }}
+        run: npm.cmd --prefix frontend ci
+
+      - name: README - Claude Code (installed, not signed in)
+        working-directory: ${{ env.SRC }}
+        run: |
+          npm.cmd install -g @anthropic-ai/claude-code
+          Get-Command claude | Format-List Source
+
+      - name: README - development certificate
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe -m jarvis.background certs
+
+      - name: README - start in the background
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe -m jarvis.background start
+
+      - name: Running after the starting shell has gone
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe scripts\startup_smoke.py running
+
+      - name: Lifecycle - duplicate start, self-restart, stop, occupied port, start again
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe scripts\startup_smoke.py lifecycle
+
+      # Informational: GitHub's runner is an elevated administrator, and
+      # files made there the ordinary way can be owned by Administrators,
+      # which the key check refuses (seen with test_private_files on this
+      # runner). It shows what the real ssh-keygen and the check do here;
+      # an ordinary account is the real case.
+      - name: Agent key on this runner (informational, elevated account)
+        continue-on-error: true
+        working-directory: ${{ env.SRC }}
+        run: |
+          Get-Command ssh-keygen | Format-List Source
+          .\.venv\Scripts\python.exe -m jarvis.agent_key init --session windows-ci-smoke
+
+      - name: Logs
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
+        run: |
+          .\.venv\Scripts\python.exe -m jarvis.background status
+          "----- backend.log"; .\.venv\Scripts\python.exe -m jarvis.background logs backend -n 200
+          "----- vite.log"; .\.venv\Scripts\python.exe -m jarvis.background logs vite -n 80
+          if (Test-Path data\knowledge-engine.log) { "----- knowledge-engine.log"; Get-Content data\knowledge-engine.log -Tail 80 }
+
+      - name: Stop anything left
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe -m jarvis.background stop
+
+      - uses: actions/upload-artifact@v4
+        if: always() && env.SRC != ''
+        with:
+          name: windows-startup-logs
+          path: |
+            ${{ env.SRC }}/data/logs/
+            ${{ env.SRC }}/data/knowledge-engine.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The native boundary tests the startup leans on, on the same kind of
+  # runner: process identity, the background command, the record engine
+  # and its process, the claude command line. tests/test_private_files.py
+  # is not among them: GitHub's runner is an elevated administrator, and
+  # under that token Windows makes Administrators the owner of a file the
+  # test makes the ordinary way, which private_files rightly refuses; it
+  # needs an ordinary account.
+  focused-tests:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+      - name: Focused native tests
+        env:
+          JARVIS_BRAIN_AUTOSTART: "0"
+          JARVIS_ENGINE_AUTOSTART: "0"
+          # The suite's fixtures are UTF-8 and some are read without naming
+          # it (test_messaging_client's contract file); Windows would read
+          # them as cp1252.
+          PYTHONUTF8: "1"
+        run: >
+          .\.venv\Scripts\python.exe -m pytest -v -p no:cacheprovider -o faulthandler_timeout=300
+          tests/test_process_inspect.py tests/test_background.py
+          tests/test_claude_command.py tests/test_data_paths.py tests/test_records.py
+          tests/test_knowledge_store.py tests/test_knowledge_process.py tests/test_knowledge_runtime.py
+          tests/test_messaging_files_windows.py tests/test_folder_readers_windows.py
+          tests/test_host_resources.py tests/test_team_client.py
+          tests/test_package_modes.py tests/test_bundle_archive.py tests/test_work_packages.py
+          tests/test_agent_keys.py tests/test_agent_key_packages.py tests/test_messaging_files.py
+          tests/test_owned_process.py tests/test_run_executor_owned.py

@@ -135,7 +135,7 @@ def _worker(root: Path):
         provider='cpu', num_threads=2))
     known = set()
     for name in ('lexicon-us-en.txt', 'lexicon-gb-en.txt'):
-        with (root / name).open() as f:
+        with (root / name).open(encoding='utf-8') as f:
             known.update(line.split()[0].lower() for line in f if line.strip())
     engine = sherpa_onnx.OfflineTts(config)
     load_sec = time.monotonic() - t0

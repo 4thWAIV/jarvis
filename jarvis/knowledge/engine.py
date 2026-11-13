@@ -7,7 +7,6 @@ transport both call the same routes over one `Engine`.
 """
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import threading
@@ -16,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from jarvis.knowledge import lanes
+from jarvis.knowledge import lanes, oscompat
 
 log = logging.getLogger("jarvis.knowledge.engine")
 
@@ -32,15 +31,15 @@ def lock_is_free(directory: Path) -> bool:
     """Whether nobody holds `directory`'s writer lock now. Taking it and
     letting it go again at once is the only reliable test."""
     try:
-        fd = os.open(str(directory / "LOCK"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(str(directory / "LOCK"), os.O_RDWR | os.O_CREAT | oscompat.O_NOFOLLOW | oscompat.O_BINARY, 0o600)
     except FileNotFoundError:
         return True
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        oscompat.lock(fd)
     except BlockingIOError:
         return False
     else:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        oscompat.unlock(fd)
         return True
     finally:
         os.close(fd)
@@ -71,9 +70,9 @@ class Engine:
     def open(cls, directory: Path) -> "Engine":
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(directory, 0o700)
-        fd = os.open(str(directory / "LOCK"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(str(directory / "LOCK"), os.O_RDWR | os.O_CREAT | oscompat.O_NOFOLLOW | oscompat.O_BINARY, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oscompat.lock(fd)
         except BlockingIOError:
             os.close(fd)
             raise EngineLocked(f"another knowledge engine holds {directory / 'LOCK'}")
@@ -258,7 +257,7 @@ class Engine:
                 self._close_parts()
             finally:
                 try:
-                    fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                    oscompat.unlock(self._lock_fd)
                 finally:
                     os.close(self._lock_fd)
 

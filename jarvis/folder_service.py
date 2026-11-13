@@ -36,6 +36,7 @@ import json
 import os
 import re
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -398,10 +399,14 @@ class FolderService:
         """The folder and its root, for work to run in (the brain's
         `spawn_run`): checked exactly as a read is, and only for an ordinary
         folder. A history or notes reader is read-only, so work never runs
-        there."""
+        there. On Windows the root is also opened as itself and must be the
+        directory recorded (folder_readers' identity check); the run is then
+        given its path, as on macOS."""
         f, policy, root = self._readable(folder_id, None)
         if policy.reader != Reader.FILES:
             raise FolderError("unsupported")
+        if sys.platform == "win32":
+            folder_readers.kind_of(root, Path(), f.location.fs_identity)
         return f, root
 
     def folder_for_cwd(self, cwd: str) -> Optional[Folder]:
@@ -458,7 +463,7 @@ class FolderService:
         f, policy, root = self._readable(folder_id, location_revision)
         rel = relative_path(path)
         self._check_visible(policy, root, rel, True)
-        kind = folder_readers.kind_of(root, rel)
+        kind = folder_readers.kind_of(root, rel, f.location.fs_identity)
         if kind == "link":
             raise FolderError("forbidden")          # never followed
         if kind != "dir":
@@ -466,7 +471,7 @@ class FolderService:
         after = self._cursor_for(cursor, f, rel, "dir")
         listing = folder_readers.list_dir(
             root, rel, lambda r, d: folder_policy.entry_visible(policy, root, r, d),
-            after=after["a"] if after else None)
+            after=after["a"] if after else None, identity=f.location.fs_identity)
         nxt = (_encode({"l": f.location.id, "r": f.location.revision, "p": rel.as_posix(),
                         "k": "dir", "a": listing.last_key}) if listing.more else None)
         return {
@@ -489,7 +494,7 @@ class FolderService:
         if not rel.parts:
             raise FolderError("not_a_directory")
         self._check_visible(policy, root, rel, False)
-        kind = folder_readers.kind_of(root, rel)
+        kind = folder_readers.kind_of(root, rel, f.location.fs_identity)
         if kind == "link":
             raise FolderError("forbidden")          # never followed
         if kind != "file":
@@ -498,10 +503,12 @@ class FolderService:
         at = self._cursor_for(cursor, f, rel, "file") or {}
         if transcript:
             window = folder_readers.read_transcript(root, rel, _MESSAGES[policy.reader],
-                                                    offset=int(at.get("o") or 0))
+                                                    offset=int(at.get("o") or 0),
+                                                    identity=f.location.fs_identity)
         else:
             window = folder_readers.read_text(root, rel, offset=int(at.get("o") or 0),
-                                              first_line=at.get("n", 1))
+                                              first_line=at.get("n", 1),
+                                              identity=f.location.fs_identity)
         nxt = None
         if window.next_offset is not None:
             nxt = _encode({"l": f.location.id, "r": f.location.revision, "p": rel.as_posix(),

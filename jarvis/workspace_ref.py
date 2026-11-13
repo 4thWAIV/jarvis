@@ -39,6 +39,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote, unquote
 
 from jarvis import bundle_archive, data_paths
+from jarvis.knowledge import oscompat
 from jarvis.bundle_contract import PATH_MAX_CHARS
 
 log = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ def file_hash(fd: int) -> tuple[str, int]:
     one open."""
     h, size, offset = hashlib.sha256(), 0, 0
     while True:
-        chunk = os.pread(fd, 1 << 20, offset)
+        chunk = oscompat.pread(fd, 1 << 20, offset)
         if not chunk:
             return h.hexdigest(), size
         h.update(chunk)

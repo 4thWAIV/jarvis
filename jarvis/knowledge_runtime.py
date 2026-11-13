@@ -35,7 +35,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -43,7 +42,7 @@ from typing import Callable, Optional
 
 from jarvis import data_paths, knowledge_client
 from jarvis.knowledge_content import state_path
-from jarvis.knowledge import address as engine_address
+from jarvis.knowledge import address as engine_address, oscompat
 
 log = logging.getLogger("jarvis.knowledge_runtime")
 
@@ -140,7 +139,7 @@ class IngestScheduler:
         if self.proc is not None:
             want_stopped = mode == "hold"
             if want_stopped != self.stopped:
-                self.proc.send_signal(signal.SIGSTOP if want_stopped else signal.SIGCONT)
+                oscompat.hold(self.proc, want_stopped)
                 self.stopped = want_stopped
             return
         if mode == "free" and self.enabled() and self.supervisor.pid() is not None \
@@ -149,7 +148,7 @@ class IngestScheduler:
 
     def _start(self) -> None:
         found = engine_address.read()
-        if found is None or found.pid != self.supervisor.pid():
+        if found is None or self.supervisor.pid() not in found.started_by:
             return
         self.proc = self._spawn()
         self.stopped = False
@@ -250,7 +249,7 @@ class ContentScheduler:
 
     def _start(self, engine: int) -> None:
         found = engine_address.read()
-        if found is None or found.pid != engine:
+        if found is None or engine not in found.started_by:
             return
         self.proc = self._spawn()
         self.engine_pid = engine
@@ -317,7 +316,7 @@ def _end_leftover(pid_path, module: str) -> None:
         return
     if module in command:
         try:
-            os.kill(pid, signal.SIGKILL)
+            oscompat.end(pid, True)
         except OSError:
             pass
     try:
