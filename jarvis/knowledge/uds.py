@@ -280,6 +280,11 @@ class EngineUDS:
         self.transport = transport
         self.deadline = deadline
 
+    def with_deadline(self, deadline: float) -> "EngineUDS":
+        """The same engine, each call given `deadline` seconds (a long job,
+        such as the records move, in place of the ordinary deadline)."""
+        return EngineUDS(self.transport, deadline=deadline)
+
     def _call(self, route: str, body: dict, deadline: Optional[float] = None) -> tuple[int, Any]:
         from jarvis.knowledge_client import EngineUnavailable
         status, payload = self.transport.request("POST", "/v1/items/" + route, body,

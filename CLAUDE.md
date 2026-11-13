@@ -85,8 +85,19 @@ this presents as "the UI is up but nothing works" rather than as an error.
   (`records_cutover.plan`: rows times `STEP_SEC_PER_ROW`, measured) and
   that stopping is safe; a failed move or start leaves the server up
   saying why. The plan refuses too little free disk first
-  (`NotEnoughSpace`, `space_needed`). The brain's `records_move` reads the
-  same status, and after the move the cut-over's record;
+  (`NotEnoughSpace`, `space_needed`). Every call the move makes has its
+  own deadline (`knowledge_move.MOVE_DEADLINE_SEC`, 300 s), never the
+  record deadline, and each copy write names the version it expects, so a
+  write that times out or loses its connection is looked for and tried
+  again only when not there (`_land`, at most `MOVE_ATTEMPTS`), never
+  doubling a version, before the move fails with the reason. The checks
+  read the records back in the file's own shape (`knowledge_move.Shape`: its
+  tables and columns; a mapping whose tables changed over JARVIS's versions
+  takes `shape` in `rows()`), so an older jarvis.db is proven against
+  itself; as a safety net, verify drops a column the file lacks only while
+  every cell of it is NULL, and export skips a table the file lacks only
+  while it is empty. The brain's
+  `records_move` reads the same status, and after the move the cut-over's record;
   `python -m jarvis.knowledge export-sqlite --out <file>` writes the records
   back to SQLite. Tests get a throwaway in-process engine each
   (`conftest._records_in_a_throwaway_engine`).

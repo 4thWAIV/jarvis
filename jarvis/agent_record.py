@@ -479,7 +479,9 @@ class AgentMapping:
                 for ev in history.get(path, ()))
             yield move.Doc(path, d, history=revisions)
 
-    def rows(self, docs) -> dict:
+    def rows(self, docs, shape=None) -> dict:
+        """The rows back, only the file's tables (`shape`): an older file
+        has agents and steers but no agent-key tables."""
         out: dict[str, list] = {t: [] for t in self.tables}
         events: list = []
         for doc in docs:
@@ -505,7 +507,7 @@ class AgentMapping:
         out["steers"] = _numbered(sorted(out["steers"], key=lambda r: (
             r.cells["id"] is None, r.cells["created_at"] or 0)), "id")
         out["agent_key_events"] = _numbered(events, "id")
-        return out
+        return (shape or _move().TODAY).fit(out)
 
 
 class HoldMapping:
@@ -533,7 +535,7 @@ class HoldMapping:
         for path, d in docs.items():
             yield move.Doc(path, d)
 
-    def rows(self, docs) -> dict:
+    def rows(self, docs, shape=None) -> dict:
         held, errors = [], []
         for doc in docs:
             if not doc.path.endswith(".hold"):
@@ -542,7 +544,8 @@ class HoldMapping:
                 held.append(_row({**HELD_DEFAULTS, **h}, HELD_FIELDS))
             if doc.data.get("error") is not None:
                 errors.append(_row(doc.data["error"], ERROR_FIELDS))
-        return {"agent_key_held": _numbered(held), "agent_key_errors": _numbered(errors)}
+        return (shape or _move().TODAY).fit(
+            {"agent_key_held": _numbered(held), "agent_key_errors": _numbered(errors)})
 
 
 class SettingsMapping:
@@ -562,14 +565,15 @@ class SettingsMapping:
         if counted:
             yield move.Doc(LEGACY_SETTINGS, {**new_settings(LEGACY_SETTINGS), "admissions": counted})
 
-    def rows(self, docs) -> dict:
+    def rows(self, docs, shape=None) -> dict:
         named, counted = [], []
         for doc in docs:
             if doc.path == KEY_SETTINGS:
                 named = [_row(s, SETTING_FIELDS) for s in doc.data.get("settings") or ()]
             elif doc.path == LEGACY_SETTINGS:
                 counted = [_row(a, LEGACY_FIELDS) for a in doc.data.get("admissions") or ()]
-        return {"agent_key_settings": _numbered(named), "legacy_admissions": _numbered(counted)}
+        return (shape or _move().TODAY).fit(
+            {"agent_key_settings": _numbered(named), "legacy_admissions": _numbered(counted)})
 
 
 MAPPINGS = [AgentMapping(), HoldMapping(), SettingsMapping()]
