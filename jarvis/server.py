@@ -108,7 +108,7 @@ from jarvis import brain_activity, tool_activity
 from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
-from jarvis import work_api, work_store, work_view
+from jarvis import report_keys, work_api, work_store, work_view
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -3267,6 +3267,8 @@ async def _start_on_records() -> None:
     await asyncio.to_thread(_apply_package_reviews)
     # Every wait still open on an answer he has already given ends now.
     await asyncio.to_thread(wait_links.sweep)
+    # Reports' keys past their keeping (report_keys.py).
+    await asyncio.to_thread(report_keys.prune)
 
     # The language chosen in Settings, and its speech model
     # (language_setting.py). Put in force before the brain starts: its launch
@@ -11566,6 +11568,7 @@ def _workflow_refused(e: Exception) -> JSONResponse:
 
 
 @app.post("/api/workflows")
+@report_keys.once
 async def api_start_workflow(req: WorkflowStartRequest, request: Request):
     """Begin recording a workflow. Its reporter (an access key in the
     `workflows` category) then sends each step to /events; who it is is the
@@ -11585,6 +11588,7 @@ async def api_start_workflow(req: WorkflowStartRequest, request: Request):
 
 
 @app.post("/api/workflows/{workflow_id}/events")
+@report_keys.once
 async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest,
                                     request: Request):
     """Record one step. Written before anything is said or shown. Dismissing
@@ -13142,6 +13146,7 @@ async def _watch_work() -> None:
 
 
 work_api.mount(app, _work_recorded, work_held)
+report_keys.mount(app)
 
 
 def _work_who(piece, names: work_api.WhoNames) -> str:

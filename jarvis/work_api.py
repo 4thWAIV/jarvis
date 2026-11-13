@@ -42,7 +42,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from jarvis import reporters
+from jarvis import report_keys, reporters
 from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
                     web_auth, work_packages, workflow_store, work_store)
@@ -624,6 +624,7 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return {"events": [event_json(e) for e in found]}
 
     @app.post("/api/work")
+    @report_keys.once
     async def start_work(req: StartRequest, request: Request):
         try:
             item = await asyncio.to_thread(work_store.create, req.title, req.source.get("kind"),
@@ -635,6 +636,7 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return {"id": item.id, "item": shown(item)}
 
     @app.post("/api/work/{item_id}/events")
+    @report_keys.once
     async def report(item_id: str, req: EventRequest, request: Request):
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
