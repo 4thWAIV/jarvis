@@ -65,7 +65,7 @@ IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 SVG_HEAD_BYTES = 64 * 1024
 _SVG_ROOT = re.compile(rb"<svg\b([^>]*)>", re.IGNORECASE)
 _SVG_ATTR = re.compile(rb"""([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-_SVG_PIXELS = re.compile(r"\s*(\d+(?:\.\d+)?|\.\d+)\s*(?:px)?\s*")
+_SVG_PIXELS = re.compile(r"(\d+(?:\.\d+)?|\.\d+)(?:px)?")
 
 
 class Refused(Exception):
@@ -148,7 +148,7 @@ def svg_size_problem(path: Path) -> str:
     bad = []
     for name in (b"width", b"height"):
         value = (attrs.get(name) or b"").decode("utf-8", "replace")
-        size = _SVG_PIXELS.fullmatch(value)
+        size = _SVG_PIXELS.fullmatch(value.strip())
         if not size or float(size.group(1)) <= 0:
             bad.append(f"{name.decode()}={value!r}" if value else f"no {name.decode()}")
     if not bad:
