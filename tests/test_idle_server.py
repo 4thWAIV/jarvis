@@ -88,3 +88,22 @@ def test_one_sweep_looks_a_package_up_once_however_many_holds_name_it(monkeypatc
         assert asked[-1] == ("pkg-1", None) and len(asked) == 3
     finally:
         wait_links.look_up_packages_with(before)
+
+
+def test_codex_s_threads_are_read_again_only_once_its_database_changed(tmp_path, monkeypatch):
+    import sqlite3
+    db = tmp_path / "state_5.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("create table threads (id, rollout_path, cwd, title, git_branch, created_at_ms, "
+                "updated_at_ms, archived)")
+    con.execute("insert into threads values ('t1', '', '/w', 'one', '', 1, 1, 0)")
+    con.commit()
+    reads = []
+    real = codex_sessions._read_threads
+    monkeypatch.setattr(codex_sessions, "_read_threads", lambda p: reads.append(p) or real(p))
+    assert set(codex_sessions._threads(tmp_path)) == {"t1"}
+    assert set(codex_sessions._threads(tmp_path)) == {"t1"} and len(reads) == 1
+    con.execute("insert into threads values ('t2', '', '/w', 'two', '', 2, 2, 0)")
+    con.commit()
+    con.close()
+    assert set(codex_sessions._threads(tmp_path)) == {"t1", "t2"} and len(reads) == 2
