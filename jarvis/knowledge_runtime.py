@@ -21,10 +21,13 @@ its watcher and path entries go on):
 - hold while the conversation floor is not idle: he is speaking, a turn is
   being gathered or checked, the recogniser is behind, the brain is
   answering, or JARVIS is speaking;
-- hold while the machine's CPU is over `CPU_HOLD_PERCENT`, but give
-  `BREATHE_SEC` free each `CPU_HOLD_MAX_SEC`, so a busy machine still sees
-  one small batch a minute while the floor is free;
 - free otherwise.
+
+The machine's own load does not hold it: the build keeps to a fixed share
+of one core (lanes.BUILD_SHARE) whatever else runs, so it always moves
+while the floor is free and never takes more than its slice (Tim, 2026-11-12;
+the hold over 70 percent CPU it replaces kept it from moving at all on a
+busy Mac).
 
 Nothing on the voice path waits on any of this: every blocking call runs
 in a thread, and a failure is logged and tried again on the next look.
@@ -52,44 +55,19 @@ INGEST_AGAIN_SEC = 5.0
 PROPOSALS_EVERY_SEC = 60.0
 PACE_EVERY_SEC = 1.0
 READY_POLL_SEC = 0.1
-CPU_HOLD_PERCENT = 70.0
-CPU_HOLD_MAX_SEC = 60.0
-BREATHE_SEC = 2.0
 
 
 class Pace:
     """The hold-or-free rule, apart from any process, so it is tested alone."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self._clock = clock
-        self._cpu_since: Optional[float] = None
-        self._breathe_until: Optional[float] = None
+    def __init__(self) -> None:
         self.mode = "free"
         self.reason = "free"
 
-    def decide(self, floor_busy: bool, cpu_percent: Optional[float]) -> tuple[str, str]:
-        now = self._clock()
+    def decide(self, floor_busy: bool) -> tuple[str, str]:
         if floor_busy:
-            self._cpu_since = None
-            self._breathe_until = None
             self.mode, self.reason = "hold", "conversation"
-        elif cpu_percent is not None and cpu_percent > CPU_HOLD_PERCENT:
-            if self._breathe_until is not None and now < self._breathe_until:
-                self.mode, self.reason = "free", "breathing"
-            else:
-                if self._breathe_until is not None:
-                    self._breathe_until = None
-                    self._cpu_since = now
-                if self._cpu_since is None:
-                    self._cpu_since = now
-                if now - self._cpu_since >= CPU_HOLD_MAX_SEC:
-                    self._breathe_until = now + BREATHE_SEC
-                    self.mode, self.reason = "free", "breathing"
-                else:
-                    self.mode, self.reason = "hold", "cpu"
         else:
-            self._cpu_since = None
-            self._breathe_until = None
             self.mode, self.reason = "free", "free"
         return self.mode, self.reason
 
@@ -335,16 +313,13 @@ def end_leftover_content() -> None:
 
 class KnowledgeRuntime:
     def __init__(self, *, floor_busy: Callable[[], bool],
-                 cpu_percent: Callable[[], Optional[float]],
                  supervisor: Optional[knowledge_client.Supervisor] = None,
-                 clock: Callable[[], float] = time.monotonic,
                  enabled: Callable[[], bool] = knowledge_client.enabled) -> None:
         self.floor_busy = floor_busy
-        self.cpu_percent = cpu_percent
         self.supervisor = supervisor or knowledge_client.Supervisor()
         self.enabled = enabled
         self._indexing_enabled = False
-        self.pace = Pace(clock)
+        self.pace = Pace()
         self.started = False
         self.pace_listeners: list[Callable[[str], None]] = []
         self.ingest = IngestScheduler(self.supervisor, enabled=lambda: self._indexing_enabled)
@@ -361,7 +336,6 @@ class KnowledgeRuntime:
         self.change_listeners: list[Callable[[], None]] = []
         self._seen_passes = 0
         self._sent: Optional[tuple[int, str, bool]] = None     # (engine pid, mode, indexing) last told
-        self.last_cpu: Optional[float] = None
 
     # -- the loop -----------------------------------------------------------
     async def start_engine(self, wait: float = knowledge_client.READY_WAIT_SEC) -> bool:
@@ -419,11 +393,7 @@ class KnowledgeRuntime:
             busy = bool(self.floor_busy())
         except Exception:  # noqa: BLE001 - when in doubt, hearing comes first
             busy = True
-        try:
-            self.last_cpu = self.cpu_percent()
-        except Exception:  # noqa: BLE001
-            self.last_cpu = None
-        mode, _ = self.pace.decide(busy, self.last_cpu)
+        mode, _ = self.pace.decide(busy)
         for listener in self.pace_listeners:
             try:
                 await asyncio.to_thread(listener, mode)
@@ -487,6 +457,6 @@ class KnowledgeRuntime:
         facts = sup.health()
         return {**facts, "state": facts["state"] if self.started else "starting",
                 "knowledge": self._indexing_enabled,
-                "pace": self.pace.mode, "pace_reason": self.pace.reason, "cpu_percent": self.last_cpu,
+                "pace": self.pace.mode, "pace_reason": self.pace.reason,
                 "engine": sup.last_health if sup.state == "running" else None,
                 "ingest": self.ingest.health(), "content": self.content.health()}

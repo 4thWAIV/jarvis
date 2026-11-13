@@ -65,6 +65,8 @@ class Engine:
         self.entities = None  # the names a question may name, for the graph
         self.items = None     # items at paths: the UDS interface (items.py)
         self.rights = None    # AccessRights at paths (rights.py)
+        # (monotonic time, health) kept by serve's health thread, if it runs.
+        self.held_health: Optional[tuple[float, dict]] = None
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":

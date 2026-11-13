@@ -193,7 +193,6 @@ SAID: dict[str, str | dict[str, str]] = {
     "knowledgeReadOnly": "Read only: {problem}",
     "knowledgeOk": {"one": "Running; {count} chunk indexed", "other": "Running; {count} chunks indexed"},
     "knowledgeHeld": "Paused while the conversation needs the machine",
-    "knowledgeHeldCpu": "Paused: the processor is busy ({percent} percent)",
     "knowledgeFree": "Free to work",
     "knowledgeIngestNotYet": "No pass yet",
     "knowledgeIngestOk": {"one": "Last pass {age} ago: {count} document read",
@@ -729,10 +728,7 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
         shown = (OK, say("knowledgeOk", count=(engine.get("keyword") or {}).get("chunks", 0)))
     checks = [check("process", "process", *shown)]
     if health.get("pace") == "hold":
-        cpu = health.get("cpu_percent")
-        line = (say("knowledgeHeldCpu", percent=round(cpu)) if health.get("pace_reason") == "cpu" and cpu
-                else say("knowledgeHeld"))
-        checks.append(check("pace", "knowledgePace", OK, line))
+        checks.append(check("pace", "knowledgePace", OK, say("knowledgeHeld")))
     else:
         checks.append(check("pace", "knowledgePace", OK, say("knowledgeFree")))
     ingest = health.get("ingest")

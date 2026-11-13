@@ -12,42 +12,19 @@ from jarvis import subsystem_diagnostics as sd
 from tests.fixtures.waiting import until_async
 
 
-class Clock:
-    def __init__(self):
-        self.t = 100.0
-
-    def __call__(self):
-        return self.t
-
-
 def test_the_floor_holds_the_engine():
-    pace = kr.Pace(Clock())
-    assert pace.decide(True, 5.0) == ("hold", "conversation")
-    assert pace.decide(False, 5.0) == ("free", "free")
-    assert pace.decide(False, None) == ("free", "free")
+    pace = kr.Pace()
+    assert pace.decide(True) == ("hold", "conversation")
+    assert pace.decide(False) == ("free", "free")
 
 
-def test_a_busy_cpu_holds_but_breathes_once_a_minute():
-    clock = Clock()
-    pace = kr.Pace(clock)
-    modes = []
-    for _ in range(int(2 * kr.CPU_HOLD_MAX_SEC + 10)):
-        modes.append(pace.decide(False, 95.0)[0])
-        clock.t += 1.0
-    frees = [i for i, m in enumerate(modes) if m == "free"]
-    assert frees and frees[0] == kr.CPU_HOLD_MAX_SEC
-    assert len(frees) == 2 * int(kr.BREATHE_SEC)          # one breath a minute, two seconds each
-    assert modes[: int(kr.CPU_HOLD_MAX_SEC)] == ["hold"] * int(kr.CPU_HOLD_MAX_SEC)
-
-
-def test_speech_during_a_breath_holds_at_once():
-    clock = Clock()
-    pace = kr.Pace(clock)
-    for _ in range(int(kr.CPU_HOLD_MAX_SEC) + 1):
-        pace.decide(False, 95.0)
-        clock.t += 1
-    assert pace.mode == "free"
-    assert pace.decide(True, 95.0)[0] == "hold"
+def test_a_busy_machine_does_not_hold_the_build():
+    """The build keeps to its own share of one core (vectors.BUILD_SHARE),
+    so the Mac's load is not the pace's to judge: only the conversation
+    holds it."""
+    assert "cpu_percent" not in kr.KnowledgeRuntime.__init__.__code__.co_varnames
+    pace = kr.Pace()
+    assert [pace.decide(False)[0] for _ in range(120)] == ["free"] * 120
 
 
 class FakeSupervisor:
@@ -96,7 +73,7 @@ def test_the_runtime_starts_tells_the_pace_once_per_change_and_stops(monkeypatch
     busy = {"v": False}
     sup = FakeSupervisor()
     heard = []
-    rt = kr.KnowledgeRuntime(floor_busy=lambda: busy["v"], cpu_percent=lambda: None,
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: busy["v"],
                              supervisor=sup)
     rt.pace_listeners.append(heard.append)
     assert rt.health()["state"] == "starting"
@@ -121,7 +98,7 @@ def test_the_runtime_starts_tells_the_pace_once_per_change_and_stops(monkeypatch
 
 
 def test_a_failing_floor_reading_holds():
-    rt = kr.KnowledgeRuntime(floor_busy=lambda: 1 / 0, cpu_percent=lambda: None,
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: 1 / 0,
                              supervisor=FakeSupervisor())
     assert asyncio.run(rt.look_pace()) == "hold"
 
@@ -163,11 +140,11 @@ def test_with_knowledge_off_ingest_is_switched_off_and_the_engine_can_be_fine():
 
 
 def test_the_row_says_the_pace_and_the_embedder():
-    s = sd.knowledge({"state": "running", "pace": "hold", "pace_reason": "cpu", "cpu_percent": 91.4,
+    s = sd.knowledge({"state": "running", "pace": "free", "pace_reason": "free",
                       "engine": {"store": {"writable": True}, "keyword": {"chunks": 1},
                                  "vectors": {"embedder": "fake-32", "waiting": 2}}}, 0)
     checks = {c.id: c for c in s.checks}
-    assert checks["pace"].said.code == "knowledgeHeldCpu" and checks["pace"].said.values == {"percent": 91}
+    assert checks["pace"].said.code == "knowledgeFree"
     assert checks["embedder"].said.code == "knowledgeEmbedding"
     none = sd.knowledge({"state": "running", "pace": "hold", "pace_reason": "conversation",
                          "engine": {"store": {"writable": True}, "vectors": {}}}, 0)
@@ -194,7 +171,7 @@ def test_start_engine_waits_for_its_health(monkeypatch):
     monkeypatch.setattr(kr, "READY_POLL_SEC", 0.001)
     monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
     sup = SlowSupervisor(answers_after=3)
-    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: None, supervisor=sup)
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
     assert asyncio.run(rt.start_engine(wait=5)) is True
     assert sup.started == 1 and sup.looks == 4 and rt.started
 
@@ -203,7 +180,7 @@ def test_start_engine_gives_up_waiting_but_not_on_the_engine(monkeypatch):
     monkeypatch.setattr(kr, "READY_POLL_SEC", 0.001)
     monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
     sup = SlowSupervisor(answers_after=10 ** 9)
-    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: None, supervisor=sup)
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
     assert asyncio.run(rt.start_engine(wait=0.05)) is False
     assert sup.state == "running" and rt.health()["state"] == "running"
 
@@ -213,7 +190,7 @@ def test_with_knowledge_off_no_ingest_pass_starts_and_no_proposals_are_read(monk
     monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
     sup = FakeSupervisor()
     spawned = []
-    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: None, supervisor=sup,
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup,
                              enabled=lambda: False)
     rt.ingest._spawn = lambda: spawned.append(1)
     looked = []

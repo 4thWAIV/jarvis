@@ -535,18 +535,23 @@ def _change(unit, doc: dict, kind: str, how: str, now: float, **fields) -> Entry
     return _entry(doc)
 
 
-def _scan(unit=None, **where) -> list[dict]:
+def _scan(unit=None, states: Optional[tuple] = None, **where) -> list[dict]:
     """The entries whose fields equal `where` (exactly: the engine's text
-    match ignores case), read through `unit` when one is given."""
+    match ignores case) and, given `states`, whose state is one of them,
+    read through `unit` when one is given. Every condition is the engine's
+    to answer from its index, so only the entries asked for are read."""
     query = [[k, "=", v] for k, v in where.items()]
+    if states is not None:
+        query.append(["state", "in", list(states)])
     found = (unit.scan if unit is not None else records.scan)(ROOT, types=[TYPE],
                                                                where=query or None)
     return [r.data for r in found if _is_entry(r.data)
-            and all(r.data.get(k) == v for k, v in where.items())]
+            and all(r.data.get(k) == v for k, v in where.items())
+            and (states is None or r.data.get("state") in states)]
 
 
 def _open_ones(unit=None, **where) -> list[dict]:
-    return [d for d in _scan(unit, **where) if d["state"] in OPEN_STATES]
+    return _scan(unit, OPEN_STATES, **where)
 
 
 def _take(unit, inbox_id: str) -> dict:
@@ -635,6 +640,33 @@ def listing(closed: bool = False, limit: int = LIST_MAX) -> list[Entry]:
     else:
         found = sorted(_open_ones(), key=lambda d: d["arrived_at"], reverse=True)
     return [_entry(d) for d in found[:limit]]
+
+
+def named(reference: str) -> list[Entry]:
+    """Every entry, open or closed, that `reference` names exactly as a
+    wait names a package: its inbox id, its package's id, its name or its
+    name-version. Each is one indexed lookup, never a scan of the inbox
+    (the wait links ask this for every held link). Open ones first, newest
+    first, then the closed ones, most recently closed first."""
+    reference = str(reference or "")
+    if not reference:
+        return []
+    found: dict[str, dict] = {}
+    rec = records.get(path_of(reference))
+    if rec is not None and _is_entry(rec.data):
+        found[rec.data["id"]] = rec.data
+    looks = [{"package_id": reference}, {"name": reference}]
+    looks += [{"name": reference[:i], "version": reference[i + 1:]}
+              for i, c in enumerate(reference) if c == "-" and 0 < i < len(reference) - 1]
+    for where in looks:
+        for d in _scan(**where):
+            found.setdefault(d["id"], d)
+    rows = list(found.values())
+    open_ = sorted((d for d in rows if d["state"] in OPEN_STATES), key=lambda d: d["arrived_at"],
+                   reverse=True)
+    shut = sorted((d for d in rows if d["state"] not in OPEN_STATES),
+                  key=lambda d: d["closed_at"] or 0.0, reverse=True)
+    return [_entry(d) for d in open_ + shut]
 
 
 def closed_count() -> int:

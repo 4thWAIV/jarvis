@@ -96,6 +96,14 @@ def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answ
 
 @route("GET", "/v1/health")
 def _health(engine: Engine, request: Request) -> Answer:
+    """The health the engine's own health thread keeps ready
+    (`_keep_health`), so a ping is answered at once however busy the
+    engine is and the server never restarts a busy engine for being slow;
+    worked out here only when there is none, or it is older than
+    `HEALTH_STALE_SEC` (the thread itself is stuck, and so is the engine)."""
+    held = engine.held_health
+    if held is not None and time.monotonic() - held[0] < HEALTH_STALE_SEC:
+        return Answer(200, held[1])
     return Answer(200, engine.health())
 
 
@@ -502,6 +510,23 @@ def _watch_stdin(on_close: Callable[[], None]) -> threading.Thread:
 
 
 MAINTAIN_EVERY_SEC = 5.0
+HEALTH_EVERY_SEC = 1.0
+HEALTH_STALE_SEC = 30.0
+
+
+def _keep_health(engine: Engine, stopping: threading.Event) -> threading.Thread:
+    """The engine's health, worked out on a thread of its own every
+    `HEALTH_EVERY_SEC` and held for `/v1/health` to answer with."""
+    def loop() -> None:
+        while not stopping.is_set():
+            try:
+                engine.held_health = (time.monotonic(), engine.health())
+            except Exception:
+                log.exception("knowledge health could not be worked out")
+            stopping.wait(HEALTH_EVERY_SEC)
+    thread = threading.Thread(target=loop, name="knowledge-health", daemon=True)
+    thread.start()
+    return thread
 
 
 def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
@@ -543,6 +568,7 @@ def run(*, watch_stdin: bool = True) -> int:
     if watch_stdin:
         _watch_stdin(stop)
     _maintenance(engine, stopping)
+    _keep_health(engine, stopping)
     engine_address.record(engine_address.EngineAddress(
         scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id,
         parent=os.getppid()))

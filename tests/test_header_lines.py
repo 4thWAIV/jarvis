@@ -1217,11 +1217,11 @@ EXEMPT = {
         "database, to `codex queue` as one argument (no shell), with a "
         "capture JARVIS read back; it logs only an exception's type and an "
         "exit code"),
-    "codex_sessions._threads": (
-        "it reads Codex's own thread table into a dict, read-only; nothing is "
-        "printed. What reaches the brain from it (titles, transcript text) "
-        "goes through the same SessionState fields, and the same walls, as "
-        "Claude's"),
+    "codex_sessions._read_threads": (
+        "it reads Codex's own thread table into a dict, read-only (_threads "
+        "keeps it until Codex writes again); nothing is printed. What reaches "
+        "the brain from it (titles, transcript text) goes through the same "
+        "SessionState fields, and the same walls, as Claude's"),
     "server._deliver": (
         "it builds a SessionState out of a staged message's own fields and "
         "hands it to the session's provider to send; it prints nothing"),

@@ -647,3 +647,49 @@ async def test_knowledge_settings_can_enable_pause_and_recover_errors(page_playw
         await page.locator('#knowledge-enabled').click()
         await async_api.expect(page.locator('#knowledge-enabled')).not_to_be_checked()
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_knowledge_settings_show_how_far_the_index_build_is(page_playwright, page_url):
+    """Settings → Knowledge shows the build as knowledge_api.build says it:
+    the pass, items and sections done of their totals and the time left;
+    held while he talks; done."""
+    class BuildServer(_Server):
+        build = {"state": "building", "items_embedded": 1200, "items_total": 1500, "items_waiting": 300,
+                 "sections_embedded": 4000, "sections_total": 12000, "sections_waiting": 8000,
+                 "pass": 2, "passes": 9, "band": 16,
+                 "texts_waiting": 8300, "texts_per_sec": 3.0, "seconds_left": 3 * 3600,
+                 "files_waiting": 0}
+
+        async def install(self, page):
+            await super().install(page)
+            await page.route("**/api/knowledge/health", lambda route: route.fulfill(
+                content_type="application/json", body=json.dumps({"enabled": True, "state": "running"})))
+
+            async def embedder(route):
+                await route.fulfill(content_type="application/json", body=json.dumps({
+                    "name": "e5", "label": "Vector model", "installed": True,
+                    "download_bytes": 100, "problem": None, "runtime_problem": None, "install": None,
+                    "engine": {"running": True, "embedded": 5, "waiting": self.build["items_waiting"],
+                               "rows": 5, "build": self.build}}))
+            await page.route("**/api/knowledge/embedder", embedder)
+
+    server = BuildServer()
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
+        line = page.locator('[data-build]')
+        await async_api.expect(line).to_contain_text('pass 2 of 9')
+        await async_api.expect(line).to_contain_text('1,200 of 1,500 items and 4,000 of 12,000 sections done')
+        await async_api.expect(line).to_contain_text('3h left')
+        await async_api.expect(line).to_contain_text('the next 16 sections of every item')
+        server.build = {**server.build, "state": "held"}
+        await async_api.expect(line).to_contain_text('paused while you talk', timeout=15000)
+        server.build = {**server.build, "state": "done", "items_embedded": 1500, "items_waiting": 0,
+                        "sections_embedded": 12000, "sections_waiting": 0, "pass": None}
+        await page.reload()
+        await _open_settings(page)
+        await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
+        await async_api.expect(page.locator('[data-build="done"]')).to_contain_text('all 1,500 items and 12,000 sections done')
+        await browser.close()
