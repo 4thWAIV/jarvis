@@ -246,3 +246,18 @@ def test_a_busy_engine_answers_its_health_from_what_its_health_thread_keeps(tmp_
         engine.held_health = (time.monotonic() - serve.HEALTH_STALE_SEC - 1, {"state": "ok"})
         monkeypatch.setattr(engine, "health", lambda: {"state": "live"})
         assert serve.dispatch(engine, "GET", "/v1/health").payload == {"state": "live"}
+
+
+def test_the_time_left_follows_the_rate_of_the_last_commits(tmp_path, monkeypatch):
+    """Short records go fast and spreadsheet sections slowly: once the
+    build has commits of its own, their rate is the one the time left uses."""
+    monkeypatch.setattr(emb, "RUNNER", lambda: Noting())
+    with in_process(tmp_path / "engine") as (engine, uds):
+        engine.vectors.set_paused(True)
+        uds.transaction(TIM, Transaction().put("/folders/f/a.md", {"title": "a"},
+                                               content=_sections(9, "eta")), change="test")
+        engine.vectors.build = {"texts": 1000, "items": 900, "cpu_sec": 10.0, "busy_sec": 100.0}
+        assert engine.vectors.build_health()["texts_per_sec"] == pytest.approx(10.0)
+        engine.vectors._recent.extend([(64, 32.0), (64, 32.0)])
+        health = engine.vectors.build_health()
+        assert health["texts_per_sec"] == pytest.approx(2.0) and health["seconds_left"] == 5

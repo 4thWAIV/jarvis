@@ -1740,8 +1740,8 @@ committed `COMMIT_EVERY` texts at a time, its whole-item row last, with the
 build's progress (META `build`: texts, items, CPU seconds and the
 seconds spent building, holds left out) in the same commit, so a restart
 goes on from the part it reached and knows the rate at once. `VectorIndex.build_health` (on the engine's health) says the items
-embedded, the items and texts waiting, the texts a second it has kept
-while free and the time left; `knowledge_api.build` adds the state (building, held while
+embedded, the items and texts waiting, the texts a second of its last
+commits (`RATE_COMMITS`; holds left out) and the time left; `knowledge_api.build` adds the state (building, held while
 the conversation needs the machine, paused in Settings, done, off) and the
 files the content reader has still to read, and is what Settings →
 Knowledge and the Knowledge view show (`KnowledgeView.tsx` `BuildLine`)
@@ -1846,10 +1846,13 @@ without restarting. Settings reuses the model-install control and links to
 registered folders' counts and knowledge search. Two lanes
 (`knowledge/lanes.py`): the process runs at normal priority, and record
 reads and writes are never paused; the background lane (the maintenance
-thread: flushes on the time rule, compaction, cards; the embedding threads;
-the linker and a requested compaction) lowers its own threads
+thread: flushes on the time rule, compaction, cards; the embedding
+producer; the linker and a requested compaction) lowers its own threads
 (`QOS_CLASS_BACKGROUND` on macOS) and raises them for `Store.commit`, a
-flush and a compaction's manifest installs (`lanes.foreground`). The
+flush and a compaction's manifest installs (`lanes.foreground`); the
+embedding thread itself runs at normal priority, held to the build's share
+by its producer's rests (the background class slowed it to a third of its
+share). The
 runtime paces the background lane every second: hold while the conversation
 floor is not idle, else free; the Mac's own load does not hold it (the
 build keeps to its share of one core instead; the old hold over 70 percent
