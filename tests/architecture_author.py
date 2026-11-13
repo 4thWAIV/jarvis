@@ -16,6 +16,12 @@ ROOT = Path(__file__).resolve().parent.parent
 FAKE_BRAIN = Path(__file__).parent / "fixtures" / "fake_brain.py"
 
 ACTION = '''
+    if text.startswith('Inspect the rendered package'):
+        from pathlib import Path as _P
+        _sys = __import__('sys')
+        _sys.path.insert(0, {root!r})
+        from tests.author_fixtures import accept_visual_review as _accept
+        _accept(_P(text.split('Read ', 1)[1].split('. Open EVERY', 1)[0]))
     if '--check-only --document' in text:
         import json as _json, re as _re, subprocess as _sp, time as _time
         from pathlib import Path as _P

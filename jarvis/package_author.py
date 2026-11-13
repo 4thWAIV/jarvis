@@ -76,7 +76,7 @@ def _assignment(document: Document | None) -> str:
 
 async def author(handoff: Path, engine: str, out: Path, *, source: Path | None = None,
                  timeout: float = 1800, session: str = "", work: str = "",
-                 workflow: str = "", document: Document | None = None) -> Path:
+                 workflow: str = "", document: Document | None = None, finish=None) -> Path:
     """One new session, no resume or fallback; return only its own package
     source (for a `document`, its package/ explanation)."""
     evidence = read_handoff(handoff)
@@ -141,6 +141,16 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               + json.dumps(evidence, ensure_ascii=False, indent=2))
     if source:
         prompt += "\nExisting package source is evidence to investigate, not an answer to preserve: " + str(source)
+    async def turn(message):
+        nonlocal done
+        identity = receipt.get("author_session")
+        done = asyncio.get_running_loop().create_future()
+        async with asyncio.timeout(timeout):
+            await child.send(message)
+            await done
+        if receipt.get("author_session") != identity:
+            raise OSError("The author session changed during visual review.")
+
     try:
         async with asyncio.timeout(timeout):
             await child.open("You are an independent human-package-author producing source for the existing package factory.")
@@ -160,7 +170,13 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         if result.is_symlink() or not result.resolve().is_relative_to(folder.resolve()):
             raise OSError("Author source must belong to its fresh output folder.")
         receipt.update(status="authored", source=str(result))
+        (folder / "author-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        if finish is not None:
+            receipt["visual_review"] = await finish(result, turn)
         return result
+    except Refused as error:
+        receipt.update(status="failed", error="; ".join(error.problems))
+        raise
     except (OSError, RuntimeError, TimeoutError) as error:
         receipt.update(status="failed", error=str(error) or "Author timed out.")
         raise Refused(["Fresh author did not finish: " + receipt["error"]]) from None
@@ -198,3 +214,94 @@ def prepare(handoff: Path | None, engine: str | None, out: Path, **kwargs) -> Pa
         raise Refused(["Creation requires --handoff with purpose, audience, questions and evidence; "
                        "the factory launches a fresh author before building. Use --check-only to validate source."])
     return asyncio.run(author(handoff.resolve(), engine or "", out, **kwargs))
+
+
+async def review(source: Path, archive: Path, result, turn, folder: Path) -> dict:
+    """Ask the still-open author to inspect built bytes, then validate its receipt.
+
+    A machine result never attests to content inside a picture. The author's
+    response records that inspection separately, including supplied attachments.
+    """
+    from jarvis import bundle_archive
+    with bundle_archive.open_archive(archive) as z:
+        listing = bundle_archive.list_members(z)
+        members = sorted(name[len(listing.root):] for name in listing.files()
+                         if not name[len(listing.root):].startswith(".jarvis/"))
+    request = {
+        "archive": str(archive), "archive_sha256": author_proof._sha(archive),
+        "source_sha256": author_proof.source_digest(source),
+        "screenshots": {str(p): author_proof._sha(p) for p in result.screenshots},
+        "members": members, "machine_passed": result.ok, "failures": result.failures,
+    }
+    folder.mkdir(parents=True, exist_ok=True)
+    request_path, response_path = folder / "visual-request.json", folder / "visual-response.json"
+    request_path.write_text(json.dumps(request, indent=2) + "\n")
+    request_digest = author_proof._sha(request_path)
+    response_path.unlink(missing_ok=True)
+    await turn(
+        "Inspect the rendered package before delivery. You are the SAME fresh author. "
+        "Read " + str(request_path) + ". Open EVERY screenshot listed there with your existing "
+        "image-viewing tool (Claude Read or Codex view_image). Judge whether illustrations appear, "
+        "their text is readable and unclipped, and they communicate the view's point. "
+        "Inspect the actual built archive, not merely your source. Use existing browser/document "
+        "tools for each supplied image/document page intended for human viewing. No new readers "
+        "or OCR. Use the story and author understanding to identify all intended views, including "
+        "tabs and expanded views. If a page view is missing, repair its story show/click actions "
+        "so the factory renders it on the next attempt. Decorative and unused assets are not "
+        "reader pages. If any intended view cannot be inspected, name that exact missing check. "
+        "A machine failure needs repair even if the screenshots look right. Do not deliver. "
+        "Write JSON to " + str(response_path) + " with request_sha256 equal to " + request_digest
+        + ", status (accepted, not-applicable, repair, or blocked), notes (one nonempty text string, "
+        "not a list, containing your specific findings), screenshots (the full list of screenshot paths you actually inspected), visual_material "
+        "(boolean), and members (an object with EVERY request member path as a key). Each member "
+        "value has use (reader, support, decorative, or unused), notes, and evidence (a list of "
+        "screenshot paths or existing tool/page references for EVERY intended reader page). "
+        "Use not-applicable only if the package's contents have no visual material; explain why. "
+        "Support files need no separate reader inspection. An accepted result must leave the "
+        "source, archive and screenshots unchanged. For repair, edit only your source/assets, "
+        "run the supplied check-only command after your final edit, and return status repair. "
+        "The factory allows one repair and re-render; after that it reports the exact failure."
+    )
+    try:
+        response = json.loads(response_path.read_text())
+    except (OSError, ValueError) as error:
+        raise Refused([f"Author visual review is missing or unreadable: {error}"]) from None
+    if not isinstance(response, dict) or response.get("request_sha256") != request_digest:
+        raise Refused(["Author visual review does not name this rendered attempt."])
+    status = response.get("status")
+    if status in ("repair", "blocked"):
+        return {**request, "review": response}
+    problems = []
+    if status not in ("accepted", "not-applicable"):
+        problems.append("Author visual review has no acceptance.")
+    if not isinstance(response.get("notes"), str) or not response["notes"].strip():
+        problems.append("Author visual review has no inspection findings.")
+    if not isinstance(response.get("screenshots"), list) or \
+            not all(isinstance(p, str) for p in response["screenshots"]) or \
+            sorted(response["screenshots"]) != sorted(request["screenshots"]):
+        problems.append("Author did not inspect every rendered screenshot.")
+    if type(response.get("visual_material")) is not bool or \
+            (status == "not-applicable") != (response.get("visual_material") is False):
+        problems.append("Author must base not-applicable on the package's actual contents.")
+    reviewed = response.get("members")
+    if not isinstance(reviewed, dict) or set(reviewed) != set(members):
+        problems.append("Author did not account for every built member and its intended reader views.")
+    else:
+        for name, detail in reviewed.items():
+            if not isinstance(detail, dict) or detail.get("use") not in \
+                    ("reader", "support", "decorative", "unused") or not detail.get("notes"):
+                problems.append(f"Author did not explain the intended use of {name}.")
+            elif detail["use"] == "reader" and (not isinstance(detail.get("evidence"), list)
+                    or not detail["evidence"] or not all(isinstance(e, str) and e.strip()
+                                                        for e in detail["evidence"])):
+                problems.append(f"Author did not inspect the intended reader pages of {name}.")
+    if not result.ok:
+        problems.extend(result.failures)
+    if author_proof._sha(archive) != request["archive_sha256"] or \
+            author_proof.source_digest(source) != request["source_sha256"] or any(
+                not Path(p).is_file() or author_proof._sha(Path(p)) != digest
+                for p, digest in request["screenshots"].items()):
+        problems.append("The source, built bytes or screenshots changed after rendering; review is invalid.")
+    if problems:
+        raise Refused(problems)
+    return {**request, "review": response}

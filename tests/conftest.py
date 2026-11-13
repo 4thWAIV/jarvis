@@ -589,5 +589,13 @@ def authored_package_source(monkeypatch):
 
     def prepare(handoff, engine, out, **kw):
         authored(kw["source"], engine or "claude")
+        if kw.get("finish"):
+            import asyncio
+            from tests.author_fixtures import accept_visual_review
+            async def turn(prompt):
+                if prompt.startswith("Inspect the rendered package"):
+                    request = Path(prompt.split("Read ", 1)[1].split(". Open EVERY", 1)[0])
+                    accept_visual_review(request)
+            asyncio.run(kw["finish"](kw["source"], turn))
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)

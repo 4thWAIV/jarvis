@@ -109,3 +109,16 @@ def sign_authored(raw: Path, target: Path, agent, session: str, statements=(),
     package_signature.sign(target, target, agent.private, agent.public, session,
                            tuple(statements), work_key, author=claim)
     return claim
+
+
+def accept_visual_review(request_path: Path, *, status="accepted", notes="Illustrations and labels are readable."):
+    """A stand-in author's explicit response to the factory's current render."""
+    import hashlib
+    request = json.loads(request_path.read_text())
+    response = {"request_sha256": hashlib.sha256(request_path.read_bytes()).hexdigest(),
+                "status": status, "notes": notes, "visual_material": status != "not-applicable",
+                "screenshots": list(request["screenshots"]),
+                "members": {name: {"use": "support", "notes": "Supporting package file.",
+                                   "evidence": []} for name in request["members"]}}
+    request_path.with_name("visual-response.json").write_text(json.dumps(response))
+    return response
