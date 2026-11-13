@@ -5,14 +5,19 @@ Updated 2026-11-01. This guide describes functionality present in the checkout. 
 ## The knowledge index builds itself, and says how far it is
 
 Settings → Knowledge (and the Knowledge view) shows the index being built:
-how many items have their vectors out of how many, how many passages are
-left and about how long that will take; "paused while you talk" while you
+which pass it is on, how many items and how many sections have their
+vectors out of how many, and about how long the rest will take; "paused while you talk" while you
 and JARVIS are speaking, and "paused in Settings" when you pause indexing
 there. It builds your messages, conversation and Work first, newest first,
 then JARVIS's notes, then your folders' files, most recently changed first.
+The first pass gives every item one vector, so everything can be found by
+meaning early; each pass after it adds the next sixteen sections of every
+file, so coverage rises evenly across files, until every section of every
+file is indexed. Nothing is left out, however long the file; a file that
+changes goes back to the first pass.
 It uses half of one processor core whatever else the Mac is doing, so it
 always moves and never slows the Mac, and a restart carries on where it
-stopped, part way through a long file included. A search made while it is
+stopped. A search made while it is
 still building says that meaning search may miss what is not indexed yet.
 Ask JARVIS "how far is the knowledge index?" for the same figures.
 

@@ -94,7 +94,7 @@ function SearchBox({ partRef, resultsRef }: { partRef: PartRef; resultsRef: Part
           <p className="knowledge-note" data-partial="building">
             {t("main.knowledge.searchPartial", {
               done: formatNumber(last.building.items_embedded),
-              total: formatNumber(last.building.items_embedded + last.building.items_waiting) })}
+              total: formatNumber(last.building.items_total ?? last.building.items_embedded + last.building.items_waiting) })}
           </p>
         )}
         {last.hits && !last.hits.length && <p className="voice-empty">{t("main.knowledge.noHits")}</p>}
@@ -305,18 +305,21 @@ const MB = 1 << 20;
 function BuildLine({ build }: { build: Build }) {
   const t = useT();
   if (build.state === "off") return null;
-  const done = formatNumber(build.items_embedded);
-  const total = formatNumber(build.items_embedded + build.items_waiting);
-  const line = build.state === "done" ? t("main.knowledge.build.done", { total })
-    : build.state === "held" ? t("main.knowledge.build.held", { done, total })
-    : build.state === "paused" ? t("main.knowledge.build.paused", { done, total })
+  const counts = {
+    done: formatNumber(build.items_embedded), total: formatNumber(build.items_total),
+    sections: formatNumber(build.sections_embedded), sectionsTotal: formatNumber(build.sections_total),
+    pass: formatNumber(build.pass ?? 1), passes: formatNumber(build.passes),
+  };
+  const line = build.state === "done" ? t("main.knowledge.build.done", counts)
+    : build.state === "held" ? t("main.knowledge.build.held", counts)
+    : build.state === "paused" ? t("main.knowledge.build.paused", counts)
     : build.seconds_left !== null
-      ? t("main.knowledge.build.building", { done, total, texts: formatNumber(build.texts_waiting),
-                                              left: shortAge(build.seconds_left * 1000) })
-      : t("main.knowledge.build.measuring", { done, total, texts: formatNumber(build.texts_waiting) });
+      ? t("main.knowledge.build.building", { ...counts, left: shortAge(build.seconds_left * 1000) })
+      : t("main.knowledge.build.measuring", counts);
   return (
     <p className="knowledge-note" role="status" data-build={build.state}>
       {line}
+      {build.state !== "done" && <> {t("main.knowledge.build.passes", { band: formatNumber(build.band) })}</>}
       {(build.files_waiting ?? 0) > 0 && <> {t("main.knowledge.build.files", { count: build.files_waiting ?? 0 })}</>}
     </p>
   );

@@ -67,11 +67,16 @@ QUERY_EMBED_SEC = 0.150
 NONE = 0
 WHOLE = 0                       # an item's whole-item row; section i is prop i + 1
 ITEM_SPACE_SUFFIX = "#items"
-SECTIONS_EMBEDDED_MAX = 2000    # past this many sections an item's later ones get no vector
 WHERE_SECTIONS = 3              # the sections a vector hit names as where it matched
-# An item's vectors are committed this many texts at a time, its whole-item
-# row last, so a long file goes on where it stopped and counts as embedded
-# only once all of it is.
+# The build goes in passes (Tim, 2026-11-12: coverage rises over time to
+# every section of every item, nothing capped). Pass one gives every item its
+# whole-item vector, so every item is found by meaning early; each pass after
+# it gives every item that has them its next SECTION_BAND sections (1-16 of
+# all, then 17-32 of all, ...), until every section has its vector.
+SECTION_BAND = 16
+# The build commits its vectors this many texts at a time (several items'
+# in one commit while they are short), with its progress, so a restart goes
+# on from the last commit.
 COMMIT_EVERY = 64
 # The time left is worked out at the rate of the build's last commits (texts
 # and seconds spent), since a record of a few short texts and a spreadsheet
@@ -390,44 +395,95 @@ def build_rank(doc: dict) -> tuple:
     return (4, -at)
 
 
-def texts_of(summary: dict) -> int:
-    """How many texts an item's vectors take: its whole-item text and one
-    per section embedded (a record's `sections` already counts its own)."""
-    return 1 + min(int(summary.get("sections") or 0), SECTIONS_EMBEDDED_MAX)
+def next_stage(space: Optional["Space"], o: int, sections: int) -> Optional[int]:
+    """The build's next stage for an item with `sections` sections, from
+    the rows it has: 0 while it has no whole-item row; else the band of its
+    first section with none (band b holds sections (b - 1) * SECTION_BAND + 1
+    to b * SECTION_BAND, as props); None once every section has its row."""
+    if space is None or not space.has(o, WHOLE):
+        return 0
+    held = space.props.get(o, ())
+    if len(held) > sections:
+        return None
+    for p in range(1, sections + 1):
+        if p not in held:
+            return (p - 1) // SECTION_BAND + 1
+    return None
+
+
+def band_props(stage: int, sections: int) -> range:
+    """The props a stage gives an item: its whole-item row, or a band of
+    its sections."""
+    if stage == 0:
+        return range(WHOLE, WHOLE + 1)
+    return range((stage - 1) * SECTION_BAND + 1, min(stage * SECTION_BAND, sections) + 1)
+
+
+@dataclass(frozen=True)
+class Job:
+    """One item's next stage of the build."""
+    o: int
+    path: str
+    sha: str
+    rank: tuple
+    stage: int
+    sections: int
+
+    @property
+    def texts(self) -> int:
+        return len(band_props(self.stage, self.sections))
 
 
 class BuildQueue:
-    """The items waiting to be embedded, best first by `build_rank`: one
-    entry an item, holding only its newest content (a heap with the stale
-    entries passed over), with the texts they wait to have embedded
-    counted. Guarded by its owner's lock."""
+    """The items with vectors still to make, best first: every item's
+    whole-item row (stage 0) before any section's, then the sections a band
+    at a time across all items (stage b), each stage in `build_rank` order.
+    One entry an item, at the stage it has reached and holding only its
+    newest content (a heap with the stale entries passed over). Guarded by
+    its owner's lock."""
 
     def __init__(self) -> None:
-        self._heap: list[tuple[tuple, int, str]] = []
-        self._held: dict[int, tuple[str, str, tuple, int]] = {}   # o -> (path, sha, rank, texts)
-        self.texts = 0
+        self._heap: list[tuple[int, tuple, int, str]] = []
+        self._held: dict[int, Job] = {}
 
-    def put(self, o: int, path: str, sha: str, rank: tuple, texts: int) -> None:
-        old = self._held.get(o)
-        if old is not None:
-            self.texts -= old[3]
-        self._held[o] = (path, sha, rank, texts)
-        self.texts += texts
-        heapq.heappush(self._heap, (rank, o, sha))
+    def put(self, job: Job) -> None:
+        self._held[job.o] = job
+        heapq.heappush(self._heap, (job.stage, job.rank, job.o, job.sha))
         if len(self._heap) > 2 * len(self._held) + 1024:
-            self._heap = [(r, o2, sh) for o2, (_, sh, r, _) in self._held.items()]
+            self._heap = [(j.stage, j.rank, j.o, j.sha) for j in self._held.values()]
             heapq.heapify(self._heap)
 
-    def pop(self) -> Optional[tuple[int, str, str, int]]:
-        """The best item waiting, (ordinal, path, sha, texts), or None."""
+    def again(self, job: Job) -> None:
+        """An item's next stage after one done, unless newer content of it
+        waits already (its write queued it at stage 0)."""
+        held = self._held.get(job.o)
+        if held is None or held.sha == job.sha:
+            self.put(job)
+
+    def discard(self, o: int) -> None:
+        self._held.pop(o, None)
+
+    def _top(self) -> Optional[Job]:
         while self._heap:
-            rank, o, sha = heapq.heappop(self._heap)
+            stage, rank, o, sha = self._heap[0]
             held = self._held.get(o)
-            if held is not None and held[1] == sha and held[2] == rank:
-                del self._held[o]
-                self.texts -= held[3]
-                return o, held[0], sha, held[3]
+            if held is not None and (held.stage, held.rank, held.sha) == (stage, rank, sha):
+                return held
+            heapq.heappop(self._heap)
         return None
+
+    def pop(self) -> Optional[Job]:
+        """The best job waiting, or None."""
+        job = self._top()
+        if job is not None:
+            heapq.heappop(self._heap)
+            del self._held[job.o]
+        return job
+
+    def stage(self) -> Optional[int]:
+        """The stage the build is at: the best job's."""
+        job = self._top()
+        return job.stage if job is not None else None
 
     def __len__(self) -> int:
         return len(self._held)
@@ -442,14 +498,18 @@ class VectorIndex:
         self.spaces: dict[str, Space] = {}
         self._lock = threading.RLock()
         self._todo: dict[int, tuple[str, str]] = {}       # ordinal -> (key, _hash) waiting to embed
-        self._items_todo = BuildQueue()                    # items, best first
+        self._items_todo = BuildQueue()                    # items' next stages, best first
+        # Every item with words to embed: path -> (ordinal, sections), and
+        # the sections they hold in all, so the build says how far it is.
+        self._sizes: dict[str, tuple[int, int]] = {}
+        self._sections_total = 0
+        self._stage: Optional[int] = None       # the stage being embedded now
         self._todo_cond = threading.Condition()
         self.paused = False
         self._stop = False
         self.embedded = 0
         self.items_embedded = 0
         self._working = False
-        self._left = 0          # texts of the item being embedded not yet committed
         # Since the build's progress was last committed (or its item began):
         # the CPU its batches took and the time it was held, so the time it
         # spent building is the time since, less the holds.
@@ -520,22 +580,54 @@ class VectorIndex:
             space = self.spaces.get(self.space_id)
             items = self.spaces.get(self.item_space_id)
             for op in ops:
-                if op.family != DOCS or op.value is None:
+                if op.family != DOCS:
+                    continue
+                if op.value is None:
+                    gone = self._size(op.key.decode("utf-8", "replace"), None)
+                    if gone is not None:
+                        with self._todo_cond:
+                            self._items_todo.discard(gone)
                     continue
                 o, doc = decode_doc(op.value)
                 if doc["_kind"] == kinds.ITEM:
-                    summary = item_texts.embedded_summary(doc)
-                    if summary and not (items is not None and items.has(o, WHOLE)):
-                        with self._todo_cond:
-                            self._items_todo.put(o, doc["_key"], summary["sha256"], build_rank(doc),
-                                                 texts_of(summary))
+                    job = self._job(o, doc, items)
+                    with self._todo_cond:
+                        if job is not None:
+                            self._items_todo.put(job)
                             self._todo_cond.notify()
+                        else:
+                            self._items_todo.discard(o)
                     continue
                 prop = embedded_prop(doc["_kind"])
                 if prop and doc.get(prop) and not (space is not None and space.has_any(o)):
                     with self._todo_cond:
                         self._todo[o] = (doc["_key"], doc["_hash"])
                         self._todo_cond.notify()
+
+    def _size(self, path: str, size: Optional[tuple[int, int]]) -> Optional[int]:
+        """Keep an item's (ordinal, sections), or forget it with None; the
+        ordinal it had, if any."""
+        old = self._sizes.pop(path, None)
+        if old is not None:
+            self._sections_total -= old[1]
+        if size is not None:
+            self._sizes[path] = size
+            self._sections_total += size[1]
+        return old[0] if old is not None else None
+
+    def _job(self, o: int, doc: dict, items: Optional[Space]) -> Optional[Job]:
+        """An item's next stage of the build, its size kept; None when it
+        has nothing to embed or every vector it can have."""
+        summary = item_texts.embedded_summary(doc)
+        if not summary:
+            self._size(doc["_key"], None)
+            return None
+        sections = int(summary.get("sections") or 0)
+        self._size(doc["_key"], (o, sections))
+        stage = next_stage(items, o, sections)
+        if stage is None:
+            return None
+        return Job(o, doc["_key"], summary["sha256"], build_rank(doc), stage, sections)
 
     def _on_generation(self, gen: int, replaced: list[int]) -> None:
         entries = [e for e in self.store.external_entries(VECS) if int(e["gen"]) == gen]
@@ -622,20 +714,33 @@ class VectorIndex:
                 o = doc["_ord"]
                 if doc.get(kind.embedded[0]) and not (space and space.has_any(o)):
                     self._todo[o] = (doc["_key"], doc["_hash"])
-        items = self.spaces.get(self.item_space_id)
+        # Read without the lock (a long scan must not hold up writes); an
+        # item written meanwhile was sized and queued by its write, which is
+        # newer than what the scan read, so the scan leaves it be.
         found = []
         with self.store.reading() as lsn:
             for v in self.store.scan(DOCS, b"/", b"0", lsn):
                 if v.value is None:
                     continue
                 o, doc = decode_doc(v.value)
-                summary = item_texts.embedded_summary(doc)
-                if doc.get("_kind") == kinds.ITEM and summary and not (items and items.has(o, WHOLE)):
-                    found.append((o, doc["_key"], summary["sha256"], build_rank(doc), texts_of(summary)))
-        with self._todo_cond:
-            for entry in found:
-                self._items_todo.put(*entry)
-            self._todo_cond.notify_all()
+                summary = item_texts.embedded_summary(doc) if doc.get("_kind") == kinds.ITEM else None
+                if summary:
+                    found.append((o, doc["_key"], summary["sha256"], build_rank(doc),
+                                  int(summary.get("sections") or 0)))
+        with self._lock:
+            items = self.spaces.get(self.item_space_id)
+            jobs = []
+            for o, path, sha, rank, sections in found:
+                if path in self._sizes:
+                    continue
+                self._size(path, (o, sections))
+                stage = next_stage(items, o, sections)
+                if stage is not None:
+                    jobs.append(Job(o, path, sha, rank, stage, sections))
+            with self._todo_cond:
+                for job in jobs:
+                    self._items_todo.again(job)
+                self._todo_cond.notify_all()
 
     def set_paused(self, paused: bool) -> None:
         with self._todo_cond:
@@ -653,23 +758,31 @@ class VectorIndex:
                     self._todo_cond.wait(1.0)
                 if self._stop:
                     return
-                item = self._items_todo.pop()
+                # Jobs in the queue's order, several short ones together,
+                # up to COMMIT_EVERY texts.
+                jobs: list[Job] = []
+                while sum(j.texts for j in jobs) < COMMIT_EVERY:
+                    job = self._items_todo.pop()
+                    if job is None:
+                        break
+                    jobs.append(job)
                 batch = []
-                if item is None:
+                if not jobs:
                     for o in list(self._todo)[:emb.INGEST_BATCH]:
                         batch.append((o, *self._todo.pop(o)))
+                self._stage = jobs[0].stage if jobs else None
                 self._working = True
             try:
-                if item is not None:
+                if jobs:
                     self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
-                    self._embed_item(*item[:3])
+                    self._embed_jobs(jobs)
                 else:
                     self._embed_batch(batch)
             except Exception:
                 log.exception("embedding failed")
             finally:
                 self._working = False
-                self._left = 0
+                self._stage = None
 
     def _embed_texts(self, texts: list[str]) -> list[array]:
         """Every text's vector, as ingest batches behind any query, each
@@ -716,18 +829,31 @@ class VectorIndex:
                 "busy_sec": float(held.get("busy_sec") or 0.0)}
 
     def build_health(self) -> dict:
-        """The build: the items embedded now, what waits (items and the
-        texts they hold), what the build has done (kept in the engine
-        across restarts), and the time left at the rate the build has kept
-        while it was free to work. `state` is building,
-        paused (the pace holds, or indexing is paused in Settings) or done;
-        `off` with no embedder."""
-        with self._todo_cond:
-            items = len(self._items_todo) + len(self._todo) + (1 if self._left else 0)
-            texts = self._items_todo.texts + len(self._todo) + self._left
+        """How far the build is: items with their whole-item vector of all
+        items with words to embed, sections with theirs of all sections, the
+        pass it is on (1, every item's whole-item vector; p > 1, sections
+        (p - 2) * SECTION_BAND + 1 to (p - 1) * SECTION_BAND of every item)
+        of the passes the largest item needs, what the build has done (kept
+        in the engine across restarts), and the time left for every text
+        still waiting at the rate the build has kept while it was free to
+        work. `state` is building, paused (indexing paused in Settings) or
+        done; `off` with no embedder."""
         with self._lock:
             space = self.spaces.get(self.item_space_id or "")
-            embedded = space.items() if space is not None else 0
+            items_total = len(self._sizes)
+            sections_total = self._sections_total
+            largest = max((n for _, n in self._sizes.values()), default=0)
+            whole = space.items() if space is not None else 0
+            rows = space.rows() if space is not None else 0
+        with self._todo_cond:
+            stage = self._items_todo.stage()
+            if self._stage is not None:
+                stage = self._stage if stage is None else min(stage, self._stage)
+            working = bool(self._items_todo) or bool(self._todo) or self._working
+            legacy = len(self._todo)
+        items_embedded = min(whole, items_total)
+        sections_embedded = max(0, min(rows - whole, sections_total))
+        texts = (items_total - items_embedded) + (sections_total - sections_embedded) + legacy
         done = self.build
         # Measured: the texts made over the time the build spent on them,
         # its rests included and every hold left out (`RATE_COMMITS`).
@@ -735,83 +861,132 @@ class VectorIndex:
         texts_done, spent = ((sum(t for t, _ in recent), sum(b for _, b in recent)) if recent
                              else (done["texts"], done["busy_sec"]))
         rate = texts_done / spent if spent > 0 and texts_done else None
-        state = ("off" if self.embedder is None else "done" if not items
+        state = ("off" if self.embedder is None else "done" if not working
                  else "paused" if self.paused else "building")
-        return {"state": state, "items_embedded": embedded, "items_waiting": items, "texts_waiting": texts,
+        return {"state": state,
+                "items_embedded": items_embedded, "items_total": items_total,
+                "items_waiting": items_total - items_embedded,
+                "sections_embedded": sections_embedded, "sections_total": sections_total,
+                "sections_waiting": sections_total - sections_embedded,
+                "texts_waiting": texts if working else 0,
+                "pass": (stage + 1) if working and stage is not None else None,
+                "passes": 1 + -(-largest // SECTION_BAND), "band": SECTION_BAND,
                 "items_done": done["items"], "texts_done": done["texts"], "share": lanes.BUILD_SHARE,
                 "texts_per_sec": round(rate, 2) if rate else None,
-                "seconds_left": 0 if not items else (round(texts / rate) if rate else None)}
+                "seconds_left": 0 if not working else (round(texts / rate) if rate else None)}
 
-    def _embed_item(self, o: int, path: str, sha: str) -> None:
-        """An item's whole-item vector and one per section, committed in one
-        write only while its content (a record's words) is still what they
-        were made from; one changed meanwhile is queued again by its write,
-        holding only its newest text (`_items_todo` is by item), so many
-        changes before the background lane reaches it cost one embedding."""
-        doc = self.docs.get(path)
+    def _texts_of(self, job: Job) -> Optional[list[tuple[int, str]]]:
+        """The (prop, text) a job embeds, those already embedded for this
+        content passed over; None when the item is gone or its content is
+        no longer the job's (its write queued it again)."""
+        doc = self.docs.get(job.path)
         summary = item_texts.embedded_summary(doc or {}) or {}
-        if doc is None or doc["_ord"] != o or summary.get("sha256") != sha:
-            return
+        if doc is None or doc["_ord"] != job.o or summary.get("sha256") != job.sha:
+            return None
         if doc.get("_content") is None:
-            texts = [emb.prepare(t) for t in item_texts.record_texts(doc)]
+            every = [emb.prepare(t) for t in item_texts.record_texts(doc)]
+            text = lambda p: every[p] if p < len(every) else None    # noqa: E731
         else:
-            raw = self.store.get(CONTENT, path.encode())
+            raw = self.store.get(CONTENT, job.path.encode())
             if raw is None or raw.value is None:
-                return
+                return None
             content = json.loads(raw.value)
             title = item_texts.title_of(doc, content)
-            sections = (content.get("sections") or [])[:SECTIONS_EMBEDDED_MAX]
-            texts = [emb.prepare(item_texts.whole_text(title, content))]
-            texts += [emb.prepare(item_texts.embedded_text(title, s)) for s in sections]
-        if not texts:
-            return
-        space = self.item_space_id
-        held = self.spaces.get(space)
-        # The sections first, any already embedded for this content passed
-        # over (a build stopped part way through goes on), the whole last.
-        props = [p for p in range(1, len(texts)) if not (held is not None and held.has(o, p))] + [WHOLE]
-        self._left = len(props)
-        for start in range(0, len(props), COMMIT_EVERY):
-            chosen = props[start:start + COMMIT_EVERY]
+            sections = content.get("sections") or []
+
+            def text(p: int) -> Optional[str]:
+                if p == WHOLE:
+                    return emb.prepare(item_texts.whole_text(title, content))
+                return emb.prepare(item_texts.embedded_text(title, sections[p - 1])) if p <= len(sections) else None
+        held = self.spaces.get(self.item_space_id or "")
+        out = []
+        for p in band_props(job.stage, job.sections):
+            if held is not None and held.has(job.o, p):
+                continue
+            t = text(p)
+            if t is not None:
+                out.append((p, t))
+        return out
+
+    def _embed_jobs(self, jobs: list[Job]) -> None:
+        """One step of the build: each job's vectors (an item's whole-item
+        row, or a band of its sections), embedded together and committed in
+        one write with the build's progress, each only while its item's
+        content is still what they were made from; then each item that has
+        more to embed waits for its next stage, behind every item still on
+        this one (breadth-first). An item changed meanwhile was queued again
+        at stage 0 by its write, holding only its newest content, so many
+        changes before the build reaches it cost one embedding."""
+        planned = []
+        for job in jobs:
+            found = self._texts_of(job)
+            if found is not None:
+                planned.append((job, found))
+        texts = [t for _, found in planned for _, t in found]
+        if texts:
             try:
-                vectors = self._embed_texts([texts[p] for p in chosen])
+                vectors = self._embed_texts(texts)
             except _Closing:
                 return
             for vector in vectors:
                 if len(vector) != self.embedder.dim:
                     raise ValueError(f"the embedder gave {len(vector)} dimensions, not {self.embedder.dim}")
-            last = start + len(chosen) >= len(props)
-            if not self._commit_rows(o, path, sha, space, list(zip(chosen, vectors)), last):
-                return              # its content changed meanwhile; it is queued again
-            self._left = len(props) - start - len(chosen)
-        if self.item_embedded(o):
-            self.items_embedded += 1
+            it = iter(vectors)
+            rows = [(job, [(p, next(it)) for p, _ in found]) for job, found in planned]
+            written = self._commit_jobs(self.item_space_id, rows)
+        else:
+            written = {job.o for job, _ in planned}
+        with self._lock:
+            items = self.spaces.get(self.item_space_id or "")
+            follow = []
+            for job, _ in planned:
+                if job.o not in written:
+                    continue
+                if job.stage == WHOLE and self.item_embedded(job.o):
+                    self.items_embedded += 1
+                stage = next_stage(items, job.o, job.sections)
+                if stage is not None and stage > job.stage:
+                    follow.append(Job(job.o, job.path, job.sha, job.rank, stage, job.sections))
+        with self._todo_cond:
+            for job in follow:
+                self._items_todo.again(job)
+            self._todo_cond.notify_all()
 
-    def _commit_rows(self, o: int, path: str, sha: str, space: str, rows: list,
-                     finished: bool) -> bool:
-        """One commit of an item's rows, with the build's progress, only
-        while its content is still what they were made from. Whether it was
-        written."""
+    def _commit_jobs(self, space: str, rows: list[tuple[Job, list]]) -> set[int]:
+        """One commit of the jobs' rows with the build's progress, each
+        job's only while its item's content is still what they were made
+        from. The ordinals written."""
         progress: dict = {}
+        written: set[int] = set()
 
         def prepare(lsn: int) -> list[Op]:
-            now = self.docs.get(path)
-            if now is None or now["_ord"] != o or ((item_texts.embedded_summary(now) or {}).get("sha256")) != sha:
+            written.clear()
+            ops = []
+            for job, made in rows:
+                now = self.docs.get(job.path)
+                if now is None or now["_ord"] != job.o or \
+                        ((item_texts.embedded_summary(now) or {}).get("sha256")) != job.sha:
+                    continue
+                written.add(job.o)
+                ops += [Op(VECS, vec_key(space, job.o, item_prop(p)), v.tobytes()) for p, v in made]
+            if not ops:
                 return []
+            texts = sum(len(made) for job, made in rows if job.o in written)
+            wholes = sum(1 for job, made in rows if job.o in written and any(p == WHOLE for p, _ in made))
             spent = max(0.0, time.monotonic() - self._since - self._spent["held_sec"])
-            progress.update({"texts": self.build["texts"] + len(rows),
-                             "items": self.build["items"] + (1 if finished else 0),
+            progress.update({"texts": self.build["texts"] + texts,
+                             "items": self.build["items"] + wholes,
                              "cpu_sec": round(self.build["cpu_sec"] + self._spent["cpu_sec"], 6),
                              "busy_sec": round(self.build["busy_sec"] + spent, 6)})
-            return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in rows] + \
-                [Op(META, BUILD_KEY, canonical(progress))]
+            return ops + [Op(META, BUILD_KEY, canonical(progress))]
         with lanes.foreground():
             self.store.commit(prepare=prepare)
-        if progress:
-            self._recent.append((len(rows), progress["busy_sec"] - self.build["busy_sec"]))
-            self.build = progress
-            self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
-        return bool(progress)
+        if not progress:
+            return set()
+        self._recent.append((progress["texts"] - self.build["texts"], progress["busy_sec"] - self.build["busy_sec"]))
+        self.build = progress
+        self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
+        return written
 
     def _embed_batch(self, batch: list[tuple[int, str, str]]) -> None:
         docs = []

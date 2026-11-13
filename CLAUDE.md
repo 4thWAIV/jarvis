@@ -1725,22 +1725,32 @@ ordinal and prop, prop 0 the whole item, i + 1 section i, made from
 in the same commit as a change of its content, so it counts as waiting
 (`count`'s `embedded` and `waiting`) until made again. The build of
 what waits (Tim's yes, 2026-11-12) finishes, is paced, goes on across
-restarts and says how far it is: the queue (`vectors.BuildQueue`, one entry
-an item, its newest content only) is taken in `vectors.build_rank` order,
-the records that hold people's words newest first, then the brain's notes,
-then JARVIS's own other files, then registered folders' files most
-recently changed first; the build keeps to `lanes.BUILD_SHARE` (half) of
+restarts and says how far it is. It goes in passes and covers every
+section of every item, nothing capped (Tim, 2026-11-12): pass one gives
+every item its whole-item vector, so every item is found by meaning early;
+each pass after it gives every item its next `vectors.SECTION_BAND`
+sections (1-16 of all, then 17-32 of all, ...), until every section has its
+vector; a changed item's rows go with its write, so it is back at pass one
+and ahead of every other item's next band. The queue (`vectors.BuildQueue`,
+one `Job` an item: its next stage, `vectors.next_stage` from the rows it
+has, its newest content only) is taken by stage, then in
+`vectors.build_rank` order, the records that hold people's words newest
+first, then the brain's notes, then JARVIS's own other files, then
+registered folders' files most recently changed first; the build keeps to `lanes.BUILD_SHARE` (half) of
 one core whatever the Mac's load (`lanes.rest_for`: after each batch the
 embedding's producer rests in proportion to the CPU the batch took on the
 embedding thread, `EmbeddingQueue.ingest_cpu`, so a query never waits
 behind a rest; the content reader rests the same way after each file),
 with one intra-op thread (`e5_onnx.THREADS`; measured 132 ms of CPU a
-1,000-character passage, a short query 11 ms); an item's rows are
-committed `COMMIT_EVERY` texts at a time, its whole-item row last, with the
+1,000-character passage, a short query 11 ms); the build's
+jobs are embedded and committed `COMMIT_EVERY` texts at a time (several
+short items together), with the
 build's progress (META `build`: texts, items, CPU seconds and the
 seconds spent building, holds left out) in the same commit, so a restart
-goes on from the part it reached and knows the rate at once. `VectorIndex.build_health` (on the engine's health) says the items
-embedded, the items and texts waiting, the texts a second of its last
+goes on from the part it reached and knows the rate at once. `VectorIndex.build_health` (on the engine's health) says the items with
+their whole-item vector of `items_total`, the sections with theirs of
+`sections_total`, the `pass` of the `passes` the largest item needs, the
+texts waiting, the texts a second of its last
 commits (`RATE_COMMITS`; holds left out) and the time left; `knowledge_api.build` adds the state (building, held while
 the conversation needs the machine, paused in Settings, done, off) and the
 files the content reader has still to read, and is what Settings →

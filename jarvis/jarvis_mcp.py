@@ -2345,7 +2345,10 @@ TOOL_SPECS = [
             "The knowledge engine's state (Diagnostics' Knowledge row): whether it is on, "
             "running, paused for the conversation, how much it has read, its last ingest "
             "pass and how many link proposals wait; and `build`, the index build Settings → "
-            "Knowledge shows: items embedded of the total, passages waiting, the time left "
+            "Knowledge shows: items with their whole-item vector of items_total, sections "
+            "with theirs of sections_total, the pass it is on of the passes needed (pass 1 "
+            "gives every item one vector; each pass after it the next `band` sections of "
+            "every item, until every section has one), texts waiting, the time left "
             "(seconds_left) and its state (building, held while you two talk, paused in "
             "Settings, done)."),
         "inputSchema": {"type": "object", "properties": {}},

@@ -7,9 +7,14 @@ how far it is.
   files, most recently changed first.
 - Pace: after each batch the build rests in proportion to the CPU the batch
   took (`lanes.BUILD_SHARE` of one core), whatever the Mac's load.
-- Resumable: a long item is committed a part at a time with the build's
-  progress, so a restart goes on from the part it reached.
-- Visible: `build_health` says what waits, what is done and the time left.
+- Coverage in passes (Tim, 2026-11-12: nothing capped): pass one gives
+  every item its whole-item vector; each pass after it gives every item its
+  next band of sections, until every section of every item has its vector;
+  a changed item goes back to pass one.
+- Resumable: the build commits a few texts at a time with its progress, so
+  a restart goes on from the last commit.
+- Visible: `build_health` says items and sections done of their totals,
+  the pass, what waits and the time left.
 """
 from __future__ import annotations
 
@@ -74,15 +79,41 @@ def test_the_build_order_is_records_newest_first_then_notes_then_files_newest_fi
         "/folders/f/new.md", "/folders/f/old.md"]
 
 
-def test_the_queue_keeps_one_entry_an_item_and_counts_its_texts():
+def _job(o, sha, rank, stage, sections=40):
+    return vec.Job(o, f"/{o}", sha, rank, stage, sections)
+
+
+def test_the_queue_keeps_one_entry_an_item_whole_vectors_first_then_bands():
     q = vec.BuildQueue()
-    q.put(1, "/a", "s1", (3, -1.0), 5)
-    q.put(2, "/b", "s2", (0, -1.0), 1)
-    q.put(1, "/a", "s3", (3, -2.0), 7)             # changed again before it was reached
-    assert len(q) == 2 and q.texts == 8
-    assert q.pop() == (2, "/b", "s2", 1)
-    assert q.pop() == (1, "/a", "s3", 7)            # only its newest content
-    assert q.pop() is None and q.texts == 0
+    q.put(_job(1, "s1", (3, -1.0), 2))
+    q.put(_job(2, "s2", (3, -2.0), 1))
+    q.put(_job(3, "s3", (0, -1.0), 1))
+    q.put(_job(4, "s4", (4, -1.0), 0))             # a whole-item vector goes before any band
+    q.put(_job(1, "s5", (3, -1.0), 0))             # changed: back to pass one, newest content only
+    assert len(q) == 4 and q.stage() == 0
+    assert [(j.o, j.sha, j.stage) for j in iter(q.pop, None)] == [
+        (1, "s5", 0), (4, "s4", 0), (3, "s3", 1), (2, "s2", 1)]
+    q.put(_job(5, "new", (3, -1.0), 0))
+    q.again(_job(5, "old", (3, -1.0), 3))          # a stage done on old content does not replace it
+    assert q.pop().sha == "new" and q.pop() is None
+
+
+def test_a_job_embeds_its_whole_vector_or_one_band_of_sections():
+    band = vec.SECTION_BAND
+    assert list(vec.band_props(0, 40)) == [vec.WHOLE]
+    assert list(vec.band_props(1, 40)) == list(range(1, band + 1))
+    assert list(vec.band_props(3, 2 * band + 3)) == list(range(2 * band + 1, 2 * band + 4))
+    space = vec.Space("s#items")
+    assert vec.next_stage(space, 7, 40) == 0
+    space.props[7] = {vec.WHOLE}
+    space.where[(7, vec.WHOLE)] = 1
+    assert vec.next_stage(space, 7, 0) is None and vec.next_stage(space, 7, 40) == 1
+    space.props[7] |= set(range(1, band + 1))
+    space.where.update({(7, p): 1 for p in space.props[7]})
+    assert vec.next_stage(space, 7, 40) == 2
+    space.props[7] |= set(range(band + 1, 41))
+    space.where.update({(7, p): 1 for p in space.props[7]})
+    assert vec.next_stage(space, 7, 40) is None
 
 
 def test_the_engine_embeds_in_the_build_order(tmp_path, monkeypatch):
@@ -129,15 +160,100 @@ def test_the_build_rests_for_its_share_of_one_core(tmp_path, monkeypatch):
                                                content=_sections(7, "alpha")), change="test")
         assert _until(lambda: engine.vectors.build_health()["state"] == "done")
         took = time.monotonic() - began
-    assert len(rests) == 2 and all(r >= 0.015 for r in rests)     # 8 texts, two batches of four
+    # The whole-item vector in pass one, then 7 sections: a batch of four, one of three.
+    assert len(rests) == 3 and all(r >= 0.015 for r in rests)
     assert took >= 3 * sum(rests) * 0.9                             # rested three times the CPU
 
 
-def test_a_long_item_goes_on_where_it_stopped_after_a_restart(tmp_path, monkeypatch):
+def test_sections_are_embedded_breadth_first_across_items(tmp_path, monkeypatch):
+    """Pass one gives every item its whole-item vector; then each pass gives
+    every item its next band of sections, so coverage rises evenly instead
+    of one dense file finishing before the next begins."""
     fake = Noting()
     monkeypatch.setattr(emb, "RUNNER", lambda: fake)
+    monkeypatch.setattr(vec, "SECTION_BAND", 4)
+    monkeypatch.setattr(vec, "COMMIT_EVERY", 8)
+    with in_process(tmp_path / "engine") as (engine, uds):
+        engine.vectors.set_paused(True)
+        tx = Transaction()
+        tx.put("/folders/f/new.md", {"title": "new", "mtime": 20.0}, content=_sections(10, "newer"))
+        tx.put("/folders/f/old.md", {"title": "old", "mtime": 10.0}, content=_sections(6, "older"))
+        uds.transaction(TIM, tx, change="test")
+        engine.vectors.set_paused(False)
+        assert _until(lambda: engine.vectors.build_health()["state"] == "done")
+        health = engine.vectors.build_health()
+    order = []
+    for text in fake.passages:
+        who = "N" if "newer" in text else "O"
+        part = text.rsplit("section ", 1)[-1] if "section" in text else "whole"
+        order.append(f"{who}{'' if part == 'whole' else int(part) // 4 + 1}")
+    # Pass one, then band 1 of both, band 2 of both, band 3 of the one left.
+    assert order == ["N", "O"] + ["N1"] * 4 + ["O1"] * 4 + ["N2"] * 4 + ["O2"] * 2 + ["N3"] * 2, order
+    assert health["items_embedded"] == health["items_total"] == 2
+    assert health["sections_embedded"] == health["sections_total"] == 16
+    assert health["texts_waiting"] == 0 and health["pass"] is None
+
+
+def test_no_item_s_sections_are_capped(tmp_path, monkeypatch):
+    """Every section of every item gets its vector, however many it has
+    (once 2,000 was the most an item's sections had)."""
+    monkeypatch.setattr(emb, "RUNNER", lambda: emb.FakeEmbedder(8))
+    monkeypatch.setattr(vec, "SECTION_BAND", 512)
+    monkeypatch.setattr(vec, "COMMIT_EVERY", 1024)
+    with in_process(tmp_path / "engine") as (engine, uds):
+        uds.transaction(TIM, Transaction().put("/folders/f/sheet.csv", {"title": "sheet"},
+                                               content=_sections(2050, "row")), change="test")
+        assert _until(lambda: engine.vectors.build_health()["state"] == "done", 60)
+        health = engine.vectors.build_health()
+        space = engine.vectors.spaces[engine.vectors.item_space_id]
+        o = engine.vectors._sizes["/folders/f/sheet.csv"][0]
+        assert len(space.props[o]) == 2051
+        assert health["sections_embedded"] == health["sections_total"] == 2050 and health["passes"] == 6
+
+
+def test_a_changed_item_goes_back_to_pass_one(tmp_path, monkeypatch):
+    """A change of an item's content deletes its vectors in the same write;
+    its whole-item vector is made again before any other item's next band."""
+    fake = Noting()
+    monkeypatch.setattr(emb, "RUNNER", lambda: fake)
+    monkeypatch.setattr(vec, "SECTION_BAND", 2)
+    monkeypatch.setattr(vec, "COMMIT_EVERY", 2)
+    gate = threading.Event()
+
+    class Gated(Noting):
+        def embed(self, texts, purpose):
+            if purpose == "passage" and any("section 2" in t for t in texts):
+                gate.wait(10)                       # held at the second band
+            return super().embed(texts, purpose)
+    fake = Gated()
+    monkeypatch.setattr(emb, "RUNNER", lambda: fake)
+    with in_process(tmp_path / "engine") as (engine, uds):
+        tx = Transaction()
+        tx.put("/folders/f/a.md", {"title": "a", "mtime": 20.0}, content=_sections(6, "alpha"))
+        tx.put("/folders/f/b.md", {"title": "b", "mtime": 10.0}, content=_sections(6, "beta"))
+        uds.transaction(TIM, tx, change="test")
+        assert _until(lambda: engine.vectors.build_health()["sections_embedded"] >= 4)
+        held = engine.vectors.build_health()
+        assert held["items_embedded"] == 2 and held["pass"] == 3
+        uds.transaction(TIM, Transaction().put("/folders/f/b.md", {"title": "b", "mtime": 30.0},
+                                               content=_sections(3, "betanew")), change="test")
+        changed = engine.vectors.build_health()
+        assert changed["items_embedded"] == 1 and changed["sections_total"] == 9 and changed["pass"] == 1
+        before = len(fake.passages)
+        gate.set()
+        assert _until(lambda: engine.vectors.build_health()["state"] == "done")
+        after = fake.passages[before:]
+        health = engine.vectors.build_health()
+    first_new = next(i for i, t in enumerate(after) if "betanew" in t)
+    assert "section" not in after[first_new]                      # its whole-item vector first
+    assert health["sections_embedded"] == health["sections_total"] == 9
+    assert not any("beta section" in t for t in after)            # nothing made for the old text
+
+
+def test_the_build_goes_on_from_its_last_commit_after_a_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(vec, "SECTION_BAND", 4)
     monkeypatch.setattr(vec, "COMMIT_EVERY", 4)
-    stop_after = {"batches": 2}
+    stop_after = {"batches": 3}
     gate = threading.Event()
 
     class Stopping(Noting):
@@ -152,25 +268,30 @@ def test_a_long_item_goes_on_where_it_stopped_after_a_restart(tmp_path, monkeypa
     with in_process(tmp_path / "engine") as (engine, uds):
         uds.transaction(TIM, Transaction().put("/folders/f/long.md", {"title": "long"},
                                                content=_sections(11, "gamma")), change="test")
-        assert _until(lambda: engine.vectors.build["texts"] == 8)
-        assert engine.vectors.build_health()["items_waiting"] == 1
+        # The whole-item vector, then bands 1 and 2: 9 texts in three commits.
+        assert _until(lambda: engine.vectors.build["texts"] == 9)
+        health = engine.vectors.build_health()
+        assert health["items_embedded"] == 1 and health["sections_embedded"] == 8 and health["pass"] == 4
         done_before = len(first.passages)
         gate.set()
-    assert done_before == 8
+    assert done_before == 9
     second = Noting()
     monkeypatch.setattr(emb, "RUNNER", lambda: second)
     with in_process(tmp_path / "engine") as (engine, uds):
-        assert engine.vectors.build["texts"] >= 8               # kept in the engine
+        assert engine.vectors.build["texts"] >= 9               # kept in the engine
         assert _until(lambda: engine.vectors.build_health()["state"] == "done")
         health = engine.vectors.build_health()
-        assert health["items_embedded"] == 1 and health["items_waiting"] == 0
-    # 12 texts in all: the 8 made before the restart were not made again.
-    assert len(second.passages) <= 12 - 8 + 4
+        assert health["sections_embedded"] == health["sections_total"] == 11
+    # Nothing committed before the restart was made again: after it, only
+    # the last band (sections 9 to 11), if the held batch had not finished.
+    assert all(int(t.rsplit("gamma section ", 1)[-1]) >= 8 for t in second.passages), second.passages
+    assert len(second.passages) <= 3
 
 
 def test_the_build_says_what_waits_and_the_time_left(tmp_path, monkeypatch):
     fake = Noting()
     monkeypatch.setattr(emb, "RUNNER", lambda: fake)
+    monkeypatch.setattr(vec, "SECTION_BAND", 2)
     with in_process(tmp_path / "engine") as (engine, uds):
         engine.vectors.set_paused(True)
         tx = Transaction()
@@ -179,6 +300,8 @@ def test_the_build_says_what_waits_and_the_time_left(tmp_path, monkeypatch):
         uds.transaction(TIM, tx, change="test")
         held = engine.vectors.build_health()
         assert held["state"] == "paused" and held["items_waiting"] == 3 and held["texts_waiting"] == 15
+        assert (held["items_total"], held["sections_total"], held["sections_waiting"]) == (3, 12, 12)
+        assert held["pass"] == 1 and held["passes"] == 3
         assert held["seconds_left"] is None                     # nothing measured yet
         engine.vectors.build = {"texts": 100, "items": 10, "cpu_sec": 5.0, "busy_sec": 20.0}
         measured = engine.vectors.build_health()

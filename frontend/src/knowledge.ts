@@ -26,11 +26,20 @@ export interface KnowledgeStatus {
   ingest?: { passes?: number; last_finished_at?: number | null; documents?: number; more?: boolean } | null;
 }
 
-/** The index build (knowledge_api.build): the same answer the brain reads. */
+/** The index build (knowledge_api.build): the same answer the brain reads.
+ * Pass 1 gives every item its whole-item vector; each pass after it the next
+ * `band` sections of every item, until every section has its vector. */
 export interface Build {
   state: "building" | "held" | "paused" | "done" | "off";
   items_embedded: number;
+  items_total: number;
   items_waiting: number;
+  sections_embedded: number;
+  sections_total: number;
+  sections_waiting: number;
+  pass: number | null;
+  passes: number;
+  band: number;
   texts_waiting: number;
   texts_per_sec: number | null;
   seconds_left: number | null;
