@@ -10,9 +10,12 @@ once the write is done (`done`): one `report` document per key,
 `/reports/<principal>/<key>.report`, through records.py. A repeated key is
 not written again: it is answered with the original answer (its status and
 body, marked `REPEATED_HEADER`), or, while the first is still being
-written, refused with 409 saying so (`STILL_WRITING`). A key claimed by an
-earlier run of the server that never finished is `unknown`: whether its
-write landed cannot be said, so it is never run again.
+written, refused with 409 saying so (`STILL_WRITING`). A key whose write
+raised (the write may have landed before a later step failed) or that an
+earlier run of the server claimed and never finished is `unknown`: whether
+its write landed cannot be said, so it is never run again. A key is never
+freed once claimed. A failure to keep the answer after the write is logged
+and the route's answer still goes back: the write landed.
 
 `GET /api/reports/<key>` (`lookup`) says what is on record for one of the
 caller's own keys: `{"state": "none"}`, `pending`, `unknown`, or `done`
@@ -20,13 +23,17 @@ with the original answer. A reporter that timed out asks it, and either
 reports the answer it finds or sends the report once more with the same
 key (`workflow_report.report`).
 
-Keys are the caller's own: one agent can neither see nor repeat another's.
+Keys are the caller's own (`owner`): one agent can neither see nor repeat
+another's. The owner is the reporter the gate proved (`reporters.recorded`),
+else, for a key JARVIS holds but has not onboarded, `held:<fingerprint>`;
+a request with neither is refused a key.
 Kept for `KEEP_SEC`, then dropped by `prune` (at server start).
 """
 from __future__ import annotations
 
 import functools
 import json
+import logging
 import re
 import time
 import uuid
@@ -37,8 +44,10 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 
-from jarvis import records, reporters
+from jarvis import records, reporters, web_auth
 from jarvis.workflow_report import REPORT_QUERY
+
+log = logging.getLogger(__name__)
 
 QUERY = REPORT_QUERY
 ROOT, TYPE = "/reports", "report"
@@ -49,8 +58,12 @@ REPEATED_HEADER = "X-JARVIS-Report"
 KEEP_SEC = 7 * 24 * 3600.0
 STILL_WRITING = ("This report (key {key}) is still being written; it was not sent again. "
                  "Ask again in a moment.")
-NOT_KNOWN = ("Whether this report (key {key}) landed is not known: JARVIS restarted while "
-             "writing it. It was not sent again; check the record before reporting it anew.")
+NOT_KNOWN = ("Whether this report (key {key}) landed is not known: JARVIS failed or "
+             "restarted while writing it. It was not sent again; check the record before "
+             "reporting it anew.")
+BAD_KEY = "A report key is 16 to 64 letters, digits, - or _."
+NO_OWNER = "A report key needs a signed request, so it is the sender's own."
+HELD_PREFIX = "held:"
 # This run of the server: a key still pending from another run never finished.
 BOOT = uuid.uuid4().hex
 
@@ -69,8 +82,21 @@ class Found:
         return out
 
 
+def owner(scope: dict) -> str:
+    """Whose keys a request's are: the reporter the gate proved, else a
+    key JARVIS holds but has not onboarded (`held:<fingerprint>`), else ''
+    (no key may be used)."""
+    recorded = reporters.recorded(scope)
+    if recorded:
+        return recorded
+    held = scope.get(web_auth.SIGNED_KEY)
+    return f"{HELD_PREFIX}{held}" if held else ""
+
+
 def path_of(principal: str, key: str) -> str:
-    return f"{ROOT}/{records.segment(principal or 'unknown')}/{key}.{TYPE}"
+    if not principal:
+        raise ValueError("a report key belongs to someone")
+    return f"{ROOT}/{records.segment(principal)}/{key}.{TYPE}"
 
 
 def valid(key: str) -> bool:
@@ -80,6 +106,8 @@ def valid(key: str) -> bool:
 def _found(data: dict) -> Found:
     if data.get("state") == DONE:
         return Found(DONE, int(data.get("status") or 200), dict(data.get("body") or {}))
+    if data.get("state") == UNKNOWN:
+        return Found(UNKNOWN)
     return Found(PENDING if data.get("boot") == BOOT else UNKNOWN)
 
 
@@ -110,11 +138,23 @@ def finish(principal: str, key: str, status: int, body: dict) -> None:
                    summary="A report's answer is kept with its key.")
 
 
-def release(principal: str, key: str) -> None:
-    """The write the key was claimed for failed before anything landed:
-    the key is free to be sent again."""
-    records.delete(path_of(principal, key), by=records.JARVIS, change="report_released",
-                   summary="A report that failed frees its key.")
+def unknown(principal: str, key: str) -> None:
+    """The route raised after the key was claimed: its write may have landed,
+    so the key is kept as unknown and never run again."""
+    def mark(data):
+        if data is None or data.get("state") == DONE:
+            return data
+        return {**data, "state": UNKNOWN, "failed_at": time.time()}
+    records.update(path_of(principal, key), mark, by=records.JARVIS, change="report_unknown",
+                   summary="A report whose write raised is kept as unknown.")
+
+
+def _quietly(what, *args) -> None:
+    """A step after the route's write that must not undo its answer."""
+    try:
+        what(*args)
+    except Exception:
+        log.warning("report key: %s failed", what.__name__, exc_info=True)
 
 
 def lookup(principal: str, key: str) -> Found:
@@ -167,19 +207,23 @@ def once(route):
         if not key:
             return await route(*args, **kwargs)
         if not valid(key):
-            return JSONResponse({"error": "A report key is 16 to 64 letters, digits, - or _."},
-                                status_code=400)
-        principal = reporters.recorded(request.scope)
+            return JSONResponse({"error": BAD_KEY}, status_code=400)
+        principal = owner(request.scope)
+        if not principal:
+            return JSONResponse({"error": NO_OWNER}, status_code=403)
         found = await asyncio.to_thread(claim, principal, request.url.path, key)
         if found is not None:
             return _repeated(key, found)
         try:
             result = await route(*args, **kwargs)
         except BaseException:
-            await asyncio.to_thread(release, principal, key)
+            # Never freed: the write may have landed before the step that
+            # raised. Kept unknown, synchronously so a cancelled request
+            # still marks it; left pending (never run again) if that fails.
+            _quietly(unknown, principal, key)
             raise
         status, body = _answer(result)
-        await asyncio.to_thread(finish, principal, key, status, body)
+        await asyncio.to_thread(_quietly, finish, principal, key, status, body)
         return result
     return wrapped
 
@@ -192,7 +236,9 @@ def mount(app: FastAPI) -> None:
     @app.get(LOOKUP_PATH)
     async def report_landed(key: str, request: Request):
         if not valid(key):
-            return JSONResponse({"error": "A report key is 16 to 64 letters, digits, - or _."},
-                                status_code=400)
-        found = await asyncio.to_thread(lookup, reporters.recorded(request.scope), key)
+            return JSONResponse({"error": BAD_KEY}, status_code=400)
+        principal = owner(request.scope)
+        if not principal:
+            return JSONResponse({"error": NO_OWNER}, status_code=403)
+        found = await asyncio.to_thread(lookup, principal, key)
         return found.json()

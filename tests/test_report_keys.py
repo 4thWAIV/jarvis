@@ -213,3 +213,60 @@ def test_work_report_survives_a_slow_answer_end_to_end(wired, agent, item, monke
     assert work_report.main(["work_report.py", "update", item.id, "Engine wired."]) == 0
     assert item.id in capsys.readouterr().out
     assert sum(e.summary == "Engine wired." for e in work_store.events(item.id)) == 1
+
+
+# ── a key once claimed is never freed, and is its own sender's ───────────
+
+def test_a_write_that_raised_after_it_landed_keeps_its_key_unknown(wired, agent, item,
+                                                                     monkeypatch):
+    """The write commits, then a step after it raises: the key is not
+    freed (that would let the same key write again), it is unknown."""
+    shown, failing = wired.server.work_held.shown, [True]
+
+    def broken(it):
+        if failing:
+            raise RuntimeError("the view's step after the write")
+        return shown(it)
+    monkeypatch.setattr(wired.server.work_held, "shown", broken)
+    with pytest.raises(RuntimeError):
+        _event(wired, agent, item.id, "Engine wired.")
+    assert wired.client.get(f"/api/reports/{KEY}", auth=agent).json() == {"state": "unknown"}
+    failing.clear()
+    again = _event(wired, agent, item.id, "Engine wired.")
+    assert again.status_code == 409 and again.json()["report"] == "unknown"
+    assert sum(e.summary == "Engine wired." for e in work_store.events(item.id)) == 1
+
+
+def test_an_answer_not_kept_still_goes_back(wired, agent, item, monkeypatch):
+    """Keeping the answer fails after the write landed: the agent is still
+    told it landed, and the key is never run again."""
+    def broken(*args):
+        raise RuntimeError("engine hiccup")
+    monkeypatch.setattr(report_keys, "finish", broken)
+    r = _event(wired, agent, item.id, "Engine wired.")
+    assert r.status_code == 200 and r.json()["item"]["id"] == item.id
+    again = _event(wired, agent, item.id, "Engine wired.")
+    assert again.status_code == 409
+    assert sum(e.summary == "Engine wired." for e in work_store.events(item.id)) == 1
+
+
+def test_held_keys_are_kept_apart(wired):
+    """Two keys JARVIS holds but has not onboarded each have their own keys,
+    never one shared namespace."""
+    from jarvis import agent_key_store, agent_keys
+    from tests.agent_key_fixtures import Agent, AgentAuth
+    one, two = (Agent(agent_keys.config_home(s), s) for s in ("sess-held-one", "sess-held-two"))
+    for a in (one, two):
+        agent_key_store.submit(a.public, a.session_id)
+    assert report_keys.claim(f"{report_keys.HELD_PREFIX}{one.fingerprint}", "/api/messages",
+                             KEY) is None
+    assert wired.client.get(f"/api/reports/{KEY}", auth=AgentAuth(one)).json() == {
+        "state": "pending"}
+    assert wired.client.get(f"/api/reports/{KEY}", auth=AgentAuth(two)).json() == {
+        "state": "none"}
+
+
+def test_a_request_with_no_sender_has_no_keys():
+    assert report_keys.owner({}) == ""
+    with pytest.raises(ValueError):
+        report_keys.path_of("", KEY)

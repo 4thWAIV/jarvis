@@ -492,12 +492,17 @@ route (`REPORT_QUERY`, in the query so it is signed with the request).
 `/api/messages`): it claims the key as its caller's before the write (one
 `report` document a key, `/reports/<principal>/<key>.report`, `pending`
 with this run's `BOOT`) and keeps the route's answer with it once the write
-is done (`done`, its status and body); a write that raises frees the key. A
-repeated key writes nothing: it is answered with the original answer
-(`X-JARVIS-Report: repeated`), refused 409 while the first is still being
-written, and `unknown` when an earlier run of the server claimed it and
-never finished. `GET /api/reports/<key>` says what is on record for one of
-the caller's own keys (`agent_rights.OWN_REPORTS`, in every grant that may
+is done (`done`, its status and body). A key is never freed: a route that
+raises (its write may have landed before a later step failed) leaves it
+`unknown`, and an answer that cannot be kept is logged and still goes back,
+since the write landed. The caller is `report_keys.owner`: the reporter the
+gate proved (`reporters.recorded`), else `held:<fingerprint>` for a key
+JARVIS holds but has not onboarded; a request with neither is refused a
+key (403). A repeated key writes nothing: it is answered with the original
+answer (`X-JARVIS-Report: repeated`), refused 409 while the first is still
+being written, and `unknown` when its write raised or an earlier run of the
+server claimed it and never finished. `GET /api/reports/<key>` says what
+is on record for one of the caller's own keys (`agent_rights.OWN_REPORTS`, in every grant that may
 report, whatever its scope). A report the client does not hear back from
 within its timeout is unknown, not failed (`TimedOut`): it asks that route
 and reports the answer it finds, waits while it is pending

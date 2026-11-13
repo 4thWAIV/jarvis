@@ -231,8 +231,8 @@ def _landed(client, key: str) -> dict | None:
         if found.get("state") == "done":
             return _answered(int(found.get("status") or 200), found.get("body") or {})
         if found.get("state") == "unknown":
-            raise SystemExit(f"Whether the report landed is not known: JARVIS restarted while "
-                             f"writing it (key {key}). It was not sent again.")
+            raise SystemExit(f"Whether the report landed is not known: JARVIS failed or "
+                             f"restarted while writing it (key {key}). It was not sent again.")
         if found.get("state") != "pending":
             return None
         if waited >= REPORT_WAIT_SEC:
