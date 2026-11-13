@@ -1,6 +1,21 @@
 # The new JARVIS workspace
 
-Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Work reports answer at once, and land once
+
+An agent's report to the Work tab no longer waits while JARVIS brings the
+Work list up to date: the report is written and answered at once, and the
+list catches up a moment later on its own. A report whose answer is slow to
+come back is no longer taken for failed: every report carries a key of its
+own, so the agent asks JARVIS whether it landed and sends it again only if
+it did not, and JARVIS never records the same report twice. The same holds
+for workflow reports and agents' messages to you.
+
+Diagnostics has a new row, Work tracker, showing how long reports and reads
+of the Work list have taken in the last five minutes. It turns amber once
+one takes over two seconds, and Updates notes it if a report takes over
+five.
 
 ## The knowledge index builds itself, and says how far it is
 
