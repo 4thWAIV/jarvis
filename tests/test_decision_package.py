@@ -171,6 +171,7 @@ def test_refused_content_is_not_built_checked_or_delivered(tmp_path, monkeypatch
 def test_a_failed_check_delivers_nothing(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
+    (tmp_path / "shot.png").write_bytes(b"rendered failed view")
     failed = decision_check.Result(passed=["one"], failures=["809x589 slide 2: too tall"],
                                    screenshots=[tmp_path / "shot.png"])
     monkeypatch.setattr(decision_check, "check", lambda *a: failed)

@@ -26,6 +26,51 @@ from tests.test_decision_package import small_deck, write
 pytestmark = [pytest.mark.page, pytest.mark.ssh_keygen]
 
 
+@pytest.mark.parametrize('show_detail', [True, False])
+def test_custom_page_renders_entry_and_expanded_story_views_before_delivery(
+        tmp_path, stand_in, authored_package_source, show_detail, capsys):
+    from jarvis import agent_keys, make_package as mp, package_signature
+    import zipfile
+    folder = tmp_path / 'source'
+    folder.mkdir()
+    (folder / 'index.html').write_text('''<!doctype html><h1>Two views</h1>
+        <img src="diagram.svg" width="200" height="120">
+        <button id="open" onclick="document.querySelector('#detail').hidden=false">Details</button>
+        <section id="detail" hidden><img src="diagram.svg" width="200" height="120"></section>
+        <script src="/api/packages/story.js"></script>''')
+    (folder / 'diagram.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120"><rect width="200" height="120" fill="green"/><text x="10" y="60" fill="white">Readable diagram</text></svg>')
+    (folder / 'about.md').write_text('# Two views\nThe page has a diagram and an expanded detail with the same diagram.')
+    (folder / 'story.json').write_text(json.dumps({
+        'title': 'Two views', 'slides': [{'title': 'Details', 'beats': [
+            {'say': 'Open the detailed diagram.', 'actions': ([{'click': '#open'}, {'show': '#detail'}] if show_detail else []),
+             'targets': ['#detail']}]}]}))
+    (folder / 'package.json').write_text(json.dumps({
+        'name': 'two-views', 'purpose': 'Explain both views.', 'runs': 'page', 'entry': 'index.html',
+        'story': 'story.json', 'brief': 'about.md',
+        'understanding': {name: 'about.md' for name in ('index.html', 'diagram.svg', 'story.json')}}))
+    agent_keys.make_pair(agent_keys.key_folder('sess-1'), 'jarvis-agent')
+    out = tmp_path / 'out'
+    code = mp.main([str(folder), '--out', str(out), '--session', 'sess-1',
+                    '--deliver-to', stand_in.url])
+    if not show_detail:
+        assert code == 1
+        assert "required pictures never visible" in capsys.readouterr().out
+        assert stand_in.posts == []
+        return
+    assert code == 0
+    for size in ('809x589', '662x489'):
+        shots = out / 'review-1' / 'check' / size
+        assert (shots / 'entry.png').is_file()
+        assert (shots / 'beat-1.1.png').is_file()
+        assert (shots / 'beat-1.1-image-2.png').is_file()
+    with zipfile.ZipFile(out / 'two-views-1.0.0.zip') as z:
+        receipt = json.loads(z.read('.jarvis/visual-review.json'))
+        assert receipt['review']['status'] == 'accepted'
+        assert receipt['machine_passed']
+    assert len(stand_in.posts) == 1
+    assert package_signature.read(out / 'two-views-1.0.0.zip').files_match
+
+
 class _StandIn:
     """POST /api/messages as JARVIS answers a message carrying a package,
     recorded: the request in, the message, the package and its inbox row out
@@ -84,7 +129,7 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
                       "every vote control is visible", "every picture, on every slide"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
-        shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
+        shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         assert shots == ["01-s1.png", "02-d-where.png", "03-d-when.png", "04-answers.png"]
     for check in ("first time: the story waits at where", "first time: the story waits at when",
                   "first time: every question answered, in order (where, when)",
@@ -95,7 +140,7 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
                   "stop again: the brain is told it is already stopped",
                   "resume: picked up at slide 3"):
         assert any(f"ok: {check}" in line for line in said.splitlines()), (check, said)
-    assert list((out / "check" / "flow").glob("*waiting-where.png"))
+    assert list((out / "review-1" / "check" / "flow").glob("*waiting-where.png"))
     assert "list_packages found it by its title's words" in said
 
     [(path, authorization, body)] = stand_in.posts
@@ -138,7 +183,7 @@ def test_the_command_checks_a_presentation_and_its_one_vote(
                 (size, check, said)
         assert any(f"ok: {size}: " in line and "every vote control is visible" in line
                    for line in lines), (size, said)
-        shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
+        shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         assert shots == ["01-s1.png", "02-s2.png", "03-d-understood.png", "04-answers.png"]
     for check in ("the story went on to its end", "every beat told pointed",
                   "the story waits at understood", "every question answered, in order (understood)",
@@ -208,6 +253,8 @@ def test_the_check_fails_a_slide_whose_picture_draws_as_nothing(tmp_path):
     with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(unsized, "w") as dst:
         for item in src.infolist():
             body = src.read(item)
+            if item.filename.endswith("deck.css"):
+                body += b'\n.pictures > .picture {flex:0 1 auto} .pictures > .picture img {width:auto}'
             if item.filename.endswith("pictures/blank.svg"):
                 body = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
                         b'<rect width="320" height="200" fill="#38bdf8"/></svg>')

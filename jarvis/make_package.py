@@ -27,10 +27,11 @@ docs/making-a-package.md is the whole of how to use it. In short:
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
-The command checks the author's result, builds and zips it, checks it again (a deck
-end to end in an isolated JARVIS, decision_check.py; a folder through the
-receiver's own reading of the zip, work_packages.recognise), and only then
-sends it to the live JARVIS as a message carrying it (POST /api/messages,
+The command checks the author's result, builds and zips it, checks every
+HTML package view in an isolated JARVIS (decision_check.py), and returns
+the actual screenshots and built bytes to the same author for visual
+inspection. One repair and re-render is allowed. Only after both checks
+accept the unchanged result does it sign and send it to the live JARVIS as a message carrying it (POST /api/messages,
 messages_api.py): on the Work item `--work` names (else his Inbox), saying
 `--says`, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
@@ -47,6 +48,7 @@ import re
 import shutil
 import sys
 import tempfile
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -456,8 +458,8 @@ def check_vote(source: Path, work: str) -> None:
 
 # -- checking ------------------------------------------------------------------------
 
-def _check(made: Made, out: Path, signer: tuple[Path, str], session: str) -> bool:
-    """A deck end to end in an isolated JARVIS; True when every check passed."""
+def _check(made: Made, out: Path, signer: tuple[Path, str], session: str):
+    """Inspect every rendered package kind in the existing isolated JARVIS."""
     from jarvis import decision_check
     print("Checking it in an isolated JARVIS…", flush=True)
     result = decision_check.check(made.archive, made.deck, out / "check", signer, session)
@@ -472,11 +474,11 @@ def _check(made: Made, out: Path, signer: tuple[Path, str], session: str) -> boo
         print("Screenshots:")
         for shot in result.screenshots:
             print(f"  {shot}")
-        return False
+        return result
     print(f"Every check passed ({len(result.passed)}). Screenshots are in {out / 'check'}.")
     for line in result.passed:
         print(f"  ok: {line}")
-    return True
+    return result
 
 
 # -- the command -----------------------------------------------------------------------
@@ -533,6 +535,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     if source is not None and not source.exists():
         print(f"There is nothing at {source}.")
         return 1
+    review_started = False
+    signer = None
     try:
         if args.check_only and args.document:
             # The author's own check of its explanation; the factory projects
@@ -576,31 +580,73 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             args.work = envelope["work_id"]
             document = package_author.Document(args.document, args.revision,
                                                document_evidence(envelope, out))
+        from jarvis import agent_keys
+        signer = agent_keys.signer_for(args.session)
+        made = author = review = None
+
+        async def finish(authored_source, turn):
+            import asyncio
+            nonlocal made, author, review, review_started
+            for attempt in range(2):
+                attempt_out = out / f"review-{attempt + 1}"
+                try:
+                    if envelope is not None:
+                        made = make_architecture(envelope, authored_source, out)
+                    else:
+                        check_vote(authored_source, args.work)
+                        made = (make_folder(authored_source, out) if authored_source.is_dir()
+                                else make_deck(authored_source, out))
+                    author = with_author(made, authored_source, args.session)
+                    print(f"Built a {made.kind}: {made.archive}")
+                    if signer is None:
+                        raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
+                    review_started = True
+                    result = await asyncio.to_thread(_check, made, attempt_out, signer, args.session)
+                    review = await package_author.review(authored_source, made.archive, result,
+                                                         turn, authored_source.parent / attempt_out.name)
+                    status = review["review"]["status"]
+                    if status in ("accepted", "not-applicable"):
+                        return review
+                    why = review["review"].get("notes") or "Author did not accept the visual inspection."
+                    if status == "blocked" or attempt == 1:
+                        raise dp.Refused([str(why)])
+                    # The repair turn has already changed source and run check-only.
+                    continue
+                except dp.Refused as error:
+                    if signer is None or attempt == 1 or (review and review["review"]["status"] == "blocked"):
+                        raise
+                    await turn("The rendered package cannot be delivered: "
+                               + "\n".join(error.problems)
+                               + "\nRepair your source/assets within this same assignment, then run "
+                               "the supplied check-only command after your final change. This is "
+                               "the one repair attempt. The factory will build and render again.")
+            raise dp.Refused(["Visual review did not accept a rendered package after repair."])
+
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
-                                        document=document)
-        if envelope is not None:
-            made = make_architecture(envelope, source, out)
-        else:
-            check_vote(source, args.work)
-            made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
-        author = with_author(made, source, args.session)
+                                        document=document, finish=finish)
+        if made is None or review is None:
+            raise dp.Refused(["The same fresh author did not finish the rendered visual review."])
+        if author_proof._sha(made.archive) != review["archive_sha256"] or \
+                author_proof.source_digest(source) != review["source_sha256"]:
+            raise dp.Refused(["Built bytes changed after visual acceptance; render and review again."])
+        # The existing signature covers both the exact built/template bytes and
+        # the author's receipt identifying their pre-signing archive digest.
+        package_signature.add_files(made.archive, {".jarvis/visual-review.json":
+                                    (json.dumps(review, indent=2) + "\n").encode()})
     except dp.Refused as e:
-        print("Not built. These need changing:")
+        print("Not delivered. These need changing:" if review_started else "Not built. These need changing:")
         for line in e.problems:
             print(f"  - {line}")
-        return 1
-    from jarvis import agent_keys
-    # The session's own key, else (an agent package's run, working in it) the
-    # work-item key in this folder or above. Nothing goes without one.
-    signer = agent_keys.signer_for(args.session)
-    if signer is None:
-        print("Not delivered: there is no key to sign it with. Give --session <your session "
-              "id>, having made and submitted your key (python -m jarvis.agent_key init, then "
-              "submit), and once Tim has switched your agent on.")
-        return 1
-    print(f"Built a {made.kind}: {made.archive}")
-    if made.deck is not None and not _check(made, out, signer, args.session):
+        if review_started and args.work and signer:
+            from jarvis import message
+            text = "Package not delivered after visual review: " + "; ".join(e.problems)
+            try:
+                dp.post(args.deliver_to.rstrip("/") + message.ROUTE + "?"
+                        + urllib.parse.urlencode({"work": args.work}), "",
+                        message.body(text[:2000], None), signer=signer)
+            except OSError as report_error:
+                print(f"The failure could not be reported on Work {args.work}: {report_error}")
         return 1
     try:
         decision = made.deck is not None and bool(made.deck.get("decisions"))

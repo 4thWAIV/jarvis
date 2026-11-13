@@ -403,28 +403,67 @@ VOTING = """
 # slide's and a decision's (its own, its comparison, each option's) alike:
 # every one loaded and drawn, as the frame shows it, at least MIN_PICTURE px
 # each way. An SVG with no size of its own loads and draws as nothing.
+PICTURE_ELEMENTS = """root => [...root.querySelectorAll('img, svg, canvas')]
+    .filter(img => img.getAttribute('role') !== 'presentation' && !img.parentElement.closest('svg'))"""
+
 PICTURES = """
-() => {
+async (options) => {
+  options = options || {};
   const problems = [];
-  const slide = document.querySelector("#track > .slide.current");
-  slide.querySelectorAll(".picture img").forEach((img, i) => {
+  const root = document.querySelector("#track > .slide.current") || document.body;
+  const scrolls = options.scroll ? [...document.querySelectorAll('*')]
+      .filter(el => typeof el.scrollTo === 'function').map(el => [el, el.scrollLeft, el.scrollTop]) : [];
+  const images = (PICTURE_ELEMENTS)(root);
+  const loaded = img => img instanceof HTMLImageElement ? Promise.race([
+    img.decode().catch(() => {}), new Promise(resolve => setTimeout(resolve, 5000))
+  ]) : Promise.resolve();
+  if (!options.scroll) await Promise.all(images.map(loaded));
+  for (const [i, img] of images.entries()) {
     const card = img.closest(".option");
-    const name = card ? `option ${card.id}'s picture` : `picture ${i + 1} (${img.getAttribute("src")})`;
-    const r = img.getBoundingClientRect(), cs = getComputedStyle(img);
-    if (cs.display === "none" || cs.visibility !== "visible" || parseFloat(cs.opacity) === 0)
-      problems.push(`${name} is not visible`);
-    if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
-      problems.push(`${name} did not load or has no size of its own`);
-      return;
+    const name = card ? `option ${card.id}'s picture` : `picture ${i + 1} (${img.getAttribute("src") || img.id || img.tagName.toLowerCase()})`;
+    let hidden = false;
+    for (let el = img; el; el = el.parentElement) {
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility !== "visible" || parseFloat(cs.opacity) === 0)
+        hidden = true;
     }
-    const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
-    const w = img.naturalWidth * k, h = img.naturalHeight * k;
-    if (!(w >= MIN_PICTURE && h >= MIN_PICTURE))
-      problems.push(`${name} is drawn ${Math.round(w || 0)} x ${Math.round(h || 0)}px, under MIN_PICTUREpx`);
-  });
+    if (hidden && options.deferHidden) continue;
+    img.__jarvisPictureSeen = true;
+    if (hidden) problems.push(`${name} is not visible`);
+    // Scroll before decoding: lazy images load when their view is reached.
+    if (options.scroll) {
+      img.scrollIntoView({block: "center", inline: "center", behavior: "instant"});
+      await loaded(img);
+    }
+    if (img instanceof HTMLImageElement && (!img.complete || !img.naturalWidth || !img.naturalHeight)) {
+      problems.push(`${name} did not load or has no size of its own`);
+      continue;
+    }
+    const r = img.getBoundingClientRect();
+    const naturalWidth = img instanceof HTMLImageElement ? img.naturalWidth : r.width;
+    const naturalHeight = img instanceof HTMLImageElement ? img.naturalHeight : r.height;
+    const k = Math.min(r.width / naturalWidth, r.height / naturalHeight);
+    const w = naturalWidth * k, h = naturalHeight * k;
+    const minimum = img.closest(".picture") ? MIN_PICTURE : 1;
+    if (!(w >= minimum && h >= minimum))
+      problems.push(`${name} is drawn ${Math.round(w || 0)} x ${Math.round(h || 0)}px, under ${minimum}px`);
+    let clip = {left: 0, top: 0, right: innerWidth, bottom: innerHeight};
+    for (let el = img.parentElement; el; el = el.parentElement) {
+      const cs = getComputedStyle(el), b = el.getBoundingClientRect();
+      if (/(hidden|clip|scroll|auto)/.test(cs.overflowX)) {
+        clip.left = Math.max(clip.left, b.left); clip.right = Math.min(clip.right, b.right);
+      }
+      if (/(hidden|clip|scroll|auto)/.test(cs.overflowY)) {
+        clip.top = Math.max(clip.top, b.top); clip.bottom = Math.min(clip.bottom, b.bottom);
+      }
+    }
+    if (r.left < clip.left - 1 || r.top < clip.top - 1 || r.right > clip.right + 1 || r.bottom > clip.bottom + 1)
+      problems.push(`${name} is clipped outside its viewing area`);
+  }
+  for (const [el, x, y] of scrolls) el.scrollTo({left:x, top:y, behavior:'instant'});
   return problems;
 }
-""".replace("MIN_PICTURE", str(MIN_PICTURE_PX))
+""".replace("MIN_PICTURE", str(MIN_PICTURE_PX)).replace("PICTURE_ELEMENTS", PICTURE_ELEMENTS)
 
 
 class Deck:
@@ -435,7 +474,7 @@ class Deck:
                  shots: Path, result: Result):
         self.browser, self.jarvis, self.deck, self.story = browser, jarvis, deck, story
         self.package_id, self.shots, self.result = package_id, shots, result
-        self.parsed = package_story.parse(json.dumps(story).encode())
+        self.parsed = package_story.parse(json.dumps(story).encode()) if story else None
         self.frames: list[tuple[float, dict]] = []
         # Each file of the package the frame asked for and did not get (its
         # results are read before any exist, so they are not counted).
@@ -509,7 +548,8 @@ class Deck:
         for _ in range(100):
             self.inner = next((f for f in self.page.frames
                                if f"/{self.package_id}/files/" in f.url), None)
-            if self.inner is not None and await self.inner.locator("#go-1").count():
+            if self.inner is not None and await self.inner.locator(
+                    "#go-1" if self.deck.get("slides") is not None else "body").count():
                 return
             await asyncio.sleep(0.2)
         raise CheckFailed("the package's frame never loaded")
@@ -656,6 +696,47 @@ async def _check_layout(d: Deck, label: str) -> None:
     if not pictures_bad:
         result.passed.append(f"{label}: every picture, on every slide, is drawn at least "
                              f"{MIN_PICTURE_PX} px each way")
+
+
+async def _check_page(d: Deck, label: str) -> None:
+    """Inspect the entry and each story view using the shipped story helper.
+
+    Story actions identify tabs and expanded views; hidden pictures must become
+    visible in one of those views. The same author checks coverage afterwards.
+    """
+    async def capture(name):
+        problems = await d.js(PICTURES, {"deferHidden": True, "scroll": True})
+        shot = d.shots / label / f"{name}.png"
+        await d.iframe.screenshot(path=str(shot))
+        d.result.screenshots.append(shot)
+        d.result.failures.extend(f"{label} {name}: {p} [{shot}]" for p in problems)
+        # Keep every image's actual view, including images above the last scroll.
+        for n, img in enumerate(await d.inner.locator("img, svg, canvas").all(), 1):
+            if await img.is_visible() and await img.evaluate("el => !!el.__jarvisPictureSeen"):
+                await img.scroll_into_view_if_needed()
+                shot = d.shots / label / f"{name}-image-{n}.png"
+                await d.iframe.screenshot(path=str(shot))
+                d.result.screenshots.append(shot)
+
+    await capture("entry")
+    if d.parsed:
+        for number in range(1, len(d.parsed.slides) + 1):
+            for _, cue in d.parsed.cues(d.package_id, number):
+                # The reader's existing story helper performs show/click actions.
+                if cue["actions"] or cue["targets"]:
+                    await d.page.evaluate("""cue => document.querySelector('#package-view iframe')
+                        .contentWindow.postMessage({...cue, jarvis: 'package', type: 'story.cue'}, '*')""", cue)
+                    await asyncio.sleep(.8)  # helper's bounded smooth-scroll/missing-target delay
+                    missing = await d.page.evaluate("() => window.__packageMissing || []")
+                    if missing:
+                        d.result.failures.append(f"{label}: story view {cue['beat']} is missing {missing}")
+                    await capture("beat-" + cue["beat"])
+    d.result.failures.extend(f"{label}: package file {failure}" for failure in sorted(set(d.refused)))
+    unseen = await d.js("() => (" + PICTURE_ELEMENTS + """ )(document)
+        .filter(img => !img.__jarvisPictureSeen)
+        .map(img => img.getAttribute('src') || img.id || img.tagName.toLowerCase())""")
+    d.result.expect(not unseen, f"{label}: page image views inspected",
+                    f"{label}: required pictures never visible in the entry or story views: {unseen}")
 
 
 async def _answer(d: Deck, question: str, option: str, by_click: bool) -> tuple[bool, str]:
@@ -895,8 +976,17 @@ async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
                 try:
                     if not await d.open(window, frame_size):
                         continue
-                    await _check_layout(d, label)
-                    if n == 0:
+                    if deck.get("slides") is None:
+                        await d.page.evaluate("""() => {
+                            window.__packageMissing = [];
+                            window.addEventListener('message', e => {
+                                if (e.data?.type === 'story.missing') window.__packageMissing.push(e.data);
+                            });
+                        }""")
+                        await _check_page(d, label)
+                    else:
+                        await _check_layout(d, label)
+                    if n == 0 and deck.get("slides") is not None:
                         # The story's behaviour, once, at the larger size. A
                         # presentation (no decisions) has no question to wait
                         # at, stop at or resume from: it is told to the end.
@@ -980,7 +1070,7 @@ async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, in
 
 # -- the whole check --------------------------------------------------------------------
 
-def check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
+def check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, str],
           session: str) -> Result:
     """Check the zip in an isolated JARVIS; screenshots go under `folder`.
     It is signed with the agent's own key (`signer`, for `session`), which
@@ -1001,13 +1091,21 @@ def seed(data: Path, public_key: str, session: str) -> None:
         agent_key_store.onboard(session, "decision check")
 
 
-def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
+def _check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, str],
            session: str) -> Result:
     from jarvis.decision_package import deliver, says_of
     result = Result()
     folder.mkdir(parents=True, exist_ok=True)
     jarvis = None
     try:
+        from jarvis import bundle_archive
+        with bundle_archive.open_archive(archive) as z:
+            listing = bundle_archive.list_members(z)
+            manifest = json.loads(z.read(listing.root + "package.json"))
+        if manifest["runs"] != "page":
+            result.passed.append("No HTML entry; supplied reader attachments require author inspection.")
+            return result
+        deck = deck or {"title": manifest["name"].replace("-", " ")}
         dist = built_page()
         # Signed by the agent's key, which the isolated JARVIS knows as an
         # onboarded agent's, as the live one does (seeded before it starts).
@@ -1024,7 +1122,9 @@ def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
         result.expect(ok and package_id in said,
                       f"list_packages found it by its title's words",
                       f"list_packages by \"{deck['title']}\" said: {said}")
-        story = json.loads((jarvis.package_folder(package_id) / "story.json").read_text())
+        story_name = manifest.get("story")
+        story = (json.loads((jarvis.package_folder(package_id) / story_name).read_text())
+                 if story_name else None)
         asyncio.run(_within_the_wall_clock(
             _in_browser(jarvis, deck, story, package_id, folder, result), result))
     except (CheckFailed, OSError, subprocess.SubprocessError) as e:

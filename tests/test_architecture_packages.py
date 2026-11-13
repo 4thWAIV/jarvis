@@ -159,6 +159,8 @@ def test_document_and_revision_go_together(tmp_path):
 def factory(through_the_route, monkeypatch, tmp_path):
     """make_package's author is the stand-in claude (tests/architecture_author)
     and its delivery goes to this test's JARVIS, signed as it is sent."""
+    from tests.test_make_package import passing_check
+    passing_check(monkeypatch)
     monkeypatch.setenv("JARVIS_CLAUDE_PATH", str(architecture_author.install(tmp_path / "bin")))
     monkeypatch.setenv("AUTHOR_TEST_CLAUDE_ROOT", str(session_watch.config_roots()[0]))
 

@@ -32,31 +32,44 @@ def only_engine(request, tmp_path, monkeypatch):
     # The author writes its source, then (as the real one is told to) checks
     # it last with --check-only, which its own transcript records.
     action = f'''
-    with open('received-prompt.txt', 'w') as output:
-        output.write(text)
-    mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
-    if mode in ('source', 'edited-after-check'):
+    if text.startswith('Inspect the rendered package'):
         import sys as _sys
         from pathlib import Path as _Path
         _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
-        from jarvis import author_proof as _ap, session_watch as _sw
-        from tests.author_fixtures import write_transcript as _write
-        with open('content.json', 'w') as output:
-            output.write(os.environ['AUTHOR_TEST_CONTENT'])
-        _digest = _ap.source_digest(_Path('content.json').resolve())
-        if {engine!r} == 'claude':
-            _at = (_Path(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
-                   / _sw.encode_cwd(os.getcwd()) / ({session} + '.jsonl'))
-        else:
-            _at = (_Path(os.environ['JARVIS_CODEX_SESSIONS_HOME']) / 'sessions' / '2026' / '11'
-                   / '09' / ('rollout-2026-11-09T00-00-00-' + {session} + '.jsonl'))
-        _write({engine!r}, {session}, _digest, path=_at)
-        if mode == 'edited-after-check':
-            with open('content.json', 'a') as output:
-                output.write(' ')
-    elif mode == 'blocked':
-        with open('author-blocked.md', 'w') as output:
-            output.write('Missing release receipt.')
+        from tests.author_fixtures import accept_visual_review as _accept
+        _request = _Path(text.split('Read ', 1)[1].split('. Open EVERY', 1)[0])
+        _mode = os.environ.get('AUTHOR_REVIEW_MODE', 'accepted')
+        if _mode != 'missing':
+            _accept(_request, status=_mode, notes='SVG label is cropped.' if _mode == 'repair' else 'Views inspected.')
+        with open('review-turns.txt', 'a') as output:
+            output.write('review\\n')
+        text = 'Visual review recorded.'
+    else:
+        with open('received-prompt.txt', 'w') as output:
+            output.write(text)
+        mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
+        if mode in ('source', 'edited-after-check'):
+            import sys as _sys
+            from pathlib import Path as _Path
+            _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
+            from jarvis import author_proof as _ap, session_watch as _sw
+            from tests.author_fixtures import write_transcript as _write
+            with open('content.json', 'w') as output:
+                output.write(os.environ['AUTHOR_TEST_CONTENT'])
+            _digest = _ap.source_digest(_Path('content.json').resolve())
+            if {engine!r} == 'claude':
+                _at = (_Path(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
+                       / _sw.encode_cwd(os.getcwd()) / ({session} + '.jsonl'))
+            else:
+                _at = (_Path(os.environ['JARVIS_CODEX_SESSIONS_HOME']) / 'sessions' / '2026' / '11'
+                       / '09' / ('rollout-2026-11-09T00-00-00-' + {session} + '.jsonl'))
+            _write({engine!r}, {session}, _digest, path=_at)
+            if mode == 'edited-after-check':
+                with open('content.json', 'a') as output:
+                    output.write(' ')
+        elif mode == 'blocked':
+            with open('author-blocked.md', 'w') as output:
+                output.write('Missing release receipt.')
 '''
     fake = folder / engine
     fake.write_text(original.replace('#!/usr/bin/env python3', '#!' + sys.executable).replace(start, start + action))
@@ -99,6 +112,8 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     receipt = json.loads(receipt_path.read_text())
     assert receipt['status'] == 'authored' and receipt['engine'] == only_engine
     assert receipt['author_session'] != receipt['origin_session'] == 'origin-session'
+    assert receipt['visual_review']['review']['status'] == 'accepted'
+    assert (receipt_path.parent / 'review-turns.txt').read_text().splitlines() == ['review']
     prompt = (receipt_path.parent / 'received-prompt.txt').read_text()
     assert str(pa.SKILL) in prompt and str(source) in prompt
     assert pa.session_skill._module("make_package", cert=False) in prompt
@@ -259,3 +274,48 @@ async def test_author_timeout_closes_session_and_preserves_failure(tmp_path, mon
     assert child.closed
     [receipt] = (tmp_path / 'out').glob('author/*/author-receipt.json')
     assert json.loads(receipt.read_text())['status'] == 'failed'
+
+
+@pytest.mark.asyncio
+async def test_visual_review_cannot_switch_author_sessions(tmp_path, monkeypatch):
+    from jarvis.brain_provider import SessionInfo, TurnEnded
+    class Session:
+        turns = 0
+        async def open(self, instructions):
+            pass
+        async def send(self, text):
+            self.turns += 1
+            (self.config.home / 'content.json').write_text('{}')
+            self.event(self, SessionInfo('fresh-author' if self.turns == 1 else 'replacement', None))
+            self.event(self, TurnEnded(0, 0))
+        async def close(self, timeout):
+            self.closed = True
+    child = Session()
+    class Provider:
+        name = 'openai'
+        def session(self, config, event, exited):
+            child.config, child.event = config, event
+            return child
+    monkeypatch.setattr(pa.brain_provider, 'provider', lambda name: Provider())
+    async def finish(source, turn):
+        await turn('Inspect the rendered views.')
+    with pytest.raises(dp.Refused, match='author session changed'):
+        await pa.author(handoff(tmp_path), 'codex', tmp_path / 'out', session='origin', finish=finish)
+    assert child.closed
+
+
+@pytest.mark.parametrize("mode", ["missing", "repair", "blocked"])
+def test_visual_review_cannot_be_skipped_and_repairs_are_bounded(
+        only_engine, origin_key, tmp_path, monkeypatch, mode, capsys):
+    monkeypatch.setenv("AUTHOR_REVIEW_MODE", mode)
+    monkeypatch.setattr(dp, "post", lambda *a, **kw: pytest.fail("unreviewed render delivered"))
+    passing_check(monkeypatch)
+    out = tmp_path / "out"
+    assert mp.main(["--handoff", str(handoff(tmp_path)), "--engine", only_engine,
+                    "--session", "origin-session", "--out", str(out)]) == 1
+    [receipt_path] = out.glob("author/*/author-receipt.json")
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed"
+    assert len(list(out.glob("author/*/review-*/visual-request.json"))) == (1 if mode == "blocked" else 2)
+    if mode == "repair":
+        assert "SVG label is cropped." in capsys.readouterr().out
