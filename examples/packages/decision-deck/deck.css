@@ -107,6 +107,9 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .table thead th { color: var(--muted); font-weight: 600; }
 .pictures { display: flex; gap: 14px; align-items: flex-start; }
 .picture { margin: 0; min-width: 0; }
+/* Give viewBox-only SVGs a definite flex width instead of a zero intrinsic basis. */
+.pictures > .picture { flex: 1 1 0; }
+.pictures > .picture img { width: 100%; }
 .picture img { display: block; max-width: 100%; max-height: 300px; object-fit: contain; border-radius: 6px; }
 .picture figcaption { color: var(--muted); margin-top: 4px; }
 
