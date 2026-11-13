@@ -89,10 +89,13 @@ def kit_page(jarvis_app, tmp_path):
         "name": "kit-selectors", "purpose": "Point at exact members of a kit-rendered page.",
         "runs": "page", "entry": "index.html", "story": "story.json", "brief": "README.md",
         "understanding": {"index.html": "README.md", "story.json": "README.md"}}))
-    if package_story.HELPER_PATH.encode() not in view:
-        pytest.skip(f"No adopted kit can be pointed at: the active kit ({digest}) does not load "
-                    f"the story helper or mark member rows with data-member; this needs the "
-                    f"kit release that does ({KIT_WITH_MEMBERS or 'its digest not yet given'}).")
+    # Skipped only while the adopted kit is not the release that marks members,
+    # decided by its digest; with that kit adopted a missing helper or
+    # data-member fails loudly here and below, never skips.
+    if KIT_WITH_MEMBERS is None or digest != KIT_WITH_MEMBERS:
+        pytest.skip(f"No adopted kit marks member rows: the active kit is {digest}; this needs "
+                    f"the kit release that does ({KIT_WITH_MEMBERS or 'its digest not yet given'}).")
+    assert package_story.HELPER_PATH.encode() in view, f"kit {digest} does not load the story helper"
     made = make_package.make_folder(folder, tmp_path / "built")
     r = client.post("/api/packages/inbox", content=made.archive.read_bytes(),
                     headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}",
@@ -130,10 +133,8 @@ async def test_the_helper_rings_exactly_the_one_intended_member_row(
             await page.locator("#package-view iframe").wait_for()
             frame = page.frame_locator("#package-view iframe")
             await frame.locator("[data-declaration]").first.wait_for(timeout=15000)
-            if await frame.locator("[data-member]").count() == 0:
-                pytest.skip(f"No adopted kit marks member rows: the active kit ({digest}) draws "
-                            f"no data-member; this needs the kit release that does "
-                            f"({KIT_WITH_MEMBERS or 'its digest not yet given'}).")
+            assert await frame.locator("[data-member]").count() > 0, \
+                f"kit {digest} is the release that marks members, yet draws no data-member"
             await page.locator("#package-view .package-story button").first.click()
             await _state(page, "Waiting for your answer on slide 2 of 2.")
             await asyncio.sleep(1.0)              # the helper's settle before it reports
