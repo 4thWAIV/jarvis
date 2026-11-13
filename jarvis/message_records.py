@@ -118,9 +118,10 @@ def pack_item(row: dict) -> dict:
     return out
 
 
-def unpack_item(data: dict) -> dict:
-    """An item's fields back as its row (detail as its stored text)."""
-    row = unpack({k: v for k, v in data.items() if k not in ("detail", "detail_text")}, ITEM_COLUMNS)
+def unpack_item(data: dict, columns: Iterable[str] = ITEM_COLUMNS) -> dict:
+    """An item's fields back as its row in `columns` (detail as its stored
+    text)."""
+    row = unpack({k: v for k, v in data.items() if k not in ("detail", "detail_text")}, columns)
     if "detail_text" in data:
         row["detail"] = _uncell(data["detail_text"])
     elif "detail" in data:
@@ -363,19 +364,24 @@ class ConversationMapping:
             top = max([r["id"] for r in rows if isinstance(r["id"], int)] + [_sequence(conn, table)])
             yield Doc(counter_path(table), {"table": table, "next": top + 1, "events": []})
 
-    def rows(self, docs) -> dict:
-        from jarvis.knowledge_move import Row
+    def rows(self, docs, shape=None) -> dict:
+        """The rows back in the file's own shape (`shape`): an older file's
+        conversation_items has fewer columns (conversation_schema 2 has 16)."""
+        from jarvis.knowledge_move import TODAY, Row
+        shape = shape or TODAY
+        item_cols = shape.columns("conversation_items", ITEM_COLUMNS)
+        message_cols = shape.columns("messages", MESSAGE_COLUMNS)
+        session_cols = shape.columns("session_messages", SESSION_MESSAGE_COLUMNS)
         out: dict[str, list] = {t: [] for t in self.tables}
         for doc in docs:
             path, data = doc.path, doc.data
             if path.endswith("." + TURN) and path.startswith(TURNS_UNDER + "/"):
-                out["conversation_items"].append(Row(unpack_item(data)))
+                out["conversation_items"].append(Row(unpack_item(data, item_cols)))
             elif path.endswith("." + MESSAGE):
                 if "message" in data:
-                    out["messages"].append(Row(unpack(data["message"], MESSAGE_COLUMNS)))
+                    out["messages"].append(Row(unpack(data["message"], message_cols)))
                 if "session_message" in data:
-                    out["session_messages"].append(
-                        Row(unpack(data["session_message"], SESSION_MESSAGE_COLUMNS)))
+                    out["session_messages"].append(Row(unpack(data["session_message"], session_cols)))
                 for item in data.get("items") or []:
-                    out["conversation_items"].append(Row(unpack_item(item)))
-        return out
+                    out["conversation_items"].append(Row(unpack_item(item, item_cols)))
+        return shape.fit(out)

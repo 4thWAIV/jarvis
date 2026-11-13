@@ -127,3 +127,85 @@ def test_a_start_stopped_during_the_checks_never_blocks_the_next(jarvis_db, monk
     out = records_cutover.cut_over(snapshot=False)
     assert out.state == "cut over" and "cleared" in out.seconds
     assert records.uds().get(move.MOVE_CALLER, "/sqlite/things/b.row") is None
+
+
+# -- an older jarvis.db: conversation_schema 2, no agent-key tables -------------
+
+# conversation_items as conversation_schema 2 left it: 16 columns (the six
+# of migration 4, sender to state_at, came later).
+_ITEMS_AT_SCHEMA_2 = """
+    CREATE TABLE conversation_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at REAL NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        agent_session_id TEXT,
+        agent_name TEXT,
+        message_id INTEGER,
+        session_message_id INTEGER,
+        capture_id INTEGER,
+        detail TEXT NOT NULL DEFAULT '{}'
+    , counterpart_kind TEXT, counterpart_ref TEXT, sender_evidence TEXT, sender_subagent TEXT,
+      source_kind TEXT, source_id TEXT)
+"""
+_LATER_INDEXES = {"conversation_items_by_source", "conversation_items_by_about",
+                  "conversation_items_by_state", "conversation_items_by_carries"}
+_NO_AGENT_KEYS = ("agent_key", "agent_rights", "agent_author")
+
+
+def _older_jarvis_db(path):
+    """JARVIS's last SQLite schema as an older install had it: conversation
+    items at conversation_schema 2 and none of the agent-key tables, with
+    agents, steers and over a thousand conversation items."""
+    import json
+    saved = json.loads(move.PACKAGED_SCHEMA.read_text(encoding="utf-8"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    for o in saved["schema"]["objects"]:
+        if not o["sql"] or o["name"].startswith("sqlite_") or o["tbl_name"].startswith(_NO_AGENT_KEYS):
+            continue
+        if o["name"] == "conversation_items":
+            conn.execute(_ITEMS_AT_SCHEMA_2)
+        elif o["name"] not in _LATER_INDEXES:
+            conn.execute(o["sql"])
+    for name, rows in saved["schema_versions"].items():
+        if name.startswith(_NO_AGENT_KEYS):
+            continue
+        rows = [[2]] if name == "conversation_schema" else rows
+        conn.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' * len(rows[0]))})", rows)
+    conn.executemany("INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     [("s-1", "planning", 1, "idle", None, 1700000000.0, None),
+                      ("s-2", "chitauri", 0, "", "Chitauri", 0, 1700000500.0)])
+    conn.executemany("INSERT INTO steers (session_id, voice_name, project, prompt, outcome, created_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?)",
+                     [("s-1", "planning", "jarvis", f"steer {n}", "sent", 1700000000.0 + n)
+                      for n in range(3)])
+    items = []
+    for n in range(1, 1375):
+        if n % 10:
+            items.append((n, 1700000000.0 + n, "heard" if n % 2 else "jarvis", f"said {n}",
+                          None, None, None, None, None, "{}", None, None, None, None, None, None))
+        else:
+            items.append((n, 1700000000.0 + n, "message_in", f"agent says {n}", "s-1", "planning",
+                          None, None, None, '{"proof": "watcher"}', "agent", "s-1", "watcher", None,
+                          "message", str(n)))
+    conn.executemany(f"INSERT INTO conversation_items VALUES ({', '.join('?' * 16)})", items)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_an_older_jarvis_db_moves_and_is_proven_both_ways():
+    """An install whose jarvis.db is older than the last schema (the
+    conversation's 16 columns, no agent-key tables) moves through the
+    document types' own mappings and is proven both ways: the check reads
+    the items back in the file's 16 columns, and the way back makes none of
+    the tables the file never had."""
+    path = _older_jarvis_db(data_paths.db_path())
+    before = _sha(path)
+    out = records_cutover.cut_over(snapshot=False)
+    assert out.state == "cut over"
+    assert _sha(path) == before
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT count(*) FROM conversation_items").fetchone()[0] == 1374
+    assert records_cutover.done()["rows"] == out.rows

@@ -45,14 +45,29 @@ the copy take longer than usual; the move now waits for it, and a write that
 still times out is checked and tried again (never written twice) before the
 move gives up and says why.
 
+**An older `jarvis.db` moves too.** A file from before the newest message
+columns and agent keys used to fail the check ("conversation_items: ... first
+difference ... (changed)") although nothing differed: the check compared it
+with today's columns. It now reads the records back in the file's own shape.
+
 **Stopping during the move is safe.** Ctrl-C, closing the terminal or shutting
 the Mac down part way loses nothing: the next start clears what was copied and
 copies again from the beginning, even if `jarvis.db` changed in between.
 
 ### If the records move fails
 
-The page says that it failed and why, and the server stays up saying so. Start
-JARVIS again to try once more. To go back to the version you had before:
+The page says that it failed and why, and the server stays up saying so. What
+to do depends on the step that failed:
+
+- **Stopped part way, or a write that timed out** (the copy step, "timed out"
+  or a lost connection in the reason): start JARVIS again; the next start
+  clears what was copied and copies again from the beginning.
+- **The check or the check back failed** (the reason says the records differ
+  from jarvis.db, or names a table): starting again repeats the same check on
+  the same file and fails the same way. Report it with the reason shown, and
+  go back to the version you had before until a fix is in.
+
+To go back to the version you had before:
 
 1. Stop JARVIS.
 2. Find the version you had: `git reflog` lists the update as

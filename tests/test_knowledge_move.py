@@ -532,3 +532,80 @@ def test_a_write_that_keeps_failing_fails_the_move_with_its_reason(tmp_path, mon
         assert move.copy(src, plain, mappings).state == "copied"     # the next start
         assert move.verify(src, plain, mappings).ok
         _no_history_doubled(plain)
+
+
+# -- an older file: the check reads back in the file's own shape --------------
+
+class _TodaysShape(move.RowMapping):
+    """A mapping that gives today's shape whatever the file: a column the
+    file never had (`added`, holding `value`) and a table it never had
+    (`later`, holding `later_rows`). It takes no `shape`, so only the
+    kit's safety net stands between it and a false difference."""
+
+    def __init__(self, table, *, value=None, later_rows=()):
+        super().__init__(table)
+        self.tables = (table, "later")
+        self.value, self.later_rows = value, list(later_rows)
+
+    def documents(self, conn):
+        self.tables = (self.table,)
+        try:
+            yield from super().documents(conn)
+        finally:
+            self.tables = (self.table, "later")
+
+    def rows(self, docs):
+        out = super().rows(docs)
+        out[self.table] = [move.Row({**r.cells, "added": self.value}, r.rowid) for r in out[self.table]]
+        out["later"] = self.later_rows
+        return out
+
+
+def _named(path: Path) -> Path:
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE named (slug TEXT PRIMARY KEY, value REAL)")
+        conn.executemany("INSERT INTO named VALUES (?, ?)", [("one", 1.0), ("two", 2.0)])
+        conn.commit()
+    return path
+
+
+def test_verify_ignores_an_empty_column_the_file_never_had(tmp_path):
+    src = _named(tmp_path / "named.db")
+    with in_process(tmp_path / "engine") as (_, uds):
+        move.copy(src, uds, [_TodaysShape("named")])
+        assert move.verify(src, uds, [_TodaysShape("named")]).ok
+        # A real value in a column the file lacks is still a difference.
+        report = move.verify(src, uds, [_TodaysShape("named", value="x")])
+        assert report.differing == ["named"]
+
+
+def test_export_skips_an_empty_table_the_file_never_had_and_refuses_one_with_rows(tmp_path):
+    src = _named(tmp_path / "named.db")
+    with in_process(tmp_path / "engine") as (_, uds):
+        move.copy(src, uds, [_TodaysShape("named")])
+        out = tmp_path / "back.db"
+        move.export_sqlite(uds, [_TodaysShape("named")], out)
+        assert _tables(src)["tables"] == _tables(out)["tables"]
+        holding = _TodaysShape("named", later_rows=[move.Row({"x": 1})])
+        with pytest.raises(move.MoveError, match="rows for tables the schema does not make: later"):
+            move.export_sqlite(uds, [holding], tmp_path / "refused.db")
+        assert not (tmp_path / "refused.db").exists()
+
+
+def test_the_first_difference_is_the_lowest_number_key(tmp_path):
+    """Number keys are ordered by value: with ids 10 and 1000 both changed,
+    10 is named (as JSON text, "1000" sorted first)."""
+    src = tmp_path / "log.db"
+    with closing(sqlite3.connect(src)) as conn:
+        conn.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, what TEXT)")
+        conn.executemany("INSERT INTO log VALUES (?, ?)", [(n, f"line {n}") for n in (1, 2, 10, 1000)])
+        conn.commit()
+    with in_process(tmp_path / "engine") as (_, uds):
+        move.copy(src, uds)
+        for n in (10, 1000):
+            path = f"/sqlite/log/{n}.row"
+            data = dict(uds.get(move.MOVE_CALLER, path).data)
+            data["cells"] = {**data["cells"], "what": "changed"}
+            uds.transaction(move.MOVE_CALLER, Transaction().put(path, data), change="test")
+        (table,) = move.verify(src, uds).tables
+        assert table.first_difference == "id=10 (changed)"

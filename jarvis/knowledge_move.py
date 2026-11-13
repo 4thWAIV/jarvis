@@ -69,6 +69,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -380,6 +381,39 @@ class Mapping(Protocol):
     def documents(self, conn: sqlite3.Connection) -> Iterator[Doc]: ...
 
     def rows(self, docs: Iterable[Doc]) -> dict[str, list[Row]]: ...
+    # A mapping whose tables changed shape over JARVIS's versions takes
+    # `shape` as well (`rows(docs, shape=...)`): the file's own tables and
+    # columns, which it gives back (an older file has fewer of either).
+
+
+@dataclass(frozen=True)
+class Shape:
+    """The tables a SQLite file has and each one's columns, in order: the
+    shape `rows()` gives back for that file. With no `tables`, today's
+    (an export with no moved file to match)."""
+    tables: Optional[dict] = None          # table -> its columns
+
+    @classmethod
+    def of(cls, infos: dict) -> "Shape":
+        return cls({t: tuple(i.columns) for t, i in infos.items()})
+
+    def has(self, table: str) -> bool:
+        return self.tables is None or table in self.tables
+
+    def columns(self, table: str, today: Iterable[str]) -> tuple[str, ...]:
+        """The file's columns of `table`, else `today`'s."""
+        if self.tables is None or table not in self.tables:
+            return tuple(today)
+        return self.tables[table]
+
+    def fit(self, out: dict) -> dict:
+        """`out` (table -> rows) with only the tables the file has; one it
+        lacks is kept only while it holds rows, so the checks still see
+        them."""
+        return {t: rows for t, rows in out.items() if self.has(t) or rows}
+
+
+TODAY = Shape()
 
 
 class Files:
@@ -427,11 +461,23 @@ def _files_root(files_root: Optional[Path]) -> Path:
     return data_paths.data_dir()
 
 
-def _rows_of(m, uds, files: "Files") -> dict:
+def _rows_of(m, uds, files: "Files", shape: Shape = TODAY) -> dict:
     docs = _engine_docs(uds, m)
-    if getattr(m, "files_under", None):
-        return m.rows(docs, files)
-    return m.rows(docs)
+    args: tuple = (docs, files) if getattr(m, "files_under", None) else (docs,)
+    if "shape" in inspect.signature(m.rows).parameters:
+        return m.rows(*args, shape=shape)
+    return m.rows(*args)
+
+
+def _in_file_columns(info: "TableInfo", row: Row) -> Row:
+    """A row read back from the engine in the file's columns, when every
+    cell of a column the file lacks is NULL (a mapping that gives today's
+    columns for an older file); a real value there is left, so it still
+    differs."""
+    extra = [c for c in row.cells if c not in info.columns]
+    if not extra or any(row.cells[c] is not None for c in extra):
+        return row
+    return Row({c: v for c, v in row.cells.items() if c in info.columns}, row.rowid)
 
 
 class RowMapping:
@@ -1001,8 +1047,19 @@ def _sortable(key: tuple[str, tuple]) -> str:
     return json.dumps([how, [[storage_class(v), cell(v)] for v in values]], sort_keys=True)
 
 
+def _key_order(sortable: str) -> list:
+    """A key's place in order: numbers by value (so id 2 before id 1000),
+    then everything else by its JSON text."""
+    how, values = json.loads(sortable)
+    out: list = [how]
+    for _, v in values:
+        number = isinstance(v, (int, float)) and not isinstance(v, bool)
+        out.append((0, v, "") if number else (1, 0, json.dumps(v, sort_keys=True)))
+    return out
+
+
 def _first_difference(info: TableInfo, source: dict, engine: dict) -> Optional[str]:
-    for k in sorted(set(source) | set(engine)):
+    for k in sorted(set(source) | set(engine), key=_key_order):
         a, b = source.get(k), engine.get(k)
         if a is None:
             return f"{info.key_words(b[0][0])} (only in the engine)"
@@ -1037,13 +1094,14 @@ def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, *,
                 problems.append("the file's schema is not the one the move recorded")
         infos = {t: table_info(conn, t) for t in tables}
         back: dict[str, list[Row]] = {}
+        shape = Shape.of(infos)
         for m in mappings:
-            for t, rows in _rows_of(m, uds, Files(_files_root(files_root))).items():
+            for t, rows in _rows_of(m, uds, Files(_files_root(files_root)), shape).items():
                 back.setdefault(t, []).extend(rows)
         for t in tables:
             info = infos[t]
             src_rows = list(read_rows(conn, info))
-            eng_rows = back.get(t, [])
+            eng_rows = [_in_file_columns(info, r) for r in back.get(t, [])]
             sn, sd = table_digest(src_rows)
             en, ed = table_digest(eng_rows)
             first = None
@@ -1082,6 +1140,7 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
     tables = tables_of(schema)
     mappings = mappings if mappings is not None else mappings_for(tables)
     _covered(mappings, tables)
+    shape = Shape.of(infos) if infos else TODAY
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=out_path.name + ".", suffix=".building", dir=out_path.parent)
     os.close(fd)
@@ -1098,7 +1157,7 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
             conn.execute("BEGIN")
             back: dict[str, list[Row]] = {}
             for m in mappings:
-                for t, rows in _rows_of(m, uds, Files(_files_root(files_root))).items():
+                for t, rows in _rows_of(m, uds, Files(_files_root(files_root)), shape).items():
                     back.setdefault(t, []).extend(rows)
             # The objects in the source's order, so `sqlite_master` reads the
             # same. Each table's rows go in as soon as it is made, before any
@@ -1116,6 +1175,9 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
                         rows = [Row(dict(zip(infos[o["name"]].columns, v))) for v in versions[o["name"]]]
                     rows_written += _insert(conn, infos[o["name"]], rows)
             internal = {t: back.pop(t) for t in list(back) if t.startswith("sqlite_")}
+            # A table an older file never had comes back empty and is not
+            # made; one holding rows is refused.
+            back = {t: rows for t, rows in back.items() if rows}
             if back:
                 raise MoveError("rows for tables the schema does not make: " + ", ".join(back))
             if "sqlite_sequence" in internal:
