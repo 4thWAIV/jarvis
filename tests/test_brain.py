@@ -118,7 +118,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__change_knowledge_index,"
         "mcp__jarvis__knowledge_seeds,mcp__jarvis__change_knowledge_seed,"
         "mcp__jarvis__work_context,"
-        "mcp__jarvis__embedding_model,mcp__jarvis__install_embedding_model,"
+        "mcp__jarvis__embedding_model,mcp__jarvis__install_embedding_model,mcp__jarvis__set_knowledge_settings,"
         "mcp__jarvis__projects,mcp__jarvis__project_detail,mcp__jarvis__project_candidates,"
         "mcp__jarvis__project_history,mcp__jarvis__works,mcp__jarvis__work_detail,"
         "mcp__jarvis__change_project,mcp__jarvis__change_project_folder,"

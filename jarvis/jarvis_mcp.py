@@ -2348,6 +2348,11 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "set_knowledge_settings",
+        "description": "On his instruction, enable or pause knowledge indexing, exactly as Settings does. Stored knowledge and record storage remain available. Changes persist and need no restart.",
+        "inputSchema": {"type": "object", "properties": {"enabled": {"type": "boolean"}}, "required": ["enabled"], "additionalProperties": False},
+    },
+    {
         "name": "embedding_model",
         "description": (
             "The embedding model vector search runs on (multilingual-e5-small): whether it "

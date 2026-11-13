@@ -7,10 +7,9 @@ first thing at startup, starts the engine through the `Supervisor`
 (`start_engine`) and waits up to `knowledge_client.READY_WAIT_SEC` for its
 health before serving the page; then `run` watches it, every second while
 it is not running and every `knowledge_client.PING_EVERY_SEC` while it is.
-`JARVIS_KNOWLEDGE` governs only ingest (no pass starts while it is off),
-the linker's proposals and the hot cards read here, embedding (the engine
-child reads it, embedder.installed) and the knowledge tools (the server's
-`knowledge_api.Context`).
+`knowledge_settings` governs background indexing and embedding. Pausing
+stops the ingest and content children; record storage and search remain
+available. The engine reads the same saved setting from its own store.
 
 The pace follows hearing, and holds only the background lane (lanes.py).
 Every `PACE_EVERY_SEC` the runtime decides `hold` or `free` and tells the
@@ -134,6 +133,9 @@ class IngestScheduler:
 
     def __call__(self, mode: str) -> None:
         self._reap()
+        if not self.enabled():
+            self.stop()
+            return
         if self.proc is not None:
             want_stopped = mode == "hold"
             if want_stopped != self.stopped:
@@ -341,12 +343,13 @@ class KnowledgeRuntime:
         self.cpu_percent = cpu_percent
         self.supervisor = supervisor or knowledge_client.Supervisor()
         self.enabled = enabled
+        self._indexing_enabled = False
         self.pace = Pace(clock)
         self.started = False
         self.pace_listeners: list[Callable[[str], None]] = []
-        self.ingest = IngestScheduler(self.supervisor, enabled=enabled)
+        self.ingest = IngestScheduler(self.supervisor, enabled=lambda: self._indexing_enabled)
         self.pace_listeners.append(self.ingest)
-        self.content = ContentScheduler(self.supervisor, enabled=enabled)
+        self.content = ContentScheduler(self.supervisor, enabled=lambda: self._indexing_enabled)
         self.pace_listeners.append(self.content)
         # Told (new, gone) when the linker's proposals change; the server
         # records each as an attention item and resolves it when it goes.
@@ -357,7 +360,7 @@ class KnowledgeRuntime:
         # cards moved): the server sends the pages a `knowledge` hint.
         self.change_listeners: list[Callable[[], None]] = []
         self._seen_passes = 0
-        self._sent: Optional[tuple[int, str]] = None     # (engine pid, mode) last told
+        self._sent: Optional[tuple[int, str, bool]] = None     # (engine pid, mode, indexing) last told
         self.last_cpu: Optional[float] = None
 
     # -- the loop -----------------------------------------------------------
@@ -391,7 +394,7 @@ class KnowledgeRuntime:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(self.supervisor.tick)
                 passed = self.ingest.passes != self._seen_passes
-                if self.enabled() and self.supervisor.pid() and (
+                if self._indexing_enabled and self.supervisor.pid() and (
                         passed or time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC):
                     last_proposals = time.monotonic()
                     self._seen_passes = self.ingest.passes
@@ -407,6 +410,12 @@ class KnowledgeRuntime:
 
     async def look_pace(self) -> str:
         try:
+            self._indexing_enabled = await asyncio.to_thread(self.enabled)
+        except knowledge_client.EngineUnavailable as e:
+            # Keep the last observed choice, but let supervision run so an
+            # unavailable store can recover. Never block the server loop.
+            log.warning("knowledge settings unavailable: %s", e)
+        try:
             busy = bool(self.floor_busy())
         except Exception:  # noqa: BLE001 - when in doubt, hearing comes first
             busy = True
@@ -417,14 +426,14 @@ class KnowledgeRuntime:
         mode, _ = self.pace.decide(busy, self.last_cpu)
         for listener in self.pace_listeners:
             try:
-                listener(mode)
+                await asyncio.to_thread(listener, mode)
             except Exception as e:  # noqa: BLE001
                 log.warning("knowledge pace listener: %s", e)
         pid = self.supervisor.pid()
-        if pid is not None and self._sent != (pid, mode):
+        if pid is not None and self._sent != (pid, mode, self._indexing_enabled):
             try:
                 await asyncio.to_thread(self.supervisor.client.pace, mode)
-                self._sent = (pid, mode)
+                self._sent = (pid, mode, self._indexing_enabled)
             except (knowledge_client.EngineUnavailable, knowledge_client.KnowledgeRefused) as e:
                 log.debug("could not tell the engine its pace: %s", e)
         return mode
@@ -477,7 +486,7 @@ class KnowledgeRuntime:
         sup = self.supervisor
         facts = sup.health()
         return {**facts, "state": facts["state"] if self.started else "starting",
-                "knowledge": self.enabled(),
+                "knowledge": self._indexing_enabled,
                 "pace": self.pace.mode, "pace_reason": self.pace.reason, "cpu_percent": self.last_cpu,
                 "engine": sup.last_health if sup.state == "running" else None,
                 "ingest": self.ingest.health(), "content": self.content.health()}

@@ -152,6 +152,24 @@
         "human"
       ],
       "effects": []
+    },
+    {
+      "id": "knowledge.configure",
+      "label": "Enable or pause knowledge indexing from Settings",
+      "view": "main.settings",
+      "args": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": []
     }
   ],
   "kinds": [

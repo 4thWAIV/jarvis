@@ -292,7 +292,7 @@ function SeedRow({ seed }: { seed: Seed }) {
 
 const MB = 1 << 20;
 
-function Vectors({ partRef }: { partRef: PartRef }) {
+export function Vectors({ partRef }: { partRef: PartRef }) {
   const t = useT();
   const live = useSyncExternalStore(embedder.subscribe, embedder.get);
   const e = live.value;

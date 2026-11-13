@@ -50,9 +50,9 @@ DEFAULT_DEADLINE_SEC = 0.5
 
 
 def enabled() -> bool:
-    """`JARVIS_KNOWLEDGE`: ingest, embedding and the knowledge tools, off by
-    default. The engine itself runs whatever it says (`autostart`)."""
-    return os.getenv("JARVIS_KNOWLEDGE", "0").strip().lower() in ("1", "true", "yes", "on")
+    """Whether Settings enables indexing. Record storage always runs."""
+    from jarvis import knowledge_settings
+    return knowledge_settings.read()["enabled"]
 
 
 def autostart() -> bool:

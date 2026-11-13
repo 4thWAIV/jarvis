@@ -4,8 +4,8 @@ The engine reaches an embedder only through `RUNNER`, a factory that
 returns an `Embedder` or None. The default, `installed`, gives the model
 installed under the data folder (embedding_models.py), run by the runtime
 its record names (`RUNTIMES`: `onnx-e5` is multilingual-e5-small through
-onnxruntime, e5_onnx.py), loaded once; with `JARVIS_KNOWLEDGE` off, no
-model installed, or a runtime that cannot load, it is None, and then the vector part has nothing
+onnxruntime, e5_onnx.py), loaded once; with no
+model installed or a runtime that cannot load, it is None, and then the vector part has nothing
 to search and every query says vectors were not used. Another runtime slots
 in as one more entry of `RUNTIMES`. Tests replace `RUNNER` with
 `FakeEmbedder`, which hashes words into deterministic vectors.
@@ -64,11 +64,9 @@ log = logging.getLogger("jarvis.knowledge.embedder")
 
 def installed() -> Optional["Embedder"]:
     """The installed model's embedder, loaded once per folder; None while
-    `JARVIS_KNOWLEDGE` is off (the engine runs, but embeds nothing), none is
-    installed, or its runtime cannot load (said once in the log)."""
-    from jarvis import embedding_models, knowledge_client
-    if not knowledge_client.enabled():
-        return None
+    none is installed or its runtime cannot load (said once in the log).
+    Engine controls indexing separately through knowledge_settings."""
+    from jarvis import embedding_models
     model = embedding_models.DEFAULT
     folder = embedding_models.model_dir(model)
     key = str(folder)

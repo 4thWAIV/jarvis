@@ -334,8 +334,10 @@ def test_memory_budget_setting(monkeypatch):
     assert kc.memory_budget_mb() in (256, 384)
 
 
-def test_off_by_default(monkeypatch):
+def test_on_by_default(monkeypatch):
     monkeypatch.delenv("JARVIS_KNOWLEDGE", raising=False)
+    assert kc.enabled()
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
     assert not kc.enabled()
 
 

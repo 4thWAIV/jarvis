@@ -32,6 +32,7 @@
 
 import { motion, setMotion } from "./motion";
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { KnowledgeSettings } from "./KnowledgeSettings";
 import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { closeMenu, reloadAfterRestart } from "./MenuControl";
@@ -49,7 +50,7 @@ import { bind, bindingProps, detailSlot } from "./uiNavigation";
 import { dispatch, registerCommand, useUiTarget } from "./uiRegistry";
 
 // In order; each is named by its id (`left.settings.section.<id>`).
-const SECTIONS = ["you", "voice", "brains", "team", "updates", "server"] as const satisfies
+const SECTIONS = ["you", "voice", "brains", "team", "knowledge", "updates", "server"] as const satisfies
   readonly CommandArgs["settings.section"]["section"][];
 export type SectionId = (typeof SECTIONS)[number];
 
@@ -215,6 +216,7 @@ export function SettingsView() {
     voice: () => <VoiceSection status={status.value} reload={status.refresh} />,
     brains: () => <BrainsSection />,
     team: () => <TeamSection />,
+    knowledge: () => <KnowledgeSettings />,
     updates: () => <UpdatesSection />,
     server: () => <ServerSection status={status.value} failed={status.error !== null} />,
   };

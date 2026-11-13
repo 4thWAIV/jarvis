@@ -12,6 +12,13 @@ from pathlib import Path
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def indexing_enabled(monkeypatch):
+    # These tests exercise indexing, with the legacy installation input.
+    # Settings persistence and live enable/disable have their own tests.
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+
+
 from jarvis import data_paths, embedding_models as em
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import query as qy
@@ -104,7 +111,7 @@ def test_the_runner_gives_the_installed_model_through_its_runtime(tmp_path, monk
     first = emb.installed()
     assert first is not None and first.dim == 4 and emb.installed() is first and len(made) == 1
     monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
-    assert emb.installed() is None                            # knowledge off: the engine embeds nothing
+    assert emb.installed() is first                           # loading and indexing policy are separate
 
 
 def test_a_runtime_that_cannot_load_turns_vectors_off_not_the_engine(tmp_path, monkeypatch):

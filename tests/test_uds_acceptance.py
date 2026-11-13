@@ -27,6 +27,9 @@ CV = "# Experience\nLed the data platform.\n## Certifications\nSOC 2 Type II aud
 
 @pytest.fixture
 def opened(tmp_path, monkeypatch):
+    # These checks are about indexing, so indexing is on, as an installation
+    # with no saved Settings choice and JARVIS_KNOWLEDGE set has it.
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
     monkeypatch.setattr(emb, "RUNNER", lambda: emb.FakeEmbedder(32))
     with in_process(tmp_path / "engine") as found:
         yield found

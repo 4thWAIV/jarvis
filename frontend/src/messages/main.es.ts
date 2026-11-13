@@ -4,6 +4,7 @@ import type { CatalogOf } from "../locale";
 import type { mainEn } from "./main.en";
 
 export const mainEs: CatalogOf<typeof mainEn> = {
+
   "main.common.close": "Cerrar",
   "main.common.cancel": "Cancelar",
   "main.common.keepIt": "Conservarlo",
@@ -628,7 +629,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.knowledge.open": "Abrir Conocimiento",
   "main.knowledge.reading": "Leyendo…",
   "main.knowledge.unreadable": "No se pudo leer el motor de conocimiento: {error}",
-  "main.knowledge.off": "El motor de conocimiento está apagado. Los temas siguen funcionando; la búsqueda lo necesita encendido.",
+  "main.knowledge.off": "La indexación está pausada. El conocimiento guardado sigue disponible. Actívela en Ajustes → Conocimiento.",
   "main.knowledge.status": "{chunks} fragmentos leídos; {proposals} propuestas de enlace esperan su sí.",
   "main.knowledge.noVectors": "La búsqueda usa palabras y enlaces; los vectores están apagados.",
   "main.knowledge.searchTitle": "Buscar en lo que JARVIS ha leído",

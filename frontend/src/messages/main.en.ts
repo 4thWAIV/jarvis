@@ -11,6 +11,7 @@
  */
 
 export const mainEn = {
+
   // Shared by several centre views.
   "main.common.close": "Close",
   "main.common.cancel": "Cancel",
@@ -662,7 +663,7 @@ export const mainEn = {
   "main.knowledge.open": "Open Knowledge",
   "main.knowledge.reading": "Reading…",
   "main.knowledge.unreadable": "Could not read the knowledge engine: {error}",
-  "main.knowledge.off": "The knowledge engine is switched off. Topics still work; search needs it on.",
+  "main.knowledge.off": "Indexing is paused. Stored knowledge remains searchable. Enable indexing in Settings → Knowledge.",
   "main.knowledge.status": "{chunks} passages read; {proposals} link proposals waiting for your yes.",
   "main.knowledge.noVectors": "Search uses words and links; vectors are off.",
   "main.knowledge.searchTitle": "Search what JARVIS has read",

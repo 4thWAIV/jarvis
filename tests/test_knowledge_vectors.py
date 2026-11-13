@@ -13,6 +13,13 @@ from ctypes import c_float
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def indexing_enabled(monkeypatch):
+    # These tests exercise indexing, with the legacy installation input.
+    # Settings persistence and live enable/disable have their own tests.
+    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+
+
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import vecmath
 from jarvis.knowledge import vectors as vx

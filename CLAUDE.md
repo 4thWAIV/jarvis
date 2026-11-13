@@ -1810,9 +1810,17 @@ exits or stops answering, then after 1, 2 and 5 s (capped) while it keeps
 dying, starting over once it has stayed healthy `STABLE_AFTER_SEC`, and never
 gives up; its footprint is reported against the budget, never acted on. An
 engine not running (not up yet, restarting, not answering) is down on its
-Diagnostics row. `JARVIS_KNOWLEDGE` governs only ingest, embedding
-(`embedder.installed` is None while it is off) and the knowledge tools and
-routes (`knowledge_calls` sees no runtime, so they answer "off"). Two lanes
+Diagnostics row. Settings → Knowledge controls indexing through
+`knowledge_settings`, persisted at `/settings/knowledge.settings` in the existing
+record store. The server, ingest/content workers and engine read the same setting.
+The engine reads it locally at startup to avoid calling its own HTTP endpoint.
+`JARVIS_KNOWLEDGE` is a compatibility input only until Settings saves a choice;
+a saved false overrides it. `set_knowledge_settings` and POST
+`/api/knowledge/settings` use the same implementation. Pausing stops content and
+ingest workers and pauses background embedding, while storage health, record
+reads/writes and searches over existing data remain available. Changes apply
+without restarting. Settings reuses the model-install control and links to
+registered folders' counts and knowledge search. Two lanes
 (`knowledge/lanes.py`): the process runs at normal priority, and record
 reads and writes are never paused; the background lane (the maintenance
 thread: flushes on the time rule, compaction, cards; the embedding threads;
@@ -2772,7 +2780,7 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the folder catalog's routes and tools off; its records are kept
 - `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
   knowledge engine (every test sets this; see "The knowledge engine")
-- `JARVIS_KNOWLEDGE` (optional, default off) — `1` turns on the knowledge
+- `JARVIS_KNOWLEDGE` (optional, default on) — `0` turns off the knowledge
   engine's ingest, embedding and tools; the engine itself runs either way
 - `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
   the context pack for its project (see "The knowledge engine")
