@@ -1169,6 +1169,7 @@ export const mainEn = {
   "main.updates.event.project_candidate.proposed": "JARVIS proposes {name} as a project; nothing is made without your yes",
   "main.updates.event.node_id.minted": "This Mac was given a new node ID although one had been kept; see Diagnostics, Team server",
   "main.updates.event.communications.down": "Communications with the agents are down",
+  "main.updates.event.work_routes.slow": "Work reports are taking over five seconds; see Diagnostics, Work tracker",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",
   "main.updates.event.brain.sign_in": "The brain's login has expired: run claude in a terminal and log in, then restart JARVIS",
   "main.updates.event.brain.rate_limited": "The brain has reached its usage limit",

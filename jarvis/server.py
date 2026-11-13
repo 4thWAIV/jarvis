@@ -12694,15 +12694,21 @@ TOOL_HANDLERS["diagnostics"] = tool_diagnostics
 TAINTING_TOOLS["diagnostics"] = "JARVIS's diagnostics, which quote agents' names and errors"
 
 
+# The attention item for Work reports slower than
+# subsystem_diagnostics.WORK_WRITES_ALARM_SEC.
+WORK_ROUTES_KIND = "work_routes"
+
+
 async def _watch_subsystems() -> None:
     """Look at every subsystem every few seconds. A state that moved tells
     the pages to read again; communications going down, and coming back,
-    are said once each. Never raises out."""
+    are said once each, and a Work report slower than the alarm is recorded
+    once, resolved once none is slow. Never raises out."""
     states: dict[str, str] = {}
-    said_down = False
+    said_down = said_slow = False
 
     async def look_at_subsystems() -> None:
-        nonlocal states, said_down
+        nonlocal states, said_down, said_slow
         now = {s.id: s for s in await asyncio.to_thread(_subsystems)}
         if states and {k: s.state for k, s in now.items()} != states:
             _send_to_session_clients({"type": "subsystems"})
@@ -12719,6 +12725,19 @@ async def _watch_subsystems() -> None:
                                            subsystem_diagnostics.DEGRADED):
             said_down = False
             _attention_resolved("communications", "agents")
+        # A Work report slower than the alarm is a silent update, resolved
+        # once none in the window is slow.
+        slowest = subsystem_diagnostics.work_routes.slowest(subsystem_diagnostics.WRITE,
+                                                             time.time())
+        if slowest is not None and slowest > subsystem_diagnostics.WORK_WRITES_ALARM_SEC \
+                and not said_slow:
+            said_slow = True
+            _attend(WORK_ROUTES_KIND, "writes", "slow", facts={"seconds": round(slowest, 1)},
+                    audible=False)
+        elif said_slow and (slowest is None
+                            or slowest <= subsystem_diagnostics.WORK_WRITES_SLOW_SEC):
+            said_slow = False
+            _attention_resolved(WORK_ROUTES_KIND, "writes")
 
     await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 

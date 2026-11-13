@@ -1122,6 +1122,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.project_candidate.proposed": "JARVIS propone {name} como proyecto; no se crea nada sin su sí",
   "main.updates.event.node_id.minted": "Esta Mac recibió un ID de nodo nuevo aunque se había guardado uno; vea Diagnóstico, Servidor del equipo",
   "main.updates.event.communications.down": "Las comunicaciones con los agentes no funcionan",
+  "main.updates.event.work_routes.slow": "Los informes de trabajo tardan más de cinco segundos; vea Diagnóstico, Seguimiento del trabajo",
   "main.updates.event.brain.down": "El cerebro no funciona; vea Diagnóstico",
   "main.updates.event.brain.sign_in": "La sesión del cerebro caducó: ejecute claude en una terminal e inicie sesión, luego reinicie JARVIS",
   "main.updates.event.brain.rate_limited": "El cerebro alcanzó su límite de uso",
