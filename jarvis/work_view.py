@@ -460,21 +460,11 @@ class WorkView:
 
     # ── reading ─────────────────────────────────────────────────────────
 
-    def _caught_up(self) -> None:
-        """Built for the database in use, and every item whose clock
-        threshold has passed composed again (with its owners' live state as
-        held; the tick does this each second, so a read seldom finds one)."""
-        self._ensure()
-        now = time.time()
-        with self._lock:
-            due = [i for i, at in self._due.items() if at is not None and at <= now]
-        if due:
-            self._held_again(due, now)
-
     def body(self) -> bytes:
         """/api/work's answer: the open items, their groups, History and the
-        revision, serialised once per change."""
-        self._caught_up()
+        revision, serialised once per change. Composes nothing: an item
+        whose clock threshold has passed is the tick's, within a second."""
+        self._ensure()
         with self._lock:
             if self._body is None:
                 self._body = json.dumps({
@@ -490,8 +480,13 @@ class WorkView:
 
     def held(self, item_id: str) -> tuple[Optional[dict], int]:
         """One item's JSON as the view holds it (or None), and the revision
-        that JSON is as of."""
-        self._caught_up()
+        that JSON is as of. That one item, when its clock threshold has
+        passed and the tick has not yet composed it again, is composed here."""
+        self._ensure()
+        with self._lock:
+            at = self._due.get(item_id)
+        if at is not None and at <= time.time():
+            self._held_again([item_id])
         with self._lock:
             return self._json.get(item_id), self.revision
 

@@ -704,9 +704,13 @@ def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
     return _snapshot(rec.data, time.time())
 
 
-def active() -> list[WorkflowSnapshot]:
-    """Every workflow not yet finished, most recently heard from first."""
-    wait_links.sweep()
+def active(sweep: bool = True) -> list[WorkflowSnapshot]:
+    """Every workflow not yet finished, most recently heard from first.
+    Without `sweep`, as recorded, for a reader polled several times a second
+    (the worker inventory, which a report's write reads through its pieces'
+    live owners): the Work view's tick sweeps every SWEEP_EVERY_SEC."""
+    if sweep:
+        wait_links.sweep()
     now = time.time()
     return [_snapshot(d, now) for d in _docs() if d["state"] not in _FINISHED_STATES]
 

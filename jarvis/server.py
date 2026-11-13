@@ -4037,7 +4037,7 @@ def _collect_worker_inventory() -> dict:
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
     runs = read_source('Managed runs', lambda: run_store.list_runs(status=["queued", "running"], limit=10000), [])
-    workflows = read_source('Workflows', workflow_store.active, [])
+    workflows = read_source('Workflows', lambda: workflow_store.active(sweep=False), [])
     capacity = read_source('Worker capacity', run_executor_instance.capacity, None)
     result = worker_inventory.build(snap, names, runs, brain_activity.feed.since(), time.time(),
                                    workflows=workflows, capacity=capacity,
