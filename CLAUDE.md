@@ -1846,10 +1846,13 @@ without restarting. Settings reuses the model-install control and links to
 registered folders' counts and knowledge search. Two lanes
 (`knowledge/lanes.py`): the process runs at normal priority, and record
 reads and writes are never paused; the background lane (the maintenance
-thread: flushes on the time rule, compaction, cards; the embedding threads;
-the linker and a requested compaction) lowers its own threads
+thread: flushes on the time rule, compaction, cards; the embedding
+producer; the linker and a requested compaction) lowers its own threads
 (`QOS_CLASS_BACKGROUND` on macOS) and raises them for `Store.commit`, a
-flush and a compaction's manifest installs (`lanes.foreground`). The
+flush and a compaction's manifest installs (`lanes.foreground`); the
+embedding thread itself runs at normal priority, held to the build's share
+by its producer's rests (the background class slowed it to a third of its
+share). The
 runtime paces the background lane every second: hold while the conversation
 floor is not idle, else free; the Mac's own load does not hold it (the
 build keeps to its share of one core instead; the old hold over 70 percent

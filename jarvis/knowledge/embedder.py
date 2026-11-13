@@ -32,7 +32,6 @@ from array import array
 from typing import Callable, Optional, Protocol
 
 from jarvis import spoken_words
-from jarvis.knowledge import lanes
 
 QUERY = 0
 INGEST = 1
@@ -166,17 +165,19 @@ class EmbeddingQueue:
         return box["v"]
 
     def _run(self) -> None:
-        # Ingest batches are background work; a query's batch is raised for
-        # its span, since someone is waiting on it.
-        lanes.background()
+        # This thread runs at the process's normal priority. A query's batch
+        # goes first; an ingest batch is held to the build's share of one
+        # core by the rest its producer takes after it (vectors, from
+        # `ingest_cpu`), not by a lowered class: on this Mac the background
+        # class slowed a batch to about three times its CPU, so the build
+        # took a third of its share and ran at a passage a second.
         while True:
             priority, _, texts, purpose, done = self._q.get()
             if texts is None:
                 return
             try:
                 if priority == QUERY:
-                    with lanes.foreground():
-                        vectors = self.embedder.embed(list(texts), purpose)
+                    vectors = self.embedder.embed(list(texts), purpose)
                 else:
                     began = time.thread_time()
                     try:
