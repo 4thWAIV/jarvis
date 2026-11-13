@@ -647,3 +647,45 @@ async def test_knowledge_settings_can_enable_pause_and_recover_errors(page_playw
         await page.locator('#knowledge-enabled').click()
         await async_api.expect(page.locator('#knowledge-enabled')).not_to_be_checked()
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_knowledge_settings_show_how_far_the_index_build_is(page_playwright, page_url):
+    """Settings → Knowledge shows the build as knowledge_api.build says it:
+    items done of the total, passages to go and the time left; held while
+    he talks; done."""
+    class BuildServer(_Server):
+        build = {"state": "building", "items_embedded": 1200, "items_waiting": 300,
+                 "texts_waiting": 9000, "texts_per_sec": 3.0, "seconds_left": 3 * 3600,
+                 "files_waiting": 0}
+
+        async def install(self, page):
+            await super().install(page)
+            await page.route("**/api/knowledge/health", lambda route: route.fulfill(
+                content_type="application/json", body=json.dumps({"enabled": True, "state": "running"})))
+
+            async def embedder(route):
+                await route.fulfill(content_type="application/json", body=json.dumps({
+                    "name": "e5", "label": "Vector model", "installed": True,
+                    "download_bytes": 100, "problem": None, "runtime_problem": None, "install": None,
+                    "engine": {"running": True, "embedded": 5, "waiting": self.build["items_waiting"],
+                               "rows": 5, "build": self.build}}))
+            await page.route("**/api/knowledge/embedder", embedder)
+
+    server = BuildServer()
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
+        line = page.locator('[data-build]')
+        await async_api.expect(line).to_contain_text('1,200 of 1,500 items done')
+        await async_api.expect(line).to_contain_text('9,000 passages to go')
+        await async_api.expect(line).to_contain_text('3h left')
+        server.build = {**server.build, "state": "held"}
+        await async_api.expect(line).to_contain_text('paused while you talk', timeout=15000)
+        server.build = {**server.build, "state": "done", "items_embedded": 1500, "items_waiting": 0}
+        await page.reload()
+        await _open_settings(page)
+        await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
+        await async_api.expect(page.locator('[data-build="done"]')).to_contain_text('all 1,500 items done')
+        await browser.close()
