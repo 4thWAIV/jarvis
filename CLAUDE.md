@@ -1740,8 +1740,8 @@ committed `COMMIT_EVERY` texts at a time, its whole-item row last, with the
 build's progress (META `build`: texts, items, CPU seconds and the
 seconds spent building, holds left out) in the same commit, so a restart
 goes on from the part it reached and knows the rate at once. `VectorIndex.build_health` (on the engine's health) says the items
-embedded, the items and texts waiting, the texts a second it has kept
-while free and the time left; `knowledge_api.build` adds the state (building, held while
+embedded, the items and texts waiting, the texts a second of its last
+commits (`RATE_COMMITS`; holds left out) and the time left; `knowledge_api.build` adds the state (building, held while
 the conversation needs the machine, paused in Settings, done, off) and the
 files the content reader has still to read, and is what Settings →
 Knowledge and the Knowledge view show (`KnowledgeView.tsx` `BuildLine`)

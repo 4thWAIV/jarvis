@@ -39,6 +39,7 @@ import struct
 import threading
 import time
 from array import array
+from collections import deque
 from ctypes import c_float
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,6 +73,11 @@ WHERE_SECTIONS = 3              # the sections a vector hit names as where it ma
 # row last, so a long file goes on where it stopped and counts as embedded
 # only once all of it is.
 COMMIT_EVERY = 64
+# The time left is worked out at the rate of the build's last commits (texts
+# and seconds spent), since a record of a few short texts and a spreadsheet
+# section of 500 tokens take very different times; until there are any, at
+# the rate kept in the engine over the whole build.
+RATE_COMMITS = 32
 # The build's own progress, in META, written in the same commit as the
 # vectors it counts, so a restart goes on from it.
 BUILD_KEY = b"build"
@@ -444,9 +450,12 @@ class VectorIndex:
         self.items_embedded = 0
         self._working = False
         self._left = 0          # texts of the item being embedded not yet committed
-        # The CPU and the time (embedding and its rests, never a hold) the
-        # build has spent since its progress was last committed.
-        self._spent = {"cpu_sec": 0.0, "busy_sec": 0.0}
+        # Since the build's progress was last committed (or its item began):
+        # the CPU its batches took and the time it was held, so the time it
+        # spent building is the time since, less the holds.
+        self._spent = {"cpu_sec": 0.0, "held_sec": 0.0}
+        self._since = time.monotonic()
+        self._recent: deque = deque(maxlen=RATE_COMMITS)       # (texts, seconds) a commit
         self.build = self._read_build()
         self._load()
         self.store.listeners.append(self._on_apply)
@@ -652,6 +661,7 @@ class VectorIndex:
                 self._working = True
             try:
                 if item is not None:
+                    self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
                     self._embed_item(*item[:3])
                 else:
                     self._embed_batch(batch)
@@ -675,20 +685,21 @@ class VectorIndex:
             def finished(vectors, error, box=box, done=done):
                 box["v"], box["e"] = vectors, error
                 done.set()
-            before, began = self.queue.ingest_cpu, time.monotonic()
+            before = self.queue.ingest_cpu
             self.queue.submit(texts[i:i + emb.INGEST_BATCH], emb.INGEST, "passage", finished)
             done.wait()
             if box.get("e") is not None:
                 raise box["e"]
             out.extend(box["v"])
             cpu = max(0.0, self.queue.ingest_cpu - before)
-            rest = lanes.rest_for(cpu)
-            rest_until = time.monotonic() + rest
+            rest_until = time.monotonic() + lanes.rest_for(cpu)
             self._spent["cpu_sec"] += cpu
-            self._spent["busy_sec"] += time.monotonic() - began + rest
             with self._todo_cond:
                 while not self._stop and (self.paused or time.monotonic() < rest_until):
-                    self._todo_cond.wait(1.0 if self.paused else max(0.0, rest_until - time.monotonic()))
+                    held, waited = self.paused, time.monotonic()
+                    self._todo_cond.wait(1.0 if held else max(0.0, rest_until - time.monotonic()))
+                    if held:
+                        self._spent["held_sec"] += time.monotonic() - waited
                 if self._stop:
                     raise _Closing()
         return out
@@ -718,9 +729,12 @@ class VectorIndex:
             space = self.spaces.get(self.item_space_id or "")
             embedded = space.items() if space is not None else 0
         done = self.build
-        # Measured: the texts made over the time the build has spent on
-        # them, its rests included and every hold left out.
-        rate = done["texts"] / done["busy_sec"] if done["busy_sec"] > 0 and done["texts"] else None
+        # Measured: the texts made over the time the build spent on them,
+        # its rests included and every hold left out (`RATE_COMMITS`).
+        recent = list(self._recent)
+        texts_done, spent = ((sum(t for t, _ in recent), sum(b for _, b in recent)) if recent
+                             else (done["texts"], done["busy_sec"]))
+        rate = texts_done / spent if spent > 0 and texts_done else None
         state = ("off" if self.embedder is None else "done" if not items
                  else "paused" if self.paused else "building")
         return {"state": state, "items_embedded": embedded, "items_waiting": items, "texts_waiting": texts,
@@ -784,17 +798,19 @@ class VectorIndex:
             now = self.docs.get(path)
             if now is None or now["_ord"] != o or ((item_texts.embedded_summary(now) or {}).get("sha256")) != sha:
                 return []
+            spent = max(0.0, time.monotonic() - self._since - self._spent["held_sec"])
             progress.update({"texts": self.build["texts"] + len(rows),
                              "items": self.build["items"] + (1 if finished else 0),
                              "cpu_sec": round(self.build["cpu_sec"] + self._spent["cpu_sec"], 6),
-                             "busy_sec": round(self.build["busy_sec"] + self._spent["busy_sec"], 6)})
+                             "busy_sec": round(self.build["busy_sec"] + spent, 6)})
             return [Op(VECS, vec_key(space, o, item_prop(p)), v.tobytes()) for p, v in rows] + \
                 [Op(META, BUILD_KEY, canonical(progress))]
         with lanes.foreground():
             self.store.commit(prepare=prepare)
         if progress:
+            self._recent.append((len(rows), progress["busy_sec"] - self.build["busy_sec"]))
             self.build = progress
-            self._spent = {"cpu_sec": 0.0, "busy_sec": 0.0}
+            self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
         return bool(progress)
 
     def _embed_batch(self, batch: list[tuple[int, str, str]]) -> None:
