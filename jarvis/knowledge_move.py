@@ -53,6 +53,16 @@ with every version (`EngineUDS.forget`), so no half-written history stays
 behind the next copy; the files it wrote under the files root since then;
 the manifest last, so a clear stopped part way is cleared again at the
 next start. The file is never touched.
+
+Every call a move makes (copy, verify, export, clear) has its own long
+deadline, `MOVE_DEADLINE_SEC`, never the ordinary record deadline: a write
+of thousands of items on a busy Mac may take longer than that, and is not
+an engine gone. Every write of a copy names the version its path is at
+(`expect_version`: 0 before the move writes it, then the version the move
+last gave it), so a write tried again can never add a version twice. A
+write that still times out or loses its connection is looked for (`_land`):
+landed, it is done; not, it is tried again, at most `MOVE_ATTEMPTS` times
+with `MOVE_BACKOFF_SEC` between, before the move fails with the reason.
 """
 from __future__ import annotations
 
@@ -71,7 +81,8 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional, Protocol
 from urllib.parse import quote as _url_quote
 
-from jarvis.knowledge.uds import Caller, Stream, Transaction
+from jarvis.knowledge.uds import KEEP, Caller, Conflict, Stream, Transaction
+from jarvis.knowledge_client import EngineUnavailable
 
 ROOT = "/sqlite"
 MANIFEST_PATH = ROOT + "/manifest.move"
@@ -82,6 +93,9 @@ FORMAT = 1
 TXN_WRITES_MAX = 1000          # the engine's limit (items.WRITES_MAX)
 TXN_BYTES_MAX = 8 << 20        # well under the engine's 64 MB request body
 SEGMENT_KEEP_BYTES = 200       # a longer key is named by its hash
+MOVE_DEADLINE_SEC = 300.0      # every call a move makes; a forget compacts what held the items
+MOVE_ATTEMPTS = 5              # tries of a write that timed out or lost its connection
+MOVE_BACKOFF_SEC = (1.0, 2.0, 4.0, 8.0)   # waited before each try after the first
 _ROWID_NAMES = ("rowid", "_rowid_", "oid")
 _SAFE = re.compile(r"[A-Za-z0-9_-]")
 _INTEGER = re.compile(r"-?[0-9]+\Z")
@@ -592,6 +606,72 @@ def _manifest(uds) -> Optional[Any]:
     return uds.get(MOVE_CALLER, MANIFEST_PATH, {Stream.ENTRY, Stream.DATA})
 
 
+def _patient(uds):
+    """The engine as the move calls it: each call given `MOVE_DEADLINE_SEC`."""
+    return uds.with_deadline(MOVE_DEADLINE_SEC)
+
+
+_sleep = time.sleep
+
+
+def _land(uds, caller: Caller, writes: list[tuple[str, dict, Any]], versions: dict[str, int], *,
+          change: str, summary: str, full_sync: bool = False) -> None:
+    """Put `writes` (path, data, content) in one transaction, each on the
+    condition that its path is still at `versions[path]` (0: not written
+    yet), and keep the versions it made in `versions`. A try that times out
+    or loses its connection (`EngineUnavailable`) may have landed all the
+    same: it is looked for, and tried again only when it is not there; the
+    condition refuses a try that would land twice. After `MOVE_ATTEMPTS`
+    tries the move fails with the last reason."""
+    tx = Transaction()
+    for path, data, content in writes:
+        tx.put(path, data, content=content, expect_version=versions.get(path, 0))
+    last: Optional[BaseException] = None
+    for attempt in range(MOVE_ATTEMPTS):
+        if attempt:
+            _sleep(MOVE_BACKOFF_SEC[min(attempt, len(MOVE_BACKOFF_SEC)) - 1])
+            try:
+                if _landed(uds, writes, versions):
+                    return
+            except EngineUnavailable as e:
+                last = e
+                continue
+        try:
+            done = uds.transaction(caller, tx, change=change, summary=summary, full_sync=full_sync)
+        except EngineUnavailable as e:
+            last = e
+            continue
+        except Conflict:
+            # A try that timed out landed after it was looked for.
+            if last is not None and _landed(uds, writes, versions):
+                return
+            raise
+        for item in (done or {}).get("items") or []:
+            versions[item["path"]] = item["version"]
+        return
+    raise MoveError(f"a write of {len(writes)} items to the engine failed {MOVE_ATTEMPTS} times; "
+                    f"last: {type(last).__name__}: {last}") from last
+
+
+def _landed(uds, writes: list[tuple[str, dict, Any]], versions: dict[str, int]) -> bool:
+    """Whether a transaction of `writes` is in the engine: every path moved
+    past the version it was written on (and `versions` brought up to date),
+    or none did. Nothing else writes where a move writes, and a transaction
+    lands whole, so a part is a fault."""
+    now = {}
+    for path, _, _ in writes:
+        item = uds.get(MOVE_CALLER, path, {Stream.ENTRY})
+        now[path] = 0 if item is None else item.version
+    moved = [p for p, v in now.items() if v != versions.get(p, 0)]
+    if not moved:
+        return False
+    if len(moved) != len(now):
+        raise MoveError(f"only part of a transaction is in the engine ({moved[0]} moved, "
+                        f"{next(p for p in now if p not in moved)} did not)")
+    versions.update(now)
+    return True
+
+
 def _write_docs(uds, docs: Iterable[Doc], *, batch: int, summary: str) -> int:
     """Write documents in transactions of at most `batch` writes and
     `TXN_BYTES_MAX` bytes; a document's history first, oldest first, each
@@ -600,6 +680,7 @@ def _write_docs(uds, docs: Iterable[Doc], *, batch: int, summary: str) -> int:
     written = 0
     pending: list[Doc] = []
     size = 0
+    versions: dict[str, int] = {}
 
     def flush() -> None:
         nonlocal written, pending, size
@@ -621,10 +702,7 @@ def _write_docs(uds, docs: Iterable[Doc], *, batch: int, summary: str) -> int:
                     groups.setdefault(key, []).append((d.path, r.data, r.content))
             for (caller, change, words), writes in groups.items():
                 for chunk in _chunks(writes, batch):
-                    tx = Transaction()
-                    for path, data, content in chunk:
-                        tx.put(path, data, content=content)
-                    uds.transaction(caller, tx, change=change, summary=words)
+                    _land(uds, caller, chunk, versions, change=change, summary=words)
                     written += len(chunk)
         pending, size = [], 0
 
@@ -697,7 +775,6 @@ def _revisions(uds, path: str, current: int) -> Iterator[Revision]:
 
 # -- clearing a move that never finished -----------------------------------------
 
-CLEAR_DEADLINE_SEC = 300.0     # a forget compacts what held the items
 FORGET_BYTES_MAX = 32 << 20    # paths a forget names: as few compactions as fit a request
 
 
@@ -760,6 +837,7 @@ def clear(uds, mappings: Optional[list[Mapping]] = None, *,
           files_root: Optional[Path] = None) -> Optional[Cleared]:
     """Erase the move the engine holds (see the module's words); None when
     it holds none."""
+    uds = _patient(uds)
     found = _manifest(uds)
     if found is None:
         return None
@@ -790,7 +868,7 @@ def _erase(uds, paths: list[str]) -> None:
             tx.delete(p)
         uds.transaction(MOVE_CALLER, tx, change=MOVE_CHANGE, summary="a move stopped part way, cleared")
     for chunk in _byte_chunks(paths, FORGET_BYTES_MAX):
-        uds.forget(MOVE_CALLER, chunk, deadline=CLEAR_DEADLINE_SEC)
+        uds.forget(MOVE_CALLER, chunk)
 
 
 # -- copy, verify, export -------------------------------------------------------
@@ -813,6 +891,7 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
     if caller != MOVE_CALLER:
         raise MoveError("the move writes as Tim through the agent move-kit")
     batch = max(1, min(int(batch), TXN_WRITES_MAX))
+    uds = _patient(uds)
     started = time.monotonic()
     db_path = Path(db_path)
     with snapshot(db_path) as conn:
@@ -851,8 +930,8 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
                        for t in tables],
             "copied_at": None,
         }
-        tx = Transaction().put(MANIFEST_PATH, manifest, absent=True)
-        uds.transaction(caller, tx, change=MOVE_CHANGE, summary="move begun", full_sync=True)
+        _land(uds, caller, [(MANIFEST_PATH, manifest, KEEP)], {}, change=MOVE_CHANGE,
+              summary="move begun", full_sync=True)
         writes = 0
         for m in mappings:
             if getattr(m, "files_under", None):
@@ -864,8 +943,8 @@ def copy(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, caller: C
     current = _manifest(uds)
     manifest["state"] = "copied"
     manifest["copied_at"] = time.time()
-    uds.transaction(caller, Transaction().put(MANIFEST_PATH, manifest, expect_version=current.version),
-                    change=MOVE_CHANGE, summary="move copied", full_sync=True)
+    _land(uds, caller, [(MANIFEST_PATH, manifest, KEEP)], {MANIFEST_PATH: current.version},
+          change=MOVE_CHANGE, summary="move copied", full_sync=True)
     return CopyReport("copied", len(tables), sum(s["rows"] for s in source.values()), writes,
                       time.monotonic() - started, source_sha)
 
@@ -939,6 +1018,7 @@ def verify(db_path: Path, uds, mappings: Optional[list[Mapping]] = None, *,
     """The file and the engine, table by table: each table's row count and
     digest read from the file and from the engine through its mapping;
     every table that differs named with its first differing key."""
+    uds = _patient(uds)
     started = time.monotonic()
     problems: list[str] = []
     reports: list[TableReport] = []
@@ -982,6 +1062,7 @@ def export_sqlite(uds, mappings: Optional[list[Mapping]], out_path: Path, *,
     each store's schema version) and its rows back from the engine. An
     existing file is never overwritten: the file is built beside it and
     linked into place only while the name is free."""
+    uds = _patient(uds)
     started = time.monotonic()
     out_path = Path(out_path)
     if out_path.exists() or out_path.is_symlink():

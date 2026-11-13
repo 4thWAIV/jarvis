@@ -40,6 +40,11 @@ much it needs if there is not, before anything is written.
 
 `data/jarvis.db` is never changed by the move; it stays beside the engine.
 
+**A slow Mac no longer stops the move.** A busy machine can make one write of
+the copy take longer than usual; the move now waits for it, and a write that
+still times out is checked and tried again (never written twice) before the
+move gives up and says why.
+
 **Stopping during the move is safe.** Ctrl-C, closing the terminal or shutting
 the Mac down part way loses nothing: the next start clears what was copied and
 copies again from the beginning, even if `jarvis.db` changed in between.

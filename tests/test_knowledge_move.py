@@ -410,3 +410,125 @@ def test_cli_copy_verify_export(tmp_path, capsys):
     words = capsys.readouterr()
     assert "copied 26 rows of 5 tables" in words.out
     assert "never overwrites" in words.err
+
+
+# -- a slow engine: the move's own deadline, and a write tried again ----------
+
+class _Slow:
+    """The in-process engine behind a transport that keeps time as the wire
+    would. The transactions numbered in `slow` take `seconds`; past the
+    caller's deadline the caller hears "timed out", and the engine commits
+    the transaction all the same (`landed`), never (`lost`), or just after
+    the caller has looked for it (`late`: before its next try arrives)."""
+
+    def __init__(self, inner, slow, *, seconds: float, mode: str = "landed") -> None:
+        self.inner, self.slow, self.seconds, self.mode = inner, slow, seconds, mode
+        self.txns = 0
+        self.timeouts = 0
+        self.deadlines: list[float] = []
+        self._late = None
+
+    def request(self, method, path, body, deadline):
+        from jarvis.knowledge_client import EngineUnavailable
+        if path.endswith("/txn"):
+            self.txns += 1
+            self.deadlines.append(deadline)
+            if self._late is not None:
+                late, self._late = self._late, None
+                self.inner.request(method, path, late, deadline)
+            if self.txns in self.slow and self.seconds > deadline:
+                self.timeouts += 1
+                if self.mode == "landed":
+                    self.inner.request(method, path, body, deadline)
+                elif self.mode == "late":
+                    self._late = body
+                raise EngineUnavailable("timed out")
+        return self.inner.request(method, path, body, deadline)
+
+
+def _events(path: Path, records: int = 40) -> Path:
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE events (record TEXT, seq INTEGER, state TEXT, "
+                     "PRIMARY KEY (record, seq)) WITHOUT ROWID")
+        conn.executemany("INSERT INTO events VALUES (?, ?, ?)",
+                         [(f"w{n}", s, st) for n in range(records)
+                          for s, st in ((1, "planned"), (2, "working"), (3, "done"))])
+        conn.commit()
+    return path
+
+
+def _slow_uds(uds, slow, **kw):
+    from jarvis import records
+    from jarvis.knowledge.uds import EngineUDS
+    transport = _Slow(uds.transport, slow, **kw)
+    return transport, EngineUDS(transport, deadline=records.DEADLINE_SEC)
+
+
+def _no_history_doubled(uds, records: int = 40) -> None:
+    for n in range(records):
+        changes = [v.change for v in uds.history(move.MOVE_CALLER, f"/records/w{n}.rec")]
+        assert changes == ["move", "event", "event"], (n, changes)
+
+
+def test_a_write_slower_than_the_record_deadline_does_not_stop_the_move(tmp_path, monkeypatch):
+    """Ninja's failure: one copy transaction took longer than the ordinary
+    record deadline (10 s) on a busy Mac. The move's calls have their own
+    deadline, so the slow write is waited for and the move finishes."""
+    from jarvis import records
+    src = _events(tmp_path / "events.db")
+    mappings = [_History()]
+    sleeps: list[float] = []
+    monkeypatch.setattr(move, "_sleep", sleeps.append)
+    with in_process(tmp_path / "engine") as (_, plain):
+        transport, uds = _slow_uds(plain, {3, 4}, seconds=records.DEADLINE_SEC + 20)
+        assert move.copy(src, uds, mappings, batch=7).state == "copied"
+        assert transport.timeouts == 0 and sleeps == []
+        assert set(transport.deadlines) == {move.MOVE_DEADLINE_SEC}
+        assert move.verify(src, uds, mappings).ok
+        _no_history_doubled(plain)
+
+
+@pytest.mark.parametrize("mode", ["landed", "lost", "late"])
+def test_a_write_that_timed_out_is_looked_for_and_never_written_twice(tmp_path, monkeypatch, mode):
+    """A write that times out even on the move's deadline: committed anyway,
+    lost, or committed only after it was looked for. Each is in the engine
+    once: tried again only when not there, and a try that would land twice
+    is refused by its condition and found landed."""
+    src = _events(tmp_path / "events.db")
+    mappings = [_History()]
+    sleeps: list[float] = []
+    monkeypatch.setattr(move, "_sleep", sleeps.append)
+    with in_process(tmp_path / "engine") as (_, plain):
+        # Transactions 3, 5 and 9: a first wave, a middle one and a last.
+        transport, uds = _slow_uds(plain, {3, 5, 9}, seconds=move.MOVE_DEADLINE_SEC + 1, mode=mode)
+        assert move.copy(src, uds, mappings, batch=7).state == "copied"
+        assert transport.timeouts == 3
+        assert sleeps == [move.MOVE_BACKOFF_SEC[0]] * 3
+        assert move.verify(src, uds, mappings).ok
+        _no_history_doubled(plain)
+        out = tmp_path / "back.db"
+        move.export_sqlite(uds, mappings, out)
+    assert _tables(src)["tables"] == _tables(out)["tables"]
+
+
+def test_a_write_that_keeps_failing_fails_the_move_with_its_reason(tmp_path, monkeypatch):
+    """An engine that never answers in time: each write tried
+    `MOVE_ATTEMPTS` times, with the backoff between, then the move fails
+    naming why, its manifest left `copying` for the next start to clear."""
+    src = _events(tmp_path / "events.db")
+    mappings = [_History()]
+    sleeps: list[float] = []
+    monkeypatch.setattr(move, "_sleep", sleeps.append)
+    with in_process(tmp_path / "engine") as (_, plain):
+        transport, uds = _slow_uds(plain, set(range(2, 10_000)), seconds=move.MOVE_DEADLINE_SEC + 1,
+                                   mode="lost")
+        with pytest.raises(move.MoveError) as failed:
+            move.copy(src, uds, mappings, batch=7)
+        assert "EngineUnavailable: timed out" in str(failed.value)
+        assert f"failed {move.MOVE_ATTEMPTS} times" in str(failed.value)
+        assert transport.timeouts == move.MOVE_ATTEMPTS
+        assert sleeps == list(move.MOVE_BACKOFF_SEC)
+        assert plain.get(move.MOVE_CALLER, move.MANIFEST_PATH).data["state"] == "copying"
+        assert move.copy(src, plain, mappings).state == "copied"     # the next start
+        assert move.verify(src, plain, mappings).ok
+        _no_history_doubled(plain)
