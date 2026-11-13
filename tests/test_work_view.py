@@ -163,3 +163,128 @@ def test_a_finished_owner_s_observed_time_moving_is_no_frame(view, folder, owner
         owners[SESSION] = _live(state="finished", doing="idle", written=1001.0 + n)
         view.tick()
     assert view.frames == []
+
+
+# ── the lock is never held during I/O ────────────────────────────────────
+
+def _blocking_owner(owners, ref):
+    """An owner whose live lookup waits until released, as a slow look at
+    the sessions would: (started, release)."""
+    import threading
+    started, release = threading.Event(), threading.Event()
+
+    class Slow(dict):
+        def get(self, key, default=None):
+            if key == ref:
+                started.set()
+                release.wait(10)
+            return super().get(key, default)
+    return Slow(owners), started, release
+
+
+def test_a_write_never_waits_on_a_tick_that_is_composing(wired, folder):
+    """The tick looks and composes outside the view's lock: a write to
+    another item while it is busy is worked out and sent at once."""
+    import threading
+    slow, started, release = _blocking_owner({}, SESSION)
+    frames: list[dict] = []
+    held = work_view.WorkView(frames.append, live=lambda who: slow.get(who.ref))
+    busy = work_store.create("Speech migration", "folder", folder)
+    work_store.record(work_store.WorkEvent(busy.id, "piece", "On it.", {
+        "key": "build", "title": "Build", "state": "working", "who": {"kind": "agent", "ref": SESSION}}))
+    other = work_store.create("Captions", "folder", folder)
+    started.clear()
+    held.load()
+    started.clear()
+    ticking = threading.Thread(target=held.tick)
+    ticking.start()
+    try:
+        assert started.wait(5), "the tick looked up the owner"
+        took = time.perf_counter()
+        work_store.record(work_store.WorkEvent(other.id, "update", "Captions wired.", {}))
+        held.refresh({other.id})
+        took = time.perf_counter() - took
+        assert took < 1.0, took
+        assert held.item(other.id)["latest_update"] == "Captions wired."
+    finally:
+        release.set()
+        ticking.join(5)
+
+
+def test_an_older_composition_never_overwrites_a_newer_one(wired, folder):
+    """A tick that began composing an item before a write landed finishes
+    after the write's own composition: the write's is kept, and the tick's
+    is dropped."""
+    import threading
+    started, release = threading.Event(), threading.Event()
+    owners = {}
+
+    def live(who):
+        if threading.current_thread().name == "ticking":
+            started.set()
+            release.wait(10)
+        return owners.get(who.ref)
+    frames: list[dict] = []
+    held = work_view.WorkView(frames.append, live=live)
+    item = work_store.create("Speech migration", "folder", folder)
+    work_store.record(work_store.WorkEvent(item.id, "piece", "On it.", {
+        "key": "build", "title": "Build", "state": "working", "who": {"kind": "agent", "ref": SESSION}}))
+    held.load()
+    owners[SESSION] = _live()             # the owner starts working: the tick composes it
+    ticking = threading.Thread(target=held.tick, name="ticking")
+    ticking.start()
+    try:
+        assert started.wait(5)
+        after = work_store.record(work_store.WorkEvent(item.id, "update", "Engine wired.", {}))
+        held.refresh({item.id})           # worked out and kept while the tick is busy
+        assert held.item(item.id)["latest_update"] == "Engine wired."
+    finally:
+        release.set()
+        ticking.join(5)
+    assert held.item(item.id)["latest_update"] == "Engine wired."
+    assert held._stamps[item.id][0] == after.revision
+
+
+def test_with_its_own_thread_a_write_returns_before_the_view_works_it_out(
+        wired, folder, monkeypatch):
+    """Once started, the view drains writes on its own thread: the writer
+    goes on at once, and the frame follows."""
+    import threading
+    frames: list[dict] = []
+    held = work_view.WorkView(frames.append, live=lambda who: None)
+    monkeypatch.setitem(work_store._changed_listeners, "test.view", held.refresh)
+    item = work_store.create("Speech migration", "folder", folder)
+    held.load()
+    gate = threading.Event()
+    real = work_store.records
+    monkeypatch.setattr(work_store, "records",
+                        lambda ids=None: (gate.wait(10), real(ids))[1])
+    held.start()
+    try:
+        took = time.perf_counter()
+        work_store.record(work_store.WorkEvent(item.id, "update", "Engine wired.", {}))
+        assert time.perf_counter() - took < 1.0
+        assert frames == []             # the view has not worked it out yet
+        gate.set()
+        deadline = time.time() + 5
+        while time.time() < deadline and not frames:
+            time.sleep(0.01)
+        [frame] = frames
+        assert frame["item"]["latest_update"] == "Engine wired."
+    finally:
+        gate.set()
+        held.stop()
+
+
+def test_a_write_s_answer_is_the_item_it_left_even_before_the_view_has_it(wired, folder):
+    """`shown` gives the view's JSON once it has caught up, else the item
+    the write left, worked out from what the view holds."""
+    frames: list[dict] = []
+    held = work_view.WorkView(frames.append, live=lambda who: None)
+    item = work_store.create("Speech migration", "folder", folder)
+    held.load()
+    after = work_store.record(work_store.WorkEvent(item.id, "update", "Engine wired.", {}))
+    shown = held.shown(after)                  # the view was not told of the write
+    assert shown["latest_update"] == "Engine wired." and shown["revision"] == after.revision
+    held.refresh({item.id})
+    assert held.shown(after) is held.item(item.id)

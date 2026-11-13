@@ -564,8 +564,10 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return JSONResponse({"error": str(e)}, status_code=409)
 
     def shown(item: work_store.WorkItem) -> dict:
-        """The item as the view holds it now (a write has just refreshed it)."""
-        return view.item(item.id) or item_json(item)
+        """The item a write left, as the view holds it once it has caught
+        up, else worked out from the write's own record: the answer never
+        waits for the view (work_view.WorkView.shown)."""
+        return view.shown(item)
 
     @app.get("/api/work")
     async def list_work():

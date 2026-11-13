@@ -13130,8 +13130,11 @@ WORK_TICK_SEC = 1.0
 async def _watch_work() -> None:
     """Build the held Work view, then once a second bring its items' live
     owners, clocks and sources up to date (work_view.WorkView.tick), off the
-    loop. Never raises out but for cancellation."""
+    loop; the items writes hand it are worked out on its own thread
+    (work_view.WorkView.start), so no write waits on it. Never raises out
+    but for cancellation."""
     await asyncio.to_thread(work_held.load)
+    work_held.start()
 
     async def look() -> None:
         await asyncio.to_thread(work_held.tick)
