@@ -9,19 +9,21 @@ so onnxruntime (with numpy, its own requirement) is the one library this
 needs. The model folder is `embedding_models.model_dir(...)`, installed
 and checked there; this class only reads it.
 
-`THREADS` intra-op threads (the engine runs at nice 10, and a query waits
-behind at most one small ingest batch), CPU only, and no memory arena, so
-the process gives back what one long batch took.
+One intra-op thread (`THREADS`), so a batch runs on the embedding thread
+itself and the build can measure its CPU and keep to its share of one core
+(lanes.BUILD_SHARE). Measured on a 16-core Mac, 1,000-character passages:
+one thread 7.4 a second at 132 ms of CPU each, four 18 a second at 205 ms
+each; a short query takes 11 ms on one thread. CPU only, and no memory
+arena, so the process gives back what one long batch took.
 """
 from __future__ import annotations
 
-import os
 import threading
 from array import array
 from pathlib import Path
 
 MAX_TOKENS = 512
-THREADS = max(1, min(4, (os.cpu_count() or 4) // 4))
+THREADS = 1
 PREFIX = {"query": "query: ", "passage": "passage: "}
 
 

@@ -201,13 +201,23 @@ def build(snapshot, names=None, runs=(), brain_events=None, now=0, workflows=(),
                 'tool_wait': sum(r['activity']['state'] == 'tool_wait' for r in items),
                 'runtime_active': sum(r['runtime'].get('status') == 'active' and 0 <= now - (r['runtime'].get('observed_at') or 0) <= 10 for r in items),
                 'queued': sum(r['activity']['state'] == 'queued' for r in items)}
+    # Each worker's children, once: a family is walked from it, never by
+    # scanning every worker again for each generation (that was cubic in
+    # the workers, and the work view asks for it each second).
+    children, rows_of = {}, {}
+    for r in workers:
+        children.setdefault(r['parent_id'], []).append(r)
+        rows_of.setdefault(r['id'], []).append(r)
     def descendants(key):
-        found = {key}
-        while True:
-            extra = {r['id'] for r in workers if r['parent_id'] in found} - found
-            if not extra: break
-            found.update(extra)
-        return [r for r in workers if r['id'] in found]
+        found, family = {key}, list(rows_of.get(key, ()))
+        todo = [key]
+        while todo:
+            for child in children.get(todo.pop(), ()):
+                if child['id'] not in found:
+                    found.add(child['id'])
+                    family.append(child)
+                    todo.append(child['id'])
+        return family
     for row in workers:
         family = descendants(row['id'])
         row['counts'] = counts(family)

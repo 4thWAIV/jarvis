@@ -26,6 +26,13 @@ from typing import Iterator, Optional
 
 log = logging.getLogger("jarvis.knowledge.lanes")
 
+# The build (reading files, embedding them) keeps to this share of one core,
+# whatever else the Mac is doing: after each step its thread rests long
+# enough that the CPU the step took is this share of the time (`rest_for`).
+# The pace still stops it while the conversation needs the machine
+# (Tim, 2026-11-12: a fixed slice of one core, not the Mac's total CPU).
+BUILD_SHARE = 0.5
+
 QOS_CLASS_UNSPECIFIED = 0x00
 QOS_CLASS_BACKGROUND = 0x09
 QOS_CLASS_DEFAULT = 0x15
@@ -123,3 +130,9 @@ def lowered() -> Iterator[None]:
         _local.lowered = False
         _local.raised = 0
         _set_qos(_local.normal)
+
+
+def rest_for(cpu_used: float, share: float = BUILD_SHARE) -> float:
+    """How long a background thread rests after a step that took
+    `cpu_used` seconds of CPU, so that it keeps to `share` of one core."""
+    return max(0.0, cpu_used) * (1.0 / share - 1.0)

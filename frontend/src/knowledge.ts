@@ -26,6 +26,17 @@ export interface KnowledgeStatus {
   ingest?: { passes?: number; last_finished_at?: number | null; documents?: number; more?: boolean } | null;
 }
 
+/** The index build (knowledge_api.build): the same answer the brain reads. */
+export interface Build {
+  state: "building" | "held" | "paused" | "done" | "off";
+  items_embedded: number;
+  items_waiting: number;
+  texts_waiting: number;
+  texts_per_sec: number | null;
+  seconds_left: number | null;
+  files_waiting: number | null;
+}
+
 export interface Embedder {
   name: string;
   label: string;
@@ -34,7 +45,8 @@ export interface Embedder {
   problem: string | null;
   runtime_problem: string | null;
   install: { state: string; done_bytes: number; total_bytes: number; error: string | null } | null;
-  engine: { running: boolean; space: string | null; embedded: number | null; waiting: number | null; rows: number };
+  engine: { running: boolean; space: string | null; embedded: number | null; waiting: number | null; rows: number;
+            build?: Build | null };
 }
 
 /** Why a hit ranked: each list that found it, with its rank there. */
@@ -122,19 +134,24 @@ export const topics = liveRead(
 export const seeds = liveRead(
   () => getJson<{ seeds: Seed[] }>("/api/knowledge/seeds").then((b) => b.seeds), [knowledgeChanged]);
 
-/** Moves while an install runs, so its progress is read again each second. */
+/** Moves while an install runs (each second) or the index is being built
+ * (every BUILD_READ_MS), so its progress is read again. */
 const embedderTick = createStore(0);
 export const embedder = liveRead(() => getJson<Embedder>("/api/knowledge/embedder"), [knowledgeChanged, embedderTick]);
-let ticking: ReturnType<typeof setInterval> | null = null;
+const BUILD_READ_MS = 5000;
+let ticking: { every: number; timer: ReturnType<typeof setInterval> } | null = null;
 embedder.subscribe(() => {
-  const state = embedder.get().value?.install?.state;
-  const running = state === "downloading" || state === "verifying" || state === "installing"
-    || (embedder.get().value?.engine.waiting ?? 0) > 0;
-  if (running && ticking === null) {
-    ticking = setInterval(() => embedderTick.set(embedderTick.get() + 1), 1000);
-  } else if (!running && ticking !== null) {
-    clearInterval(ticking);
+  const value = embedder.get().value;
+  const state = value?.install?.state;
+  const installing = state === "downloading" || state === "verifying" || state === "installing";
+  const building = (value?.engine.waiting ?? 0) > 0 || (value?.engine.build?.items_waiting ?? 0) > 0;
+  const every = installing ? 1000 : building ? BUILD_READ_MS : 0;
+  if (ticking !== null && ticking.every !== every) {
+    clearInterval(ticking.timer);
     ticking = null;
+  }
+  if (every && ticking === null) {
+    ticking = { every, timer: setInterval(() => embedderTick.set(embedderTick.get() + 1), every) };
   }
 });
 
@@ -142,7 +159,8 @@ export const extraIndexes = liveRead(
   () => getJson<{ indexes: ExtraIndex[] }>("/api/knowledge/indexes").then((b) => b.indexes), [knowledgeChanged]);
 
 /** The last search: its words, what came back, and why it failed. */
-export interface Search { query: string; hits: Hit[] | null; notes: string[]; error: string | null; busy: boolean }
+export interface Search { query: string; hits: Hit[] | null; notes: string[]; error: string | null; busy: boolean;
+                          building?: Build | null }
 export const search = createStore<Search>({ query: "", hits: null, notes: [], error: null, busy: false });
 
 export async function runSearch(query: string): Promise<void> {
@@ -153,9 +171,11 @@ export async function runSearch(query: string): Promise<void> {
     return;
   }
   try {
-    const answer = await postJson<{ hits: Hit[]; notes: string[] }>("/api/knowledge/search", { text: words });
+    const answer = await postJson<{ hits: Hit[]; notes: string[]; building?: Build | null }>(
+      "/api/knowledge/search", { text: words });
     if (search.get().query !== words) return;
-    search.set({ query: words, hits: answer.hits, notes: answer.notes ?? [], error: null, busy: false });
+    search.set({ query: words, hits: answer.hits, notes: answer.notes ?? [], error: null, busy: false,
+                 building: answer.building ?? null });
   } catch (e) {
     search.set({ query: words, hits: null, notes: [], error: (e as Error).message, busy: false });
   }

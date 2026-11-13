@@ -374,7 +374,6 @@ export const rightEn = {
   "right.subsystem.said.knowledgeReadOnly": "Read only: {problem}",
   "right.subsystem.said.knowledgeOk": { one: "Running; {count} chunk indexed", other: "Running; {count} chunks indexed" },
   "right.subsystem.said.knowledgeHeld": "Paused while the conversation needs the machine",
-  "right.subsystem.said.knowledgeHeldCpu": "Paused: the processor is busy ({percent} percent)",
   "right.subsystem.said.knowledgeFree": "Free to work",
   "right.subsystem.said.knowledgeIngestNotYet": "No pass yet",
   "right.subsystem.said.knowledgeIngestOk": { one: "Last pass {age} ago: {count} document read", other: "Last pass {age} ago: {count} documents read" },

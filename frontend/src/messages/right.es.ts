@@ -361,7 +361,6 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.said.knowledgeReadOnly": "Solo lectura: {problem}",
   "right.subsystem.said.knowledgeOk": { one: "En marcha; {count} fragmento indexado", other: "En marcha; {count} fragmentos indexados" },
   "right.subsystem.said.knowledgeHeld": "En pausa mientras la conversación necesita la máquina",
-  "right.subsystem.said.knowledgeHeldCpu": "En pausa: el procesador está ocupado ({percent} por ciento)",
   "right.subsystem.said.knowledgeFree": "Libre para trabajar",
   "right.subsystem.said.knowledgeIngestNotYet": "Aún sin pasada",
   "right.subsystem.said.knowledgeIngestOk": { one: "Última pasada hace {age}: {count} documento leído", other: "Última pasada hace {age}: {count} documentos leídos" },

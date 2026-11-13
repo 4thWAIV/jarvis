@@ -561,11 +561,14 @@ class ContentService:
                     return
                 key = next(iter(self.todo))
                 root = self.todo.pop(key)
+            began = time.thread_time()
             try:
                 self.indexer.extract(root, key[1])
             except Exception as e:  # noqa: BLE001 - one file never stops the rest
                 log.warning("reading %s/%s failed: %s", root.prefix, key[1], e)
                 self.counters.error(f"{root.prefix}/{key[1]}: {type(e).__name__}")
+            # The build's share of one core (lanes.BUILD_SHARE), as embedding keeps.
+            self.stopping.wait(lanes.rest_for(time.thread_time() - began))
 
     def _main(self) -> None:
         try:

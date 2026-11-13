@@ -26,9 +26,10 @@ import { useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import {
   answerError, embedder, extraIndexes, knowledgeStatus, seeds, type Seed, proposals, search, topics, type ExtraIndex,
-  type Hit, type Proposal,
+  type Build, type Hit, type Proposal,
 } from "./knowledge";
-import { useT } from "./locale";
+import { formatNumber, useT } from "./locale";
+import { shortAge } from "./timeFormat";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 
@@ -89,6 +90,13 @@ function SearchBox({ partRef, resultsRef }: { partRef: PartRef; resultsRef: Part
       </form>
       <div ref={resultsRef}>
         {last.error && <p className="read-failure">{t("main.knowledge.searchFailed", { error: last.error })}</p>}
+        {last.hits && last.building && (
+          <p className="knowledge-note" data-partial="building">
+            {t("main.knowledge.searchPartial", {
+              done: formatNumber(last.building.items_embedded),
+              total: formatNumber(last.building.items_embedded + last.building.items_waiting) })}
+          </p>
+        )}
         {last.hits && !last.hits.length && <p className="voice-empty">{t("main.knowledge.noHits")}</p>}
         {last.hits && (
           <ol className="knowledge-hits">
@@ -292,6 +300,28 @@ function SeedRow({ seed }: { seed: Seed }) {
 
 const MB = 1 << 20;
 
+/** How far the index build is (knowledge_api.build), the line Settings and
+ * the Knowledge view show; the brain reads the same through knowledge_status. */
+function BuildLine({ build }: { build: Build }) {
+  const t = useT();
+  if (build.state === "off") return null;
+  const done = formatNumber(build.items_embedded);
+  const total = formatNumber(build.items_embedded + build.items_waiting);
+  const line = build.state === "done" ? t("main.knowledge.build.done", { total })
+    : build.state === "held" ? t("main.knowledge.build.held", { done, total })
+    : build.state === "paused" ? t("main.knowledge.build.paused", { done, total })
+    : build.seconds_left !== null
+      ? t("main.knowledge.build.building", { done, total, texts: formatNumber(build.texts_waiting),
+                                              left: shortAge(build.seconds_left * 1000) })
+      : t("main.knowledge.build.measuring", { done, total, texts: formatNumber(build.texts_waiting) });
+  return (
+    <p className="knowledge-note" role="status" data-build={build.state}>
+      {line}
+      {(build.files_waiting ?? 0) > 0 && <> {t("main.knowledge.build.files", { count: build.files_waiting ?? 0 })}</>}
+    </p>
+  );
+}
+
 export function Vectors({ partRef }: { partRef: PartRef }) {
   const t = useT();
   const live = useSyncExternalStore(embedder.subscribe, embedder.get);
@@ -312,6 +342,7 @@ export function Vectors({ partRef }: { partRef: PartRef }) {
             : t("main.knowledge.vectorsMissing", { model: e.label, size: Math.round(e.download_bytes / MB) })}
         </p>
       )}
+      {e?.engine.build && <BuildLine build={e.engine.build} />}
       {running && install && (
         <p className="knowledge-note" role="status">
           {t(`main.knowledge.vectorsInstall.${install.state as "downloading" | "verifying" | "installing"}`,

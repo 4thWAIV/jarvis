@@ -27,6 +27,7 @@ import math
 import queue
 import re
 import threading
+import time
 from array import array
 from typing import Callable, Optional, Protocol
 
@@ -134,6 +135,9 @@ class EmbeddingQueue:
         self._seq = itertools.count()
         self._stop = False
         self.batches: list[tuple[int, int]] = []    # (priority, size), for tests and health
+        # The CPU the ingest batches have taken on this thread, in seconds:
+        # the build rests in proportion to it (lanes.BUILD_SHARE).
+        self.ingest_cpu = 0.0
         self._thread = threading.Thread(target=self._run, name="knowledge-embed", daemon=True)
         self._thread.start()
 
@@ -174,7 +178,11 @@ class EmbeddingQueue:
                     with lanes.foreground():
                         vectors = self.embedder.embed(list(texts), purpose)
                 else:
-                    vectors = self.embedder.embed(list(texts), purpose)
+                    began = time.thread_time()
+                    try:
+                        vectors = self.embedder.embed(list(texts), purpose)
+                    finally:
+                        self.ingest_cpu += time.thread_time() - began
                 self.batches.append((priority, len(texts)))
                 done(vectors, None)
             except BaseException as e:  # noqa: BLE001 - the caller decides

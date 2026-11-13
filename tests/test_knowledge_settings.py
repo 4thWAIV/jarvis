@@ -76,7 +76,7 @@ async def test_runtime_setting_read_and_shutdown_do_not_block_event_loop():
         entered.set()
         release.wait(3)
         return False
-    runtime = KnowledgeRuntime(floor_busy=lambda: False, cpu_percent=lambda: 0,
+    runtime = KnowledgeRuntime(floor_busy=lambda: False,
         supervisor=SimpleNamespace(pid=lambda: None), enabled=slow_setting)
     runtime.pace_listeners.clear()
     task = asyncio.create_task(runtime.look_pace())

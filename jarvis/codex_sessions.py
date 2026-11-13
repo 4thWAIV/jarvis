@@ -99,6 +99,24 @@ def _cwd_of(pid: int) -> Optional[str]:
     return next((line[1:] for line in out.splitlines() if line.startswith("n")), None)
 
 
+# Each Codex process's folder, asked of lsof once: by pid, with the start
+# time and arguments it was seen with, so a pid used again by another
+# process is asked again. `ps`'s elapsed time is whole seconds, so a start
+# within `_SAME_START_SEC` is the same start.
+_cwds: dict[int, tuple[float, tuple, str]] = {}
+_SAME_START_SEC = 2.0
+
+
+def _cached_cwd(pid: int, started: float, args: list[str]) -> Optional[str]:
+    held = _cwds.get(pid)
+    if held is not None and held[1] == tuple(args) and abs(held[0] - started) <= _SAME_START_SEC:
+        return held[2]
+    cwd = _cwd_of(pid)
+    if cwd:
+        _cwds[pid] = (started, tuple(args), cwd)
+    return cwd
+
+
 def list_processes() -> list[CodexProcess]:
     """The Codex terminal sessions running now."""
     try:
@@ -120,10 +138,14 @@ def list_processes() -> list[CodexProcess]:
         if sub is not None and sub not in _UI_SUBCOMMANDS and not _UUID.fullmatch(sub):
             continue
         elapsed = _etime_seconds(parts[1])
-        cwd = _cwd_of(int(parts[0]))
-        if elapsed is None or not cwd:
+        if elapsed is None:
+            continue
+        cwd = _cached_cwd(int(parts[0]), now - elapsed, args)
+        if not cwd:
             continue
         found.append(CodexProcess(pid=int(parts[0]), started=now - elapsed, args=args, cwd=cwd))
+    for gone in set(_cwds) - {p.pid for p in found}:
+        _cwds.pop(gone, None)
     return found
 
 
@@ -169,7 +191,30 @@ def _thread_for(proc: CodexProcess, threads: dict[str, dict]) -> Optional[dict]:
     return max(here, key=lambda t: t["updated_at_ms"] or 0)
 
 
+# Each transcript's tail as it was last read, by path, with the size and
+# change time it was read at: a session that wrote nothing since is not read
+# and parsed again on every poll.
+_TAILS: dict[str, tuple[tuple[int, int, int], list[dict]]] = {}
+_TAILS_MAX = 4096
+
+
 def _tail(path: str) -> list[dict]:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    held = _TAILS.get(path)
+    if held is not None and held[0] == key:
+        return held[1]
+    out = _read_tail(path)
+    if len(_TAILS) >= _TAILS_MAX:
+        _TAILS.clear()
+    _TAILS[path] = (key, out)
+    return out
+
+
+def _read_tail(path: str) -> list[dict]:
     try:
         with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
