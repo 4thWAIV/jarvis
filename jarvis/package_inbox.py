@@ -22,6 +22,11 @@ closed with why: `signed_off` (he is done with it: whatever he answered, or
 that he has reviewed it, goes back to its sender, `signed_off_at` its
 time), `dismissed` (he set it aside, nothing sent back) or `superseded` (a
 newer one of the same name came from the same sender while it was open).
+Whatever way it closes, nothing is left waiting on it in the same write
+(wait_links): signed off or set aside, every wait on it ends and its Work
+item's vote (`understood-<inbox id>`) closes with it; replaced, every wait
+on it waits on the newer one instead (`superseded_by`, which also takes its
+Work item when it names none) and its vote closes.
 A package unpacked here outside the inbox gets a row when he signs it off
 (`adopt`), so every package is signed off the same way.
 
@@ -588,7 +593,7 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
         same = sorted(_open_ones(unit, sha256=sha256), key=lambda d: d["arrived_at"],
                       reverse=True)
         if same:
-            return Arrival(_entry(same[0]), False)
+            return Arrival(_entry(same[0]), False), wait_links.Settled()
         arrivals = unit.get(ARRIVALS)
         unit.put(ARRIVALS, {"arrivals": int((arrivals.data if arrivals else {}).get(
             "arrivals") or 0) + 1, "last": inbox_id})
@@ -596,16 +601,27 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
                          "project": ("from_project", sender.project)}[sender.key()[0]]
         older = [record_cells.take(unit, path_of(d["id"]))
                  for d in _open_ones(unit, name=m.name, **{column: value})] if value else []
-        superseded = [_change(unit, d, "closed", BY_THE_SENDER, now, state=CLOSED,
-                              closed_at=now, closed_why=SUPERSEDED) for d in older]
         if unit.get(path_of(inbox_id)) is not None:
             raise InboxRefused("That inbox id is taken; try again.")
+        # What waited on an older version waits on this one, and this one is
+        # for its Work item when it names none (wait_links.carry).
+        moved = wait_links.Settled()
+        for d in older:
+            moved.add(wait_links.carry(unit, wait_links.replaced(
+                _refs(unit, d["package_id"]), inbox_id, now), now))
+        carried_work = next((d["work_id"] for d in older if d["work_id"]), None)
+        superseded = [_change(unit, d, "closed", BY_THE_SENDER, now, state=CLOSED,
+                              closed_at=now, closed_why=SUPERSEDED, superseded_by=inbox_id)
+                      for d in older]
+        for e in superseded:
+            moved.add(_close_vote(unit, e, SUPERSEDED, "asker", now))
         doc = {"id": inbox_id, "package_id": package.id, "sha256": sha256, "name": m.name,
                "version": m.version, "title": title, "purpose": m.purpose, "runs": m.runs,
                "decisions_total": total, "decisions_answered": answered,
                "from_project": sender.project, "from_session": sender.session,
                "from_agent": sender.agent, "workflow_id": workflow_id or None,
-               "work_id": work_id or None, "project_id": None, "state": ARRIVED,
+               "work_id": work_id or carried_work or None, "project_id": None,
+               "state": ARRIVED,
                "revision": 1, "capture_id": None, "return_asked_at": None,
                "message_id": None, "arrived_at": now, "opened_at": None,
                "answered_at": None, "returned_at": None, "closed_at": None,
@@ -616,9 +632,11 @@ def arrive(package: Package, sha256: str, sender: Sender, *, workflow_id: str = 
                "reprove": 0, record_cells.EVENTS: [], "last_seq": 0}
         _event(doc, "arrived", 1, now, BY_THE_SENDER)
         record_cells.stage(unit, path_of(inbox_id), doc)
-        return Arrival(_entry(doc), True, superseded)
+        return Arrival(_entry(doc), True, superseded), moved
 
-    return records.atomic(write, by=_caller(BY_THE_SENDER, sender.session))
+    arrival, moved = records.atomic(write, by=_caller(BY_THE_SENDER, sender.session))
+    wait_links.tell(moved)
+    return arrival
 
 
 # The events of the one-time re-proof of a row's claimed session from the
@@ -785,13 +803,93 @@ def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
                         return_asked_at=now)
         # Everything waiting on the package ends with his sign-off, in this
         # write (wait_links).
-        moved = wait_links.settle(unit, wait_links.answer(
-            wait_links.PACKAGE, _refs(unit, entry.package_id), None, SIGNED_OFF, now), now)
-        return entry, moved
+        return entry, _ended(unit, entry, SIGNED_OFF, "user", now)
 
     entry, moved = records.atomic(write, by=_caller(how), full_sync=True)
     wait_links.tell(moved)
     return entry
+
+
+def _actor(how: str) -> str:
+    """Whose act a change was, as a wait it ends records it."""
+    return "user" if how in (BY_VOICE, ON_THE_PAGE) else "jarvis"
+
+
+def _ended(unit, entry: Entry, why: str, actor: str, now: float) -> "wait_links.Settled":
+    """It is closed, signed off or set aside (`why`): every wait on it ends
+    (wait_links.settle) and its Work item's vote closes, in the caller's
+    unit (the close's own write)."""
+    moved = wait_links.settle(unit, wait_links.answer(
+        wait_links.PACKAGE, _refs(unit, entry.package_id), None, why, now, actor), now)
+    if why != SIGNED_OFF:
+        # Signed off, its vote is answered or closed by the sign-off itself
+        # (server._inbox_sign_off_work), which knows his answer.
+        moved.add(_close_vote(unit, entry, why, actor, now))
+    return moved
+
+
+def vote_key(inbox_id: str) -> str:
+    """The Work decision a package's vote is asked as on its item."""
+    return f"{UNDERSTOOD_ID}-{inbox_id}"
+
+
+def _close_vote(unit, entry: Entry, why: str, actor: str, now: float) -> "wait_links.Settled":
+    """Its Work item's vote on it (`understood-<inbox id>`), still open, is
+    closed with it: set aside or replaced, never answered."""
+    if not entry.work_id:
+        return wait_links.Settled()
+    from jarvis import work_store
+    return work_store.close_with_package(unit, entry.work_id, vote_key(entry.id), why, now,
+                                         actor)
+
+
+def replacement(entry: Entry) -> Optional[Entry]:
+    """The newest version that replaced a superseded entry, following each
+    replacement in turn: `superseded_by`, or, for one replaced before that
+    was kept, the first entry of the same name from the same sender that
+    arrived as it closed. None for an entry not replaced, or not found."""
+    seen = {entry.id}
+    doc = records.get(path_of(entry.id))
+    current = doc.data if doc is not None and _is_entry(doc.data) else None
+    while current is not None and current["closed_why"] == SUPERSEDED:
+        nxt = current.get("superseded_by")
+        if not nxt:
+            column = "from_session" if current["from_session"] else "from_project"
+            later = sorted((d for d in _scan(name=current["name"],
+                                             **{column: current[column]})
+                            if d["arrived_at"] >= (current["closed_at"] or 0) - 1
+                            and d["id"] != current["id"]),
+                           key=lambda d: d["arrived_at"])
+            nxt = later[0]["id"] if later else None
+        if not nxt or nxt in seen:
+            return None
+        seen.add(nxt)
+        rec = records.get(path_of(nxt))
+        current = rec.data if rec is not None and _is_entry(rec.data) else None
+    return _entry(current) if current is not None and current["id"] != entry.id else None
+
+
+def settle_closed() -> "wait_links.Settled":
+    """At start: the vote of every package already set aside or replaced
+    that its Work item still asks is closed, as it would have been then
+    (waits on the packages themselves are wait_links.sweep's)."""
+    closed = [d for d in _scan(state=CLOSED)
+              if d["closed_why"] in (DISMISSED, SUPERSEDED) and d["work_id"]]
+    if not closed:
+        return wait_links.Settled()
+
+    def write(unit) -> "wait_links.Settled":
+        moved = wait_links.Settled()
+        for d in closed:
+            actor = "asker" if d["closed_why"] == SUPERSEDED else "user"
+            moved.add(_close_vote(unit, _entry(d), d["closed_why"], actor,
+                                  d["closed_at"] or time.time()))
+        return moved
+
+    moved = records.atomic(write, by=records.JARVIS, change="decision_signed_off",
+                           summary="Votes on packages already closed are closed.")
+    wait_links.tell(moved)
+    return moved
 
 
 def _refs(unit, package_id: str) -> set:
@@ -889,16 +987,21 @@ def follow_messages(now: Optional[float] = None) -> list[Entry]:
 
 def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
     """He sets it aside without signing it off: dismissed, whatever is
-    answered so far kept in its record and nothing sent back."""
+    answered so far kept in its record and nothing sent back. Every wait on
+    it ends, and its Work item's vote closes, in the same write."""
     now = time.time() if now is None else now
 
-    def write(unit) -> Entry:
+    def write(unit) -> tuple[Entry, "wait_links.Settled"]:
         doc = _take(unit, inbox_id)
         _still_open(doc, "already ")
-        return _change(unit, doc, "closed", how, now, state=CLOSED, closed_at=now,
-                       closed_why=DISMISSED)
+        entry = _change(unit, doc, "closed", how, now, state=CLOSED, closed_at=now,
+                        closed_why=DISMISSED)
+        # Nothing waits on a package he set aside, in this write (wait_links).
+        return entry, _ended(unit, entry, DISMISSED, _actor(how), now)
 
-    return records.atomic(write, by=_caller(how), full_sync=True)
+    entry, moved = records.atomic(write, by=_caller(how), full_sync=True)
+    wait_links.tell(moved)
+    return entry
 
 
 def events(inbox_id: str) -> list[dict]:

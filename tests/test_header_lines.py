@@ -967,6 +967,20 @@ EXEMPT = {
         "it writes JARVIS's own log entry when his answer releases a hold: a fixed sentence "
         "with the links (checked by wait_links.parse) and the answer's checked key, read by "
         "the brain only through work_status's wall"),
+    "work_store._end_own_wait": (
+        "it ends a wait its own reporter placed and prints nothing but its refusals, whose "
+        "values are checked keys and links and what holds it, which a reporter named and the "
+        "brain reads only through work_status's wall"),
+    "work_store.carry_waits": (
+        "it writes JARVIS's own log entry when a package is replaced: a fixed sentence with "
+        "the links (checked by wait_links.parse) and an inbox id JARVIS made, read by the "
+        "brain only through work_status's wall"),
+    "workflow_store.carry_waits": (
+        "it writes JARVIS's own wait_started when a package is replaced: a fixed sentence "
+        "with links checked by wait_links.parse and an inbox id JARVIS made, read by the "
+        "brain only through workflow_status's wall"),
+    "workflow_store._opener": (
+        "it returns who opened a wait, a principal the route proved; it prints nothing"),
     "work_store._review": (
         "it records his review (his own words, from the page or his voice) and prints "
         "nothing but its refusals, whose values are checked keys and what holds a piece, "
@@ -1503,8 +1517,6 @@ EXEMPT = {
         "it records a refused report's method, path and summary as a hold for the error package, escaped there; nothing reaches the brain's headers"),
     "server._signer_sender": (
         "it builds the proven sender record of a signed package or message from JARVIS's own agent directory; names reach the brain only through _said_name or a walled block"),
-    "server._ask_understood_on_work": (
-        "it records the standard vote, JARVIS's own fixed words, as a Work decision; the agent's session id goes into the record as its asker, never into a line the brain reads"),
     "server.tool_revoke_agent_key": (
         "its answers are fixed sentences, and the agent's name only through _agent_said, the voice-name wall. Driven by tests/test_agent_keys.py"),
 }

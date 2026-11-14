@@ -101,13 +101,14 @@ export interface WorkDecision {
 }
 
 /** A decision no longer open: answered by him on the page or by voice,
- *  withdrawn by its asker (`answer` is why), or closed by his signing off
- *  its package without an answer (`answer` is ""). */
+ *  withdrawn by its asker (`answer` is why), or closed with its package
+ *  (signed off without an answer, set aside, or replaced by a newer
+ *  version; `answer` is ""). */
 export interface WorkAnswered {
   key: string;
   question: string;
   answer: string;
-  where: "page" | "voice" | "withdrawn" | "signed_off";
+  where: "page" | "voice" | "withdrawn" | "signed_off" | "dismissed" | "superseded";
   answered_at: number;
   package: string;
 }

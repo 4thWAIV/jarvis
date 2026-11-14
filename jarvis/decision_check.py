@@ -77,8 +77,9 @@ FOLLOW_SEC = 10          # the deck reads its record every 3 s
 WAIT_LONGER_SEC = 3.0
 # Stop ends the story's words and its cue within this.
 STOP_WITHIN_SEC = 1.0
-# Every vote control at least this tall, and every option's picture drawn
-# at least this large each way, in the frame's own pixels.
+# Every vote control at least this tall, and every picture (a slide's and an
+# option's alike) drawn at least this large each way, in the frame's own
+# pixels.
 MIN_CONTROL_PX = 32
 MIN_PICTURE_PX = 60
 # Audio plays without a click, for the story; WebGL is off, so the orb
@@ -368,8 +369,7 @@ STYLED = """
 
 # What is wrong with the voting on the decision slide showing now: every
 # vote control visible, at least MIN_CONTROL px tall and inside the slide and
-# the frame; exactly one Choose on each option; each option's picture drawn
-# at least MIN_PICTURE px each way.
+# the frame; exactly one Choose on each option. Its pictures are PICTURES'.
 VOTING = """
 () => {
   const problems = [];
@@ -391,18 +391,36 @@ VOTING = """
   for (const card of slide.querySelectorAll(".option")) {
     const n = card.querySelectorAll(".choose").length;
     if (n !== 1) problems.push(`option ${card.id} has ${n} Choose controls, not one`);
-    for (const img of card.querySelectorAll(".picture img")) {
-      const r = img.getBoundingClientRect();
-      if (!img.naturalWidth) { problems.push(`option ${card.id}'s picture did not load`); continue; }
-      const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
-      const w = img.naturalWidth * k, h = img.naturalHeight * k;
-      if (w < MIN_PICTURE || h < MIN_PICTURE)
-        problems.push(`option ${card.id}'s picture is drawn ${Math.round(w)} x ${Math.round(h)}px, under MIN_PICTUREpx`);
-    }
   }
   return problems;
 }
-""".replace("MIN_CONTROL", str(MIN_CONTROL_PX)).replace("MIN_PICTURE", str(MIN_PICTURE_PX))
+""".replace("MIN_CONTROL", str(MIN_CONTROL_PX))
+
+
+# What is wrong with the pictures on the slide showing now, a content
+# slide's and a decision's (its own, its comparison, each option's) alike:
+# every one loaded and drawn, as the frame shows it, at least MIN_PICTURE px
+# each way. An SVG with no size of its own loads and draws as nothing.
+PICTURES = """
+() => {
+  const problems = [];
+  const slide = document.querySelector("#track > .slide.current");
+  slide.querySelectorAll(".picture img").forEach((img, i) => {
+    const card = img.closest(".option");
+    const name = card ? `option ${card.id}'s picture` : `picture ${i + 1} (${img.getAttribute("src")})`;
+    const r = img.getBoundingClientRect();
+    if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
+      problems.push(`${name} did not load or has no size of its own`);
+      return;
+    }
+    const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+    const w = img.naturalWidth * k, h = img.naturalHeight * k;
+    if (!(w >= MIN_PICTURE && h >= MIN_PICTURE))
+      problems.push(`${name} is drawn ${Math.round(w || 0)} x ${Math.round(h || 0)}px, under MIN_PICTUREpx`);
+  });
+  return problems;
+}
+""".replace("MIN_PICTURE", str(MIN_PICTURE_PX))
 
 
 class Deck:
@@ -605,12 +623,14 @@ async def _check_layout(d: Deck, label: str) -> None:
         ".map(e => [e.id, e.classList.contains('decision')])", what=f"{label}: listing the slides")
     bad = 0
     voting_bad = 0
+    pictures_bad = 0
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
         await d.inner.click(f"#go-{n}")
         await d.inner.wait_for_selector(f"#{slide_id}.current")
         measured = await d.js(MEASURE, what=f"{label}: measuring slide {n}")
         voting = await d.js(VOTING, what=f"{label}: checking slide {n}'s voting")
+        pictures = await d.js(PICTURES, what=f"{label}: measuring slide {n}'s pictures")
         shot = d.shots / label / f"{n:02d}-{slide_id}.png"
         await d.iframe.screenshot(path=str(shot))
         result.screenshots.append(shot)
@@ -620,12 +640,18 @@ async def _check_layout(d: Deck, label: str) -> None:
         for problem in voting:
             voting_bad += 1
             result.failures.append(f"{label} slide {n} ({slide_id}) voting: {problem} [{shot}]")
+        for problem in pictures:
+            pictures_bad += 1
+            result.failures.append(f"{label} slide {n} ({slide_id}) pictures: {problem} [{shot}]")
     if not bad:
         result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px")
     if not voting_bad and d.deck.get("decisions"):
         result.passed.append(f"{label}: every vote control is visible, at least "
                              f"{MIN_CONTROL_PX} px tall and inside the frame, one Choose on "
-                             f"each option, every option picture at least {MIN_PICTURE_PX} px")
+                             f"each option")
+    if not pictures_bad:
+        result.passed.append(f"{label}: every picture, on every slide, is drawn at least "
+                             f"{MIN_PICTURE_PX} px each way")
 
 
 async def _answer(d: Deck, question: str, option: str, by_click: bool) -> tuple[bool, str]:
