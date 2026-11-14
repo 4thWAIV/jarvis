@@ -555,6 +555,10 @@ def briefing_problems(given: dict, deck: dict) -> list[str]:
     if conclusion and not one_sentence(conclusion):
         problems.append("The deck's conclusion is more than one sentence: give the answer or "
                         "the ask in one; the rest belongs on the slides.")
+    for n, slide in enumerate(given.get("slides") or [] if isinstance(given, dict) else [], 1):
+        if isinstance(slide, dict) and "lead_in" in slide:
+            problems.append(f"Slide {n}: a lead-in slide is made from its decision's question, "
+                            f"why_you and evidence; remove this one and give those fields.")
     return problems + opening_problems(deck) + lead_in_problems(deck)
 
 

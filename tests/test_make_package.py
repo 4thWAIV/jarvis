@@ -489,14 +489,44 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     lead = deck["slides"][1]
     assert lead["blocks"][0] == {"lead": "Where do we eat?"}
     assert "It is your team's lunch." in lead["say"] and "Lunch is on Friday." in lead["say"]
-    # A child decision's lead-in is told only when its decision is asked.
+    # The lead-in is told as its decision's own story slide's first beat, so
+    # the story asks, waits and resumes there: never the question without it.
     deck["decisions"][0]["options"][0]["opens"] = ["when"]
     told = dp.builder().story(deck)["slides"]
-    assert told[3]["asks_when"] == {"question": "where", "answers": ["in"]}
-    assert "asks_when" not in told[1]
+    assert [s.get("waits") for s in told] == [None, "where", "when", None]
+    where, when = told[1], told[2]
+    assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
+    assert where["beats"][0]["targets"] == ["#lead-where h2"]
+    assert "It is your team's lunch." in where["beats"][0]["say"]
+    assert where["beats"][1]["actions"] == [{"click": "#go-3"}]
+    assert "target" not in where, "each part goes to its own slide"
+    assert when["beats"][0]["actions"] == [{"click": "#go-4"}]
+    assert when["asks_when"] == {"question": "where", "answers": ["in"]}
+    from jarvis import package_story
+    story = package_story.parse(package_story.encode(dp.builder().story(deck)))
+    record = {"where": {"answer": "in"}}
+    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
 
 
 def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):
     deck = small_deck() | {"language": "es"}
     lead = mp.deck_of(write(tmp_path, deck))["slides"][1]
     assert lead["title"] == "Antes de decidir: Where"
+
+
+def test_a_lead_in_slide_is_never_written_by_hand(tmp_path):
+    deck = small_deck()
+    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
+                           "blocks": [{"p": "Mine."}]})
+    assert "Slide 2: a lead-in slide is made from its decision's question" in \
+        refused_for(tmp_path, deck)
+
+
+def test_evidence_lines_are_strings_with_words(tmp_path):
+    deck = small_deck()
+    deck["decisions"][0]["evidence"] = ["Fine.", "  "]
+    assert "Decision where: it has no lead-in (evidence)" in refused_for(tmp_path, deck)
+    deck["decisions"][0]["evidence"] = ["x" * 161]
+    assert "the evidence is 161 characters; at most 160" in refused_for(tmp_path, deck)
+    deck["decisions"][0]["evidence"], deck["decisions"][0]["why_you"] = ["Fine."], "y" * 161
+    assert "the why_you is 161 characters; at most 160" in refused_for(tmp_path, deck)

@@ -95,7 +95,7 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
                   "stop by the brain's tool during narration: stopped within 1s",
                   "stop by the brain's tool while waiting: stopped within 1s",
                   "stop again: the brain is told it is already stopped",
-                  "resume: picked up at slide 5"):
+                  "resume: picked up at slide 3"):
         assert any(f"ok: {check}" in line for line in said.splitlines()), (check, said)
     assert list((out / "check" / "flow").glob("*waiting-where.png"))
     assert "list_packages found it by its title's words" in said
