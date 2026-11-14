@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jarvis import data_paths, settings_service, settings_specs, start_settings
+from jarvis import data_paths, env_names, settings_service, settings_specs, start_settings
 
 log = logging.getLogger("jarvis.settings_import")
 
@@ -64,9 +64,44 @@ def _parsed(store: str) -> dict:
     return out
 
 
+# The data folder `.env` named (JARVIS_DATA_DIR) and this start uses, or None.
+_data_dir_from_env: str | None = None
+
+
+def data_dir_from_env() -> str | None:
+    """The data folder `.env` named that this start uses (said in Settings,
+    Server), or None."""
+    return _data_dir_from_env
+
+
+def _follow_data_folder() -> None:
+    """While `.env` was loaded, a JARVIS_DATA_DIR line in it moved the whole
+    data folder. Settings has no data folder control (the owner's question
+    5, docs/planning/settings-only/design.md), so a folder `.env` names is
+    used for this start, before anything opens a data folder, and Settings,
+    Server says so: an upgrade never starts on an empty default folder and
+    copies `.env` into it. A JARVIS_DATA_DIR this process was given (an
+    isolated instance) always wins."""
+    global _data_dir_from_env
+    if env_names.is_set("JARVIS_DATA_DIR"):
+        return
+    raw = _env_values().get("JARVIS_DATA_DIR", "").strip()
+    if not raw:
+        return
+    folder = str(Path(raw).expanduser())
+    env_names.publish("JARVIS_DATA_DIR", folder)
+    _data_dir_from_env = folder
+    log.warning("using the data folder %s named in %s; Settings has no data folder "
+                "control yet", folder, env_file())
+
+
 def start_file_once() -> None:
     """Copy `.env`'s start settings into the start file, when there is no
-    start file yet. Never raises."""
+    start file yet; first, the data folder `.env` named. Never raises."""
+    try:
+        _follow_data_folder()
+    except Exception as e:  # noqa: BLE001
+        log.warning("the data folder in .env could not be followed: %s", e)
     try:
         found = _parsed("start")
         if found and not start_settings.path().exists():

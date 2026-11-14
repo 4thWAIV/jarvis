@@ -41,7 +41,8 @@ export interface SettingView {
 
 export interface SettingsValues {
   settings: SettingView[];
-  start: { problem: "tampered" | "unreadable" | null; imported_from_env: string | null; file: string };
+  start: { problem: "tampered" | "unreadable" | null; imported_from_env: string | null;
+           data_dir_from_env: string | null; file: string };
 }
 
 interface Refusal { message: string; code: string; values: Record<string, string | number> }

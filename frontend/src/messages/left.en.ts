@@ -48,6 +48,7 @@ export const leftEn = {
   "left.server.pending": "Some settings that take effect at the next start have changed: restart JARVIS to use them.",
   "left.server.startTampered": "The start-up settings file was changed outside Settings, so JARVIS started on the defaults. Choose them again here.",
   "left.server.startUnreadable": "The start-up settings file could not be read, so JARVIS started on the defaults. Choose them again here.",
+  "left.server.dataDirFromEnv": "JARVIS is using the data folder {path}, named in the old .env file. Settings has no data folder control yet.",
   "left.server.imported": "Settings were copied from the old .env file on {when}; it is no longer read.",
   "left.field.weather_location_label": "Weather place name",
   "left.field.weather_location_label.help": "What JARVIS calls the place it reports the weather for. Empty: the place found from your connection.",

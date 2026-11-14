@@ -17187,6 +17187,9 @@ def _settings_said(view: dict) -> str:
     if start.get("problem"):
         lines.append("The start file was not trusted (" + start["problem"]
                      + "): JARVIS started on the default address, port and HTTPS.")
+    if start.get("data_dir_from_env"):
+        lines.append("JARVIS is using the data folder the old .env file named; Settings has "
+                     "no data folder control yet.")
     return "\n".join(lines)
 
 

@@ -173,15 +173,25 @@ The six questions above are still his. Until he answers, the build takes the
 proposal or the smallest change, so each can be reversed:
 
 1. The brain's programs (`claude_path`, `codex_path`): page-only, read by
-   `jarvis_settings`, refused by `set_jarvis_setting`.
+   `jarvis_settings`, refused by `set_jarvis_setting`. The brains themselves
+   (which are added, the one JARVIS starts with, each one's model) are read
+   by `brains_settings` and changed by the acting `set_brain`, through the
+   same `_change_brain` as Settings, Brains' routes.
 2. The address (`host`) and the extra origins (`allowed_origins`): page-only
    in the same way. The port, HTTPS and the rest of the start file the brain
-   may change.
+   may change. The address is only one that still serves this Mac
+   (127.0.0.1, ::1, localhost, 0.0.0.0, ::), and the port never the page's
+   dev server's, so no choice leaves the page unable to reach Settings; the
+   dev server reads the start file again whenever it changes.
 3. No exception is written; a start whose address or port cannot be bound
    falls back to the last one that served.
 4. `--host`, `--port` and `--ssl` stay as one run's own, saved nowhere.
 5. No data folder control: `JARVIS_DATA_DIR` stays WIRING (an isolated
-   instance), and the data folder is the default.
+   instance), and the data folder is the default. An install whose `.env`
+   named `JARVIS_DATA_DIR` (which moved its data folder while `.env` was
+   loaded) keeps that folder: `settings_import.start_file_once` uses it for
+   the start, before anything opens a data folder, and Settings, Server says
+   so, until he answers question 5. A folder the process was given wins.
 6. Settings does not make the certificate; HTTPS serves when `cert.pem` and
    `key.pem` are there and the switch is on.
 

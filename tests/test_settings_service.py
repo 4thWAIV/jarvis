@@ -286,3 +286,29 @@ def test_the_start_that_served_is_recorded_only_once_it_is_listening(fresh_start
         await asyncio.wait_for(task, 5)
     asyncio.run(scenario())
     assert start_settings.document()["last_good"] == served
+
+
+def test_a_data_folder_named_in_dotenv_is_the_one_this_start_uses(monkeypatch, tmp_path):
+    """An install whose .env moved its data folder never starts on an empty
+    default one and copies .env into it."""
+    from jarvis import data_paths
+    moved = tmp_path / "moved-data"
+    dotenv = tmp_path / "old.env"
+    dotenv.write_text(f"JARVIS_DATA_DIR={moved}\nUSER_NAME=Tony\n")
+    monkeypatch.setenv("JARVIS_ENV_FILE", str(dotenv))
+    monkeypatch.delenv("JARVIS_DATA_DIR")
+    monkeypatch.setattr(settings_import, "_data_dir_from_env", None)
+    settings_import.start_file_once()
+    assert data_paths.data_dir() == moved
+    assert settings_service.view("server")["start"]["data_dir_from_env"] == str(moved)
+
+
+def test_a_data_folder_this_process_was_given_wins_over_dotenv(monkeypatch, tmp_path):
+    from jarvis import data_paths
+    given = data_paths.data_dir()
+    dotenv = tmp_path / "old.env"
+    dotenv.write_text(f"JARVIS_DATA_DIR={tmp_path / 'elsewhere'}\n")
+    monkeypatch.setenv("JARVIS_ENV_FILE", str(dotenv))
+    monkeypatch.setattr(settings_import, "_data_dir_from_env", None)
+    settings_import.start_file_once()
+    assert data_paths.data_dir() == given and settings_import.data_dir_from_env() is None

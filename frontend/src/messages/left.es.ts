@@ -43,6 +43,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.server.pending": "Algunos ajustes que se aplican en el próximo inicio cambiaron: reinicie JARVIS para usarlos.",
   "left.server.startTampered": "El archivo de ajustes de inicio se cambió fuera de la configuración, así que JARVIS se inició con los valores predeterminados. Vuelva a elegirlos aquí.",
   "left.server.startUnreadable": "No se pudo leer el archivo de ajustes de inicio, así que JARVIS se inició con los valores predeterminados. Vuelva a elegirlos aquí.",
+  "left.server.dataDirFromEnv": "JARVIS usa la carpeta de datos {path}, indicada en el antiguo archivo .env. Ajustes aún no tiene un control para la carpeta de datos.",
   "left.server.imported": "La configuración se copió del antiguo archivo .env el {when}; ya no se lee.",
   "left.field.weather_location_label": "Nombre del lugar del clima",
   "left.field.weather_location_label.help": "Cómo llama JARVIS al lugar del clima. Vacío: el lugar que se deduce de su conexión.",

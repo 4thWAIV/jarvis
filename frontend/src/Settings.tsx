@@ -834,6 +834,10 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
         <p role="alert" className="settings-state"><StatusDot status="red" />
           {t(values.start.problem === "tampered" ? "left.server.startTampered" : "left.server.startUnreadable")}</p>
       )}
+      {values?.start.data_dir_from_env && (
+        <p role="alert" className="settings-state">
+          {t("left.server.dataDirFromEnv", { path: values.start.data_dir_from_env })}</p>
+      )}
       {status?.imported && (
         <p className="settings-hint">{t("left.server.imported", {
           when: formatDateTime(new Date(status.imported.at), { dateStyle: "medium" }) })}</p>

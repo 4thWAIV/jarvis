@@ -420,8 +420,10 @@ def view(area: Optional[str] = None) -> dict:
     if area is not None and area not in settings_specs.AREAS:
         raise Refused("area", "No such area: " + ", ".join(settings_specs.AREAS))
     specs = settings_specs.SPECS if area is None else settings_specs.in_area(area)
+    from jarvis import settings_import
     doc = start_settings.document()
     return {"settings": [described(s) for s in specs],
             "start": {"problem": start_settings.problem(),
                       "imported_from_env": doc.get("imported_from_env"),
+                      "data_dir_from_env": settings_import.data_dir_from_env(),
                       "file": str(start_settings.path())}}
