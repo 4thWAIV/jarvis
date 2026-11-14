@@ -2412,7 +2412,10 @@ with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
 ## Key Files
-- `server.py` — Main server, WebSocket handler, HTTP API, action system
+- `server.py` — Main server, WebSocket handler, HTTP API, action system;
+  `kill -USR1 <pid>` appends every thread's Python stack to
+  `server-stacks.log` in the data folder (`_stacks_on_signal`), for a
+  server that stops answering
 - `brain.py` — The voice brain: one long-lived `claude -p` process on the
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
