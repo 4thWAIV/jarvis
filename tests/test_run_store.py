@@ -237,3 +237,36 @@ def test_existing_run_without_folder_id_still_opens(store):
     store.init_db()          # repeatable
 
     assert store.get_run("old-run")["folder_id"] is None
+
+
+def test_message_projects_counts_each_project_from_the_grouped_count():
+    """project_seed's legacy evidence: a grouped count is (value, items)
+    pairs, and reading it must not stop project candidates at startup."""
+    from jarvis import run_store
+    run_store.create_message("s1", "claude", "Ada", "jarvis", "one")
+    run_store.create_message("s1", "claude", "Ada", "jarvis", "two")
+    run_store.create_message("s2", "claude", "Bo", "denice", "three")
+    counted = run_store.message_projects()
+    assert counted["messages"] == {"jarvis": 2, "denice": 1}
+    assert counted["session_messages"] == {}
+
+
+def test_usr1_writes_every_thread_stack_to_the_data_folder():
+    """A server that stops answering can be diagnosed: SIGUSR1 dumps every
+    thread's Python stack beside the data, no root needed."""
+    import os
+    import signal
+    import time
+    import faulthandler
+    import pytest
+    if not hasattr(signal, "SIGUSR1"):
+        pytest.skip("no SIGUSR1 on this platform")
+    from jarvis import data_paths, server
+    try:
+        server._stacks_on_signal()
+        os.kill(os.getpid(), signal.SIGUSR1)
+        time.sleep(0.2)
+        text = (data_paths.data_dir() / "server-stacks.log").read_text()
+        assert "Current thread" in text or "Thread 0x" in text
+    finally:
+        faulthandler.unregister(signal.SIGUSR1)

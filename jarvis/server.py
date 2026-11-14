@@ -17852,6 +17852,23 @@ if FRONTEND_DIST.exists():
 DEFAULT_BIND_HOST = web_auth.JARVIS_DEFAULT_HOST
 
 
+def _stacks_on_signal() -> None:
+    """`kill -USR1 <pid>` writes every thread's Python stack to
+    `server-stacks.log` in the data folder, so a server that stops answering
+    can be diagnosed without root (py-spy needs it on macOS)."""
+    import faulthandler
+    import signal
+    if not hasattr(signal, "SIGUSR1"):      # Windows has no SIGUSR1
+        return
+    path = data_paths.data_dir() / "server-stacks.log"
+    try:
+        stream = open(path, "a", buffering=1)
+    except OSError:
+        log.warning("server stacks: %s cannot be opened", path)
+        return
+    faulthandler.register(signal.SIGUSR1, file=stream, all_threads=True)
+
+
 def _apply_start_settings(args) -> bool:
     """The address and port this run binds: a flag given for this run, else
     Settings, Server. When the saved ones cannot be bound, the start file
@@ -17885,6 +17902,7 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
     parser.add_argument("--ssl", action="store_true", help="HTTPS for this run (needs key.pem/cert.pem)")
     args = parser.parse_args()
+    _stacks_on_signal()
     from_settings = _apply_start_settings(args)
 
     cert_file = data_paths.CONFIG_DIR / "cert.pem"
