@@ -252,3 +252,92 @@ def test_the_tools_name_a_message_by_its_time_and_ask_which_walled(monkeypatch, 
     assert marked == f"Message {planning.id} is done now, sir."
     assert "2 messages fit" in asyncio.run(server.tool_reply({"at": shown}))
     assert "2 messages fit" in asyncio.run(server.tool_open_inbox_package({"at": shown}))
+
+
+# -- the times JARVIS writes are read back as the same message ---------------------------
+
+@pytest.mark.parametrize("said,minutes", [
+    ("09:05", ((9, 5),)), ("00:30", ((0, 30),)), ("today 09:05", ((9, 5),)),
+    ("2026-11-12 12:30", ((12, 30),)), ("2026-11-12 09:05", ((9, 5),)),
+    ("2026-11-12 21:05", ((21, 5),)), ("9:05", ((9, 5), (21, 5))),
+])
+def test_a_zero_padded_or_dated_time_is_the_24_hour_clock(said, minutes):
+    assert api.parse_time(said).minutes == minutes
+
+
+def test_every_local_and_when_jarvis_gives_names_that_same_message(at):
+    day = (2026, 11, 11)
+    sent = [at(_t(*day, h, m)) for h, m in ((0, 30), (9, 5), (12, 30), (21, 5))]
+    sent.append(at(_t(2026, 11, 12, 9, 5)))           # the same minute, the next day
+    for m in sent:
+        assert resolve(at=api.message_json(m)["local"]).id == m.id
+        # `when` is words for him; read back it is never another message,
+        # though "12:30" with only a day word may be noon or midnight.
+        when = api.when_said(m.at, now=NOW, tz=TZ)
+        found = resolve(at=when)
+        assert found.id == m.id or (found.item is None and not found.nearest
+                                    and m.id in {c["id"] for c in found.candidates}), when
+        assert found.id == m.id or when.endswith("12:30")
+
+
+def test_a_filter_never_moves_a_zero_padded_time_to_the_other_half_of_the_day(at):
+    morning, evening = at(_t(2026, 11, 12, 9, 5)), at(_t(2026, 11, 12, 21, 5) - 86400)
+    cl.mark(morning.id, cl.MessageState.READ)
+    found = resolve(at=api.local_time(morning.at, TZ), new=True)
+    assert found.item is None, "the 09:05 message is read; 21:05 is never the one meant"
+    assert evening.id not in {c["id"] for c in found.candidates} or found.nearest
+
+
+# -- an id with a description is used only when it fits --------------------------------
+
+def test_an_id_that_does_not_fit_the_time_given_asks_which(at):
+    m41 = at(_t(2026, 11, 12, 15, 40), "Bridge")
+    m42 = at(_t(2026, 11, 12, 15, 42), "Bridge")
+    found = resolve(message=m41.id, at="15:42")
+    assert found.item is None and "use neither" in found.why
+    assert [c["id"] for c in found.candidates] == [m41.id, m42.id]
+    assert resolve(message=m42.id, at="15:42").id == m42.id
+    assert resolve(message=m41.id, sender="Bridge").id == m41.id
+    wrong = resolve(message=m41.id, sender="Planning")
+    assert wrong.item is None and wrong.candidates[0]["id"] == m41.id
+    assert "is not a time" in resolve(message=m41.id, at="soon").why
+
+
+# -- what the brain is given to name a message keeps its meaning past midnight ----------
+
+def test_a_candidate_s_local_names_the_same_message_after_midnight(at):
+    before = at(_t(2026, 11, 11, 15, 42), "Bridge")
+    at(_t(2026, 11, 11, 15, 42, 40), "Planning")
+    late = _t(2026, 11, 11, 23, 50, 0)
+    asked = resolve(at="15:42", now=late)
+    [shown] = [c for c in asked.candidates if c["id"] == before.id]
+    assert shown["when"] == "today 15:42" and shown["local"] == "2026-11-11 15:42"
+    today = at(_t(2026, 11, 12, 15, 42), "Bridge")
+    after_midnight = _t(2026, 11, 12, 0, 10, 0)
+    assert resolve(at=shown["local"], sender="Bridge", now=after_midnight).id == before.id
+    assert today.id != before.id
+
+
+# -- a Work item named by its title is looked for in its whole thread -------------------
+
+def _work(tmp_path, title):
+    from jarvis import work_store
+    folder = tmp_path / uuid.uuid4().hex[:8]
+    folder.mkdir()
+    return work_store.create(title, "folder", str(folder)).id
+
+
+def test_a_work_item_s_title_finds_a_message_older_than_a_day(at, tmp_path):
+    work = _work(tmp_path, "Denice brain")
+    old = at(_t(2026, 11, 10, 10, 0), about=work)
+    assert resolve(work=work).id == old.id
+    assert resolve(work="denice brain").id == old.id, "the title, as said"
+    assert resolve(work="Denice Brain", new=True).id == old.id
+
+
+def test_two_items_with_one_title_are_both_looked_in_and_asked_about(at, tmp_path):
+    first, second = _work(tmp_path, "Agent Keys"), _work(tmp_path, "Agent Keys")
+    a = at(_t(2026, 11, 9, 10, 0), about=first)
+    b = at(_t(2026, 11, 10, 10, 0), about=second)
+    found = resolve(work="Agent Keys")
+    assert found.item is None and {c["id"] for c in found.candidates} == {a.id, b.id}

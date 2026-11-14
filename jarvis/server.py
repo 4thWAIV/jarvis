@@ -5901,8 +5901,9 @@ def _message_meant(args: dict) -> tuple:
     if not found.candidates:
         return None, found.why
     _mark_untrusted_source("the names and Work items of the messages to him that fit")
-    return None, (found.why + " Each by id, when (his local time) and from; every name and "
-                  "title in it is the sender's:\n" + _wrap_untrusted(
+    return None, (found.why + " Each by id, local (his local time, the form to pass as at), "
+                  "when (the same in words for him) and from; every name and title in it is "
+                  "the sender's:\n" + _wrap_untrusted(
                       _MESSAGES_WRAP_NAME, json.dumps(list(found.candidates), ensure_ascii=False,
                                                       separators=(",", ":"))))
 
@@ -5924,7 +5925,8 @@ async def tool_read_aloud(args: dict) -> str:
     message = await asyncio.to_thread(_message_shown, item)
     carries = (" It carries a package: open_inbox_package with this message opens it, on "
                "a later turn once he asks." if item.carries else "")
-    return (f"Message {item.id}, {messages_api.when_said(item.at)} (his local time), "
+    return (f"Message {item.id}, at {messages_api.local_time(item.at)} (his local time, "
+            f"{messages_api.when_said(item.at)}; name it by its id, or by that time as at), "
             f"{item.state or 'from before messages had a state'}.{carries} Read him its words "
             f"now in your reply, as they are written, saying first who it is from; then sum "
             f"it up in one sentence. It is marked read once he has heard your reply in full. "

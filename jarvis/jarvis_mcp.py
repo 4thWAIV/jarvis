@@ -86,9 +86,10 @@ _ENGINE_PROPERTY = {
 MESSAGE_NAMED = {
     "message": {"type": "integer", "description": "The message's id."},
     "at": {"type": "string",
-           "description": "When it came, his local time as he said or typed it: \"3:42\", "
-                          "\"15:42\", \"3:42 pm\", \"15:42 h\", \"today 15:42\", "
-                          "\"yesterday 9:05\", \"2026-11-12 15:42\"."},
+           "description": "When it came, his local time: as he said or typed it "
+                          "(\"3:42\", \"15:42\", \"3:42 pm\", \"15:42 h\", "
+                          "\"yesterday 9:05\"), or a message's local as JARVIS gave it "
+                          "(\"2026-11-12 15:42\"); never its when."},
     "from": {"type": "string", "description": "Who it is from, as he named them."},
     "work": {"type": "string", "description": "Its Work item: id or title."},
     "new": {"type": "boolean", "description": "Only a message not yet read."},
@@ -208,9 +209,9 @@ TOOL_SPECS = [
             "ones that belong to no item he has read or answered and is not done with (the "
             "Inbox's Read section). Each message has from, about (its Work item), "
             "says, carries (a package inbox row), state (new, read, answered, done) and when "
-            "it came, his local time (when: \"today 15:42\"; local: \"2026-11-12 15:42\"), "
-            "either of which read_aloud, reply, mark_message and open_inbox_package take as "
-            "at. "
+            "it came, his local time (local: \"2026-11-12 15:42\", the form to pass "
+            "read_aloud, reply, mark_message and open_inbox_package as at; when: \"today "
+            "15:42\", words for him only, since today changes at midnight). "
             "When he asks what is new, give new: every new message in the Inbox's order "
             "(each Work item with new messages, then the general ones), which puts him on "
             "the first; tell him each item's in a sentence (from, about, what it says, a "

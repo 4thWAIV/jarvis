@@ -305,9 +305,12 @@ def parse_time(text: str) -> AskedTime:
     if hour > 23 or minute > 59:
         raise BadTime(f'"{str(text)[:40]}" is not a time of day: give it as {TIME_FORMS}.')
     half = (found["half"] or "").replace(".", "").replace(" ", "")
+    # A zero-padded hour ("09:05") or a dated time ("2026-11-12 12:30", the
+    # form JARVIS gives as `local`) is the 24-hour clock JARVIS writes.
+    clock24 = found["hour"].startswith("0") or bool(found["date"])
     if half and 1 <= hour <= 12:
         minutes = (((hour % 12) + (12 if half == "pm" else 0), minute),)
-    elif found["h"] or half or hour == 0 or hour > 12:
+    elif found["h"] or half or clock24 or hour == 0 or hour > 12:
         minutes = ((hour, minute),)
     else:
         # "3:42" with no am or pm is 3:42 or 15:42; "12:05" is noon or midnight.
@@ -393,9 +396,12 @@ class Resolved:
 
 def candidate(item: conversation_log.ConversationItem, *, now: Optional[float] = None,
               tz=None) -> dict:
-    """One message, briefly, to ask which: its id, when, from, about."""
+    """One message, briefly, to ask which: its id, `local` (the time to name
+    it by, which keeps its meaning past midnight), `when` (the words for
+    him), from, about."""
     about = _titles([item.about]).get(item.about, "") if item.about else ""
-    return {"id": item.id, "when": when_said(item.at, now=now, tz=tz),
+    return {"id": item.id, "local": local_time(item.at, tz),
+            "when": when_said(item.at, now=now, tz=tz),
             "from": _shown_sender(item), "about": about or item.about or "",
             "new": item.state == conversation_log.MessageState.NEW}
 
@@ -458,15 +464,31 @@ def _targets(asked: AskedTime, lo: float, hi: float, tz) -> list[float]:
     return out
 
 
+def _work_ids(work: str) -> list[str]:
+    """The Work items he named: the one with that id, else every one whose
+    title is his words (as said: any case, accents folded). Only items with
+    messages to him are looked at by title."""
+    from jarvis.agent_directory import spoken_key
+    if work_store.get(work) is not None:
+        return [work]
+    asked = spoken_key(work)
+    if not asked:
+        return []
+    threads = [t.work for t in conversation_log.work_threads(limit=10_000)]
+    return [i for i, title in _titles(threads).items() if spoken_key(title) == asked]
+
+
 def _pool(spec: MessageSpec, now: float) -> list:
     """The messages a description without a time is looked for among: the
-    new ones (new), its Work item's (work), else the last day's."""
+    new ones (new), its Work item's whole thread (work, by id or title),
+    else the last day's."""
     if spec.new:
         return conversation_log.new_messages()
     if spec.work:
-        work = work_store.get(spec.work)
-        if work is not None:
-            return [i for i in conversation_log.work_thread(spec.work) if i.is_message]
+        ids = _work_ids(spec.work)
+        if ids:
+            return [i for w in ids for i in conversation_log.work_thread(w, limit=10_000)
+                    if i.is_message]
     return conversation_log.messages_between(now - BARE_TIME_WINDOW_SEC, now + 60)
 
 
@@ -482,7 +504,10 @@ def resolve(spec: MessageSpec, *, now: Optional[float] = None, tz=None) -> Resol
         if spec.message < 0:
             return Resolved(why="Give the message's id, or when it came (at); messages_to_him "
                                 "names each message and its time.")
-        return _by_id(spec.message)
+        found = _by_id(spec.message)
+        if found.item is None or not spec.described:
+            return found
+        return _id_as_described(found.item, spec, now, tz)
     if spec.described:
         return _described(spec, now, tz)
     if spec.next:
@@ -503,6 +528,38 @@ def _by_id(item_id: int) -> Resolved:
         return Resolved(why=f"There is no message {item_id} to him on record; messages_to_him "
                             f"names each message and its time.")
     return Resolved(item.id, item)
+
+
+def _fits_described(item, spec: MessageSpec, now: float, tz) -> bool:
+    """Whether a message fits everything named: its sender, Work item, new
+    and its time (to the minute, in its day or the last day)."""
+    titles = _titles([item.about]) if spec.work and item.about else {}
+    if not _fits(item, spec, titles):
+        return False
+    if not spec.at:
+        return True
+    asked = parse_time(spec.at)
+    lo, hi = _window(asked, now, tz)
+    return _at_minute(item, asked, _local(now, tz).date(), tz) and lo - 60 <= item.at < hi
+
+
+def _id_as_described(item, spec: MessageSpec, now: float, tz) -> Resolved:
+    """Named by its id and described too: the id only when the message is
+    the one described; otherwise neither is used, and both come back to ask
+    him which he means."""
+    try:
+        if _fits_described(item, spec, now, tz):
+            return Resolved(item.id, item)
+    except BadTime as e:
+        return Resolved(why=str(e))
+    described = _described(spec, now, tz)
+    others = ([candidate(described.item, now=now, tz=tz)] if described.item is not None
+              else list(described.candidates))
+    shown = [candidate(item, now=now, tz=tz)] + [c for c in others if c["id"] != item.id]
+    return Resolved(candidates=tuple(shown[:CANDIDATES_MAX + 1]),
+                    why=(f"Message {item.id} does not fit {_named(spec)}: use neither; ask "
+                         f"him which he means, naming each by its time and sender, then name "
+                         f"it by its id alone."))
 
 
 def _described(spec: MessageSpec, now: float, tz) -> Resolved:

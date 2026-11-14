@@ -499,12 +499,19 @@ pm", "3:42 p.m.", "15:42 h", "today"/"yesterday" or "hoy"/"ayer" before it,
 "2026-11-12 15:42"; `parse_time`) with `from`, `work` and `new`. A time is
 matched to the minute against each message's recorded time; one with no day
 looks back a day (`BARE_TIME_WINDOW_SEC`, so the same minute yesterday is
-never today's), and "3:42" with no am or pm is 3:42 and 15:42 both. Exactly
+never today's), and "3:42" with no am or pm is 3:42 and 15:42 both, but a
+zero-padded hour ("09:05") or a dated time is the 24-hour clock JARVIS
+writes. A Work item is named by id or title (`_work_ids`; a title shared by
+several items looks in all of them), with no time in its whole thread. An
+id given with a description is used only when the message fits it
+(`_id_as_described`); otherwise both come back to ask which. Exactly
 one match is the message; several come back (at most `CANDIDATES_MAX`) to
 ask him which, by time and sender, walled; none says so and names the
-nearest by minute, both when two are as near. Every message's JSON carries
-`local` ("2026-11-12 15:42") and `when` ("today 15:42"), both forms `at`
-takes. No message is ever found through the brain's memory notes.
+nearest by minute, both when two are as near. Every message's JSON, and
+each one given to ask which, carries `local` ("2026-11-12 15:42"), the form
+the brain passes back as `at`, and `when` ("today 15:42"), words for him
+only, since "today" means another day after midnight. No message is ever
+found through the brain's memory notes.
 
 ## Messages from sessions
 An agent reaches Tim one way: a signed message, `python -m jarvis.message

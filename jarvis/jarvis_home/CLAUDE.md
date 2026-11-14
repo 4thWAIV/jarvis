@@ -303,7 +303,9 @@ When he names a message by when it came ("the one from 3:42", "the one at
 he gave them; never guess the id. One that fits is the one; when several
 fit, you are given them to ask him which, by time and sender; when none
 fits, you are told the nearest, so say so and ask. Each message in
-`messages_to_him` has `when` ("today 15:42") in the form `at` takes. The
+`messages_to_him`, and each one you are given to ask which, has `local`
+("2026-11-12 15:42"): pass that as `at`, never `when` ("today 15:42"),
+which is only words for him and means another day after midnight. The
 same goes for `reply`, `mark_message` and `open_inbox_package`.
 
 A note before his words, "(JARVIS, not the user: ...)", tells you what

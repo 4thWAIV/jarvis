@@ -68,7 +68,7 @@ If the brain is down, the turn fails and is shown with its reason. There is no d
 - Several matches return up to five, as "message 41 from Bridge at 15:42 about X", and the brain asks which one, in the same style as `_ask_which`.
 - No match names the nearest message by minutes, with its id and time. Two equally near messages are both named.
 
-`message_json` adds `local`, for example `"2026-11-12 15:42"`. `messages_to_him` shows it as "today 15:42" or "yesterday 15:42". Both forms are accepted by `resolve`.
+`message_json` and each candidate add `local`, for example `"2026-11-12 15:42"`, which is what the brain passes back as `at`. `when` ("today 15:42") is words for him only: "today" means another day after midnight. A zero-padded hour or a dated time is read as the 24-hour clock JARVIS writes. A message named by id and also described is used only when it fits the description; otherwise both are returned to ask which.
 
 ## 4. Tests (focused only)
 

@@ -159,7 +159,8 @@ def test_the_brain_is_given_that_message_to_read_and_it_is_read_once_heard(serve
     m = _taken(server, monkeypatch, attention)
     out = _read_on_his_turn(server, monkeypatch, m.id)
     head, _, block = out.partition("\n")
-    assert head.startswith(f"Message {m.id}, today ") and "sum it up" in head
+    assert head.startswith(f"Message {m.id}, at {server.messages_api.local_time(m.at)} (his local "
+                           f"time, today ") and "sum it up" in head
     assert "Agent Guard" not in head and "All good" not in head, "the sender's words are walled"
     assert block.startswith("<session-output") and 'untrusted="true"' in block
     assert "Agent Guard" in block and "Status\\n\\nAll good." in block
