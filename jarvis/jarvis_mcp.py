@@ -23,6 +23,7 @@ import urllib.request
 # The one limit on a message's files, from the messaging contract.
 from jarvis.messaging_wire import ATTACHMENTS_MAX
 # The ui_* tools' schemas come from the UI contract, the page's own declarations.
+from jarvis import env_names, settings_specs
 from jarvis import ui_contract
 
 # The pause stages in order (the pause cues, then the send) and their
@@ -2196,6 +2197,35 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "jarvis_settings",
+        "description": (
+            "Settings: every setting he has made, or one section's (area): you (weather place "
+            "and units, the browser JARVIS opens), voice, brains (effort, turn time limit, "
+            "context budget, program paths, usage reading), agents (run time limits, skipping "
+            "permission prompts, the cancel window, extra session homes, polling), projects "
+            "(folders and scan limits), knowledge, safety (refusing to act after reading "
+            "others' words), team (local team servers) and server (address, port, HTTPS, "
+            "starting the brain, extra origins, the docs console). Each with its value, its "
+            "bounds or choices, whether it waits for a restart and whether only his click "
+            "changes it. The Fish key is only ever said to be set or not."),
+        "inputSchema": {"type": "object", "properties": {
+            "area": {"type": "string", "enum": list(settings_specs.AREAS)}}},
+    },
+    {
+        "name": "set_jarvis_setting",
+        "description": (
+            "Change one setting, only when he asks, as its Settings control does: key from "
+            "jarvis_settings, value a boolean, a number, text or a list as the setting takes. "
+            "A setting marked for a restart takes effect when JARVIS next starts. The brain's "
+            "program, the address, the extra origins and the Fish key are his click's alone."),
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string",
+                    "enum": [s.key for s in settings_specs.SPECS
+                             if not s.page_only and s.kind != "secret"]},
+            "value": {"description": "The new value; null empties an optional number."}},
+            "required": ["key", "value"]},
+    },
+    {
         "name": "set_voice_input_settings",
         "description": (
             "Change any of his voice input settings, only when he asks. It applies from the "
@@ -2837,11 +2867,11 @@ def _ssl_context_for(url: str) -> ssl.SSLContext | None:
 
 
 def _endpoint() -> str:
-    return os.getenv("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
+    return env_names.read("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
 
 
 def _token() -> str:
-    path = os.getenv("JARVIS_TOOL_TOKEN_FILE", "")
+    path = env_names.read("JARVIS_TOOL_TOKEN_FILE")
     if not path:
         return ""
     try:

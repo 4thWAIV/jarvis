@@ -24,14 +24,17 @@ import os
 import time
 from typing import Callable, Protocol
 
+from jarvis import settings_service
 from jarvis import claude_env, owned_process, session_steer
 from jarvis import stream_parser, worker_activity
 
 log = logging.getLogger("jarvis.run_executor")
 
-# Same default and env var as work_mode.py and server.py.
-_SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() \
-    not in ("0", "false", "no")
+
+def _skip_permissions() -> bool:
+    """Settings, Agents: runs skip permission prompts (on by default), read
+    at each run's start, the same setting server.py's runs read."""
+    return settings_service.value("skip_permissions") is True
 
 # Same precedent as brain.py's BrainConfig.from_env: never rely on the CLI's
 # own default, always pass --model explicitly.
@@ -149,10 +152,11 @@ def _wall_clock(value: float) -> float | None:
     return min(value, float(MAX_BOUND_SEC))
 
 
-def _resolve_bound(explicit: float | None, env_var: str, default: float,
+def _resolve_bound(explicit: float | None, setting: str, default: float,
                    what: str) -> float:
-    """Explicit argument, else the environment, else the module default —
-    and never anything that is not a wall clock. See `_wall_clock`.
+    """Explicit argument, else the setting (Settings, Agents), else the
+    module default — and never anything that is not a wall clock. See
+    `_wall_clock`.
 
     One function rather than two so that a third bound added later cannot
     quietly get the old `> 0` test. tests/test_bounds.py finds every
@@ -161,37 +165,37 @@ def _resolve_bound(explicit: float | None, env_var: str, default: float,
     bounded = _wall_clock(explicit) if explicit is not None else None
     if bounded is not None:
         return bounded
-    raw = os.getenv(env_var)
-    if raw:
+    raw = settings_service.value(setting)
+    if raw is not None:
         bounded = _wall_clock(raw)
         if bounded is not None:
             return bounded
         log.warning("%s=%r is not a length of time %s can be bounded by; "
-                    "using %ss", env_var, raw, what, default)
+                    "using %ss", setting, raw, what, default)
     return float(default)
 
 
 def _resolve_default_timeout(explicit: float | None) -> float:
-    """Explicit argument, else JARVIS_RUN_TIMEOUT_SEC, else six hours.
+    """Explicit argument, else Settings' run_timeout_sec, else six hours.
 
     Never returns 0, a negative, or anything that is not finite and inside
     MAX_BOUND_SEC: an unbounded unattended process is the defect this exists
     to close, so a nonsensical override falls back to the module default
     rather than disabling the bound.
     """
-    return _resolve_bound(explicit, "JARVIS_RUN_TIMEOUT_SEC",
+    return _resolve_bound(explicit, "run_timeout_sec",
                           _DEFAULT_TIMEOUT_SEC, "a run")
 
 
 def _resolve_idle(explicit: float | None) -> float:
-    """Explicit argument, else JARVIS_RUN_IDLE_SEC, else thirty minutes.
+    """Explicit argument, else Settings' run_idle_sec, else thirty minutes.
 
     Same rule as _resolve_default_timeout, for the same reason: a bound that
     can be set to zero — or to infinity — is a bound an operator can
     accidentally remove, and the thing it is protecting is a permit the whole
     pipeline shares.
     """
-    return _resolve_bound(explicit, "JARVIS_RUN_IDLE_SEC",
+    return _resolve_bound(explicit, "run_idle_sec",
                           _IDLE_OUTPUT_SEC, "a silent run")
 
 
@@ -701,13 +705,14 @@ class ClaudeEngine:
         return self._ex._poll_sec
 
     def resolve_model(self, model: str | None) -> str:
-        """Explicit argument, else JARVIS_RUN_MODEL, else 'sonnet'.
+        """Explicit argument, else 'sonnet' (the engine choice, Settings,
+        Brains, names a run's model before it reaches here).
 
         Never returns falsy: the CLI's own default must never be relied on,
         so a --model flag is always emitted (brain.py sets this precedent
         for the voice path already).
         """
-        return model or os.getenv("JARVIS_RUN_MODEL") or _DEFAULT_MODEL
+        return model or _DEFAULT_MODEL
 
     def _command(self, run_id: str, resume_from: str | None,
                 model: str | None = None) -> list[str]:
@@ -722,7 +727,7 @@ class ClaudeEngine:
         # Always explicit, never the CLI's own default — same reasoning as
         # brain.py always passing --model.
         cmd += ["--model", self.resolve_model(model)]
-        if _SKIP_PERMISSIONS:
+        if _skip_permissions():
             # Matches the five existing call sites. Without this a run blocks on
             # a permission prompt it has no TTY to answer, and hangs forever.
             cmd.append("--dangerously-skip-permissions")
@@ -878,9 +883,8 @@ class ClaudeEngine:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=project_path or None,
-                    # NOT the inherited environment. server.py loads .env into
-                    # os.environ at import, and a developer's .env holds
-                    # ANTHROPIC_API_KEY for the older lookup paths — which the
+                    # NOT the inherited environment. A developer's shell may
+                    # hold ANTHROPIC_API_KEY for the older lookup paths — which the
                     # CLI silently prefers over the subscription login, moving
                     # every run onto paid API billing without a word. Same
                     # scrub the brain has had since milestone 1; see

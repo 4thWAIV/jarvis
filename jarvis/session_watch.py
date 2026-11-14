@@ -26,6 +26,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
+from jarvis import settings_service
+from jarvis import env_names
 from jarvis import data_paths, process_inspect
 from jarvis.session_provider import Tracking
 
@@ -44,8 +46,7 @@ PROVIDER = "anthropic"
 def config_roots() -> list[Path]:
     """Every directory that may hold a `sessions/` roster, in priority order."""
     roots = [Path(r).expanduser() for r in DEFAULT_ROOTS]
-    extra = os.getenv("JARVIS_CLAUDE_CONFIG_DIRS", "")
-    for raw in extra.split(os.pathsep):
+    for raw in settings_service.value("claude_config_dirs"):
         raw = raw.strip()
         if raw:
             p = Path(raw).expanduser()
@@ -1627,7 +1628,7 @@ def brain_cwd() -> str:
     exact lockstep with `data_paths.brain_home()` by
     `test_brain_cwd_matches_data_paths_brain_home` in the test suite.
     """
-    raw = os.getenv("JARVIS_DATA_DIR")
+    raw = env_names.read("JARVIS_DATA_DIR") or None
     base = Path(raw).expanduser() if raw else data_paths.DEFAULT_DATA_DIR
     return str(base / "jarvis")
 

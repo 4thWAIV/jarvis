@@ -37,6 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from jarvis import env_names
 from jarvis import claude_env
 from jarvis import screen
 
@@ -452,20 +453,21 @@ def _check_screen_recording_sync() -> Check:
 
 
 def _check_fish_api_key_sync() -> Check:
-    """FISH_API_KEY must be set or JARVIS has no voice."""
-    if os.environ.get("JARVIS_TTS_PROVIDER") == "local":
+    """A Fish Audio key must be set (Settings, Voice) or JARVIS has no voice."""
+    from jarvis import settings_service
+    if settings_service.value("tts_provider") == "local":
         from jarvis.local_tts import model_problem
         problem = model_problem()
         return Check(name="fish_api_key", status=STATUS_FAIL if problem else STATUS_OK,
                      message=problem or "Local CPU voice model is installed.",
                      remedy="Install the local voice model in Settings → Voice." if problem else "")
-    if os.environ.get("FISH_API_KEY"):
-        return Check(name="fish_api_key", status=STATUS_OK, message="FISH_API_KEY is set.")
+    if settings_service.value("fish_api_key"):
+        return Check(name="fish_api_key", status=STATUS_OK, message="The Fish Audio key is set.")
     return Check(
         name="fish_api_key",
         status=STATUS_FAIL,
-        message="FISH_API_KEY is not set.",
-        remedy="Get a Fish Audio API key from fish.audio and set FISH_API_KEY in .env.",
+        message="The Fish Audio key is not set.",
+        remedy="Get a Fish Audio API key from fish.audio and enter it in Settings, Voice.",
     )
 
 
@@ -479,7 +481,7 @@ def _check_anthropic_key_leftover_sync() -> Check:
     not how this project authenticates (see brain-subscription-only-env-scrub
     history) and is a sign the rest of the setup may be off too.
     """
-    leftover = sorted(k for k in os.environ if k.startswith("ANTHROPIC_"))
+    leftover = env_names.with_prefix("ANTHROPIC_")
     if not leftover:
         return Check(
             name="anthropic_key_leftover",
@@ -507,7 +509,7 @@ def _settings_path() -> Path:
     respect) so this reports on the file `claude` will actually read for this
     process; falls back to the CLI's default of ~/.claude.
     """
-    root = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"
+    root = env_names.read("CLAUDE_CONFIG_DIR") or "~/.claude"
     return Path(root).expanduser() / "settings.json"
 
 

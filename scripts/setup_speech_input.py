@@ -62,6 +62,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--archive", type=Path,
                         help="an archive already downloaded, checked like a download")
     args = parser.parse_args(argv)
+    # Settings' speech models folder, when JARVIS's records can be reached.
+    from jarvis import settings_service
+    settings_service.load()
     if args.language == "all":
         if args.archive:
             parser.error("--archive is one model's; name its --language")

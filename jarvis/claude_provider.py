@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("jarvis.brain")
 
 # The brain runs on the user's Claude subscription — never on an API key. Any of
-# these in the server's environment (they come from .env for Fish/other features)
+# these in the server's environment (a developer's shell may hold them)
 # would make the CLI authenticate with the key instead of the login.
 #
 # Re-exported from claude_env, which is where the scrub now lives: the run
@@ -162,6 +162,10 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_voice_input_settings",
     "mcp__jarvis__engine_settings",
     "mcp__jarvis__set_engine_setting",
+    # Every other setting in Settings (settings_specs.py): reading them, and
+    # the acting change the Settings route also calls.
+    "mcp__jarvis__jarvis_settings",
+    "mcp__jarvis__set_jarvis_setting",
     "mcp__jarvis__play_cue",
     # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
     "mcp__jarvis__skip_reading",

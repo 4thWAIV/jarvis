@@ -44,6 +44,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from jarvis import env_names
 from jarvis import data_paths, process_inspect, server_address
 
 WINDOWS = sys.platform == "win32"
@@ -311,7 +312,7 @@ def _openssl() -> Optional[str]:
         return found
     if WINDOWS:
         git = shutil.which("git")
-        candidates = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "openssl.exe"]
+        candidates = [Path(env_names.read("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "openssl.exe"]
         if git:
             candidates.insert(0, Path(git).resolve().parent.parent / "usr" / "bin" / "openssl.exe")
         for c in candidates:
@@ -336,7 +337,7 @@ def certs() -> int:
     result = subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-keyout", str(key),
                              "-out", str(cert), "-days", "365", "-nodes", "-subj", "/CN=localhost"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            env={**os.environ, "MSYS_NO_PATHCONV": "1"})
+                            env=env_names.child(MSYS_NO_PATHCONV="1"))
     if result.returncode != 0:
         print(result.stdout + result.stderr)
         return 1

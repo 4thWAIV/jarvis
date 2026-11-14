@@ -29,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from jarvis import env_names
 from jarvis import data_paths, self_update, server_address, web_auth
 from jarvis.jarvis_mcp import _ssl_context_for
 
@@ -38,10 +39,10 @@ SERVER_WAIT_SEC = 3 * self_update.STEP_TIMEOUT_SEC
 
 def server_url() -> str:
     """Where to look when no server has recorded its address."""
-    explicit = os.environ.get("JARVIS_URL", "").strip()
+    explicit = env_names.read("JARVIS_URL").strip()
     if explicit:
         return explicit.rstrip("/")
-    tool = urllib.parse.urlsplit(os.environ.get("JARVIS_TOOL_URL", "").strip())
+    tool = urllib.parse.urlsplit(env_names.read("JARVIS_TOOL_URL").strip())
     if tool.scheme and tool.netloc:
         return f"{tool.scheme}://{tool.netloc}"
     certs = all((data_paths.CONFIG_DIR / name).exists() for name in ("cert.pem", "key.pem"))

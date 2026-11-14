@@ -81,8 +81,7 @@ LOGOUT_TIMEOUT_SEC = 5
 API_VERSION = 1
 KEYCHAIN_SERVICE = "JARVIS team server session"
 # Origins allowed to break the URL rules (http, loopback/private addresses),
-# for running a team server locally. Comma-separated, exact origins.
-DEV_SERVERS_ENV = "JARVIS_TEAM_DEV_SERVERS"
+# for running a team server locally: Settings, Team (`team_dev_servers`).
 
 NETWORK_PATH = "/api/v1/network/nodes/self"
 NETWORK_INTERVAL_SEC = 5.0
@@ -353,13 +352,13 @@ class CredentialManagerStore:
 # -- URL rules ---------------------------------------------------------------
 
 def _dev_servers() -> set[str]:
-    return {o.strip().rstrip("/") for o in os.getenv(DEV_SERVERS_ENV, "").split(",")
-            if o.strip()}
+    from jarvis import settings_service
+    return set(settings_service.value("team_dev_servers"))
 
 
 def normalize_url(value: str) -> str:
     """The server's origin, or TeamError. https only, no path, query or
-    credentials, except an origin listed in JARVIS_TEAM_DEV_SERVERS."""
+    credentials, except an origin listed in Settings, Team, Local team servers."""
     value = (value or "").strip().rstrip("/")
     parts = urlsplit(value)
     if not parts.scheme or not parts.hostname:

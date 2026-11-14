@@ -81,17 +81,19 @@ DEFAULT_DATA_DIR = CONFIG_DIR / "data"
 
 
 def env_file_path() -> Path:
-    """The .env JARVIS loads at startup and its settings read and write.
-    JARVIS_ENV_FILE exists so the test suite can neither read nor write the
-    developer's live .env — the same reasoning as JARVIS_DATA_DIR."""
-    override = os.getenv("JARVIS_ENV_FILE", "").strip()
+    """The .env settings were kept in before Settings held them, read once
+    by settings_import's one-time copy and never again. JARVIS_ENV_FILE
+    exists so the test suite never reads the developer's live .env."""
+    from jarvis import env_names
+    override = env_names.read("JARVIS_ENV_FILE").strip()
     return Path(override) if override else CONFIG_DIR / ".env"
 _DEFAULT = DEFAULT_DATA_DIR
 
 
 def data_dir() -> Path:
     """Return the data directory, creating it if needed."""
-    raw = os.getenv("JARVIS_DATA_DIR")
+    from jarvis import env_names
+    raw = env_names.read("JARVIS_DATA_DIR")
     path = Path(raw).expanduser() if raw else _DEFAULT
     path.mkdir(parents=True, exist_ok=True)
     return path
