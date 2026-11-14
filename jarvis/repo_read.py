@@ -37,6 +37,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from jarvis import env_names
 
 # --- bounds ---------------------------------------------------------------
 #
@@ -301,7 +302,7 @@ def _roots_and_openings() -> tuple[tuple, tuple, tuple, tuple]:
     """The private roots and the `OPEN_DATA_DIRS` inside them, each with
     its identities, computed together and cached against JARVIS_DATA_DIR."""
     global _PRIVATE_ROOTS_CACHE
-    key = os.getenv("JARVIS_DATA_DIR")
+    key = env_names.read("JARVIS_DATA_DIR") or None
     cached_key, cached, ids, opens, open_ids = _PRIVATE_ROOTS_CACHE
     if cached and cached_key == key:
         return cached, ids, opens, open_ids

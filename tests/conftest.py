@@ -14,11 +14,13 @@ import pytest_asyncio
 from tests.fixtures.local_config import read_local_skips
 from tests.fixtures.memory_secrets import MemorySecrets
 from tests.loopback_server import LoopbackThreadingHTTPServer
+from tests.settings_fixtures import hold_setting
 
-# server.py loads its .env the moment it is imported, and test modules import
-# it at collection, before any fixture runs. Pointing JARVIS_ENV_FILE at a file
-# that does not exist, here, means even that first import never reads the
-# developer's real settings. Each test then gets its own file below.
+# server.py copies a .env's settings once, the moment it is imported, and test
+# modules import it at collection, before any fixture runs. Pointing
+# JARVIS_ENV_FILE at a file that does not exist, here, means even that first
+# import never reads the developer's real settings. Each test then gets its
+# own file below.
 NO_DOTENV_UNDER_TEST = Path(tempfile.gettempdir()) / "jarvis-tests" / "no-dotenv" / ".env"
 os.environ["JARVIS_ENV_FILE"] = str(NO_DOTENV_UNDER_TEST)
 
@@ -46,22 +48,24 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
-    """Every test starts from the shipped default: the refusal OFF.
-
-    `server.py` copies the repository's `.env` into the environment at import,
-    so a developer who set JARVIS_REFUSE_UNTRUSTED_ACTIONS there would flip
-    every test's default. A test that wants the refusal on sets it itself
-    (`refusal_on` below); the obsolete JARVIS_ALLOW_UNTRUSTED_ACTIONS is
-    cleared too.
-
-    Set to empty rather than deleted: the `.env` loader only fills in keys
-    that are missing (`os.environ.setdefault`), and the many tests that
-    `importlib.reload(server)` would put a deleted key straight back. Empty
-    reads as off.
-    """
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "")
-    monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "")
+def _settings_start_from_the_suite_s_own(tmp_path):
+    """Every test starts from the suite's own settings, held for this process
+    (tests/settings_fixtures.py) and let go after: the untrusted-content
+    refusal off (as shipped; `refusal_on` turns it on), no brain started
+    (no `claude` under test), indexing off (on for users; a test that wants
+    it says so), no usage read (no keychain, no call to Anthropic), no
+    folder discovery (it reads the user's histories), an empty Codex home
+    and a projects folder of the test's own (never the user's ~/Projects)."""
+    from jarvis import settings_service
+    settings_service.let_go()
+    for key, value in (("refuse_untrusted_actions", False), ("brain_autostart", False),
+                       ("knowledge_enabled", False), ("usage_poll", False),
+                       ("folder_discovery", False),
+                       ("codex_sessions_home", str(tmp_path / "codex-sessions-home")),
+                       ("projects_dir", str(tmp_path / "projects-root"))):
+        hold_setting(key, value)
+    yield
+    settings_service.let_go()
 
 
 @pytest.fixture(autouse=True)
@@ -89,28 +93,16 @@ def spanish(monkeypatch):
 
 
 @pytest.fixture
-def refusal_on(monkeypatch):
+def refusal_on():
     """Opt in to the untrusted-content refusal for one test or module."""
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    hold_setting("refuse_untrusted_actions", True)
 
 
 @pytest.fixture(autouse=True)
-def _never_spawn_a_real_brain(monkeypatch):
-    """jarvis.server.lifespan builds the brain but must not start `claude` under test,
-    nor read the keychain and call Anthropic for the usage limits, nor start
-    the knowledge engine's process."""
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+def _never_start_the_engine_s_process(monkeypatch):
+    """jarvis.server.lifespan must not start the knowledge engine's process
+    under test (the brain is held off by `_settings_start_from_the_suite_s_own`)."""
     monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "0")
-    # Indexing is on by default for users; a test that wants it says so.
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
-    monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
-
-
-@pytest.fixture(autouse=True)
-def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
-    """The session watcher reads the user's Codex sessions out of ~/.codex
-    (codex_sessions.py). Under test it reads an empty Codex home instead."""
-    monkeypatch.setenv("JARVIS_CODEX_SESSIONS_HOME", str(tmp_path / "codex-sessions-home"))
 
 
 @pytest.fixture(autouse=True)
@@ -137,14 +129,6 @@ def _never_watch_this_mac_s_real_sessions(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _never_discover_the_user_s_folders(monkeypatch):
-    """The folder catalog's discovery loop reads the user's Claude Code
-    histories (folder_discovery.py). Under test it never runs on its own; a
-    test drives `discover` against synthetic homes instead."""
-    monkeypatch.setenv("JARVIS_FOLDER_DISCOVERY", "0")
-
-
-@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 
@@ -165,27 +149,9 @@ def _never_post_a_real_notification(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
-def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
-    """No test may create a directory in the user's real ~/Projects.
-
-    `create_project` writes into JARVIS_PROJECTS_DIR (default ~/Projects) and
-    will create that root if it is missing, so the default is redirected into
-    a tmp_path for every test — the same reasoning as JARVIS_DATA_DIR. A test
-    that wants its own root still sets the variable itself; this only fills in
-    a safe default.
-    """
-    monkeypatch.setenv("JARVIS_PROJECTS_DIR", str(tmp_path / "projects-root"))
-
-
-@pytest.fixture(autouse=True)
 def _never_write_to_the_live_dotenv(monkeypatch, tmp_path):
-    """No test may write into the developer's live `.env`.
-
-    Found the hard way: the settings endpoints write straight into the
-    repository's own .env, so a test that posted a preference silently
-    rewrote the developer's real configuration — and a test written to
-    prove `.env` line injection injected the line for real. Same reasoning
-    as JARVIS_DATA_DIR; a test that wants its own file still sets the
+    """No test may read the developer's live `.env` (the one-time copy into
+    Settings reads it). A test that wants its own file still sets the
     variable itself.
     """
     monkeypatch.setenv("JARVIS_ENV_FILE", str(tmp_path / "dotenv" / ".env"))
@@ -252,9 +218,9 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     overwrote the live usage reading with a fixture's fake one.
     """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data-dir"))
-    # Nor load the real speech model: with no override it is looked for in
-    # that empty data folder, so the server starts with speech input failed.
-    monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
+    # Nor load the real speech model: with no speech models folder set it is
+    # looked for in that empty data folder, so the server starts with speech
+    # input failed.
 
 
 @pytest.fixture(autouse=True)

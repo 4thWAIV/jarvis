@@ -8,8 +8,9 @@ section:
      "brains": {"anthropic": {"model": "sonnet"}, "openai": {"model": "gpt-5.6-terra"}}}
 
 A brain is added once it is listed here; Claude is always listed, set up as it
-has always been. `JARVIS_BRAIN_PROVIDER` and `JARVIS_BRAIN_MODEL` in `.env`
-still win when set, for tests and development (brain.BrainConfig.from_env).
+has always been. Nothing else chooses the brain: `.env`'s old
+`JARVIS_BRAIN_PROVIDER` and `JARVIS_BRAIN_MODEL` are copied here once
+(settings_import) and never read again.
 A missing or unreadable file is Claude alone, which is how JARVIS has always
 started.
 """

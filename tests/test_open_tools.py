@@ -18,6 +18,7 @@ import importlib
 
 import pytest
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 class _Actions:
@@ -50,7 +51,7 @@ class _Actions:
 def ready(monkeypatch, tmp_path):
     """A server with one project on disk and a recording `actions`."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store
@@ -288,7 +289,7 @@ async def test_no_project_named_asks(ready):
 @pytest.mark.asyncio
 async def test_chrome_is_the_default_when_nothing_is_configured(ready, monkeypatch):
     server, fake, _project = ready
-    monkeypatch.delenv("JARVIS_DEFAULT_BROWSER", raising=False)
+    default_setting("default_browser")
     await server.tool_open_in_browser({"target": "https://example.com"})
     assert fake.browsers == ["chrome"]
 
@@ -298,7 +299,7 @@ async def test_the_configured_default_is_honoured(ready, monkeypatch):
     """The repo's existing convention — a JARVIS_* environment variable — and
     read at call time, so setting it does not need a restart."""
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
+    hold_setting("default_browser", "firefox")
     await server.tool_open_in_browser({"target": "https://example.com"})
     assert fake.browsers == ["firefox"]
 
@@ -306,7 +307,7 @@ async def test_the_configured_default_is_honoured(ready, monkeypatch):
 @pytest.mark.asyncio
 async def test_a_browser_named_for_one_call_beats_the_default(ready, monkeypatch):
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "chrome")
+    hold_setting("default_browser", "chrome")
     await server.tool_open_in_browser({"target": "https://example.com",
                                        "browser": "Firefox"})
     assert fake.browsers == ["firefox"]
@@ -316,7 +317,7 @@ async def test_a_browser_named_for_one_call_beats_the_default(ready, monkeypatch
 async def test_a_file_from_a_project_goes_to_the_chosen_browser_too(ready,
                                                                     monkeypatch):
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
+    hold_setting("default_browser", "firefox")
     out = await server.tool_open_in_browser({"target": "index.html",
                                              "project": "tony-starks-website"})
     assert fake.browsers == ["firefox"]
@@ -335,11 +336,14 @@ async def test_a_browser_he_cannot_drive_is_refused_not_swapped(ready):
 
 
 @pytest.mark.asyncio
-async def test_a_nonsense_default_falls_back_rather_than_breaking(ready,
+async def test_a_nonsense_default_is_refused_and_pages_still_open(ready,
                                                                   monkeypatch):
-    """A typo in .env must not stop pages opening — but it is logged."""
+    """Settings refuses a browser JARVIS cannot drive, so the one in force
+    stays Chrome and pages still open."""
+    from jarvis import settings_service
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "netscape")
+    with pytest.raises(settings_service.Refused):
+        hold_setting("default_browser", "netscape")
     await server.tool_open_in_browser({"target": "https://example.com"})
     assert fake.browsers == ["chrome"]
 
@@ -359,7 +363,7 @@ async def test_his_own_interface_is_not_opened_where_the_mic_is_dead(ready,
     does not work, and he would conclude JARVIS is broken. Say why; do not
     do it silently."""
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
+    hold_setting("default_browser", "firefox")
     out = await server.tool_open_in_browser({"target": url})
     assert fake.browser == [], "it opened his own UI where the mic is dead"
     assert "Chrome" in out and "microphone" in out
@@ -369,7 +373,7 @@ async def test_his_own_interface_is_not_opened_where_the_mic_is_dead(ready,
 async def test_his_own_interface_opens_perfectly_well_in_chrome(ready,
                                                                 monkeypatch):
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
+    hold_setting("default_browser", "firefox")
     await server.tool_open_in_browser({"target": "http://localhost:5173/",
                                        "browser": "chrome"})
     assert fake.browsers == ["chrome"]
@@ -385,7 +389,7 @@ async def test_everything_else_opens_in_firefox_quite_happily(ready, monkeypatch
     """The dashboard has no microphone in it, and neither has the rest of the
     web. Only JARVIS's own voice page is refused."""
     server, fake, _project = ready
-    monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
+    hold_setting("default_browser", "firefox")
     await server.tool_open_in_browser({"target": url})
     assert fake.browsers == ["firefox"], f"{url} was wrongly refused"
 

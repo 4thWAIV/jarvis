@@ -16,7 +16,10 @@ A decision or a question is never sent bare: it goes inside a package that
 shows him what he needs to decide. A message that asks something (a
 sentence ending in "?") without `--package` is refused.
 
-Prints the message's id. Exits 1 when JARVIS refuses it, saying why.
+Prints the message's id. Exits 1 when JARVIS refuses it, saying why. A
+message JARVIS does not answer in time is asked about by its key and sent
+again only when it did not land (`workflow_report.report`), so it never
+arrives twice.
 """
 from __future__ import annotations
 
@@ -29,7 +32,7 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.workflow_report import _post, signed_client  # noqa: E402
+from jarvis.workflow_report import report, signed_client  # noqa: E402
 
 ROUTE = "/api/messages"
 
@@ -73,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     path = ROUTE + (f"?work={urllib.parse.quote(args.work)}" if args.work else "")
     with signed_client(args.cert, args.as_session, "work") as client:
         try:
-            sent = _post(client, path, body(args.says, args.package))
+            sent = report(client, path, body(args.says, args.package))
         except SystemExit as refused:
             print(refused, file=sys.stderr)
             return 1

@@ -30,6 +30,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 SECRET = "sk-live-notion-token-do-not-read-me"
 
@@ -45,7 +46,7 @@ def wired(monkeypatch, tmp_path):
     project.mkdir()
     data = project / "data"
     monkeypatch.setenv("JARVIS_DATA_DIR", str(data))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
 
     from jarvis import data_paths
     importlib.reload(data_paths)
@@ -212,7 +213,7 @@ async def test_open_in_browser_refuses_a_private_file(monkeypatch, tmp_path):
     user's home as a project it would put `~/.ssh/id_rsa` on screen in
     Chrome — where `look_at_screen` then reads it back."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

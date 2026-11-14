@@ -20,6 +20,7 @@ from tests.fixtures.waiting import until_async  # noqa: E402
 from tests.test_brain import _alive, _config  # noqa: E402
 
 from jarvis import brain  # noqa: E402
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.mark.asyncio
@@ -319,11 +320,11 @@ async def test_the_warmup_alone_never_schedules_a_rotation(tmp_path):
         await b.stop()
 
 
-def test_the_budget_defaults_and_reads_the_environment(tmp_path, monkeypatch):
+def test_the_budget_defaults_and_reads_its_setting(tmp_path, monkeypatch):
     assert brain.BrainConfig(home=tmp_path).context_budget == 900000
     assert brain.BrainConfig.from_env(tmp_path).context_budget == 900000
-    monkeypatch.setenv("JARVIS_BRAIN_CONTEXT_BUDGET", "25000")
-    assert brain.BrainConfig.from_env(tmp_path).context_budget == 25000
+    hold_setting("brain_context_budget", "250000")
+    assert brain.BrainConfig.from_env(tmp_path).context_budget == 250000
 
 
 def test_a_cache_rebuild_is_not_counted_as_the_conversation_growing():

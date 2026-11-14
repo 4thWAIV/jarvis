@@ -13,6 +13,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis import settings_service
 from jarvis import author_proof, brain_provider, data_paths, engine_choice, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
@@ -76,7 +77,10 @@ def _assignment(document: Document | None) -> str:
     if document is None:
         return ("Write a deck to content.json in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
-                "source, and your evidence/review notes in evidence.md. Validate with this "
+                "source, and your evidence/review notes in evidence.md. A deck gives its "
+                "\"purpose\" and one-sentence \"conclusion\", opens with a slide that shows "
+                "both, and gives each decision its \"why_you\" and \"evidence\" "
+                "(docs/making-a-package.md). Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
     return ("This package explains one checked canonical architecture document. Its exact "
@@ -85,12 +89,14 @@ def _assignment(document: Document | None) -> str:
             "its identity, coverage and what lies outside the language. JARVIS projects that "
             "exact revision into the package itself, with the handoff's purpose as its purpose; "
             "you write its plain explanation, package/UNDERSTANDING.md, for the handoff's "
-            "audience and questions: walk one concrete input through the architecture as the "
-            "skill says, and say plainly what its coverage leaves unresolved or outside the "
-            "language. You may also write package/story.json, the walk-through JARVIS tells "
-            "over the rendered page, with any questions the reader should answer declared in "
-            "its `questions` (the guide's Architecture documents section has the format; the "
-            "factory adds the standard vote last, so never ask it). " + _pointing(document)
+            "audience and questions: open it with what the architecture is for and its "
+            "conclusion or the ask, in its first paragraph; walk one concrete input through "
+            "the architecture as the skill says, and say plainly what its coverage leaves "
+            "unresolved or outside the language. You may also write package/story.json, the "
+            "walk-through JARVIS tells over the rendered page, with any questions the reader "
+            "should answer declared in its `questions` (the guide's Architecture documents "
+            "section has the format; the factory adds the standard vote last, so never ask "
+            "it). " + _pointing(document)
             + " Nothing else goes under package/. "
             "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
             "installation’s exact command: " + session_skill._module("make_package", cert=False)
@@ -117,10 +123,11 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     folder.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
     provider = brain_provider.provider(ENGINES[choice.engine])
+    settings_service.load()     # this command's own process: his saved program paths
     config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
                          authoring=True, warmup_timeout=60, turn_timeout=60,
-                         claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
-                         codex_path=os.getenv("JARVIS_CODEX_PATH") or None)
+                         claude_path=settings_service.value("claude_path") or None,
+                         codex_path=settings_service.value("codex_path") or None)
     done = asyncio.get_running_loop().create_future()
     receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
                "origin_session": session, "work": work,

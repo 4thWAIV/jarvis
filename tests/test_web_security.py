@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.settings_fixtures import hold_setting, default_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -39,8 +40,8 @@ def env(monkeypatch, tmp_path):
     itself, who it is pretending to be.
     """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("JARVIS_ALLOWED_ORIGINS", raising=False)
-    monkeypatch.delenv("JARVIS_DEBUG_DOCS", raising=False)
+    default_setting("allowed_origins")
+    default_setting("debug_docs")
     monkeypatch.setenv("JARVIS_PORT", "8340")
     from jarvis import data_paths
     importlib.reload(data_paths)
@@ -161,7 +162,7 @@ def test_an_operator_can_name_an_origin_of_their_own(env, no_spawn,
                                                      monkeypatch):
     """--host 0.0.0.0 means the page is opened somewhere JARVIS cannot guess."""
     c, _, _ = env
-    monkeypatch.setenv("JARVIS_ALLOWED_ORIGINS", "http://192.168.1.5:8340")
+    hold_setting("allowed_origins", "http://192.168.1.5:8340")
     r = c.post("/api/runs", json=RUN_BODY,
                headers={"Origin": "http://192.168.1.5:8340"})
     assert r.status_code == 200, r.text
@@ -380,46 +381,53 @@ def test_an_operator_can_name_the_host_they_reach_it_by(env, monkeypatch):
     c, _, _ = env
     assert c.get("/api/runs",
                  headers={"Host": "mac.tail1234.ts.net:8340"}).status_code == 403
-    monkeypatch.setenv("JARVIS_ALLOWED_ORIGINS",
-                       "http://mac.tail1234.ts.net:8340")
+    hold_setting("allowed_origins", ["http://mac.tail1234.ts.net:8340"])
     assert c.get("/api/runs",
                  headers={"Host": "mac.tail1234.ts.net:8340"}).status_code == 200
 
 
-# -- FINDING 4: .env line injection, key sprawl, open restart -------------
+# -- FINDING 4: line injection, key sprawl, open restart ------------------
+# The `.env` writer is gone; every setting is checked by settings_service and
+# saved in its own place. The same attacks, against the routes that remain.
 
 
-def test_an_env_value_with_a_newline_is_refused(env):
+def test_a_setting_value_with_a_newline_is_refused(env):
     c, server, _ = env
-    r = c.post("/api/settings/keys",
-               json={"key_name": "USER_NAME",
-                     "key_value": "Tony\nJARVIS_CLAUDE_PATH=/tmp/evil"},
+    r = c.post("/api/settings/preferences",
+               json={"user_name": "Tony\nJARVIS_CLAUDE_PATH=/tmp/evil", "honorific": "sir"},
                headers={"Origin": DASHBOARD_ORIGIN})
     assert r.status_code == 400, r.text
-    dotenv = server._env_file_path()
-    assert not dotenv.exists() or "JARVIS_CLAUDE_PATH" not in dotenv.read_text()
+    from jarvis import settings_service
+    assert settings_service.value("user_name") == ""
+    assert settings_service.value("claude_path") == ""
 
 
 @pytest.mark.parametrize("bad", ["a\nb", "a\rb", "a\x00b"])
-def test_write_env_key_refuses_anything_that_can_start_a_new_line(env, bad):
-    c, server, _ = env
-    with pytest.raises(ValueError):
-        server._write_env_key("USER_NAME", bad)
+def test_a_text_setting_refuses_anything_that_can_start_a_new_line(env, bad):
+    from jarvis import settings_service
+    with pytest.raises(settings_service.Refused):
+        settings_service.change("user_name", bad)
 
 
 def test_a_name_with_a_space_in_it_is_still_a_name(env):
     """The gate is line breaks, not punctuation — Tony Stark must save."""
-    c, server, _ = env
-    server._write_env_key("USER_NAME", "Tony Stark")
-    assert "USER_NAME=Tony Stark" in server._env_file_path().read_text()
+    from jarvis import settings_service
+    settings_service.change("user_name", "Tony Stark")
+    assert settings_service.value("user_name") == "Tony Stark"
 
 
-def test_write_env_key_refuses_a_key_nobody_is_allowed_to_set(env):
+def test_the_keys_route_sets_only_the_voice_s_two_and_the_brain_s_program_is_his_click(env):
     """The chain was JARVIS_CLAUDE_PATH or JARVIS_PROJECT_ROOTS, then restart."""
     c, server, _ = env
-    for key in ("JARVIS_CLAUDE_PATH", "JARVIS_PROJECT_ROOTS", "PATH"):
-        with pytest.raises(ValueError):
-            server._write_env_key(key, "/tmp/evil")
+    from jarvis import data_paths, settings_service
+    for key in ("claude_path", "project_roots", "PATH", "JARVIS_CLAUDE_PATH"):
+        r = c.post("/api/settings/keys", json={"key_name": key, "key_value": "/tmp/evil"},
+                   headers={"Origin": DASHBOARD_ORIGIN})
+        assert r.status_code == 400, key
+    r = c.post("/api/settings/values", json={"key": "claude_path", "value": "/tmp/evil"},
+               headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
+    assert r.status_code == 403
+    assert settings_service.value("claude_path") == ""
 
 
 def test_preferences_values_go_through_the_same_gate(env):
@@ -454,7 +462,7 @@ def test_the_openapi_console_is_not_served(env):
 def test_the_openapi_console_can_be_turned_back_on_for_debugging(monkeypatch,
                                                                  tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("JARVIS_DEBUG_DOCS", "1")
+    hold_setting("debug_docs", "1")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import server
@@ -486,25 +494,15 @@ def test_spending_the_users_tts_quota_is_not_a_get(env, monkeypatch):
     assert r.status_code == 200 and calls
 
 
-def test_settings_status_is_a_read_and_creates_nothing(env, monkeypatch,
-                                                       tmp_path):
-    """A GET that copies .env.example into place is a GET with a side effect."""
+def test_settings_status_is_a_read_and_writes_nothing(env):
+    """A GET is a read: it neither creates a record nor a start file."""
     c, server, _ = env
-    fake_env = tmp_path / "dotenv" / ".env"
-    fake_env.parent.mkdir()
-    example = tmp_path / "dotenv" / ".env.example"
-    example.write_text("FISH_API_KEY=your-fish-audio-api-key-here\n")
-    monkeypatch.setattr(server, "_env_file_path", lambda: fake_env)
-    monkeypatch.setattr(server, "_env_example_path", lambda: example)
-
+    from jarvis import records, start_settings
     assert c.get("/api/settings/status").status_code == 200
-    assert not fake_env.exists(), "a GET created .env"
     assert c.get("/api/settings/preferences").status_code == 200
-    assert not fake_env.exists(), "a GET created .env"
-
-    # A write still seeds it — that path is allowed to.
-    server._write_env_key("USER_NAME", "Tony")
-    assert fake_env.exists()
+    assert c.get("/api/settings/values").status_code == 200
+    assert records.get("/settings/you.settings") is None
+    assert not start_settings.path().exists()
 
 
 # -- the bind default -----------------------------------------------------

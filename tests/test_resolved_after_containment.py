@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -183,10 +184,10 @@ def test_every_exemption_is_justified_in_words():
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     projects = tmp_path / "projects"
     projects.mkdir()
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(projects))
+    hold_setting("project_roots", str(projects))
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

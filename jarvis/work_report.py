@@ -6,7 +6,9 @@ one durable record (work_store.py) always says what state it is in and
 exactly who is on each piece. Every request is signed with the agent's own
 onboarded key (`--as <session id>`, or JARVIS_AGENT_SESSION), else a
 work-item key found in this folder or above (`.jarvis/work-key`). It finds JARVIS and trusts its certificate the same way as
-workflow_report.py, whose standard-library client it uses.
+workflow_report.py, whose standard-library client it uses: each report
+lands at most once, and one JARVIS does not answer in time is asked about
+before it is sent again (`workflow_report.report`).
 
     python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>] [--area <area>]
     python work_report.py update <id> <summary> [--state <state>] [--area <area>] [--until <hold> ...] [--cleared]
@@ -77,7 +79,7 @@ if not __package__:
     # Run as a script: put the package's parent on the path, as workflow_report does.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.workflow_report import NOT_ANSWERED, _Client, _post, signed_client  # noqa: E402
+from jarvis.workflow_report import NOT_ANSWERED, _Client, report, signed_client  # noqa: E402
 
 # `answer`'s exit when the decision was closed by his signing off its package
 # without answering it (work_store.DECISION_SIGNED_OFF).
@@ -184,7 +186,7 @@ def main(argv: list[str]) -> int:
             for name in ("state", "area"):
                 if getattr(args, name):
                     body[name] = getattr(args, name)
-            print(_post(client, "/api/work", body)["id"])
+            print(report(client, "/api/work", body)["id"])
             return 0
         if args.command == "answer":
             r = client.get(f"/api/work/{args.id}/events",
@@ -244,7 +246,7 @@ def main(argv: list[str]) -> int:
                 detail["evidence"] = [_evidence(e) for e in args.evidence]
             if args.cleared:
                 detail["cleared"] = True
-        item = _post(client, f"/api/work/{args.id}/events",
+        item = report(client, f"/api/work/{args.id}/events",
                      {"kind": kind, "summary": args.summary, "detail": detail})["item"]
         print(_line(item))
         return 0

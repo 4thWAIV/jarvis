@@ -32,8 +32,8 @@ less natural for proper names; listen before accepting it as your preferred voic
 this feature does not constitute a Windows port or an i9 benchmark.
 
 Settings changes persist immediately; a provider/voice change stops queued speech.
-Optional environment settings are `JARVIS_TTS_PROVIDER=local` and
-`JARVIS_LOCAL_VOICE=george`. Diagnostics report selected local provider, model
+Both are chosen in Settings, Voice and language (the voice provider and the
+local voice; the brain's `set_jarvis_setting` changes the same). Diagnostics report selected local provider, model
 availability and last synthesis timing. Invalid provider values disable synthesis
 rather than selecting a billable provider.
 

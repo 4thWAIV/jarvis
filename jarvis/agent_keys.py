@@ -34,6 +34,8 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import Callable, Optional
+from jarvis import settings_service
+from jarvis import env_names
 
 # What each signature is for. A signature checks only under its own.
 REQUEST = "jarvis-request@v1"
@@ -183,12 +185,13 @@ def verify(public_key: str, namespace: str, data: bytes, signature: str) -> bool
 # -- the agent's key files ---------------------------------------------------------------
 
 def _claude_home() -> Path:
-    raw = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    raw = env_names.read("CLAUDE_CONFIG_DIR").strip()
     return Path(raw).expanduser() if raw else Path.home() / ".claude"
 
 
 def _codex_home() -> Path:
-    raw = (os.environ.get("CODEX_HOME") or os.environ.get("JARVIS_CODEX_SESSIONS_HOME")
+    settings_service.load_once()    # a command's own process: his saved homes
+    raw = (env_names.read("CODEX_HOME") or settings_service.value("codex_sessions_home")
            or "").strip()
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
 
@@ -198,10 +201,11 @@ def config_home(session_id: str) -> Path:
     its transcript (CLAUDE_CONFIG_DIR when this process was given one, else
     the first root that has `projects/*/<session>.jsonl`), else the Codex
     home when a rollout there names the session, else ~/.claude."""
-    if os.environ.get("CLAUDE_CONFIG_DIR", "").strip():
+    if env_names.read("CLAUDE_CONFIG_DIR").strip():
         return _claude_home()
+    settings_service.load_once()    # a command's own process: his saved homes
     roots = [_claude_home()]
-    for raw in os.environ.get("JARVIS_CLAUDE_CONFIG_DIRS", "").split(os.pathsep):
+    for raw in settings_service.value("claude_config_dirs"):
         if raw.strip():
             roots.append(Path(raw.strip()).expanduser())
     for root in roots:
@@ -419,7 +423,7 @@ def signer_for(session_id: str = "", start: Optional[Path] = None
     """The key a report command signs with: the session's own (from
     `session_id`, else JARVIS_AGENT_SESSION), else a work-item key in this
     folder or above, else None."""
-    session_id = session_id or os.environ.get("JARVIS_AGENT_SESSION", "").strip()
+    session_id = session_id or env_names.read("JARVIS_AGENT_SESSION").strip()
     if session_id:
         found = session_key(session_id)
         if found:

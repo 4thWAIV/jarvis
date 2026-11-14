@@ -8,16 +8,17 @@ Two shapes, and both were open.
    an operator can accidentally remove, and the thing it is protecting is a
    permit the whole pipeline shares". They then checked only `> 0`, so
    `JARVIS_RUN_TIMEOUT_SEC=inf` and `=1e30` were both accepted and the wall
-   clock was gone.
+   clock was gone. They are Settings now (`run_timeout_sec`, `run_idle_sec`),
+   which refuse such a value at the door, and the wall clock still holds
+   behind it.
 
-2. `server._env_value_problem` is the one validator every HTTP-writable
-   setting passes through. It refused a line break, a leading space and a
-   wrapping quote — and had no length bound at all, so a 100 KB `USER_NAME`
+2. Every setting a route can write passes settings_service.check. The old
+   `.env` validator had no length bound at all, so a 100 KB `USER_NAME`
    round-tripped through `POST /api/settings/preferences` and landed
    unwrapped in the brain's `--append-system-prompt`.
 
 Both are tested as CLASSES: every `_resolve_*` in `run_executor` found from
-the AST, and every key in `SETTABLE_ENV_KEYS` — not the two the finding
+the AST, and every text setting in settings_specs — not the two the finding
 named.
 """
 
@@ -28,6 +29,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting, default_setting
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -35,12 +37,12 @@ sys.path.insert(0, str(ROOT))
 EXECUTOR = ROOT / "jarvis" / "run_executor.py"
 
 
-# --- 1. every bound the executor resolves from the environment -----------
+# --- 1. every bound the executor resolves from a setting -----------------
 
 def _resolvers() -> dict:
-    """{function: env var it reads} for every `_resolve_*` in run_executor
-    that takes a bound off the environment. Found in the source, so one
-    added next year is bounded here before it can be removed there."""
+    """{function: setting it reads} for every `_resolve_*` in run_executor
+    that takes a bound off a setting. Found in the source, so one added
+    next year is bounded here before it can be removed there."""
     tree = ast.parse(EXECUTOR.read_text())
     out = {}
     for node in tree.body:
@@ -48,13 +50,11 @@ def _resolvers() -> dict:
             continue
         if not node.name.startswith("_resolve_"):
             continue
-        # The variable is named either at an `os.getenv` in the body or as
-        # a literal handed to a shared helper. Both spellings count: the
-        # point is "this function takes a bound off the environment", not
-        # how it happens to be written this month.
+        # The setting is named as a literal handed to the shared helper.
+        from jarvis import settings_specs
         for sub in ast.walk(node):
             if (isinstance(sub, ast.Constant) and isinstance(sub.value, str)
-                    and sub.value.startswith("JARVIS_")):
+                    and sub.value in settings_specs.BY_KEY):
                 out[node.name] = sub.value
                 break
     return out
@@ -66,14 +66,13 @@ RESOLVERS = _resolvers()
 def test_the_resolvers_are_found_in_the_source():
     assert set(RESOLVERS) == {"_resolve_default_timeout", "_resolve_idle"}, \
         RESOLVERS
-    assert set(RESOLVERS.values()) == {"JARVIS_RUN_TIMEOUT_SEC",
-                                       "JARVIS_RUN_IDLE_SEC"}, RESOLVERS
+    assert set(RESOLVERS.values()) == {"run_timeout_sec", "run_idle_sec"}, RESOLVERS
 
 
 @pytest.fixture
 def executor(monkeypatch):
-    monkeypatch.delenv("JARVIS_RUN_TIMEOUT_SEC", raising=False)
-    monkeypatch.delenv("JARVIS_RUN_IDLE_SEC", raising=False)
+    default_setting("run_timeout_sec")
+    default_setting("run_idle_sec")
     from jarvis import run_executor
     importlib.reload(run_executor)
     return run_executor
@@ -85,26 +84,24 @@ NOT_A_NUMBER = ["nan", "NaN"]
 
 
 @pytest.mark.parametrize("name", sorted(RESOLVERS))
-@pytest.mark.parametrize("raw", UNBOUNDED)
-def test_no_environment_value_can_remove_the_wall_clock(executor, monkeypatch,
-                                                        name, raw):
+@pytest.mark.parametrize("raw", UNBOUNDED + NOT_A_NUMBER)
+def test_no_setting_can_remove_the_wall_clock(executor, name, raw):
     """`> 0` is not "is a wall clock". `inf` passes it, and so does 1e30 —
-    thirty-one orders of magnitude past the heat death of the run."""
-    monkeypatch.setenv(RESOLVERS[name], raw)
-    importlib.reload(executor)
-    value = getattr(executor, name)(None)
+    thirty-one orders of magnitude past the heat death of the run. The
+    setting refuses them, and a value that reached the executor some other
+    way is still held to the wall."""
+    from jarvis import settings_service
+    with pytest.raises(settings_service.Refused):
+        hold_setting(RESOLVERS[name], raw)
+    held = {RESOLVERS[name]: float(raw)}
+    real = settings_service.value
+    executor.settings_service.value = lambda key: held.get(key, real(key))
+    try:
+        value = getattr(executor, name)(None)
+    finally:
+        executor.settings_service.value = real
     assert math.isfinite(value), (name, raw, value)
     assert 0 < value <= executor.MAX_BOUND_SEC, (name, raw, value)
-
-
-@pytest.mark.parametrize("name", sorted(RESOLVERS))
-@pytest.mark.parametrize("raw", NOT_A_NUMBER)
-def test_a_non_number_falls_back_to_the_module_default(executor, monkeypatch,
-                                                       name, raw):
-    monkeypatch.setenv(RESOLVERS[name], raw)
-    importlib.reload(executor)
-    value = getattr(executor, name)(None)
-    assert math.isfinite(value) and value > 0, (name, raw, value)
 
 
 @pytest.mark.parametrize("name", sorted(RESOLVERS))
@@ -120,8 +117,7 @@ def test_no_caller_can_remove_it_either(executor, name, explicit):
 @pytest.mark.parametrize("name", sorted(RESOLVERS))
 def test_an_ordinary_override_is_still_honoured(executor, monkeypatch, name):
     """A wall that ignores the operator is not a fix."""
-    monkeypatch.setenv(RESOLVERS[name], "120")
-    importlib.reload(executor)
+    hold_setting(RESOLVERS[name], 120)
     assert getattr(executor, name)(None) == 120.0
     assert getattr(executor, name)(90.0) == 90.0
 
@@ -134,13 +130,11 @@ def test_the_maximum_is_a_working_day_or_less(executor):
     assert executor.MAX_BOUND_SEC >= executor._DEFAULT_TIMEOUT_SEC
 
 
-# --- 2. every setting an HTTP route can write ----------------------------
+# --- 2. every setting a route can write ---------------------------------
 
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    monkeypatch.setenv("JARVIS_ENV_FILE", str(tmp_path / ".env"))
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store
@@ -151,58 +145,61 @@ def server(monkeypatch, tmp_path):
     return server_module
 
 
-def test_every_settable_key_is_bounded(server):
-    """The class, from `SETTABLE_ENV_KEYS` itself. A key added next year is
-    bounded the day it is added, or this fails."""
-    keys = sorted(server.SETTABLE_ENV_KEYS)
-    assert len(keys) >= 4, keys
-    for key in keys:
-        problem = server._env_value_problem(key, "x" * 100_000)
-        assert problem, f"{key} accepts a hundred thousand characters"
-        assert "long" in problem.lower(), (key, problem)
+def _texts():
+    from jarvis import settings_specs
+    return [s for s in settings_specs.SPECS if s.kind in ("text", "path", "secret")]
 
 
-def test_a_name_is_bounded_more_tightly_than_a_key(server):
+def test_every_text_setting_is_bounded():
+    """The class, from settings_specs itself. A text setting added next year
+    is bounded the day it is added, or this fails."""
+    from jarvis import settings_service
+    assert len(_texts()) >= 6
+    for spec in _texts():
+        with pytest.raises(settings_service.Refused) as refused:
+            settings_service.check(spec, "x" * 100_000)
+        assert refused.value.code == "tooLong", spec.key
+
+
+def test_a_name_is_bounded_more_tightly_than_a_key():
     """A Fish Audio key is sixty-odd characters of opaque token. A NAME is a
     name — and it is the one that is spliced into the brain's system prompt
     (`brain.launch_prompt`: "The user's name is {…}") with nothing around
     it, so it is the one that must not be a paragraph."""
-    for key in ("USER_NAME", "HONORIFIC"):
-        assert key in server.ENV_NAME_KEYS, key
-        assert server._env_value_problem(key, "x" * 200), key
-        assert server._env_value_problem(key, "Tony") is None, key
-        assert server._env_value_problem(key, "Étienne d'Arcy-Smith") is None
+    from jarvis import settings_service, settings_specs
+    name = settings_specs.spec("user_name")
+    assert name.max_chars <= 64 < settings_specs.spec("fish_api_key").max_chars
+    with pytest.raises(settings_service.Refused):
+        settings_service.check(name, "x" * 200)
+    for ok in ("Tony", "Étienne d'Arcy-Smith"):
+        assert settings_service.check(name, ok) == ok
+    with pytest.raises(settings_service.Refused):
+        settings_service.check(settings_specs.spec("honorific"), "Your Majesty")
 
 
-def test_a_control_character_is_refused(server):
+def test_a_control_character_is_refused():
     """`splitlines()` catches the ten separators. An ESC or a BEL is neither
     a separator nor printable, and it round-tripped into the system prompt
     and into whatever renders it."""
-    for key in sorted(server.SETTABLE_ENV_KEYS):
+    from jarvis import settings_service
+    for spec in _texts():
         for bad in ("\x1b[2J", "a\x07b", "a\x00b", "a\x7fb"):
-            assert server._env_value_problem(key, bad), (key, repr(bad))
-
-
-def test_the_ordinary_settings_still_save(server):
-    for key, value in (("USER_NAME", "Tony"), ("HONORIFIC", "sir"),
-                       ("FISH_VOICE_ID", "b545c585f4d491a"),
-                       ("FISH_API_KEY", "x" * 64)):
-        assert server._env_value_problem(key, value) is None, key
-        server._write_env_key(key, value)
-    _, parsed = server._read_env()
-    assert parsed["USER_NAME"] == "Tony"
-    assert parsed["FISH_API_KEY"] == "x" * 64
+            with pytest.raises(settings_service.Refused):
+                settings_service.check(spec, bad)
 
 
 def test_the_route_refuses_rather_than_saving_half(server):
     """`POST /api/settings/preferences` is the door the finding came
-    through. It must answer 400 and write nothing."""
+    through. It must answer 400 and save nothing."""
     from fastapi.testclient import TestClient
+    from jarvis import settings_service
     with TestClient(server.app) as client:
         r = client.post("/api/settings/preferences",
                         json={"user_name": "x" * 100_000, "honorific": "sir"},
                         headers={"Origin": "http://localhost:5173"})
         assert r.status_code == 400, r.text
-        _, parsed = server._read_env()
-        assert not parsed.get("USER_NAME"), parsed.get("USER_NAME")
-        assert not parsed.get("HONORIFIC"), parsed.get("HONORIFIC")
+        assert settings_service.value("user_name") == ""
+        r = client.post("/api/settings/preferences",
+                        json={"user_name": "Tony", "honorific": "sir"},
+                        headers={"Origin": "http://localhost:5173"})
+        assert r.status_code == 200 and settings_service.value("user_name") == "Tony"

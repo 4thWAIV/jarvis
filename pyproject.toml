@@ -40,7 +40,6 @@ include = ["jarvis", "jarvis.*"]
 # dashboard (`npm run build` in frontend/ writes it).
 [tool.setuptools.package-data]
 jarvis = [
-    ".env.example",
     "transcribeProtocol.json",
     "ui_contract/*.json",
     "ui_contract/families/*.json",

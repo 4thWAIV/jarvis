@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from jarvis import settings_service
+from jarvis import env_names
 from jarvis import session_steer, worker_activity
 from jarvis.codex_runtime import RuntimeObserver
 from jarvis.session_provider import Tracking
@@ -58,7 +60,7 @@ _INJECTED = re.compile(r"^\s*(<[a-z_]+>|# [A-Za-z.]+ instructions for )")
 
 
 def codex_home() -> Path:
-    raw = os.getenv("JARVIS_CODEX_SESSIONS_HOME")
+    raw = settings_service.value("codex_sessions_home")
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
 
 
@@ -608,7 +610,7 @@ class CodexSessions:
         codex = self._codex or shutil.which("codex")
         if not codex:
             return session_steer.failed("the codex command is not on the PATH")
-        env = dict(os.environ)
+        env = env_names.child()
         env["CODEX_HOME"] = str(self.home)
         try:
             done = subprocess.run([*codex.split(), "queue", "--thread", session.session_id,

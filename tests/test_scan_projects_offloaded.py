@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from jarvis import server
 from tests.fixtures.waiting import until
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +37,7 @@ def _make_repo(root: Path, name: str, branch: str = "main") -> None:
 def test_a_slow_scan_does_not_freeze_the_event_loop(monkeypatch, tmp_path):
     """The regression itself: the loop must keep running during a scan."""
     _make_repo(tmp_path, "alpha")
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(tmp_path))
+    hold_setting("project_roots", str(tmp_path))
 
     real = server._scan_projects_blocking
 
@@ -70,7 +71,7 @@ def test_the_scan_stops_itself_at_the_budget(monkeypatch, tmp_path):
     honour the deadline itself or it runs on regardless."""
     for i in range(50):
         _make_repo(tmp_path, f"repo{i:03d}")
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(tmp_path))
+    hold_setting("project_roots", str(tmp_path))
 
     real_is_dir = Path.is_dir
 
@@ -79,7 +80,7 @@ def test_the_scan_stops_itself_at_the_budget(monkeypatch, tmp_path):
         return real_is_dir(self)
 
     monkeypatch.setattr(Path, "is_dir", slow_is_dir)
-    monkeypatch.setattr(server, "SCAN_BUDGET_SECONDS", 0.1)
+    hold_setting("scan_budget", 0.1)
 
     started = time.monotonic()
     projects = asyncio.run(server.scan_projects())
@@ -90,7 +91,7 @@ def test_the_scan_stops_itself_at_the_budget(monkeypatch, tmp_path):
 
 
 def test_a_partial_scan_is_not_cached_as_the_whole_picture(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(tmp_path))
+    hold_setting("project_roots", str(tmp_path))
     monkeypatch.setattr(
         server, "_scan_projects_blocking",
         lambda deadline: ([{"name": "partial", "path": "p", "branch": "main"}], False))
@@ -101,7 +102,7 @@ def test_a_partial_scan_is_not_cached_as_the_whole_picture(monkeypatch, tmp_path
 
 def test_a_complete_scan_is_served_from_cache(monkeypatch, tmp_path):
     _make_repo(tmp_path, "alpha")
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(tmp_path))
+    hold_setting("project_roots", str(tmp_path))
 
     calls = 0
     real = server._scan_projects_blocking
@@ -120,8 +121,8 @@ def test_a_complete_scan_is_served_from_cache(monkeypatch, tmp_path):
 
 def test_roots_are_overridable(monkeypatch, tmp_path):
     """A user whose Desktop is slow or cloud-backed needs an escape hatch."""
-    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", f"{tmp_path}:{tmp_path / 'nope'}")
+    hold_setting("project_roots", f"{tmp_path}:{tmp_path / 'nope'}")
     assert server._scan_roots() == [tmp_path, tmp_path / "nope"]
 
-    monkeypatch.delenv("JARVIS_PROJECT_ROOTS", raising=False)
+    default_setting("project_roots")
     assert server.DESKTOP_PATH in server._scan_roots()

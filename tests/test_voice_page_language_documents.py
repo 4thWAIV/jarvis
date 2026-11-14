@@ -23,9 +23,8 @@ pytestmark = pytest.mark.page
 def canonical_server(wired, draft, monkeypatch, tmp_path):
     from jarvis import data_paths, run_store
     run_store.init_db()
-    configured = tmp_path / "configured.env"
-    configured.write_text("FISH_API_KEY=isolated-test-key\n")
-    monkeypatch.setenv("JARVIS_ENV_FILE", str(configured))
+    from jarvis import settings_service
+    settings_service.hold("fish_api_key", "isolated-test-key")
     checked = language_documents.Documents().validate(**draft)
     published = language_projection.publish(language_documents.Documents(), **{k: checked[k] for k in ("document_id", "revision", "source_revision")})
     sock = socket.socket()

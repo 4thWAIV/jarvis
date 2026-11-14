@@ -10,6 +10,7 @@ from jarvis import knowledge_client as kc
 from jarvis import knowledge_runtime as kr
 from jarvis import subsystem_diagnostics as sd
 from tests.fixtures.waiting import until_async
+from tests.settings_fixtures import hold_setting
 
 
 def test_the_floor_holds_the_engine():
@@ -226,12 +227,12 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
     asyncio.run(server.start_knowledge_engine())
     assert made == [] and server.knowledge is None          # conftest: autostart off
     monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "1")
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    hold_setting("knowledge_enabled", "0")
     asyncio.run(server.start_knowledge_engine())
     assert len(made) == 1 and server.knowledge is made[0]
     # Record health remains available even while indexing is disabled.
     assert server.knowledge_calls.runtime is made[0]
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     assert server.knowledge_calls.runtime is made[0]
 
 

@@ -95,8 +95,8 @@ def test_the_answer_is_stored_as_a_percent(monkeypatch, tmp_path):
 
 
 def test_the_test_suite_never_polls():
-    import os
-    assert os.environ["JARVIS_USAGE_POLL"] == "0"
+    from jarvis import settings_service
+    assert settings_service.value("usage_poll") is False
 
 
 def test_the_provider_is_the_service_and_the_subscription_from_the_login():

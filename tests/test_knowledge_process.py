@@ -22,6 +22,7 @@ from jarvis.knowledge import address as engine_address
 from jarvis.knowledge import auth
 from jarvis.knowledge.engine import Engine, EngineLocked, lock_is_free
 from jarvis.knowledge.serve import EngineHTTPServer, dispatch
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 @pytest.fixture
@@ -328,16 +329,16 @@ def test_footprint_reads_a_process():
 
 
 def test_memory_budget_setting(monkeypatch):
-    monkeypatch.setenv("JARVIS_KNOWLEDGE_MEMORY_MB", "123")
+    hold_setting("knowledge_memory_mb", "123")
     assert kc.memory_budget_mb() == 123
-    monkeypatch.setenv("JARVIS_KNOWLEDGE_MEMORY_MB", "")
+    hold_setting("knowledge_memory_mb", "")
     assert kc.memory_budget_mb() in (256, 384)
 
 
 def test_on_by_default(monkeypatch):
-    monkeypatch.delenv("JARVIS_KNOWLEDGE", raising=False)
+    default_setting("knowledge_enabled")
     assert kc.enabled()
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    hold_setting("knowledge_enabled", "0")
     assert not kc.enabled()
 
 

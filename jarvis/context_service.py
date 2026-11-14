@@ -55,8 +55,9 @@ STATUS_WORDS = {"planned": "planned, not implemented", "implemented": "implement
 
 
 def run_context_enabled() -> bool:
-    """`JARVIS_RUN_CONTEXT`: off until the phase 0 evaluation passes (D7)."""
-    return os.getenv("JARVIS_RUN_CONTEXT", "0").strip().lower() in ("1", "true", "yes", "on")
+    """Settings' `run_context`: off until the phase 0 evaluation passes (D7)."""
+    from jarvis import settings_service
+    return settings_service.value("run_context") is True
 
 
 @dataclass

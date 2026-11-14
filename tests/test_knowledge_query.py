@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 @pytest.fixture(autouse=True)
 def indexing_enabled(monkeypatch):
     # These tests exercise indexing, with the legacy installation input.
     # Settings persistence and live enable/disable have their own tests.
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
 
 
 from jarvis import knowledge_client as kc

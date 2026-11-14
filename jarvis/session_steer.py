@@ -13,6 +13,7 @@ import json
 import os
 import socket
 from pathlib import Path
+from jarvis import env_names
 
 SENT = "sent"          # the bytes left over the socket — NOT that the target
                         # session accepted or even received them; no reply is
@@ -115,7 +116,7 @@ def post_to_session(socket_path: str | None, prompt: str,
     # successful `sendall` proves the bytes left this process, not that the
     # target accepted them. See the SENT docstring above and the wording at
     # the call site in server.py's `_perform_staged_steers`.
-    token = os.getenv("CLAUDE_CODE_MESSAGING_TOKEN", "")
+    token = env_names.read("CLAUDE_CODE_MESSAGING_TOKEN")
     if token:
         lines.append(json.dumps({"type": "auth", "token": token}))
     line = {"type": "user", "message": {"role": "user", "content": prompt.strip()}}

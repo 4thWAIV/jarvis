@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from jarvis import builds  # noqa: E402
 from jarvis import specs  # noqa: E402
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 SPEC_BODY = """\
 A local web UI to browse and edit CLAUDE.md files
@@ -210,7 +211,7 @@ def test_the_socket_notices_a_change_in_either_copy(monkeypatch, with_worktree):
     """The fingerprint has to carry the path, or a change in the worktree
     looks identical to no change at all."""
     c, _, _, tree = with_worktree
-    monkeypatch.setenv("JARVIS_SPECS_POLL", "0.05")
+    hold_setting("specs_poll", "0.05")
     with c.websocket_connect("/ws/specs") as ws:
         assert _next_message(ws)["type"] == "hello"
         doc = next((tree / builds.SPEC_DIR).glob("*.md"))
@@ -419,7 +420,7 @@ def test_a_document_changing_on_disk_wakes_the_page(monkeypatch, client):
     so the socket watches the files and says only that something moved. The
     client reconciles against /api/specs; the hint carries no content."""
     c, server, root, relative = client
-    monkeypatch.setenv("JARVIS_SPECS_POLL", "0.05")
+    hold_setting("specs_poll", "0.05")
     with c.websocket_connect("/ws/specs") as ws:
         assert _next_message(ws)["type"] == "hello"
         doc = root / relative
@@ -433,7 +434,7 @@ def test_an_approval_wakes_the_page_too(monkeypatch, client):
     """Approving by voice changes no document, only a record beside it — and
     the page has to notice, or it goes on showing "awaiting"."""
     c, server, root, relative = client
-    monkeypatch.setenv("JARVIS_SPECS_POLL", "0.05")
+    hold_setting("specs_poll", "0.05")
     with c.websocket_connect("/ws/specs") as ws:
         assert _next_message(ws)["type"] == "hello"
         specs.record_approval(str(root), relative)

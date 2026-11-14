@@ -52,8 +52,8 @@ silently *prefers* an inherited `ANTHROPIC_API_KEY` over the logged-in
 session, without saying so (`claude auth status` still reports
 `loggedIn: true` while billing moves to the key). So:
 
-- Putting `ANTHROPIC_API_KEY` in `.env` is not a setup step and does nothing
-  useful — it is a leftover from a different project's instructions, or a
+- Setting `ANTHROPIC_API_KEY` in the environment (or an old `.env`) is not a
+  setup step and does nothing useful — it is a leftover from a different project's instructions, or a
   misunderstanding, and is worth flagging if you see it.
 - Setup is exactly: install Claude Code (`npm install -g
   @anthropic-ai/claude-code`, 2.1.224 or newer) and run `claude` once to log
@@ -98,7 +98,10 @@ does not follow the app there. Move it to `/Applications` and relaunch.
 error `-1728` / "not allowed assistive access") without ever triggering the
 permission prompt itself, and its remedy text carries this same guidance.
 
-## `FISH_API_KEY` is genuinely required — there is no fallback voice
+## A Fish Audio key is genuinely required — there is no fallback voice
+
+It is entered in Settings, Voice (first-time setup opens there when the page
+loads without a voice), and kept in the Keychain; no file is edited.
 
 `tts.py` calls the Fish Audio API directly; if the key is missing or empty,
 `synthesize_chunk` simply returns `None` — no error, no local TTS, no
@@ -190,10 +193,12 @@ it. It is not only the web: `server.TAINTING_TOOLS` names every reader that
 marks a turn — repository files, other sessions' transcripts, run output,
 documents, the user's own screen — and everything that acts is shut, bar
 `answer_dialog` (one keystroke) and the tools that only fetch more to read.
-That refusal is opt-in (`JARVIS_REFUSE_UNTRUSTED_ACTIONS`, off by default). If
-someone reports "JARVIS refused to start a run right after reading my Jira
-ticket", or right after reading a README — it is on, and this is it working.
-Asking again re-opens it; unsetting the variable turns it off.
+That refusal is opt-in: Settings, Safety, "Refuse to act after reading
+others' words" (the setting `refuse_untrusted_actions`, off by default; the
+brain's `set_jarvis_setting` changes it too). If someone reports "JARVIS
+refused to start a run right after reading my Jira ticket", or right after
+reading a README — it is on, and this is it working. Asking again re-opens
+it; switching it off in Settings, Safety turns it off.
 
 ## If something here is wrong
 

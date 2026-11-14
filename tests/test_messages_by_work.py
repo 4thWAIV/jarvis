@@ -357,13 +357,10 @@ def test_heard_in_full_a_message_is_read(wired, monkeypatch):
     client = TestClient(server.app)
     m = _post(client, Agent(home, PLAN).onboarded(), {"says": "Done."}).json()["message"]
 
-    async def heard(utt, timeout=None):
-        return True
-    monkeypatch.setattr(server, "speech", SimpleNamespace(wait_for=heard))
     reads = [(server._MESSAGE_READ, str(m["id"]), None)]
-    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[])))
+    server._seen_once_heard(reads, SimpleNamespace(chunks=[]), True)
     assert cl.get(m["id"]).state == "new", "nothing said is nothing heard"
-    asyncio.run(server._seen_when_heard(reads, SimpleNamespace(chunks=[1])))
+    server._seen_once_heard(reads, SimpleNamespace(chunks=[1]), True)
     assert cl.get(m["id"]).state == "read"
 
 

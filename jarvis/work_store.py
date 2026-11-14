@@ -740,7 +740,7 @@ def create(title: str, source_kind: str, path: str, state: str = PLANNED,
 
     _records.atomic(write, by=_caller(CREATED, reporter))
     _tell_changed({item_id})
-    return get(item_id)
+    return _written(item_id)
 
 
 def record(event: WorkEvent) -> WorkItem:
@@ -787,7 +787,7 @@ def record(event: WorkEvent) -> WorkItem:
                            full_sync=event.kind in HIS_KINDS)
     wait_links.tell(moved)
     _tell_changed({event.item_id})
-    return get(event.item_id)
+    return _written(event.item_id)
 
 
 def _answered(unit, item_id: str, kept: dict, kind: str, now: float) -> "wait_links.Settled":
@@ -1640,6 +1640,14 @@ def _doc(item_id: str) -> Optional[dict]:
 
 def get(item_id: str) -> Optional[WorkItem]:
     wait_links.sweep()
+    return _written(item_id)
+
+
+def _written(item_id: str) -> Optional[WorkItem]:
+    """The item as its document holds it now, with no sweep: what a writer
+    returns. Its own write settled every wait it ended in the same unit, and
+    the waits other answers ended are the Work view's tick's to sweep, so a
+    report's write never waits for a sweep of every held item."""
     doc = _doc(item_id)
     return _item(doc, time.time()) if doc is not None else None
 

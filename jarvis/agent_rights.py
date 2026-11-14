@@ -22,6 +22,9 @@ from dataclasses import dataclass
 WEBSOCKET = "WS"
 ANY_SCOPE = "*"
 WORK_SCOPE = "work:"
+# Whether one of the caller's own reports landed (report_keys.py): it reads
+# only the caller's own keys, so every grant that may report may ask it.
+OWN_REPORTS = r"/api/reports/[^/]+"
 
 
 @dataclass(frozen=True)
@@ -47,13 +50,14 @@ RIGHTS: dict[str, Right] = {
          (WEBSOCKET, r"/ws/runs"))),
     "workflows": Right(
         "Start workflows and report their steps to the Workflows view.",
-        (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
+        (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"),
+         ("GET", OWN_REPORTS))),
     "work": Right(
         "Track work items and report who is on each piece to the Work tab, and send Tim "
         "messages about them (or about nothing in particular).",
         (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"),
          ("POST", r"/api/messages"),
-         ("GET", r"/api/work/answers"), ("POST", r"/api/agent-keys/work-keys"),
+         ("GET", r"/api/work/answers"), ("GET", OWN_REPORTS), ("POST", r"/api/agent-keys/work-keys"),
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
         "Send Tim packages for his package inbox, and write canonical language documents "
@@ -93,7 +97,7 @@ def _work_target(method: str, path: str, query: str) -> str:
 
 def in_scope(scope: str, method: str, path: str, query: str) -> bool:
     """Whether a grant's scope admits this request."""
-    if scope == ANY_SCOPE:
+    if scope == ANY_SCOPE or re.fullmatch(OWN_REPORTS, path):
         return True
     if scope.startswith(WORK_SCOPE):
         return bool(scope[len(WORK_SCOPE):]) and \

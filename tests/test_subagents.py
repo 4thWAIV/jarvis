@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 from tests.fixtures.transcripts import encode, iso
+from tests.settings_fixtures import hold_setting
 
 NOW = 1_788_404_571.0
 
@@ -387,7 +388,7 @@ def test_directory_does_not_derive_activity_from_recent_files(tmp_path, monkeypa
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store, workflow_store
