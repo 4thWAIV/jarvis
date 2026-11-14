@@ -970,9 +970,10 @@ EXEMPT = {
         "it records his review (his own words, from the page or his voice) and prints "
         "nothing but its refusals, whose values are checked keys and what holds a piece, "
         "itself only reached by the brain through work_status's wall"),
-    "server._sender_name": (
-        "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
-        "through _said_name, which refuses anything but a plain name; never to the brain"),
+    "server.tool_read_aloud": (
+        "its header names the message by its id, its time and its state, a fixed "
+        "MessageState value, never a session's; who sent it, its Work item and its words "
+        "go to the brain only inside the messages wall"),
     "server._replying": (
         "its note to the brain names the capture by number and its recipient through "
         "_recipient_name's wall; no word of the message"),

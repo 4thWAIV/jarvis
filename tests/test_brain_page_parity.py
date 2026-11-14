@@ -139,7 +139,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone", "set_motion",
-            "read_aloud", "reply",
+            "reply",
             "mute_speech", "turn_audio_off", "mark_updates_seen",
             "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
@@ -147,7 +147,9 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_project_candidate", "change_work", "change_accomplishment",
             "set_engine_setting")
 # Acting tools that give back somebody else's words (a received file's name).
-NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
+# read_aloud gives the brain the message he asked to hear, to read him itself.
+NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package",
+                     "read_aloud")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models", "voice_input_settings", "knowledge_status", "knowledge_topics",
                  "knowledge_indexes", "knowledge_seeds", "embedding_model", "folder_document_counts",
@@ -218,6 +220,26 @@ def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     refused = _call(wired, tool, origin="event", **args)
     assert not refused["ok"] and "not_allowed_from_event" in refused["text"]
     assert wired.team.calls == [] and wired.hints == []
+
+
+def test_every_tool_and_route_that_takes_a_message_names_it_through_one_resolver(wired):
+    """His Read, Reply and mark on the page and the brain's read_aloud,
+    reply, mark_message and open_inbox_package all find the message through
+    messages_api.resolve; every tool takes it by id or by when it came."""
+    import inspect
+    from jarvis import jarvis_mcp
+    server = wired.server
+    specs = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}
+    for tool in ("read_aloud", "reply", "mark_message", "open_inbox_package"):
+        props = specs[tool]["inputSchema"]["properties"]
+        assert {"message", "at", "from", "work", "new"} <= set(props), tool
+    assert "resolve(" in inspect.getsource(server._message_meant)
+    assert "resolve(" in inspect.getsource(server._message_to_him)
+    for route in (server.api_read_message, server.api_reply_message, server._mark_message):
+        assert "_message_to_him" in inspect.getsource(route), route.__name__
+    for tool in (server.tool_read_aloud, server.tool_reply, server.tool_mark_message,
+                 server._carried_by):
+        assert "_message_meant" in inspect.getsource(tool), tool.__name__
 
 
 # ── the team ─────────────────────────────────────────────────────────────

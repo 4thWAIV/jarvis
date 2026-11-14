@@ -2,7 +2,8 @@
 one-channel-fixes):
 
   1. A message read to him to its end is read, by the page's Read and by
-     voice alike: read_aloud waits as long as the longest message takes,
+     voice alike: the reply that reads it is waited for as long as the
+     longest message takes,
      and an agent's answer the brain reads to him (read_message_reply) is
      read once its turn's reply has been heard, not only its update seen.
      His mark (read or done) sees the message's update too, so the update
@@ -87,34 +88,17 @@ def test_an_answer_read_with_no_pending_update_is_still_read(server, monkeypatch
     assert server.conversation_log.get(message.id).state == "read"
 
 
-def test_read_aloud_waits_as_long_as_the_longest_message_takes(server, monkeypatch, attention):
-    """An 8,000-character message takes about nine minutes to say: five
-    minutes gave up on it while he was still hearing it, so it stayed new."""
-    from fastapi.testclient import TestClient
-    waited = []
-
-    async def wait_for(utt, timeout=60.0):
-        waited.append(timeout)
-        return True
-    monkeypatch.setattr(server.speech, "wait_for", wait_for)
-    _, message = _answer(server, monkeypatch, attention, reply="word " * 1600)
-    r = TestClient(server.app).post(f"/api/messages/{message.id}/read", headers=ORIGIN)
-    assert r.status_code == 200, r.text
-    assert waited == [server.READ_ALOUD_TIMEOUT] and server.READ_ALOUD_TIMEOUT >= 3600
-    assert server.conversation_log.get(message.id).state == "read"
-
-
 def test_the_brain_s_read_aloud_marks_it_read_once_heard(server, monkeypatch, attention):
+    """read_aloud gives the brain the message; the reply that reads it,
+    heard in full, makes it read. (How long that reply may take to be heard
+    is test_brain_reads_messages's.)"""
     _, message = _answer(server, monkeypatch, attention)
-
-    async def read():
-        said = await server.tool_read_aloud({"message": message.id})
-        for _ in range(50):
-            if server.conversation_log.get(message.id).state == "read":
-                break
-            await asyncio.sleep(0.02)
-        return said
-    assert asyncio.run(read()).startswith("Reading message")
+    reads = _on_his_turn(server, monkeypatch)
+    said = asyncio.run(server.tool_read_aloud({"message": message.id}))
+    assert said.startswith(f"Message {message.id},")
+    assert (server._MESSAGE_READ, str(message.id), None) in reads
+    assert server.conversation_log.get(message.id).state == "new"
+    server._seen_once_heard(reads, SimpleNamespace(chunks=["Guard answers."]), True)
     assert server.conversation_log.get(message.id).state == "read"
 
 
