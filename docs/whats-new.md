@@ -1,6 +1,18 @@
 # The new JARVIS workspace
 
-Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## The knowledge engine no longer slows down as records are rewritten
+
+Every record keeps all of its versions, and some are rewritten every few
+seconds or minutes (the brains' usage for the day, folder checks, the
+message sync position). Reading such a record used to unpack its whole
+history, hundreds of megabytes for one day's usage, so the engine got
+slower with every write until the page and the brain's reads timed out
+while the engine still said it was running. Reading a record now reads
+only its newest version: a folder discovery pass costs the engine a
+quarter of what it did, and a read of the day's usage takes milliseconds
+instead of seconds.
 
 ## A start setting the page cannot reach goes back by itself
 
