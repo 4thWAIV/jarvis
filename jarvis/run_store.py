@@ -850,10 +850,11 @@ def message_projects() -> dict[str, int]:
     messages came from each (project_seed's legacy evidence): two counts."""
     def counted(field: str) -> dict[str, int]:
         out: dict[str, int] = {}
-        for g in records.count("/agents", types=[message_records.MESSAGE], group_by=field).groups or []:
-            out[str(g["value"])] = out.get(str(g["value"]), 0) + int(g["items"])
-        for g in records.count("/messages", types=[message_records.MESSAGE], group_by=field).groups or []:
-            out[str(g["value"])] = out.get(str(g["value"]), 0) + int(g["items"])
+        for under in ("/agents", "/messages"):
+            # A grouped count is (value, items) pairs (uds.Count.groups).
+            for value, items in records.count(under, types=[message_records.MESSAGE],
+                                              group_by=field).groups or ():
+                out[str(value)] = out.get(str(value), 0) + int(items)
         return out
     return {"messages": counted("message.project"),
             "session_messages": counted("session_message.project")}
