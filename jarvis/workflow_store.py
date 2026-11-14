@@ -23,8 +23,12 @@ A wait may name the answer it waits for (`detail.until`, a wait_links link:
 `package:<id>[:<decision>]`), kept as `detail.link`. His answer to it, by
 any route, ends the wait in the same transaction (`end_waits`, a
 `wait_ended` recorded as his, with when and how); one already answered is
-ended when the record is next read (`sweep_waits`). A wait with no link open
-for wait_links.UNLINKED_AFTER_SEC reads as `unlinked`.
+ended when the record is next read (`sweep_waits`). A wait on a package its
+sender replaced with a newer version waits on the newer one instead
+(`carry_waits`, a `wait_started` naming the new link). A reporter's own
+`wait_ended` ends only a wait that same reporter opened (`_opener`); a wait
+JARVIS opened, or another reporter's, ends only by his answer. A wait with
+no link open for wait_links.UNLINKED_AFTER_SEC reads as `unlinked`.
 
 Everything in a workflow's record (its name, summaries, titles, questions)
 was written by the session running it: it is another session's words, and
@@ -472,12 +476,17 @@ def _apply(doc: dict, event: WorkflowEvent, now: float) -> Optional[WorkflowEven
         doc["open"] = [o for o in doc["open"] if not (o["kind"] == _OPENS[kind]
                                                        and o["key"] == key)]
         doc["open"].append({"kind": _OPENS[kind], "key": key, "summary": event.summary,
-                            "detail": detail, "opened_at": now})
+                            "detail": detail, "opened_at": now, "reporter": event.reporter})
         return event
     elif kind in _CLOSES:
         key = open_key(event)
-        if _open_item(doc, _CLOSES[kind], key) is None:
+        opened = _open_item(doc, _CLOSES[kind], key)
+        if opened is None:
             raise WorkflowRefused(f"No {_CLOSES[kind]} {key} is open.")
+        if kind == "wait_ended" and event.reporter and \
+                _opener(doc, opened) != event.reporter:
+            raise WorkflowRefused(f"Wait {key} was not opened by you: only its own reporter "
+                                  f"ends it, else his answer does.")
         doc["open"] = [o for o in doc["open"] if not (o["kind"] == _CLOSES[kind]
                                                        and o["key"] == key)]
     elif kind == "agent_attached":
@@ -508,6 +517,17 @@ def _linked(doc: dict, event: WorkflowEvent, key: str) -> WorkflowEvent:
         raise WorkflowRefused(f"This workflow has asked no decision {link.key}; ask it with "
                               f"decision_needed first, then wait on it.")
     return dataclasses.replace(event, detail={**event.detail, "link": str(link)})
+
+
+def _opener(doc: dict, opened: dict) -> str:
+    """Who opened a wait, as the route proved it ("" for JARVIS's own): kept
+    on it, or, for one opened before that was kept, its wait_started's
+    reporter in the log."""
+    if "reporter" in opened:
+        return opened["reporter"] or ""
+    started = [e for e in events(doc["id"], kinds={"wait_started"})
+               if open_key(e) == opened["key"]]
+    return started[-1].reporter if started else ""
 
 
 def decision_answer(unit, wid: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
@@ -583,13 +603,45 @@ def end_waits(unit, found: "wait_links.Answer", now: float) -> set:
         now)
 
 
+def carry_waits(unit, replaced, now: float) -> set:
+    """Every open wait whose link `replaced(link)` gives a wait_links.Replaced
+    for now waits on the newer package, in `unit`: opened again under its key
+    with the new link (a `wait_started`, as JARVIS's). The workflows it moved."""
+    paths = {r.path for r in unit.scan(ROOT, types=[TYPE], where=[["linked", "=", True]])}
+    paths |= record_cells.touched(unit, ROOT, TYPE)
+    moved = set()
+    for path in sorted(paths):
+        doc = record_cells.take(unit, path)
+        if not _is_workflow(doc):
+            continue
+        for wid, key, link in list(_linked_waits(doc)):
+            found = replaced(link)
+            new = found.relink(link) if found is not None else None
+            if new is None:
+                continue
+            o = _open_item(doc, "wait", key)
+            o["detail"] = {**(o.get("detail") or {}), "until": str(new), "link": str(new)}
+            _add_event(doc, WorkflowEvent(
+                wid, "wait_started", None,
+                _one_line(f"{found.said()}: now waiting on {new}.", SUMMARY_MAX),
+                {"key": key, "until": str(new), "link": str(new), "carried_from": str(link)}),
+                now)
+            moved.add(wid)
+        if doc["id"] in moved:
+            _stage(unit, doc)
+    return moved
+
+
 def sweep_waits() -> "wait_links.Settled":
-    """End every open wait whose answer was already given (at start, and on
+    """Carry every open wait on a replaced package to its newer version, then
+    end every open wait whose answer was already given (at start, and on
     every read: wait_links.sweep)."""
     def run(unit) -> set:
-        return _end_answered(
+        now = time.time()
+        carried = carry_waits(unit, wait_links.replaced_package, now)
+        return carried | _end_answered(
             unit, lambda link, wid: wait_links.already(unit, link, wait_links.WORKFLOW, wid),
-            time.time())
+            now)
     moved = records.atomic(run, by=records.JARVIS, change="wait_ended",
                            summary="His answers already given end the waits on them.")
     return wait_links.Settled(workflows=moved)

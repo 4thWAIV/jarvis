@@ -81,7 +81,7 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
 
     for size in ("809x589", "662x489"):
         for check in ("the package frame is", "the deck's own styles are in force", "slides fit",
-                      "every vote control is visible"):
+                      "every vote control is visible", "every picture, on every slide"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
@@ -184,3 +184,44 @@ def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
     assert not any("slides fit" in line or "styles are in force" in line
                    for line in result.passed), result.passed
     assert (tmp_path / "check" / "809x589" / "unstyled.png").is_file()
+
+
+def test_the_check_fails_a_slide_whose_picture_draws_as_nothing(tmp_path):
+    """A slide picture is measured as drawn, at both sizes, with the same
+    minimum as an option's: an SVG with no size of its own (which the
+    command refuses before it builds) draws as nothing, and the check fails
+    the deck rather than pass a blank slide."""
+    import zipfile
+    from jarvis import agent_keys, decision_check, make_package as mp
+    reason = dashboard_page.why_unavailable()
+    if reason:
+        pytest.skip(reason)
+    deck = small_deck()
+    deck["slides"][0]["blocks"][1]["picture"] = "pictures/blank.svg"
+    folder = tmp_path / "in"
+    content = write(folder, deck)
+    (folder / "pictures" / "blank.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
+        '<rect width="320" height="200" fill="#38bdf8"/></svg>')
+    made = mp.make_deck(content, tmp_path / "out")
+    unsized = tmp_path / "unsized.zip"
+    with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(unsized, "w") as dst:
+        for item in src.infolist():
+            body = src.read(item)
+            if item.filename.endswith("pictures/blank.svg"):
+                body = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+                        b'<rect width="320" height="200" fill="#38bdf8"/></svg>')
+            dst.writestr(item, body)
+    signer = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
+    result = decision_check.check(unsized, made.deck, tmp_path / "check", signer, "sess-1")
+    if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
+        pytest.skip("no Playwright Chromium")
+    assert not result.ok
+    # Measured at the first size, which ends the check (the passing deck
+    # above is measured at both).
+    assert any(f.startswith("809x589 slide 1 (s1) pictures: picture 1 (pictures/blank.svg) "
+                            "is drawn 0 x 0px, under 60px") for f in result.failures), \
+        result.failures
+    assert not any("every picture" in line for line in result.passed), result.passed
+    assert not any("option " in f and "pictures:" in f for f in result.failures), \
+        "the options' sized pictures pass"
