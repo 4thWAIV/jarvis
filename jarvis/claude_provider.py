@@ -237,6 +237,8 @@ ALLOWED_TOOLS = [
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
+    # Settings, Updates' held language kit, activated on his word.
+    "mcp__jarvis__activate_language_kit",
     # The records move into the engine (records_move.py), as the page shows it.
     "mcp__jarvis__records_move",
     "mcp__jarvis__agent_keys",

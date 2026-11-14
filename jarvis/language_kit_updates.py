@@ -2,15 +2,26 @@
 
 Only the configured publisher's named asset is fetched. GitHub's asset digest
 detects corruption relative to its metadata; it is not a publisher signature.
+
+A staged candidate whose activation is refused (its language files changed,
+or it was held after a rollback) is `held` in updates.json: its version,
+digest, why and the files that changed. While it is held it is one silent
+attention item (`attend`, kind `language_kit`, one per candidate digest),
+resolved once the candidate is active or no longer held. Settings, Updates
+shows it with Activate, his click (`POST /api/language-kits/activate`), and
+the brain's acting `activate_language_kit` calls the same `approve_held`.
+Every activation clears the stale refusal from updates.json.
 """
 from __future__ import annotations
 
 import asyncio
 import argparse
 import json
+import logging
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable, Optional, Protocol
 
 import httpx
 
@@ -18,6 +29,24 @@ from jarvis import language_kit as kit
 
 API = f"https://api.github.com/repos/{kit.REPOSITORY}"
 CHECK_INTERVAL = 6 * 60 * 60
+log = logging.getLogger(__name__)
+
+# The attention item a held candidate is (attention_store.py), one per
+# candidate digest. Its events: `review`, the language files changed and
+# his compatibility review is wanted; `refused`, activation refused for any
+# other reason (held after a rollback, a kit file that changed).
+KIND = "language_kit"
+REVIEW, REFUSED = "review", "refused"
+
+
+class Attention(Protocol):
+    """The attention record, as far as this needs it."""
+
+    def record(self, kind: str, source_id: str, event: str, **kw) -> object: ...
+
+    def resolve(self, kind: str, source_id: str) -> bool: ...
+
+    def open_sources(self, kind: str) -> list[str]: ...
 
 
 def status() -> dict:
@@ -36,7 +65,109 @@ def status() -> dict:
     except kit.KitError as error:
         state["active"] = None
         state["active_error"] = str(error)
+    if "held" not in state and state.get("compatibility_review_required"):
+        # Written before holds were kept: the refusal is the candidate's.
+        state["held"] = _legacy_hold(state)
+    hold = state.get("held")
+    active_digest = (state["active"] or {}).get("digest")
+    if not isinstance(hold, dict) or not hold.get("digest") or active_digest == hold["digest"]:
+        # Nothing held, or the candidate is active now (activated from
+        # anywhere): the review flag and the refusal's words went with it.
+        if isinstance(hold, dict) and state.get("error") == hold.get("detail"):
+            state["error"] = None
+        state["held"] = None
+        state["compatibility_review_required"] = False
+    else:
+        state["compatibility_review_required"] = True
     return state
+
+
+def _legacy_hold(state: dict) -> Optional[dict]:
+    """The hold an older updates.json meant by `compatibility_review_required`:
+    its `candidate`, with the language files that differ from the active
+    kit's worked out from both kits on disk. None when that cannot be read."""
+    candidate = state.get("candidate")
+    if not isinstance(candidate, dict) or not candidate.get("digest"):
+        return None
+    try:
+        staged = kit.active(str(candidate["digest"]))
+        working = kit.active()
+    except kit.KitError:
+        return None
+    changed = [name for name in kit.LANGUAGE_FILES
+               if working.record["files"].get(name) != staged.record["files"].get(name)]
+    error = kit.ReviewRequired(changed) if changed else kit.KitError(
+        state.get("error") or "Activation was refused; review it before activating.")
+    return _hold(staged.release, error, None)
+
+
+def held() -> Optional[dict]:
+    """The candidate held back from activation, or None."""
+    return status()["held"]
+
+
+def _hold(release: kit.Release, error: kit.KitError, before: Optional[dict]) -> dict:
+    """What updates.json keeps of a candidate whose activation was refused;
+    `since` is when it was first held."""
+    review = isinstance(error, kit.ReviewRequired)
+    same = isinstance(before, dict) and before.get("digest") == release.digest
+    return {"version": release.version, "digest": release.digest,
+            "reason": REVIEW if review else REFUSED,
+            "changed": error.changed if review else [], "detail": str(error),
+            "since": before.get("since") if same else time.time()}
+
+
+def _settled(state: dict) -> None:
+    """A candidate became active: the refusal recorded before is stale."""
+    state.update(held=None, compatibility_review_required=False, error=None)
+
+
+def activate_reviewed(digest: str) -> dict:
+    """Activate a staged version after its compatibility review (the
+    command's `activate-reviewed`, and `approve_held`). Clears the refusal
+    recorded for it in updates.json and resolves its attention item."""
+    selected = kit.activate(kit.active(digest), compatibility_reviewed=True)
+    state = status()
+    if state.get("held") is None:
+        _settled(state)
+    kit._atomic_json(kit.root() / "updates.json", state)
+    runtime.attend()
+    return selected
+
+
+def approve_held(digest: str) -> dict:
+    """His approval of the held candidate (Settings, Updates' Activate and
+    the brain's `activate_language_kit`): activate exactly the candidate
+    held, by its digest. Returns the status after."""
+    hold = held()
+    if hold is None:
+        raise kit.KitError("No language kit is waiting for review.")
+    if digest != hold["digest"]:
+        raise kit.KitError(f"The language kit waiting for review is {hold['version']} "
+                           f"(digest {hold['digest']}); nothing was activated.")
+    activate_reviewed(digest)
+    return status()
+
+
+def facts(hold: dict) -> dict:
+    """A held candidate's attention facts: JARVIS's own and the trusted
+    publisher's words, the same on every check so nothing new is recorded."""
+    out = {"version": hold["version"], "digest": hold["digest"],
+           "files": ", ".join(hold.get("changed") or [])}
+    if hold.get("reason") != REVIEW:
+        out["reason"] = hold.get("detail") or ""
+    return out
+
+
+def attend(attention: Attention) -> None:
+    """The held candidate as one silent attention item (one per digest),
+    and every other kit item resolved: active now or no longer held."""
+    hold = held()
+    if hold is not None:
+        attention.record(KIND, hold["digest"], hold["reason"], facts=facts(hold), audible=False)
+    for source in attention.open_sources(KIND):
+        if hold is None or source != hold["digest"]:
+            attention.resolve(KIND, source)
 
 
 class Updater:
@@ -122,12 +253,13 @@ class Updater:
             state["candidate"] = {"version": tag, "digest": digest, "commit": commit}
             try:
                 kit.activate(candidate)
-                state["compatibility_review_required"] = False
+                _settled(state)
             except kit.KitError as error:
                 # The staged version is retained for an explicit compatibility
                 # review; existing documents and the active kit remain pinned.
                 state["compatibility_review_required"] = True
                 state["error"] = str(error)
+                state["held"] = _hold(candidate.release, error, state.get("held"))
             state.update(etag=response.headers.get("etag"), failures=0)
         except (httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as error:
             failures = state.get("failures", 0) + 1
@@ -140,10 +272,14 @@ class Updater:
             kit._atomic_json(kit.root() / "updates.json", state)
         return status()
 
-    async def run(self) -> None:
+    async def run(self, after: Callable[[], None] = lambda: None) -> None:
+        """Check when due, then `after` (the runtime's `attend`), every
+        minute once a kit is adopted; an activation from the command line
+        is seen within the minute."""
         while True:
             if (kit.root() / "active.json").is_file():
                 await asyncio.to_thread(self.check)
+                await asyncio.to_thread(after)
             await asyncio.sleep(60)
 
 
@@ -151,14 +287,28 @@ class Runtime:
     def __init__(self):
         self.task = None
         self.client = None
+        self.attention: Callable[[], Optional[Attention]] = lambda: None
 
-    def start(self):
+    def start(self, attention: Optional[Callable[[], Optional[Attention]]] = None):
         # Keep the scheduler alive so explicit adoption after server startup
         # takes effect. Its loop performs no checks or downloads until adopted.
+        if attention is not None:
+            self.attention = attention
         if self.task:
             return
         self.client = httpx.Client(trust_env=False)
-        self.task = asyncio.create_task(Updater(self.client).run())
+        self.task = asyncio.create_task(Updater(self.client).run(self.attend))
+
+    def attend(self) -> None:
+        """`attend` on the server's attention record; nothing outside a
+        server (the command). Never raises."""
+        attention = self.attention()
+        if attention is None:
+            return
+        try:
+            attend(attention)
+        except Exception:
+            log.warning("the held language kit's attention item was not recorded", exc_info=True)
 
     async def stop(self):
         if self.task:
@@ -187,7 +337,7 @@ def main(argv=None):
         elif args.action == "activate-reviewed":
             if not args.digest:
                 parser.error("activate-reviewed requires --digest from the compatibility review")
-            result = kit.activate(kit.active(args.digest), compatibility_reviewed=True)
+            result = activate_reviewed(args.digest)
         elif args.action == "status":
             result = status()
         else:

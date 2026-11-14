@@ -60,7 +60,7 @@
               "voiceOutputProvider", "localVoice", "installLocalVoice", "previewVoice", "appearance",
               "teamState", "teamAddress", "teamSignIn", "teamApproval", "teamCancel", "teamSignInAgain",
               "teamDisconnect", "teamLogin", "teamLookUp", "teamRole", "teamAdd", "teamAddCancel",
-              "currentVersion", "checkUpdates", "installUpdate", "languageKit",
+              "currentVersion", "checkUpdates", "installUpdate", "languageKit", "activateLanguageKit",
               "serverPort", "serverUptime", "knowledgeEnabled", "knowledgeModel", "knowledgeDetails", "knowledgeFolders",
               "enginePackageAuthor", "engineRun", "engineBuild", "engineAgentPackage", "engineOverride",
               "weatherLocationLabel", "weatherLatitude", "weatherLongitude", "weatherUnit", "defaultBrowser",

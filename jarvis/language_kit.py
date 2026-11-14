@@ -45,6 +45,20 @@ class KitError(ValueError):
     """A visible installation, runtime or document validation diagnostic."""
 
 
+class ReviewRequired(KitError):
+    """A candidate whose language files differ from the active kit's: held
+    until its compatibility is reviewed. `changed` names those files."""
+
+    def __init__(self, changed: list[str]):
+        self.changed = list(changed)
+        super().__init__(f"Language compatibility review is required: {', '.join(self.changed)}.")
+
+
+# The files that are the language itself: a candidate that changes one of
+# them waits for a compatibility review before it becomes active.
+LANGUAGE_FILES = ("metalang.yaml", "arch.yaml", "propose.yaml")
+
+
 def sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -273,10 +287,10 @@ def activate(kit: Kit, *, compatibility_reviewed: bool = False) -> dict:
         raise KitError("This candidate is held after rollback; review it before explicit activation.")
     if previous and previous != kit.release.digest and not compatibility_reviewed:
         prior = active(previous)
-        changed = [name for name in ("metalang.yaml", "arch.yaml", "propose.yaml")
+        changed = [name for name in LANGUAGE_FILES
                    if prior.record["files"][name] != kit.record["files"][name]]
         if changed:
-            raise KitError(f"Language compatibility review is required: {', '.join(changed)}.")
+            raise ReviewRequired(changed)
     return _select(kit.release.digest, previous if previous != kit.release.digest else old.get("previous"),
                    [digest for digest in held if digest != kit.release.digest] if compatibility_reviewed else held)
 

@@ -3218,6 +3218,7 @@ export const UI_CONTRACT = {
         "checkUpdates",
         "installUpdate",
         "languageKit",
+        "activateLanguageKit",
         "serverPort",
         "serverUptime",
         "knowledgeEnabled",
