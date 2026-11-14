@@ -937,16 +937,23 @@ async def _within_the_wall_clock(work, result: Result) -> None:
     task.result()
 
 
+# Idle sleep, system sleep, display sleep, and wake a display already asleep.
+AWAKE_FLAGS = ("-i", "-s", "-d", "-u")
+
+
 @contextlib.contextmanager
 def _awake():
     """The Mac kept from sleeping while the check runs: `caffeinate` (part of
     macOS) holds the assertions for as long as this process lives. A Mac that
     sleeps mid-check stops the stand-in voice's playback, the server's
-    timers and the check's own, so a story never reaches its wait."""
+    timers and the check's own, so a story never reaches its wait. The
+    display too (`-d`, and `-u` to wake one already asleep): while it sleeps
+    under a locked screen the browser's audio clock stops (measured
+    2026-11-14: 0.005 s of audio time in 3 s), so no chunk ever plays."""
     tool = shutil.which("caffeinate")
     held = None
     if tool:
-        held = subprocess.Popen([tool, "-i", "-s", "-w", str(os.getpid())],
+        held = subprocess.Popen([tool, *AWAKE_FLAGS, "-w", str(os.getpid())],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
     try:

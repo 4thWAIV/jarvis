@@ -2,6 +2,10 @@
 
 Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Package checks run while the screen is locked
+
+The check every package passes before it reaches you now keeps the display awake, and wakes it if it is asleep. While the display slept under a locked screen the browser's audio stopped, so a package built overnight failed its check for no fault of its own.
+
 ## A start setting the page cannot reach goes back by itself
 
 When you change the address, port, HTTPS or the page's extra origins in
