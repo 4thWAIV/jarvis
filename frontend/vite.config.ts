@@ -1,6 +1,6 @@
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { createHmac, timingSafeEqual } from "crypto";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { resolve } from "path";
 
 // The same headers server.py's OriginGuard puts on everything it serves.
@@ -21,13 +21,16 @@ const SECURITY_HEADERS = {
 // keeps (jarvis/start_settings.py), trusted only when its signature (keyed
 // with the tool token) checks, exactly as JARVIS trusts it. JARVIS_DATA_DIR
 // is the data folder of an isolated instance, set by its parent.
+const DATA_DIR = process.env.JARVIS_DATA_DIR || resolve(__dirname, "../data");
+const START_FILE = resolve(DATA_DIR, "settings/start.json");
+
 function chosenTarget(): string {
-  const data = process.env.JARVIS_DATA_DIR || resolve(__dirname, "../data");
+  const data = DATA_DIR;
   const certs = existsSync(resolve(__dirname, "../cert.pem")) && existsSync(resolve(__dirname, "../key.pem"));
   let port = 8340;
   let https = certs;
   try {
-    const file = JSON.parse(readFileSync(resolve(data, "settings/start.json"), "utf8"));
+    const file = JSON.parse(readFileSync(START_FILE, "utf8"));
     const token = readFileSync(resolve(data, "jarvis/tool-token"), "utf8");
     const body = JSON.stringify(sortKeys(file.body));
     const sig = createHmac("sha256", token).update(body).digest("hex");
@@ -50,12 +53,39 @@ function sortKeys(v: unknown): unknown {
   return v;
 }
 
-// Where the dev server sends /api and /ws: the JARVIS Settings chose. An
-// isolated instance on another port is named by its parent with
-// JARVIS_API_TARGET (and its own JARVIS_VITE_PORT), so a test page never
-// talks to the live backend.
-const API_TARGET = process.env.JARVIS_API_TARGET || chosenTarget();
+// Where the dev server sends /api and /ws: the JARVIS Settings chose, worked
+// out again whenever the start file changes, so a port or HTTPS changed in
+// Settings, Server reaches the running dev server once JARVIS restarts on
+// it, with no restart of Vite. An isolated instance on another port is
+// named by its parent with JARVIS_API_TARGET (and its own JARVIS_VITE_PORT),
+// so a test page never talks to the live backend.
+const FIXED_TARGET = process.env.JARVIS_API_TARGET;
 const VITE_PORT = Number(process.env.JARVIS_VITE_PORT || 5173);
+let seen = { stamp: "", target: "" };
+
+function currentTarget(): string {
+  if (FIXED_TARGET) return FIXED_TARGET;
+  let stamp = "none";
+  try {
+    const st = statSync(START_FILE);
+    stamp = `${st.mtimeMs}:${st.size}`;
+  } catch { /* no start file: the defaults */ }
+  if (stamp !== seen.stamp || !seen.target) seen = { stamp, target: chosenTarget() };
+  return seen.target;
+}
+
+// http-proxy reads `options.target` on each request (a WebSocket upgrade
+// uses the options object itself), so setting it just before each one
+// sends every request to the target in force now.
+function followTarget(proxy: any, options: { target?: unknown }): void {
+  for (const kind of ["web", "ws"] as const) {
+    const pass = proxy[kind].bind(proxy);
+    proxy[kind] = (...args: unknown[]) => {
+      options.target = currentTarget();
+      return pass(...args);
+    };
+  }
+}
 
 export default defineConfig({
   server: {
@@ -72,13 +102,15 @@ export default defineConfig({
     },
     proxy: {
       "/ws": {
-        target: API_TARGET,
+        target: currentTarget(),
         ws: true,
         secure: false,
+        configure: followTarget,
       },
       "/api": {
-        target: API_TARGET,
+        target: currentTarget(),
         secure: false,
+        configure: followTarget,
       },
     },
   },

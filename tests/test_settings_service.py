@@ -194,3 +194,25 @@ def test_muting_the_mic_while_speaking_reaches_every_open_page_at_once(client, m
     asyncio.run(server._change_setting("mute_mic_during_speech", True))
     assert sent == [{"type": "config", "muteMicDuringSpeech": True}]
     assert server._opening_frames()[0] == sent[0]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0", "::"])
+def test_an_address_that_still_serves_this_mac_is_taken(host):
+    assert settings_service.check(settings_specs.spec("host"), host) == host
+
+
+@pytest.mark.parametrize("host", ["192.168.1.20", "10.0.0.5", "mac.local", "127.0.0.2"])
+def test_an_address_that_leaves_out_this_mac_is_refused(host):
+    """Bound only there, the page (Vite's proxy, or a built page, both at
+    localhost) could never reach Settings again to undo it."""
+    with pytest.raises(settings_service.Refused) as e:
+        settings_service.check(settings_specs.spec("host"), host)
+    assert e.value.code == "notLoopback"
+
+
+@pytest.mark.parametrize("port", [5173, 5180])
+def test_the_page_s_own_dev_server_port_is_refused(port):
+    with pytest.raises(settings_service.Refused) as e:
+        settings_service.check(settings_specs.spec("port"), port)
+    assert e.value.code == "devPort"
+    assert settings_service.check(settings_specs.spec("port"), 8350) == 8350

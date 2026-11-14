@@ -227,6 +227,9 @@ def check(s: Spec, raw: Any) -> Any:
                 s.maximum is not None and number > s.maximum:
             raise Refused("range", f"Between {s.minimum:g} and {s.maximum:g}",
                           min=s.minimum, max=s.maximum)
+        if s.key == "port" and number in _dev_server_ports():
+            raise Refused("devPort", f"Port {number} is the page's own dev server's",
+                          port=number)
         return number
     if kind == "choice":
         allowed = s.choice_values()
@@ -260,7 +263,22 @@ def check(s: Spec, raw: Any) -> Any:
         raise Refused("secret", "A key has no spaces or quotes")
     if s.key == "host" and text:
         _host(text)
+        if text.strip("[]").lower() not in SERVES_THIS_MAC:
+            raise Refused("notLoopback", f"{text!r} leaves out this Mac, so the page could not "
+                          "reach Settings again", value=text)
     return text
+
+
+# The addresses that still serve the page here (the Vite proxy and a built
+# page both reach JARVIS at localhost): this Mac alone, or every address.
+SERVES_THIS_MAC = frozenset({"127.0.0.1", "::1", "localhost", "0.0.0.0", "::"})
+
+
+def _dev_server_ports() -> tuple:
+    """The ports Vite's dev server serves the page from (web_auth): JARVIS
+    there would take the page's port, or proxy onto itself."""
+    from jarvis import web_auth
+    return web_auth.DEV_SERVER_PORTS
 
 
 def _host(text: str) -> None:
