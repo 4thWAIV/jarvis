@@ -3284,7 +3284,10 @@ async def _start_on_records() -> None:
     run_store.sweep_staged_messages()
     # Every review he made in a package before now is on its item.
     await asyncio.to_thread(_apply_package_reviews)
-    # Every wait still open on an answer he has already given ends now.
+    # Every Work vote on a package already set aside or replaced closes, and
+    # every wait still open on an answer he has already given (or a package
+    # set aside) ends now, one on a replaced package moving to its newer one.
+    await asyncio.to_thread(package_inbox.settle_closed)
     await asyncio.to_thread(wait_links.sweep)
 
     # The language chosen in Settings, and its speech model
@@ -9279,19 +9282,22 @@ def _inbox_attend(entry) -> None:
             untrusted={"agent": entry.sender_name(), "package": entry.title})
 
 
-def _inbox_wait(entry, kind: str) -> None:
-    """Its workflow waits on his answers (wait_started at arrival), or no
-    longer does (wait_ended once returned or closed). Never raises: a
-    workflow that has finished or never opened the wait is left as it is."""
+def _inbox_wait(entry) -> None:
+    """Its workflow waits on his answers (wait_started at arrival), linked
+    to the package, so signing it off or setting it aside ends it, and a
+    newer version carries it (wait_links, in the package's own write). A
+    wait already carried to it from the version it replaced is not opened
+    twice. Never raises: a workflow that has finished is left as it is."""
     if not entry.workflow_id:
         return
-    summary = (f"Waiting on Tim's answers to the package {entry.title}."
-               if kind == "wait_started" else f"The package {entry.title} is back from Tim.")
-    detail = {"key": entry.id}
-    if kind == "wait_started":
-        # Linked to the package, so signing it off ends it (wait_links).
-        detail["until"] = f"package:{entry.id}"
-    event = workflow_store.WorkflowEvent(entry.workflow_id, kind, None, summary, detail)
+    link = f"package:{entry.id}"
+    w = workflow_store.snapshot(entry.workflow_id)
+    if w is not None and any((o.detail or {}).get("link") == link for o in w.open):
+        return
+    event = workflow_store.WorkflowEvent(
+        entry.workflow_id, "wait_started", None,
+        f"Waiting on Tim's answers to the package {entry.title}.",
+        {"key": entry.id, "until": link})
     try:
         w = workflow_store.record(event)
     except workflow_store.WorkflowRefused:
@@ -9300,11 +9306,15 @@ def _inbox_wait(entry, kind: str) -> None:
 
 
 def _inbox_closed(entries) -> None:
-    """Closed ones no longer want him, and their workflows no longer wait."""
+    """Closed ones no longer want him; what waited on them ended (or moved
+    to the newer version) in their own write, and their Work items are told
+    so their votes' messages settle."""
     for e in entries:
         _attention_resolved("package", e.id)
-        _inbox_wait(e, "wait_ended")
         _messages_settled(conversation_log.MessageState.DONE, carries=e.id)
+        item = work_store.get(e.work_id) if e.work_id else None
+        if item is not None:
+            _work_recorded(item, work_store.DECISION_SIGNED_OFF)
 
 
 def _check_inbox_links(workflow_id: str, work_id: str) -> Optional[str]:
@@ -9446,8 +9456,8 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         _record_package(arrival.entry, proven)
     if arrival.fresh:
         _inbox_attend(arrival.entry)
-        _inbox_wait(arrival.entry, "wait_started")
-        if work_id and package.manifest.runs == work_packages.AGENT:
+        _inbox_wait(arrival.entry)
+        if arrival.entry.work_id and package.manifest.runs == work_packages.AGENT:
             _ask_understood_on_work(arrival.entry, package, proven)
     _hint_inbox([arrival.entry, *arrival.superseded])
     log.info("package inbox: %s arrived as %s%s", package.id, arrival.entry.id,
@@ -9464,7 +9474,7 @@ def _ask_understood_on_work(entry, package, proven) -> None:
     try:
         vote = package_inbox.understood(spoken_words.active_language())
         asker = agent_key_store.agent_principal(proven.session_id) if proven else "jarvis"
-        detail = {"key": f"{package_inbox.UNDERSTOOD_ID}-{entry.id}",
+        detail = {"key": package_inbox.vote_key(entry.id),
                   "options": [o["name"] for o in vote["options"]],
                   "recommendation": vote["options"][0]["name"], "package": package.id,
                   "asked_by": asker}
@@ -9998,14 +10008,31 @@ def _package_finished_at(entry) -> Optional[float]:
     return None
 
 
+def _package_entries(ref: str) -> list:
+    """The inbox rows a link's `ref` names: its open ones if it has any (a
+    name an older version also had names the one he can open), else its
+    closed ones, most recently closed first."""
+    entries = package_inbox.named(ref)
+    return [e for e in entries if e.is_open] or entries
+
+
 def _package_answer(ref: str, key: Optional[str]):
     """The answer of his that ends a link to package `ref` (decision `key`,
-    or the whole package), or None while there is none."""
-    for e in package_inbox.named(ref):
+    or the whole package: signed off, or set aside), or None while there is
+    none. A package replaced by a newer version is no answer: its waits are
+    carried (`_package_replaced`)."""
+    entries = _package_entries(ref)
+    if entries and not entries[0].is_open:
+        e = entries[0]
         refs = package_inbox.refs(e.package_id)
         at = _package_finished_at(e)
         if at is not None:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, "signed_off", at)
+            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.SIGNED_OFF, at)
+        if e.closed_why == package_inbox.DISMISSED:
+            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.DISMISSED,
+                                     e.closed_at)
+    for e in entries:
+        refs = package_inbox.refs(e.package_id)
         if key is None:
             continue
         package = work_packages.by_id(e.package_id)
@@ -10025,8 +10052,21 @@ def _waits_settled(moved) -> None:
     # The Work items it moved are sent by the held Work view (work_store.on_changed).
 
 
+def _package_replaced(ref: str):
+    """The newer version a link to package `ref` now waits on, when every
+    row it names is closed and the last was replaced; else None."""
+    entries = _package_entries(ref)
+    if not entries or entries[0].is_open or \
+            entries[0].closed_why != package_inbox.SUPERSEDED:
+        return None
+    newer = package_inbox.replacement(entries[0])
+    if newer is None:
+        return None
+    return wait_links.replaced({ref}, newer.id, entries[0].closed_at)
+
+
 wait_links.on_settled(_waits_settled)
-wait_links.look_up_packages_with(_package_answer)
+wait_links.look_up_packages_with(_package_answer, _package_replaced)
 
 
 def _inbox_saved(package) -> None:
@@ -10195,7 +10235,7 @@ def _has_questions(asked) -> Optional[object]:
 
 def _questions_key(entry) -> str:
     """The Work decision his questions on this package become."""
-    return f"{package_inbox.UNDERSTOOD_ID}-{entry.id}"
+    return package_inbox.vote_key(entry.id)
 
 
 def _inbox_questions_on_work(entry, package, where: str) -> None:
@@ -13127,7 +13167,8 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
         _attention_resolved("work", item.id)
     if item.follow_up is None or not item.follow_up.overdue:
         _attention_resolved(_FOLLOW_UP_KIND, item.id)
-    if kind in (work_store.DECISION_MADE, work_store.DECISION_WITHDRAWN):
+    if kind in (work_store.DECISION_MADE, work_store.DECISION_WITHDRAWN,
+                work_store.DECISION_SIGNED_OFF):
         _decision_messages_settled(item)
 
 
@@ -13137,7 +13178,7 @@ def _decision_messages_settled(item) -> None:
     its package signed off without an answer)."""
     for a in item.answered:
         state = (conversation_log.MessageState.DONE
-                 if a.where in (work_store.WITHDRAWN, work_store.SIGNED_OFF)
+                 if a.where in work_store.NOT_ANSWERED
                  else conversation_log.MessageState.ANSWERED)
         _messages_settled(state, source=(conversation_log.Source.WORK_DECISION,
                                          f"{item.id}:{a.key}"))
@@ -13345,9 +13386,12 @@ def _work_detail(item) -> str:
         if a.where == work_store.WITHDRAWN:
             said = (f"withdrawn decision {a.key}: {a.question} Withdrawn by the agent that "
                     f"asked it, not answered by him: {a.answer}")
-        elif a.where == work_store.SIGNED_OFF:
-            said = (f"closed decision {a.key}: {a.question} Closed when he signed off its "
-                    f"package without answering it; it has no answer of his.")
+        elif a.where in work_store.PACKAGE_CLOSED:
+            how = {work_store.DISMISSED: "he set its package aside",
+                   work_store.SUPERSEDED: "its package was replaced by a newer version"}.get(
+                a.where, "he signed off its package without answering it")
+            said = (f"closed decision {a.key}: {a.question} Closed when {how}; it has no "
+                    f"answer of his.")
         else:
             said = f"answered decision {a.key}: {a.question} His answer ({a.where}): {a.answer}"
         lines.append(said + (f" Package: {a.package}." if a.package else ""))

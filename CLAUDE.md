@@ -581,17 +581,23 @@ Nothing waits on him once he has answered (`wait_links.py`). A
 `wait_started` names what will answer it with `--until` (`detail.until`,
 kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
 first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
-signs it off) or `package:<id>:<decision>`; anything else stays words. His
-answer by any route (the workflow's or a Work item's decision, page or
-voice; a package decision through its decide.py, `_inbox_recount`; his
-finishing with a package) ends every wait linked to it in the same
+signs it off or sets it aside) or `package:<id>:<decision>`; anything else
+stays words. His answer by any route (the workflow's or a Work item's
+decision, page or voice; a package decision through its decide.py,
+`_inbox_recount`; his finishing with a package, signed off or set aside)
+ends every wait linked to it in the same
 write as the answer (`wait_links.settle`, staged in the answer's own
 `records.atomic` unit across the Work, workflow and package documents; a
 package's, recorded by its own script, in a unit of its own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
-at server start and on every read of either record. A wait with no link
+at server start and on every read of either record, first carrying one on a
+package its sender replaced to the newer version (`wait_links.replaced_package`,
+the server's `_package_replaced`); at start `package_inbox.settle_closed`
+first closes the votes of packages already set aside or replaced. A
+reporter's own `wait_ended` ends only a wait that reporter opened
+(`workflow_store._opener`), never JARVIS's or another's. A wait with no link
 open over `wait_links.UNLINKED_AFTER_SEC` (a day) reads as `unlinked`, shown
 "waiting, no link to an answer" on its card. The package inbox's own wait is
 linked to its package.
@@ -659,8 +665,12 @@ any route, in the same transaction (`work_store.end_waits`, also on a
 decision's sign-off or its asker withdrawing it), which moves it to its
 `--then` (`ready` by default: nothing holds it, its agent has yet to pick
 it up), recorded as `wait_ended` with by, how and when; a blocker in words
-is cleared by its reporter's `--cleared`. The sweep releases holds already
-answered. An item with pieces is never reported held (it is the piece that
+is cleared by its reporter's `--cleared`; and the reporter that put a piece
+(or an item with no pieces) on hold may end that wait itself (kind
+`wait_ended`, `work_report.py end-wait`, checked against `held_by`), never
+one another reporter, JARVIS or he placed. A hold on a package its sender
+replaced holds on the newer version (`work_store.carry_waits`). The sweep
+releases holds already answered. An item with pieces is never reported held (it is the piece that
 waits), and its state is worked out from them (`work_store._computed`):
 a piece may name one of a session's subagents, `agent:<session
 id>/sub:<agent id>` (the agentId the Agent tool gave its dispatcher, which
@@ -1045,11 +1055,13 @@ one command, `python -m jarvis.make_package <content.json | folder>`
 (`make_package.py`), and `docs/making-a-package.md` is the only place
 that says how: a deck's content (a decision package, or a presentation
 when it has no decisions; `decision_package.py` reads, expands and checks
-it, the shared deck's `new_deck.py` builds it) or a hand-made package's
+it, refusing an SVG picture whose root has no width and height in pixels
+(`svg_size_problem`), the shared deck's `new_deck.py` builds it) or a hand-made package's
 folder (only `purpose` given; read back through
 `work_packages.recognise`). A deck is checked end to end in an isolated
 JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
-sizes and the story told to the end; for a decision package also voting,
+sizes, every picture on every slide drawn at least `MIN_PICTURE_PX` each
+way at both sizes (`PICTURES`), and the story told to the end; for a decision package also voting,
 the story waiting at every question as a first-time user answers by click
 and by decide.py, Stop within 1 s from the page and the tool, and resume).
 The isolated JARVIS is seeded with the agent's public key
@@ -1152,7 +1164,10 @@ work item). States `arrived -> opened -> answering -> answered ->
 closed` (`signed_off`, `dismissed`, `superseded`). The same bytes while open
 are the same row; an open package of the same name from the same sender
 (its session, else its project) is closed `superseded` in the same
-transaction. A decision package's questions are read from `deck-data.js`
+transaction, which carries every wait on it to the newer one
+(`wait_links.carry`, `superseded_by`), gives the newer one its Work item
+when it names none, and closes its item's vote `understood-<inbox id>`
+(`work_store.close_with_package`, `where` superseded). A decision package's questions are read from `deck-data.js`
 as JSON after `window.DECK = ` (never executed) and its answers from its
 own `results/decisions.json` (`package_inbox.questions`; a follow-up
 applies only once its parent's answer opens it); the row mirrors only the
@@ -1200,7 +1215,10 @@ page showing it closes it (`package_closed` on the voice socket).
 (`_attend_message`) and every direct send, gives a signed-off row the id
 of the message that carried it back once that has gone.
 `_close_inbox_package` (the acting `close_inbox_package`, `POST
-.../close`) sets one aside with nothing sent back. `package_inbox`
+.../close`) sets one aside with nothing sent back; in the same write every
+wait linked to it ends (`wait_links.settle`, how `dismissed`) and its item's
+vote closes, not answered (`where` dismissed; `package_inbox._ended`).
+`package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
 is a message on that work item's Messages tab, what he chose in it shown
 under it (`work_api.packages_json` on `GET /api/work/{id}`,

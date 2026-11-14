@@ -8,18 +8,24 @@ for, its link:
     decision:<key>               a decision of the same workflow or work item
     work:<item id>:<key>         a Work item's decision
     workflow:<workflow id>:<key> a workflow's decision
-    package:<id or name>         a package, until he signs it off
+    package:<id or name>         a package, until he signs it off or sets it aside
     package:<id or name>:<id>    one decision of a package (or its sign-off)
 
 Whatever route he answers by (a workflow's or a Work item's decision, on
 the page or by voice; a package's decision through its decide.py; signing a
-package off), the store that records the answer calls `settle` in the same
-transaction, and every open wait and waiting piece whose link it answers is
+package off, or setting it aside), the store that records the answer calls
+`settle` in the same transaction, and every open wait and waiting piece whose link it answers is
 ended there and then as his answer, with when and how (`wait_ended` in a
 workflow, a piece moved to its next state, ready by default, on a Work
 item). `sweep` does the same for a link already answered or signed off when
 it is found (at server start, and each time either record is read), so a
 wait never outlives his answer.
+
+A package replaced by a newer version from its sender is no answer: what
+waited on it waits on the newer one, which is the one he can open
+(`carry`, in the replacement's own write; `sweep` carries one left behind).
+An agent may end a wait it placed itself through its report route; that is
+its stores' own rule, recorded with how ENDED.
 
 A wait with no link, open for more than UNLINKED_AFTER_SEC, is shown as
 "waiting, no link to an answer" (worked out when read, never stored).
@@ -47,6 +53,12 @@ DECISION, WORK, WORKFLOW, PACKAGE = "decision", "work", "workflow", "package"
 # How an answer came that is not his words: its package signed off, or the
 # decision withdrawn by the agent that asked it (which also releases a wait).
 SIGNED_OFF, WITHDRAWN = "signed_off", "withdrawn"
+# A package he set aside (closed, not signed off), and one its sender
+# replaced with a newer version (which closes its own decision, never a wait
+# on the package: that is carried to the newer one).
+DISMISSED, SUPERSEDED = "dismissed", "superseded"
+# A wait ended by the agent that placed it, through its report route.
+ENDED = "ended"
 KINDS = (DECISION, WORK, WORKFLOW, PACKAGE)
 
 # How long a wait with no link may stay open before it is flagged.
@@ -104,8 +116,9 @@ class Answer:
     kind: str                 # work, workflow or package
     refs: frozenset
     key: Optional[str]
-    how: str                  # page, voice, signed_off ...
+    how: str                  # page, voice, signed_off, dismissed ...
     at: float
+    actor: str = ""           # whose act, when it is not the one `how` implies
 
     def ends(self, link: Link, owner_kind: str, owner_id: str) -> bool:
         """Whether this answer ends `link`, held by a wait of `owner_kind`
@@ -121,23 +134,56 @@ class Answer:
 
     @property
     def by(self) -> str:
-        """Whose act ended it: his (`user`), or the asker's withdrawal."""
-        return "asker" if self.how == WITHDRAWN else "user"
+        """Whose act ended it: his (`user`), the asker's (its withdrawal,
+        or its package replaced by its sender), or `actor` when given."""
+        if self.actor:
+            return self.actor
+        return "asker" if self.how in (WITHDRAWN, SUPERSEDED) else "user"
 
     def said(self) -> str:
         """What ended it, in JARVIS's words."""
         if self.kind == PACKAGE and self.key is None:
+            if self.how == DISMISSED:
+                return ("JARVIS closed the package" if self.by == "jarvis"
+                        else "Tim set the package aside")
             return "Tim signed off the package"
         if self.how == WITHDRAWN:
             return f"Its asker withdrew {self.key}"
         if self.how == SIGNED_OFF:
             return f"Tim signed off the package {self.key} names"
+        if self.how == DISMISSED:
+            return f"The package {self.key} names was set aside"
+        if self.how == SUPERSEDED:
+            return f"The package {self.key} names was replaced by a newer version"
         return f"Tim answered {self.key}"
 
 
-def answer(kind: str, refs, key: Optional[str], how: str, at: Optional[float] = None) -> Answer:
+def answer(kind: str, refs, key: Optional[str], how: str, at: Optional[float] = None,
+           actor: str = "") -> Answer:
     return Answer(kind, frozenset(r for r in refs if r), key, how,
-                  time.time() if at is None else at)
+                  time.time() if at is None else at, actor)
+
+
+@dataclass(frozen=True)
+class Replaced:
+    """A package its sender replaced with a newer version: every link to it
+    by one of `refs` now names `to` (the newer one's inbox id)."""
+    refs: frozenset
+    to: str
+    at: float
+
+    def relink(self, link: Link) -> Optional[Link]:
+        """The link `link` becomes, or None when it does not name this package."""
+        if link.kind != PACKAGE or link.ref not in self.refs or link.ref == self.to:
+            return None
+        return Link(PACKAGE, self.to, link.key)
+
+    def said(self) -> str:
+        return f"The package was replaced by a newer version, {self.to}"
+
+
+def replaced(refs, to: str, at: Optional[float] = None) -> Replaced:
+    return Replaced(frozenset(r for r in refs if r), to, time.time() if at is None else at)
 
 
 @dataclass
@@ -161,6 +207,18 @@ def settle(unit, found: Answer, now: float) -> Settled:
     from jarvis import work_store, workflow_store
     return Settled(workflows=workflow_store.end_waits(unit, found, now),
                    work=work_store.end_waits(unit, found, now))
+
+
+def carry(unit, moved: Replaced, now: float) -> Settled:
+    """Every open wait and waiting piece on the replaced package waits on
+    the newer one instead, staged in the caller's unit (the replacement's
+    arrival). The caller's unit lands, then it calls `tell`."""
+    from jarvis import work_store, workflow_store
+
+    def found(link: Link) -> Optional[Replaced]:
+        return moved if moved.relink(link) else None
+    return Settled(workflows=workflow_store.carry_waits(unit, found, now),
+                   work=work_store.carry_waits(unit, found, now))
 
 
 def settle_now(found: Answer) -> Settled:
@@ -200,15 +258,20 @@ def tell(moved: Settled) -> None:
 # ── answers already given ───────────────────────────────────────────────
 
 # How a package link is found answered: (ref, key or None) -> the Answer
-# that ends it, or None while it is not. Set by the server (the package
-# inbox is its), so this module never reads a package itself.
+# that ends it, or None while it is not; and found replaced: ref -> the
+# Replaced naming the version that took its place, or None. Set by the
+# server (the package inbox is its), so this module never reads a package
+# itself.
 PackageLookup = Callable[[str, Optional[str]], Optional[Answer]]
+ReplacedLookup = Callable[[str], Optional[Replaced]]
 _package_lookup: Optional[PackageLookup] = None
+_replaced_lookup: Optional[ReplacedLookup] = None
 
 
-def look_up_packages_with(lookup: Optional[PackageLookup]) -> None:
-    global _package_lookup
-    _package_lookup = lookup
+def look_up_packages_with(lookup: Optional[PackageLookup],
+                          replaced_by: Optional[ReplacedLookup] = None) -> None:
+    global _package_lookup, _replaced_lookup
+    _package_lookup, _replaced_lookup = lookup, replaced_by
 
 
 # Within one sweep each package link is looked up once, however many holds
@@ -232,6 +295,17 @@ def answered_package(ref: str, key: Optional[str]) -> Optional[Answer]:
     return found
 
 
+def replaced_package(link: Link) -> Optional[Replaced]:
+    """The newer version a package link's package was replaced by, or None."""
+    if link.kind != PACKAGE or _replaced_lookup is None:
+        return None
+    try:
+        return _replaced_lookup(link.ref)
+    except Exception:
+        log.warning("wait links: package %s was not looked up", link.ref, exc_info=True)
+        return None
+
+
 def already(unit, link: Link, owner_kind: str, owner_id: str) -> Optional[Answer]:
     """The answer of his that already ends `link` (held by a wait of
     `owner_kind` `owner_id`), or None while there is none; the record it is
@@ -251,8 +325,10 @@ _sweeping = threading.Lock()
 
 
 def sweep() -> Settled:
-    """End every open wait whose link is already answered or signed off:
-    at server start and on every read of either record. Never raises."""
+    """End every open wait whose link is already answered, signed off or
+    set aside, and carry one on a replaced package to its newer version
+    (each store's sweep, `replaced_package` then `already`): at server
+    start and on every read of either record. Never raises."""
     if not _sweeping.acquire(blocking=False):
         return Settled()
     _looked.found = {}

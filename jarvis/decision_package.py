@@ -58,6 +58,15 @@ TEXT_ONLY_WORDS = 5
 
 IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 
+# An SVG says its own size: its root <svg> has width and height, each a
+# positive number of pixels ("320" or "320px"). One without them (a viewBox
+# alone, or a percentage) has no size of its own in an <img> and can draw as
+# nothing, so a slide showing it is blank (docs/making-a-package.md).
+SVG_HEAD_BYTES = 64 * 1024
+_SVG_ROOT = re.compile(rb"<svg\b([^>]*)>", re.IGNORECASE)
+_SVG_ATTR = re.compile(rb"""([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_SVG_PIXELS = re.compile(r"(\d+(?:\.\d+)?|\.\d+)(?:px)?")
+
 
 class Refused(Exception):
     """The content cannot become a decision package; `problems` says why."""
@@ -119,7 +128,33 @@ def _is_image(path: Path) -> bool:
     head = path.read_bytes()[:1024]
     if head.startswith(IMAGE_MAGIC) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
         return True
+    return _is_svg(path, head)
+
+
+def _is_svg(path: Path, head: bytes) -> bool:
     return path.suffix.lower() == ".svg" and b"<svg" in head
+
+
+def svg_size_problem(path: Path) -> str:
+    """Why an SVG has no size of its own ("" when its root <svg> gives width
+    and height in pixels, or it is no SVG), by the rule above SVG_HEAD_BYTES."""
+    with open(path, "rb") as f:
+        head = f.read(SVG_HEAD_BYTES)
+    if not _is_svg(path, head[:1024]):
+        return ""
+    root = _SVG_ROOT.search(head)
+    attrs = {m.group(1).lower(): (m.group(2) if m.group(2) is not None else m.group(3))
+             for m in _SVG_ATTR.finditer(root.group(1))} if root else {}
+    bad = []
+    for name in (b"width", b"height"):
+        value = (attrs.get(name) or b"").decode("utf-8", "replace")
+        size = _SVG_PIXELS.fullmatch(value.strip())
+        if not size or float(size.group(1)) <= 0:
+            bad.append(f"{name.decode()}={value!r}" if value else f"no {name.decode()}")
+    if not bad:
+        return ""
+    return (f"its <svg> has {' and '.join(bad)}: give the root <svg> width and height in "
+            f"pixels (for example width=\"320\" height=\"220\"), or it can draw as nothing")
 
 
 def problems_of(deck: dict, folder: Path) -> list[str]:
@@ -238,6 +273,8 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             problems.append(f"Picture {pic} is not at {folder / p}.")
         elif not _is_image(folder / p):
             problems.append(f"Picture {pic} is not a PNG, JPEG, GIF, WebP or SVG image.")
+        elif (unsized := svg_size_problem(folder / p)):
+            problems.append(f"Picture {pic}: {unsized}.")
     return problems
 
 
