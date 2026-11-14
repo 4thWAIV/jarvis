@@ -3,46 +3,62 @@
 ## Overview
 JARVIS is a voice-first macOS workspace for conversation, coding agents and workflows. Its React interface centres on Conversation, with agent threads, workflow details and voice diagnostics opening alongside it. Claude and Codex are available as conversational brain providers. The project direction is in `docs/roadmap.md`; current user-facing changes are in `docs/whats-new.md`. Keep planned successor engines distinct from implemented prototype functionality.
 
+## Settings only
+Every choice a person makes is a Settings control. No one ever leaves the
+dashboard for any reason: nothing a person sets is read from the
+environment, and no step asks anyone to edit `.env`. A setting is one of
+`settings_specs.py`'s list, read through `settings_service.value` and
+changed only through `server._change_setting` (the page's routes and the
+brain's `set_jarvis_setting` alike); it is a record
+(`/settings/<area>.settings`), a Keychain item (a secret) or the start file
+only Settings writes (`start_settings.py`, the few chosen before the records
+are open), each with a brain tool to read it and one to change it. The
+environment carries only WIRING, PLATFORM and TEST names, every one listed
+in `env_names.py`, the one reader; a new environment read, or a setting
+with no Settings control, brain tool or words in both catalogs, fails
+`tests/test_env_registry.py`. The list of settings is "Settings" below.
+
 ## Quick Start
 Read `jarvis/skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
 facts (Chrome for the voice page, the per-port permission trap, subscription vs. API
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
-When a user clones this repo and starts Claude Code, help them:
-1. Copy jarvis/.env.example to .env
-2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
+When a user clones this repo and starts Claude Code, help them (every setting is chosen in Settings; there is no `.env` to edit):
+1. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
-3. Get a Fish Audio API key from fish.audio (required — there is no fallback
-   voice)
-4. Make the virtual environment and install Python dependencies:
+2. Get a Fish Audio API key from fish.audio (required — there is no fallback
+   voice); first-time setup opens Settings, Voice for it once the page loads
+3. Make the virtual environment and install Python dependencies:
    `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
-5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
+4. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
-5a. Install the current local Kroko speech model:
+4a. Install the current local Kroko speech model:
    `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
    adds the Spanish model, `--language all` both)
-5b. Install the knowledge engine's embedding model (vector search, about
+4b. Install the knowledge engine's embedding model (vector search, about
    135 MB): `.venv/bin/python scripts/setup_embedding_model.py`
-6. Install frontend dependencies: cd frontend && npm install
-7. Generate the SSL certs — see below, they are NOT optional:
+5. Install frontend dependencies: cd frontend && npm install
+6. Generate the SSL certs (see below):
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
-8. Run the backend: .venv/bin/python -m jarvis --host 127.0.0.1
-9. Run the frontend: cd frontend && npm run dev
-10. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
-11. Click to enable audio, speak to JARVIS
-12. Teach your own Claude Code and Codex sessions to reach you through
+7. Run the backend: .venv/bin/python -m jarvis (it listens where Settings,
+   Server says: 127.0.0.1:8340 until changed there)
+8. Run the frontend: cd frontend && npm run dev
+9. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
+10. Click to enable audio, speak to JARVIS
+11. Teach your own Claude Code and Codex sessions to reach you through
     JARVIS: `.venv/bin/python -m jarvis.session_skill install`
 
-**The certs are required for the dev-server workflow**, despite `server.py`
-treating them as optional. JARVIS serves HTTPS only when `cert.pem` and
-`key.pem` are both in its configuration directory (the repository root in a checkout), but `frontend/vite.config.ts` hard-codes its
-proxy target as `https://localhost:8340`. Measured with a stand-in backend on
-8340 and `npx vite`: with a plain-HTTP backend the Vite dev server itself
-answers 200 while every proxied `/api` request returns **500**; with an HTTPS
-backend the same request returns 200. The page loads either way, which is why
-this presents as "the UI is up but nothing works" rather than as an error.
+**The Vite proxy and JARVIS must agree on the scheme.** JARVIS serves HTTPS
+only when `cert.pem` and `key.pem` are both in its configuration directory
+(the repository root in a checkout) and Settings, Server has HTTPS on.
+`frontend/vite.config.ts` reads the same start file (its port and HTTPS,
+trusted only when its signature checks) and whether the certs are there, so
+both sides follow Settings. Measured before that, when Vite hard-coded
+`https://localhost:8340`: with a plain-HTTP backend the Vite dev server
+itself answers 200 while every proxied `/api` request returns **500**, which
+presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
@@ -114,8 +130,9 @@ this presents as "the UI is up but nothing works" rather than as an error.
   a hostile page reading the GETs that cannot be gated (a same-origin GET
   carries no `Origin` to check). The `Host` header IS checked on every
   request including reads, because DNS rebinding is the way around "no
-  CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
-  and then needs `JARVIS_ALLOWED_ORIGINS`.
+  CORS". The address is Settings, Server (`host`, `127.0.0.1` by default);
+  `0.0.0.0` still works and warns, and then needs Settings' Allowed origins
+  (`allowed_origins`).
   An onboarded agent signs each request with its own key instead (see
   "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
   (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
@@ -1634,8 +1651,9 @@ before it reads None), and a retry goes through
 `review_document` and `approve_document` find a build by its project. Every
 committed change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
 (one store for both views), `FoldersView.tsx` and `FolderDetail.tsx` in the
-centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
-routes and tools off and keeps the records.
+centre and `FoldersPanel.tsx` on the right. Settings, Knowledge, Folder
+catalog (`folders`) off switches the routes and tools off at the next start
+and keeps the records.
 
 ## Project records
 His projects are records of truth, one `project` document each
@@ -1858,8 +1876,9 @@ Diagnostics row. Settings → Knowledge controls indexing through
 `knowledge_settings`, persisted at `/settings/knowledge.settings` in the existing
 record store. The server, ingest/content workers and engine read the same setting.
 The engine reads it locally at startup to avoid calling its own HTTP endpoint.
-`JARVIS_KNOWLEDGE` is a compatibility input only until Settings saves a choice;
-a saved false overrides it. `set_knowledge_settings` and POST
+It is on until Settings saves a choice (`knowledge_enabled`, its record
+field `enabled`); `.env`'s old `JARVIS_KNOWLEDGE` is copied in once.
+`set_knowledge_settings` and POST
 `/api/knowledge/settings` use the same implementation. Pausing stops content and
 ingest workers and pauses background embedding, while storage health, record
 reads/writes and searches over existing data remain available. Changes apply
@@ -1919,7 +1938,7 @@ the brain's knowledge tools call the same `knowledge_api` functions.
 `context_service.pack` is the context pack: tier 0 from notes and topics,
 tier 1 with the engine's search; `work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
-`JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
+Settings, Knowledge's `run_context` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
 Each registered folder's files are items under `/folders/<folder id>/` in
 the engine; `knowledge_api.folder_counts` reads each active folder's count
@@ -2277,12 +2296,11 @@ when the saved one's model is missing (preflight checks the same model,
 `startup_model`). `GET`/`POST /api/settings/language` are the routes; the
 brain's `speech_models` read starts with the language.
 
-The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
-in .env) is now used: `spoken_words.address` turns it into a fixed word
+The Honorific setting (Settings, You: Sir, Ma'am, Señor, None;
+`honorific`) is now used: `spoken_words.address` turns it into a fixed word
 from one table, `spoken_words._ADDRESS`, each honorific's word in each
-language (sir is señor in Spanish, ma'am is señora), and any value not on
-that list counting as the default, sir, so nothing typed into .env reaches
-the prompt. `brain.address_rule` adds a launch-prompt line only when
+language (sir is señor in Spanish, ma'am is señora); the setting takes only
+those values, so nothing else reaches the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
 
@@ -2769,78 +2787,81 @@ Note that `docs/superpowers/specs` and `docs/superpowers/plans` are still a
 live convention: `builds.py` and `specs.py` create them **inside the projects
 JARVIS builds**. It is only this repository's own copies that are gone.
 
-## Environment Variables
-- `ANTHROPIC_API_KEY` — **read by nothing.** Not asked for in setup, not read
-  by any module, and the `anthropic` SDK is not a dependency: JARVIS's brain
-  and every spawned run go through your Claude Code subscription login.
-  `claude_env.child_env()` scrubs every `ANTHROPIC_*` variable from every
-  spawned Claude Code child (brain and run pipeline alike) so the CLI can
-  never bill an API key instead, and `preflight.py`'s `anthropic_key_leftover`
-  check warns you if one is sitting in your `.env` — that is the only place
-  the name appears in live code.
-- `JARVIS_BRAIN_MODEL` (optional, default `sonnet`) — model for the brain,
-  always passed explicitly as `--model`
-- `JARVIS_BRAIN_AUTOSTART` (optional, default `1`) — `0` builds the brain but
-  never spawns it (every test sets this)
-- `JARVIS_BRAIN_CONTEXT_BUDGET` (optional, default `900000`) — tokens of
-  conversation before JARVIS asks to compact its context. It never rotates
-  without the user's yes; he is asked again every ten turns, and the Claude
-  CLI's own auto-compact is the backstop if he never agrees
-- `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
-  rejection is not enough with a given microphone
-- `FISH_API_KEY` (required) — Fish Audio TTS
-- `FISH_VOICE_ID` (optional) — Voice model ID
-- `USER_NAME` (optional) — Your name for JARVIS to use
-- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the
-  knowledge engine holding every record (`knowledge/`), runs' output and the
-  voice log as files, memory Markdown, usage.json, the tool token, the running
-  server's address (`server-address.json`). Defaults to `data/`
-  (`data_paths.py`). Set it to run an isolated instance without touching live
-  data — the test suite gives every test a fresh one this way.
-- `JARVIS_SKIP_PERMISSIONS` (optional) — Defaults to true; passes
-  `--dangerously-skip-permissions` to spawned runs, which have no TTY to
-  answer a permission prompt
-- `WEATHER_LOCATION_LABEL` / `WEATHER_LATITUDE` / `WEATHER_LONGITUDE` /
-  `WEATHER_UNIT` (all optional) — override the auto-detected (public-IP)
-  weather location and units
-- `JARVIS_ALLOWED_ORIGINS` (optional) — extra origins the web boundary
-  accepts, comma-separated. Only needed when the page is opened at an
-  address JARVIS does not serve from itself (a LAN IP, a tunnel). Their
-  host names are also what the `Host` check accepts, so a `.local` or
-  tailscale name has to be listed here to work at all
-- `JARVIS_DEBUG_DOCS` (optional, default off) — serve `/docs`, `/redoc` and
-  `/openapi.json`. That console has a "Try it out" button on every route
-- `JARVIS_REFUSE_UNTRUSTED_ACTIONS` (optional, default off) — `1`/`true`/`yes`/`on`
-  turns ON the untrusted-content action refusal: a turn that has read foreign
-  text may not act, and memory writers are refused for the rest of that
-  generation. Off by default, so JARVIS keeps acting after reading foreign
-  content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
-- `JARVIS_STT_MODEL_DIR` (optional) — the folder holding the local speech
-  models, one folder per model (`<root>/<model name>`). Defaults to
-  `<data>/models`; `scripts/setup_speech_input.py` and the install route
-  install there, checked against the release's SHA-256
-- `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
-  settings endpoints read and write. Defaults to the repo's own; the test
-  suite redirects it so no test reads or rewrites the developer's real
-  configuration
+## Settings
+Every setting, by its Settings section and key (`settings_specs.py`).
+"Next start" marks one that takes effect when JARVIS next starts; "his
+click" one that only his click on Settings changes (the brain reads it and
+never changes it). The rest the brain changes with `set_jarvis_setting`,
+or the section's own tool where one is named.
+- You: `user_name`, `honorific` (the section's own Save, both through
+  `/api/settings/preferences`), `weather_location_label`,
+  `weather_latitude`, `weather_longitude` (empty: found from the public IP),
+  `weather_unit`, `default_browser` (Chrome or Firefox).
+- Voice and language: `fish_api_key` (the Keychain, his click; it is never
+  read back), `fish_voice_id`, `tts_provider`, `local_voice`,
+  `mute_mic_during_speech` (a fallback if echo rejection is not enough),
+  `stt_model_dir` (next start; empty: `<data>/models`), beside the
+  language and voice input settings of their own.
+- Brains: `brain_effort`, `brain_turn_timeout`, `brain_context_budget`
+  (tokens before JARVIS asks to compact; it never rotates without his yes),
+  each next start; `claude_path`, `codex_path` (next start, his click);
+  `usage_poll`. The brain and its model are the brains' cards
+  (brains.json); a run's model is the engine choice (engines.json).
+- Agents: `run_timeout_sec`, `run_idle_sec`, `skip_permissions` (passes
+  `--dangerously-skip-permissions` to runs, which have no TTY),
+  `steer_cancel_window`, `claude_config_dirs`, `codex_sessions_home`,
+  `watch_interval` (next start), `specs_poll`.
+- Projects: `projects_dir`, `project_roots`, `scan_budget`, `scan_cache`.
+- Knowledge: `knowledge_enabled` (its own switch and
+  `set_knowledge_settings`), `run_context`, `folders` and
+  `folder_discovery` (next start), `knowledge_memory_mb` (the start file,
+  next start; empty: 384, or 256 under 16 GB).
+- Safety: `refuse_untrusted_actions` (off: a turn that has read foreign text
+  may still act; on, it may not, and memory writers are refused for the rest
+  of that generation).
+- Team: `team_dev_servers` (origins JARVIS may sign in to over plain http or
+  a private address, for a team server run locally).
+- Server, the start file (`start_settings.py`, signed with the tool token, a
+  hand-edited file ignored and said so): `host` (his click), `port`,
+  `https` (when the certificates are there), `brain_autostart`, each next
+  start; `allowed_origins` (his click; also the host names the `Host`
+  check accepts); `debug_docs` (`/docs`, next start). A start whose address
+  cannot be bound goes back to the last one that served
+  (`start_settings.fall_back`). Restart now is `/api/restart`. The
+  command-line `--host`, `--port` and `--ssl` stay as one run's own and are
+  saved nowhere.
+- Updates has no setting.
+`.env` is read once, by `settings_import` at the first start after this
+(`/settings/env-import.settings` records it, and Settings, Server says
+when), and never again; nothing loads it into the environment. The old
+names are each setting's `env` in `settings_specs.py`, or
+`settings_specs.ELSEWHERE` for the brain, its model and a run's model.
 
-- `JARVIS_TEAM_DEV_SERVERS` (optional) — comma-separated exact origins
-  (e.g. `http://127.0.0.1:18080`) JARVIS may connect to as a team server
-  despite being plain http or on a private address. For running a team
-  server locally only
-
-- `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
-  the folder catalog's routes and tools off; its records are kept
-- `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
-  knowledge engine (every test sets this; see "The knowledge engine")
-- `JARVIS_KNOWLEDGE` (optional, default on) — `0` turns off the knowledge
-  engine's ingest, embedding and tools; the engine itself runs either way
-- `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
-  the context pack for its project (see "The knowledge engine")
-- `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
-  — the engine's memory budget, which its footprint is reported against
-- `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
-  background discovery and availability look (every test sets this)
+## Not settings
+None of these is for a person to set; each is listed in `env_names.py`.
+- WIRING, set by JARVIS for itself and its children: `JARVIS_BIND_HOST`,
+  `JARVIS_PORT`, `JARVIS_SCHEME` (published by `server.main`),
+  `JARVIS_TOOL_URL`, `JARVIS_TOOL_TOKEN_FILE` (the brain's MCP child),
+  `JARVIS_AGENT_SESSION`, `JARVIS_ACCESS_KEY`, `JARVIS_URL` (an agent's
+  commands), `JARVIS_DECISION_CHECK_SERVER`, `JARVIS_DATA_DIR` (the data
+  folder of an isolated instance: a test, the decision check),
+  `JARVIS_PYTHON`, `JARVIS_SOURCE`, `PACKAGE_DIR` (a package's command),
+  `MSYS_NO_PATHCONV`, `JARVIS_API_TARGET`, `JARVIS_VITE_PORT` (a parent
+  pointing Vite at an isolated JARVIS).
+- PLATFORM, read to find things or to scrub them from a child:
+  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `HOME`, `PATH`,
+  `TMPDIR`, `USER`, `PYTHONUNBUFFERED`, `CODEX_API_KEY`, and by prefix
+  `ANTHROPIC_*` (read by nothing but the scrub: `claude_env.child_env()`
+  removes every one from every Claude Code child, and preflight's
+  `anthropic_key_leftover` check warns of one), `CLAUDE_CODE_*` and
+  `OPENAI_*`.
+- TEST, the suite's harness: `JARVIS_ENV_FILE` (the `.env` the one-time copy
+  reads), `JARVIS_ENGINE_AUTOSTART` (`0` never starts the knowledge engine;
+  JARVIS cannot run without it, so it is no setting),
+  `JARVIS_ENGINE_EPHEMERAL`. A test sets a setting only with
+  `tests/settings_fixtures.hold_setting` (`settings_service.hold`, this
+  process only, never saved).
 
 ## Testing
 The team server has its own suite: `cd team_server/tests && pytest` with its
@@ -2903,9 +2924,13 @@ A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to e
   same service or function as its route (`tests/test_brain_page_parity.py`).
   Changes are ACTING_TOOLS; reads carrying other people's words are wrapped
   as untrusted. Left out on purpose: settings that hold secrets (API keys and
-  the Fish key test), `/api/restart` on its own (`update_jarvis` restarts,
+  the Fish key test), the settings only his click changes (the brain's
+  programs, the address and the extra origins: read by `jarvis_settings`,
+  never changed), `/api/restart` on its own (`update_jarvis` restarts,
   through the same `_restart_server`, once an update is in), and the sign-in
   and connect flows that need a browser approval
+- Every setting is a Settings control (see "Settings only"); no step tells a
+  person to edit `.env` or set an environment variable
 - AppleScript for Terminal and Chrome control (no OAuth needed)
 - Records are documents in the knowledge engine (`records.py`), never
   SQL; long-term memory is plain Markdown files instead (`jarvis_memory.py`) —

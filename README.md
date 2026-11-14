@@ -68,7 +68,6 @@ Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and 
 From a clone of this repository:
 
 ```bash
-cp jarvis/.env.example .env
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m playwright install chromium
@@ -77,7 +76,7 @@ python3 -m venv .venv
 npm --prefix frontend install
 ```
 
-Set `FISH_API_KEY` in `.env`. The other settings are documented in [jarvis/.env.example](jarvis/.env.example). Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
+Every setting is chosen in Settings; nothing asks you to edit a `.env` file. The first time the page loads without a voice, Settings opens on Voice for the Fish Audio key. Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
 
 Generate the local certificates required by the Vite development proxy:
 
@@ -88,7 +87,7 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -node
 Run these in separate terminals:
 
 ```bash
-.venv/bin/python -m jarvis --host 127.0.0.1
+.venv/bin/python -m jarvis
 ```
 
 ```bash

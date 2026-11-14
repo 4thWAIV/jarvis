@@ -2,6 +2,28 @@
 
 Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Every setting is in Settings
+
+Everything you can choose about JARVIS is now a control in Settings, and
+nothing asks you to edit a `.env` file or set an environment variable. New
+sections hold what used to live only in `.env`: Agents (how long a run may
+take or stay silent, skipping permission prompts, the time to cancel a send,
+the session homes JARVIS watches), Projects (where new projects go and where
+JARVIS looks for them) and Safety (refusing to act after reading others'
+words). You gains the weather place and units and the browser JARVIS opens;
+Voice the speech models folder and muting the microphone while JARVIS
+speaks; Brains the effort, turn limit, compaction point, program paths and
+usage reading; Knowledge the run context, the folder catalog and the engine's
+memory; Team the local team servers; Server the address, port, HTTPS,
+starting the brain, extra page origins and the API console, with Restart now.
+A start-up setting says it takes effect at the next start, and says so again
+once changed. If a new address or port cannot be used, JARVIS goes back to the
+last one that worked. Ask JARVIS about any of them, or to change one; the
+program paths, the address, the extra origins and the Fish key are changed
+only by your click. The Fish key is kept in your Keychain. The first start
+copies whatever your old `.env` held into Settings, once, and says when in
+Settings → Server; after that the file is not read.
+
 ## The knowledge index builds itself, and says how far it is
 
 Settings → Knowledge (and the Knowledge view) shows the index being built:

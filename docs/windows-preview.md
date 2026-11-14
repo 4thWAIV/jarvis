@@ -46,21 +46,19 @@ $Venv = "$env:USERPROFILE\jarvis-venv"
 py -3.12 -m venv $Venv
 & "$Venv\Scripts\python.exe" -m pip install .\dist\jarvis-0.1.0-py3-none-any.whl
 Set-Location $env:USERPROFILE                    # anywhere outside the checkout
-$env:JARVIS_BRAIN_MODEL = "opus"                 # the brain's model; without it, sonnet
-& "$Venv\Scripts\python.exe" -m jarvis --host 127.0.0.1
+& "$Venv\Scripts\python.exe" -m jarvis
 ```
 
 - It serves the built page on loopback: open http://127.0.0.1:8340. Vite and certificates are not needed for this. Stop it with Ctrl+C in that window.
-- An installed copy keeps its settings file at `$env:LOCALAPPDATA\JARVIS\.env` and its data in `$env:LOCALAPPDATA\JARVIS\data`. `JARVIS_DATA_DIR` and `JARVIS_ENV_FILE` choose others. For an isolated trial, create the folder and an empty settings file first, then set both in the same window before launching:
+- Every setting is chosen in Settings; nothing asks you to edit a settings file. An installed copy keeps its data, its settings included, in `$env:LOCALAPPDATA\JARVIS\data`. For an isolated trial, a parent window may point one run at a folder of its own before launching (this is how JARVIS's own tests isolate an instance, not a setting):
 
   ```powershell
   $env:JARVIS_DATA_DIR = "$env:USERPROFILE\jarvis-trial\data"
-  $env:JARVIS_ENV_FILE = "$env:USERPROFILE\jarvis-trial\jarvis.env"
   ```
 
-- The brain's model is `JARVIS_BRAIN_MODEL` (default `sonnet`; `opus` was used in testing). Development runs use `JARVIS_RUN_MODEL` or the model the brain asks for.
-- If `claude` is not on PATH in the window that starts JARVIS (a window opened before Claude Code was installed may not have it yet), set `$env:JARVIS_CLAUDE_PATH` to `claude.exe` for the brain. Development runs still look `claude` up on PATH, so keep it on PATH.
-- Without `FISH_API_KEY`, replies are text only (tested). Fish and local Kokoro voice output were not tested on Windows.
+- The brain's model is chosen on its card in Settings, Brains (default `sonnet`; `opus` was used in testing). Development runs use the model Settings, Brains names for agent runs, or the one the brain asks for.
+- If `claude` is not on PATH in the window that starts JARVIS (a window opened before Claude Code was installed may not have it yet), set Settings, Brains, Claude program to `claude.exe` for the brain. Development runs still look `claude` up on PATH, so keep it on PATH.
+- Without a Fish Audio key (Settings, Voice), replies are text only (tested). Fish and local Kokoro voice output were not tested on Windows.
 - The data folder must be one only you can change. JARVIS refuses to keep its token in a folder other users can modify (for example a checkout directly under `C:\`), and refuses junctions or links on the way to it. A folder under your user profile is fine.
 
 ## Optional: the English speech model
