@@ -9,7 +9,13 @@
  * Registered for pointing at: the subsystem (its head, Close, checks and
  * messages) and each check (`<subsystem>/<check>`). Close is
  * `subsystem.close`, as the brain runs it.
+ *
+ * The brain's row has Start brain while it is down (stopped after crashing,
+ * its login expired, no process): `POST /api/brain/start`, the same
+ * `_start_brain` as the brain's acting `start_brain`.
  */
+
+import { useState } from "react";
 
 import { CENTRE_SOCKET } from "./ConversationView";
 import { statusWords } from "./conversation";
@@ -65,6 +71,7 @@ export function SubsystemView({ id }: { id: string }) {
         </section>
       )}
       {s?.messages && <Messages messages={s.messages} partRef={ui.part("messages")} />}
+      {id === "brain" && s?.state === "down" && <StartBrain />}
       {id === "knowledge" && (
         <p>
           <button type="button" className="knowledge-open"
@@ -72,6 +79,45 @@ export function SubsystemView({ id }: { id: string }) {
         </p>
       )}
     </div>
+  );
+}
+
+const START_OUTCOMES = {
+  started: "main.subsystem.brain.started",
+  ready: "main.subsystem.brain.ready",
+  starting: "main.subsystem.brain.starting",
+  not_up: "main.subsystem.brain.notUp",
+} as const;
+
+/** Start brain: asks the server to start the brain again, and says what it
+ *  answered; the row itself moves with the next read. */
+function StartBrain() {
+  const t = useT();
+  const [asked, setAsked] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const start = async () => {
+    setAsked(true);
+    try {
+      const res = await fetch("/api/brain/start", { method: "POST" });
+      if (!res.ok) {
+        setSaid(t("main.subsystem.brain.refused", { error: `${res.status} ${res.statusText}`.trim() }));
+      } else {
+        const outcome = ((await res.json()) as { outcome?: string }).outcome ?? "";
+        const key = START_OUTCOMES[outcome as keyof typeof START_OUTCOMES];
+        setSaid(key ? t(key) : t("main.subsystem.brain.refused", { error: outcome }));
+      }
+    } catch (e) {
+      setSaid(t("main.subsystem.brain.refused", { error: String(e) }));
+    } finally {
+      setAsked(false);
+    }
+  };
+  return (
+    <p className="subsystem-action">
+      <button type="button" id="subsystem-start-brain" className="knowledge-open"
+              disabled={asked} onClick={() => void start()}>{t("main.subsystem.brain.start")}</button>
+      {said && <span className="subsystem-action-said" role="status"> {said}</span>}
+    </p>
   );
 }
 

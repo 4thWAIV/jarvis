@@ -21,6 +21,15 @@ Until then:
   (a file) are open.
 - A move that fails leaves the server up saying so and why; jarvis.db is
   untouched, and the next start tries again.
+- The same cover holds for a start that cannot open the records at all
+  (`cause` `ENGINE`: the knowledge engine did not answer within
+  knowledge_client.READY_WAIT_SEC, with the supervisor's reason and the end
+  of the engine's log) and for a start that failed once they were open
+  (`START`). Nothing is up but this server and the page.
+- While it has failed, `POST /api/restart` from the page's own origin
+  (`RETRY`) goes through the gate, so the page's Try again starts JARVIS
+  again from the dashboard. `boot` is this process's own id, so the page
+  knows the server it asked has been replaced.
 
 The move runs in a daemon thread of its own, so stopping JARVIS during it
 (Ctrl-C, a closed terminal) stops at once; the next start clears what was
@@ -32,6 +41,7 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Optional
 
 from fastapi import FastAPI
@@ -45,6 +55,14 @@ MOVING, STARTING, READY, FAILED = "moving", "starting", "ready", "failed"
 OPEN = frozenset({("GET", "/api/health"), ("GET", "/api/records/move"),
                   ("GET", "/api/settings/language")})
 GATED_PREFIXES = ("/api/", "/ws/", "/internal/")
+# What failed: the move itself, the knowledge engine before the records could
+# be opened, or the start after the records were open.
+MOVE, ENGINE, START = "move", "engine", "start"
+# The one route open while it has failed: the page's Try again.
+RETRY = ("POST", "/api/restart")
+# This process: a restart is a new one, which is how the page knows its Try
+# again took.
+BOOT = uuid.uuid4().hex
 SAFE_TO_STOP = ("It is safe to stop JARVIS during the move: the next start copies again "
                 "from the beginning, and jarvis.db is never changed.")
 
@@ -63,6 +81,7 @@ class _State:
         self.done_steps: list[str] = []
         self.plan: Optional[dict] = None
         self.reason: Optional[str] = None
+        self.cause: Optional[str] = None
 
 
 _state = _State()
@@ -102,7 +121,8 @@ def status() -> dict:
             "done_steps": list(s.done_steps), "started_at": s.started_at,
             "elapsed": round(now - s.begun, 1) if s.begun is not None else None,
             "left": _left(s.plan, s.step, s.done_steps, in_step) if s.state == MOVING else None,
-            "plan": s.plan, "reason": s.reason, "safe_to_stop": SAFE_TO_STOP}
+            "plan": s.plan, "reason": s.reason, "cause": s.cause, "boot": BOOT,
+            "safe_to_stop": SAFE_TO_STOP}
     return out
 
 
@@ -116,11 +136,13 @@ def _on_step(step: str, facts: dict) -> None:
     log.info("records move: %s", step)
 
 
-def _set(state: str, reason: Optional[str] = None) -> None:
+def _set(state: str, reason: Optional[str] = None, cause: Optional[str] = None) -> None:
     with _state.lock:
         _state.state = state
         if reason is not None:
             _state.reason = reason
+        if cause is not None:
+            _state.cause = cause
 
 
 def begin() -> None:
@@ -175,10 +197,11 @@ async def run(cut_over=None) -> bool:
     return True
 
 
-def failed(reason: str) -> None:
-    """The move (or the start after it) failed: the server stays up saying
-    so and why."""
-    _set(FAILED, reason[:4000])
+def failed(reason: str, cause: str = MOVE) -> None:
+    """The move, the engine before it, or the start after it failed
+    (`cause`): the server stays up saying so and why, and the page offers
+    Try again."""
+    _set(FAILED, reason[:4000], cause)
 
 
 def started() -> None:
@@ -190,9 +213,15 @@ def said(record: Optional[dict] = None) -> str:
     """The move in words, for the brain: where it is, or, once done, the
     cut-over's record."""
     st = status()
+    if st["state"] == FAILED and st["cause"] == ENGINE:
+        return (f"JARVIS could not open its records: {st['reason']}. The page offers Try again, "
+                "which starts JARVIS again.")
+    if st["state"] == FAILED and st["cause"] == START:
+        return (f"JARVIS could not start on its records: {st['reason']}. The page offers Try "
+                "again, which starts JARVIS again.")
     if st["state"] == FAILED:
-        return (f"The records move failed: {st['reason']}. jarvis.db is untouched; starting "
-                "JARVIS again tries the move again.")
+        return (f"The records move failed: {st['reason']}. jarvis.db is untouched; the page's Try "
+                "again starts JARVIS again, which tries the move again.")
     if st["state"] in (MOVING, STARTING):
         left = st["left"]
         return (f"The records are moving into the engine (step {st['step']}"
@@ -216,14 +245,19 @@ class Gate:
         if scope["type"] not in ("http", "websocket") or ready() or not _gated(scope):
             return await self.app(scope, receive, send)
         st = status()
+        if st["state"] == FAILED and _retry_from_page(scope):
+            return await self.app(scope, receive, send)
         if scope["type"] == "websocket":
             await receive()                   # the connect
             await send({"type": "websocket.close", "code": 1013,
                         "reason": "records moving" if st["state"] != FAILED else "records move failed"})
             return
         error = "records_move_failed" if st["state"] == FAILED else "records_moving"
-        detail = (f"JARVIS's records could not be moved: {st['reason']}" if st["state"] == FAILED
-                  else "JARVIS is moving its records into the new engine; try again shortly.")
+        detail = ("JARVIS is moving its records into the new engine; try again shortly."
+                  if st["state"] != FAILED
+                  else f"JARVIS could not open its records: {st['reason']}" if st["cause"] == ENGINE
+                  else f"JARVIS could not start on its records: {st['reason']}" if st["cause"] == START
+                  else f"JARVIS's records could not be moved: {st['reason']}")
         retry = str(max(5, int(st["left"] or 5)))
         await JSONResponse({"error": error, "detail": detail, "move": st}, status_code=503,
                            headers={"Retry-After": retry})(scope, receive, send)
@@ -234,6 +268,17 @@ def _gated(scope) -> bool:
     if not path.startswith(GATED_PREFIXES):
         return False
     return (scope.get("method", "GET"), path) not in OPEN
+
+
+def _retry_from_page(scope) -> bool:
+    """The page's Try again: `POST /api/restart` carrying an `Origin` (the
+    OriginGuard outside this gate has already refused any origin JARVIS does
+    not serve from) and no Authorization, so neither the tool token nor an
+    agent's key restarts a JARVIS that has failed."""
+    if (scope.get("method"), scope.get("path")) != RETRY:
+        return False
+    headers = {k.lower(): v for k, v in scope.get("headers") or []}
+    return bool(headers.get(b"origin")) and b"authorization" not in headers
 
 
 def mount(app: FastAPI) -> None:

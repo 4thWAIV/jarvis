@@ -136,6 +136,33 @@ async def test_codex_signs_in_from_the_page_and_the_page_hears_it_finish(server,
         assert r.status_code == 400, "Claude signs in on its own"
 
 
+@pytest.mark.asyncio
+async def test_a_failed_brain_starts_again_once_its_sign_in_goes_through(server, monkeypatch):
+    """A brain stopped on an expired login is started again by the sign-in
+    that renews it, through the one `_start_brain`."""
+    from types import SimpleNamespace
+    from jarvis import brain_accounts
+    monkeypatch.setattr(brain_accounts, "_accounts", {})
+    monkeypatch.setattr(server, "_voice_emit", lambda msg: asyncio.sleep(0))
+    starts = []
+
+    async def start():
+        starts.append(True)
+        return True
+    failed = SimpleNamespace(failed=True, ready=False, running=False, restarting=False,
+                             provider=SimpleNamespace(name="openai"), start=start)
+    monkeypatch.setattr(server, "brain_instance", failed)
+    import httpx
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8340") as client:
+        assert (await client.post("/api/brains/openai/sign-in", headers=ORIGIN)).status_code == 200
+        for _ in range(100):
+            if starts:
+                break
+            await asyncio.sleep(0.05)
+    assert starts == [True]
+
+
 def test_usage_is_kept_and_read_per_brain(server):
     from jarvis import usage_store
     usage_store.record({"status": "allowed", "unifiedWindows": {

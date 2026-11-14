@@ -108,7 +108,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "work_status", "answer_work_decision", "review_work",
         "package_inbox", "open_inbox_package", "answer_package_decision",
         "sign_off_package", "close_inbox_package",
-        "install_speech_model", "update_jarvis",
+        "install_speech_model", "update_jarvis", "start_brain",
     ),
     # The page shown or pointed at: the white attention path's tools.
     UI: (

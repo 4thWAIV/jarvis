@@ -2829,6 +2829,14 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "start_brain",
+        "description": (
+            "Start the brain again after it stopped (its login expired, or it crashed "
+            "repeatedly) — Diagnostics' Start brain on the brain's row — only when he asks. "
+            "It does nothing while the brain is running or already starting."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "retry_run",
         "description": (
             "Run a finished run's own instruction again, picking up where it left off — the "

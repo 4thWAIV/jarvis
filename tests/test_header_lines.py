@@ -1257,6 +1257,11 @@ EXEMPT = {
         "it logs a brain's name, checked against brains_config.KNOWN, and "
         "hands the sign-in address Codex returned to the page, which opens it "
         "in a new tab; nothing of it reaches the brain or is spoken"),
+    "server.finish": (
+        "api_brains_sign_in's finish: it logs and emits a brain's name, checked "
+        "against brains_config.KNOWN, compares the running brain's provider name "
+        "with it, and hands `_start_brain` a reason made of that name; nothing "
+        "of it reaches the brain or is spoken"),
     "session_watch.send": (
         "ClaudeSessions.send: it hands the session's own inbox socket path and "
         "a capture JARVIS read back to session_steer; it prints nothing"),

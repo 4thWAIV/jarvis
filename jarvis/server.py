@@ -754,8 +754,10 @@ def _hint_from_any_thread(message: dict) -> None:
 def _attend(kind: str, source_id, event: str, *, facts: Optional[dict] = None,
             untrusted: Optional[dict] = None, audible: bool = True) -> None:
     """Record a routine event as an attention item. Nothing is said. Never
-    raises: an item that cannot be written is logged."""
+    raises: an item that cannot be written is logged. With no record open
+    it is dropped, logged, and Diagnostics' attention row is down saying why."""
     if attention_record is None:
+        log.info("attention: %s %s dropped: the record is not open", kind, event)
         return
     try:
         attention_record.record(kind, str(source_id), event, facts=facts,
@@ -910,15 +912,24 @@ def _attend_node_id_minted() -> None:
             facts={"previous_kept": bool(minted.get("previous"))}, audible=False)
 
 
+# Why the attention record could not be opened, for its Diagnostics row
+# (subsystem_diagnostics.attention); None while it is open or not tried.
+_attention_problem: Optional[str] = None
+
+
 def _start_attention() -> None:
     """The attention record, its admission policy and the digest loop. A
-    failure leaves routine events unrecorded and everything else running."""
-    global attention_record, attention_admission, _attention_task
+    failure leaves routine events unrecorded and everything else running,
+    and the attention row in Diagnostics down with the reason."""
+    global attention_record, attention_admission, _attention_task, _attention_problem
     try:
         attention_record = attention_store.AttentionStore(on_change=_hint_attention)
-    except Exception:
+    except Exception as e:
         log.warning("attention: the record could not be opened", exc_info=True)
+        _attention_problem = f"{type(e).__name__}: {e}"[:500]
+        _send_to_session_clients({"type": "subsystems"})
         return
+    _attention_problem = None
     attention_store.use(attention_record)
     _attend_node_id_minted()
     _attend_start_reverted()
@@ -2636,11 +2647,12 @@ def _offer_knowledge_seeds() -> None:
 async def start_knowledge_engine() -> None:
     """The engine first, before the rest of startup: started, and waited for
     up to knowledge_client.READY_WAIT_SEC, off the event loop's thread.
-    JARVIS's records live in it, so a server whose engine has not answered
-    by then does not start: it stops with the supervisor's reason and the
-    end of the engine's own log (`EngineNotUp`), rather than serving a page
-    whose every record call would fail, or failing later in the first
-    startup step that reads a record."""
+    JARVIS's records live in it, so nothing that needs them starts without
+    it: an engine that has not answered by then raises `EngineNotUp` with the
+    supervisor's reason and the end of the engine's own log, which `lifespan`
+    turns into the records gate's failed state (records_move.ENGINE): the
+    server stays up, every route that needs the records answers 503 with the
+    reason, and the page shows it with Try again."""
     global knowledge
     from jarvis import knowledge_runtime
     if not knowledge_client.autostart():
@@ -2661,6 +2673,7 @@ async def start_knowledge_engine() -> None:
              f"({data_paths.knowledge_engine_log_path()}) ends:\n{knowledge_client.engine_log_tail()}")
     log.error("%s", words)
     await knowledge.stop()
+    knowledge = None
     raise knowledge_client.EngineNotUp(words)
 
 
@@ -3255,9 +3268,20 @@ async def _move_records_then_start() -> None:
         await _start_on_records()
     except Exception as e:
         log.exception("startup after the records move failed")
-        records_move.failed(f"JARVIS could not start after its records moved: {type(e).__name__}: {e}")
+        records_move.failed(f"JARVIS could not start after its records moved: {type(e).__name__}: {e}",
+                            records_move.START)
         return
     records_move.started()
+
+
+async def _start_records_now() -> None:
+    """Everything that needs the records, with no move first; a failure
+    leaves the server up saying why, with Try again (records_move.START)."""
+    try:
+        await _start_on_records()
+    except Exception as e:
+        log.exception("startup on the records failed")
+        records_move.failed(f"{type(e).__name__}: {e}", records_move.START)
 
 
 async def _start_on_records() -> None:
@@ -3435,21 +3459,28 @@ async def lifespan(application: FastAPI):
         _spawn(_confirm_or_revert(served))
     global _main_loop
     _main_loop = asyncio.get_running_loop()
-    # The knowledge engine before anything else; the page waits for it.
-    await start_knowledge_engine()
+    global _records_task, _on_records_begun
+    _on_records_begun = False
+    records_move.reset()
+    # The knowledge engine before anything else; the page waits for it. One
+    # that does not come up leaves the server up saying why, with Try again
+    # on the page (records_move.ENGINE), never a server that is not there.
+    try:
+        await start_knowledge_engine()
+    except knowledge_client.EngineNotUp as e:
+        records_move.failed(str(e), records_move.ENGINE)
     # jarvis.db into the engine, once, proven both ways before any store is
     # touched (records_cutover.py). It takes minutes on a large file, so the
     # server serves meanwhile, saying the records are moving, and starts
     # everything that needs them once they are (records_move.py); a move it
     # cannot prove leaves the server up saying why.
-    global _records_task, _on_records_begun
-    _on_records_begun = False
-    records_move.reset()
-    if await asyncio.to_thread(records_cutover.needed):
+    if not records_move.ready():
+        pass
+    elif await asyncio.to_thread(records_cutover.needed):
         records_move.begin()
         _records_task = _spawn(_move_records_then_start())
     else:
-        await _start_on_records()
+        await _start_records_now()
 
     yield
 
@@ -3763,8 +3794,53 @@ async def api_brains_sign_in(name: str):
         await _voice_emit({"type": "brain_sign_in", "name": name, "ok": ok})
         if ok:
             await brain_accounts.refresh(name)
+            # A brain that stopped on this login (or after crashing) is
+            # started again now that its sign-in has gone through.
+            b = brain_instance
+            if b is not None and b.failed and getattr(b.provider, "name", None) == name:
+                await _start_brain(f"{name} signed in again")
     _spawn(finish())
     return {"url": started.url, "sign_in_id": started.sign_in_id}
+
+
+# --- Starting the brain again -------------------------------------------------
+#
+# A brain that has failed (its restart budget used, or its login expired)
+# stays down until something starts it: the brain's Diagnostics row's Start
+# brain (`POST /api/brain/start`), the brain's acting `start_brain`, and a
+# sign-in that finishes for a failed brain all come here.
+
+BRAIN_STARTED, BRAIN_ALREADY_READY, BRAIN_ALREADY_STARTING, BRAIN_NOT_UP = (
+    "started", "ready", "starting", "not_up")
+_brain_start_task: Optional[asyncio.Task] = None
+
+
+async def _start_brain(why: str) -> dict:
+    """Start the brain again unless it is serving or already starting:
+    `Brain.start` clears a failure and its restart budget. Returns at once
+    with `outcome` (one of the BRAIN_ codes); the start itself goes on in
+    the background and shows on the brain's Diagnostics row."""
+    global _brain_start_task
+    b = brain_instance
+    if b is None:
+        return {"outcome": BRAIN_NOT_UP}
+    if b.ready:
+        return {"outcome": BRAIN_ALREADY_READY}
+    if (_brain_start_task is not None and not _brain_start_task.done()) or b.restarting \
+            or (b.running and not b.failed):
+        return {"outcome": BRAIN_ALREADY_STARTING}
+    log.info("brain: started again (%s)", why)
+    _brain_start_task = _spawn(b.start())
+    _send_to_session_clients({"type": "subsystems"})
+    return {"outcome": BRAIN_STARTED}
+
+
+@app.post("/api/brain/start")
+async def api_brain_start():
+    """The brain's Diagnostics row's Start brain."""
+    return await _start_brain("the page's Start brain")
+
+
 
 
 # --- Which engine each kind of agent goes on (Settings, Brains) --------------
@@ -12098,6 +12174,25 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+_BRAIN_START_SAID = {
+    BRAIN_STARTED: "Starting the brain again, sir; Diagnostics shows how it goes.",
+    BRAIN_ALREADY_READY: "The brain is already running, sir.",
+    BRAIN_ALREADY_STARTING: "The brain is already starting, sir.",
+    BRAIN_NOT_UP: "There is no brain to start yet, sir: JARVIS has not started on its records.",
+}
+
+
+async def tool_start_brain(args: dict) -> str:
+    """The Diagnostics row's Start brain by voice, through the same
+    `_start_brain`. An ACTING tool."""
+    return _BRAIN_START_SAID[(await _start_brain("asked by voice"))["outcome"]]
+
+
+TOOL_HANDLERS["start_brain"] = tool_start_brain
+ACTING_TOOLS.add("start_brain")
+TAINT_EXEMPT_TOOLS["start_brain"] = "it starts the brain and says a fixed outcome, it does not read"
+
+
 # A cue played once on his page, as Settings' Test button plays it.
 CUE_TEST_FRAME = "cue_test"
 
@@ -12871,7 +12966,8 @@ def _subsystems() -> list:
         knowledge_health=knowledge.health() if knowledge is not None else None,
         start={**start_settings.status(),
                "from_file": bool(settings_service.served_at_start()),
-               "overridden": not settings_service.from_settings_at_start()})
+               "overridden": not settings_service.from_settings_at_start()},
+        attention_open=attention_record is not None, attention_problem=_attention_problem)
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -17519,7 +17615,9 @@ def _restart_server(why: str) -> None:
 
 @app.post("/api/restart")
 async def api_restart():
-    """Restart the JARVIS server."""
+    """Restart the JARVIS server. Open through the records gate while a
+    start has failed (records_move.RETRY), from the page's own origin only:
+    the failed view's Try again."""
     _restart_server("the page's Restart Server")
     return {"status": "restarting"}
 
