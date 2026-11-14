@@ -1,6 +1,7 @@
 """A stand-in `claude` that authors an architecture document's explanation
 the way the real fresh author is told to (package_author._assignment): it
-reads the document folder the prompt names, writes package/UNDERSTANDING.md,
+reads the document folder the prompt names, writes package/UNDERSTANDING.md
+(and package/story.json, copied from `AUTHOR_TEST_STORY` when it is set),
 runs the exact check command the prompt gives as a real subprocess, and
 records that call and its real output in its own transcript under
 `AUTHOR_TEST_CLAUDE_ROOT` (which the receiver reads, author_proof.py).
@@ -32,6 +33,8 @@ ACTION = '''
             + 'One input goes through ' + ', '.join(_meta['declarations']) + '. '
             + 'Each declaration is described in source.yaml and drawn on the page. '
             + 'Outside the language: ' + '; '.join(_meta['coverage']['outside_language']) + '\\n')
+        if os.environ.get('AUTHOR_TEST_STORY'):
+            _P('package/story.json').write_bytes(_P(os.environ['AUTHOR_TEST_STORY']).read_bytes())
         _run = _sp.run(['/bin/sh', '-c', _cmd], capture_output=True, text=True)
         _P('check-output.txt').write_text(_run.stdout + _run.stderr)
         _at = (_P(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'

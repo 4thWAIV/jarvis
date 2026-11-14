@@ -1,39 +1,21 @@
 {
   "environment": "Isolated adoption check; not the live installation.",
-  "status": {
-    "active": {
-      "version": "0.1.108172209-pre-release",
-      "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0"
-    },
-    "adopted": true,
-    "candidate": {
-      "commit": "c918581ffda7a6fad7c05dde13f54aeb5760fdfb",
-      "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0",
-      "version": "0.1.108172209-pre-release"
-    },
-    "compatibility_review_required": false,
-    "error": null,
-    "etag": "W/\"3526f2fa1e81c2c692e471b29037314e4238df66437d5ce5926cb969a6374e23\"",
-    "failures": 0,
-    "last_check": 1794191168.620595,
-    "next_check": 1794212768.620595
-  },
   "release": {
     "checks": [
       "release",
       "gate",
+      "linux",
       "windows",
       "macos",
-      "linux",
       "typescript (windows-latest)",
       "typescript (macos-latest)",
       "typescript (ubuntu-latest)",
       "version"
     ],
-    "commit": "c918581ffda7a6fad7c05dde13f54aeb5760fdfb",
-    "digest": "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0",
+    "commit": "4055170833b59796623c88f6f1608bb1d002118d",
+    "digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
     "repository": "4thWAIV/agent-guard",
-    "version": "0.1.108172209-pre-release"
+    "version": "0.1.108421045-pre-release"
   },
   "smoke": {
     "fixtures": {
@@ -45,6 +27,24 @@
       "valid": true
     },
     "runtime": "v23.5.0",
-    "view_sha256": "aae06132a13ddb872b6c889533afaa5f6fbc7de65d52921f594b61d1f85bb192"
+    "view_sha256": "45984ab40eedc2587dedf5952082511399549ad0808cb98c59a74ee020c98fe1"
+  },
+  "status": {
+    "active": {
+      "digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
+      "version": "0.1.108421045-pre-release"
+    },
+    "adopted": true,
+    "candidate": {
+      "commit": "4055170833b59796623c88f6f1608bb1d002118d",
+      "digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
+      "version": "0.1.108421045-pre-release"
+    },
+    "compatibility_review_required": false,
+    "error": null,
+    "etag": "W/\"5707654294ebad6421d4b8e940a0a5af10e75bec2dd9c167b14e440bafbc35ad\"",
+    "failures": 0,
+    "last_check": 1794683842.607157,
+    "next_check": 1794705442.607157
   }
 }
