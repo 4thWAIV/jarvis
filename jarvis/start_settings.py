@@ -4,15 +4,28 @@
 `remember_served`), read only here. It holds the `store="start"` settings of
 `settings_specs.py` (the address, port, HTTPS, whether the brain starts,
 the page's extra origins, the docs console, the engine's memory budget),
-the last start that served (`last_good`) and when `.env` was copied in.
+the last start setup a page reached (`last_good`), a changed setup on trial
+(`trial`), the last time JARVIS went back (`reverted`) and when `.env` was
+copied in.
 
 The file carries an HMAC-SHA256 of its body keyed with the tool token: only
 JARVIS can write one it will read. A file edited by hand, or one it cannot
 read, is not trusted: JARVIS starts on the defaults and `problem()` says
 why, which Settings, Server shows. Written through one atomic rename, 0600.
 
-A restart that cannot bind the address and port it holds goes back to the
-last start that served (`fall_back`), so the page always comes back.
+Confirm or revert. A start from Settings (no command-line flags) whose
+setup (`SETUP_KEYS`: the address, port, HTTPS and the page's extra origins)
+differs from the last one a page reached is a trial (`begin_trial`, once it
+is listening). A page reaching it (server._page_reached, told by web_auth: a
+socket or a request admitted by the page's own origin, never the tool token
+or an agent's key) confirms it (`remember_served`), and it becomes
+`last_good`; nothing else ever writes `last_good`. No page within
+`TRIAL_WINDOW_SEC` and JARVIS goes back (`fall_back`) and restarts. A start
+whose address cannot be bound goes back the same way, before it binds. Each
+going back is recorded (`reverted`: when, from what, to what, why), shown in
+Settings, Server, in Diagnostics and as an attention item, until he next
+saves a start setting. With no `last_good` yet nothing is known to work, so
+there is no trial: the first page to reach it records it.
 """
 from __future__ import annotations
 
@@ -23,6 +36,7 @@ import os
 import socket
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -36,6 +50,23 @@ _problem: dict[str, Optional[str]] = {}
 
 TAMPERED = "tampered"
 UNREADABLE = "unreadable"
+
+# How long a changed start setup waits for a page to reach it before JARVIS
+# goes back to the last setup a page reached (the owner's 60 seconds).
+TRIAL_WINDOW_SEC = 60.0
+# The start settings that decide whether the page can reach JARVIS at all.
+SETUP_KEYS = ("host", "port", "https", "allowed_origins")
+# Why JARVIS went back (`reverted["why"]`).
+UNREACHED = "unreached"      # no page reached the trial within the window
+UNBINDABLE = "unbindable"    # the address could not be bound
+# How long a going back is shown as worth his attention (Diagnostics, and
+# the attention item at a start).
+REVERT_NOTICE_SEC = 7 * 24 * 3600.0
+
+
+def now() -> float:
+    """The clock a trial is timed by (a seam for tests)."""
+    return time.time()
 
 
 def path() -> Path:
@@ -57,7 +88,8 @@ def _sign(body: dict) -> str:
 def _empty() -> dict:
     # `problem`: why the file found at a start was not trusted, and when,
     # kept in the file JARVIS wrote in its place until he saves in Settings.
-    return {"values": {}, "last_good": None, "imported_from_env": None, "problem": None}
+    return {"values": {}, "last_good": None, "imported_from_env": None, "problem": None,
+            "trial": None, "reverted": None}
 
 
 def document() -> dict:
@@ -152,19 +184,84 @@ def change(values: dict, *, imported: bool = False) -> dict:
         doc = dict(document())
         doc["values"] = {**doc["values"], **values}
         doc["problem"] = None       # his save in Settings: what he sees now is what he chose
+        doc["reverted"] = None
         if imported:
             doc["imported_from_env"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return _write(doc)
 
 
-def remember_served(values: dict) -> None:
-    """The start that served: what `fall_back` goes back to."""
+def _iso(at: float) -> str:
+    return datetime.fromtimestamp(at, timezone.utc).isoformat(timespec="seconds")
+
+
+def _default(key: str) -> Any:
+    return settings_specs.spec(key).default
+
+
+def _fallback(doc: dict) -> dict:
+    """What going back restores: the last setup a page reached (a key it
+    does not name, from a record made before it named the origins, as saved
+    now), or the defaults when no page has reached any."""
+    good = doc.get("last_good")
+    if not good:
+        return {k: _default(k) for k in SETUP_KEYS}
+    return {k: good[k] if k in good else doc["values"].get(k, _default(k)) for k in SETUP_KEYS}
+
+
+def address(setup: dict) -> str:
+    """A start setup's address as a page would open it."""
+    host = str(setup.get("host") or "")
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{'https' if setup.get('https') else 'http'}://{host}:{setup.get('port')}"
+
+
+def _same(setup: dict, other: dict) -> bool:
+    return all(setup.get(k) == other.get(k) for k in SETUP_KEYS if k in setup)
+
+
+def begin_trial(setup: dict) -> Optional[dict]:
+    """A start from Settings is listening on `setup`: when it differs from
+    the last setup a page reached, keep it as a trial, timed from now, and
+    return it; else None. With no setup reached yet there is no trial."""
     with _lock:
         doc = dict(document())
-        if doc.get("last_good") == values:
+        if not doc.get("last_good") or _same(setup, _fallback(doc)):
+            if doc.get("trial"):
+                doc["trial"] = None
+                _write(_keeping_problem(doc))
+            return None
+        doc["trial"] = {"setup": setup, "fallback": _fallback(doc), "began": now()}
+        return _write(_keeping_problem(doc))["trial"]
+
+
+def trial() -> Optional[dict]:
+    """The trial pending, with its `deadline` and `seconds_left`, or None."""
+    t = document().get("trial")
+    if not t:
+        return None
+    deadline = t["began"] + TRIAL_WINDOW_SEC
+    return {**t, "deadline": deadline, "seconds_left": max(0.0, deadline - now())}
+
+
+def remember_served(values: dict) -> None:
+    """A page reached the start `values`: it is the setup that worked, what
+    `fall_back` goes back to, and any trial is over. The one writer of
+    `last_good`."""
+    with _lock:
+        doc = dict(document())
+        if doc.get("last_good") == values and not doc.get("trial"):
             return
         doc["last_good"] = values
+        doc["trial"] = None
         _write(_keeping_problem(doc))
+
+
+def status() -> dict:
+    """The trial pending and the last going back, as Settings, Server, the
+    brain and Diagnostics read them."""
+    return {"trial": trial(), "reverted": document().get("reverted"),
+            "window_sec": TRIAL_WINDOW_SEC}
 
 
 def bindable(host: str, port: int) -> bool:
@@ -184,12 +281,19 @@ def bindable(host: str, port: int) -> bool:
     return False
 
 
-def fall_back() -> dict:
-    """Go back to the last start that served (or the defaults): its values
-    saved again in place of the ones that did not bind."""
+def fall_back(why: str = UNBINDABLE) -> dict:
+    """Go back to the last setup a page reached (or the defaults): its
+    values saved again in place of the ones that did not bind (`UNBINDABLE`)
+    or that no page reached in time (`UNREACHED`), recorded as `reverted`.
+    The one rollback."""
     with _lock:
         doc = dict(document())
-        good = doc.get("last_good") or {}
-        doc["values"] = {**doc["values"], **{k: good.get(k, settings_specs.spec(k).default)
-                                             for k in ("host", "port", "https")}}
+        good = _fallback(doc)
+        was = {k: doc["values"].get(k, _default(k)) for k in SETUP_KEYS}
+        tried = (doc.get("trial") or {}).get("setup")
+        at = now()
+        doc["values"] = {**doc["values"], **good}
+        doc["trial"] = None
+        doc["reverted"] = {"at": at, "when": _iso(at), "why": why,
+                           "from": tried or was, "to": good}
         return _write(_keeping_problem(doc))

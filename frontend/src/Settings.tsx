@@ -36,7 +36,7 @@
 import { motion, setMotion } from "./motion";
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { KnowledgeSettings } from "./KnowledgeSettings";
-import { SettingsFields, settingsValues } from "./SettingsFields";
+import { SettingsFields, settingsValues, startAddress, type SettingsValues } from "./SettingsFields";
 import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { closeMenu, reloadAfterRestart, restartServer } from "./MenuControl";
@@ -809,6 +809,37 @@ function LanguageKitStatus() {
   </SettingsRow>;
 }
 
+/** The start setup on trial, counting down to going back, and the last
+ *  time JARVIS went back (start_settings.status, as the brain reads it). */
+function StartTrial({ start }: { start: SettingsValues["start"] }) {
+  const t = useT();
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const trial = start.trial;
+  useEffect(() => {
+    if (!trial) return;
+    const timer = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(timer);
+  }, [trial]);
+  const reverted = start.reverted;
+  return <>
+    {trial && (
+      <p role="status" className="settings-state" data-start-trial="">
+        <StatusDot status="yellow" />
+        {t("left.server.trial", { address: startAddress(trial.setup), fallback: startAddress(trial.fallback),
+                                  seconds: Math.max(0, Math.ceil(trial.deadline - now)) })}</p>
+    )}
+    {start.overridden && <p className="settings-hint">{t("left.server.overridden")}</p>}
+    {reverted && (
+      <p role="alert" className="settings-state" data-start-reverted="">
+        <StatusDot status="red" />
+        {t(reverted.why === "unreached" ? "left.server.revertedUnreached" : "left.server.revertedUnbindable", {
+          when: formatDateTime(new Date(reverted.at * 1000), { dateStyle: "medium", timeStyle: "short" }),
+          address: startAddress(reverted.from), fallback: startAddress(reverted.to),
+          window: Math.round(start.window_sec) })}</p>
+    )}
+  </>;
+}
+
 function ServerSection({ status, failed }: { status: Status | null; failed: boolean }) {
   const t = useT();
   const port = useSettingsItem("serverPort", t("left.server.port"));
@@ -832,6 +863,7 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
         <p role="alert" className="settings-state">
           {t("left.server.dataDirFromEnv", { path: values.start.data_dir_from_env })}</p>
       )}
+      {values && <StartTrial start={values.start} />}
       {status?.imported && (
         <p className="settings-hint">{t("left.server.imported", {
           when: formatDateTime(new Date(status.imported.at), { dateStyle: "medium" }) })}</p>

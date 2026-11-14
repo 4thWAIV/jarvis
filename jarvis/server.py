@@ -921,6 +921,7 @@ def _start_attention() -> None:
         return
     attention_store.use(attention_record)
     _attend_node_id_minted()
+    _attend_start_reverted()
     attention_admission = attention.Admission(
         attention_record, conversation_floor, human_activity.recorder.current)
     digest = attention.Digest(
@@ -3330,18 +3331,81 @@ async def _start_on_records() -> None:
 
 
 SERVING_LOOK_SEC = 0.25
+# How often a trial looks at its clock while it waits for a page.
+TRIAL_LOOK_SEC = 1.0
+# Set once a page reaches this run (web_auth.on_page_reached).
+_page_reached_event: Optional[asyncio.Event] = None
 
 
-async def _remember_once_serving(served: dict) -> None:
-    """Record `served` as the start that served once uvicorn is listening
-    (its `started`, set after the sockets are bound and the startup is
-    done); a start whose bind fails exits first and records nothing."""
+def _page_reached() -> None:
+    """A page JARVIS serves reached this run: a socket or a request web_auth
+    admitted by the page's own origin, never the tool token or an agent's
+    key. On the event loop, so only an event is set; never raises."""
+    event = _page_reached_event
+    if event is not None and not event.is_set():
+        event.set()
+
+
+web_auth.on_page_reached = _page_reached
+
+
+async def _confirm_or_revert(served: dict) -> None:
+    """Once uvicorn is listening (its `started`, after the sockets are
+    bound; a start whose bind fails exits first and records nothing), a
+    changed start setup is a trial (start_settings.begin_trial). A page
+    reaching it confirms it (remember_served, the one writer of the setup
+    that worked); no page within start_settings.TRIAL_WINDOW_SEC and JARVIS
+    goes back (fall_back, recorded) and restarts. Outside a trial the first
+    page records the setup it reached. Only a start from Settings: a run
+    given --host, --port or --ssl never comes here."""
+    reached = _page_reached_event
     while not settings_service.listening():
         await asyncio.sleep(SERVING_LOOK_SEC)
     try:
+        trial = await asyncio.to_thread(start_settings.begin_trial, served)
+    except OSError as e:
+        log.warning("the start setup's trial was not recorded: %s", e)
+        trial = None
+    if trial:
+        log.info("Trying the changed start setup %s; going back to %s unless a page reaches "
+                 "it within %.0f s", trial["setup"], trial["fallback"],
+                 start_settings.TRIAL_WINDOW_SEC)
+        _send_to_session_clients({"type": "settings", "key": "start"})
+    while reached is not None and not reached.is_set():
+        if trial and start_settings.now() >= trial["began"] + start_settings.TRIAL_WINDOW_SEC:
+            why = (f"no page reached the start setup {trial['setup']} within "
+                   f"{start_settings.TRIAL_WINDOW_SEC:.0f} s")
+            log.warning("%s; going back to %s", why, trial["fallback"])
+            await asyncio.to_thread(start_settings.fall_back, start_settings.UNREACHED)
+            _restart_server(why)
+            return
+        try:
+            await asyncio.wait_for(reached.wait(), TRIAL_LOOK_SEC)
+        except asyncio.TimeoutError:
+            pass
+    try:
         await asyncio.to_thread(start_settings.remember_served, served)
     except OSError as e:
-        log.warning("the start that served was not recorded: %s", e)
+        log.warning("the start setup a page reached was not recorded: %s", e)
+        return
+    if trial:
+        log.info("A page reached the changed start setup; it is now the one that worked")
+        _send_to_session_clients({"type": "settings", "key": "start"})
+
+
+def _attend_start_reverted() -> None:
+    """JARVIS went back to the last start setup that worked (a restart
+    that did not bind, or a trial no page reached): an attention item, once
+    per going back, while it is recent. Nothing is said."""
+    reverted = start_settings.document().get("reverted")
+    if not reverted or not isinstance(reverted.get("at"), (int, float)):
+        return
+    if start_settings.now() - reverted["at"] > start_settings.REVERT_NOTICE_SEC:
+        return
+    _attend("start_setup", reverted.get("when") or reverted["at"], "reverted",
+            facts={"why": reverted.get("why"),
+                   "from": start_settings.address(reverted.get("from") or {}),
+                   "to": start_settings.address(reverted.get("to") or {})}, audible=False)
 
 
 @asynccontextmanager
@@ -3360,13 +3424,15 @@ async def lifespan(application: FastAPI):
     _announce_bind(web_auth.detect_bind())
     # Where this server is, for `python -m jarvis.update` (server_address.py).
     server_address.record()
-    # The start that served, what a later start falls back to when Settings'
-    # address cannot be bound (start_settings.fall_back): recorded once the
-    # server is listening, never before the bind. Only from main(), the
-    # launcher that reads the start file.
+    # Confirm or revert (start_settings): a changed start setup is a trial
+    # once the server is listening, confirmed by a page reaching it, else
+    # gone back from. Only from main(), the launcher that reads the start
+    # file, and never for a run given command-line flags.
+    global _page_reached_event
+    _page_reached_event = asyncio.Event()
     served = settings_service.served_at_start()
-    if served:
-        _spawn(_remember_once_serving(served))
+    if served and settings_service.from_settings_at_start():
+        _spawn(_confirm_or_revert(served))
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     # The knowledge engine before anything else; the page waits for it.
@@ -12802,7 +12868,10 @@ def _subsystems() -> list:
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
                  if folder_catalog is not None else None),
-        knowledge_health=knowledge.health() if knowledge is not None else None)
+        knowledge_health=knowledge.health() if knowledge is not None else None,
+        start={**start_settings.status(),
+               "from_file": bool(settings_service.served_at_start()),
+               "overridden": not settings_service.from_settings_at_start()})
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -17346,7 +17415,31 @@ def _settings_said(view: dict) -> str:
     if start.get("data_dir_from_env"):
         lines.append("JARVIS is using the data folder the old .env file named; Settings has "
                      "no data folder control yet.")
+    lines.extend(_start_trial_said(start))
     return "\n".join(lines)
+
+
+def _start_trial_said(start: dict) -> list[str]:
+    """The start setup's trial and the last going back, as Settings,
+    Server shows them (start_settings.status)."""
+    lines = []
+    trial = start.get("trial")
+    if trial:
+        lines.append(f"The changed start setup ({start_settings.address(trial['setup'])}) is on trial: "
+                     f"unless a page reaches it within {trial['seconds_left']:.0f} s, JARVIS goes "
+                     f"back to {start_settings.address(trial['fallback'])} and restarts.")
+    if start.get("overridden"):
+        lines.append("This run was started with --host, --port or --ssl: those are its own, "
+                     "saved nowhere and never put on trial.")
+    reverted = start.get("reverted")
+    if reverted:
+        why = ("no page reached " + start_settings.address(reverted.get("from") or {})
+               + f" within {start.get('window_sec', start_settings.TRIAL_WINDOW_SEC):.0f} seconds"
+               if reverted.get("why") == start_settings.UNREACHED
+               else start_settings.address(reverted.get("from") or {}) + " could not be bound")
+        lines.append(f"At {reverted.get('when')}, {why}, so JARVIS went back to "
+                     f"{start_settings.address(reverted.get('to') or {})}, the last start setup that worked.")
+    return lines
 
 
 def _refusal_said(e: settings_service.Refused) -> str:
@@ -17759,11 +17852,13 @@ if FRONTEND_DIST.exists():
 DEFAULT_BIND_HOST = web_auth.JARVIS_DEFAULT_HOST
 
 
-def _apply_start_settings(args) -> None:
+def _apply_start_settings(args) -> bool:
     """The address and port this run binds: a flag given for this run, else
     Settings, Server. When the saved ones cannot be bound, the start file
-    goes back to the last start that served (start_settings.fall_back), so
-    the page comes back."""
+    goes back to the last setup a page reached (start_settings.fall_back),
+    so the page comes back. True when the run binds Settings' setup, False
+    when a flag overrides it for this run (never put on trial)."""
+    from_settings = args.host is None and args.port is None and not args.ssl
     if args.host is None and args.port is None:
         host, port = _setting("host"), int(_setting("port"))
         if not start_settings.bindable(host, port):
@@ -17772,6 +17867,7 @@ def _apply_start_settings(args) -> None:
             start_settings.fall_back()
     args.host = args.host or _setting("host") or DEFAULT_BIND_HOST
     args.port = args.port or int(_setting("port"))
+    return from_settings
 
 
 def main() -> None:
@@ -17789,7 +17885,7 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
     parser.add_argument("--ssl", action="store_true", help="HTTPS for this run (needs key.pem/cert.pem)")
     args = parser.parse_args()
-    _apply_start_settings(args)
+    from_settings = _apply_start_settings(args)
 
     cert_file = data_paths.CONFIG_DIR / "cert.pem"
     key_file = data_paths.CONFIG_DIR / "key.pem"
@@ -17830,11 +17926,12 @@ def main() -> None:
                     log_level="info", **ssl_kwargs)
         return
     # uvicorn.run's own path, with the server kept, so the start that served
-    # is recorded only once it is listening (`_remember_once_serving`).
+    # is put on trial only once it is listening (`_confirm_or_revert`).
     server = uvicorn.Server(uvicorn.Config("jarvis.server:app", host=args.host, port=args.port,
                                            log_level="info", **ssl_kwargs))
-    settings_service.note_serving({"host": args.host, "port": args.port, "https": use_ssl},
-                                  lambda: server.started)
+    settings_service.note_serving({"host": args.host, "port": args.port, "https": use_ssl,
+                                   "allowed_origins": _setting("allowed_origins")},
+                                  lambda: server.started, from_settings=from_settings)
     try:
         server.run()
     except KeyboardInterrupt:
