@@ -16,12 +16,13 @@ import time
 
 import pytest
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

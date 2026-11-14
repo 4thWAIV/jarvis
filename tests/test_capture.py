@@ -15,6 +15,7 @@ from tests.test_session_steer import (FakeBrain, FakeSpeech, Harness, _Client,  
                                       _fake_session_state, _wait_for_receipt,
                                       fake_session, wired)
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.fixture(autouse=True)
@@ -413,7 +414,7 @@ def test_a_yes_heard_by_the_voice_socket_approves_and_tells_the_brain(monkeypatc
     from fastapi.testclient import TestClient
     from tests.test_voice_ws import FakeBrain, _drain_until
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("FISH_API_KEY", "fish-test")
+    hold_setting("fish_api_key", "fish-test")
     from jarvis import data_paths, run_store, transmission
     importlib.reload(data_paths)
     importlib.reload(run_store)

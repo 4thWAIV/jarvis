@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import ui_contract
 from tests.fixtures.waiting import until
+from tests.settings_fixtures import hold_setting
 
 ALL = ["map", "navigate", "indicate", "clear", "journey"]
 CPU = {"region": "main", "view": "main.network", "kind": "node", "key": "n1", "part": "cpu"}
@@ -41,7 +42,7 @@ class TurnOnly:
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("FISH_API_KEY", "fish-test")
+    hold_setting("fish_api_key", "fish-test")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

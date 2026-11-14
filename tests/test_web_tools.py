@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -42,9 +43,9 @@ def _config(tmp_path, **kw):
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     # These tests exercise the refusal, which is opt-in.
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    hold_setting("refuse_untrusted_actions", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

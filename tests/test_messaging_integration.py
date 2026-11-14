@@ -6,7 +6,7 @@ MongoDB (each test its own `hm_int_*` database, dropped afterwards), where
 messaging is always on. Each JARVIS is the real server app with its
 messaging wired as startup wires it (`messaging_runtime`), reaching the
 team server through `team_client.TeamConnection` over HTTP, which
-JARVIS_TEAM_DEV_SERVERS allows for that loopback origin:
+Settings' local team servers (team_dev_servers) allow for that loopback origin:
 
     in-process   this test's own JARVIS (`server`, its data directory the
                  test's): driven through its HTTP routes with its tool
@@ -67,6 +67,7 @@ from teamserver.app import create_app  # noqa: E402
 from teamserver.config import Config  # noqa: E402
 from teamserver.github import Identity  # noqa: E402
 from tests.test_message_approvals_server import _Speech  # noqa: E402
+from tests.settings_fixtures import hold_setting
 
 TIM = Identity(id=863470, login="tistocks", name="Tim")
 MATT = Identity(id=1001, login="matt", name="Matt")
@@ -262,7 +263,7 @@ def server(monkeypatch, tmp_path):
 
 async def here(server, ts: LocalTeamServer, who: Identity, monkeypatch) -> Here:
     from jarvis import team_client
-    monkeypatch.setenv("JARVIS_TEAM_DEV_SERVERS", ts.url)
+    hold_setting("team_dev_servers", [ts.url])
     await ts.member(who)
     token = await ts.device(who)
     team_client.connection.saved = saved_connection(ts, who)
@@ -305,7 +306,8 @@ class Node:
         self.log = open(root / "node.log", "w")
         env = {**os.environ, "JARVIS_DATA_DIR": str(data), "JARVIS_ENV_FILE": str(root / ".env"),
                "JARVIS_PORT": str(self.port),
-               "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_TEAM_DEV_SERVERS": ts.url}
+               "MESSAGING_NODE_SETTINGS": json.dumps({"brain_autostart": False,
+                                                      "team_dev_servers": [ts.url]})}
         self.proc = subprocess.Popen([sys.executable, "-m", "tests.messaging_node"],
                                      cwd=ROOT, env=env, stdin=subprocess.PIPE,
                                      stdout=self.log, stderr=subprocess.STDOUT)

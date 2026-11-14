@@ -267,7 +267,8 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
             await page.click("#menu-dropdown button >> nth=0")
             await page.wait_for_selector("#settings-view")
             nav = await page.locator(".settings-nav button").all_text_contents()
-            assert nav == ["Usted", "Voz e idioma", "Cerebros", "Equipo", "Conocimiento", "Actualizaciones", "Servidor"], nav
+            assert nav == ["Usted", "Voz e idioma", "Cerebros", "Agentes", "Proyectos", "Equipo", "Conocimiento",
+                           "Seguridad", "Actualizaciones", "Servidor"], nav
             assert await page.locator(".centre-tabs [aria-selected=true]").text_content() == "Configuración"
             assert await page.evaluate(SETTINGS_FITS) == []
             await async_api.expect(page.get_by_placeholder("Su nombre")).to_have_value("Tim")
@@ -425,7 +426,8 @@ async def test_every_settings_section_and_control_is_reached_along_the_main_rail
             assert {("settings", None), ("brainCard", "anthropic"), ("brainAdd", "openai"),
                     ("updateVersion", "e" * 40)} <= keys, keys
             assert {k for kind, k in keys if kind == "settingsSection"} == {
-                "you", "voice", "brains", "team", "knowledge", "updates", "server"}
+                "you", "voice", "brains", "agents", "projects", "team", "knowledge", "safety", "updates",
+                "server"}
             assert {k for kind, k in keys if kind == "settingsItem"} >= {
                 "name", "honorific", "saveYou", "language", "spanishModel", "voiceId", "saveVoiceId",
                 "fishKey", "testFishKey", "saveFishKey", "currentVersion", "checkUpdates", "installUpdate",

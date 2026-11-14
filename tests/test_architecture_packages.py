@@ -18,6 +18,7 @@ from tests import architecture_author
 from tests.agent_key_fixtures import Agent
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (a fixture)
 from tests.test_language_documents import draft, installed_kit  # noqa: F401  (fixtures)
+from tests.settings_fixtures import hold_setting
 
 SESSION = "sess-architect-0001"
 ROUTE = language_document.ROUTE
@@ -159,7 +160,7 @@ def test_document_and_revision_go_together(tmp_path):
 def factory(through_the_route, monkeypatch, tmp_path):
     """make_package's author is the stand-in claude (tests/architecture_author)
     and its delivery goes to this test's JARVIS, signed as it is sent."""
-    monkeypatch.setenv("JARVIS_CLAUDE_PATH", str(architecture_author.install(tmp_path / "bin")))
+    hold_setting("claude_path", str(architecture_author.install(tmp_path / "bin")))
     monkeypatch.setenv("AUTHOR_TEST_CLAUDE_ROOT", str(session_watch.config_roots()[0]))
 
     def post(url, token, body, timeout=60, signer=None):

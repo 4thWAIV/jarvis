@@ -7,7 +7,6 @@ unwritten. These tests exist so it cannot quietly stop running again.
 """
 import os
 
-os.environ.setdefault("JARVIS_BRAIN_AUTOSTART", "0")
 
 import pytest
 

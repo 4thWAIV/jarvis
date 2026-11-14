@@ -26,6 +26,7 @@ from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+from tests.settings_fixtures import hold_setting
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -118,7 +119,7 @@ class _Voice:
 @pytest.fixture
 def jarvis_app(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths, run_store, work_packages
     importlib.reload(data_paths)
     importlib.reload(run_store)

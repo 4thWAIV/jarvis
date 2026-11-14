@@ -17,6 +17,7 @@ from jarvis.transcriber import RecognitionEvent, SherpaSession
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import setup_speech_input  # noqa: E402
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 class FakeStream:
@@ -145,11 +146,11 @@ def test_pcm16_is_read_little_endian_and_signed():
 def test_the_model_is_found_in_the_data_folder_or_where_the_override_says(
         monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
+    default_setting("stt_model_dir")
     english, spanish = transcriber.find_model("en"), transcriber.find_model("es")
     assert transcriber.model_dir() == tmp_path / "data" / "models" / english.name
     assert transcriber.model_dir(spanish) == tmp_path / "data" / "models" / spanish.name
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "elsewhere"))
+    hold_setting("stt_model_dir", str(tmp_path / "elsewhere"))
     assert transcriber.model_dir() == tmp_path / "elsewhere" / english.name
     assert transcriber.model_dir(spanish) == tmp_path / "elsewhere" / spanish.name
 
@@ -229,7 +230,7 @@ def _good_entries():
 
 @pytest.fixture
 def destination(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "models"))
+    hold_setting("stt_model_dir", str(tmp_path / "models"))
     return tmp_path / "models" / transcriber.default_model().name
 
 

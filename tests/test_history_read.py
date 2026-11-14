@@ -17,6 +17,7 @@ from jarvis import history_read
 from jarvis import repo_read
 from tests.test_untrusted_turn import _Brain
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 
 def _line(kind, content, ts, sidechain=False):
@@ -31,7 +32,7 @@ def _text(t):
 @pytest.fixture
 def hist(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

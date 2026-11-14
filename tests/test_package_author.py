@@ -9,6 +9,7 @@ import pytest
 from jarvis import package_author as pa, make_package as mp, decision_package as dp
 from tests.test_make_package import passing_check, presentation
 from tests.test_decision_package import _Delivery
+from tests.settings_fixtures import default_setting
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -48,7 +49,7 @@ def only_engine(request, tmp_path, monkeypatch):
             _at = (_Path(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
                    / _sw.encode_cwd(os.getcwd()) / ({session} + '.jsonl'))
         else:
-            _at = (_Path(os.environ['JARVIS_CODEX_SESSIONS_HOME']) / 'sessions' / '2026' / '11'
+            _at = (_Path(os.environ['AUTHOR_TEST_CODEX_HOME']) / 'sessions' / '2026' / '11'
                    / '09' / ('rollout-2026-11-09T00-00-00-' + {session} + '.jsonl'))
         _write({engine!r}, {session}, _digest, path=_at)
         if mode == 'edited-after-check':
@@ -62,13 +63,15 @@ def only_engine(request, tmp_path, monkeypatch):
     fake.write_text(original.replace('#!/usr/bin/env python3', '#!' + sys.executable).replace(start, start + action))
     fake.chmod(0o755)
     monkeypatch.setenv('PATH', str(folder))
-    monkeypatch.delenv('JARVIS_CLAUDE_PATH', raising=False)
-    monkeypatch.delenv('JARVIS_CODEX_PATH', raising=False)
+    default_setting("claude_path")
+    default_setting("codex_path")
     monkeypatch.setenv('AUTHOR_TEST_CONTENT', json.dumps(presentation()))
     monkeypatch.setenv('FAKE_CODEX_LOG', str(tmp_path / 'codex.log'))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'caller-codex-home'))
     from jarvis import session_watch
     monkeypatch.setenv('AUTHOR_TEST_CLAUDE_ROOT', str(session_watch.config_roots()[0]))
+    from jarvis import settings_service
+    monkeypatch.setenv('AUTHOR_TEST_CODEX_HOME', settings_service.value("codex_sessions_home"))
     return engine
 
 
@@ -202,8 +205,8 @@ def test_missing_selected_engine_does_not_try_other_engine(tmp_path, monkeypatch
     opposite.write_text('#!' + sys.executable + '\nraise RuntimeError("wrong engine launched")\n')
     opposite.chmod(0o755)
     monkeypatch.setenv('PATH', str(folder))
-    monkeypatch.delenv('JARVIS_CODEX_PATH', raising=False)
-    monkeypatch.delenv('JARVIS_CLAUDE_PATH', raising=False)
+    default_setting("codex_path")
+    default_setting("claude_path")
     with pytest.raises(dp.Refused, match='Fresh author'):
         pa.prepare(handoff(tmp_path), engine, tmp_path / 'out', session='origin')
     [receipt] = (tmp_path / 'out').glob('author/*/author-receipt.json')
@@ -224,8 +227,8 @@ def test_the_author_goes_on_his_package_author_setting(tmp_path, monkeypatch):
     caller.write_text('#!' + sys.executable + '\nraise RuntimeError("wrong engine launched")\n')
     caller.chmod(0o755)
     monkeypatch.setenv('PATH', str(folder))
-    monkeypatch.delenv('JARVIS_CODEX_PATH', raising=False)
-    monkeypatch.delenv('JARVIS_CLAUDE_PATH', raising=False)
+    default_setting("codex_path")
+    default_setting("claude_path")
     with pytest.raises(dp.Refused, match='Fresh author'):
         pa.prepare(handoff(tmp_path), 'claude', tmp_path / 'out', session='origin')
     [receipt] = (tmp_path / 'out').glob('author/*/author-receipt.json')

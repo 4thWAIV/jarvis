@@ -10,6 +10,7 @@ import pytest
 from jarvis import session_steer
 from tests.fixtures.captures import captured
 from tests.fixtures.waiting import LIMIT_SEC, until, until_async
+from tests.settings_fixtures import hold_setting
 
 
 def _wait_for_receipt(received, timeout=LIMIT_SEC):
@@ -638,7 +639,7 @@ class TurnRig:
         self.brain = ScriptedBrain(server, calls, **brain_kw)
         monkeypatch.setattr(server, "speech", self.h.sched)
         monkeypatch.setattr(server, "brain_instance", self.brain)
-        monkeypatch.setattr(server, "STEER_CANCEL_WINDOW", cancel_window)
+        hold_setting("steer_cancel_window", cancel_window)
 
     async def __aenter__(self):
         await self.h.sched.start()

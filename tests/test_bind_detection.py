@@ -159,7 +159,7 @@ def test_a_wide_bind_produces_a_warning():
     assert lines
     text = " ".join(lines)
     assert "0.0.0.0" in text
-    assert "JARVIS_ALLOWED_ORIGINS" in text, (
+    assert "Allowed origins" in text, (
         "an operator who means it must be told the one thing they have to "
         "set, or their own browser is refused")
 
@@ -277,7 +277,7 @@ def test_the_wide_bind_warning_is_reached_from_a_uvicorn_launch(reloaded,
     warned = " ".join(r.getMessage() for r in caplog.records
                       if r.levelno >= logging.WARNING)
     assert "0.0.0.0" in warned, caplog.text
-    assert "JARVIS_ALLOWED_ORIGINS" in warned, caplog.text
+    assert "Allowed origins" in warned, caplog.text
 
 
 def test_a_loopback_launch_says_nothing_alarming(reloaded, monkeypatch,

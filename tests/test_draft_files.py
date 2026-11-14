@@ -28,6 +28,7 @@ from jarvis.messaging_client import Pairing
 from jarvis.messaging_wire import CAPABILITY
 from tests.test_brain_page_parity import _Brain, wired  # noqa: F401  (the fixture)
 from tests.test_messaging_signed_in import SERVER, Connection, runtime
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 # -- the runtime, signed in and answering nothing -----------------------------------------
@@ -679,14 +680,14 @@ def test_the_tool_is_defined_gated_and_awaited(wired, tmp_path, monkeypatch):
 
     refused = _post(wired, "attach_message_files", _Brain("event"), **args)
     assert not refused["ok"] and refused["text"].startswith("not_allowed_from_event")
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    hold_setting("refuse_untrusted_actions", "1")
     tainted = _Brain()
     tainted.turn_untrusted_source = "a web page"
     refused = _post(wired, "attach_message_files", tainted, **args)
     assert not refused["ok"] and refused["text"].startswith("untrusted_content_in_this_turn")
     assert draft_of(s.rt, message).attachments == []
 
-    monkeypatch.delenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS")
+    default_setting("refuse_untrusted_actions")
     brain = _Brain()
     got = _post(wired, "attach_message_files", brain, **args)
     assert got["ok"] and got["text"].startswith("Attached study.html (56 bytes) to draft"), got

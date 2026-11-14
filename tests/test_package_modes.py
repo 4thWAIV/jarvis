@@ -23,6 +23,7 @@ import pytest
 from jarvis import data_paths, web_auth, work_packages
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_work_packages import MANIFEST, make_zip, marks, write_zip  # noqa: F401
+from tests.settings_fixtures import hold_setting
 
 EXAMPLES = Path(__file__).parent.parent / "examples" / "packages"
 BROWSER = {"Origin": "http://localhost:5173"}
@@ -127,7 +128,7 @@ async def _drain(server):
 
 @pytest.fixture
 def agent_run(monkeypatch, tmp_path, marks):
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     importlib.reload(data_paths)
     from jarvis import run_executor, run_store
     importlib.reload(run_store)

@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from jarvis import brain_activity
 from jarvis.brain_activity import ActivityFeed
 from tests.fixtures.waiting import until_async
+from tests.settings_fixtures import hold_setting
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_brain.py"
 SECRET = "words-that-must-never-leave"
@@ -312,7 +313,7 @@ async def test_speech_starts_when_it_sounds_and_ends_with_its_outcome():
 
 def test_the_route_reads_every_kind_and_the_tool_route_only_tools(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import server as server_module, tool_activity
     importlib.reload(server_module)
     with TestClient(server_module.app, headers={"Origin": "http://localhost:5173"}) as client:
