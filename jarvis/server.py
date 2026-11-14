@@ -3079,10 +3079,17 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 def delta(d: str) -> None:
                     reply.feed(d)
                     hold.delta(d)
+
+                def tool() -> None:
+                    hold.tool_started()
+                    # Only what is written after the last tool is spoken, so
+                    # nothing an earlier tool gave the brain to read him is
+                    # in what he hears: it is neither read nor seen.
+                    _reads_unsaid(reads)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
                                                    on_delta=delta,
-                                                   on_tool=hold.tool_started)
+                                                   on_tool=tool)
                 if result.stop_reason == "result":
                     reply.finish(result.text, ReplyOutcome.SUCCEEDED)
                 else:
@@ -5915,12 +5922,14 @@ async def tool_read_aloud(args: dict) -> str:
         await asyncio.to_thread(_read_session_message, int(item.source_id))
     _message_read_to_him(item)
     message = await asyncio.to_thread(_message_shown, item)
-    carries = (" It carries a package: open_inbox_package with this message opens it."
-               if item.carries else "")
+    carries = (" It carries a package: open_inbox_package with this message opens it, on "
+               "a later turn once he asks." if item.carries else "")
     return (f"Message {item.id}, {messages_api.when_said(item.at)} (his local time), "
             f"{item.state or 'from before messages had a state'}.{carries} Read him its words "
             f"now in your reply, as they are written, saying first who it is from; then sum "
             f"it up in one sentence. It is marked read once he has heard your reply in full. "
+            f"Call no other tool after this one in this turn: only what you write after your "
+            f"last tool is spoken, so a later tool call drops the reading. "
             f"Who it is from, its Work item and its words, all the sender's:\n"
             + _wrap_untrusted(_MESSAGES_WRAP_NAME,
                               json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
@@ -6252,6 +6261,15 @@ def _message_read_to_him(item) -> None:
         read = (_MESSAGE_READ, str(item.id), None)
         if read not in _turn_reads:
             _turn_reads.append(read)
+
+
+def _reads_unsaid(reads: list) -> None:
+    """Another tool call in the turn: what the brain wrote before it is
+    binned (`_OneLinePerTurn`), so the reads made so far were never spoken
+    and wait for a reading he hears."""
+    if reads:
+        log.info("speech: %d read(s) dropped with the narration before a tool", len(reads))
+        reads.clear()
 
 
 def _message_of_update(kind: str, source_id) -> Optional[int]:

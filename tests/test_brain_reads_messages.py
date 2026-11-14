@@ -46,12 +46,29 @@ class _ReadsIt:
                                 "In short, all is well.", stop_reason="result")
 
 
-async def _his_read(server, monkeypatch, message_id, *, skip=False):
+class _ReadsThenActs(_ReadsIt):
+    """A brain that reads the message, then reaches for another tool: what it
+    wrote before that tool is binned, and only its last line is spoken."""
+
+    async def turn(self, text, origin="user", on_delta=None, on_tool=None):
+        self.asked.append(text)
+        on_tool()
+        number = int(re.search(r"message (\d+)\.", text).group(1))
+        self.given = await self.server.tool_read_aloud({"message": number})
+        on_delta("Agent Guard writes: Status. All good.")
+        on_tool()                                # open_inbox_package, say
+        on_delta("Opened it, sir.")
+        from jarvis import brain
+        return brain.TurnResult(origin=origin, text="Agent Guard writes: Status. All good."
+                                "Opened it, sir.", stop_reason="result")
+
+
+async def _his_read(server, monkeypatch, message_id, *, skip=False, brain_kind=None):
     """His Read on a message, its brain turn run to the end and its reply
     played to the page (or skipped); the brain, and every timeout the reply
     was waited on with."""
     h = Harness()
-    brain = _ReadsIt(server)
+    brain = (brain_kind or _ReadsIt)(server)
     waited = []
     real_wait = h.sched.wait_for
 
@@ -115,6 +132,18 @@ async def test_his_read_is_one_brain_turn_that_reads_exactly_that_message(server
 async def test_his_read_cut_short_leaves_the_message_new(server, monkeypatch, attention):
     m = _taken(server, monkeypatch, attention)
     await _his_read(server, monkeypatch, m.id, skip=True)
+    assert server.conversation_log.get(m.id).state == "new"
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_reading_dropped_by_a_later_tool_leaves_the_message_new(server, monkeypatch,
+                                                                     attention):
+    m = _taken(server, monkeypatch, attention)
+    brain, _, h = await _his_read(server, monkeypatch, m.id, brain_kind=_ReadsThenActs)
+    assert "Call no other tool after this one" in brain.given
+    assert [t for _, _, t in h.audio()] == ["Opened it, sir."], "the reading was binned"
     assert server.conversation_log.get(m.id).state == "new"
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "pending"
