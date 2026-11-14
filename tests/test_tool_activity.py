@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jarvis import jarvis_mcp, tool_activity
+from tests.settings_fixtures import hold_setting
 
 SECRET_ARGUMENT = "argument-words-that-must-never-leave"
 SECRET_RESULT = "result-words-that-must-never-leave"
@@ -38,7 +39,7 @@ class _Brain:
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import server as server_module
     importlib.reload(server_module)
     token = server_module.data_paths.ensure_tool_token()
@@ -112,7 +113,7 @@ def test_an_acting_tool_off_his_turn_ends_refused(wired, monkeypatch):
 
 def test_an_acting_tool_on_an_untrusted_turn_ends_refused(wired, monkeypatch):
     call, feed, server, _ = wired
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    hold_setting("refuse_untrusted_actions", "1")
     ran = []
     monkeypatch.setitem(server.TOOL_HANDLERS, "spawn_run",
                         lambda args: ran.append(args) or "started")

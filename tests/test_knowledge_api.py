@@ -13,6 +13,7 @@ from jarvis import knowledge_ingest as ki
 from jarvis import knowledge_links as kl
 from jarvis.knowledge.engine import Engine
 from tests.test_brain_page_parity import HOSTILE, _call, wired  # noqa: F401
+from tests.settings_fixtures import hold_setting
 
 ORIGIN = {"Origin": "http://localhost:8340", "Host": "localhost:8340"}
 
@@ -54,7 +55,7 @@ def knowing(wired, monkeypatch, tmp_path):  # noqa: F811
     monkeypatch.setattr(Engine, "compact_in_child", False)
     engine = Engine.open(tmp_path / "engine")
     runtime = FakeRuntime(engine)
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     monkeypatch.setattr(wired.server, "knowledge", runtime)
     kl.create_topic("Denice", status="planned", ambiguous=["Denise"], pinned=True)
     note = __import__("jarvis").data_paths.brain_home() / "memory" / "orbs.md"
@@ -174,7 +175,7 @@ def test_status_and_maintenance(knowing):
 
 def test_with_indexing_off_storage_health_and_existing_search_remain_available(knowing, monkeypatch):
     w, runtime, engine = knowing
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    hold_setting("knowledge_enabled", "0")
     assert w.server.knowledge is runtime                      # the engine is up
     health = w.client.get("/api/knowledge/health", headers=ORIGIN).json()
     assert not health["enabled"] and health["state"] == "running"

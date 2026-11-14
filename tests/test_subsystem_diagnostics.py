@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from jarvis import subsystem_diagnostics as sd
 from jarvis.run_store import Message
 from tests.fixtures.waiting import until_async
+from tests.settings_fixtures import hold_setting
 from tests.test_brain_page_parity import wired  # noqa: F401  (the fixture)
 
 NOW = 1_000_000.0
@@ -457,7 +458,7 @@ def test_each_synthesis_is_noted(server, monkeypatch):
         return next(results)
 
     monkeypatch.setattr(server.tts, "synthesize_chunk", synth)
-    monkeypatch.setattr(server, "FISH_API_KEY", "key")
+    hold_setting("fish_api_key", "key")
     monkeypatch.setattr(server, "_append_usage_entry", lambda *a: None)
     asyncio.run(server._synth_for_speech("Good evening."))
     asyncio.run(server._synth_for_speech("Good evening."))

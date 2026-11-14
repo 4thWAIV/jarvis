@@ -25,9 +25,11 @@ children (the knowledge engine, a brain, esbuild): `taskkill /T` on
 Windows, the process group on macOS and Linux. Anything else, an unrelated
 process on a reused pid included, is left alone and reported.
 
-The ports are the ones the page is served from: the backend's 8340 and
-Vite's 5173 (vite.config.ts, strictPort), since Chrome keeps the microphone
-permission per origin, port included. An occupied port is reported by the
+The ports are the ones the page is served from: the backend's, which
+Settings, Server holds (8340 by default; the backend is started with no
+--host or --port, so the start file decides), and Vite's 5173
+(vite.config.ts, strictPort), since Chrome keeps the microphone permission
+per origin, port included. An occupied port is reported by the
 process that could not bind it, in its log.
 """
 from __future__ import annotations
@@ -44,10 +46,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from jarvis import data_paths, process_inspect, server_address
+from jarvis import env_names
+from jarvis import data_paths, process_inspect, server_address, settings_service
 
 WINDOWS = sys.platform == "win32"
-BACKEND_PORT = 8340
 VITE_PORT = 5173
 START_WAIT_SEC = 90.0
 STOP_WAIT_SEC = 15.0
@@ -55,6 +57,11 @@ NAMES = ("backend", "vite")
 
 
 # -- where things are ---------------------------------------------------------
+
+def backend_port() -> int:
+    """The port Settings, Server saved for the backend (the start file)."""
+    return int(settings_service.value("port"))
+
 
 def checkout() -> Path:
     if not data_paths.CHECKOUT:
@@ -107,7 +114,7 @@ class Found:
         return self.state is process_inspect.State.ALIVE
 
     def line(self) -> str:
-        where = {"backend": f"port {BACKEND_PORT}", "vite": f"http://localhost:{VITE_PORT}"}[self.name]
+        where = {"backend": f"port {backend_port()}", "vite": f"http://localhost:{VITE_PORT}"}[self.name]
         if self.pid is None:
             return f"{self.name}: not running ({where}); log {log_path(self.name)}"
         word = {"alive": "running", "exited": "not running", "unknown": "unconfirmed"}[self.state.value]
@@ -199,7 +206,7 @@ def start(wait: bool = True) -> int:
         print("Already running; nothing started (stop it first):")
         print("\n".join(already))
         return 1
-    busy = [p for p in (BACKEND_PORT, VITE_PORT) if _port_open(p)]
+    busy = [p for p in (backend_port(), VITE_PORT) if _port_open(p)]
     if busy:
         print(f"Port(s) {', '.join(map(str, busy))} are in use by another program; nothing "
               f"started. JARVIS's page must be served from these ports.")
@@ -208,8 +215,8 @@ def start(wait: bool = True) -> int:
         print("cert.pem and key.pem are missing from the checkout; run "
               "`python -m jarvis.background certs` first (the Vite proxy speaks HTTPS).")
         return 1
-    _spawn("backend", [sys.executable, "-m", "jarvis", "--host", "127.0.0.1",
-                       "--port", str(BACKEND_PORT)], root)
+    # No --host or --port: those would be this run's own, over Settings'.
+    _spawn("backend", [sys.executable, "-m", "jarvis"], root)
     proc = _spawn("vite", _vite_argv(root), root / "frontend")
     identity = _identity(proc.pid)
     _write_state({"vite": {"pid": proc.pid,
@@ -220,7 +227,7 @@ def start(wait: bool = True) -> int:
     deadline = time.monotonic() + START_WAIT_SEC
     while time.monotonic() < deadline:
         backend, vite = find_backend(), find_vite()
-        if backend.running and vite.running and _port_open(BACKEND_PORT) and _port_open(VITE_PORT):
+        if backend.running and vite.running and _port_open(backend_port()) and _port_open(VITE_PORT):
             print(backend.line())
             print(vite.line())
             print(f"Open http://localhost:{VITE_PORT} in Chrome.")
@@ -311,7 +318,7 @@ def _openssl() -> Optional[str]:
         return found
     if WINDOWS:
         git = shutil.which("git")
-        candidates = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "openssl.exe"]
+        candidates = [Path(env_names.read("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "openssl.exe"]
         if git:
             candidates.insert(0, Path(git).resolve().parent.parent / "usr" / "bin" / "openssl.exe")
         for c in candidates:
@@ -336,7 +343,7 @@ def certs() -> int:
     result = subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-keyout", str(key),
                              "-out", str(cert), "-days", "365", "-nodes", "-subj", "/CN=localhost"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            env={**os.environ, "MSYS_NO_PATHCONV": "1"})
+                            env=env_names.child(MSYS_NO_PATHCONV="1"))
     if result.returncode != 0:
         print(result.stdout + result.stderr)
         return 1

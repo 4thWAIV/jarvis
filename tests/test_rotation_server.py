@@ -17,6 +17,7 @@ import types
 import pytest
 
 from tests.fixtures.waiting import LIMIT_SEC
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.fixture
@@ -396,7 +397,7 @@ async def test_a_wedged_brain_cannot_hold_shutdown_open(wired, monkeypatch):
 @pytest.mark.asyncio
 async def test_boot_wires_the_brain_to_the_active_projects(wired, monkeypatch):
     server = wired
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")     # never spawn a real claude
+    hold_setting("brain_autostart", False)     # never spawn a real claude
 
     await server.start_brain_and_speech()
     try:

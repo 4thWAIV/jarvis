@@ -4,8 +4,8 @@ Spanish, chosen in Settings (Voice), by the brain's `set_language`, or by one
 exact spoken phrase (`spoken_words.Vocabulary.switch_command`: "switch to
 Spanish", and back "cambia a inglés").
 
-The choice is kept in JARVIS's own store (`data_paths.language_path()`), not
-.env, and put in force with `spoken_words.set_active_language`, which is what
+The choice is kept in JARVIS's own store (`data_paths.language_path()`), and
+put in force with `spoken_words.set_active_language`, which is what
 everything that depends on it reads: the word lists, Fish's language and the
 brain's launch prompt. `change` first loads the language's speech model
 (`speech_models.switch`: a few seconds, one model in memory) and only once it
@@ -164,8 +164,9 @@ async def _hear_again(language: str) -> None:
 
 
 def honorific() -> str:
-    """The Honorific setting (Settings, You), as saved in .env."""
-    return os.getenv("HONORIFIC", "")
+    """The Honorific setting (Settings, You)."""
+    from jarvis import settings_service
+    return settings_service.value("honorific")
 
 
 def confirmation(language: str) -> str:

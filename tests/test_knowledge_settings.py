@@ -6,10 +6,11 @@ from jarvis import knowledge_api as api, knowledge_client as kc, knowledge_setti
 from jarvis.knowledge import embedder
 from jarvis.knowledge.engine import Engine
 from jarvis.knowledge.uds import EngineUDS
+from tests.settings_fixtures import hold_setting
 
 
 def test_saved_false_overrides_legacy_environment(monkeypatch):
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     assert kc.enabled()
     settings.change(False)
     assert not kc.enabled()
@@ -19,7 +20,7 @@ def test_saved_false_overrides_legacy_environment(monkeypatch):
 
 
 def test_engine_reads_same_saved_setting_and_reopens(tmp_path, monkeypatch):
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    hold_setting("knowledge_enabled", "0")
     monkeypatch.setattr(embedder, "RUNNER", lambda: embedder.FakeEmbedder(8))
     directory = tmp_path / "settings-engine"
     engine = Engine.open(directory)

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from jarvis import brain
 from jarvis import brains_config
+from tests.settings_fixtures import hold_setting
 
 FAKE_CODEX = Path(__file__).parent / "fixtures" / "fake_codex.py"
 ORIGIN = {"Origin": "http://localhost:5173"}
@@ -20,7 +21,7 @@ ORIGIN = {"Origin": "http://localhost:5173"}
 
 @pytest.fixture
 def server(monkeypatch):
-    monkeypatch.setenv("JARVIS_CODEX_PATH", f"{sys.executable} {FAKE_CODEX}")
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
     from jarvis import server as server_module
 
     async def fine(timeout=None):
@@ -72,12 +73,10 @@ def test_the_model_and_the_startup_brain_are_saved_and_read_at_start(server, tmp
     assert client.put("/api/brains/openai", json={"model": "made-up"}, headers=ORIGIN).status_code == 400
     assert client.post("/api/brains/default", json={"name": "openai"}, headers=ORIGIN).status_code == 200
 
-    monkeypatch.delenv("JARVIS_BRAIN_PROVIDER", raising=False)
-    monkeypatch.delenv("JARVIS_BRAIN_MODEL", raising=False)
     cfg = brain.BrainConfig.from_env(tmp_path)
     assert (cfg.provider, cfg.model) == ("openai", "gpt-5.6-luna")
     monkeypatch.setenv("JARVIS_BRAIN_PROVIDER", "anthropic")
-    assert brain.BrainConfig.from_env(tmp_path).provider == "anthropic", ".env still wins"
+    assert brain.BrainConfig.from_env(tmp_path).provider == "openai", "the page's choice alone"
 
 
 def test_claude_cannot_be_removed_nor_the_brain_jarvis_starts_with(server):

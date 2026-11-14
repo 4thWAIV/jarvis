@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from jarvis import settings_service
 
 log = logging.getLogger("jarvis.project_maker")
 
@@ -61,7 +62,7 @@ class BadName(ValueError):
 
 
 def projects_root() -> Path:
-    raw = os.getenv("JARVIS_PROJECTS_DIR") or DEFAULT_ROOT
+    raw = settings_service.value("projects_dir") or DEFAULT_ROOT
     return Path(raw).expanduser()
 
 

@@ -33,6 +33,7 @@ import sys
 import time
 from typing import Any, Callable, Optional, Protocol
 
+from jarvis import env_names
 from jarvis import data_paths
 from jarvis.knowledge import address as engine_address, oscompat
 
@@ -58,16 +59,18 @@ def enabled() -> bool:
 def autostart() -> bool:
     """`JARVIS_ENGINE_AUTOSTART`, on by default: the server starts the engine
     first thing and keeps it up. Every test sets it off."""
-    return os.getenv("JARVIS_ENGINE_AUTOSTART", "1").strip().lower() not in ("0", "false", "no", "off")
+    return env_names.read("JARVIS_ENGINE_AUTOSTART", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def memory_budget_mb() -> int:
-    """`JARVIS_KNOWLEDGE_MEMORY_MB`, else 384, or 256 on a Mac with less than
-    16 GB, and, unless it was set, more by the embedding model's measured
-    share while one is installed (embedding_models.extra_memory_mb)."""
-    raw = os.getenv("JARVIS_KNOWLEDGE_MEMORY_MB", "").strip()
-    if raw.isdigit() and int(raw) > 0:
-        return int(raw)
+    """Settings' engine memory budget (`knowledge_memory_mb`), else 384, or
+    256 on a Mac with less than 16 GB, and, unless it was set, more by the
+    embedding model's measured share while one is installed
+    (embedding_models.extra_memory_mb)."""
+    from jarvis import settings_service
+    chosen = settings_service.value("knowledge_memory_mb")
+    if chosen:
+        return int(chosen)
     try:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (ValueError, OSError, AttributeError):   # Windows has no sysconf
@@ -377,7 +380,7 @@ def _spawn_engine() -> subprocess.Popen:
     """The engine, its stderr appended to its own log
     (`data_paths.knowledge_engine_log_path`), so a server that cannot reach
     it can say what it last said (`engine_log_tail`)."""
-    env = dict(os.environ)
+    env = env_names.child()
     path = data_paths.knowledge_engine_log_path()
     _trim_log(path)
     with open(path, "ab") as engine_log:

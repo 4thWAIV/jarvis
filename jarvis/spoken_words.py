@@ -48,7 +48,7 @@ def set_active_language(language: str) -> None:
 
 # How he is addressed, by the Honorific setting (Settings, You), in each
 # language: the one table. Only these fixed words ever reach the brain's
-# launch prompt: any other value in .env counts as the default, "sir", which
+# launch prompt: any other value counts as the default, "sir", which
 # in Spanish is "señor" (and "ma'am" is "señora"), since "sir" is never said
 # there.
 _ADDRESS = {

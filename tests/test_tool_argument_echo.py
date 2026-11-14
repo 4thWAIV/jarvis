@@ -48,6 +48,7 @@ import importlib
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 SERVER = Path(__file__).parent.parent / "jarvis" / "server.py"
 
@@ -708,7 +709,7 @@ def test_no_tool_prints_its_own_argument_raw():
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     monkeypatch.setenv("JARVIS_ENV_FILE", str(tmp_path / ".env"))
     from jarvis import data_paths
     importlib.reload(data_paths)

@@ -81,17 +81,19 @@ DEFAULT_DATA_DIR = CONFIG_DIR / "data"
 
 
 def env_file_path() -> Path:
-    """The .env JARVIS loads at startup and its settings read and write.
-    JARVIS_ENV_FILE exists so the test suite can neither read nor write the
-    developer's live .env — the same reasoning as JARVIS_DATA_DIR."""
-    override = os.getenv("JARVIS_ENV_FILE", "").strip()
+    """The .env settings were kept in before Settings held them, read once
+    by settings_import's one-time copy and never again. JARVIS_ENV_FILE
+    exists so the test suite never reads the developer's live .env."""
+    from jarvis import env_names
+    override = env_names.read("JARVIS_ENV_FILE").strip()
     return Path(override) if override else CONFIG_DIR / ".env"
 _DEFAULT = DEFAULT_DATA_DIR
 
 
 def data_dir() -> Path:
     """Return the data directory, creating it if needed."""
-    raw = os.getenv("JARVIS_DATA_DIR")
+    from jarvis import env_names
+    raw = env_names.read("JARVIS_DATA_DIR")
     path = Path(raw).expanduser() if raw else _DEFAULT
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -187,6 +189,8 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "fff9c0cd0fe916a353d14add621c90e2eaf91cccba63e992224f8b350f2f9a79",  # settings only, merged with messages read through the brain
+    "58ce45c76c0667bf74eafc7858b9bb305c7885d56d1fe5181a7cac1248ced3a8",  # the untrusted-content refusal is a Settings control
     "5a27a23f2eae7193fc3c55f33c32bf5e3ecad4d11904b30575b7c96d3bebb440",  # resolver: messages named by their local time
     "70429177c291f7c6701f1529f83ebf772447fa918bc19290e10a401b4b28cd87",  # messages are read through the brain
     "e3e8023884d10ff8a07d7bafe1a9c72499c972b7d45cc8f8f95f1a27f421735a",  # packages arrive as messages in the Inbox, not the Queue

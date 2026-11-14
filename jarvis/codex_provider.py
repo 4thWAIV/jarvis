@@ -40,6 +40,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from jarvis import settings_service
+from jarvis import env_names
 from jarvis import claude_env
 from jarvis import data_paths
 from jarvis import preflight
@@ -84,7 +86,7 @@ WINDOW_NAMES = {300: "five_hour", 10080: "seven_day"}
 
 
 def child_env(*, authoring: bool = False) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
+    env = env_names.child(drop=SCRUBBED_ENV_KEYS)
     if not authoring:
         env["CODEX_HOME"] = str(data_paths.codex_home())
     return env
@@ -754,7 +756,7 @@ class CodexProvider:
     default_model = DEFAULT_MODEL
 
     def __init__(self, codex_path: Optional[str] = None):
-        self._codex = codex_path or os.getenv("JARVIS_CODEX_PATH") or None
+        self._codex = codex_path or settings_service.value("codex_path") or None
         self._signing_in: dict[str, AppServer] = {}
 
     def models(self) -> list[str]:

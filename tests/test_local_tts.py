@@ -4,6 +4,7 @@ import wave
 from pathlib import Path
 import pytest
 from jarvis import local_tts
+from tests.settings_fixtures import hold_setting
 
 
 def test_missing_model_is_actionable_and_does_not_download(tmp_path):
@@ -24,7 +25,7 @@ async def test_missing_model_never_starts_worker(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_local_provider_never_falls_back_to_fish(monkeypatch):
     from jarvis import server
-    monkeypatch.setenv('JARVIS_TTS_PROVIDER', 'local')
+    hold_setting("tts_provider", 'local')
     async def broken(*args):
         raise RuntimeError('worker failed')
     async def fish(*a, **kw):
@@ -35,11 +36,14 @@ async def test_local_provider_never_falls_back_to_fish(monkeypatch):
 
 
 def test_provider_values_are_bounded_and_enum_checked():
-    from jarvis import server
-    assert server._env_value_problem('JARVIS_TTS_PROVIDER', 'local') is None
-    assert server._env_value_problem('JARVIS_TTS_PROVIDER', 'other')
-    assert server._env_value_problem('JARVIS_LOCAL_VOICE', 'george') is None
-    assert server._env_value_problem('JARVIS_LOCAL_VOICE', '../voice')
+    from jarvis import settings_service, settings_specs
+    check = settings_service.check
+    assert check(settings_specs.spec('tts_provider'), 'local') == 'local'
+    with pytest.raises(settings_service.Refused):
+        check(settings_specs.spec('tts_provider'), 'other')
+    assert check(settings_specs.spec('local_voice'), 'george') == 'george'
+    with pytest.raises(settings_service.Refused):
+        check(settings_specs.spec('local_voice'), '../voice')
 
 
 def test_wav_playback_has_real_ack_floor():
@@ -94,8 +98,13 @@ def test_bad_archive_keeps_existing_files(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_provider_never_calls_fish(monkeypatch):
-    from jarvis import server
-    monkeypatch.setenv('JARVIS_TTS_PROVIDER', 'typo')
+    """A provider that is not one of the two cannot be chosen at all, and a
+    voice that somehow reads one fails closed."""
+    from jarvis import server, settings_service
+    with pytest.raises(settings_service.Refused):
+        hold_setting("tts_provider", 'typo')
+    monkeypatch.setattr(server, '_setting', lambda key: 'typo' if key == 'tts_provider'
+                        else settings_service.value(key))
     async def fish(*a, **kw): pytest.fail('invalid setting must fail closed')
     monkeypatch.setattr(server.tts, 'synthesize_chunk', fish)
     assert await server._synth_for_speech('Hello') is None

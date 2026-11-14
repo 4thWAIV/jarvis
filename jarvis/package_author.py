@@ -13,6 +13,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis import settings_service
 from jarvis import author_proof, brain_provider, data_paths, engine_choice, session_skill
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
@@ -97,10 +98,11 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     folder.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
     provider = brain_provider.provider(ENGINES[choice.engine])
+    settings_service.load()     # this command's own process: his saved program paths
     config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
                          authoring=True, warmup_timeout=60, turn_timeout=60,
-                         claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
-                         codex_path=os.getenv("JARVIS_CODEX_PATH") or None)
+                         claude_path=settings_service.value("claude_path") or None,
+                         codex_path=settings_service.value("codex_path") or None)
     done = asyncio.get_running_loop().create_future()
     receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
                "origin_session": session, "work": work,

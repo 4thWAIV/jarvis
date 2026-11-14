@@ -56,8 +56,9 @@ _APOSTROPHES = re.compile(r"['’‘\"“”]")
 # `str.split()` with no argument splits on every character `str.splitlines()`
 # knows about and then some, so the join below cannot leave a separator
 # behind. That is deliberately asked of the language rather than of a
-# hand-written list of characters: `server._env_value_problem` learned this
-# the hard way — its list was "\n", "\r", "\0" and the readers split on ten.
+# hand-written list of characters: the old `.env` writer's `_env_value_problem`
+# (gone with the `.env`) learned this the hard way — its list was "\n",
+# "\r", "\0" and the readers split on ten.
 FIELD_MAX_CHARS = 240
 
 # The index's own link syntax. A `]` or a `(` in a TITLE closes the link and
@@ -91,7 +92,7 @@ class UnwritableValue(Exception):
     The wall, after the flattening above: whatever `one_line` and
     `_INDEX_STRUCTURAL` did or did not catch, a line is only written if the
     module's OWN reader parses it back to exactly the values handed in. Same
-    round-trip rule as `server._env_value_problem`, and for the same reason —
+    round-trip rule as the old `.env` writer's, and for the same reason —
     it needs no list of dangerous characters to be right.
     """
 

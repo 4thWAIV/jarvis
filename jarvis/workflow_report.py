@@ -62,6 +62,7 @@ if not __package__:
     # package's parent on the path so this copy's own package is imported.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from jarvis import env_names
 from jarvis import agent_keys, server_address  # noqa: E402
 
 DEFAULT_URL = "https://localhost:8340"
@@ -159,7 +160,7 @@ def signed_client(cert: Path | None, session_id: str = "", right: str = "workflo
         return _Client(base_url(), "", cert, signer)
     # Until the cut-over (legacy_access.py: no access key used for 7 days),
     # an old access key still works.
-    key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
+    key = env_names.read("JARVIS_ACCESS_KEY").strip()
     if key:
         return _Client(base_url(), key, cert)
     raise SystemExit("No agent key: run python -m jarvis.agent_key init --session <your "
@@ -174,7 +175,7 @@ def _client(cert: Path | None, session_id: str = "") -> _Client:
 def base_url() -> str:
     """JARVIS_URL when set, else the running server's recorded address (a
     loopback one as localhost), else DEFAULT_URL."""
-    explicit = os.environ.get("JARVIS_URL", "").strip()
+    explicit = env_names.read("JARVIS_URL").strip()
     if explicit:
         return explicit.rstrip("/")
     found = server_address.running()

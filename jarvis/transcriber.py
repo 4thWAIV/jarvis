@@ -138,9 +138,10 @@ def install_guidance(model: Optional[SpeechModel] = None) -> str:
 
 
 def models_root() -> Path:
-    """Where the models' folders are, one per model: JARVIS_STT_MODEL_DIR if
-    set, otherwise `<data>/models`."""
-    raw = os.getenv("JARVIS_STT_MODEL_DIR", "").strip()
+    """Where the models' folders are, one per model: Settings' speech models
+    folder (`stt_model_dir`) if set, otherwise `<data>/models`."""
+    from jarvis import settings_service
+    raw = settings_service.value("stt_model_dir").strip()
     if raw:
         return Path(raw).expanduser()
     return data_paths.models_dir()

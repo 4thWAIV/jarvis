@@ -42,6 +42,7 @@ from pathlib import Path
 import pytest
 from jarvis.session_watch import Subagent
 from tests.fixtures.captures import captured
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -58,7 +59,7 @@ MARKER = "he approves"
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store
@@ -1373,6 +1374,17 @@ EXEMPT = {
         "it reads the brain's own `engine` and `model` arguments, mapped to "
         "fixed engine names and the checked model shapes of `_normalise_model` "
         "and `_codex_model`; its refusals are fixed sentences"),
+    "server._brains_said": (
+        "it says Settings, Brains' cards: fixed brain names and titles, and a "
+        "model set in brains.json only by `_change_brain` after checking it "
+        "against its brain's own list"),
+    "server._change_brain": (
+        "it reads the brain's own `brain`, `action` and `model` arguments, the "
+        "brain checked against brains_config.KNOWN and the model against its "
+        "brain's own list; its refusals are brains_config's fixed sentences"),
+    "server.tool_set_brain": (
+        "the same arguments, refused as a fixed sentence naming the fixed "
+        "brain names and actions; it says `_brains_said` after"),
     "server._engine_settings_said": (
         "it says his engine settings: fixed kind and engine names, a model "
         "checked against its brain's own list when it was set, and JARVIS's "

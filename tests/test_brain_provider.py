@@ -179,7 +179,6 @@ def test_the_provider_is_chosen_by_name_and_claude_is_the_default(tmp_path, monk
     assert isinstance(brain_provider.provider(), claude_provider.ClaudeProvider)
     assert isinstance(brain.Brain(brain.BrainConfig(home=tmp_path)).provider,
                       claude_provider.ClaudeProvider)
-    monkeypatch.setenv("JARVIS_BRAIN_PROVIDER", "anthropic")
     assert brain.BrainConfig.from_env(tmp_path).provider == "anthropic"
     with pytest.raises(ValueError):
         brain_provider.provider("nobody")

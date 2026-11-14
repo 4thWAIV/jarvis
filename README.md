@@ -68,7 +68,6 @@ Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and 
 From a clone of this repository:
 
 ```bash
-cp jarvis/.env.example .env
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m playwright install chromium
@@ -77,7 +76,7 @@ python3 -m venv .venv
 npm --prefix frontend install
 ```
 
-Set `FISH_API_KEY` in `.env`. The other settings are documented in [jarvis/.env.example](jarvis/.env.example). Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
+Every setting is chosen in Settings; nothing asks you to edit a `.env` file. The first time the page loads without a voice, Settings opens on Voice for the Fish Audio key. Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
 
 Generate the local certificates required by the Vite development proxy:
 
@@ -88,7 +87,7 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -node
 Run these in separate terminals:
 
 ```bash
-.venv/bin/python -m jarvis --host 127.0.0.1
+.venv/bin/python -m jarvis
 ```
 
 ```bash
@@ -120,7 +119,7 @@ Recognition currently uses Kroko through sherpa-onnx. The model and runtime are 
 
 SQLite records and Markdown memory live under `data/` in a checkout. `JARVIS_DATA_DIR` selects another data directory. An installed copy keeps configuration and data under `~/Library/Application Support/JARVIS`. MCP connections are configured through the brain home's `connections.json`; the setup guide explains the format.
 
-The service binds to loopback by default. Host/origin checks, internal tool tokens and each agent's own signing key (with its rights) protect specific application boundaries. Development runs can have full user privileges, and `JARVIS_SKIP_PERMISSIONS` defaults on. The foreign-content action refusal is opt-in through `JARVIS_REFUSE_UNTRUSTED_ACTIONS`. These controls are not a universal sandbox or transactional rollback system. See [jarvis/web_auth.py](jarvis/web_auth.py), [jarvis/agent_rights.py](jarvis/agent_rights.py) and [jarvis/run_executor.py](jarvis/run_executor.py) for their implementation.
+The service binds to loopback by default. Host/origin checks, internal tool tokens and each agent's own signing key (with its rights) protect specific application boundaries. Development runs can have full user privileges: Settings, Agents, "Runs skip permission prompts" (`skip_permissions`) is on by default. The foreign-content action refusal is opt-in in Settings, Safety, "Refuse to act after reading others' words" (`refuse_untrusted_actions`). These controls are not a universal sandbox or transactional rollback system. See [jarvis/web_auth.py](jarvis/web_auth.py), [jarvis/agent_rights.py](jarvis/agent_rights.py) and [jarvis/run_executor.py](jarvis/run_executor.py) for their implementation.
 
 ## Development
 

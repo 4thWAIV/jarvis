@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis import (agent_keys, data_paths, decision_check, language_kit as lk, package_inbox,
-                    package_signature, records, work_store)
+                    package_signature, records, settings_service, work_store)
 from jarvis import decision_package as dp
 from tests import architecture_author
 
@@ -77,15 +77,17 @@ def world(tmp_path):
         # in ~/.claude, where both JARVIS processes look, so the agent's key
         # is there too, under a session of this run's own, removed after.
         session = f"sess-architect-e2e-{uuid.uuid4().hex[:8]}"
-        home, extra = Path.home() / ".claude", {}
+        home, saved = Path.home() / ".claude", {}
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:
         session, home = SESSION, tmp_path / "agent-home"
-        extra = {"JARVIS_CLAUDE_CONFIG_DIRS": str(transcripts)}
-        env.update({"CLAUDE_CONFIG_DIR": str(home), "AUTHOR_TEST_CLAUDE_ROOT": str(transcripts),
-                    "JARVIS_CLAUDE_PATH": str(architecture_author.install(
-                        tmp_path / "bin", f"author-{uuid.uuid4().hex[:12]}")),
-                    **extra})
+        # Saved in the isolated JARVIS's Settings before it starts: its server
+        # reads the author's transcripts there, and make_package's author runs
+        # the stand-in Claude saved there.
+        saved = {"claude_config_dirs": [str(transcripts)],
+                 "claude_path": str(architecture_author.install(
+                     tmp_path / "bin", f"author-{uuid.uuid4().hex[:12]}"))}
+        env.update({"CLAUDE_CONFIG_DIR": str(home), "AUTHOR_TEST_CLAUDE_ROOT": str(transcripts)})
     keys = agent_keys.key_folder(session, home)
     private, public = agent_keys.make_pair(keys, f"jarvis-agent {session}")
     made = {}
@@ -95,10 +97,12 @@ def world(tmp_path):
         # engine's folder before its server and engine start there.
         with decision_check._data_dir(data), records.opened_at(data_paths.knowledge_dir()):
             made["work"] = work_store.create("Architecture inbox", "folder", str(tmp_path))
+            for key, value in saved.items():
+                settings_service.change(key, value)
         decision_check.seed(data, public, session)
 
-    jarvis = decision_check.Isolated(folder, "en", page, before, is_the_check=False, extra_env={
-        **extra, "JARVIS_CODEX_SESSIONS_HOME": str(tmp_path / "codex-home")})
+    jarvis = decision_check.Isolated(folder, "en", page, before, is_the_check=False, settings={
+        "codex_sessions_home": str(tmp_path / "codex-home")})
     work = made["work"]
     try:
         env.update({"JARVIS_URL": jarvis.base, "JARVIS_DATA_DIR": str(data)})

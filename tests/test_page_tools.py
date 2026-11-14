@@ -27,6 +27,7 @@ from tests.fixtures.waiting import LIMIT_SEC
 
 from jarvis import browser as real_browser
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 
 class _Browser:
@@ -80,7 +81,7 @@ class _UserBrain:
 def ready(monkeypatch, tmp_path):
     """A server whose browser is a recorder."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

@@ -3,8 +3,9 @@
     python -m jarvis.decision_check_server --port PORT --page DIR [--language en|es]
 
 Run only by `decision_check`, in a child process whose environment already
-points every path at a temporary folder (JARVIS_DATA_DIR, JARVIS_ENV_FILE,
-JARVIS_STT_MODEL_DIR) with JARVIS_BRAIN_AUTOSTART=0. It is JARVIS's real
+points its data at a temporary folder (JARVIS_DATA_DIR), with the settings
+it is given (`--settings`, held for this process: its speech models
+folder, the brain not started, a stand-in Fish key). It is JARVIS's real
 server, `jarvis.server:app`, on loopback over plain HTTP, with seven things
 changed for a check and nothing else:
 
@@ -14,7 +15,7 @@ changed for a check and nothing else:
 - Speech is a stand-in synthesizer: a short silent WAV per chunk, so a story
   is told through the real scheduler, voice socket, page playback and cues
   without calling Fish Audio.
-- The brain is never spawned (JARVIS_BRAIN_AUTOSTART=0), so every tool call
+- The brain is never spawned (brain_autostart held off), so every tool call
   is taken as on a turn he drove while it runs: the acting package tools run
   as they do when he asks, and between calls the floor is free.
 - The session watcher, the preflight checks and the brain account lookup do
@@ -32,10 +33,12 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import struct
 import wave
 from pathlib import Path
+from jarvis import env_names
 
 # How long each chunk of the stand-in voice lasts: long enough for the page
 # to play it and point at its beat, short enough that a story is quick.
@@ -119,9 +122,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--language", default="en")
     parser.add_argument("--page", type=Path, required=True, help="the built voice page")
+    parser.add_argument("--settings", default="{}", help="settings held for this process (JSON)")
     args = parser.parse_args(argv)
-    os.environ.update({"JARVIS_PORT": str(args.port), "JARVIS_SCHEME": "http",
-                       "JARVIS_BIND_HOST": "127.0.0.1"})
+    from jarvis import settings_service
+    for key, value in json.loads(args.settings).items():
+        settings_service.hold(key, value)
+    env_names.publish("JARVIS_PORT", str(args.port))
+    env_names.publish("JARVIS_SCHEME", "http")
+    env_names.publish("JARVIS_BIND_HOST", "127.0.0.1")
     import uvicorn
     from jarvis import server
     prepare(server, args.language, args.page)

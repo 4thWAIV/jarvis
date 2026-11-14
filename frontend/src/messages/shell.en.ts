@@ -40,7 +40,7 @@ export const shellEn = {
   "menu.updates": "Check for updates",
   "menu.restart": "Restart Server",
   "menu.restarting": "Restarting the server.",
-  "menu.restartFailed": "The restart failed: the server did not answer.",
+  "menu.restartFailed": "The server did not restart: it refused or did not answer.",
 
   // Settings → Voice, the language (LanguageControl.tsx).
   "language.label": "Language",

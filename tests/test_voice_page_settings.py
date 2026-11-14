@@ -1,6 +1,6 @@
 """The Settings view, by what the user sees and does: opened from the ⋮
 menu as a centre view, beside Conversation, covering neither the orb nor a
-side column; the Fish Audio key saved (with the note to restart), and
+side column; the Fish Audio key saved (in use at once, no restart), and
 tested; the voice id saved; name and honorific loaded and saved; a state
 shown only when it is not the ordinary one (a server that does not answer,
 a failing brain check); and, with no Fish key set, the first-time setup
@@ -127,7 +127,7 @@ class _Server:
         async def keys(route):
             body = json.loads(route.request.post_data or "{}")
             self.posts.append(("keys", body))
-            if body.get("key_name") == "FISH_API_KEY":
+            if body.get("key_name") == "fish_api_key":
                 self.fish = True
             await route.fulfill(status=200, content_type="application/json", body='{"ok": true}')
 
@@ -213,6 +213,16 @@ class _Server:
         await page.route("**/api/settings/preferences", prefs)
         await page.route("**/api/settings/keys", keys)
         await page.route("**/api/settings/test-fish", test_fish)
+
+        async def values(route):
+            # Every setting as the server shows them (settings_service.view), at
+            # their defaults; a change is recorded and answered the same.
+            from jarvis import settings_service
+            if route.request.method == "POST":
+                self.posts.append(("values", json.loads(route.request.post_data or "{}")))
+            await route.fulfill(status=200, content_type="application/json",
+                                body=json.dumps(settings_service.view()))
+        await page.route("**/api/settings/values**", values)
         await page.route_web_socket("**/ws/**", lambda ws: None)
 
 
@@ -266,7 +276,8 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
         assert await settled(page, CENTRED) == {"orb": True, "inside": True}
         # The sections in the order a person comes to them.
         assert await page.locator(".settings-nav button").all_text_contents() == [
-            "You", "Voice and language", "Brains", "Team", "Knowledge", "Updates", "Server"]
+            "You", "Voice and language", "Brains", "Agents", "Projects", "Team", "Knowledge", "Safety",
+            "Updates", "Server"]
         await browser.close()
 
 
@@ -284,7 +295,7 @@ CENTRED = """() => {
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page_playwright, page_url):
+async def test_saving_the_fish_key_needs_no_restart_and_testing_it_checks_it(page_playwright, page_url):
     server = _Server()
     async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
@@ -300,15 +311,15 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
         await page.wait_for_function(f"({DOT})('Test') === 'green'")
         await async_api.expect(page.get_by_text("Fish Audio generated speech successfully.")).to_be_visible()
         await key.get_by_role("button", name="Save", exact=True).click()
-        await page.get_by_text("Restart the server").wait_for()
         await async_api.expect(key_input).to_have_value("")
+        await async_api.expect(page.get_by_text("Restart the server")).to_have_count(0)
         assert await until_async(lambda: ("test-fish", {"key_value": "good-key"}) in server.posts), server.posts
-        assert await until_async(lambda: ("keys", {"key_name": "FISH_API_KEY", "key_value": "good-key"}) in server.posts), server.posts
+        assert await until_async(lambda: ("keys", {"key_name": "fish_api_key", "key_value": "good-key"}) in server.posts), server.posts
 
         await page.get_by_placeholder("612b878b113047d9a770c069c8b4fdfe").fill("voice-42")
         voice = page.locator(".settings-row", has=page.locator("#settings-voice-id"))
         await voice.get_by_role("button", name="Save", exact=True).click()
-        assert await until_async(lambda: ("keys", {"key_name": "FISH_VOICE_ID", "key_value": "voice-42"}) in server.posts), server.posts
+        assert await until_async(lambda: ("keys", {"key_name": "fish_voice_id", "key_value": "voice-42"}) in server.posts), server.posts
         await page.reload()
         await _open_settings(page)
         await async_api.expect(page.get_by_text("API key saved. Enter a new key here to replace it.")).to_be_visible()
@@ -357,7 +368,7 @@ async def test_a_state_is_shown_only_when_it_is_not_the_ordinary_one(page_playwr
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         server_section = page.locator("#settings-server")
-        await async_api.expect(server_section.locator(".settings-row", has_text="Port")).to_contain_text("8340")
+        await async_api.expect(server_section.locator(".settings-row", has_text="Serving on port")).to_contain_text("8340")
         # A good reading, a saved key and a passing check say nothing more.
         assert await server_section.locator(".settings-state").count() == 0
         assert await page.evaluate(DOT, "Test") is None
@@ -374,7 +385,7 @@ async def test_a_state_is_shown_only_when_it_is_not_the_ordinary_one(page_playwr
         await _open_settings(page)
         await page.wait_for_function(f"({DOT})('No answer from the server.') === 'red'")
         # Drawn from the answer that never came: no figures, and not green.
-        await async_api.expect(page.locator("#settings-server .settings-row", has_text="Port")).to_contain_text("—")
+        await async_api.expect(page.locator("#settings-server .settings-row", has_text="Serving on port")).to_contain_text("—")
         assert await page.evaluate(DOT, "Test") != "green"
         await browser.close()
 

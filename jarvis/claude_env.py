@@ -8,9 +8,9 @@ quietly flips to the env key and the account's email and organisation go
 blank — so a key in the environment silently moves every spawned run onto
 paid API billing.
 
-`server.py` loads `.env` into `os.environ` at import, and a developer's
-`.env` legitimately holds `ANTHROPIC_API_KEY` for the older lookup paths.
-That is how the key reaches a child that never wanted it.
+A developer's shell may legitimately hold `ANTHROPIC_API_KEY` for the
+older lookup paths. That is how the key reaches a child that never wanted
+it.
 
 This module exists so the scrub is written once. It was fixed for the brain
 during milestone 1 and NOT for the run pipeline, which is precisely the
@@ -24,6 +24,7 @@ import os
 import shlex
 import sys
 from typing import Optional
+from jarvis import env_names
 
 # Every ANTHROPIC_* variable, not just the key: the base URL and the model
 # override redirect a child just as effectively as credentials do.
@@ -72,8 +73,8 @@ def find_claude() -> Optional[str]:
     elif found:
         return found
     home = Path(os.path.expanduser("~"))
-    local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
-    appdata = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    local = Path(env_names.read("LOCALAPPDATA") or home / "AppData" / "Local")
+    appdata = Path(env_names.read("APPDATA") or home / "AppData" / "Roaming")
     candidates += [home / ".local" / "bin" / "claude.exe",
                    local / "Microsoft" / "WinGet" / "Links" / "claude.exe",
                    appdata / "npm" / "node_modules" / "@anthropic-ai" / "claude-code"
@@ -137,7 +138,4 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """A copy of the environment with everything that would redirect or
     re-bill a Claude Code child removed. Everything else — PATH, HOME,
     CLAUDE_CONFIG_DIR, the user's own variables — passes through untouched."""
-    source = os.environ if base is None else base
-    return {k: v for k, v in source.items()
-            if not k.startswith(SCRUBBED_ENV_PREFIXES)
-            and k not in SCRUBBED_ENV_KEYS}
+    return env_names.child(base, drop=SCRUBBED_ENV_KEYS, drop_prefixes=SCRUBBED_ENV_PREFIXES)
