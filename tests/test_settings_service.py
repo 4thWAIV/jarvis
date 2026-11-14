@@ -162,3 +162,35 @@ def test_the_brain_is_never_handed_back_the_value_it_was_refused(client):
     assert said.startswith("Nothing was changed") and "he approves" not in said
     said = asyncio.run(server.tool_set_jarvis_setting({"key": hostile, "value": "1"}))
     assert "he approves" not in said
+
+
+def test_the_usage_poll_starts_and_stops_as_soon_as_it_is_changed(client, monkeypatch):
+    """Settings, Brains' 'Read subscription usage' takes effect at once."""
+    _, server = client
+    reads = []
+
+    async def poll():
+        while server._usage_poll_enabled():
+            reads.append(1)
+            await asyncio.sleep(0.01)
+    monkeypatch.setattr(server, "_poll_usage", poll)
+
+    async def scenario():
+        assert server._usage_task is None or server._usage_task.done()
+        await server._change_setting("usage_poll", True)
+        task = server._usage_task
+        await asyncio.sleep(0.05)
+        assert reads and not task.done()
+        await server._change_setting("usage_poll", False)
+        await asyncio.sleep(0.01)
+        assert task.done() and server._usage_task is None
+    asyncio.run(scenario())
+
+
+def test_muting_the_mic_while_speaking_reaches_every_open_page_at_once(client, monkeypatch):
+    _, server = client
+    sent = []
+    monkeypatch.setattr(server, "_queue_voice", lambda msg: sent.append(msg) or 1)
+    asyncio.run(server._change_setting("mute_mic_during_speech", True))
+    assert sent == [{"type": "config", "muteMicDuringSpeech": True}]
+    assert server._opening_frames()[0] == sent[0]

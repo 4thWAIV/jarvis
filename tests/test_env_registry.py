@@ -168,9 +168,14 @@ def test_every_setting_has_a_brain_tool_to_read_and_one_to_change_it():
             # His click alone (the brain's program, the address, the extra
             # origins, the Fish key): read by the brain, never changed.
             assert (s.key in settable) == (not s.page_only and s.kind != "secret"), s.key
-    for _target, tools in settings_specs.ELSEWHERE.values():
-        for tool in tools:
-            assert tool in specs and tool in server.TOOL_HANDLERS, tool
+    for name, (_target, tools) in settings_specs.ELSEWHERE.items():
+        # One to read and one to change it, as every other setting has.
+        assert len(tools) == 2, (name, tools)
+        read, act = tools
+        assert read in specs and read in server.TOOL_HANDLERS, (name, read)
+        assert read not in server.ACTING_TOOLS, (name, read)
+        assert act in specs and act in server.TOOL_HANDLERS and act in server.ACTING_TOOLS, \
+            (name, act)
 
 
 def test_every_setting_drawn_from_the_list_has_words_in_both_catalogs():

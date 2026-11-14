@@ -190,6 +190,7 @@ def _claude_home() -> Path:
 
 
 def _codex_home() -> Path:
+    settings_service.load_once()    # a command's own process: his saved homes
     raw = (env_names.read("CODEX_HOME") or settings_service.value("codex_sessions_home")
            or "").strip()
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
@@ -202,6 +203,7 @@ def config_home(session_id: str) -> Path:
     home when a rollout there names the session, else ~/.claude."""
     if env_names.read("CLAUDE_CONFIG_DIR").strip():
         return _claude_home()
+    settings_service.load_once()    # a command's own process: his saved homes
     roots = [_claude_home()]
     for raw in settings_service.value("claude_config_dirs"):
         if raw.strip():

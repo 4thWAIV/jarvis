@@ -106,6 +106,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__set_language,"
         "mcp__jarvis__voice_input_settings,mcp__jarvis__set_voice_input_settings,"
         "mcp__jarvis__engine_settings,mcp__jarvis__set_engine_setting,"
+        "mcp__jarvis__brains_settings,mcp__jarvis__set_brain,"
         "mcp__jarvis__jarvis_settings,mcp__jarvis__set_jarvis_setting,mcp__jarvis__play_cue,"
         "mcp__jarvis__skip_reading,mcp__jarvis__stop_speaking,"
         "mcp__jarvis__voice_turn,mcp__jarvis__quiet_microphone,mcp__jarvis__set_motion,"

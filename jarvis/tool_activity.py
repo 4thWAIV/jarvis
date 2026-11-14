@@ -61,6 +61,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "language_document",
         "diagnostics", "usage_status", "usage_history", "connections", "speech_models",
         "voice_input_settings", "engine_settings", "set_engine_setting",
+        "brains_settings", "set_brain",
         "jarvis_settings", "set_jarvis_setting",
         "attention_updates", "mark_updates_seen",
         "set_attention_settings", "update_status",

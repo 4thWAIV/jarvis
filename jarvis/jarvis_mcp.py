@@ -2172,6 +2172,32 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "brains_settings",
+        "description": (
+            "Settings, Brains: which brains are added (Claude, Codex), the one JARVIS starts "
+            "with, the one running now, and each one's model."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_brain",
+        "description": (
+            "Change Settings, Brains only when he asks: add or remove a brain, choose the one "
+            "JARVIS starts with (from its next start), or a brain's model. It restarts nothing."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "brain": {"type": "string", "enum": ["anthropic", "openai"],
+                          "description": "anthropic is Claude, openai is Codex."},
+                "action": {"type": "string", "enum": ["add", "remove", "default", "model"],
+                           "description": ("default: the brain JARVIS starts with; model: "
+                                           "that brain's model, given in model.")},
+                "model": {"type": "string",
+                          "description": "With model: one of that brain's models."},
+            },
+            "required": ["brain", "action"],
+        },
+    },
+    {
         "name": "set_engine_setting",
         "description": (
             "Change one kind of agent's engine setting, or the override, only when he asks. "

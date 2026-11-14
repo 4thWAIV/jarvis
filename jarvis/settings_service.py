@@ -125,6 +125,18 @@ def load() -> None:
         _loaded[engine] = found
 
 
+def load_once() -> None:
+    """`load`, unless this process already holds the records of the engine
+    in use: what a command run in its own process (session_skill,
+    agent_key and every command that signs with an agent's key) calls
+    before it reads a saved setting, so it sees what he saved in Settings."""
+    engine = _engine_key()
+    with _lock:
+        if engine is not None and engine in _loaded:
+            return
+    load()
+
+
 def hold(key: str, held: Any) -> None:
     """Put `held` in force for this process, unsaved, until the setting is changed."""
     s = settings_specs.spec(key)

@@ -2280,10 +2280,23 @@ def _usage_poll_enabled() -> bool:
     return _setting("usage_poll") is True
 
 
+def _follow_usage_poll() -> None:
+    """Start the usage poll while Settings has it on and stop it once off:
+    at start and on every change of the setting, so it takes effect at once."""
+    global _usage_task
+    running = _usage_task is not None and not _usage_task.done()
+    if _usage_poll_enabled() and not running:
+        _usage_task = _spawn(_poll_usage())
+    elif running and not _usage_poll_enabled():
+        _usage_task.cancel()
+        _usage_task = None
+
+
 async def _poll_usage() -> None:
-    """Never raises: a missed reading keeps the last one."""
+    """Never raises: a missed reading keeps the last one. Ends once the
+    setting is off (a hold under test included)."""
     reported: dict[str, str] = {}
-    while True:
+    while _usage_poll_enabled():
         for name in list(brains_config.load()["brains"]):
             try:
                 # Made once and kept: a source may hold its login in memory.
@@ -2675,8 +2688,7 @@ async def start_session_watcher() -> None:
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
-    if _usage_poll_enabled():
-        _usage_task = _spawn(_poll_usage())
+    _follow_usage_poll()
 
 
 async def stop_session_watcher() -> None:
@@ -3566,12 +3578,37 @@ async def api_brains(brief: bool = False):
     return {"brains": [await _brain_card(n, cfg, brief) for n in brains_config.KNOWN]}
 
 
-def _brains_change(change) -> dict:
-    """A brains change; a refusal's `detail` carries its English words and,
-    for `brains_config.Refused`, its code and values, which the page words
-    in its own language (brains.ts)."""
+BRAIN_CHANGES = ("add", "remove", "default", "model")
+
+
+async def _change_brain(name: str, action: str, model: str = "") -> dict:
+    """Settings, Brains' one change, from the page's routes and the brain's
+    `set_brain` alike: add or remove a brain, choose the one JARVIS starts
+    with (`default`, from the next start), or a brain's model. Raises
+    brains_config.Refused, or ValueError for a request that names nothing
+    it can do."""
+    if action == "add":
+        return brains_config.add(name)
+    if action == "remove":
+        return brains_config.remove(name)
+    if action == "default":
+        return brains_config.set_default(name)
+    if action == "model":
+        model = (model or "").strip()
+        if name not in brains_config.KNOWN or not model:
+            raise ValueError("a known brain and a model")
+        if model not in await asyncio.to_thread(brain_provider.provider(name).models):
+            raise ValueError("that brain does not offer that model")
+        return brains_config.set_model(name, model)
+    raise ValueError("action is " + ", ".join(BRAIN_CHANGES))
+
+
+async def _brains_change(name: str, action: str, model: str = "") -> dict:
+    """A brains change from the page; a refusal's `detail` carries its
+    English words and, for `brains_config.Refused`, its code and values,
+    which the page words in its own language (brains.ts)."""
     try:
-        change()
+        await _change_brain(name, action, model)
     except brains_config.Refused as e:
         raise HTTPException(status_code=400,
                             detail={"message": str(e), "code": e.code, "values": e.values})
@@ -3583,29 +3620,22 @@ def _brains_change(change) -> dict:
 @app.post("/api/brains/default")
 async def api_brains_default(request: Request):
     body = await request.json()
-    return _brains_change(lambda: brains_config.set_default(str(body.get("name") or "")))
+    return await _brains_change(str(body.get("name") or ""), "default")
 
 
 @app.post("/api/brains/{name}")
 async def api_brains_add_remove(name: str, request: Request):
     body = await request.json()
     action = body.get("action")
-    if action == "add":
-        return _brains_change(lambda: brains_config.add(name))
-    if action == "remove":
-        return _brains_change(lambda: brains_config.remove(name))
-    raise HTTPException(status_code=400, detail="action is add or remove")
+    if action not in ("add", "remove"):
+        raise HTTPException(status_code=400, detail="action is add or remove")
+    return await _brains_change(name, action)
 
 
 @app.put("/api/brains/{name}")
 async def api_brains_model(name: str, request: Request):
     body = await request.json()
-    model = str(body.get("model") or "").strip()
-    if name not in brains_config.KNOWN or not model:
-        raise HTTPException(status_code=400, detail="a known brain and a model")
-    if model not in await asyncio.to_thread(brain_provider.provider(name).models):
-        raise HTTPException(status_code=400, detail="that brain does not offer that model")
-    return _brains_change(lambda: brains_config.set_model(name, model))
+    return await _brains_change(name, "model", str(body.get("model") or ""))
 
 
 @app.post("/api/brains/{name}/sign-in")
@@ -11842,6 +11872,61 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+def _brains_said(cards: list) -> str:
+    """Settings, Brains' cards as the brain reads them: JARVIS's own words."""
+    lines = []
+    for c in cards:
+        if not c["added"]:
+            lines.append(f"{c['title']} ({c['name']}): not added.")
+            continue
+        notes = [f"model {c['model'] or 'its default'}"]
+        if c["default"]:
+            notes.append("the brain JARVIS starts with")
+        if c["active"]:
+            notes.append("running now")
+        lines.append(f"{c['title']} ({c['name']}): " + ", ".join(notes) + ".")
+    lines.append("The brain JARVIS starts with changes at the next start.")
+    return " ".join(lines)
+
+
+async def _brain_cards_brief() -> list:
+    cfg = brains_config.load()
+    return [await _brain_card(n, cfg, brief=True) for n in brains_config.KNOWN]
+
+
+async def tool_brains_settings(args: dict) -> str:
+    """Settings, Brains: which brains are added, the one JARVIS starts with,
+    the one running and each one's model, as the page's cards say."""
+    return _brains_said(await _brain_cards_brief())
+
+
+async def tool_set_brain(args: dict) -> str:
+    """Settings, Brains' change by voice, through the page's own
+    `_change_brain`: add or remove a brain, choose the one JARVIS starts
+    with, or a brain's model. An ACTING tool; it restarts nothing."""
+    name = str(args.get("brain") or "").strip()
+    action = str(args.get("action") or "").strip()
+    if name not in brains_config.KNOWN or action not in BRAIN_CHANGES:
+        return ("Nothing was changed, sir: name a brain (" + ", ".join(brains_config.KNOWN)
+                + ") and what to do (" + ", ".join(BRAIN_CHANGES) + ").")
+    try:
+        await _change_brain(name, action, str(args.get("model") or ""))
+    except (brains_config.Refused, ValueError) as e:
+        return f"Nothing was changed, sir: {e}."
+    return "Saved. " + _brains_said(await _brain_cards_brief())
+
+
+TOOL_HANDLERS.update({
+    "brains_settings": tool_brains_settings,
+    "set_brain": tool_set_brain,
+})
+ACTING_TOOLS.add("set_brain")
+TAINT_EXEMPT_TOOLS.update({
+    "brains_settings": "it reads his own brains settings, JARVIS's own words",
+    "set_brain": "it changes his brains settings to fixed values, it does not read",
+})
+
+
 # A cue played once on his page, as Settings' Test button plays it.
 CUE_TEST_FRAME = "cue_test"
 
@@ -16584,12 +16669,17 @@ def _scan_projects_sync() -> list[dict]:
 
 # -- WebSocket Voice Handler -----------------------------------------------
 
+def _config_frame() -> dict:
+    """The settings the voice page needs, sent as its socket opens and to
+    every open page again when one of them changes (`_change_setting`)."""
+    return {"type": "config", "muteMicDuringSpeech": _setting("mute_mic_during_speech")}
+
+
 def _opening_frames() -> list[dict]:
     """What a page is told as its voice socket opens: the settings it
     needs, that JARVIS is idle, the page package shown (so a reload keeps
     it) and the story being told, if any."""
-    frames = [{"type": "config", "muteMicDuringSpeech": _setting("mute_mic_during_speech")},
-              {"type": "status", "state": "idle"}]
+    frames = [_config_frame(), {"type": "status", "state": "idle"}]
     if _package_shown is not None:
         frames.append({"type": "package_page", "package": _package_shown})
     if story_teller.status() is not None:
@@ -16889,6 +16979,10 @@ async def _change_setting(key: str, value, *, by: str = "tim") -> dict:
     saved = await asyncio.to_thread(settings_service.change, key, value, by=by)
     if key in ("tts_provider", "local_voice"):
         await local_tts.client.close()
+    if key == "usage_poll":
+        _follow_usage_poll()
+    if key == "mute_mic_during_speech":
+        _queue_voice(_config_frame())      # every open page, at once
     _send_to_session_clients({"type": "settings", "key": key})
     return {"key": key, "value": None if settings_specs.spec(key).kind == "secret" else saved}
 

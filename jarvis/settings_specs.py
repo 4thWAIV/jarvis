@@ -180,9 +180,8 @@ BY_ENV: dict[str, Spec] = {s.env: s for s in SPECS if s.env}
 # own (brains.json, engines.json), copied there once by settings_import:
 # env name -> (the Settings target, the brain tools that read and change it).
 ELSEWHERE: dict[str, tuple[str, tuple]] = {
-    # No brain tool changes the brains yet (Settings, Brains is page-only today).
-    "JARVIS_BRAIN_PROVIDER": ("brainCard", ()),
-    "JARVIS_BRAIN_MODEL": ("brainCard", ()),
+    "JARVIS_BRAIN_PROVIDER": ("brainCard", ("brains_settings", "set_brain")),
+    "JARVIS_BRAIN_MODEL": ("brainCard", ("brains_settings", "set_brain")),
     "JARVIS_RUN_MODEL": ("engineRun", ("engine_settings", "set_engine_setting")),
 }
 

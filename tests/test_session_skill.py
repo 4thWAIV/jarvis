@@ -97,3 +97,20 @@ def test_preflight_reports_and_never_installs(homes):
 
     session_skill.install()
     assert preflight._check_session_skill_sync().status == preflight.STATUS_OK
+
+
+def test_the_command_installs_into_the_homes_saved_in_settings(tmp_path, capsys):
+    """`python -m jarvis.session_skill install` runs in its own process: it
+    reads the extra Claude Code homes he saved in Settings, Agents."""
+    from jarvis import agent_keys, session_watch, settings_service
+    extra = tmp_path / "claude-work"
+    (extra / "projects" / "p").mkdir(parents=True)
+    (extra / "projects" / "p" / "s-1.jsonl").write_text("{}\n")
+    settings_service.change("claude_config_dirs", [str(extra)])
+    settings_service._loaded.clear()    # a fresh process: nothing read yet
+    assert session_skill.main(["session_skill", "install"]) == 0
+    assert (extra / "skills" / "talk-to-jarvis" / "SKILL.md").is_file()
+    assert extra in session_watch.config_roots()
+    # An agent's own command finds its key home there the same way.
+    settings_service._loaded.clear()
+    assert agent_keys.config_home("s-1") == extra
