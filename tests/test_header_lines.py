@@ -1332,6 +1332,17 @@ EXEMPT = {
         "it reads the brain's own `engine` and `model` arguments, mapped to "
         "fixed engine names and the checked model shapes of `_normalise_model` "
         "and `_codex_model`; its refusals are fixed sentences"),
+    "server._brains_said": (
+        "it says Settings, Brains' cards: fixed brain names and titles, and a "
+        "model set in brains.json only by `_change_brain` after checking it "
+        "against its brain's own list"),
+    "server._change_brain": (
+        "it reads the brain's own `brain`, `action` and `model` arguments, the "
+        "brain checked against brains_config.KNOWN and the model against its "
+        "brain's own list; its refusals are brains_config's fixed sentences"),
+    "server.tool_set_brain": (
+        "the same arguments, refused as a fixed sentence naming the fixed "
+        "brain names and actions; it says `_brains_said` after"),
     "server._engine_settings_said": (
         "it says his engine settings: fixed kind and engine names, a model "
         "checked against its brain's own list when it was set, and JARVIS's "

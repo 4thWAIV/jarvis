@@ -2805,8 +2805,10 @@ or the section's own tool where one is named.
 - Brains: `brain_effort`, `brain_turn_timeout`, `brain_context_budget`
   (tokens before JARVIS asks to compact; it never rotates without his yes),
   each next start; `claude_path`, `codex_path` (next start, his click);
-  `usage_poll`. The brain and its model are the brains' cards
-  (brains.json); a run's model is the engine choice (engines.json).
+  `usage_poll` (starts and stops the poll at once). The brain and its model
+  are the brains' cards (brains.json), read by `brains_settings` and changed
+  by the acting `set_brain` through `server._change_brain`, the routes' own;
+  a run's model is the engine choice (engines.json).
 - Agents: `run_timeout_sec`, `run_idle_sec`, `skip_permissions` (passes
   `--dangerously-skip-permissions` to runs, which have no TTY),
   `steer_cancel_window`, `claude_config_dirs`, `codex_sessions_home`,
@@ -2825,15 +2827,25 @@ or the section's own tool where one is named.
   hand-edited file ignored and said so): `host` (his click), `port`,
   `https` (when the certificates are there), `brain_autostart`, each next
   start; `allowed_origins` (his click; also the host names the `Host`
-  check accepts); `debug_docs` (`/docs`, next start). A start whose address
-  cannot be bound goes back to the last one that served
-  (`start_settings.fall_back`). Restart now is `/api/restart`. The
-  command-line `--host`, `--port` and `--ssl` stay as one run's own and are
-  saved nowhere.
+  check accepts); `debug_docs` (`/docs`, next start). The address is only
+  one that still serves this Mac (127.0.0.1, ::1, localhost, 0.0.0.0, ::)
+  and the port never the page's dev server's; Vite reads the start file
+  again whenever it changes. A start whose address cannot be bound goes
+  back to the last one that served (`start_settings.fall_back`), recorded
+  only once uvicorn is listening. Every next-start setting, the records'
+  too, says it waits for a restart once saved differently from the start
+  (`settings_service.note_started`). Restart now is `/api/restart`, through
+  `MenuControl.restartServer` as the menu's. The command-line `--host`,
+  `--port` and `--ssl` stay as one run's own and are saved nowhere;
+  `jarvis.background` passes none.
 - Updates has no setting.
 `.env` is read once, by `settings_import` at the first start after this
 (`/settings/env-import.settings` records it, and Settings, Server says
-when), and never again; nothing loads it into the environment. The old
+when), and never again, but for a `JARVIS_DATA_DIR` it names, which the
+start follows (and Settings, Server says so) until Settings has a data
+folder control; nothing loads it into the environment. A command run in
+its own process reads the saved settings first
+(`settings_service.load_once`). The old
 names are each setting's `env` in `settings_specs.py`, or
 `settings_specs.ELSEWHERE` for the brain, its model and a run's model.
 
