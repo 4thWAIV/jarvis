@@ -13,13 +13,14 @@
  * The same failed view covers a start that could not open the records at
  * all (`cause` "engine": the knowledge engine did not answer) or that failed
  * once they were open ("start"), each with its own words. Every failed view
- * has Try again: `POST /api/restart`, which the gate lets through from this
+ * has Try again: MenuControl.postRestart, which the gate lets through from this
  * page while a start has failed (records_move.RETRY); the page then waits
  * for a new server (its `boot` changes) and loads again on it.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { guardedRead, useT, type PlainKey } from "./locale";
+import { postRestart } from "./MenuControl";
 import { spokenAge } from "./timeFormat";
 
 export interface RecordsMove {
@@ -92,12 +93,8 @@ async function readBoot(): Promise<string | null> {
  *  boot id changes) and load the page on it. Resolves with the refusal's
  *  words when the server did not take it; never resolves otherwise. */
 export async function tryAgain(boot: string | undefined): Promise<string> {
-  try {
-    const res = await fetch("/api/restart", { method: "POST" });
-    if (!res.ok) return `${res.status} ${res.statusText}`.trim();
-  } catch (e) {
-    return String(e);
-  }
+  const refused = await postRestart();
+  if (refused !== null) return refused;
   const until = Date.now() + RETRY_GIVE_UP_MS;
   for (;;) {
     await new Promise((r) => window.setTimeout(r, RETRY_LOOK_MS));
@@ -163,7 +160,7 @@ export function RecordsMoveView({ move, retrying }: {
         <p>{t(cause === "engine" ? "move.engine.kept" : cause === "start" ? "move.start.kept"
                                                                           : "move.failed.kept")}</p>
         <p>
-          <button type="button" id="records-move-retry" className="records-move-retry"
+          <button type="button" data-ui-action="restart" id="records-move-retry" className="records-move-retry"
                   disabled={asked} onClick={() => void retry()}>
             {t(asked ? "move.retrying" : "move.retry")}
           </button>

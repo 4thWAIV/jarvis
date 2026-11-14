@@ -114,7 +114,7 @@ function StartBrain() {
   };
   return (
     <p className="subsystem-action">
-      <button type="button" id="subsystem-start-brain" className="knowledge-open"
+      <button type="button" data-ui-action="domain" id="subsystem-start-brain" className="knowledge-open"
               disabled={asked} onClick={() => void start()}>{t("main.subsystem.brain.start")}</button>
       {said && <span className="subsystem-action-said" role="status"> {said}</span>}
     </p>
