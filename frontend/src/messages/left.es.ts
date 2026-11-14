@@ -346,7 +346,6 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.voice.badVoiceId": "Fish Audio rechazó la solicitud. Compruebe el ID de voz y reinicie el servidor después de guardarlo.",
   "left.voice.testFailed": "No se pudo probar Fish Audio. Compruebe la clave de API y la conexión, y vuelva a intentarlo.",
   "left.voice.voiceId": "ID de voz",
-  "left.voice.restartNotice": "Guardado. Reinicie el servidor para usarla (menú → {restart}).",
 
   "left.you.name": "Nombre",
   "left.you.namePlaceholder": "Su nombre",
@@ -412,7 +411,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.updates.confirm.noOlder": "No se ofrece volver a una versión anterior.",
 
   "left.server.noAnswer": "El servidor no responde.",
-  "left.server.port": "Puerto",
+  "left.server.port": "Sirviendo en el puerto",
   "left.server.uptime": "Tiempo activo",
   "left.server.hoursMinutes": "{hours} h {minutes} min",
 

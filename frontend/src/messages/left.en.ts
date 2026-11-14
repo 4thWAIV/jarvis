@@ -364,7 +364,6 @@ export const leftEn = {
   "left.voice.badVoiceId": "Fish Audio rejected the speech request. Check Voice ID and restart the server after saving it.",
   "left.voice.testFailed": "Could not test Fish Audio. Check the API key and connection, then try again.",
   "left.voice.voiceId": "Voice ID",
-  "left.voice.restartNotice": "Saved. Restart the server to use it (menu → {restart}).",
 
   // Settings → You.
   "left.you.name": "Name",
@@ -433,7 +432,7 @@ export const leftEn = {
 
   // Settings → Server.
   "left.server.noAnswer": "No answer from the server.",
-  "left.server.port": "Port",
+  "left.server.port": "Serving on port",
   "left.server.uptime": "Uptime",
   "left.server.hoursMinutes": "{hours}h {minutes}m",
 

@@ -17082,9 +17082,18 @@ def _settings_said(view: dict) -> str:
     return "\n".join(lines)
 
 
+def _refusal_said(e: settings_service.Refused) -> str:
+    """A refusal in JARVIS's words: the value it names (the brain's own
+    argument) is never repeated, only that it was refused."""
+    said = str(e)
+    if "value" in e.values:
+        said = said.replace(repr(e.values["value"]), "that value")
+    return said
+
+
 async def tool_jarvis_settings(args: dict) -> str:
     """Settings: every setting, or one section's, as the page shows them."""
-    area = str(args.get("area") or "").strip() or None
+    area = _plain_name(str(args.get("area") or "").strip(), "") or None
     try:
         return _settings_said(await asyncio.to_thread(settings_service.view, area))
     except settings_service.Refused as e:
@@ -17100,13 +17109,14 @@ async def tool_set_jarvis_setting(args: dict) -> str:
     try:
         spec = settings_specs.spec(key)
     except KeyError:
-        return f"There is no setting called {key!r}, sir; jarvis_settings lists them."
+        return (f"There is no setting called {_plain_name(key, 'that')}, sir; "
+                "jarvis_settings lists them.")
     if spec.page_only or spec.kind == "secret":
-        return PAGE_ONLY_SAID.format(name=key)
+        return PAGE_ONLY_SAID.format(name=spec.key)
     try:
         await _change_setting(key, args.get("value"), by="jarvis")
     except settings_service.Refused as e:
-        return f"Nothing was changed, sir: {e}."
+        return f"Nothing was changed, sir: {_refusal_said(e)}."
     view = await asyncio.to_thread(settings_service.view, spec.area)
     mine = next(d for d in view["settings"] if d["key"] == key)
     return "Saved. " + _setting_said(mine)
