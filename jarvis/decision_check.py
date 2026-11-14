@@ -410,7 +410,9 @@ PICTURES = """
   slide.querySelectorAll(".picture img").forEach((img, i) => {
     const card = img.closest(".option");
     const name = card ? `option ${card.id}'s picture` : `picture ${i + 1} (${img.getAttribute("src")})`;
-    const r = img.getBoundingClientRect();
+    const r = img.getBoundingClientRect(), cs = getComputedStyle(img);
+    if (cs.display === "none" || cs.visibility !== "visible" || parseFloat(cs.opacity) === 0)
+      problems.push(`${name} is not visible`);
     if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
       problems.push(`${name} did not load or has no size of its own`);
       return;
