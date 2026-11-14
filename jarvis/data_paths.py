@@ -189,6 +189,7 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "900d1bf94e05e22d6303197fb5264454b996410091b5d4a9a0aafbb9fbb50fef",  # a failed brain is started again
     "fff9c0cd0fe916a353d14add621c90e2eaf91cccba63e992224f8b350f2f9a79",  # settings only, merged with messages read through the brain
     "58ce45c76c0667bf74eafc7858b9bb305c7885d56d1fe5181a7cac1248ced3a8",  # the untrusted-content refusal is a Settings control
     "5a27a23f2eae7193fc3c55f33c32bf5e3ecad4d11904b30575b7c96d3bebb440",  # resolver: messages named by their local time
