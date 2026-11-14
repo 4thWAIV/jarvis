@@ -82,6 +82,21 @@ _ENGINE_PROPERTY = {
                     "decides (engine_settings), which may move it off a brain in token "
                     "stress. Never ask which engine.")}
 
+# How a tool that takes one message to him names it: by id, or by when it
+# came with who it is from, its Work item and new (messages_api.resolve).
+MESSAGE_NAMED = {
+    "message": {"type": "integer", "description": "The message's id."},
+    "at": {"type": "string",
+           "description": "When it came, his local time: as he said or typed it "
+                          "(\"3:42\", \"15:42\", \"3:42 pm\", \"15:42 h\", "
+                          "\"yesterday 9:05\"), or a message's local as JARVIS gave it "
+                          "(\"2026-11-12 15:42\"); never its when."},
+    "from": {"type": "string", "description": "Who it is from, as he named them."},
+    "work": {"type": "string", "description": "Its Work item: id or title."},
+    "new": {"type": "boolean", "description": "Only a message not yet read."},
+}
+
+
 TOOL_SPECS = [
     {
         "name": "session_detail",
@@ -158,28 +173,31 @@ TOOL_SPECS = [
     {
         "name": "read_aloud",
         "description": (
-            "Read one message to him aloud, that message only, whatever it came by (an "
-            "agent's message or answer, a package's, a decision, a person's message), as the "
-            "Read button does, only when he asks. With no message it reads the one he is on "
-            "(\"read it\"): the first that messages_to_him new listed, or the last he heard, "
-            "opened or replied to; with next, the next new one in that order (\"next\"). It "
-            "is read, and its update seen, only once he has heard it in full."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"},
-                                       "next": {"type": "boolean",
-                                                "description": "The next new message."}}},
+            "Give you one message to him to read him, that message only, whatever it came by "
+            "(an agent's message or answer, a package's, a decision, a person's message), "
+            "only when he asks: his Read on it comes to you as \"Read me message 42.\". "
+            "Read him its words in your reply as they are written, saying first who it is "
+            "from, then sum it up in one sentence. Name it by its id; or by when it came "
+            "(at, his local time as he said it: \"3:42\", \"15:42\", \"3:42 pm\", "
+            "\"yesterday 9:05\") with who it is from (from), its Work item (work) and new, "
+            "as he gave them. Several that fit come back to ask him which; none names the "
+            "nearest. With nothing named it is the one he is on (\"read it\"): the first "
+            "that messages_to_him new listed, or the last he heard, opened or replied to; "
+            "with next, the next new one in that order (\"next\"). It is read, and its "
+            "update seen, only once he has heard your reply in full."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
+            "next": {"type": "boolean", "description": "The next new message."}}},
     },
     {
         "name": "reply",
         "description": (
-            "His reply to one message to him (its id, else the one he is on: \"reply\"): "
-            "a capture addressed to its proven sender, holding his words when given; read it "
-            "back with read_capture, and it goes only on his yes. For a person's message it "
-            "is a draft in their thread instead, reviewed with request_message_review."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"},
-                                       "text": {"type": "string",
-                                                "description": "His reply, in his words."}}},
+            "His reply to one message to him (named as read_aloud names one, else the one "
+            "he is on: \"reply\"): a capture addressed to its proven sender, holding his "
+            "words when given; read it back with read_capture, and it goes only on his yes. "
+            "For a person's message it is a draft in their thread instead, reviewed with "
+            "request_message_review."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
+            "text": {"type": "string", "description": "His reply, in his words."}}},
     },
     {
         "name": "messages_to_him",
@@ -191,7 +209,10 @@ TOOL_SPECS = [
             "it; with general, only the new messages that belong to no item; with read, the "
             "ones that belong to no item he has read or answered and is not done with (the "
             "Inbox's Read section). Each message has from, about (its Work item), "
-            "says, carries (a package inbox row) and state (new, read, answered, done). "
+            "says, carries (a package inbox row), state (new, read, answered, done) and when "
+            "it came, his local time (local: \"2026-11-12 15:42\", the form to pass "
+            "read_aloud, reply, mark_message and open_inbox_package as at; when: \"today "
+            "15:42\", words for him only, since today changes at midnight). "
             "When he asks what is new, give new: every new message in the Inbox's order "
             "(each Work item with new messages, then the general ones), which puts him on "
             "the first; tell him each item's in a sentence (from, about, what it says, a "
@@ -213,12 +234,12 @@ TOOL_SPECS = [
     {
         "name": "mark_message",
         "description": (
-            "Mark one message to him read or done, only when he says so (its id from "
-            "messages_to_him). Answered is never marked: it comes of his reply going."),
-        "inputSchema": {"type": "object", "properties": {
-            "message": {"type": "integer"},
+            "Mark one message to him read or done, only when he says so (named as read_aloud "
+            "names one: its id from messages_to_him, or when it came; else the one he is "
+            "on). Answered is never marked: it comes of his reply going."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
             "state": {"type": "string", "enum": ["read", "done"]}},
-            "required": ["message", "state"]},
+            "required": ["state"]},
     },
     {
         "name": "capture",
@@ -2749,10 +2770,9 @@ TOOL_SPECS = [
             "and, for a decision package, every question to read him one at a time."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string",
-                                       "description": "Its id, or its title or sender as he said it."},
-                           "message": {"type": "integer",
-                                       "description": "A message carrying it."}},
+            "properties": MESSAGE_NAMED | {
+                "package": {"type": "string",
+                            "description": "Its id, or its title or sender as he said it."}},
         },
     },
     {

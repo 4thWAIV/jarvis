@@ -42,7 +42,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from jarvis import reporters
+from jarvis import report_keys, reporters
+from jarvis.subsystem_diagnostics import READ, WRITE, work_routes
+
+# Every report's write and every read of the list is timed, live, for the
+# Diagnostics tab's Work tracker row (subsystem_diagnostics.work).
+timed = work_routes.timed
 from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
                     web_auth, work_packages, workflow_store, work_store)
@@ -564,10 +569,13 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return JSONResponse({"error": str(e)}, status_code=409)
 
     def shown(item: work_store.WorkItem) -> dict:
-        """The item as the view holds it now (a write has just refreshed it)."""
-        return view.item(item.id) or item_json(item)
+        """The item a write left, as the view holds it once it has caught
+        up, else worked out from the write's own record: the answer never
+        waits for the view (work_view.WorkView.shown)."""
+        return view.shown(item)
 
     @app.get("/api/work")
+    @timed(READ)
     async def list_work():
         """The held view (work_view.py): the open items, their groups,
         History and the view's revision. Reads nothing."""
@@ -622,6 +630,8 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return {"events": [event_json(e) for e in found]}
 
     @app.post("/api/work")
+    @timed(WRITE)
+    @report_keys.once
     async def start_work(req: StartRequest, request: Request):
         try:
             item = await asyncio.to_thread(work_store.create, req.title, req.source.get("kind"),
@@ -633,6 +643,8 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         return {"id": item.id, "item": shown(item)}
 
     @app.post("/api/work/{item_id}/events")
+    @timed(WRITE)
+    @report_keys.once
     async def report(item_id: str, req: EventRequest, request: Request):
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing

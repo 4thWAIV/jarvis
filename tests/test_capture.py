@@ -807,7 +807,9 @@ async def test_read_reads_it_aloud_and_heard_to_the_end_it_counts_as_read_back(
     assert wired._approve_on_his_yes(wired._take_read_back_answers(), "yes") == [1]
     assert wired._capture_to_send(1)[1] is None
     assert wired._captures[1]["state"] == "capturing"
-    assert "read aloud from its box" in wired._with_notes_for_brain("")
+    note = wired._with_notes_for_brain("")
+    assert "read him a capture's read-back from its box" in note
+    assert "counts as read back in full" in note
 
 
 @pytest.mark.asyncio
@@ -820,7 +822,10 @@ async def test_a_reading_cut_short_or_overtaken_by_a_change_is_not_read_back(
 
     assert wired._capture_to_send(1)[1], "not heard in full"
     assert wired._captures[1]["state"] == "capturing"
-    assert wired._notes_for_brain == []
+    [note] = wired._notes_for_brain
+    assert "(capture 1, to hammer)" in note, "the brain still learns what he heard"
+    assert ("changed while it was read" if heard else "cut short") in note
+    assert "counts as read back" not in note
 
 
 @pytest.mark.asyncio

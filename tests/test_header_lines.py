@@ -837,6 +837,10 @@ EXEMPT = {
         "it reads each running workflow's `state`, a fixed word the workflow "
         "store works out, only to count the quiet and running ones; the line it "
         "builds carries counts and goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.work": (
+        "it reads only its own checks' `state`, a fixed word, and timings the "
+        "Work routes noted of themselves; the line it builds carries counts and "
+        "seconds and goes only to the Diagnostics tab"),
     "subsystem_diagnostics.team_server": (
         "it prints the team's name, the member's login and the client's own "
         "error line, which come from the team server, into the team row's "
@@ -985,9 +989,10 @@ EXEMPT = {
         "it records his review (his own words, from the page or his voice) and prints "
         "nothing but its refusals, whose values are checked keys and what holds a piece, "
         "itself only reached by the brain through work_status's wall"),
-    "server._sender_name": (
-        "it names a message's sender only to be spoken to him by read_aloud, as he asked, "
-        "through _said_name, which refuses anything but a plain name; never to the brain"),
+    "server.tool_read_aloud": (
+        "its header names the message by its id, its time and its state, a fixed "
+        "MessageState value, never a session's; who sent it, its Work item and its words "
+        "go to the brain only inside the messages wall"),
     "server._replying": (
         "its note to the brain names the capture by number and its recipient through "
         "_recipient_name's wall; no word of the message"),
@@ -1016,6 +1021,10 @@ EXEMPT = {
     "server.api_start_workflow": (
         "it answers the reporting agent's command with the workflow's id or a refusal "
         "naming the Work item id it gave; nothing reaches the brain or the voice"),
+    "messages_api._id_as_described": (
+        "it returns the messages that fit as candidates (their senders' names and Work "
+        "titles), which the server's _message_meant gives the brain only walled; its own "
+        "words are JARVIS's"),
     "messages_api.mount": (
         "its routes answer the page and the sending agent with JSON; the brain reads the "
         "same JSON only through messages_to_him, inside its wall"),
@@ -1081,6 +1090,19 @@ EXEMPT = {
     "decision_package.too_many_words": (
         "it lists the author's own slides and decisions over the word limits, by their "
         "own ids and titles, for the agent that ran the command"),
+    "decision_package.opening_problems": (
+        "it lists what keeps the author's own first slide from being an opening, quoting "
+        "the author's own title, purpose and conclusion, for the agent that ran the "
+        "command"),
+    "decision_package.lead_in_problems": (
+        "it lists the author's own decisions missing their lead-in, by their own ids, for "
+        "the agent that ran the command"),
+    "decision_package._slide_where": (
+        "it names one of the author's own slides by its own title, or a lead-in by its "
+        "decision's own id, in the command's refusals"),
+    "decision_package.lead_in_slide": (
+        "it builds a lead-in slide from the author's own decision fields into the deck "
+        "the command builds; nothing it builds reaches the brain"),
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
@@ -1120,6 +1142,9 @@ EXEMPT = {
     "server._package_story": (
         "it says what the teller did, by its fixed states, slide numbers, JARVIS's "
         "package id and JARVIS's own words for who stopped it; no story text"),
+    "story_teller._stop_locked": (
+        "its note to the brain names only slide numbers, JARVIS's package id and JARVIS's "
+        "own words for who stopped it; the slides' titles stay behind the status wall"),
     "server._close_package_page": (
         "its note names only the package id that matched the story being told, "
         "JARVIS's own folder name, and says the story stopped; no package text"),
@@ -1128,9 +1153,12 @@ EXEMPT = {
         "each piece to the agent that ran it, in its own terminal, never to the brain"),
     "work_report.main": (
         "the same command line: what it prints goes to the agent that ran it"),
-    "workflow_report._post": (
+    "workflow_report._answered": (
         "the reporter's command line: it prints JARVIS's refusal to the session "
-        "running the workflow, in that session's own terminal, never to the brain"),
+        "that sent the report, in that session's own terminal, never to the brain"),
+    "workflow_report._landed": (
+        "the same command line: it prints whether a report's key landed, to the "
+        "session that sent it, never to the brain"),
     "workflow_report.main": (
         "the same command line: what it prints goes to the session that ran it"),
     "agent_directory._find": (
