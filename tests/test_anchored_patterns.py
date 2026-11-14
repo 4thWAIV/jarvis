@@ -267,6 +267,7 @@ SAMPLES = {
     "_SYNC_PATH": "/people/42/settings/sync.settings",
     "_ANNOUNCEMENT_PATH": "/attention/announcements/42@m1@s1.attention",
     "_SETEXT": "===",
+    "_TIME": "today 3:42 pm",
     "_TABLE_RULE": "| --- | :-: |",
     "_SOURCES_HEADER": "**Sources:**",
     "_INDEX_KEY": "document|language,media_type",

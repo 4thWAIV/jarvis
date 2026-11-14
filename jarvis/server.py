@@ -2001,6 +2001,17 @@ def _with_notes_for_brain(text: str) -> str:
     return f"(JARVIS, not the user: {notes})\n{text}"
 
 
+def _note_spoken(what: str, ident: str, how: str) -> None:
+    """What JARVIS read him word for word outside the brain's turn (a
+    read-back for his approval, a package story's slides, a reading said
+    again), told to the brain at its next turn so it knows what he heard:
+    what it was, which (its number or id) and how it went. The only reads
+    kept direct: their exact words are the point. Everything else he asks
+    to hear is read by the brain in its own turn."""
+    _notes_for_brain.append(f"Outside your turn JARVIS read him {what} ({ident}) word for "
+                            f"word: {how}.")
+
+
 def _message_number(message: dict) -> int:
     """A message's id, as a number: it is put in a sentence for the brain."""
     try:
@@ -3068,10 +3079,17 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 def delta(d: str) -> None:
                     reply.feed(d)
                     hold.delta(d)
+
+                def tool() -> None:
+                    hold.tool_started()
+                    # Only what is written after the last tool is spoken, so
+                    # nothing an earlier tool gave the brain to read him is
+                    # in what he hears: it is neither read nor seen.
+                    _reads_unsaid(reads)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
                                                    on_delta=delta,
-                                                   on_tool=hold.tool_started)
+                                                   on_tool=tool)
                 if result.stop_reason == "result":
                     reply.finish(result.text, ReplyOutcome.SUCCEEDED)
                 else:
@@ -3108,7 +3126,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
         # Heard in full, it is also what makes the updates it read seen.
-        heard_all = await speech.wait_for(utt, timeout=120.0)
+        # A reply that reads him a message may take as long as the message.
+        heard_all = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT if reads else 120.0)
         _seen_once_heard(reads, utt, heard_all and result.stop_reason == "result")
         first_audio = (utt.first_sent_at - t0) if utt.first_sent_at is not None else None
         log.info("latency: first_delta=%s first_audio=%s turn=%.2fs ctx=%d out=%d tools=%s",
@@ -4792,7 +4811,14 @@ def _mark_the_turn_untrusted(tool: str) -> None:
     later cannot forget. Never raises: a brain that is a stand-in, or gone,
     must not take a tool down with it.
     """
-    source = TAINTING_TOOLS.get(tool)
+    _mark_untrusted_source(TAINTING_TOOLS.get(tool))
+
+
+def _mark_untrusted_source(source: Optional[str]) -> None:
+    """The turn now holds somebody else's words from `source`: what
+    `_mark_the_turn_untrusted` does for a reading tool, and what a tool
+    that only sometimes gives back other people's words (several messages
+    that fit, to ask which) does when it does. Never raises."""
     if not source:
         return
     try:
@@ -5677,23 +5703,11 @@ def _read_session_message(number: int):
     return m
 
 
-# How long a message read aloud may take to be heard before it is given up:
-# an hour, so the longest message is still read when heard to its end (an
-# 8,000-character message takes about nine minutes to say; five minutes
-# gave up on it while it was still being heard).
+# How long the reply that reads a message to him may take to be heard
+# before it is given up: an hour, so the longest message is still read when
+# heard to its end (an 8,000-character message takes about nine minutes to
+# say; five minutes gave up on it while it was still being heard).
 READ_ALOUD_TIMEOUT = 3600.0
-
-
-# How each source's message is said when he asks to hear it: who sent it
-# first. A needs board, a decision and a package already say what they are.
-# (Boards and session message files are on record from before the signed
-# route; nothing new comes by them.)
-_READ_ALOUD_LEAD = {
-    conversation_log.Source.MESSAGE: "{name} answers: ",
-    conversation_log.Source.SESSION_MESSAGE: "{name} writes: ",
-    conversation_log.Source.SIGNED: "{name} writes: ",
-    conversation_log.Source.PERSON_MESSAGE: "{name} writes: ",
-}
 
 
 def _update_message(item) -> Optional[int]:
@@ -5710,83 +5724,41 @@ def _update_message(item) -> Optional[int]:
 
 def _message_to_him(item_id) -> tuple:
     """(the message to him that conversation item `item_id` is, "") or
-    (None, why not). Blocking."""
+    (None, why not): a route's id, through the one resolver every tool
+    that takes a message uses (messages_api.resolve). Blocking."""
     try:
         number = int(item_id)
     except (TypeError, ValueError):
         return None, "Give the message's id; attention_updates names each update's message."
-    item = conversation_log.get(number)
-    if item is None or not item.inbound:
-        return None, (f"There is no message {number} to him on record; attention_updates "
-                      f"names each update's message.")
-    return item, ""
+    found = messages_api.resolve(messages_api.MessageSpec(message=number))
+    return (found.item, "") if found.item is not None else (None, found.why)
 
 
-def _sender_name(item) -> str:
-    """Who a message to him is from, as it may be said: an agent by its one
-    name now, anyone else by the name its message came under."""
-    if item.counterpart_kind == conversation_log.Counterpart.AGENT:
-        name = _name_of(item.agent_session_id, item.agent_name)
-    else:
-        name = item.detail.get("name") or ""
-    return _said_name({"voice_name": name}, "Someone")
-
-
-def _as_sentences(text: str) -> str:
-    """A message's paragraphs (a subject, then its body) as sentences to be
-    said one after another: "Status. All good."."""
-    parts = [p.strip() for p in str(text).split("\n\n") if p.strip()]
-    return " ".join(p if i == len(parts) - 1 or p[-1] in ".!?:;…" else p + "."
-                    for i, p in enumerate(parts))
-
-
-async def read_aloud(item_id):
-    """JARVIS reads one message to him aloud, that message only, as he asked,
-    whatever channel it came by: the page's Read and the brain's read_aloud
-    alike. A session's message is marked read; its update is seen only once
-    it has been heard in full (`_speak_message`), so cut off or skipped it
-    stays. (the message, "") or (None, why not)."""
-    item, why = await asyncio.to_thread(_message_to_him, item_id)
-    if item is None:
-        return None, why
-    if speech is None:
-        return None, "I have no voice to read it with."
-    _on_message(item.id)
-    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
-        await asyncio.to_thread(_read_session_message, int(item.source_id))
-    lead = _READ_ALOUD_LEAD.get(item.source_kind, "").format(name=_sender_name(item))
-    await _speak_message(conversation_log.update_of(item), lead + _as_sentences(item.text),
-                         item.id)
-    return item, ""
-
-
-async def _speak_message(update: Optional[tuple], text: str,
-                         message_id: Optional[int] = None) -> None:
-    """Speak one message to him that he asked to hear, and mark its update
-    (kind, source id) seen, and the message read, only once it has been
-    heard in full (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
-    item = attention_record.get(*update) if attention_record and update else None
-    utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
-    reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
-    if message_id is not None:
-        reads.append((_MESSAGE_READ, str(message_id), None))
-    _spawn(_seen_when_heard(reads, utt))
-
-
-async def _seen_when_heard(reads: list, utt) -> None:
-    heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
-    await asyncio.to_thread(_seen_once_heard, reads, utt, heard)
-    _hint_attention()
+# What his Read on a message says for him, as his own turn: the message by
+# its id, so the brain reads exactly that one.
+_READ_REQUEST = {"en": "Read me message {id}.", "es": "Léeme el mensaje {id}."}
 
 
 @app.post("/api/messages/{item_id}/read")
 async def api_read_message(item_id: int):
-    """His Read on a message's Updates entry, whatever channel it came by:
-    JARVIS reads it aloud (`read_aloud`); the entry stays until heard."""
-    item, why = await read_aloud(item_id)
+    """His Read on a message, whatever channel it came by: a turn of his,
+    as if he had asked by voice ("Read me message 42."), on record as his
+    typed request with the message's id (`via` read), which the brain
+    answers by reading him that message with read_aloud and summing it up.
+    Nothing is spoken here: the brain reads it, so it knows what he heard.
+    The message is read, and its update seen, only once that reply has been
+    heard in full."""
+    item, why = await asyncio.to_thread(_message_to_him, item_id)
     if item is None:
-        raise HTTPException(status_code=409 if speech is None else 404, detail=why)
-    return {"id": item.id, "reading": True}
+        raise HTTPException(status_code=404, detail=why)
+    if speech is None:
+        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    _on_message(item.id)
+    asked = _READ_REQUEST.get(spoken_words.active_language(), _READ_REQUEST["en"])
+    await _take_his_turn(asked.format(id=item.id), None, conversation_log.ItemKind.TYPED,
+                         detail={"via": "read", "message": item.id})
+    return {"id": item.id, "asking": True}
+
 
 
 def _reply_capture(item):
@@ -5879,10 +5851,7 @@ async def tool_reply(args: dict) -> str:
     """His reply to any message to him (the one he names, else the one he
     is on): a capture to its proven sender, or for a person's message a
     draft in its thread to review."""
-    meant, why = await asyncio.to_thread(_message_meant, args)
-    if meant is None:
-        return why + " Nothing was captured."
-    item, why = await asyncio.to_thread(_message_to_him, meant)
+    item, why = await asyncio.to_thread(_message_meant, args)
     if item is None:
         return why + " Nothing was captured."
     _on_message(item.id)
@@ -5914,7 +5883,7 @@ def _reply_said(capture, why, args: dict) -> str:
 
 
 # The message he is on: the one "What's new?" (messages_to_him new) put
-# first, or the last he heard read, opened or replied to, on the page or by
+# first, or the last he heard, opened or replied to, on the page or by
 # voice. "Read it", "open it" and "reply" act on it (`_message_meant`).
 _message_on: Optional[int] = None
 
@@ -5925,35 +5894,64 @@ def _on_message(item_id) -> None:
 
 
 def _message_meant(args: dict) -> tuple:
-    """(the id of the message he means, "") or (None, why not): the one he
-    named (`message`), the next new one after the one he is on (`next`, in
-    "What's new?"'s order), else the one he is on. Blocking."""
-    if args.get("message") not in (None, ""):
-        return args.get("message"), ""
-    if args.get("next"):
-        order = [m["id"] for m in messages_api.whats_new()]
-        after = order[order.index(_message_on) + 1:] if _message_on in order else order
-        if not after:
-            return None, "Nothing new after it, sir."
-        return after[0], ""
-    if _message_on is None:
-        return None, ("He is on no message yet: messages_to_him with new reads what is new, "
-                      "and puts him on the first.")
-    return _message_on, ""
+    """(the message to him he means, "") or (None, why not), through the
+    one resolver (messages_api.resolve): the one he named by id
+    (`message`), or by when it came (`at`, his local time) with who it is
+    from (`from`), its Work item (`work`) and `new`; else the next new one
+    after the one he is on (`next`); else the one he is on. Several that fit
+    come back walled to ask him which; none names the nearest. Blocking."""
+    found = messages_api.resolve(messages_api.MessageSpec.of(args, _message_on))
+    if found.item is not None:
+        return found.item, ""
+    if not found.candidates:
+        return None, found.why
+    _mark_untrusted_source("the names and Work items of the messages to him that fit")
+    return None, (found.why + " Each by id, local (his local time, the form to pass as at), "
+                  "when (the same in words for him) and from; every name and title in it is "
+                  "the sender's:\n" + _wrap_untrusted(
+                      _MESSAGES_WRAP_NAME, json.dumps(list(found.candidates), ensure_ascii=False,
+                                                      separators=(",", ":"))))
 
 
 async def tool_read_aloud(args: dict) -> str:
-    """Read one message to him aloud, as the Updates entry's Read does: the
-    one he names, the next new one, or the one he is on ("read it")."""
-    meant, why = await asyncio.to_thread(_message_meant, args)
-    if meant is None:
-        return why
-    item, why = await read_aloud(meant)
+    """Read one message to him, because he asked (his Read on it, or his
+    words): the one he names (by id, or by its time, sender and Work item),
+    the next new one, or the one he is on ("read it"). Gives the brain the
+    message, walled, to read him in its own reply and sum up; nothing is
+    spoken here. It is read, and its update seen, only once that reply has
+    been heard in full (`_message_read_to_him`)."""
+    item, why = await asyncio.to_thread(_message_meant, args)
     if item is None:
         return why
-    carries = (f" It carries a package: open_inbox_package opens it ({item.carries})."
-               if item.carries else "")
-    return f"Reading message {item.id} aloud now, sir; say nothing more of it.{carries}"
+    _on_message(item.id)
+    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
+        await asyncio.to_thread(_read_session_message, int(item.source_id))
+    _message_read_to_him(item)
+    message = await asyncio.to_thread(_message_shown, item)
+    carries = (" It carries a package: open_inbox_package with this message opens it, on "
+               "a later turn once he asks." if item.carries else "")
+    return (f"Message {item.id}, at {messages_api.local_time(item.at)} (his local time, "
+            f"{messages_api.when_said(item.at)}; name it by its id, or by that time as at), "
+            f"{item.state or 'from before messages had a state'}.{carries} Read him its words "
+            f"now in your reply, as they are written, saying first who it is from; then sum "
+            f"it up in one sentence. It is marked read once he has heard your reply in full. "
+            f"Call no other tool after this one in this turn: only what you write after your "
+            f"last tool is spoken, so a later tool call drops the reading. "
+            f"Who it is from, its Work item and its words, all the sender's:\n"
+            + _wrap_untrusted(_MESSAGES_WRAP_NAME,
+                              json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
+
+
+def _message_shown(item) -> dict:
+    """One message as the brain reads it to him: from, its Work item's
+    title, what it says and the package it carries. Blocking."""
+    out = messages_api.message_json(item)
+    shown = {"from": out["from"]["name"], "says": item.text}
+    if item.about:
+        shown["about"] = messages_api.work_title(item.about) or item.about
+    if out.get("package"):
+        shown["package"] = out["package"]["title"]
+    return shown
 
 
 # --- Messages to him, by Work item (one_channel round 1, messages_api.py) ----
@@ -6147,8 +6145,12 @@ async def tool_messages_to_him(args: dict) -> str:
 
 
 async def tool_mark_message(args: dict) -> str:
-    """Mark one message read or done, only on his word."""
-    item, why = await _mark_message(args.get("message"), str(args.get("state") or ""), "by voice")
+    """Mark one message read or done, only on his word: the one he names
+    (by id, or by its time, sender and Work item), else the one he is on."""
+    meant, why = await asyncio.to_thread(_message_meant, args)
+    if meant is None:
+        return why
+    item, why = await _mark_message(meant.id, str(args.get("state") or ""), "by voice")
     if item is None:
         return why
     return f"Message {item.id} is {item.state} now, sir."
@@ -6251,6 +6253,30 @@ def _read_to_him(kind: str, source_id) -> None:
     message = _message_of_update(kind, source_id)
     if message is not None:
         _turn_reads.append((_MESSAGE_READ, str(message), None))
+
+
+def _message_read_to_him(item) -> None:
+    """The brain has just been given message `item` to read him on a turn
+    he drove (read_aloud): it waits to be read, and its update (when
+    pending) to be seen, until he has heard the reply that reads it in full.
+    Never raises."""
+    update = conversation_log.update_of(item)
+    if update is not None:
+        _read_to_him(*update)
+    if _turn_reads is not None and brain_instance is not None \
+            and brain_instance.current_origin == "user":
+        read = (_MESSAGE_READ, str(item.id), None)
+        if read not in _turn_reads:
+            _turn_reads.append(read)
+
+
+def _reads_unsaid(reads: list) -> None:
+    """Another tool call in the turn: what the brain wrote before it is
+    binned (`_OneLinePerTurn`), so the reads made so far were never spoken
+    and wait for a reading he hears."""
+    if reads:
+        log.info("speech: %d read(s) dropped with the narration before a tool", len(reads))
+        reads.clear()
 
 
 def _message_of_update(kind: str, source_id) -> Optional[int]:
@@ -7048,12 +7074,18 @@ async def _finish_reading_aloud(capture: dict, text: str, recipient: str, utt) -
     number = capture["id"]
     if _captures.get(number) is not capture:
         return                                  # sent, merged or deleted meanwhile
-    if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
+    unchanged = capture["text"] == text and transmission.recipient(capture) == recipient
+    if heard and unchanged:
         transmission.read_back(capture, text)
-        _notes_for_brain.append(
-            f"He had capture {number} read aloud from its box and heard it to the "
-            f"end: it counts as read back in full. It goes only if the next thing he "
-            f"says is a plain yes; ask him whether to send it.")
+        how = ("he heard it to the end, so it counts as read back in full. It goes only if "
+               "the next thing he says is a plain yes; ask him whether to send it")
+    elif heard:
+        how = "it changed while it was read, so it must be read back again before it can go"
+    else:
+        how = ("it was cut short, so it has not been heard in full and cannot be sent until "
+               "it is read back again")
+    _note_spoken("a capture's read-back from its box, at his Read",
+                 f"capture {number}, to {_recipient_name(capture, 'its recipient')}", how)
     _capture_show(capture, "capturing")
 
 
@@ -7378,6 +7410,17 @@ async def _perform_steer(item: _StagedSteer) -> None:
 COMMAND_AUDIT_NAME = "a Terminal window"
 
 
+# How a command's or keypress's read-back went, as the brain is told
+# (`_note_spoken`): each audit outcome after the read-back began.
+_READBACK_OUTCOMES = {
+    "ran": "heard in full, and the command was run in a Terminal window",
+    "cancelled_by_user": "he cancelled it, so nothing was done",
+    "readback_failed": "it was not heard in full, so nothing was done",
+    "failed": "it failed, so it may not have been done",
+    dialog.SENT: "heard in full, and the key was pressed",
+}
+
+
 async def _perform_command(item: _StagedCommand) -> None:
     """One staged command, start to finish. Records EXACTLY one audit row.
 
@@ -7405,6 +7448,9 @@ async def _perform_command(item: _StagedCommand) -> None:
         recorded = True
         await asyncio.to_thread(run_store.record_steer, "", COMMAND_AUDIT_NAME,
                                 item.project, item.command, outcome)
+        if outcome in _READBACK_OUTCOMES:
+            _note_spoken("the read-back of the command run_command staged",
+                         f"command {item.command}", _READBACK_OUTCOMES[outcome])
 
     def outcome(event: str) -> None:
         # Shown, not spoken: the read-back was the words that mattered.
@@ -7521,6 +7567,10 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         await asyncio.to_thread(run_store.record_steer, item.session_id,
                                 item.voice_name, item.project, item.key,
                                 f"dialog:{outcome}")
+        if outcome != "no_voice":
+            _note_spoken("the read-back of the keypress answer_dialog staged",
+                         f"key {said}", _READBACK_OUTCOMES.get(
+                             outcome, f"heard in full; pressing it ended {outcome}"))
 
     def shown(event: str) -> None:
         _action_outcome("keypress", event, {"agent": _said_name(item)})
@@ -9044,7 +9094,7 @@ async def _close_package_page(reference: str) -> None:
 story_teller = StoryTeller(
     lambda: speech, _open_package_page, lambda f: _voice_emit(f),
     floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
-    note=_notes_for_brain.append)
+    note=_notes_for_brain.append, spoken=_note_spoken)
 
 
 def _story_said(told: "story_teller_module.Told") -> str:
@@ -10476,10 +10526,7 @@ def _carried_by(args: dict) -> tuple:
     `message`, else the one he is on: "open it"). Blocking."""
     if str(args.get("package") or "").strip():
         return str(args["package"]).strip(), ""
-    meant, why = _message_meant(args)
-    if meant is None:
-        return None, why
-    item, why = _message_to_him(meant)
+    item, why = _message_meant(args)
     if item is None:
         return None, why
     _on_message(item.id)
@@ -12080,9 +12127,9 @@ ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_micro
                      "mark_message"})
 TAINTING_TOOLS.update({
     "messages_to_him": "the messages agents and people sent him, and their names",
+    "read_aloud": "one message an agent or a person sent him, its sender's name and its words",
 })
 TAINT_EXEMPT_TOOLS.update({
-    "read_aloud": "it reads one message aloud to him and says so in JARVIS's words",
     "reply": ("it opens a capture addressed to the message's proven sender, or saves a draft "
               "to a person, naming only the recipient"),
     "mark_message": "it marks one message read or done by its id, it does not read",
@@ -16672,6 +16719,62 @@ def _scan_projects_sync() -> list[dict]:
 
 # -- WebSocket Voice Handler -----------------------------------------------
 
+async def _take_his_turn(text: str, heard: Optional[int],
+                         kind: str = conversation_log.ItemKind.HEARD,
+                         detail: Optional[dict] = None) -> None:
+    """One whole thing he said, typed or asked for with a button (his Read
+    on a message): on record as `kind` with `detail`, then answered. The
+    one way in for every turn of his, so a clear or rotation answer, the
+    read-backs waiting for his answer and the brain's turn are taken the
+    same way whatever brought it."""
+    log.info(f"User{'' if kind == conversation_log.ItemKind.HEARD else f' ({kind})'}: {text}")
+    detail = dict(detail or {})
+    if heard is not None:
+        detail["client_turn_id"] = heard
+    _record(kind, text, detail=detail)
+    # Whatever he said answers the read-backs waiting for it; only a
+    # plain yes that goes on to the brain as his turn approves them.
+    read_backs = _take_read_back_answers()
+    cleared = _take_clear_answer(text)
+    if cleared:
+        return
+    if cleared is None and _is_fresh_start(text):
+        _spawn(_ask_to_clear(text))
+        return
+    switch_to = _language_switch_asked(text) if cleared is None else None
+    if switch_to:
+        _spawn(_switch_language_by_voice(switch_to))
+        return
+    if cleared is False and _rotation_answer(text) is False:
+        return                  # a plain no: consumed, not a request
+    if _take_rotation_answer(text):
+        return
+    _approve_on_his_yes(read_backs, text)
+    _spawn(_handle_utterance(text, heard))
+
+
+def _note_replayed(utt) -> None:
+    """"Say that again" said a reading JARVIS read him directly (a capture's
+    read-back, a command's or keypress's, a story's slides): the brain is
+    told it was said again. The brain's own reply needs no note: it has it."""
+    if utt is None or utt.kind == "turn":
+        return
+    captures = sorted({c.capture for c in utt.chunks if c.capture is not None})
+    slides = sorted({(c.cue or {}).get("slide") for c in utt.chunks
+                     if c.cue and (c.cue or {}).get("slide")})
+    if captures:
+        what, ident = "a capture's read-back", ", ".join(f"capture {n}" for n in captures)
+    elif slides:
+        package = next(c.cue.get("package") for c in utt.chunks if c.cue)
+        what, ident = "slides of a package's story", f"package {package}, " + \
+            ", ".join(f"slide {n}" for n in slides)
+    elif utt.label == "readback":
+        what, ident = "a command's or keypress's read-back", "the last one staged"
+    else:
+        return
+    _note_spoken(what, ident, "he asked to hear it again, and it was said again as it was")
+
+
 def _opening_frames() -> list[dict]:
     """What a page is told as its voice socket opens: the settings it
     needs, that JARVIS is idle, the page package shown (so a reload keeps
@@ -16724,29 +16827,8 @@ async def voice_handler(ws: WebSocket):
     log.info("Voice WebSocket connected")
 
     async def take_utterance(text: str, heard: Optional[int], typed: bool = False) -> None:
-        """One whole thing he said (or typed): record it, and answer it."""
-        log.info(f"User{' (typed)' if typed else ''}: {text}")
-        _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
-                text, detail={"client_turn_id": heard} if heard is not None else {})
-        # Whatever he said answers the read-backs waiting for it; only a
-        # plain yes that goes on to the brain as his turn approves them.
-        read_backs = _take_read_back_answers()
-        cleared = _take_clear_answer(text)
-        if cleared:
-            return
-        if cleared is None and _is_fresh_start(text):
-            _spawn(_ask_to_clear(text))
-            return
-        switch_to = _language_switch_asked(text) if cleared is None else None
-        if switch_to:
-            _spawn(_switch_language_by_voice(switch_to))
-            return
-        if cleared is False and _rotation_answer(text) is False:
-            return                  # a plain no: consumed, not a request
-        if _take_rotation_answer(text):
-            return
-        _approve_on_his_yes(read_backs, text)
-        _spawn(_handle_utterance(text, heard))
+        await _take_his_turn(text, heard, conversation_log.ItemKind.TYPED if typed
+                             else conversation_log.ItemKind.HEARD)
 
     def show_turn(frame: dict) -> None:
         _show_turn(ws, frame)
@@ -16906,8 +16988,11 @@ async def voice_handler(ws: WebSocket):
                     # no brain turn, so no cost and no risk of coming back
                     # with different words. Never routed to _handle_utterance.
                     log.info(f"User (replay): {text}")
+                    last = speech.last_spoken
                     if not await speech.replay_last():
                         await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL, label="system")
+                    else:
+                        _note_replayed(last)
                     continue
                 if verdict != "speech":
                     # Say WHY, so a dropped sentence can be diagnosed from the

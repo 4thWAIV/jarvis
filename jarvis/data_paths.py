@@ -187,6 +187,8 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "5a27a23f2eae7193fc3c55f33c32bf5e3ecad4d11904b30575b7c96d3bebb440",  # resolver: messages named by their local time
+    "70429177c291f7c6701f1529f83ebf772447fa918bc19290e10a401b4b28cd87",  # messages are read through the brain
     "e3e8023884d10ff8a07d7bafe1a9c72499c972b7d45cc8f8f95f1a27f421735a",  # packages arrive as messages in the Inbox, not the Queue
     "ff6f0f4e8e1bbc10bc27d7efb21c93c3635e290685a7e9ff11e866d106caaff1",  # UDS round 2: knowledge search over files
     "083a94de9e0316698de18329919d6218af17180909c7029cb9a4a3d70f3c0b2b",  # complete capture before read-back
