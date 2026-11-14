@@ -23,6 +23,9 @@ heartbeats and outcomes kept here).
     has read, never worse than degraded.
   - The team server: team_client's own status, never worse than degraded,
     since JARVIS works without it.
+  - The server's start setup (start_settings.status): a changed setup on
+    trial, and going back to the last one a page reached, degraded for
+    start_settings.REVERT_NOTICE_SEC.
 
 The page judges its own connection. `gather` does the reads; the server's
 route returns it, and the server's watch (`_watch_subsystems`) hints the
@@ -221,6 +224,12 @@ SAID: dict[str, str | dict[str, str]] = {
     "teamPairing": "Waiting for this Mac to be approved on the team server",
     "nodeIdMinted": "This Mac was given a new node ID {age} ago, although one had been kept; references made under the old one still resolve here",
     "teamNotConnected": "Not connected",
+    "startTrial": "Trying {address}; going back to {fallback} in {left} unless a page reaches it",
+    "startReverted": "No page reached {address} within {window}; went back to {fallback} {age} ago",
+    "startUnbindable": "{address} could not be bound; went back to {fallback} {age} ago",
+    "startOverridden": "Started with command-line flags for this run; nothing is put on trial",
+    "startAsSaved": "Running on the start setup saved in Settings",
+    "startNotFromFile": "Not started from the start file; nothing is put on trial",
 }
 
 # The English of every subsystem's and check's name, by code.
@@ -247,6 +256,7 @@ NAMES: dict[str, str] = {
     "recogniser": "Recogniser",
     "server": "Server",
     "nodeId": "Node ID",
+    "startSetup": "Start setup",
     "usage": "Usage limit",
     "process": "Process",
     "toolCalls": "Tool calls",
@@ -812,12 +822,46 @@ def team_server(team: dict, now: float, minted: Optional[dict] = None) -> Subsys
     return subsystem("team_server", shown[0], shown[1], checks)
 
 
+def start_setup(start: Optional[dict], now: float) -> Subsystem:
+    """The server's start setup (start_settings.status, with `from_file`
+    and `overridden` from settings_service): a trial waiting for a page,
+    and the last going back, degraded while recent. Never worse than
+    degraded: the server is up and answering whichever setup it is on."""
+    from jarvis import start_settings
+    if not start or not start.get("from_file"):
+        shown = (IDLE, say("startNotFromFile"))
+    elif start.get("overridden"):
+        shown = (OK, say("startOverridden"))
+    elif start.get("trial"):
+        t = start["trial"]
+        shown = (OK, say("startTrial", address=start_settings.address(t["setup"]),
+                         fallback=start_settings.address(t["fallback"]), left=age(t["seconds_left"])))
+    else:
+        shown = (OK, say("startAsSaved"))
+    checks = [check("start", "startSetup", *shown)]
+    reverted = (start or {}).get("reverted")
+    if reverted and isinstance(reverted.get("at"), (int, float)):
+        when = now - reverted["at"]
+        code = "startReverted" if reverted.get("why") == start_settings.UNREACHED \
+            else "startUnbindable"
+        checks.append(check("reverted", "startSetup",
+                            DEGRADED if when < start_settings.REVERT_NOTICE_SEC else IDLE,
+                            say(code, address=start_settings.address(reverted.get("from") or {}),
+                                fallback=start_settings.address(reverted.get("to") or {}),
+                                window=age(start.get("window_sec") or 0), age=age(when))))
+    s = from_checks("server", checks, shown[1])
+    if s.state == DOWN:
+        s.state = DEGRADED
+    return s
+
+
 # ── all of them ──────────────────────────────────────────────────────────
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
            team: Optional[dict] = None, folders: Optional[dict] = None,
            knowledge_health: Optional[dict] = None,
            local_voice: Optional[dict] = None,
+           start: Optional[dict] = None,
            now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
@@ -834,6 +878,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
         team_server(team or {}, now, data_paths.node_id_minted()),
+        start_setup(start, now),
     ]
 
 

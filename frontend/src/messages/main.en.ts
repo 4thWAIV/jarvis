@@ -1170,6 +1170,7 @@ export const mainEn = {
   "main.updates.event.knowledge_seed.proposed": "JARVIS suggests creating the {name} topics; nothing is created without your yes",
   "main.updates.event.project_candidate.proposed": "JARVIS proposes {name} as a project; nothing is made without your yes",
   "main.updates.event.node_id.minted": "This Mac was given a new node ID although one had been kept; see Diagnostics, Team server",
+  "main.updates.event.start_setup.reverted": "JARVIS went back to the last start setup that worked; see Settings, Server",
   "main.updates.event.communications.down": "Communications with the agents are down",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",
   "main.updates.event.brain.sign_in": "The brain's login has expired: run claude in a terminal and log in, then restart JARVIS",

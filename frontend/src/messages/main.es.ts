@@ -1123,6 +1123,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.knowledge_seed.proposed": "JARVIS sugiere crear los temas de {name}; no se crea nada sin su sí",
   "main.updates.event.project_candidate.proposed": "JARVIS propone {name} como proyecto; no se crea nada sin su sí",
   "main.updates.event.node_id.minted": "Esta Mac recibió un ID de nodo nuevo aunque se había guardado uno; vea Diagnóstico, Servidor del equipo",
+  "main.updates.event.start_setup.reverted": "JARVIS volvió a la última configuración de inicio que funcionó; vea Ajustes, Servidor",
   "main.updates.event.communications.down": "Las comunicaciones con los agentes no funcionan",
   "main.updates.event.brain.down": "El cerebro no funciona; vea Diagnóstico",
   "main.updates.event.brain.sign_in": "La sesión del cerebro caducó: ejecute claude en una terminal e inicie sesión, luego reinicie JARVIS",

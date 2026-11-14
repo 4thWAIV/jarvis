@@ -1532,8 +1532,9 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel, the workflow monitor, the folder catalog and the team
-server connection
+output, the tool channel, the workflow monitor, the folder catalog, the team
+server connection and the server's start setup (`start_setup`: a trial and
+the last going back, never worse than degraded)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
@@ -2848,13 +2849,31 @@ or the section's own tool where one is named.
   check accepts); `debug_docs` (`/docs`, next start). The address is only
   one that still serves this Mac (127.0.0.1, ::1, localhost, 0.0.0.0, ::)
   and the port never the page's dev server's; Vite reads the start file
-  again whenever it changes. A start whose address cannot be bound goes
-  back to the last one that served (`start_settings.fall_back`), recorded
-  only once uvicorn is listening. Every next-start setting, the records'
+  again whenever it changes. Confirm or revert (Tim's decision
+  unreachable-after-start-change): a start from Settings whose setup
+  (`start_settings.SETUP_KEYS`: host, port, HTTPS, allowed origins)
+  differs from the last one a page reached is a trial once uvicorn is
+  listening (`start_settings.begin_trial`, `server._confirm_or_revert`),
+  that setup its fallback. A page reaching it (`web_auth.on_page_reached`,
+  `server._page_reached`: a socket or a state-changing request admitted
+  by the page's own origin with no Authorization, never the tool token or
+  an agent's key) confirms it (`start_settings.remember_served`, the one
+  writer of `last_good`); none within `start_settings.TRIAL_WINDOW_SEC`
+  (60 s) and JARVIS goes back (`start_settings.fall_back`, the one
+  rollback) and restarts through `_restart_server`. With no setup reached
+  yet there is no trial. A start whose address cannot be bound goes back
+  the same way before it binds. Each going back is `reverted` in the start
+  file (when, from, to, why: `unreached` or `unbindable`), shown in
+  Settings, Server until he next saves a start setting, as a silent
+  `start_setup` attention item at the next start, and on the Diagnostics
+  `server` row's Start setup check (degraded for `REVERT_NOTICE_SEC`); a
+  pending trial is counted down in Settings, Server, and
+  `jarvis_settings` says the same. Every next-start setting, the records'
   too, says it waits for a restart once saved differently from the start
   (`settings_service.note_started`). Restart now is `/api/restart`, through
   `MenuControl.restartServer` as the menu's. The command-line `--host`,
-  `--port` and `--ssl` stay as one run's own and are saved nowhere;
+  `--port` and `--ssl` stay as one run's own, saved nowhere and never put
+  on trial or confirmed (`settings_service.from_settings_at_start`);
   `jarvis.background` passes none.
 - Updates has no setting.
 `.env` is read once, by `settings_import` at the first start after this
