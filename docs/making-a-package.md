@@ -83,13 +83,24 @@ python -m jarvis.make_package --example               # a decision package
 python -m jarvis.make_package --example presentation  # a presentation
 ```
 
-Write only the substance. A decision package:
+Write only the substance. Every deck is a conclusion-first briefing: it says what it is for and its answer or ask before any data, and every decision is led in by why it is Tim's and what it rests on (see [The opening and the lead-ins](#the-opening-and-the-lead-ins)). A decision package:
 
 ```json
 {
   "title": "Team lunch",
+  "purpose": "Choose where the team eats on Friday.",
+  "conclusion": "Choose lunch in the office on Friday, so nobody has to book a table.",
+  "slides": [
+    {"title": "Where should Friday's lunch be?",
+     "blocks": [{"lead": "Choose lunch in the office on Friday, so nobody has to book a table."},
+                {"p": "The restaurant needs a booking by Wednesday."}],
+     "say": "This is about where the team eats on Friday. I suggest the office, so nobody has to book a table; the restaurant needs a booking by Wednesday."}
+  ],
   "decisions": [
     {"question": "Where do we eat on Friday?",
+     "why_you": "It is your team's day and your budget.",
+     "evidence": ["The restaurant needs a booking by Wednesday.",
+                  "The office caterer needs a day's notice."],
      "options": [{"name": "In the office", "says": "Food is brought in.",
                   "picture": "pictures/office.png", "recommended": true},
                  {"name": "A restaurant", "says": "A short walk away.",
@@ -99,20 +110,43 @@ Write only the substance. A decision package:
 }
 ```
 
-A presentation is the same file with `slides` and no `decisions`. A decision package may have `slides` too, shown before its decisions.
+A presentation is the same file with `slides` and no `decisions`. A decision package's `slides` are shown before its decisions, the first of them its opening.
 
 | field | what it is |
 |---|---|
 | `title` | The deck's title. Tim opens it by saying "Open the <title> package." |
+| `purpose` | Required. One sentence: what the package is for, in Tim's terms; at most 200 characters. It is also the package's own purpose. |
+| `conclusion` | Required. One sentence: the answer, or what he is asked; at most 200 characters. One sentence means one line that ends in `.`, `!`, `?` or `…` at most once. |
 | `language` | `en` (the default) or `es`, the language its story is told in. |
 | `slides` | The slides, in order. Each has a `title`, `say` (what JARVIS says over it; without it JARVIS says only the title), and `blocks`. Optional: `short` (its name on the slide strip), `id`, `kicker`, and `beats` in place of `say` (several lines, each pointing at a part of the slide; see "Telling a page's story" in [work packages](work-packages.md)). `{"decision": "<question, short name or id>"}` places that decision's slide there. |
 | `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows"}}`, `{"picture": path, "alt", "caption"}` or `{"pictures": [{"src", "alt", "caption"}]}`. Text may use `**bold**` and `` `code` ``. |
-| `decisions` | Each has its `question`, at least two `options`, which one is recommended, and the one-line `reason`. Optional: `context` (a line of background), `picture` (beside the options), `compare` (a large picture comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
+| `decisions` | Each has its `question`, at least two `options`, which one is recommended, the one-line `reason`, and its lead-in: `why_you` (one line, at most 160 characters: why it is his to decide and not an agent's) and `evidence` (one to three lines, each at most 160 characters: the facts it rests on; one line may be given as a string). Optional: `context` (a line of background), `picture` (beside the options), `compare` (a large picture comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
 | `options` | Each has a `name`, what it `says` and a `picture` of what he would see (required unless the decision is `text_only`). Optional: `"recommended": true` (on exactly one, or name the option in the decision's `recommended`), and `opens`: the questions asked only when this option is chosen. |
 
 Pictures are PNG, JPEG, GIF, WebP or SVG files, given as paths beside the JSON file.
 
-Worked out for you, and never needed: the package's `name` and `purpose` (from the title), its `version` (one past the highest of that name already delivered), every `id`, each decision's `short` name, the story JARVIS tells, `package.json`, the answering skill and `decide.py`.
+### The opening and the lead-ins
+
+The command refuses a deck that is not a briefing, naming what to write. These are the rules (`decision_package.briefing_problems`), the same for a decision package and a presentation:
+
+- **`purpose` and `conclusion`** are written by you, both nonempty, the conclusion one sentence. They are deck/0.1's document fields of the same names.
+- **The first slide is the opening.** It is a content slide of yours: not a decision, not a lead-in. Its first block is words (`lead`, `p`, `points`, `note` or a picture), never a `table` or `facts`: data comes after the opening, on slides titled with the claim it supports. It has a `say` (or `beats`), what JARVIS tells over it.
+- **The opening shows the conclusion.** At least 80% of the conclusion's words (see below) are in the opening's title and blocks, so the conclusion itself or a close paraphrase of it is on the slide, not only in the metadata.
+- **The opening carries the purpose.** At least 60% of the purpose's words are in its title, blocks and narration together.
+- **Every decision has its lead-in**: `why_you` and `evidence` beside its `question`. The command draws them as the decision's own lead-in slide, "Before you decide: <short name>", placed just before the decision's slide: the question, why it is his, and the evidence, with JARVIS saying all three. A decision opened by another's answer has its lead-in told only when it is asked. The standard vote the command adds needs none.
+
+The words test: both texts are split into words with accents and case folded (`spoken_words.folded_words`, so it works in Spanish as in English), `**` and `` ` `` marks dropped, and only the distinct words of four letters or more are counted (all of them when there are none that long). Order, punctuation and the short words do not matter, so "At noon we eat in the office: nobody books tables." carries "Eat in the office at noon, so nobody books a table." It is a check that the words are there; whether they read well is the fresh author's comprehension review, which starts from the opening slide alone.
+
+An opening, for the example above:
+
+```json
+{"title": "Where should Friday's lunch be?",
+ "blocks": [{"lead": "Choose lunch in the office on Friday, so nobody has to book a table."},
+            {"p": "The restaurant needs a booking by Wednesday."}],
+ "say": "This is about where the team eats on Friday. I suggest the office, so nobody has to book a table."}
+```
+
+Worked out for you, and never needed: the package's `name` (from the title), each decision's lead-in slide (from its `why_you` and `evidence`), its `version` (one past the highest of that name already delivered), every `id`, each decision's `short` name, the story JARVIS tells, `package.json`, the answering skill and `decide.py`.
 
 No slide may be a wall of text. The limits are 80 characters for a title, 16 for a short name, 120 for a question, 160 for a reason, 40 for an option's name and 140 for what it says; 280 for any one line and 700 for a whole slide; and 60 words of body text on a slide, 30 words for a question, and 40 for a reason, context or what an option says. A field the deck does not know (`sais`, `recomended`) is refused with the field you probably meant. Split a long slide into two.
 
@@ -144,6 +178,8 @@ python -m jarvis.language_document --as <your session id> validate --source arch
 python -m jarvis.make_package --document <document_id> --revision <revision> \
   --handoff handoff.json --engine <claude|codex> --session <your session id> --work <item id>
 ```
+
+The opening rule applies here through the explanation, not through slides: the page is the kit's drawing of the checked document, whose title and content come from its revision and cannot be reworded without a new one, so the command does not check its first screen. The fresh author is told to open `UNDERSTANDING.md` with what the architecture is for and the conclusion or ask, and its comprehension review checks that; the command checks only that the explanation is there and readable.
 
 `validate` exits 1 and prints the kit's diagnostics while the draft does not check or leaves anything `unresolved`; such a revision cannot be sent. Do not give `readable_markdown`: the explanation is the fresh author's. `make_package --document` launches the fresh author as for any package, giving it the checked revision (its YAML, rendered page, check and coverage); the author writes only `package/UNDERSTANDING.md`, the plain explanation for your handoff's audience, and checks it last with `make_package package --check-only --document <document_id> --revision <revision>`. The command then projects the revision around it (the YAML, the kit's rendered page as the package's page, the check and the canonical identity, `language_projection.project`, the same projection JARVIS's own publish makes), runs the kit's check again on it as Tim's JARVIS will, signs it with your key and the author's proof, and sends it as a message on the document's own Work item (`--work` may be left out; another item is refused). It ends with the standard vote. Tim's JARVIS admits it only with that author proof, opens it like any page package, and his answers come back to your session when he signs it off.
 

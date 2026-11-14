@@ -1012,7 +1012,13 @@ one command, `python -m jarvis.make_package <content.json | folder>`
 (`make_package.py`), and `docs/making-a-package.md` is the only place
 that says how: a deck's content (a decision package, or a presentation
 when it has no decisions; `decision_package.py` reads, expands and checks
-it, the shared deck's `new_deck.py` builds it) or a hand-made package's
+it, the shared deck's `new_deck.py` builds it; every deck is a briefing,
+`decision_package.briefing_problems`: its own `purpose` and one-sentence
+`conclusion` (deck/0.1's), a first slide of words that shows the
+conclusion and with its narration carries the purpose, and each decision's
+`why_you` and `evidence`, drawn as its lead-in slide before it; an
+architecture package's opening is its document's, its explanation opening
+with the purpose and conclusion) or a hand-made package's
 folder (only `purpose` given; read back through
 `work_packages.recognise`). A deck is checked end to end in an isolated
 JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both

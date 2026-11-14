@@ -233,7 +233,11 @@ def story(deck: dict) -> dict:
             else:
                 beats = [{"say": spoken(s.get("say") or s["title"]), "actions": [go],
                           "targets": [f"#{sid} h2"]}]
-            slides.append({"title": s.get("short") or s["title"], "target": f"#{sid}", "beats": beats})
+            slide = {"title": s.get("short") or s["title"], "target": f"#{sid}", "beats": beats}
+            # A decision's lead-in is told only when its decision is asked.
+            if s.get("lead_in") in opened:
+                slide["asks_when"] = opened[s["lead_in"]]
+            slides.append(slide)
     for slide in slides:
         for b in slide["beats"]:
             if len(b["say"]) > SAY_MAX:

@@ -1066,6 +1066,19 @@ EXEMPT = {
     "decision_package.too_many_words": (
         "it lists the author's own slides and decisions over the word limits, by their "
         "own ids and titles, for the agent that ran the command"),
+    "decision_package.opening_problems": (
+        "it lists what keeps the author's own first slide from being an opening, quoting "
+        "the author's own title, purpose and conclusion, for the agent that ran the "
+        "command"),
+    "decision_package.lead_in_problems": (
+        "it lists the author's own decisions missing their lead-in, by their own ids, for "
+        "the agent that ran the command"),
+    "decision_package._slide_where": (
+        "it names one of the author's own slides by its own title, or a lead-in by its "
+        "decision's own id, in the command's refusals"),
+    "decision_package.lead_in_slide": (
+        "it builds a lead-in slide from the author's own decision fields into the deck "
+        "the command builds; nothing it builds reaches the brain"),
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
