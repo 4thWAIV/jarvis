@@ -30,42 +30,16 @@ import time
 import uuid
 from pathlib import Path
 
-# Before the .env is loaded, which is found through it. It reads nothing
-# from the environment on import.
 from jarvis import data_paths
 
-# The ONE definition of what a line of `.env` is. Both readers use it (this
-# boot loader and `_read_env`), and so does `_env_value_problem`, which is
-# what the writer asks before it puts a value on a line.
-#
-# One function rather than three copies because the copies disagreed. The
-# writer forbade three characters — "\n", "\r", "\0" — and `str.splitlines()`
-# splits on ten, so `{"user_name": "Tony\x0bJARVIS_CLAUDE_PATH=/tmp/evil"}`
-# came back 200 and `_read_env()` then reported JARVIS_CLAUDE_PATH=/tmp/evil.
-# That is the binary the brain is spawned from, and /api/restart is one call
-# away. Extending the blocklist to ten characters would have left the same
-# shape of bug for the next separator; deriving the writer's rule from the
-# reader's parser cannot.
-def _parse_env_lines(text: str) -> list[tuple[str, str]]:
-    """Every (key, value) a reader of `.env` sees in `text`, in order."""
-    out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            out.append((k.strip(), v.strip().strip('"').strip("'")))
-    return out
-
-
-def _env_file_path() -> Path:
-    # The boot loader below and the settings endpoints both go through here.
-    return data_paths.env_file_path()
-
-
-# Load .env file if present
-if _env_file_path().exists():
-    for _k, _v in _parse_env_lines(_env_file_path().read_text()):
-        os.environ.setdefault(_k, _v)
+# Every setting is a Settings control (settings_specs.py); none is read from
+# the environment, and `.env` is never loaded. The first start after that
+# copies `.env`'s start settings into the start file once, here, before
+# anything below reads one (the docs console decides the app's routes);
+# the rest are copied once the records are open (`_start_on_records`).
+from jarvis import env_names, settings_import, settings_service, settings_specs, start_settings
+settings_import.start_file_once()
+_setting = settings_service.value
 from contextlib import asynccontextmanager
 import dataclasses
 from dataclasses import dataclass, field
@@ -108,7 +82,7 @@ from jarvis import brain_activity, tool_activity
 from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
-from jarvis import work_api, work_store, work_view
+from jarvis import report_keys, work_api, work_store, work_view
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -172,10 +146,21 @@ log = logging.getLogger("jarvis")
 
 from jarvis import local_tts
 
-FISH_API_KEY = os.getenv("FISH_API_KEY", "")
-FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-USER_NAME = os.getenv("USER_NAME", "sir")
-_SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
+
+def _fish_key() -> str:
+    """Settings, Voice: the Fish Audio key (the Keychain's)."""
+    return _setting("fish_api_key")
+
+
+def _fish_voice() -> str:
+    """Settings, Voice: the Fish Audio voice (default JARVIS, MCU)."""
+    return _setting("fish_voice_id")
+
+
+def _skip_permissions() -> bool:
+    """Settings, Agents: runs skip permission prompts (run_executor's one reading)."""
+    from jarvis import run_executor
+    return run_executor._skip_permissions()
 
 DESKTOP_PATH = Path.home() / "Desktop"
 
@@ -202,21 +187,14 @@ def _format_location_label(city: str, region: str, country: str) -> str:
 
 
 def _get_weather_location() -> Optional[dict]:
-    """Resolve weather location: env override → cached lookup → fresh IP lookup."""
+    """Resolve weather location: Settings' place → cached lookup → fresh IP lookup."""
     global _cached_weather_location, _weather_location_fetched_at
 
-    lat_raw = os.getenv("WEATHER_LATITUDE", "").strip()
-    lon_raw = os.getenv("WEATHER_LONGITUDE", "").strip()
-    label_override = os.getenv("WEATHER_LOCATION_LABEL", "").strip()
-    if lat_raw and lon_raw:
-        try:
-            return {
-                "latitude": float(lat_raw),
-                "longitude": float(lon_raw),
-                "label": label_override or "your area",
-            }
-        except ValueError:
-            log.warning("Invalid WEATHER_LATITUDE / WEATHER_LONGITUDE in environment")
+    lat, lon = _setting("weather_latitude"), _setting("weather_longitude")
+    label_override = _setting("weather_location_label").strip()
+    if lat is not None and lon is not None:
+        return {"latitude": float(lat), "longitude": float(lon),
+                "label": label_override or "your area"}
 
     if (
         _cached_weather_location is not None
@@ -256,9 +234,7 @@ def _fetch_weather_string_sync() -> Optional[str]:
     if not location:
         return None
 
-    unit = os.getenv("WEATHER_UNIT", "fahrenheit").strip().lower()
-    if unit not in ("fahrenheit", "celsius"):
-        unit = "fahrenheit"
+    unit = _setting("weather_unit")
     unit_symbol = "°F" if unit == "fahrenheit" else "°C"
 
     try:
@@ -298,15 +274,21 @@ def _fetch_weather_string_sync() -> Optional[str]:
 # dashboard's repeated calls from starting a new one each time. The budget is
 # checked between entries, so a single pathological entry can still overshoot
 # it — bounding that would mean a timeout per stat, which is not worth it.
-SCAN_BUDGET_SECONDS = float(os.getenv("JARVIS_SCAN_BUDGET", "20"))
-SCAN_CACHE_SECONDS = float(os.getenv("JARVIS_SCAN_CACHE", "300"))
+# Both are Settings, Projects (`scan_budget`, `scan_cache`).
+def _scan_budget() -> float:
+    return float(_setting("scan_budget"))
 
-# Roots are overridable so a user whose Desktop is slow, huge or cloud-backed
-# has somewhere to point this. Colon-separated, like PATH.
+
+def _scan_cache_seconds() -> float:
+    return float(_setting("scan_cache"))
+
+
+# Roots are a setting (Settings, Projects) so a user whose Desktop is slow,
+# huge or cloud-backed has somewhere to point this.
 def _scan_roots() -> list[Path]:
-    override = os.getenv("JARVIS_PROJECT_ROOTS", "").strip()
-    if override:
-        return [Path(r).expanduser() for r in override.split(":") if r.strip()]
+    chosen = _setting("project_roots")
+    if chosen:
+        return [Path(r).expanduser() for r in chosen]
     return [DESKTOP_PATH, project_maker.projects_root()]
 
 
@@ -379,10 +361,11 @@ async def scan_projects() -> list[dict]:
     interpreter is blocked in a native call.
     """
     now = time.monotonic()
-    if _scan_cache["value"] and now - _scan_cache["at"] < SCAN_CACHE_SECONDS:
+    if _scan_cache["value"] and now - _scan_cache["at"] < _scan_cache_seconds():
         return _scan_cache["value"]
 
-    deadline = now + SCAN_BUDGET_SECONDS
+    budget = _scan_budget()
+    deadline = now + budget
     projects, complete = await asyncio.to_thread(_scan_projects_blocking, deadline)
 
     if complete:
@@ -392,7 +375,7 @@ async def scan_projects() -> list[dict]:
     log.warning(
         "project scan hit its %.0fs budget after %d projects; serving those. "
         "Set JARVIS_PROJECT_ROOTS to a faster directory, or raise "
-        "JARVIS_SCAN_BUDGET.", SCAN_BUDGET_SECONDS, len(projects))
+        "Settings, Projects, Scan time.", budget, len(projects))
     # A partial answer beats none, but do not cache it as though it were the
     # whole picture — the next call should try again.
     return projects or _scan_cache["value"]
@@ -569,8 +552,8 @@ def format_runs_for_prompt() -> str:
 async def synthesize_speech(text: str) -> Optional[bytes]:
     """Generate speech audio from text using Fish Audio TTS: the same
     synthesis everything JARVIS says goes through (`_synth_for_speech`)."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
+    if not _fish_key():
+        log.warning("No Fish Audio key set in Settings, skipping TTS")
         return None
     return await _synth_for_speech(text)
 
@@ -579,7 +562,6 @@ async def synthesize_speech(text: str) -> Optional[bytes]:
 # Brain + speech (milestone 1): one Claude Code process, one mouth
 # ---------------------------------------------------------------------------
 
-MUTE_MIC_DURING_SPEECH = os.getenv("JARVIS_MUTE_MIC_DURING_SPEECH", "false").lower() in ("1", "true", "yes")
 
 voice_clients: set[WebSocket] = set()
 brain_instance: Optional[Brain] = None
@@ -1073,8 +1055,8 @@ async def _voice_emit(msg: dict) -> None:
 
 
 def _voice_output_status() -> dict:
-    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
-    voice = os.environ.get("JARVIS_LOCAL_VOICE", "george")
+    provider = _setting("tts_provider")
+    voice = _setting("local_voice")
     problem = local_tts.model_problem() if provider == "local" else None
     if provider not in ("fish", "local"):
         problem = "Unknown speech output provider. Choose Local or Fish in Settings."
@@ -1086,13 +1068,13 @@ def _voice_output_status() -> dict:
 
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
-    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
+    provider = _setting("tts_provider")
     if provider not in ("fish", "local"):
         log.warning("Unknown speech output provider; synthesis disabled")
         return None
     if provider == "local":
         try:
-            audio = await local_tts.client.synthesize(text, os.environ.get("JARVIS_LOCAL_VOICE", "george"))
+            audio = await local_tts.client.synthesize(text, _setting("local_voice"))
             subsystem_diagnostics.voice_output_calls.note(True)
             return audio
         except asyncio.CancelledError:
@@ -1101,9 +1083,10 @@ async def _synth_for_speech(text: str) -> Optional[bytes]:
             subsystem_diagnostics.voice_output_calls.note(False)
             log.warning("local voice: %s", e)
             return None  # Never fall back to a billable provider.
-    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client,
+    key = _fish_key()
+    r = await tts.synthesize_chunk(text, api_key=key, voice_id=_fish_voice(), client=_tts_client,
                                    language=spoken_words.active_language())
-    if FISH_API_KEY and (text or "").strip():
+    if key and (text or "").strip():
         subsystem_diagnostics.voice_output_calls.note(r is not None)
     if r is None:
         return None
@@ -1502,7 +1485,8 @@ def _live_session_redirect(name: str, path, args: dict, tool: str) -> Optional[s
 
 
 def _brain_autostart() -> bool:
-    return os.getenv("JARVIS_BRAIN_AUTOSTART", "1") == "1"
+    """Settings, Server: start the brain with JARVIS (the start file's)."""
+    return _setting("brain_autostart") is True
 
 
 async def start_brain_and_speech() -> None:
@@ -2001,6 +1985,17 @@ def _with_notes_for_brain(text: str) -> str:
     return f"(JARVIS, not the user: {notes})\n{text}"
 
 
+def _note_spoken(what: str, ident: str, how: str) -> None:
+    """What JARVIS read him word for word outside the brain's turn (a
+    read-back for his approval, a package story's slides, a reading said
+    again), told to the brain at its next turn so it knows what he heard:
+    what it was, which (its number or id) and how it went. The only reads
+    kept direct: their exact words are the point. Everything else he asks
+    to hear is read by the brain in its own turn."""
+    _notes_for_brain.append(f"Outside your turn JARVIS read him {what} ({ident}) word for "
+                            f"word: {how}.")
+
+
 def _message_number(message: dict) -> int:
     """A message's id, as a number: it is put in a sentence for the brain."""
     try:
@@ -2287,20 +2282,33 @@ def _brain_provider() -> brain_provider.BrainProvider:
     """The provider of the brain that is running, or of the one configured."""
     if brain_instance is not None:
         return brain_instance.provider
-    return brain_provider.provider(
-        os.getenv("JARVIS_BRAIN_PROVIDER", brain_provider.DEFAULT_PROVIDER))
+    return brain_provider.provider(brains_config.load()["default"])
 
 
 def _usage_poll_enabled() -> bool:
-    """On by default; JARVIS_USAGE_POLL=0 turns it off (the test suite does,
-    so no test reads the keychain or calls Anthropic)."""
-    return os.getenv("JARVIS_USAGE_POLL", "1").strip().lower() not in ("0", "false", "no", "off")
+    """Settings, Brains: on by default (the test suite holds it off, so no
+    test reads the keychain or calls Anthropic)."""
+    return _setting("usage_poll") is True
+
+
+def _follow_usage_poll() -> None:
+    """Start the usage poll while Settings has it on and stop it once off:
+    at start and on every change of the setting, so it takes effect at once."""
+    global _usage_task
+    if _usage_task is not None and _usage_task.done():
+        _usage_task = None
+    if _usage_poll_enabled() and _usage_task is None:
+        _usage_task = _spawn(_poll_usage())
+    elif _usage_task is not None and not _usage_poll_enabled():
+        _usage_task.cancel()
+        _usage_task = None
 
 
 async def _poll_usage() -> None:
-    """Never raises: a missed reading keeps the last one."""
+    """Never raises: a missed reading keeps the last one. Ends once the
+    setting is off (a hold under test included)."""
     reported: dict[str, str] = {}
-    while True:
+    while _usage_poll_enabled():
         for name in list(brains_config.load()["brains"]):
             try:
                 # Made once and kept: a source may hold its login in memory.
@@ -2455,8 +2463,9 @@ _folders_task: Optional[asyncio.Task] = None
 _folders_wanted = threading.Event()
 
 
-def _switched_on(name: str) -> bool:
-    return os.getenv(name, "1").strip().lower() not in ("0", "false", "no", "off")
+def _switched_on(key: str) -> bool:
+    """A Settings switch that is on unless he turned it off."""
+    return _setting(key) is True
 
 
 def _folder_owner() -> Optional[str]:
@@ -2497,13 +2506,13 @@ async def _watch_folders() -> None:
 
 def start_folders() -> None:
     global folder_catalog, _folders_task
-    if not _switched_on("JARVIS_FOLDERS"):
-        log.info("the folder catalog is switched off (JARVIS_FOLDERS)")
+    if not _switched_on("folders"):
+        log.info("the folder catalog is switched off (Settings, Knowledge)")
         return
     folder_catalog = folder_service.FolderService(
         folder_store.FolderStore(), data_paths.node_id, owner=_folder_owner,
         live_sessions=_live_sessions, wake=_folders_wanted.set)
-    if _switched_on("JARVIS_FOLDER_DISCOVERY"):
+    if _switched_on("folder_discovery"):
         _folders_task = _spawn(_watch_folders())
     start_projects()
 
@@ -2680,7 +2689,7 @@ async def stop_knowledge() -> None:
 async def start_session_watcher() -> None:
     global session_watcher
     session_watcher = session_watch.SessionWatcher(
-        interval=float(os.getenv("JARVIS_WATCH_INTERVAL", "1.0")),
+        interval=float(_setting("watch_interval")),
         providers=_session_providers(), messages=run_store)
     session_watcher.on_event(_on_session_event)
     await session_watcher.start()
@@ -2691,8 +2700,7 @@ async def start_session_watcher() -> None:
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
     _subsystems_task = _spawn(_watch_subsystems())
-    if _usage_poll_enabled():
-        _usage_task = _spawn(_poll_usage())
+    _follow_usage_poll()
 
 
 async def stop_session_watcher() -> None:
@@ -3068,10 +3076,17 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 def delta(d: str) -> None:
                     reply.feed(d)
                     hold.delta(d)
+
+                def tool() -> None:
+                    hold.tool_started()
+                    # Only what is written after the last tool is spoken, so
+                    # nothing an earlier tool gave the brain to read him is
+                    # in what he hears: it is neither read nor seen.
+                    _reads_unsaid(reads)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
                                                    on_delta=delta,
-                                                   on_tool=hold.tool_started)
+                                                   on_tool=tool)
                 if result.stop_reason == "result":
                     reply.finish(result.text, ReplyOutcome.SUCCEEDED)
                 else:
@@ -3108,7 +3123,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
         # Heard in full, it is also what makes the updates it read seen.
-        heard_all = await speech.wait_for(utt, timeout=120.0)
+        # A reply that reads him a message may take as long as the message.
+        heard_all = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT if reads else 120.0)
         _seen_once_heard(reads, utt, heard_all and result.stop_reason == "result")
         first_audio = (utt.first_sent_at - t0) if utt.first_sent_at is not None else None
         log.info("latency: first_delta=%s first_audio=%s turn=%.2fs ctx=%d out=%d tools=%s",
@@ -3247,6 +3263,11 @@ async def _start_on_records() -> None:
     """Everything that needs the records, once they are in the engine."""
     global _on_records_begun
     _on_records_begun = True
+    # His settings: `.env` copied in once (settings_import), then every
+    # area's record held in memory, before anything below reads one.
+    await asyncio.to_thread(settings_import.records_once)
+    await asyncio.to_thread(settings_service.load)
+    settings_service.note_started("record")
     # His voice settings held in memory before a page connects, so listening
     # and speaking never wait on the engine (voice_control.py).
     try:
@@ -3270,6 +3291,8 @@ async def _start_on_records() -> None:
     # set aside) ends now, one on a replaced package moving to its newer one.
     await asyncio.to_thread(package_inbox.settle_closed)
     await asyncio.to_thread(wait_links.sweep)
+    # Reports' keys past their keeping (report_keys.py).
+    await asyncio.to_thread(report_keys.prune)
 
     # The language chosen in Settings, and its speech model
     # (language_setting.py). Put in force before the brain starts: its launch
@@ -3301,12 +3324,24 @@ async def _start_on_records() -> None:
     _spawn(brain_accounts.refresh())
     if _untrusted_actions_refused():
         log.info(
-            "JARVIS_REFUSE_UNTRUSTED_ACTIONS is ON: JARVIS will refuse to act "
-            "in a turn that has read text it did not write.")
-    if os.getenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "").strip():
-        log.info("JARVIS_ALLOW_UNTRUSTED_ACTIONS is obsolete and ignored; "
-                 "the refusal is now opt-in via JARVIS_REFUSE_UNTRUSTED_ACTIONS.")
+            "Settings, Safety: JARVIS will refuse to act in a turn that has "
+            "read text it did not write.")
     log.info("JARVIS server starting")
+
+
+SERVING_LOOK_SEC = 0.25
+
+
+async def _remember_once_serving(served: dict) -> None:
+    """Record `served` as the start that served once uvicorn is listening
+    (its `started`, set after the sockets are bound and the startup is
+    done); a start whose bind fails exits first and records nothing."""
+    while not settings_service.listening():
+        await asyncio.sleep(SERVING_LOOK_SEC)
+    try:
+        await asyncio.to_thread(start_settings.remember_served, served)
+    except OSError as e:
+        log.warning("the start that served was not recorded: %s", e)
 
 
 @asynccontextmanager
@@ -3325,6 +3360,13 @@ async def lifespan(application: FastAPI):
     _announce_bind(web_auth.detect_bind())
     # Where this server is, for `python -m jarvis.update` (server_address.py).
     server_address.record()
+    # The start that served, what a later start falls back to when Settings'
+    # address cannot be bound (start_settings.fall_back): recorded once the
+    # server is listening, never before the bind. Only from main(), the
+    # launcher that reads the start file.
+    served = settings_service.served_at_start()
+    if served:
+        _spawn(_remember_once_serving(served))
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     # The knowledge engine before anything else; the page waits for it.
@@ -3372,7 +3414,8 @@ async def lifespan(application: FastAPI):
 # The interactive OpenAPI console is a "Try it out" button on every route
 # JARVIS has, served to anyone who can reach the port. It is a debugging
 # tool, so it lives behind a debugging flag.
-_DEBUG_DOCS = os.getenv("JARVIS_DEBUG_DOCS", "").lower() in ("1", "true", "yes")
+# Settings, Server (the start file's), so it takes effect when JARVIS next starts.
+_DEBUG_DOCS = _setting("debug_docs") is True
 
 app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
               docs_url="/docs" if _DEBUG_DOCS else None,
@@ -3573,12 +3616,37 @@ async def api_brains(brief: bool = False):
     return {"brains": [await _brain_card(n, cfg, brief) for n in brains_config.KNOWN]}
 
 
-def _brains_change(change) -> dict:
-    """A brains change; a refusal's `detail` carries its English words and,
-    for `brains_config.Refused`, its code and values, which the page words
-    in its own language (brains.ts)."""
+BRAIN_CHANGES = ("add", "remove", "default", "model")
+
+
+async def _change_brain(name: str, action: str, model: str = "") -> dict:
+    """Settings, Brains' one change, from the page's routes and the brain's
+    `set_brain` alike: add or remove a brain, choose the one JARVIS starts
+    with (`default`, from the next start), or a brain's model. Raises
+    brains_config.Refused, or ValueError for a request that names nothing
+    it can do."""
+    if action == "add":
+        return brains_config.add(name)
+    if action == "remove":
+        return brains_config.remove(name)
+    if action == "default":
+        return brains_config.set_default(name)
+    if action == "model":
+        model = (model or "").strip()
+        if name not in brains_config.KNOWN or not model:
+            raise ValueError("a known brain and a model")
+        if model not in await asyncio.to_thread(brain_provider.provider(name).models):
+            raise ValueError("that brain does not offer that model")
+        return brains_config.set_model(name, model)
+    raise ValueError("action is " + ", ".join(BRAIN_CHANGES))
+
+
+async def _brains_change(name: str, action: str, model: str = "") -> dict:
+    """A brains change from the page; a refusal's `detail` carries its
+    English words and, for `brains_config.Refused`, its code and values,
+    which the page words in its own language (brains.ts)."""
     try:
-        change()
+        await _change_brain(name, action, model)
     except brains_config.Refused as e:
         raise HTTPException(status_code=400,
                             detail={"message": str(e), "code": e.code, "values": e.values})
@@ -3590,29 +3658,22 @@ def _brains_change(change) -> dict:
 @app.post("/api/brains/default")
 async def api_brains_default(request: Request):
     body = await request.json()
-    return _brains_change(lambda: brains_config.set_default(str(body.get("name") or "")))
+    return await _brains_change(str(body.get("name") or ""), "default")
 
 
 @app.post("/api/brains/{name}")
 async def api_brains_add_remove(name: str, request: Request):
     body = await request.json()
     action = body.get("action")
-    if action == "add":
-        return _brains_change(lambda: brains_config.add(name))
-    if action == "remove":
-        return _brains_change(lambda: brains_config.remove(name))
-    raise HTTPException(status_code=400, detail="action is add or remove")
+    if action not in ("add", "remove"):
+        raise HTTPException(status_code=400, detail="action is add or remove")
+    return await _brains_change(name, action)
 
 
 @app.put("/api/brains/{name}")
 async def api_brains_model(name: str, request: Request):
     body = await request.json()
-    model = str(body.get("model") or "").strip()
-    if name not in brains_config.KNOWN or not model:
-        raise HTTPException(status_code=400, detail="a known brain and a model")
-    if model not in await asyncio.to_thread(brain_provider.provider(name).models):
-        raise HTTPException(status_code=400, detail="that brain does not offer that model")
-    return _brains_change(lambda: brains_config.set_model(name, model))
+    return await _brains_change(name, "model", str(body.get("model") or ""))
 
 
 @app.post("/api/brains/{name}/sign-in")
@@ -3996,11 +4057,7 @@ async def ws_specs(ws: WebSocket):
     or not at all can never leave a stale document on screen looking current.
     """
     await ws.accept()
-    try:
-        interval = float(os.getenv("JARVIS_SPECS_POLL", SPECS_POLL_DEFAULT))
-    except ValueError:
-        interval = SPECS_POLL_DEFAULT
-    interval = max(0.05, interval)
+    interval = max(0.05, float(_setting("specs_poll")))
     try:
         previous = await asyncio.to_thread(_specs_fingerprint)
         await ws.send_json({"type": "hello"})
@@ -4038,7 +4095,7 @@ def _collect_worker_inventory() -> dict:
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
     runs = read_source('Managed runs', lambda: run_store.list_runs(status=["queued", "running"], limit=10000), [])
-    workflows = read_source('Workflows', workflow_store.active, [])
+    workflows = read_source('Workflows', lambda: workflow_store.active(sweep=False), [])
     capacity = read_source('Worker capacity', run_executor_instance.capacity, None)
     result = worker_inventory.build(snap, names, runs, brain_activity.feed.since(), time.time(),
                                    workflows=workflows, capacity=capacity,
@@ -4717,12 +4774,11 @@ def _writer_untrusted_source(tool: str) -> str | None:
 def _untrusted_actions_refused() -> bool:
     """True when the operator opted in to the untrusted-content refusal.
 
-    Read at call time, not import time, so the setting is the environment's
-    current value. Default off: JARVIS keeps acting after reading foreign
-    text unless JARVIS_REFUSE_UNTRUSTED_ACTIONS is 1/true/yes/on.
+    Read at call time, so a change in Settings, Safety holds from the next
+    call. Default off: JARVIS keeps acting after reading foreign text unless
+    he turns the refusal on.
     """
-    return os.getenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "").strip().lower() in (
-        "1", "true", "yes", "on")
+    return _setting("refuse_untrusted_actions") is True
 
 
 def _untrusted_content_refusal(tool: str, read_untrusted: bool,
@@ -4790,7 +4846,14 @@ def _mark_the_turn_untrusted(tool: str) -> None:
     later cannot forget. Never raises: a brain that is a stand-in, or gone,
     must not take a tool down with it.
     """
-    source = TAINTING_TOOLS.get(tool)
+    _mark_untrusted_source(TAINTING_TOOLS.get(tool))
+
+
+def _mark_untrusted_source(source: Optional[str]) -> None:
+    """The turn now holds somebody else's words from `source`: what
+    `_mark_the_turn_untrusted` does for a reading tool, and what a tool
+    that only sometimes gives back other people's words (several messages
+    that fit, to ask which) does when it does. Never raises."""
     if not source:
         return
     try:
@@ -5675,23 +5738,11 @@ def _read_session_message(number: int):
     return m
 
 
-# How long a message read aloud may take to be heard before it is given up:
-# an hour, so the longest message is still read when heard to its end (an
-# 8,000-character message takes about nine minutes to say; five minutes
-# gave up on it while it was still being heard).
+# How long the reply that reads a message to him may take to be heard
+# before it is given up: an hour, so the longest message is still read when
+# heard to its end (an 8,000-character message takes about nine minutes to
+# say; five minutes gave up on it while it was still being heard).
 READ_ALOUD_TIMEOUT = 3600.0
-
-
-# How each source's message is said when he asks to hear it: who sent it
-# first. A needs board, a decision and a package already say what they are.
-# (Boards and session message files are on record from before the signed
-# route; nothing new comes by them.)
-_READ_ALOUD_LEAD = {
-    conversation_log.Source.MESSAGE: "{name} answers: ",
-    conversation_log.Source.SESSION_MESSAGE: "{name} writes: ",
-    conversation_log.Source.SIGNED: "{name} writes: ",
-    conversation_log.Source.PERSON_MESSAGE: "{name} writes: ",
-}
 
 
 def _update_message(item) -> Optional[int]:
@@ -5708,83 +5759,41 @@ def _update_message(item) -> Optional[int]:
 
 def _message_to_him(item_id) -> tuple:
     """(the message to him that conversation item `item_id` is, "") or
-    (None, why not). Blocking."""
+    (None, why not): a route's id, through the one resolver every tool
+    that takes a message uses (messages_api.resolve). Blocking."""
     try:
         number = int(item_id)
     except (TypeError, ValueError):
         return None, "Give the message's id; attention_updates names each update's message."
-    item = conversation_log.get(number)
-    if item is None or not item.inbound:
-        return None, (f"There is no message {number} to him on record; attention_updates "
-                      f"names each update's message.")
-    return item, ""
+    found = messages_api.resolve(messages_api.MessageSpec(message=number))
+    return (found.item, "") if found.item is not None else (None, found.why)
 
 
-def _sender_name(item) -> str:
-    """Who a message to him is from, as it may be said: an agent by its one
-    name now, anyone else by the name its message came under."""
-    if item.counterpart_kind == conversation_log.Counterpart.AGENT:
-        name = _name_of(item.agent_session_id, item.agent_name)
-    else:
-        name = item.detail.get("name") or ""
-    return _said_name({"voice_name": name}, "Someone")
-
-
-def _as_sentences(text: str) -> str:
-    """A message's paragraphs (a subject, then its body) as sentences to be
-    said one after another: "Status. All good."."""
-    parts = [p.strip() for p in str(text).split("\n\n") if p.strip()]
-    return " ".join(p if i == len(parts) - 1 or p[-1] in ".!?:;…" else p + "."
-                    for i, p in enumerate(parts))
-
-
-async def read_aloud(item_id):
-    """JARVIS reads one message to him aloud, that message only, as he asked,
-    whatever channel it came by: the page's Read and the brain's read_aloud
-    alike. A session's message is marked read; its update is seen only once
-    it has been heard in full (`_speak_message`), so cut off or skipped it
-    stays. (the message, "") or (None, why not)."""
-    item, why = await asyncio.to_thread(_message_to_him, item_id)
-    if item is None:
-        return None, why
-    if speech is None:
-        return None, "I have no voice to read it with."
-    _on_message(item.id)
-    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
-        await asyncio.to_thread(_read_session_message, int(item.source_id))
-    lead = _READ_ALOUD_LEAD.get(item.source_kind, "").format(name=_sender_name(item))
-    await _speak_message(conversation_log.update_of(item), lead + _as_sentences(item.text),
-                         item.id)
-    return item, ""
-
-
-async def _speak_message(update: Optional[tuple], text: str,
-                         message_id: Optional[int] = None) -> None:
-    """Speak one message to him that he asked to hear, and mark its update
-    (kind, source id) seen, and the message read, only once it has been
-    heard in full (`_seen_once_heard`'s rule): cut off or skipped, it stays."""
-    item = attention_record.get(*update) if attention_record and update else None
-    utt = await speech.say(text, Priority.NORMAL, immediate=True, label="reply")
-    reads = [(item.kind, item.source_id, item.revision)] if item is not None else []
-    if message_id is not None:
-        reads.append((_MESSAGE_READ, str(message_id), None))
-    _spawn(_seen_when_heard(reads, utt))
-
-
-async def _seen_when_heard(reads: list, utt) -> None:
-    heard = await speech.wait_for(utt, timeout=READ_ALOUD_TIMEOUT)
-    await asyncio.to_thread(_seen_once_heard, reads, utt, heard)
-    _hint_attention()
+# What his Read on a message says for him, as his own turn: the message by
+# its id, so the brain reads exactly that one.
+_READ_REQUEST = {"en": "Read me message {id}.", "es": "Léeme el mensaje {id}."}
 
 
 @app.post("/api/messages/{item_id}/read")
 async def api_read_message(item_id: int):
-    """His Read on a message's Updates entry, whatever channel it came by:
-    JARVIS reads it aloud (`read_aloud`); the entry stays until heard."""
-    item, why = await read_aloud(item_id)
+    """His Read on a message, whatever channel it came by: a turn of his,
+    as if he had asked by voice ("Read me message 42."), on record as his
+    typed request with the message's id (`via` read), which the brain
+    answers by reading him that message with read_aloud and summing it up.
+    Nothing is spoken here: the brain reads it, so it knows what he heard.
+    The message is read, and its update seen, only once that reply has been
+    heard in full."""
+    item, why = await asyncio.to_thread(_message_to_him, item_id)
     if item is None:
-        raise HTTPException(status_code=409 if speech is None else 404, detail=why)
-    return {"id": item.id, "reading": True}
+        raise HTTPException(status_code=404, detail=why)
+    if speech is None:
+        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    _on_message(item.id)
+    asked = _READ_REQUEST.get(spoken_words.active_language(), _READ_REQUEST["en"])
+    await _take_his_turn(asked.format(id=item.id), None, conversation_log.ItemKind.TYPED,
+                         detail={"via": "read", "message": item.id})
+    return {"id": item.id, "asking": True}
+
 
 
 def _reply_capture(item):
@@ -5877,10 +5886,7 @@ async def tool_reply(args: dict) -> str:
     """His reply to any message to him (the one he names, else the one he
     is on): a capture to its proven sender, or for a person's message a
     draft in its thread to review."""
-    meant, why = await asyncio.to_thread(_message_meant, args)
-    if meant is None:
-        return why + " Nothing was captured."
-    item, why = await asyncio.to_thread(_message_to_him, meant)
+    item, why = await asyncio.to_thread(_message_meant, args)
     if item is None:
         return why + " Nothing was captured."
     _on_message(item.id)
@@ -5912,7 +5918,7 @@ def _reply_said(capture, why, args: dict) -> str:
 
 
 # The message he is on: the one "What's new?" (messages_to_him new) put
-# first, or the last he heard read, opened or replied to, on the page or by
+# first, or the last he heard, opened or replied to, on the page or by
 # voice. "Read it", "open it" and "reply" act on it (`_message_meant`).
 _message_on: Optional[int] = None
 
@@ -5923,35 +5929,64 @@ def _on_message(item_id) -> None:
 
 
 def _message_meant(args: dict) -> tuple:
-    """(the id of the message he means, "") or (None, why not): the one he
-    named (`message`), the next new one after the one he is on (`next`, in
-    "What's new?"'s order), else the one he is on. Blocking."""
-    if args.get("message") not in (None, ""):
-        return args.get("message"), ""
-    if args.get("next"):
-        order = [m["id"] for m in messages_api.whats_new()]
-        after = order[order.index(_message_on) + 1:] if _message_on in order else order
-        if not after:
-            return None, "Nothing new after it, sir."
-        return after[0], ""
-    if _message_on is None:
-        return None, ("He is on no message yet: messages_to_him with new reads what is new, "
-                      "and puts him on the first.")
-    return _message_on, ""
+    """(the message to him he means, "") or (None, why not), through the
+    one resolver (messages_api.resolve): the one he named by id
+    (`message`), or by when it came (`at`, his local time) with who it is
+    from (`from`), its Work item (`work`) and `new`; else the next new one
+    after the one he is on (`next`); else the one he is on. Several that fit
+    come back walled to ask him which; none names the nearest. Blocking."""
+    found = messages_api.resolve(messages_api.MessageSpec.of(args, _message_on))
+    if found.item is not None:
+        return found.item, ""
+    if not found.candidates:
+        return None, found.why
+    _mark_untrusted_source("the names and Work items of the messages to him that fit")
+    return None, (found.why + " Each by id, local (his local time, the form to pass as at), "
+                  "when (the same in words for him) and from; every name and title in it is "
+                  "the sender's:\n" + _wrap_untrusted(
+                      _MESSAGES_WRAP_NAME, json.dumps(list(found.candidates), ensure_ascii=False,
+                                                      separators=(",", ":"))))
 
 
 async def tool_read_aloud(args: dict) -> str:
-    """Read one message to him aloud, as the Updates entry's Read does: the
-    one he names, the next new one, or the one he is on ("read it")."""
-    meant, why = await asyncio.to_thread(_message_meant, args)
-    if meant is None:
-        return why
-    item, why = await read_aloud(meant)
+    """Read one message to him, because he asked (his Read on it, or his
+    words): the one he names (by id, or by its time, sender and Work item),
+    the next new one, or the one he is on ("read it"). Gives the brain the
+    message, walled, to read him in its own reply and sum up; nothing is
+    spoken here. It is read, and its update seen, only once that reply has
+    been heard in full (`_message_read_to_him`)."""
+    item, why = await asyncio.to_thread(_message_meant, args)
     if item is None:
         return why
-    carries = (f" It carries a package: open_inbox_package opens it ({item.carries})."
-               if item.carries else "")
-    return f"Reading message {item.id} aloud now, sir; say nothing more of it.{carries}"
+    _on_message(item.id)
+    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
+        await asyncio.to_thread(_read_session_message, int(item.source_id))
+    _message_read_to_him(item)
+    message = await asyncio.to_thread(_message_shown, item)
+    carries = (" It carries a package: open_inbox_package with this message opens it, on "
+               "a later turn once he asks." if item.carries else "")
+    return (f"Message {item.id}, at {messages_api.local_time(item.at)} (his local time, "
+            f"{messages_api.when_said(item.at)}; name it by its id, or by that time as at), "
+            f"{item.state or 'from before messages had a state'}.{carries} Read him its words "
+            f"now in your reply, as they are written, saying first who it is from; then sum "
+            f"it up in one sentence. It is marked read once he has heard your reply in full. "
+            f"Call no other tool after this one in this turn: only what you write after your "
+            f"last tool is spoken, so a later tool call drops the reading. "
+            f"Who it is from, its Work item and its words, all the sender's:\n"
+            + _wrap_untrusted(_MESSAGES_WRAP_NAME,
+                              json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
+
+
+def _message_shown(item) -> dict:
+    """One message as the brain reads it to him: from, its Work item's
+    title, what it says and the package it carries. Blocking."""
+    out = messages_api.message_json(item)
+    shown = {"from": out["from"]["name"], "says": item.text}
+    if item.about:
+        shown["about"] = messages_api.work_title(item.about) or item.about
+    if out.get("package"):
+        shown["package"] = out["package"]["title"]
+    return shown
 
 
 # --- Messages to him, by Work item (one_channel round 1, messages_api.py) ----
@@ -6145,8 +6180,12 @@ async def tool_messages_to_him(args: dict) -> str:
 
 
 async def tool_mark_message(args: dict) -> str:
-    """Mark one message read or done, only on his word."""
-    item, why = await _mark_message(args.get("message"), str(args.get("state") or ""), "by voice")
+    """Mark one message read or done, only on his word: the one he names
+    (by id, or by its time, sender and Work item), else the one he is on."""
+    meant, why = await asyncio.to_thread(_message_meant, args)
+    if meant is None:
+        return why
+    item, why = await _mark_message(meant.id, str(args.get("state") or ""), "by voice")
     if item is None:
         return why
     return f"Message {item.id} is {item.state} now, sir."
@@ -6179,7 +6218,9 @@ def tool_list_projects(args: dict) -> str:
     return "\n".join(lines)
 
 
-STEER_CANCEL_WINDOW = float(os.getenv("JARVIS_STEER_CANCEL_WINDOW", "2.0"))
+def _steer_cancel_window() -> float:
+    """Settings, Agents: how long a send waits for a cancel."""
+    return float(_setting("steer_cancel_window"))
 # How long to wait for the read-back utterance to actually finish playing
 # before opening the cancel window. speech.say() returns as soon as the
 # utterance is QUEUED, not once it has been heard — a realistic TTS chunk
@@ -6249,6 +6290,30 @@ def _read_to_him(kind: str, source_id) -> None:
     message = _message_of_update(kind, source_id)
     if message is not None:
         _turn_reads.append((_MESSAGE_READ, str(message), None))
+
+
+def _message_read_to_him(item) -> None:
+    """The brain has just been given message `item` to read him on a turn
+    he drove (read_aloud): it waits to be read, and its update (when
+    pending) to be seen, until he has heard the reply that reads it in full.
+    Never raises."""
+    update = conversation_log.update_of(item)
+    if update is not None:
+        _read_to_him(*update)
+    if _turn_reads is not None and brain_instance is not None \
+            and brain_instance.current_origin == "user":
+        read = (_MESSAGE_READ, str(item.id), None)
+        if read not in _turn_reads:
+            _turn_reads.append(read)
+
+
+def _reads_unsaid(reads: list) -> None:
+    """Another tool call in the turn: what the brain wrote before it is
+    binned (`_OneLinePerTurn`), so the reads made so far were never spoken
+    and wait for a reading he hears."""
+    if reads:
+        log.info("speech: %d read(s) dropped with the narration before a tool", len(reads))
+        reads.clear()
 
 
 def _message_of_update(kind: str, source_id) -> Optional[int]:
@@ -7046,12 +7111,18 @@ async def _finish_reading_aloud(capture: dict, text: str, recipient: str, utt) -
     number = capture["id"]
     if _captures.get(number) is not capture:
         return                                  # sent, merged or deleted meanwhile
-    if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
+    unchanged = capture["text"] == text and transmission.recipient(capture) == recipient
+    if heard and unchanged:
         transmission.read_back(capture, text)
-        _notes_for_brain.append(
-            f"He had capture {number} read aloud from its box and heard it to the "
-            f"end: it counts as read back in full. It goes only if the next thing he "
-            f"says is a plain yes; ask him whether to send it.")
+        how = ("he heard it to the end, so it counts as read back in full. It goes only if "
+               "the next thing he says is a plain yes; ask him whether to send it")
+    elif heard:
+        how = "it changed while it was read, so it must be read back again before it can go"
+    else:
+        how = ("it was cut short, so it has not been heard in full and cannot be sent until "
+               "it is read back again")
+    _note_spoken("a capture's read-back from its box, at his Read",
+                 f"capture {number}, to {_recipient_name(capture, 'its recipient')}", how)
     _capture_show(capture, "capturing")
 
 
@@ -7360,7 +7431,7 @@ class _CaptureBox:
 
 
 async def _transmit(destination: transmission.Destination) -> None:
-    await transmission.perform(destination, speech=speech, cancel_window=STEER_CANCEL_WINDOW,
+    await transmission.perform(destination, speech=speech, cancel_window=_steer_cancel_window(),
                                captures=_CaptureBox())
 
 
@@ -7374,6 +7445,17 @@ async def _perform_steer(item: _StagedSteer) -> None:
 # on the user's behalf after reading it back; a command belongs in it for the
 # same reason a steer does — "did you run that?" must have an answer.
 COMMAND_AUDIT_NAME = "a Terminal window"
+
+
+# How a command's or keypress's read-back went, as the brain is told
+# (`_note_spoken`): each audit outcome after the read-back began.
+_READBACK_OUTCOMES = {
+    "ran": "heard in full, and the command was run in a Terminal window",
+    "cancelled_by_user": "he cancelled it, so nothing was done",
+    "readback_failed": "it was not heard in full, so nothing was done",
+    "failed": "it failed, so it may not have been done",
+    dialog.SENT: "heard in full, and the key was pressed",
+}
 
 
 async def _perform_command(item: _StagedCommand) -> None:
@@ -7403,6 +7485,9 @@ async def _perform_command(item: _StagedCommand) -> None:
         recorded = True
         await asyncio.to_thread(run_store.record_steer, "", COMMAND_AUDIT_NAME,
                                 item.project, item.command, outcome)
+        if outcome in _READBACK_OUTCOMES:
+            _note_spoken("the read-back of the command run_command staged",
+                         f"command {item.command}", _READBACK_OUTCOMES[outcome])
 
     def outcome(event: str) -> None:
         # Shown, not spoken: the read-back was the words that mattered.
@@ -7431,7 +7516,7 @@ async def _perform_command(item: _StagedCommand) -> None:
         if not heard:
             await record("readback_failed")
             return
-        if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
+        if await speech.open_cancel_window(_steer_cancel_window()):
             await record("cancelled_by_user")
             outcome("cancelled")
             return
@@ -7519,6 +7604,10 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         await asyncio.to_thread(run_store.record_steer, item.session_id,
                                 item.voice_name, item.project, item.key,
                                 f"dialog:{outcome}")
+        if outcome != "no_voice":
+            _note_spoken("the read-back of the keypress answer_dialog staged",
+                         f"key {said}", _READBACK_OUTCOMES.get(
+                             outcome, f"heard in full; pressing it ended {outcome}"))
 
     def shown(event: str) -> None:
         _action_outcome("keypress", event, {"agent": _said_name(item)})
@@ -7543,7 +7632,7 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         if not heard:
             await record("readback_failed")
             return
-        if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
+        if await speech.open_cancel_window(_steer_cancel_window()):
             await record("cancelled_by_user")
             shown("cancelled")
             return
@@ -8976,7 +9065,7 @@ async def tool_run_package_agent(args: dict) -> str:
     source = context.extracted_from(package.folder) if context is not None else None
     handed, problem = await _hand_over(
         [{"message": str(source[0]), "attachment": str(source[1])}] if source else [],
-        (package.folder,), _SKIP_PERMISSIONS, package.folder)
+        (package.folder,), _skip_permissions(), package.folder)
     if problem:
         return f"{problem} Nothing was started."
     try:
@@ -9042,7 +9131,7 @@ async def _close_package_page(reference: str) -> None:
 story_teller = StoryTeller(
     lambda: speech, _open_package_page, lambda f: _voice_emit(f),
     floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
-    note=_notes_for_brain.append)
+    note=_notes_for_brain.append, spoken=_note_spoken)
 
 
 def _story_said(told: "story_teller_module.Told") -> str:
@@ -9551,7 +9640,7 @@ def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
         return f"It could not be read: {e}"
     if key is not None and signed is not None and (
             package_signature.DECISION_CHECKED in signed.statements
-            or os.environ.get("JARVIS_DECISION_CHECK_SERVER") == "1"):
+            or env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1"):
         return None
     return ("This is a decision package that has not passed its check: decision packages "
             "reach him only through python -m jarvis.make_package, which checks them end to "
@@ -9575,7 +9664,7 @@ def _admit_agent_package(zip_path: Path, signed, status: str,
     nothing), the same bytes already unpacked here, and the isolated
     check JARVIS (decision_check_server), which is the check. Blocking."""
     if status != _GOOD_SIGNER or signed is None or \
-            os.environ.get("JARVIS_DECISION_CHECK_SERVER") == "1" or \
+            env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1" or \
             work_packages.already_here(zip_path):
         return None
     sha = _file_sha256(zip_path)
@@ -10127,7 +10216,7 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
             ran = await asyncio.to_thread(
                 subprocess.run, argv, cwd=str(package.folder), capture_output=True, text=True,
                 timeout=DECIDE_TIMEOUT_SEC,
-                env={**os.environ, **work_packages.command_env(package)})
+                env=env_names.child(**work_packages.command_env(package)))
         except (OSError, subprocess.SubprocessError) as e:
             return None, (f"The package's decide.py could not run ({type(e).__name__}). "
                           f"Nothing was recorded.")
@@ -10474,10 +10563,7 @@ def _carried_by(args: dict) -> tuple:
     `message`, else the one he is on: "open it"). Blocking."""
     if str(args.get("package") or "").strip():
         return str(args["package"]).strip(), ""
-    meant, why = _message_meant(args)
-    if meant is None:
-        return None, why
-    item, why = _message_to_him(meant)
+    item, why = _message_meant(args)
     if item is None:
         return None, why
     _on_message(item.id)
@@ -11343,7 +11429,7 @@ async def tool_spawn_run(args: dict) -> str:
     # permissions are skipped reads anywhere; otherwise a verified copy in
     # its folder).
     handed, problem = await _hand_over(args.get("attachments"), (Path(path),),
-                                       _SKIP_PERMISSIONS, Path(path))
+                                       _skip_permissions(), Path(path))
     if problem:
         return f"{problem} Nothing was started."
 
@@ -11606,6 +11692,7 @@ def _workflow_refused(e: Exception) -> JSONResponse:
 
 
 @app.post("/api/workflows")
+@report_keys.once
 async def api_start_workflow(req: WorkflowStartRequest, request: Request):
     """Begin recording a workflow. Its reporter (an access key in the
     `workflows` category) then sends each step to /events; who it is is the
@@ -11625,6 +11712,7 @@ async def api_start_workflow(req: WorkflowStartRequest, request: Request):
 
 
 @app.post("/api/workflows/{workflow_id}/events")
+@report_keys.once
 async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest,
                                     request: Request):
     """Record one step. Written before anything is said or shown. Dismissing
@@ -11889,6 +11977,61 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+def _brains_said(cards: list) -> str:
+    """Settings, Brains' cards as the brain reads them: JARVIS's own words."""
+    lines = []
+    for c in cards:
+        if not c["added"]:
+            lines.append(f"{c['title']} ({c['name']}): not added.")
+            continue
+        notes = [f"model {c['model'] or 'its default'}"]
+        if c["default"]:
+            notes.append("the brain JARVIS starts with")
+        if c["active"]:
+            notes.append("running now")
+        lines.append(f"{c['title']} ({c['name']}): " + ", ".join(notes) + ".")
+    lines.append("The brain JARVIS starts with changes at the next start.")
+    return " ".join(lines)
+
+
+async def _brain_cards_brief() -> list:
+    cfg = brains_config.load()
+    return [await _brain_card(n, cfg, brief=True) for n in brains_config.KNOWN]
+
+
+async def tool_brains_settings(args: dict) -> str:
+    """Settings, Brains: which brains are added, the one JARVIS starts with,
+    the one running and each one's model, as the page's cards say."""
+    return _brains_said(await _brain_cards_brief())
+
+
+async def tool_set_brain(args: dict) -> str:
+    """Settings, Brains' change by voice, through the page's own
+    `_change_brain`: add or remove a brain, choose the one JARVIS starts
+    with, or a brain's model. An ACTING tool; it restarts nothing."""
+    name = str(args.get("brain") or "").strip()
+    action = str(args.get("action") or "").strip()
+    if name not in brains_config.KNOWN or action not in BRAIN_CHANGES:
+        return ("Nothing was changed, sir: name a brain (" + ", ".join(brains_config.KNOWN)
+                + ") and what to do (" + ", ".join(BRAIN_CHANGES) + ").")
+    try:
+        await _change_brain(name, action, str(args.get("model") or ""))
+    except (brains_config.Refused, ValueError) as e:
+        return f"Nothing was changed, sir: {e}."
+    return "Saved. " + _brains_said(await _brain_cards_brief())
+
+
+TOOL_HANDLERS.update({
+    "brains_settings": tool_brains_settings,
+    "set_brain": tool_set_brain,
+})
+ACTING_TOOLS.add("set_brain")
+TAINT_EXEMPT_TOOLS.update({
+    "brains_settings": "it reads his own brains settings, JARVIS's own words",
+    "set_brain": "it changes his brains settings to fixed values, it does not read",
+})
+
+
 # A cue played once on his page, as Settings' Test button plays it.
 CUE_TEST_FRAME = "cue_test"
 
@@ -12076,9 +12219,9 @@ ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_micro
                      "mark_message"})
 TAINTING_TOOLS.update({
     "messages_to_him": "the messages agents and people sent him, and their names",
+    "read_aloud": "one message an agent or a person sent him, its sender's name and its words",
 })
 TAINT_EXEMPT_TOOLS.update({
-    "read_aloud": "it reads one message aloud to him and says so in JARVIS's words",
     "reply": ("it opens a capture addressed to the message's proven sender, or saves a draft "
               "to a person, naming only the recipient"),
     "mark_message": "it marks one message read or done by its id, it does not read",
@@ -12654,8 +12797,8 @@ def _subsystems() -> list:
     """Every subsystem, read now (blocking: it reads the database)."""
     return subsystem_diagnostics.gather(
         watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
-        has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at,
-        local_voice=(_voice_output_status() if os.environ.get("JARVIS_TTS_PROVIDER") == "local" else None),
+        has_fish_key=bool(_fish_key()), started_at=_server_started_at,
+        local_voice=(_voice_output_status() if _setting("tts_provider") == "local" else None),
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
                  if folder_catalog is not None else None),
@@ -12730,15 +12873,21 @@ TOOL_HANDLERS["diagnostics"] = tool_diagnostics
 TAINTING_TOOLS["diagnostics"] = "JARVIS's diagnostics, which quote agents' names and errors"
 
 
+# The attention item for Work reports slower than
+# subsystem_diagnostics.WORK_WRITES_ALARM_SEC.
+WORK_ROUTES_KIND = "work_routes"
+
+
 async def _watch_subsystems() -> None:
     """Look at every subsystem every few seconds. A state that moved tells
     the pages to read again; communications going down, and coming back,
-    are said once each. Never raises out."""
+    are said once each, and a Work report slower than the alarm is recorded
+    once, resolved once none is slow. Never raises out."""
     states: dict[str, str] = {}
-    said_down = False
+    said_down = said_slow = False
 
     async def look_at_subsystems() -> None:
-        nonlocal states, said_down
+        nonlocal states, said_down, said_slow
         now = {s.id: s for s in await asyncio.to_thread(_subsystems)}
         if states and {k: s.state for k, s in now.items()} != states:
             _send_to_session_clients({"type": "subsystems"})
@@ -12755,6 +12904,19 @@ async def _watch_subsystems() -> None:
                                            subsystem_diagnostics.DEGRADED):
             said_down = False
             _attention_resolved("communications", "agents")
+        # A Work report slower than the alarm is a silent update, resolved
+        # once none in the window is slow.
+        slowest = subsystem_diagnostics.work_routes.slowest(subsystem_diagnostics.WRITE,
+                                                             time.time())
+        if slowest is not None and slowest > subsystem_diagnostics.WORK_WRITES_ALARM_SEC \
+                and not said_slow:
+            said_slow = True
+            _attend(WORK_ROUTES_KIND, "writes", "slow", facts={"seconds": round(slowest, 1)},
+                    audible=False)
+        elif said_slow and (slowest is None
+                            or slowest <= subsystem_diagnostics.WORK_WRITES_SLOW_SEC):
+            said_slow = False
+            _attention_resolved(WORK_ROUTES_KIND, "writes")
 
     await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 
@@ -13171,8 +13333,11 @@ WORK_TICK_SEC = 1.0
 async def _watch_work() -> None:
     """Build the held Work view, then once a second bring its items' live
     owners, clocks and sources up to date (work_view.WorkView.tick), off the
-    loop. Never raises out but for cancellation."""
+    loop; the items writes hand it are worked out on its own thread
+    (work_view.WorkView.start), so no write waits on it. Never raises out
+    but for cancellation."""
     await asyncio.to_thread(work_held.load)
+    work_held.start()
 
     async def look() -> None:
         await asyncio.to_thread(work_held.tick)
@@ -13180,6 +13345,7 @@ async def _watch_work() -> None:
 
 
 work_api.mount(app, _work_recorded, work_held)
+report_keys.mount(app)
 
 
 def _work_who(piece, names: work_api.WhoNames) -> str:
@@ -14094,18 +14260,8 @@ DEFAULT_BROWSER_FALLBACK = "chrome"
 
 
 def _default_browser() -> str:
-    """The user's configured default browser, or Chrome."""
-    raw = (os.getenv("JARVIS_DEFAULT_BROWSER") or "").strip().lower()
-    if not raw:
-        return DEFAULT_BROWSER_FALLBACK
-    picked = _BROWSER_NAMES.get(raw)
-    if picked is None:
-        # Loudly in the log, quietly to the user: a typo in .env must not
-        # break opening a page, but it must not pass unnoticed either.
-        log.warning("JARVIS_DEFAULT_BROWSER=%r is not a browser I can drive; "
-                    "using %s", raw, DEFAULT_BROWSER_FALLBACK)
-        return DEFAULT_BROWSER_FALLBACK
-    return picked
+    """The browser chosen in Settings, You (Chrome or Firefox; Chrome by default)."""
+    return _BROWSER_NAMES.get(_setting("default_browser"), DEFAULT_BROWSER_FALLBACK)
 
 
 def _browser_for(args: dict) -> tuple[str | None, str | None]:
@@ -14158,7 +14314,7 @@ def _is_jarvis_voice_ui(url: str) -> bool:
         port = parts.port
     except ValueError:                        # a garbage port is not our UI
         return False
-    api_port = int(os.getenv("JARVIS_PORT", "8340"))
+    api_port = int(env_names.read("JARVIS_PORT", "8340"))
     if port not in (api_port, _VITE_DEV_PORT):
         return False
     return parts.path in _VOICE_UI_PATHS
@@ -14833,7 +14989,7 @@ REPO_SENSITIVE_REFUSAL = ("That's a private file, sir — credentials and keys "
 # Containment and the sensitive-file wall are unchanged and get this for
 # free — every path still goes through `repo_read.resolve_within`, so
 # JARVIS's own `.env` is refused exactly as any other project's is. That is
-# not incidental: his .env holds the Fish API key.
+# not incidental: an old .env may still hold the Fish API key.
 
 JARVIS_SELF_NAME = "JARVIS"
 
@@ -16645,12 +16801,73 @@ def _scan_projects_sync() -> list[dict]:
 
 # -- WebSocket Voice Handler -----------------------------------------------
 
+def _config_frame() -> dict:
+    """The settings the voice page needs, sent as its socket opens and to
+    every open page again when one of them changes (`_change_setting`)."""
+    return {"type": "config", "muteMicDuringSpeech": _setting("mute_mic_during_speech")}
+
+
+async def _take_his_turn(text: str, heard: Optional[int],
+                         kind: str = conversation_log.ItemKind.HEARD,
+                         detail: Optional[dict] = None) -> None:
+    """One whole thing he said, typed or asked for with a button (his Read
+    on a message): on record as `kind` with `detail`, then answered. The
+    one way in for every turn of his, so a clear or rotation answer, the
+    read-backs waiting for his answer and the brain's turn are taken the
+    same way whatever brought it."""
+    log.info(f"User{'' if kind == conversation_log.ItemKind.HEARD else f' ({kind})'}: {text}")
+    detail = dict(detail or {})
+    if heard is not None:
+        detail["client_turn_id"] = heard
+    _record(kind, text, detail=detail)
+    # Whatever he said answers the read-backs waiting for it; only a
+    # plain yes that goes on to the brain as his turn approves them.
+    read_backs = _take_read_back_answers()
+    cleared = _take_clear_answer(text)
+    if cleared:
+        return
+    if cleared is None and _is_fresh_start(text):
+        _spawn(_ask_to_clear(text))
+        return
+    switch_to = _language_switch_asked(text) if cleared is None else None
+    if switch_to:
+        _spawn(_switch_language_by_voice(switch_to))
+        return
+    if cleared is False and _rotation_answer(text) is False:
+        return                  # a plain no: consumed, not a request
+    if _take_rotation_answer(text):
+        return
+    _approve_on_his_yes(read_backs, text)
+    _spawn(_handle_utterance(text, heard))
+
+
+def _note_replayed(utt) -> None:
+    """"Say that again" said a reading JARVIS read him directly (a capture's
+    read-back, a command's or keypress's, a story's slides): the brain is
+    told it was said again. The brain's own reply needs no note: it has it."""
+    if utt is None or utt.kind == "turn":
+        return
+    captures = sorted({c.capture for c in utt.chunks if c.capture is not None})
+    slides = sorted({(c.cue or {}).get("slide") for c in utt.chunks
+                     if c.cue and (c.cue or {}).get("slide")})
+    if captures:
+        what, ident = "a capture's read-back", ", ".join(f"capture {n}" for n in captures)
+    elif slides:
+        package = next(c.cue.get("package") for c in utt.chunks if c.cue)
+        what, ident = "slides of a package's story", f"package {package}, " + \
+            ", ".join(f"slide {n}" for n in slides)
+    elif utt.label == "readback":
+        what, ident = "a command's or keypress's read-back", "the last one staged"
+    else:
+        return
+    _note_spoken(what, ident, "he asked to hear it again, and it was said again as it was")
+
+
 def _opening_frames() -> list[dict]:
     """What a page is told as its voice socket opens: the settings it
     needs, that JARVIS is idle, the page package shown (so a reload keeps
     it) and the story being told, if any."""
-    frames = [{"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH},
-              {"type": "status", "state": "idle"}]
+    frames = [_config_frame(), {"type": "status", "state": "idle"}]
     if _package_shown is not None:
         frames.append({"type": "package_page", "package": _package_shown})
     if story_teller.status() is not None:
@@ -16697,29 +16914,8 @@ async def voice_handler(ws: WebSocket):
     log.info("Voice WebSocket connected")
 
     async def take_utterance(text: str, heard: Optional[int], typed: bool = False) -> None:
-        """One whole thing he said (or typed): record it, and answer it."""
-        log.info(f"User{' (typed)' if typed else ''}: {text}")
-        _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
-                text, detail={"client_turn_id": heard} if heard is not None else {})
-        # Whatever he said answers the read-backs waiting for it; only a
-        # plain yes that goes on to the brain as his turn approves them.
-        read_backs = _take_read_back_answers()
-        cleared = _take_clear_answer(text)
-        if cleared:
-            return
-        if cleared is None and _is_fresh_start(text):
-            _spawn(_ask_to_clear(text))
-            return
-        switch_to = _language_switch_asked(text) if cleared is None else None
-        if switch_to:
-            _spawn(_switch_language_by_voice(switch_to))
-            return
-        if cleared is False and _rotation_answer(text) is False:
-            return                  # a plain no: consumed, not a request
-        if _take_rotation_answer(text):
-            return
-        _approve_on_his_yes(read_backs, text)
-        _spawn(_handle_utterance(text, heard))
+        await _take_his_turn(text, heard, conversation_log.ItemKind.TYPED if typed
+                             else conversation_log.ItemKind.HEARD)
 
     def show_turn(frame: dict) -> None:
         _show_turn(ws, frame)
@@ -16879,8 +17075,11 @@ async def voice_handler(ws: WebSocket):
                     # no brain turn, so no cost and no risk of coming back
                     # with different words. Never routed to _handle_utterance.
                     log.info(f"User (replay): {text}")
+                    last = speech.last_spoken
                     if not await speech.replay_last():
                         await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL, label="system")
+                    else:
+                        _note_replayed(last)
                     continue
                 if verdict != "speech":
                     # Say WHY, so a dropped sentence can be diagnosed from the
@@ -16925,146 +17124,74 @@ async def voice_handler(ws: WebSocket):
 # ---------------------------------------------------------------------------
 # Settings / Configuration endpoints
 # ---------------------------------------------------------------------------
-
-# The only keys any HTTP route may write into .env.
 #
-# The gate is here, at the one function that writes, rather than on each
-# endpoint: `JARVIS_CLAUDE_PATH` is the binary the brain spawns and
-# `JARVIS_PROJECT_ROOTS` is what counts as "inside a project" for every
-# containment check, so an endpoint that can write an arbitrary key is an
-# endpoint that can replace JARVIS's brain with /tmp/evil and then ask for
-# a restart.
-SETTABLE_ENV_KEYS = frozenset({
-    "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC",
-    "JARVIS_TTS_PROVIDER", "JARVIS_LOCAL_VOICE",
-})
+# Every setting is one of settings_specs.SPECS, read with `_setting` and
+# changed only through `_change_setting`, which the page's routes and the
+# brain's `set_jarvis_setting` share. Its checks are settings_service.check:
+# a value's kind, its bounds (a name is 64 characters at most: it reaches the
+# brain's system prompt), no control character or line break. A secret (the
+# Fish key) goes to the Keychain and is never read back to the page.
 
-# A value may not carry anything that ends the line it is written on.
-#
-# Asked of the READER (`_parse_env_lines`, at the top of this file), never of
-# a hand-written list of characters. The list was "\n", "\r", "\0"; the
-# readers split with `str.splitlines()`, which splits on ten characters, so
-# `\x0b`, `\x0c`, `\x1c`, `\x1d`, `\x1e`, `\x85`, ` ` and ` ` each
-# wrote a whole extra setting into `.env` through a 200 OK.
-#
-# The rule now is a round trip: JARVIS will write `key=value` only if reading
-# that back gives exactly this key and exactly this value. It refuses more
-# than line breaks — a leading space or a wrapping quote would be silently
-# eaten by the reader too, and saying "saved" while storing something else is
-# the same class of lie as reporting a stalled run as a success.
-# And a value has a LENGTH.
-#
-# There was no bound at all, and `USER_NAME` is not an ordinary setting: it
-# is spliced into every generation's system prompt by `brain.launch_prompt`
-# ("The user's name is {…}") with nothing around it. A 100 KB `USER_NAME`
-# posted to `/api/settings/preferences` round-tripped through this function,
-# through `.env`, and into the brain — a paragraph of somebody's choosing
-# standing in the system prompt as JARVIS's own words.
-#
-# So two bounds, because the keys are two kinds of thing. A Fish Audio key is
-# an opaque token and needs room; a NAME is a name. Neither needs a thousand
-# characters, and the name — the one that reaches the prompt — gets the
-# tighter one. Held against SETTABLE_ENV_KEYS itself by tests/test_bounds.py,
-# so a key added later is bounded the day it is added.
-ENV_VALUE_MAX_CHARS = 500
-ENV_NAME_KEYS = frozenset({"USER_NAME", "HONORIFIC"})
-ENV_NAME_MAX_CHARS = 64
-
-# `str.splitlines()` covers the ten separators; this covers what is left of
-# C0/C1 and DEL. An ESC is neither a separator nor printable, and it went
-# into the system prompt — and into whatever renders it — untouched.
-_ENV_CONTROL_RE = _action_re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# A setting only his click on Settings changes (settings_specs `page_only`):
+# the brain's program, the address JARVIS listens on, the page's extra
+# origins and the Fish key.
+PAGE_ONLY_SAID = ("Only his click on Settings changes {name}, sir: it decides what JARVIS "
+                  "runs or who can reach it.")
 
 
-def _env_value_max(key: str) -> int:
-    return ENV_NAME_MAX_CHARS if key in ENV_NAME_KEYS else ENV_VALUE_MAX_CHARS
+async def _change_setting(key: str, value, *, by: str = "tim") -> dict:
+    """Change one setting, from the page or the brain, and do what it needs
+    at once: a new voice provider or local voice stops what is sounding and
+    closes the local voice. Raises settings_service.Refused or KeyError."""
+    settings_specs.spec(key)
+    if key in ("tts_provider", "local_voice") and speech:
+        await speech.barge_in(reason="voice provider changed")
+    saved = await asyncio.to_thread(settings_service.change, key, value, by=by)
+    if key in ("tts_provider", "local_voice"):
+        await local_tts.client.close()
+    if key == "usage_poll":
+        _follow_usage_poll()
+    if key == "mute_mic_during_speech":
+        _queue_voice(_config_frame())      # every open page, at once
+    _send_to_session_clients({"type": "settings", "key": key})
+    return {"key": key, "value": None if settings_specs.spec(key).kind == "secret" else saved}
 
 
-def _env_value_problem(key: str, value: str) -> str | None:
-    """Why `key=value` cannot be written into `.env`, or None if it can."""
-    if len(value) > _env_value_max(key):
-        return (f"That setting is too long — {_env_value_max(key)} "
-                f"characters at most")
-    if "\0" in value:
-        # `splitlines()` does not split on NUL, so the round trip below would
-        # not catch it — but it truncates the string for anything that hands
-        # the value to a C API, so it keeps its own rule.
-        return "A setting cannot contain a null byte"
-    if value.splitlines() != ([value] if value else []):
-        return "A setting cannot contain a line break"
-    if key == "JARVIS_TTS_PROVIDER" and value not in ("fish", "local"):
-        return "Voice provider must be fish or local"
-    if key == "JARVIS_LOCAL_VOICE" and value not in local_tts.VOICES:
-        return "Unknown local voice"
-    if _ENV_CONTROL_RE.search(value):
-        return "A setting cannot contain a control character"
-    if _parse_env_lines(f"{key}={value}") != [(key, value)]:
-        return "A setting cannot begin or end with a space or a quote"
-    return None
+def _refusal_detail(e: settings_service.Refused) -> dict:
+    return {"message": str(e), "code": e.code, "values": e.values}
 
 
-def _env_example_path() -> Path:
-    return data_paths.PACKAGE_DIR / ".env.example"
+@app.get("/api/settings/values")
+async def api_settings_values(area: Optional[str] = None):
+    """Every setting (or one area's), as Settings draws them."""
+    try:
+        return await asyncio.to_thread(settings_service.view, area)
+    except settings_service.Refused as e:
+        raise HTTPException(status_code=400, detail=_refusal_detail(e))
 
-def _read_env(create: bool = False) -> tuple[list[str], dict[str, str]]:
-    """Read .env. Returns (raw_lines, parsed_dict).
 
-    `create` seeds the file from .env.example, and only a caller that is
-    about to write may ask for it. It used to happen unconditionally, which
-    made `GET /api/settings/status` — a read, by every reading of its name —
-    create a file on disk as a side effect of being asked a question.
-    """
-    path = _env_file_path()
-    if not path.exists():
-        if not create:
-            return [], {}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        example = _env_example_path()
-        if example.exists():
-            import shutil as _shutil
-            _shutil.copy2(str(example), str(path))
-        else:
-            path.write_text("")
-    text = path.read_text()
-    lines = text.splitlines()
-    # The same parser the boot loader uses, and the same one the writer asks
-    # before it commits a value — see `_parse_env_lines`.
-    parsed: dict[str, str] = dict(_parse_env_lines(text))
-    return lines, parsed
+class SettingChange(BaseModel):
+    key: str
+    value: object = None
 
-def _write_env_key(key: str, value: str) -> None:
-    """Update a single key in .env, preserving comments and order.
 
-    Raises ValueError for a key nobody may set, or a value the reader would
-    not read back as written: `f"{key}={value}"` with anything
-    `str.splitlines()` splits on in `value` appends whatever follows it as a
-    separate setting.
-    """
-    if key not in SETTABLE_ENV_KEYS:
-        raise ValueError(f"{key} is not a setting JARVIS will write")
-    problem = _env_value_problem(key, value)
-    if problem:
-        raise ValueError(problem)
-    lines, saved = _read_env(create=True)
-    if key == "FISH_VOICE_ID" and value and value in (saved.get("FISH_API_KEY"), os.getenv("FISH_API_KEY")):
-        raise ValueError("Use a Fish Audio voice model ID in Voice ID")
-    if key == "FISH_API_KEY" and value and value in (saved.get("FISH_VOICE_ID"), os.getenv("FISH_VOICE_ID")):
-        raise ValueError("Replace the key in Voice ID with a Fish Audio voice model ID first")
-    found = False
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            k, _, _ = stripped.partition("=")
-            if k.strip() == key:
-                new_lines.append(f"{key}={value}")
-                found = True
-                continue
-        new_lines.append(line)
-    if not found:
-        new_lines.append(f"{key}={value}")
-    _env_file_path().write_text("\n".join(new_lines) + "\n")
-    os.environ[key] = value
+@app.post("/api/settings/values")
+async def api_change_setting(body: SettingChange, request: Request):
+    """One setting changed on his click; returns the view of its area."""
+    try:
+        spec = settings_specs.spec(body.key)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail={"message": str(e), "code": "unknown",
+                                                     "values": {}})
+    if spec.page_only and not packages_api.his_click(request):
+        raise HTTPException(status_code=403, detail={
+            "message": PAGE_ONLY_SAID.format(name=body.key), "code": "pageOnly", "values": {}})
+    try:
+        await _change_setting(body.key, body.value)
+    except settings_service.Refused as e:
+        raise HTTPException(status_code=400, detail=_refusal_detail(e))
+    return await asyncio.to_thread(settings_service.view, spec.area)
+
 
 class KeyUpdate(BaseModel):
     key_name: str
@@ -17077,20 +17204,30 @@ class PreferencesUpdate(BaseModel):
     user_name: str = ""
     honorific: str = "sir"
 
+# The Voice section's Fish key and voice ID, by their setting keys.
+_VOICE_KEYS = ("fish_api_key", "fish_voice_id")
+
+
 @app.post("/api/settings/keys")
-async def api_settings_keys(body: KeyUpdate):
+async def api_settings_keys(body: KeyUpdate, request: Request):
+    if body.key_name not in _VOICE_KEYS:
+        return JSONResponse({"success": False, "error": f"{body.key_name} is not set here"},
+                            status_code=400)
+    if body.key_name == "fish_api_key" and not packages_api.his_click(request):
+        return JSONResponse({"success": False, "error": "Only his click sets the key"},
+                            status_code=403)
     try:
-        _write_env_key(body.key_name, body.key_value)
-    except ValueError as e:
+        await _change_setting(body.key_name, body.key_value)
+    except (settings_service.Refused, team_client.TeamError) as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=400)
     return {"success": True}
 
 @app.post("/api/settings/test-fish")
 async def api_test_fish(body: KeyTest):
-    key = body.key_value or os.getenv("FISH_API_KEY", "")
+    key = body.key_value or _fish_key()
     if not key:
         return {"valid": False, "error": "No key provided"}
-    if FISH_VOICE_ID == key:
+    if _fish_voice() == key:
         return {"valid": False, "error": "Use a Fish Audio voice model ID in Voice ID", "status_code": 400}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -17099,7 +17236,7 @@ async def api_test_fish(body: KeyTest):
             resp = await client.post(
                 tts.FISH_TTS_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json=tts.request_body("test", FISH_VOICE_ID),
+                json=tts.request_body("test", _fish_voice()),
             )
             if resp.status_code in (200, 201):
                 return {"valid": True}
@@ -17117,16 +17254,14 @@ class VoiceOutputUpdate(BaseModel):
 
 @app.post("/api/settings/voice-output")
 async def api_voice_output(body: VoiceOutputUpdate):
-    for key, value in (("JARVIS_TTS_PROVIDER", body.provider), ("JARVIS_LOCAL_VOICE", body.voice)):
-        problem = _env_value_problem(key, value)
-        if problem:
-            return JSONResponse({"error": problem}, status_code=400)
-    # Cancel queued playback/synthesis before switching models/providers.
-    if speech:
-        await speech.barge_in(reason="voice provider changed")
-    await local_tts.client.close()
-    _write_env_key("JARVIS_TTS_PROVIDER", body.provider)
-    _write_env_key("JARVIS_LOCAL_VOICE", body.voice)
+    # Both checked before either is saved.
+    try:
+        settings_service.check(settings_specs.spec("tts_provider"), body.provider)
+        settings_service.check(settings_specs.spec("local_voice"), body.voice)
+        await _change_setting("tts_provider", body.provider)
+        await _change_setting("local_voice", body.voice)
+    except settings_service.Refused as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     return _voice_output_status()
 
 
@@ -17147,43 +17282,122 @@ async def api_install_voice_output():
 @app.get("/api/settings/status")
 async def api_settings_status():
     from jarvis import claude_env
-    _, env_dict = _read_env()
     claude_installed = claude_env.find_claude() is not None
     return {
         "voice_output": _voice_output_status(),
         "claude_code_installed": claude_installed,
-        "server_port": 8340,
+        "server_port": web_auth.api_port(),
         "uptime_seconds": int(time.time() - _session_start),
         "env_keys_set": {
-            "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
-            "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
-            "user_name": env_dict.get("USER_NAME", ""),
+            "fish_audio": bool(_fish_key().strip()),
+            "fish_voice_id": bool(_fish_voice().strip()),
+            "user_name": _setting("user_name"),
         },
+        "imported": await asyncio.to_thread(settings_import.imported),
     }
 
 @app.get("/api/settings/preferences")
 async def api_get_preferences():
-    _, env_dict = _read_env()
-    return {
-        "user_name": env_dict.get("USER_NAME", ""),
-        "honorific": env_dict.get("HONORIFIC", "sir"),
-    }
+    return {"user_name": _setting("user_name"), "honorific": _setting("honorific")}
 
 @app.post("/api/settings/preferences")
 async def api_save_preferences(body: PreferencesUpdate):
-    # Validate both before writing either, so a bad honorific cannot leave
+    # Both checked before either is saved, so a bad honorific cannot leave
     # the name half-saved.
     try:
-        for key, value in (("USER_NAME", body.user_name),
-                           ("HONORIFIC", body.honorific)):
-            problem = _env_value_problem(key, value)
-            if problem:
-                raise ValueError(problem)
-        _write_env_key("USER_NAME", body.user_name)
-        _write_env_key("HONORIFIC", body.honorific)
-    except ValueError as e:
+        settings_service.check(settings_specs.spec("user_name"), body.user_name)
+        settings_service.check(settings_specs.spec("honorific"), body.honorific)
+        await _change_setting("user_name", body.user_name)
+        await _change_setting("honorific", body.honorific)
+    except settings_service.Refused as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=400)
     return {"success": True}
+
+
+# --- The brain's settings tools (Settings, every section) --------------------
+
+def _setting_said(d: dict) -> str:
+    if d["kind"] == "secret":
+        shown = "set" if d.get("set") else "not set"
+    else:
+        v = d.get("value")
+        shown = ("on" if v else "off") if d["kind"] == "bool" else (
+            "(empty)" if v in (None, "", []) else ", ".join(v) if isinstance(v, list) else str(v))
+    notes = []
+    if d.get("restart"):
+        notes.append("takes effect when JARVIS next starts")
+    if d.get("pending_restart"):
+        notes.append("changed, waiting for a restart")
+    if d.get("page_only"):
+        notes.append("only his click on Settings changes it")
+    if d.get("choices"):
+        notes.append("one of " + ", ".join(d["choices"]))
+    if d.get("min") is not None:
+        notes.append(f"between {d['min']:g} and {d['max']:g}")
+    return f"{d['area']}.{d['key']}: {shown}" + (f" ({'; '.join(notes)})" if notes else "")
+
+
+def _settings_said(view: dict) -> str:
+    lines = [_setting_said(d) for d in view["settings"]]
+    start = view.get("start") or {}
+    if start.get("problem"):
+        lines.append("The start file was not trusted (" + start["problem"]
+                     + "): JARVIS started on the default address, port and HTTPS.")
+    if start.get("data_dir_from_env"):
+        lines.append("JARVIS is using the data folder the old .env file named; Settings has "
+                     "no data folder control yet.")
+    return "\n".join(lines)
+
+
+def _refusal_said(e: settings_service.Refused) -> str:
+    """A refusal in JARVIS's words: the value it names (the brain's own
+    argument) is never repeated, only that it was refused."""
+    said = str(e)
+    if "value" in e.values:
+        said = said.replace(repr(e.values["value"]), "that value")
+    return said
+
+
+async def tool_jarvis_settings(args: dict) -> str:
+    """Settings: every setting, or one section's, as the page shows them."""
+    area = _plain_name(str(args.get("area") or "").strip(), "") or None
+    try:
+        return _settings_said(await asyncio.to_thread(settings_service.view, area))
+    except settings_service.Refused as e:
+        return f"Nothing to read, sir: {e}."
+
+
+async def tool_set_jarvis_setting(args: dict) -> str:
+    """Change one setting, as the page's control does. An ACTING tool: it
+    changes a setting; a start-up one takes effect when JARVIS next starts.
+    A page-only setting (the brain's program, the address, the extra
+    origins, the Fish key) is his click's alone."""
+    key = str(args.get("key") or "").strip()
+    try:
+        spec = settings_specs.spec(key)
+    except KeyError:
+        return (f"There is no setting called {_plain_name(key, 'that')}, sir; "
+                "jarvis_settings lists them.")
+    if spec.page_only or spec.kind == "secret":
+        return PAGE_ONLY_SAID.format(name=spec.key)
+    try:
+        await _change_setting(key, args.get("value"), by="jarvis")
+    except settings_service.Refused as e:
+        return f"Nothing was changed, sir: {_refusal_said(e)}."
+    view = await asyncio.to_thread(settings_service.view, spec.area)
+    mine = next(d for d in view["settings"] if d["key"] == key)
+    return "Saved. " + _setting_said(mine)
+
+
+TOOL_HANDLERS.update({
+    "jarvis_settings": tool_jarvis_settings,
+    "set_jarvis_setting": tool_set_jarvis_setting,
+})
+ACTING_TOOLS.add("set_jarvis_setting")
+TAINT_EXEMPT_TOOLS.update({
+    "jarvis_settings": "it reads his own settings, JARVIS's own words",
+    "set_jarvis_setting": "it changes one of his settings to a fixed value, it does not read",
+})
 
 # ---------------------------------------------------------------------------
 # Control endpoints (restart)
@@ -17562,24 +17776,43 @@ def _stacks_on_signal() -> None:
     faulthandler.register(signal.SIGUSR1, file=stream, all_threads=True)
 
 
+def _apply_start_settings(args) -> None:
+    """The address and port this run binds: a flag given for this run, else
+    Settings, Server. When the saved ones cannot be bound, the start file
+    goes back to the last start that served (start_settings.fall_back), so
+    the page comes back."""
+    if args.host is None and args.port is None:
+        host, port = _setting("host"), int(_setting("port"))
+        if not start_settings.bindable(host, port):
+            log.warning("Settings' address %s:%s cannot be bound; going back to the last "
+                        "start that served", host, port)
+            start_settings.fall_back()
+    args.host = args.host or _setting("host") or DEFAULT_BIND_HOST
+    args.port = args.port or int(_setting("port"))
+
+
 def main() -> None:
     """`python -m jarvis` and the `jarvis` command."""
     import argparse
     import uvicorn
 
+    # The address, port and HTTPS are Settings, Server (the start file); the
+    # flags are one run's own and are saved nowhere.
     parser = argparse.ArgumentParser(description="JARVIS Server")
-    parser.add_argument("--host", default=DEFAULT_BIND_HOST,
-                        help="Bind host (default: loopback only)")
-    parser.add_argument("--port", type=int, default=8340, help="Bind port")
+    parser.add_argument("--host", default=None,
+                        help="Bind host for this run only (Settings, Server holds the choice)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="Bind port for this run only (Settings, Server holds the choice)")
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
-    parser.add_argument("--ssl", action="store_true", help="Enable HTTPS with key.pem/cert.pem")
+    parser.add_argument("--ssl", action="store_true", help="HTTPS for this run (needs key.pem/cert.pem)")
     args = parser.parse_args()
     _stacks_on_signal()
+    _apply_start_settings(args)
 
-    # Auto-detect SSL certs
     cert_file = data_paths.CONFIG_DIR / "cert.pem"
     key_file = data_paths.CONFIG_DIR / "key.pem"
-    use_ssl = args.ssl or (cert_file.exists() and key_file.exists())
+    certs = cert_file.exists() and key_file.exists()
+    use_ssl = certs and (args.ssl or _setting("https") is True)
 
     proto = "https" if use_ssl else "http"
     ws_proto = "wss" if use_ssl else "ws"
@@ -17603,18 +17836,29 @@ def main() -> None:
     # Record the actual bind parameters so _write_mcp_config (called later,
     # from start_brain_and_speech) can point the brain's MCP child at a URL
     # that actually reaches this server — not a hardcoded guess.
-    os.environ["JARVIS_PORT"] = str(args.port)
-    os.environ["JARVIS_SCHEME"] = proto
-    os.environ["JARVIS_BIND_HOST"] = args.host
+    env_names.publish("JARVIS_PORT", str(args.port))
+    env_names.publish("JARVIS_SCHEME", proto)
+    env_names.publish("JARVIS_BIND_HOST", args.host)
+    # What Settings saved as this process starts: a setting saved
+    # differently since waits for a restart (settings_service.described).
+    settings_service.note_started("start")
 
-    uvicorn.run(
-        "jarvis.server:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level="info",
-        **ssl_kwargs,
-    )
+    if args.reload:
+        uvicorn.run("jarvis.server:app", host=args.host, port=args.port, reload=True,
+                    log_level="info", **ssl_kwargs)
+        return
+    # uvicorn.run's own path, with the server kept, so the start that served
+    # is recorded only once it is listening (`_remember_once_serving`).
+    server = uvicorn.Server(uvicorn.Config("jarvis.server:app", host=args.host, port=args.port,
+                                           log_level="info", **ssl_kwargs))
+    settings_service.note_serving({"host": args.host, "port": args.port, "https": use_ssl},
+                                  lambda: server.started)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        sys.exit(3)        # uvicorn's STARTUP_FAILURE
 
 
 if __name__ == "__main__":

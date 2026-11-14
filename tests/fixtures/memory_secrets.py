@@ -3,7 +3,7 @@ memory, so no test reads or writes the user's Keychain."""
 
 
 class MemorySecrets:
-    def __init__(self):
+    def __init__(self, service=None):
         self.items: dict[str, str] = {}
 
     def get(self, account):

@@ -23,6 +23,7 @@ import urllib.request
 # The one limit on a message's files, from the messaging contract.
 from jarvis.messaging_wire import ATTACHMENTS_MAX
 # The ui_* tools' schemas come from the UI contract, the page's own declarations.
+from jarvis import env_names, settings_specs
 from jarvis import ui_contract
 
 # The pause stages in order (the pause cues, then the send) and their
@@ -80,6 +81,21 @@ _ENGINE_PROPERTY = {
                     "'with Claude'). Omit it otherwise: his setting for this kind of agent "
                     "decides (engine_settings), which may move it off a brain in token "
                     "stress. Never ask which engine.")}
+
+# How a tool that takes one message to him names it: by id, or by when it
+# came with who it is from, its Work item and new (messages_api.resolve).
+MESSAGE_NAMED = {
+    "message": {"type": "integer", "description": "The message's id."},
+    "at": {"type": "string",
+           "description": "When it came, his local time: as he said or typed it "
+                          "(\"3:42\", \"15:42\", \"3:42 pm\", \"15:42 h\", "
+                          "\"yesterday 9:05\"), or a message's local as JARVIS gave it "
+                          "(\"2026-11-12 15:42\"); never its when."},
+    "from": {"type": "string", "description": "Who it is from, as he named them."},
+    "work": {"type": "string", "description": "Its Work item: id or title."},
+    "new": {"type": "boolean", "description": "Only a message not yet read."},
+}
+
 
 TOOL_SPECS = [
     {
@@ -157,28 +173,31 @@ TOOL_SPECS = [
     {
         "name": "read_aloud",
         "description": (
-            "Read one message to him aloud, that message only, whatever it came by (an "
-            "agent's message or answer, a package's, a decision, a person's message), as the "
-            "Read button does, only when he asks. With no message it reads the one he is on "
-            "(\"read it\"): the first that messages_to_him new listed, or the last he heard, "
-            "opened or replied to; with next, the next new one in that order (\"next\"). It "
-            "is read, and its update seen, only once he has heard it in full."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"},
-                                       "next": {"type": "boolean",
-                                                "description": "The next new message."}}},
+            "Give you one message to him to read him, that message only, whatever it came by "
+            "(an agent's message or answer, a package's, a decision, a person's message), "
+            "only when he asks: his Read on it comes to you as \"Read me message 42.\". "
+            "Read him its words in your reply as they are written, saying first who it is "
+            "from, then sum it up in one sentence. Name it by its id; or by when it came "
+            "(at, his local time as he said it: \"3:42\", \"15:42\", \"3:42 pm\", "
+            "\"yesterday 9:05\") with who it is from (from), its Work item (work) and new, "
+            "as he gave them. Several that fit come back to ask him which; none names the "
+            "nearest. With nothing named it is the one he is on (\"read it\"): the first "
+            "that messages_to_him new listed, or the last he heard, opened or replied to; "
+            "with next, the next new one in that order (\"next\"). It is read, and its "
+            "update seen, only once he has heard your reply in full."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
+            "next": {"type": "boolean", "description": "The next new message."}}},
     },
     {
         "name": "reply",
         "description": (
-            "His reply to one message to him (its id, else the one he is on: \"reply\"): "
-            "a capture addressed to its proven sender, holding his words when given; read it "
-            "back with read_capture, and it goes only on his yes. For a person's message it "
-            "is a draft in their thread instead, reviewed with request_message_review."),
-        "inputSchema": {"type": "object",
-                        "properties": {"message": {"type": "integer"},
-                                       "text": {"type": "string",
-                                                "description": "His reply, in his words."}}},
+            "His reply to one message to him (named as read_aloud names one, else the one "
+            "he is on: \"reply\"): a capture addressed to its proven sender, holding his "
+            "words when given; read it back with read_capture, and it goes only on his yes. "
+            "For a person's message it is a draft in their thread instead, reviewed with "
+            "request_message_review."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
+            "text": {"type": "string", "description": "His reply, in his words."}}},
     },
     {
         "name": "messages_to_him",
@@ -190,7 +209,10 @@ TOOL_SPECS = [
             "it; with general, only the new messages that belong to no item; with read, the "
             "ones that belong to no item he has read or answered and is not done with (the "
             "Inbox's Read section). Each message has from, about (its Work item), "
-            "says, carries (a package inbox row) and state (new, read, answered, done). "
+            "says, carries (a package inbox row), state (new, read, answered, done) and when "
+            "it came, his local time (local: \"2026-11-12 15:42\", the form to pass "
+            "read_aloud, reply, mark_message and open_inbox_package as at; when: \"today "
+            "15:42\", words for him only, since today changes at midnight). "
             "When he asks what is new, give new: every new message in the Inbox's order "
             "(each Work item with new messages, then the general ones), which puts him on "
             "the first; tell him each item's in a sentence (from, about, what it says, a "
@@ -212,12 +234,12 @@ TOOL_SPECS = [
     {
         "name": "mark_message",
         "description": (
-            "Mark one message to him read or done, only when he says so (its id from "
-            "messages_to_him). Answered is never marked: it comes of his reply going."),
-        "inputSchema": {"type": "object", "properties": {
-            "message": {"type": "integer"},
+            "Mark one message to him read or done, only when he says so (named as read_aloud "
+            "names one: its id from messages_to_him, or when it came; else the one he is "
+            "on). Answered is never marked: it comes of his reply going."),
+        "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
             "state": {"type": "string", "enum": ["read", "done"]}},
-            "required": ["message", "state"]},
+            "required": ["state"]},
     },
     {
         "name": "capture",
@@ -2171,6 +2193,32 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "brains_settings",
+        "description": (
+            "Settings, Brains: which brains are added (Claude, Codex), the one JARVIS starts "
+            "with, the one running now, and each one's model."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_brain",
+        "description": (
+            "Change Settings, Brains only when he asks: add or remove a brain, choose the one "
+            "JARVIS starts with (from its next start), or a brain's model. It restarts nothing."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "brain": {"type": "string", "enum": ["anthropic", "openai"],
+                          "description": "anthropic is Claude, openai is Codex."},
+                "action": {"type": "string", "enum": ["add", "remove", "default", "model"],
+                           "description": ("default: the brain JARVIS starts with; model: "
+                                           "that brain's model, given in model.")},
+                "model": {"type": "string",
+                          "description": "With model: one of that brain's models."},
+            },
+            "required": ["brain", "action"],
+        },
+    },
+    {
         "name": "set_engine_setting",
         "description": (
             "Change one kind of agent's engine setting, or the override, only when he asks. "
@@ -2194,6 +2242,35 @@ TOOL_SPECS = [
                                                       "to the least stressed.")},
             },
         },
+    },
+    {
+        "name": "jarvis_settings",
+        "description": (
+            "Settings: every setting he has made, or one section's (area): you (weather place "
+            "and units, the browser JARVIS opens), voice, brains (effort, turn time limit, "
+            "context budget, program paths, usage reading), agents (run time limits, skipping "
+            "permission prompts, the cancel window, extra session homes, polling), projects "
+            "(folders and scan limits), knowledge, safety (refusing to act after reading "
+            "others' words), team (local team servers) and server (address, port, HTTPS, "
+            "starting the brain, extra origins, the docs console). Each with its value, its "
+            "bounds or choices, whether it waits for a restart and whether only his click "
+            "changes it. The Fish key is only ever said to be set or not."),
+        "inputSchema": {"type": "object", "properties": {
+            "area": {"type": "string", "enum": list(settings_specs.AREAS)}}},
+    },
+    {
+        "name": "set_jarvis_setting",
+        "description": (
+            "Change one setting, only when he asks, as its Settings control does: key from "
+            "jarvis_settings, value a boolean, a number, text or a list as the setting takes. "
+            "A setting marked for a restart takes effect when JARVIS next starts. The brain's "
+            "program, the address, the extra origins and the Fish key are his click's alone."),
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string",
+                    "enum": [s.key for s in settings_specs.SPECS
+                             if not s.page_only and s.kind != "secret"]},
+            "value": {"description": "The new value; null empties an optional number."}},
+            "required": ["key", "value"]},
     },
     {
         "name": "set_voice_input_settings",
@@ -2693,10 +2770,9 @@ TOOL_SPECS = [
             "and, for a decision package, every question to read him one at a time."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string",
-                                       "description": "Its id, or its title or sender as he said it."},
-                           "message": {"type": "integer",
-                                       "description": "A message carrying it."}},
+            "properties": MESSAGE_NAMED | {
+                "package": {"type": "string",
+                            "description": "Its id, or its title or sender as he said it."}},
         },
     },
     {
@@ -2837,11 +2913,11 @@ def _ssl_context_for(url: str) -> ssl.SSLContext | None:
 
 
 def _endpoint() -> str:
-    return os.getenv("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
+    return env_names.read("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
 
 
 def _token() -> str:
-    path = os.getenv("JARVIS_TOOL_TOKEN_FILE", "")
+    path = env_names.read("JARVIS_TOOL_TOKEN_FILE")
     if not path:
         return ""
     try:

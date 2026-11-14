@@ -11,12 +11,13 @@ import os
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 @pytest.fixture(autouse=True)
 def indexing_enabled(monkeypatch):
     # These tests exercise indexing, with the legacy installation input.
     # Settings persistence and live enable/disable have their own tests.
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
 
 
 from jarvis import data_paths, embedding_models as em
@@ -103,14 +104,14 @@ def test_the_shipped_model_names_the_trial_s_file():
 def test_the_runner_gives_the_installed_model_through_its_runtime(tmp_path, monkeypatch):
     model, src = _tiny_model(tmp_path)
     monkeypatch.setattr(em, "DEFAULT", model)
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     assert emb.installed() is None                            # nothing installed: no vectors
     em.install(model, files_from=src)
     made = []
     monkeypatch.setitem(emb.RUNTIMES, "fake", lambda folder, m: made.append(folder) or emb.FakeEmbedder(4))
     first = emb.installed()
     assert first is not None and first.dim == 4 and emb.installed() is first and len(made) == 1
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "0")
+    hold_setting("knowledge_enabled", "0")
     assert emb.installed() is first                           # loading and indexing policy are separate
 
 
@@ -122,7 +123,7 @@ def test_a_runtime_that_cannot_load_turns_vectors_off_not_the_engine(tmp_path, m
     def broken(folder, m):
         raise RuntimeError("no runtime here")
     monkeypatch.setitem(emb.RUNTIMES, "fake", broken)
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     assert emb.installed() is None
     e = Engine.open(tmp_path / "k")
     try:

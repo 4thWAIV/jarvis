@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from jarvis import data_paths, language_setting, spoken_words, transcriber
 from tests.test_speech_models import _app, _events, _put
 from tests.test_transcription_ws import FakeEngine, PAGE
+from tests.settings_fixtures import hold_setting
 
 ENGLISH = transcriber.find_model("en")
 SPANISH = transcriber.find_model("es")
@@ -187,16 +188,26 @@ def test_choosing_needs_the_pages_origin(client):
 
 @pytest.mark.parametrize("honorific,english,spanish", [
     ("sir", "Speaking English now, sir.", "Ahora hablo en español, señor."),
-    ("", "Speaking English now, sir.", "Ahora hablo en español, señor."),
     ("señor", "Speaking English now, señor.", "Ahora hablo en español, señor."),
     ("ma'am", "Speaking English now, ma'am.", "Ahora hablo en español, señora."),
     ("none", "Speaking English now.", "Ahora hablo en español."),
-    ("Lord Vader", "Speaking English now, sir.", "Ahora hablo en español, señor."),
 ])
 def test_the_confirmation_uses_the_honorific(monkeypatch, honorific, english, spanish):
-    monkeypatch.setenv("HONORIFIC", honorific)
+    hold_setting("honorific", honorific)
     assert language_setting.confirmation("en") == english
     assert language_setting.confirmation("es") == spanish
+
+
+def test_an_honorific_not_on_the_list_is_refused_and_never_said():
+    """Settings takes only the listed honorifics; anything else is refused,
+    sir stays in force, and the address table still reads it as sir."""
+    from jarvis import settings_service, spoken_words
+    with pytest.raises(settings_service.Refused):
+        hold_setting("honorific", "Lord Vader")
+    assert language_setting.confirmation("en") == "Speaking English now, sir."
+    for word in ("", "Lord Vader"):
+        assert spoken_words.address("en", word) == "sir"
+        assert spoken_words.address("es", word) == "señor"
 
 
 def _launch_prompt(tmp_path, honorific):
@@ -237,7 +248,7 @@ def test_spanish_addresses_her_as_senora_under_maam(tmp_path, spanish):
 
 def test_the_honorific_reaches_the_brain_from_env(monkeypatch, tmp_path):
     from jarvis import brain
-    monkeypatch.setenv("HONORIFIC", "señor")
+    hold_setting("honorific", "señor")
     assert brain.BrainConfig.from_env(tmp_path).honorific == "señor"
 
 
@@ -245,7 +256,7 @@ def test_the_honorific_reaches_the_brain_from_env(monkeypatch, tmp_path):
 
 @pytest.fixture
 def server(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import server as server_module
     return server_module
 
@@ -366,7 +377,7 @@ def test_the_brain_s_change_is_published_too(published):
 
 def test_every_page_hears_it_and_a_page_that_connects_reads_it(monkeypatch, tmp_path):
     import importlib
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import server
     importlib.reload(server)
     assert language_setting._publish == server._send_to_session_clients

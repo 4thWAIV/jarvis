@@ -259,6 +259,9 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.name.toolServer": "Herramientas de JARVIS en el cerebro",
   "right.subsystem.name.workflowsRunning": "Flujos",
   "right.subsystem.name.workflowsWatch": "Vigilancia de silencio",
+  "right.subsystem.name.work": "Seguimiento del trabajo",
+  "right.subsystem.name.workWrites": "Informes",
+  "right.subsystem.name.workReads": "Lista de trabajo",
   "right.subsystem.name.folderList": "Carpetas",
   "right.subsystem.name.discovery": "Descubrimiento",
   "right.subsystem.name.discoveryLoop": "Ciclo de descubrimiento",
@@ -341,6 +344,16 @@ export const rightEs: CatalogOf<typeof rightEn> = {
     one: "{count} flujo se quedó sin noticias", other: "{count} flujos se quedaron sin noticias" },
   "right.subsystem.said.workflowsRunning": { one: "{count} flujo en curso", other: "{count} flujos en curso" },
   "right.subsystem.said.workflowsNone": "Ningún flujo en curso",
+  "right.subsystem.said.workWritesNone": "Ningún informe en los últimos {window}",
+  "right.subsystem.said.workWritesOk": {
+    one: "{count} informe en los últimos {window}, el más lento {seconds}",
+    other: "{count} informes en los últimos {window}, el más lento {seconds}" },
+  "right.subsystem.said.workWritesSlow": "El informe más lento de los últimos {window} tardó {seconds}",
+  "right.subsystem.said.workReadsNone": "Ninguna lectura de la lista de trabajo en los últimos {window}",
+  "right.subsystem.said.workReadsOk": {
+    one: "{count} lectura en los últimos {window}, la más lenta {seconds}",
+    other: "{count} lecturas en los últimos {window}, la más lenta {seconds}" },
+  "right.subsystem.said.workReadsSlow": "La lectura más lenta de la lista de trabajo en los últimos {window} tardó {seconds}",
   "right.subsystem.said.foldersOff": "No está en marcha",
   "right.subsystem.said.foldersUnavailable":
     "{count} de {total} no disponibles ({missing} no encontradas, {denied} con acceso denegado, {elsewhere} en un nodo no disponible)",

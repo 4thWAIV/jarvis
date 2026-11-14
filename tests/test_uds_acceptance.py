@@ -17,6 +17,7 @@ import pytest
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge.uds import (Caller, Conflict, Denied, Link, Query, Stream, Transaction,
                                   in_process)
+from tests.settings_fixtures import hold_setting
 
 TIM = Caller("tim")
 ANA = Caller("ana")                     # a staffing manager: given the CVs' data, not always their content
@@ -29,7 +30,7 @@ CV = "# Experience\nLed the data platform.\n## Certifications\nSOC 2 Type II aud
 def opened(tmp_path, monkeypatch):
     # These checks are about indexing, so indexing is on, as an installation
     # with no saved Settings choice and JARVIS_KNOWLEDGE set has it.
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
     monkeypatch.setattr(emb, "RUNNER", lambda: emb.FakeEmbedder(32))
     with in_process(tmp_path / "engine") as found:
         yield found

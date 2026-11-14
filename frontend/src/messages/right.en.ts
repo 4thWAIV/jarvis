@@ -272,6 +272,9 @@ export const rightEn = {
   "right.subsystem.name.toolServer": "JARVIS's tools in the brain",
   "right.subsystem.name.workflowsRunning": "Workflows",
   "right.subsystem.name.workflowsWatch": "Watch for quiet",
+  "right.subsystem.name.work": "Work tracker",
+  "right.subsystem.name.workWrites": "Reports",
+  "right.subsystem.name.workReads": "Work list",
   "right.subsystem.name.folderList": "Folders",
   "right.subsystem.name.discovery": "Discovery",
   "right.subsystem.name.discoveryLoop": "Discovery loop",
@@ -354,6 +357,16 @@ export const rightEn = {
     one: "{count} workflow has gone quiet", other: "{count} workflows have gone quiet" },
   "right.subsystem.said.workflowsRunning": { one: "{count} workflow running", other: "{count} workflows running" },
   "right.subsystem.said.workflowsNone": "No workflows running",
+  "right.subsystem.said.workWritesNone": "No report in the last {window}",
+  "right.subsystem.said.workWritesOk": {
+    one: "{count} report in the last {window}, the slowest {seconds}",
+    other: "{count} reports in the last {window}, the slowest {seconds}" },
+  "right.subsystem.said.workWritesSlow": "The slowest report in the last {window} took {seconds}",
+  "right.subsystem.said.workReadsNone": "No read of the Work list in the last {window}",
+  "right.subsystem.said.workReadsOk": {
+    one: "{count} read in the last {window}, the slowest {seconds}",
+    other: "{count} reads in the last {window}, the slowest {seconds}" },
+  "right.subsystem.said.workReadsSlow": "The slowest read of the Work list in the last {window} took {seconds}",
   "right.subsystem.said.foldersOff": "Not running",
   "right.subsystem.said.foldersUnavailable":
     "{count} of {total} not available ({missing} missing, {denied} access denied, {elsewhere} on an unavailable node)",

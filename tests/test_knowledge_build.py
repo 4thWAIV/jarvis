@@ -26,6 +26,7 @@ import pytest
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import lanes, vectors as vec
 from jarvis.knowledge.uds import Caller, Transaction, in_process
+from tests.settings_fixtures import hold_setting
 
 TIM = Caller("tim")
 WAIT_SEC = 20.0
@@ -33,7 +34,7 @@ WAIT_SEC = 20.0
 
 @pytest.fixture(autouse=True)
 def indexing_enabled(monkeypatch):
-    monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+    hold_setting("knowledge_enabled", "1")
 
 
 class Noting(emb.FakeEmbedder):

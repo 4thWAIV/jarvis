@@ -1,8 +1,11 @@
 /**
  * The Settings view: a centre view like Conversation, offered as a centre
  * tab while it is open, one scrolling page of sections in the order a
- * person comes to them: You, Voice and language, Brains, Team, Updates,
- * Server. Its title, × and a row of section names that jumps to each stay
+ * person comes to them: You, Voice and language, Brains, Agents, Projects,
+ * Team, Knowledge, Safety, Updates, Server. Every choice a person makes is
+ * here: no one ever leaves the dashboard to change JARVIS. The settings
+ * with no control of their own are drawn from their one list
+ * (SettingsFields.tsx, settings_specs.py). Its title, × and a row of section names that jumps to each stay
  * above the scrolling sections.
  *
  * With no Fish Audio key set, two seconds after the page loads, it opens
@@ -33,9 +36,10 @@
 import { motion, setMotion } from "./motion";
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { KnowledgeSettings } from "./KnowledgeSettings";
+import { SettingsFields, settingsValues } from "./SettingsFields";
 import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { closeMenu, reloadAfterRestart } from "./MenuControl";
+import { closeMenu, reloadAfterRestart, restartServer } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { VoiceInputSettingsControl } from "./VoiceInputSettingsControl";
 import { TeamSection } from "./TeamSection";
@@ -50,7 +54,8 @@ import { bind, bindingProps, detailSlot } from "./uiNavigation";
 import { dispatch, registerCommand, useUiTarget } from "./uiRegistry";
 
 // In order; each is named by its id (`left.settings.section.<id>`).
-const SECTIONS = ["you", "voice", "brains", "team", "knowledge", "updates", "server"] as const satisfies
+const SECTIONS = ["you", "voice", "brains", "agents", "projects", "team", "knowledge", "safety", "updates",
+                  "server"] as const satisfies
   readonly CommandArgs["settings.section"]["section"][];
 export type SectionId = (typeof SECTIONS)[number];
 
@@ -142,6 +147,7 @@ interface Status {
   server_port: number;
   uptime_seconds: number;
   env_keys_set: { fish_audio: boolean; fish_voice_id: boolean; user_name: string };
+  imported: { at: string; copied: string[] } | null;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -212,11 +218,14 @@ export function SettingsView() {
 
   const close = bindingProps(bind("settings.close", {}));
   const body: Record<SectionId, () => ReactNode> = {
-    you: () => <YouSection />,
-    voice: () => <VoiceSection status={status.value} reload={status.refresh} />,
-    brains: () => <BrainsSection />,
-    team: () => <TeamSection />,
-    knowledge: () => <KnowledgeSettings />,
+    you: () => <><YouSection /><SettingsFields area="you" /></>,
+    voice: () => <><VoiceSection status={status.value} reload={status.refresh} /><SettingsFields area="voice" /></>,
+    brains: () => <><BrainsSection /><SettingsFields area="brains" /></>,
+    agents: () => <SettingsFields area="agents" />,
+    projects: () => <SettingsFields area="projects" />,
+    team: () => <><TeamSection /><SettingsFields area="team" /></>,
+    knowledge: () => <><KnowledgeSettings /><SettingsFields area="knowledge" /></>,
+    safety: () => <SettingsFields area="safety" />,
     updates: () => <UpdatesSection />,
     server: () => <ServerSection status={status.value} failed={status.error !== null} />,
   };
@@ -369,7 +378,6 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
   const [key, setKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [tested, setTested] = useState<"testing" | "testPassed" | "invalidKey" | "noCredit" | "badVoiceId" | "testFailed" | null>(null);
-  const [restartNeeded, setRestartNeeded] = useState(false);
   const voiceUi = useSettingsItem("voiceId", t("left.voice.voiceId"), provider === "fish");
   const saveVoiceUi = useSettingsItem("saveVoiceId", t("left.settings.save"), provider === "fish");
   const keyUi = useSettingsItem("fishKey", t("left.voice.fishKey"), provider === "fish");
@@ -389,16 +397,15 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
       setTested("testFailed");
     }
   };
-  const saveFishSetting = async (name: "FISH_API_KEY" | "FISH_VOICE_ID", value: string) => {
+  const saveFishSetting = async (name: "fish_api_key" | "fish_voice_id", value: string) => {
     setSaving(true); setError(null);
     try {
       await postJson("/api/settings/keys", { key_name: name, key_value: value.trim() });
-      if (name === "FISH_API_KEY") setKey("");
+      if (name === "fish_api_key") setKey("");
       setTested(null);
-      setRestartNeeded(true);
       reload();
     } catch {
-      setError(name === "FISH_API_KEY" ? "keySaveFailed" : "voiceIdSaveFailed");
+      setError(name === "fish_api_key" ? "keySaveFailed" : "voiceIdSaveFailed");
     } finally {
       setSaving(false);
     }
@@ -436,7 +443,7 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
         <input data-ui-action="input" id="settings-voice-id" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe"
                value={voiceId} ref={voiceUi.whole} disabled={saving} onChange={(e) => setVoiceId(e.target.value)} />
         <button data-ui-action="domain" className="settings-btn" disabled={!voiceId.trim() || testing || saving}
-                onClick={() => void saveFishSetting("FISH_VOICE_ID", voiceId)} ref={saveVoiceUi.whole}>
+                onClick={() => void saveFishSetting("fish_voice_id", voiceId)} ref={saveVoiceUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
       <SettingsRow label={t("left.voice.fishKey")} labelRef={keyUi.part("label")} htmlFor="settings-fish-key">
@@ -448,14 +455,11 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
           {t("left.voice.test")}</button>
         {dot && <StatusDot status={dot} />}
         <button data-ui-action="domain" className="settings-btn primary" disabled={!key.trim() || testing || saving}
-                onClick={() => void saveFishSetting("FISH_API_KEY", key)} ref={saveKeyUi.whole}>
+                onClick={() => void saveFishSetting("fish_api_key", key)} ref={saveKeyUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
       {hasSavedKey !== undefined && <p role="status">{t(hasSavedKey ? "left.voice.keySaved" : "left.voice.keyMissing")}</p>}
       {tested && <p role="status">{t(`left.voice.${tested}`)}</p>}
-      {restartNeeded && (
-        <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
-      )}
       </>}
       <button data-ui-action="domain" className="settings-btn" ref={previewUi.whole}
               disabled={busy || saving || (provider === "local" && !output?.installed)}
@@ -810,13 +814,32 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
   const port = useSettingsItem("serverPort", t("left.server.port"));
   const uptime = useSettingsItem("serverUptime", t("left.server.uptime"));
   const appearance = useSettingsItem("appearance", t("left.server.appearance"));
+  const restartUi = useSettingsItem("restartNow", t("left.server.restartNow"));
   const selectedTheme = useSyncExternalStore(theme.subscribe, theme.get);
+  const values = useSyncExternalStore(settingsValues.subscribe, settingsValues.get).value;
   const known = status !== null && !failed;
+  const pending = (values?.settings ?? []).some((s) => s.pending_restart);
   return (
     <>
       {failed && (
         <p className="settings-state"><StatusDot status="red" />{t("left.server.noAnswer")}</p>
       )}
+      {values?.start.problem && (
+        <p role="alert" className="settings-state"><StatusDot status="red" />
+          {t(values.start.problem === "tampered" ? "left.server.startTampered" : "left.server.startUnreadable")}</p>
+      )}
+      {values?.start.data_dir_from_env && (
+        <p role="alert" className="settings-state">
+          {t("left.server.dataDirFromEnv", { path: values.start.data_dir_from_env })}</p>
+      )}
+      {status?.imported && (
+        <p className="settings-hint">{t("left.server.imported", {
+          when: formatDateTime(new Date(status.imported.at), { dateStyle: "medium" }) })}</p>
+      )}
+      <SettingsFields area="server" />
+      {pending && <p className="settings-restart-notice">{t("left.server.pending")}</p>}
+      <button data-ui-action="restart" className="settings-btn" ref={restartUi.whole} onClick={() => void restartServer()}>
+        {t("left.server.restartNow")}</button>
       <SettingsRow label={t("left.server.port")} labelRef={port.part("label")}>
         <span className="settings-value" ref={port.whole}>{known ? status.server_port : "—"}</span>
       </SettingsRow>

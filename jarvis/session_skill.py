@@ -22,6 +22,7 @@ from pathlib import Path
 from jarvis import codex_sessions
 from jarvis import data_paths
 from jarvis import session_watch
+from jarvis import settings_service
 
 NAME = "talk-to-jarvis"
 TEMPLATE = data_paths.PACKAGE_DIR / "session_skills" / NAME / "SKILL.md"
@@ -110,6 +111,9 @@ def main(argv: list[str]) -> int:
     if argv[1:] != ["install"]:
         print("usage: python -m jarvis.session_skill install", file=sys.stderr)
         return 2
+    # Its own process: the extra Claude Code and Codex homes he saved in
+    # Settings, Agents are read from the records before the targets are.
+    settings_service.load_once()
     written = install()
     if not written:
         print("No Claude Code or Codex home found; nothing installed.")

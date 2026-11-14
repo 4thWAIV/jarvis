@@ -9,6 +9,7 @@ import pytest
 
 from jarvis import claude_provider
 from tests.fixtures.waiting import until_async
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -104,7 +105,9 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__speech_models,mcp__jarvis__install_speech_model,"
         "mcp__jarvis__set_language,"
         "mcp__jarvis__voice_input_settings,mcp__jarvis__set_voice_input_settings,"
-        "mcp__jarvis__engine_settings,mcp__jarvis__set_engine_setting,mcp__jarvis__play_cue,"
+        "mcp__jarvis__engine_settings,mcp__jarvis__set_engine_setting,"
+        "mcp__jarvis__brains_settings,mcp__jarvis__set_brain,"
+        "mcp__jarvis__jarvis_settings,mcp__jarvis__set_jarvis_setting,mcp__jarvis__play_cue,"
         "mcp__jarvis__skip_reading,mcp__jarvis__stop_speaking,"
         "mcp__jarvis__voice_turn,mcp__jarvis__quiet_microphone,mcp__jarvis__set_motion,"
         "mcp__jarvis__read_aloud,mcp__jarvis__reply,"
@@ -148,10 +151,12 @@ def test_command_has_exact_flags(tmp_path):
     assert "--mcp-config" not in cmd
 
 
-def test_model_defaults_to_sonnet_and_env_overrides(tmp_path, monkeypatch):
-    from jarvis import brain
+def test_model_defaults_to_sonnet_and_the_brain_s_card_chooses_it(tmp_path, monkeypatch):
+    from jarvis import brain, brains_config
     assert brain.BrainConfig.from_env(tmp_path).model == "sonnet"
-    monkeypatch.setenv("JARVIS_BRAIN_MODEL", "haiku")
+    monkeypatch.setenv("JARVIS_BRAIN_MODEL", "opus")        # read by nothing any more
+    assert brain.BrainConfig.from_env(tmp_path).model == "sonnet"
+    brains_config.set_model("anthropic", "haiku")
     assert brain.BrainConfig.from_env(tmp_path).model == "haiku"
 
 
@@ -533,10 +538,10 @@ def test_child_env_never_carries_api_credentials(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example")   # would move the brain off the login
     monkeypatch.setenv("ANTHROPIC_MODEL", "something")
-    monkeypatch.setenv("FISH_API_KEY", "keep")
+    monkeypatch.setenv("SOME_USER_VARIABLE", "keep")
     env = claude_provider.ClaudeSession.child_env()
     assert not any(k.startswith("ANTHROPIC_") for k in env)
-    assert env["FISH_API_KEY"] == "keep"
+    assert env["SOME_USER_VARIABLE"] == "keep"
 
 
 @pytest.mark.asyncio

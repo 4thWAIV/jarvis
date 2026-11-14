@@ -9,7 +9,6 @@ silently unhonoured.
 """
 import os
 
-os.environ.setdefault("JARVIS_BRAIN_AUTOSTART", "0")
 
 import pytest
 

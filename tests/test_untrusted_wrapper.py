@@ -34,6 +34,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 SERVER = Path(__file__).parent.parent / "jarvis" / "server.py"
 
@@ -93,7 +94,7 @@ def test_every_literal_name_survives_the_shape_check():
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

@@ -20,6 +20,7 @@ import pytest
 
 from jarvis import project_maker
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 @pytest.fixture
@@ -31,8 +32,8 @@ def root(tmp_path):
 def wired(monkeypatch, tmp_path):
     """A reloaded server whose projects root is a tmp_path, never ~/Projects."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_PROJECTS_DIR", str(tmp_path / "Projects"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("projects_dir", str(tmp_path / "Projects"))
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store
@@ -211,9 +212,9 @@ def test_a_symlinked_root_still_compares_equal(tmp_path):
 
 
 def test_the_root_comes_from_the_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_PROJECTS_DIR", str(tmp_path / "elsewhere"))
+    hold_setting("projects_dir", str(tmp_path / "elsewhere"))
     assert project_maker.projects_root() == tmp_path / "elsewhere"
-    monkeypatch.delenv("JARVIS_PROJECTS_DIR")
+    default_setting("projects_dir")
     assert project_maker.projects_root() == Path.home() / "Projects"
 
 

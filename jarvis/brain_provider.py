@@ -167,7 +167,7 @@ class SignIn:
 class BrainProvider(Protocol):
     name: str                       # "anthropic" or "openai"; also picks the orb's logo
     title: str                      # "Claude", "OpenAI (Codex)"
-    default_model: str              # when neither .env nor brains.json names one
+    default_model: str              # when brains.json names none
 
     def models(self) -> list[str]: ...
 

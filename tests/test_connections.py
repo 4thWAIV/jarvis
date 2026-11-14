@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from jarvis import claude_provider
+from tests.settings_fixtures import hold_setting
 
 
 def _command(b):
@@ -173,7 +174,7 @@ def test_the_persona_and_the_connections_file_share_one_mechanism():
 def srv(monkeypatch, tmp_path):
     """A reloaded server module with its own data dir."""
     # These tests exercise the refusal, which is opt-in.
-    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    hold_setting("refuse_untrusted_actions", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     from jarvis import data_paths
     importlib.reload(data_paths)

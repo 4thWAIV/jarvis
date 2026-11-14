@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.fixtures.transcripts import write_agent_transcript, write_transcript
+from tests.settings_fixtures import hold_setting
 
 # Read the clock when a test RUNS, never at import. This file once captured
 # time.time() at module level, and the "active agent" test wrote its turn
@@ -50,7 +51,7 @@ def env(monkeypatch, tmp_path):
     roots = [tmp_path / ".claude", tmp_path / ".claude-orcha"]
     for r in roots:
         (r / "projects").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", os.pathsep.join(str(r) for r in roots))
+    hold_setting("claude_config_dirs", os.pathsep.join(str(r) for r in roots))
 
     from jarvis import data_paths
     importlib.reload(data_paths)

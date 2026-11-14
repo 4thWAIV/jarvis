@@ -29,6 +29,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from jarvis import env_names
 from jarvis import brain_provider
 from jarvis import data_paths
 from jarvis import repo_read
@@ -53,8 +54,8 @@ TRANSCRIPT_LABEL = "transcript"
 def _history() -> brain_provider.HistorySource:
     """Where the running brain provider keeps its transcripts, and how to
     read them."""
-    return brain_provider.provider(
-        os.getenv("JARVIS_BRAIN_PROVIDER", brain_provider.DEFAULT_PROVIDER)).history()
+    from jarvis import brains_config
+    return brain_provider.provider(brains_config.load()["default"]).history()
 
 
 def claude_roots() -> list[Path]:
@@ -62,7 +63,7 @@ def claude_roots() -> list[Path]:
     transcripts: the CLI's own `CLAUDE_CONFIG_DIR` first, then the roster
     roots `session_watch` already reads. Tests replace this."""
     roots: list[Path] = []
-    env = os.getenv("CLAUDE_CONFIG_DIR")
+    env = env_names.read("CLAUDE_CONFIG_DIR")
     if env:
         roots.append(Path(env).expanduser())
     for root in config_roots():

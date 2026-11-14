@@ -65,10 +65,16 @@ FIRST_VERSION = "1.0.0"
 
 PRESENTATION_EXAMPLE = {
     "title": "Team lunch moved",
+    "purpose": "Tell the team where Friday's lunch is now.",
+    "conclusion": "Friday's lunch is now in the office, at noon.",
     "slides": [
-        {"title": "What changed",
+        {"title": "Friday's lunch has moved",
          "blocks": [{"lead": "Friday's lunch is now in the office, at noon."},
-                    {"points": ["Food is brought in.", "Nobody has to book a table."]}]},
+                    {"p": "Nobody has to book a table, and nothing is asked of you."}],
+         "say": "This tells you where Friday's lunch is now. It is in the office, at noon, "
+                "so nobody has to book a table."},
+        {"title": "What changed",
+         "blocks": [{"points": ["Food is brought in.", "Nobody has to book a table."]}]},
         {"title": "What you need to do",
          "blocks": [{"p": "Nothing: it is in everyone's calendar."}]},
     ],
@@ -119,7 +125,10 @@ def deck_of(content: Path) -> dict:
         deck["decisions"] = [package_inbox.understood(raw.get("language") or built_language())]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
-    problems = dp.problems_of(deck, content.parent)
+    # A briefing (dp.briefing_problems): its purpose and conclusion as the
+    # author wrote them, the opening that shows them and each decision's
+    # lead-in. The standard vote is JARVIS's own and needs none.
+    problems = dp.problems_of(deck, content.parent) + dp.briefing_problems(raw, deck)
     if not problems:
         from jarvis.package_understanding import validate_deck_inputs
         try:

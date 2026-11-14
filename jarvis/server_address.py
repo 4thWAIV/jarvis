@@ -26,6 +26,7 @@ import logging
 import os
 from typing import NamedTuple, Optional
 
+from jarvis import env_names
 from jarvis import data_paths, process_inspect
 
 log = logging.getLogger("jarvis.server_address")
@@ -78,9 +79,9 @@ def dial_host(bind_host: str) -> str:
 def own() -> Address:
     """This server's address, from what it was started with."""
     from jarvis import web_auth  # the server's defaults; it needs starlette
-    return Address(scheme=os.getenv("JARVIS_SCHEME", DEFAULT_SCHEME),
-                   host=dial_host(os.getenv("JARVIS_BIND_HOST", web_auth.JARVIS_DEFAULT_HOST)),
-                   port=int(os.getenv("JARVIS_PORT", str(web_auth.DEFAULT_API_PORT))))
+    return Address(scheme=env_names.read("JARVIS_SCHEME", DEFAULT_SCHEME),
+                   host=dial_host(env_names.read("JARVIS_BIND_HOST", web_auth.JARVIS_DEFAULT_HOST)),
+                   port=int(env_names.read("JARVIS_PORT", str(web_auth.DEFAULT_API_PORT))))
 
 
 def record() -> None:

@@ -80,6 +80,7 @@ from urllib.parse import urlsplit
 
 from starlette.responses import JSONResponse
 
+from jarvis import env_names
 from jarvis import agent_keys
 from jarvis import agent_rights
 from jarvis import data_paths
@@ -313,16 +314,16 @@ def detect_bind(argv: Sequence[str] | None = None,
     launcher this looks like.
     """
     argv = list(sys.argv if argv is None else argv)
-    environ = os.environ if environ is None else environ
+    lookup = env_names.read if environ is None else (lambda name: environ.get(name) or "")
 
     launcher = (argv[0] if argv else "").rsplit("/", 1)[-1].lower()
     uvicorn_cli = launcher.startswith("uvicorn")
     default_host = UVICORN_DEFAULT_HOST if uvicorn_cli else JARVIS_DEFAULT_HOST
     default_port = UVICORN_DEFAULT_PORT if uvicorn_cli else JARVIS_DEFAULT_PORT
 
-    env_host = (environ.get("JARVIS_BIND_HOST") or "").strip()
-    env_port = (environ.get("JARVIS_PORT") or "").strip()
-    env_scheme = (environ.get("JARVIS_SCHEME") or "").strip()
+    env_host = lookup("JARVIS_BIND_HOST").strip()
+    env_port = lookup("JARVIS_PORT").strip()
+    env_scheme = lookup("JARVIS_SCHEME").strip()
 
     argv_host = _flag(argv, "--host")
     argv_port = _flag(argv, "--port")
@@ -371,9 +372,9 @@ def adopt_bind(bind: Bind) -> None:
     """
     if bind.source == "unknown":
         return
-    os.environ.setdefault("JARVIS_BIND_HOST", bind.host)
-    os.environ.setdefault("JARVIS_PORT", str(bind.port))
-    os.environ.setdefault("JARVIS_SCHEME", bind.scheme)
+    env_names.publish("JARVIS_BIND_HOST", bind.host, only_if_unset=True)
+    env_names.publish("JARVIS_PORT", str(bind.port), only_if_unset=True)
+    env_names.publish("JARVIS_SCHEME", bind.scheme, only_if_unset=True)
 
 
 def exposure_warning(bind: Bind) -> list[str]:
@@ -392,8 +393,8 @@ def exposure_warning(bind: Bind) -> list[str]:
             "! JARVIS could not work out what address it is listening on",
             "  from how it was launched, so its own origin and Host checks",
             "  are using defaults that may be wrong — the browser may be",
-            "  refused. Set JARVIS_BIND_HOST and JARVIS_PORT to the address",
-            "  you are actually serving from.",
+            "  refused. Start it with python -m jarvis, which serves the",
+            "  address and port chosen in Settings, Server.",
         ]
     if is_loopback(bind.host):
         return []
@@ -402,18 +403,24 @@ def exposure_warning(bind: Bind) -> list[str]:
         "  reach this port can read every conversation on this",
         "  machine; only the tool token stands in front of the",
         "  endpoints that act. Bind 127.0.0.1 unless you mean it —",
-        "  and if you do, set JARVIS_ALLOWED_ORIGINS to the address",
-        "  you will open the page at, or the browser will be",
-        "  refused too.",
+        "  and if you do, add the address you will open the page at",
+        "  to Settings, Server, Allowed origins, or the browser will",
+        "  be refused too.",
     ]
 
 
 def api_port() -> int:
     """The port this server is actually bound to, per main()."""
     try:
-        return int(os.getenv("JARVIS_PORT", "") or DEFAULT_API_PORT)
+        return int(env_names.read("JARVIS_PORT") or DEFAULT_API_PORT)
     except ValueError:
         return DEFAULT_API_PORT
+
+
+def _extra_origins() -> list[str]:
+    """Settings, Server: the extra origins he named (`allowed_origins`)."""
+    from jarvis import settings_service
+    return list(settings_service.value("allowed_origins"))
 
 
 def allowed_origins() -> frozenset[str]:
@@ -429,10 +436,7 @@ def allowed_origins() -> frozenset[str]:
         for host in LOOPBACK_HOSTS
         for port in ports
     }
-    for extra in os.getenv("JARVIS_ALLOWED_ORIGINS", "").split(","):
-        extra = extra.strip().rstrip("/")
-        if extra:
-            origins.add(extra)
+    origins.update(_extra_origins())
     return frozenset(origins)
 
 
@@ -454,16 +458,13 @@ def allowed_hosts() -> frozenset[str]:
     The bind host counts: `python -m jarvis --host jarvis.example.com` is
     the operator saying that name IS this server, and the brain's own MCP
     child dials whatever main() was given. Every other dotted name has to be
-    named in JARVIS_ALLOWED_ORIGINS.
+    named in Settings, Server, Allowed origins.
     """
     hosts = set()
-    bind = os.getenv("JARVIS_BIND_HOST", "").strip().strip("[]").lower()
+    bind = env_names.read("JARVIS_BIND_HOST").strip().strip("[]").lower()
     if bind:
         hosts.add(bind)
-    for origin in os.getenv("JARVIS_ALLOWED_ORIGINS", "").split(","):
-        origin = origin.strip()
-        if not origin:
-            continue
+    for origin in _extra_origins():
         try:
             name = urlsplit(origin).hostname
         except ValueError:
@@ -488,7 +489,7 @@ def host_allowed(host_header: Optional[str]) -> bool:
     DNS, and a public domain has a dot in it. An address literal is not a
     name and has nothing to rebind; a single-label host (`localhost`, a
     machine name, `testserver`) cannot be a public domain. Anything dotted
-    has to be declared in JARVIS_ALLOWED_ORIGINS — which an operator
+    has to be declared in Settings' Allowed origins — which an operator
     reaching JARVIS at a .local or tailscale name has already had to set for
     the Origin check anyway.
     """

@@ -177,8 +177,9 @@ async def test_an_app_server_that_ends_is_replaced(tmp_path, codex_log):
 def test_it_is_the_provider_named_openai_with_its_own_default_model(tmp_path, monkeypatch):
     p = brain_provider.provider("openai")
     assert isinstance(p, codex_provider.CodexProvider) and p.name == "openai"
-    monkeypatch.setenv("JARVIS_BRAIN_PROVIDER", "openai")
-    monkeypatch.delenv("JARVIS_BRAIN_MODEL", raising=False)
+    from jarvis import brains_config
+    brains_config.add("openai")
+    brains_config.set_default("openai")
     cfg = brain.BrainConfig.from_env(tmp_path)
     assert (cfg.provider, cfg.model) == ("openai", codex_provider.DEFAULT_MODEL)
 
@@ -200,7 +201,9 @@ def test_usage_is_read_from_the_plan(monkeypatch):
 
 
 def test_its_transcripts_are_read_for_history_and_codex_s_own_context_is_not(monkeypatch):
-    monkeypatch.setenv("JARVIS_BRAIN_PROVIDER", "openai")
+    from jarvis import brains_config
+    brains_config.add("openai")
+    brains_config.set_default("openai")
     folder = data_paths.codex_home() / "sessions" / "2026" / "10" / "21"
     folder.mkdir(parents=True)
     lines = [

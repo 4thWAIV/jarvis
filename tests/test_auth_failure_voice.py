@@ -16,12 +16,13 @@ speech are both fakes, following the pattern in test_run_announcements.py.
 import importlib
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import server as server_module
     importlib.reload(server_module)
     return server_module

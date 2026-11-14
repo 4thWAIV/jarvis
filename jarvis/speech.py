@@ -998,6 +998,11 @@ class SpeechScheduler:
             await self.barge_in(reason=f"{verdict}: {text[:40]!r}")
         return verdict
 
+    @property
+    def last_spoken(self) -> Optional[Utterance]:
+        """The utterance "say that again" would say again, or None."""
+        return self._last_spoken
+
     async def replay_last(self) -> bool:
         """"Say that again": resend the most recently completed utterance.
 

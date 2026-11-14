@@ -10,6 +10,7 @@ from jarvis import knowledge_api as ka
 from jarvis.knowledge.uds import Caller, Transaction, in_process
 from tests.test_brain_page_parity import _call, wired  # noqa: F401
 from tests.test_knowledge_api import ORIGIN, FakeRuntime
+from tests.settings_fixtures import hold_setting
 
 A = "0b6f6a52-6f0e-4c39-9f5c-0d1f6c1e2a01"
 B = "4d1e0c55-21f8-4a8e-9d3b-7c2b8e0f9b02"
@@ -64,7 +65,7 @@ def test_past_the_deadline_the_rest_is_left_out_and_said(tmp_path):
 def test_the_route_and_the_brain_s_tool_give_the_same_counts(wired, monkeypatch, tmp_path):  # noqa: F811
     with in_process(tmp_path / "engine") as (engine, uds):
         _fill(uds)
-        monkeypatch.setenv("JARVIS_KNOWLEDGE", "1")
+        hold_setting("knowledge_enabled", "1")
         monkeypatch.setattr(wired.server, "knowledge", FakeRuntime(engine))
         monkeypatch.setattr(ka, "_active_folder_ids", lambda: [A, B])
         page = wired.client.get("/api/knowledge/folder-counts", headers=ORIGIN)
