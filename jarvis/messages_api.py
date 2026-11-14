@@ -270,11 +270,11 @@ NEAREST_SPAN_SEC = 3 * 24 * 3600
 
 _TODAY = {"today": 0, "hoy": 0, "yesterday": 1, "ayer": 1}
 _TIME = re.compile(
-    r"^(?:(?P<date>\d{4}-\d{2}-\d{2})\s+|(?P<day>today|yesterday|hoy|ayer)\s+)?"
+    r"(?:(?P<date>\d{4}-\d{2}-\d{2})\s+|(?P<day>today|yesterday|hoy|ayer)\s+)?"
     r"(?:(?:at|a\s+las|a\s+la)\s+)?"
     r"(?P<hour>\d{1,2})[:.](?P<minute>\d{2})"
     r"\s*(?:(?P<h>h|hrs?)\b|(?P<half>a\.?\s?m\.?|p\.?\s?m\.?))?"
-    r"(?:\s+(?P<after>today|yesterday|hoy|ayer))?$")
+    r"(?:\s+(?P<after>today|yesterday|hoy|ayer))?")
 
 
 class BadTime(ValueError):
@@ -298,7 +298,7 @@ class AskedTime:
 def parse_time(text: str) -> AskedTime:
     """His words for a time, read: BadTime when they are not one."""
     words = " ".join(str(text or "").strip().lower().split())
-    found = _TIME.match(words)
+    found = _TIME.fullmatch(words)
     if not found:
         raise BadTime(f'"{str(text)[:40]}" is not a time I read: give it as {TIME_FORMS}.')
     hour, minute = int(found["hour"]), int(found["minute"])

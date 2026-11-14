@@ -10,6 +10,7 @@ nearest. Every test here pins the zone and the clock; nothing reads a real
 data/.
 """
 import asyncio
+import time
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
@@ -28,6 +29,20 @@ def _t(y, mo, d, h, mi, s=20, fold=0) -> float:
 
 
 NOW = _t(2026, 11, 12, 16, 0, 0)        # Thursday 12 November 2026, 16:00 in Chicago
+
+
+@pytest.fixture(autouse=True)
+def _the_mac_is_in_chicago(monkeypatch):
+    """What JARVIS gives with no zone (`message_json`'s local, the tools'
+    words) is the Mac's own zone: pinned to TZ here, so a runner in UTC
+    reads the same clock as the tests."""
+    if not hasattr(time, "tzset"):                     # pragma: no cover
+        pytest.skip("the process zone cannot be pinned here")
+    monkeypatch.setenv("TZ", TZ.key)
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture
