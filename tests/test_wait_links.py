@@ -425,6 +425,7 @@ def test_the_work_view_s_tick_sweeps_the_record(wired, item, monkeypatch):
     """The list is read from the held view, which reads nothing; the sweep
     a read of the list used to make is the view's tick's, every
     work_view.SWEEP_EVERY_SEC."""
+    wired.server.work_held.load()     # what the server builds at startup
     _waiting_piece(wired, item)
     with monkeypatch.context() as m:
         m.setattr(wait_links, "settle", lambda unit, found, now: wait_links.Settled())

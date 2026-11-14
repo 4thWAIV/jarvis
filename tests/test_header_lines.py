@@ -836,6 +836,10 @@ EXEMPT = {
         "it reads each running workflow's `state`, a fixed word the workflow "
         "store works out, only to count the quiet and running ones; the line it "
         "builds carries counts and goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.work": (
+        "it reads only its own checks' `state`, a fixed word, and timings the "
+        "Work routes noted of themselves; the line it builds carries counts and "
+        "seconds and goes only to the Diagnostics tab"),
     "subsystem_diagnostics.team_server": (
         "it prints the team's name, the member's login and the client's own "
         "error line, which come from the team server, into the team row's "
@@ -1127,9 +1131,12 @@ EXEMPT = {
         "each piece to the agent that ran it, in its own terminal, never to the brain"),
     "work_report.main": (
         "the same command line: what it prints goes to the agent that ran it"),
-    "workflow_report._post": (
+    "workflow_report._answered": (
         "the reporter's command line: it prints JARVIS's refusal to the session "
-        "running the workflow, in that session's own terminal, never to the brain"),
+        "that sent the report, in that session's own terminal, never to the brain"),
+    "workflow_report._landed": (
+        "the same command line: it prints whether a report's key landed, to the "
+        "session that sent it, never to the brain"),
     "workflow_report.main": (
         "the same command line: what it prints goes to the session that ran it"),
     "agent_directory._find": (

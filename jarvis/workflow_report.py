@@ -34,6 +34,12 @@ answer (`decision:<key>` of this workflow, `work:<item id>:<key>`,
 and JARVIS ends the wait itself the moment he gives it; anything else is
 kept as words (until when). `start` prints the workflow's id. `answer` prints the user's answer to an
 open decision once he has given it, and exits 3 while he has not.
+
+Every report this client sends (`report`: this command's, work_report.py's
+and message.py's) carries a key of its own (`?report=`, report_keys.py), so
+it lands at most once. A report JARVIS does not answer in time is unknown,
+not failed: the command asks whether its key landed and reports what it
+finds, or sends it once more with the same key.
 """
 
 from __future__ import annotations
@@ -41,8 +47,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
+import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -59,6 +68,17 @@ DEFAULT_URL = "https://localhost:8340"
 # Hosts the certificate does not name; a server recorded on one is dialled as localhost.
 LOOPBACK_ADDRESSES = ("127.0.0.1", "::1")
 NOT_ANSWERED = 3
+# The query parameter a report's key rides in (report_keys.QUERY).
+REPORT_QUERY = "report"
+# How long a report still being written is waited for, asked every
+# REPORT_ASK_EVERY_SEC, before the command says so.
+REPORT_WAIT_SEC = 10.0
+REPORT_ASK_EVERY_SEC = 0.5
+
+
+class TimedOut(Exception):
+    """JARVIS did not answer within the client's timeout: the request may
+    or may not have landed."""
 
 
 class _Response:
@@ -116,6 +136,12 @@ class _Client:
                 return _Response(r.status, r.read(), r.headers.get("content-type", ""))
         except urllib.error.HTTPError as e:
             return _Response(e.code, e.read(), e.headers.get("content-type", ""))
+        except (TimeoutError, socket.timeout) as e:
+            raise TimedOut(str(e)) from e
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, (TimeoutError, socket.timeout)):
+                raise TimedOut(str(e.reason)) from e
+            raise
 
     def post(self, path: str, json: dict) -> _Response:
         return self._send("POST", path, body=json)
@@ -174,13 +200,69 @@ def _detail(args) -> dict:
     return detail
 
 
+def _answered(status: int, data: dict, text: str = "") -> dict:
+    """A route's answer: its JSON, or SystemExit saying why it was refused."""
+    if status != 200:
+        raise SystemExit(f"JARVIS refused it ({status}): "
+                         f"{data.get('error') or data.get('detail') or text}")
+    return data
+
+
 def _post(client, path: str, body: dict) -> dict:
     r = client.post(path, json=body)
     data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-    if r.status_code != 200:
-        raise SystemExit(f"JARVIS refused it ({r.status_code}): "
-                         f"{data.get('error') or data.get('detail') or r.text}")
-    return data
+    return _answered(r.status_code, data, r.text)
+
+
+def _landed(client, key: str) -> dict | None:
+    """Whether the report with this key landed: its original answer when it
+    did, None when it did not (or JARVIS cannot say, being older than keys),
+    and SystemExit when it is still being written past REPORT_WAIT_SEC or
+    cannot be known."""
+    waited = 0.0
+    while True:
+        try:
+            r = client.get(f"/api/reports/{key}")
+        except TimedOut:
+            return None                   # sending it again with its key is safe
+        if r.status_code != 200:
+            return None
+        found = r.json()
+        if found.get("state") == "done":
+            return _answered(int(found.get("status") or 200), found.get("body") or {})
+        if found.get("state") == "unknown":
+            raise SystemExit(f"Whether the report landed is not known: JARVIS failed or "
+                             f"restarted while writing it (key {key}). It was not sent again.")
+        if found.get("state") != "pending":
+            return None
+        if waited >= REPORT_WAIT_SEC:
+            raise SystemExit(f"JARVIS is still writing the report (key {key}); it was not "
+                             f"sent again. Ask GET /api/reports/{key} in a moment.")
+        time.sleep(REPORT_ASK_EVERY_SEC)
+        waited += REPORT_ASK_EVERY_SEC
+
+
+def report(client, path: str, body: dict) -> dict:
+    """POST one report, at most once: it carries a key of its own
+    (report_keys.py). When JARVIS does not answer in time the report is
+    unknown, not failed: this asks whether the key landed and returns that
+    answer, or sends the report once more with the same key, which JARVIS
+    never writes twice."""
+    key = secrets.token_urlsafe(18)
+    keyed = f"{path}{'&' if '?' in path else '?'}{REPORT_QUERY}={key}"
+    try:
+        return _post(client, keyed, body)
+    except TimedOut:
+        pass
+    found = _landed(client, key)
+    if found is not None:
+        return found
+    try:
+        return _post(client, keyed, body)
+    except TimedOut:
+        raise SystemExit(f"JARVIS did not answer in time, twice. Whether the report landed is "
+                         f"not known (key {key}); ask GET /api/reports/{key} before sending it "
+                         f"anew.") from None
 
 
 def main(argv: list[str]) -> int:
@@ -212,12 +294,12 @@ def main(argv: list[str]) -> int:
 
     with _client(args.cert, args.as_session or getattr(args, "session", None) or "") as client:
         if args.command == "start":
-            print(_post(client, "/api/workflows", {"name": args.name, "project": args.project,
+            print(report(client, "/api/workflows", {"name": args.name, "project": args.project,
                                                    "phases": args.phase,
                                                    "work": args.work})["id"])
             return 0
         if args.command == "event":
-            w = _post(client, f"/api/workflows/{args.id}/events",
+            w = report(client, f"/api/workflows/{args.id}/events",
                       {"kind": args.kind, "item": args.item, "summary": args.summary,
                        "detail": _detail(args)})["workflow"]
             print(f"{w['state']}: phase {w['phases_done']}/{w['phases_total']}, "
