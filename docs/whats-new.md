@@ -36,6 +36,17 @@ screen sizes. An SVG picture must say its size (width and height in pixels
 on its `<svg>`); one that does not is refused before the package is built,
 since it can show as a blank slide.
 
+## A package opens with its purpose, and every decision with its lead-in
+
+Every deck an agent sends you now opens by saying what it is for and its
+answer or what it asks, before any data: its first slide shows the
+conclusion and JARVIS says the purpose over it. A deck that opens on a
+table, a set of figures or a question is refused before it reaches you.
+Each decision now comes after a slide of its own, "Before you decide",
+giving the question, why it is yours to decide and not an agent's, and
+the facts it rests on; a decision without them is refused too. An
+architecture package's explanation opens the same way.
+
 ## The knowledge index builds itself, and says how far it is
 
 Settings → Knowledge (and the Knowledge view) shows the index being built:

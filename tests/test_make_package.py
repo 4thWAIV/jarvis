@@ -58,7 +58,7 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
         "SKILL.md", "deck-data.js", "deck.css", "deck.js", "index.html", "scripts/decide.py",
         "story.json")}
     assert package == {"name": "team-lunch-moved", "version": "1.0.0",
-                       "purpose": "Team lunch moved", "runs": "page", "entry": "index.html",
+                       "purpose": "Tell the team where Friday's lunch is now.", "runs": "page", "entry": "index.html",
                        "story": "story.json", "skill": "SKILL.md",
                        "returns": ["results/decisions.json", "results/decisions.md"],
                        "brief": "UNDERSTANDING.md", "understanding": understood}
@@ -67,8 +67,9 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
     assert [o["name"] for o in vote["options"]] == ["Got it", "I have questions"]
     story = json.loads(z.read("story.json"))
     titles = [s["title"] for s in story["slides"]]
-    assert titles[:2] == ["What changed", "What you need to do"], "its own slides first"
-    assert [s.get("waits") for s in story["slides"]].index("understood") == 2, \
+    assert titles[:3] == ["Friday's lunch has moved", "What changed", "What you need to do"], \
+        "its own slides first, its opening first of all"
+    assert [s.get("waits") for s in story["slides"]].index("understood") == 3, \
         "the vote at the end, after every slide of its own"
     assert len(seen) == 1 and len(delivery.calls) == 1
     assert "Built a presentation" in capsys.readouterr().out
@@ -393,3 +394,139 @@ def test_a_deck_given_as_a_folder_is_refused(tmp_path):
     with pytest.raises(dp.Refused) as refused:
         mp.make_folder(EXAMPLES / "decision-deck", tmp_path)
     assert "made from its content file" in " ".join(refused.value.problems)
+
+
+# -- a briefing: the opening and each decision's lead-in --------------------------------
+
+def refused_for(tmp_path, deck) -> str:
+    with pytest.raises(dp.Refused) as refused:
+        mp.deck_of(write(tmp_path, deck))
+    return " ".join(refused.value.problems)
+
+
+def test_a_well_formed_briefing_is_accepted(tmp_path):
+    deck = mp.deck_of(write(tmp_path, small_deck()))
+    assert deck["purpose"] == "Two decisions on the team lunch."
+    assert [s.get("lead_in") for s in deck["slides"] if s.get("lead_in")] == ["where", "when"]
+    assert mp.deck_of(write(tmp_path, presentation()))["conclusion"]
+
+
+@pytest.mark.parametrize("field", ["purpose", "conclusion"])
+def test_a_deck_without_its_purpose_or_conclusion_is_refused(tmp_path, field):
+    deck = small_deck()
+    del deck[field]
+    said = refused_for(tmp_path, deck)
+    assert f'The deck has no {field}: write "{field}": one sentence' in said
+    deck[field] = "   "
+    assert f"The deck has no {field}" in refused_for(tmp_path, deck)
+
+
+def test_a_conclusion_is_one_sentence(tmp_path):
+    deck = small_deck()
+    deck["conclusion"] += " Then we vote."
+    assert "conclusion is more than one sentence" in refused_for(tmp_path, deck)
+
+
+def test_a_deck_that_opens_on_data_is_refused(tmp_path):
+    deck = small_deck()
+    deck["slides"][0]["blocks"].insert(0, {"table": {"head": ["Day", "People"],
+                                                     "rows": [["Friday", "9"]]}})
+    said = refused_for(tmp_path, deck)
+    assert "the opening: it starts with a table, data before its purpose" in said
+    deck["slides"][0]["blocks"][0] = {"facts": [{"n": "9", "text": "people"}]}
+    assert "it starts with facts" in refused_for(tmp_path, deck)
+
+
+def test_a_deck_that_opens_on_a_decision_is_refused(tmp_path):
+    deck = small_deck()
+    del deck["slides"]
+    assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
+    deck["slides"] = [{"decision": "where"}]
+    assert "opens on decision 'where''s lead-in" in refused_for(tmp_path, deck)
+
+
+def test_the_opening_must_show_its_conclusion_and_say_its_purpose(tmp_path):
+    deck = small_deck()
+    opening = deck["slides"][0]
+    opening["blocks"][0] = {"lead": "Lunch is on Friday."}
+    del opening["say"]
+    opening["title"] = "Friday"
+    said = refused_for(tmp_path, deck)
+    assert "it does not show the conclusion" in said
+    assert "neither it nor its narration says the purpose" in said
+    assert "it has no `say`" in said
+    # A close paraphrase is enough: most of its words, any order and case.
+    opening["blocks"][0] = {"lead": "At noon we EAT in the office: nobody books tables."}
+    opening["say"] = "These are two decisions about the team's lunch."
+    mp.deck_of(write(tmp_path, deck))
+
+
+def test_metadata_alone_is_not_an_opening(tmp_path):
+    """The fields are there, but the first slide says neither."""
+    deck = presentation()
+    deck["slides"] = deck["slides"][1:]
+    said = refused_for(tmp_path, deck)
+    assert "does not show the conclusion" in said and "says the purpose" in said
+
+
+def test_a_decision_without_its_lead_in_is_refused(tmp_path):
+    deck = small_deck()
+    del deck["decisions"][0]["why_you"]
+    deck["decisions"][1]["evidence"] = []
+    said = refused_for(tmp_path, deck)
+    assert "Decision where: it has no lead-in (why_you)" in said
+    assert "Decision when: it has no lead-in (evidence)" in said
+    deck = small_deck()
+    deck["decisions"][0]["evidence"] = ["One.", "Two.", "Three.", "Four."]
+    assert "4 lines of evidence; at most 3" in refused_for(tmp_path, deck)
+
+
+def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
+    deck = mp.deck_of(write(tmp_path, small_deck()))
+    order = [s.get("lead_in") and f"lead-{s['lead_in']}" or s.get("decision") or s["id"]
+             for s in deck["slides"]]
+    assert order == ["s1", "lead-where", "where", "lead-when", "when"]
+    lead = deck["slides"][1]
+    assert lead["blocks"][0] == {"lead": "Where do we eat?"}
+    assert "It is your team's lunch." in lead["say"] and "Lunch is on Friday." in lead["say"]
+    # The lead-in is told as its decision's own story slide's first beat, so
+    # the story asks, waits and resumes there: never the question without it.
+    deck["decisions"][0]["options"][0]["opens"] = ["when"]
+    told = dp.builder().story(deck)["slides"]
+    assert [s.get("waits") for s in told] == [None, "where", "when", None]
+    where, when = told[1], told[2]
+    assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
+    assert where["beats"][0]["targets"] == ["#lead-where h2"]
+    assert "It is your team's lunch." in where["beats"][0]["say"]
+    assert where["beats"][1]["actions"] == [{"click": "#go-3"}]
+    assert "target" not in where, "each part goes to its own slide"
+    assert when["beats"][0]["actions"] == [{"click": "#go-4"}]
+    assert when["asks_when"] == {"question": "where", "answers": ["in"]}
+    from jarvis import package_story
+    story = package_story.parse(package_story.encode(dp.builder().story(deck)))
+    record = {"where": {"answer": "in"}}
+    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
+
+
+def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):
+    deck = small_deck() | {"language": "es"}
+    lead = mp.deck_of(write(tmp_path, deck))["slides"][1]
+    assert lead["title"] == "Antes de decidir: Where"
+
+
+def test_a_lead_in_slide_is_never_written_by_hand(tmp_path):
+    deck = small_deck()
+    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
+                           "blocks": [{"p": "Mine."}]})
+    assert "Slide 2: a lead-in slide is made from its decision's question" in \
+        refused_for(tmp_path, deck)
+
+
+def test_evidence_lines_are_strings_with_words(tmp_path):
+    deck = small_deck()
+    deck["decisions"][0]["evidence"] = ["Fine.", "  "]
+    assert "Decision where: it has no lead-in (evidence)" in refused_for(tmp_path, deck)
+    deck["decisions"][0]["evidence"] = ["x" * 161]
+    assert "the evidence is 161 characters; at most 160" in refused_for(tmp_path, deck)
+    deck["decisions"][0]["evidence"], deck["decisions"][0]["why_you"] = ["Fine."], "y" * 161
+    assert "the why_you is 161 characters; at most 160" in refused_for(tmp_path, deck)

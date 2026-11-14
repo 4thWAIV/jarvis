@@ -57,7 +57,10 @@ def _assignment(document: Document | None) -> str:
     if document is None:
         return ("Write a deck to content.json in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
-                "source, and your evidence/review notes in evidence.md. Validate with this "
+                "source, and your evidence/review notes in evidence.md. A deck gives its "
+                "\"purpose\" and one-sentence \"conclusion\", opens with a slide that shows "
+                "both, and gives each decision its \"why_you\" and \"evidence\" "
+                "(docs/making-a-package.md). Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
     return ("This package explains one checked canonical architecture document. Its exact "
@@ -66,7 +69,8 @@ def _assignment(document: Document | None) -> str:
             "its identity, coverage and what lies outside the language. JARVIS projects that "
             "exact revision into the package itself; you write only its plain explanation, "
             "package/UNDERSTANDING.md (nothing else under package/), for the handoff's audience "
-            "and questions: walk one concrete input through the architecture as the skill "
+            "and questions: open it with what the architecture is for and its conclusion or "
+            "the ask, in its first paragraph; walk one concrete input through the architecture as the skill "
             "says, and say plainly what its coverage leaves unresolved or outside the language. "
             "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
             "installation’s exact command: " + session_skill._module("make_package", cert=False)
