@@ -189,6 +189,7 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "58ce45c76c0667bf74eafc7858b9bb305c7885d56d1fe5181a7cac1248ced3a8",  # the untrusted-content refusal is a Settings control
     "e3e8023884d10ff8a07d7bafe1a9c72499c972b7d45cc8f8f95f1a27f421735a",  # packages arrive as messages in the Inbox, not the Queue
     "ff6f0f4e8e1bbc10bc27d7efb21c93c3635e290685a7e9ff11e866d106caaff1",  # UDS round 2: knowledge search over files
     "083a94de9e0316698de18329919d6218af17180909c7029cb9a4a3d70f3c0b2b",  # complete capture before read-back
