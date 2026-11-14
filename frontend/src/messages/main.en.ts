@@ -471,6 +471,8 @@ export const mainEn = {
   "main.work.answeredBy.page": "You answered on the page: {answer}",
   "main.work.answeredBy.voice": "You answered by voice: {answer}",
   "main.work.answeredBy.signed_off": "Closed when you signed off its package, without an answer",
+  "main.work.answeredBy.dismissed": "Closed when you set its package aside, without an answer",
+  "main.work.answeredBy.superseded": "Closed when a newer version replaced its package",
   "main.work.answeredBy.withdrawn": "Withdrawn by the agent that asked it: {answer}",
   "main.work.nothingBlocking": "Nothing is holding this up",
   "main.work.blocker.decision": "Decision needed: {title}",

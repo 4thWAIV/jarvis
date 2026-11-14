@@ -15,6 +15,7 @@ before it is sent again (`workflow_report.report`).
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
                           [--until <hold> ...] [--then <state>] [--cleared]
+    python work_report.py end-wait <id> <summary> [--piece <key>] [--until <hold> ...]
     python work_report.py answer <id> <key>
     python work_report.py answers [--since <epoch seconds or ISO time>]
     python work_report.py close <id> [<summary>]
@@ -46,7 +47,10 @@ piece on to `--then` (ready by default)
 itself. Nothing else moves a held piece on: a report that would is refused,
 naming what holds it, so work that can go on meanwhile is a piece of its
 own. A blocker given in words is cleared by reporting the piece's next
-state with `--cleared`. An item with pieces takes its state from them and
+state with `--cleared`. A wait you put on a piece yourself (or on an item
+with no pieces) you may end yourself with `end-wait`, all of what holds it
+or the `--until` holds named; one another agent, JARVIS or the user put
+there is refused, and ends only by his answer. An item with pieces takes its state from them and
 is never reported waiting or blocked itself (an item with none follows the
 same rules as a piece). `close`
 moves the item to History for good (nothing is deleted, and nothing more
@@ -54,7 +58,8 @@ can be reported to it); a done item moves there by itself after a few
 minutes. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
 he has not; it exits 4 when the decision was closed without an answer
-because the user signed off the package it names without answering it.
+because the user signed off the package it names without answering it, set
+that package aside, or it was replaced by a newer version.
 `answers` prints every answer he has given to the decisions asked for your
 key (a package's questions on a Work item), since the time given (all of
 them without one), one per line:
@@ -154,6 +159,11 @@ def main(argv: list[str]) -> int:
     # The old ways of asking a decision, kept only to say the new one.
     for gone in ("decision", "withdraw"):
         sub.add_parser(gone).add_argument("rest", nargs=argparse.REMAINDER)
+    end_wait = sub.add_parser("end-wait")
+    end_wait.add_argument("id")
+    end_wait.add_argument("summary")
+    end_wait.add_argument("--piece")
+    end_wait.add_argument("--until", action="append")
     close = sub.add_parser("close")
     close.add_argument("id")
     close.add_argument("summary", nargs="?", default="Closed.")
@@ -185,8 +195,12 @@ def main(argv: list[str]) -> int:
             for e in reversed(r.json()["events"]):
                 if e["detail"].get("key") == args.key:
                     if e["kind"] == "decision_signed_off":
-                        print(f"Decision {args.key} was closed without an answer: the user "
-                              f"signed off its package without answering it.", file=sys.stderr)
+                        why = {"dismissed": "the user set its package aside",
+                               "superseded": "its package was replaced by a newer version"}.get(
+                            e["detail"].get("where"),
+                            "the user signed off its package without answering it")
+                        print(f"Decision {args.key} was closed without an answer: {why}.",
+                              file=sys.stderr)
                         return SIGNED_OFF
                     print(e["detail"]["answer"])
                     return 0
@@ -211,6 +225,12 @@ def main(argv: list[str]) -> int:
                 detail["cleared"] = True
         elif args.command == "close":
             kind, detail = "closed", {}
+        elif args.command == "end-wait":
+            kind, detail = "wait_ended", {}
+            if args.piece:
+                detail["key"] = args.piece
+            if args.until:
+                detail["until"] = args.until
         else:
             kind, detail = "piece", {"key": args.key}
             for name in ("title", "state", "until", "then"):

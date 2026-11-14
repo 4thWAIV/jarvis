@@ -242,6 +242,162 @@ def test_a_package_s_own_workflow_wait_ends_with_his_sign_off(wired, shown, mark
     assert any(e.detail.get("by") == "user" for e in _wait_ended(wid))
 
 
+# -- packages set aside or replaced -----------------------------------------------
+
+def _agent_zip(version="1.0.0") -> bytes:
+    from tests.test_package_inbox import make_zip
+    return make_zip({"BRIEF.md": "Count the words."},
+                    {"name": "count", "version": version, "purpose": "Count.", "runs": "agent",
+                     "brief": "BRIEF.md", "returns": ["results/**"]})
+
+
+def _arrived(w, data, **query) -> str:
+    from tests.test_package_inbox import send
+    r = send(w, data, **query)
+    assert r.status_code == 200, r.text
+    return r.json()["inbox"]["id"]
+
+
+def _decision(item_id, key):
+    item = work_store.get(item_id)
+    return (next((d for d in item.decisions if d.key == key), None),
+            next((a for a in item.answered if a.key == key), None))
+
+
+def test_setting_a_package_aside_ends_every_wait_on_it_and_closes_its_vote(
+        wired, shown, marks, item):
+    inbox_id = _arrived(wired, _agent_zip(), work=item.id, project="s")
+    vote = package_inbox.vote_key(inbox_id)
+    assert _decision(item.id, vote)[0] is not None, "its vote is asked on the item"
+    _report(wired, item.id, "piece", "Waiting on the package.", **{
+        "key": "read", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": f"package:{inbox_id}"})
+    _report(wired, item.id, "piece", "Waiting on his vote.", **{
+        "key": "vote", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": f"decision:{vote}"})
+    wid = workflow_store.start("Counting", "count", [])
+    workflow_store.record(workflow_store.WorkflowEvent(
+        wid, "wait_started", None, "Waiting on the count.", {"key": "count",
+                                                             "until": "package:count"}))
+    r = wired.client.post(f"/api/packages/inbox/{inbox_id}/close", headers=BROWSER)
+    assert r.status_code == 200, r.text
+    pieces = _piece(item.id)
+    assert (pieces["read"].state, pieces["read"].until) == ("ready", [])
+    assert (pieces["vote"].state, pieces["vote"].until) == ("ready", [])
+    still, closed = _decision(item.id, vote)
+    assert still is None and closed.where == work_store.DISMISSED and closed.answer == ""
+    assert workflow_store.snapshot(wid).open_waits == []
+    [ended] = _wait_ended(wid)
+    assert (ended.detail["how"], ended.detail["by"]) == ("dismissed", "user")
+    assert "set its package aside" in _call(wired, "work_status", item=item.id)["text"]
+    # The package's close, the waits it ended and its vote closed are one write.
+    closing = [v for v in records.history(package_inbox.path_of(inbox_id))
+               if v.change == "closed"]
+    assert closing, "the close is on the package's record"
+
+
+def test_a_newer_version_carries_the_waits_and_the_work_item(wired, shown, marks, item):
+    old = _arrived(wired, _agent_zip("1.0.0"), work=item.id, project="s")
+    _report(wired, item.id, "piece", "Waiting on the package.", **{
+        "key": "read", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": f"package:{old}"})
+    wid = workflow_store.start("Counting", "count", [])
+    workflow_store.record(workflow_store.WorkflowEvent(
+        wid, "wait_started", None, "Waiting on the count.", {"key": "count",
+                                                             "until": f"package:{old}"}))
+    new = _arrived(wired, _agent_zip("1.0.1"), project="s")
+    assert package_inbox.get(old).closed_why == package_inbox.SUPERSEDED
+    assert package_inbox.get(new).work_id == item.id, "the newer one is for the same item"
+    read = _piece(item.id)["read"]
+    assert (read.state, read.until) == ("waiting_on_tim", [f"package:{new}"])
+    [waiting] = workflow_store.snapshot(wid).open
+    assert waiting.detail["link"] == f"package:{new}"
+    still, closed = _decision(item.id, package_inbox.vote_key(old))
+    assert still is None and closed.where == work_store.SUPERSEDED
+    assert _decision(item.id, package_inbox.vote_key(new))[0] is not None, \
+        "the newer one's vote is asked on the item it took over"
+    wired.client.post(f"/api/packages/inbox/{new}/close", headers=BROWSER)
+    assert _piece(item.id)["read"].state == "ready"
+    assert workflow_store.snapshot(wid).open_waits == []
+
+
+def test_an_agent_ends_only_a_wait_it_placed_itself(wired, item):
+    mine, theirs = _key("placer"), _key("other")
+    _report(wired, item.id, "piece", "Waiting on the deck.", auth=mine, **{
+        "key": "deck", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": "package:tea-deck", "then": "verifying"})
+
+    def end(auth, **detail):
+        return wired.client.post(f"/api/work/{item.id}/events", auth=auth, json={
+            "kind": "wait_ended", "summary": "Not needed any more.", "detail": detail})
+    r = end(theirs, key="deck")
+    assert r.status_code == 409 and "not put on hold by you" in r.json()["error"]
+    r = end(mine, key="deck", by="agent:sess-other")
+    assert r.status_code == 200, r.text
+    deck = _piece(item.id)["deck"]
+    assert (deck.state, deck.until) == ("verifying", [])
+    [moved] = [e for e in work_store.events(item.id) if e.kind == "wait_ended"]
+    assert moved.detail["wait_ended"][0]["by"] == "reporter"
+    # One JARVIS placed (no reporter) is never an agent's to end.
+    work_store.record(work_store.WorkEvent(item.id, "piece", "Waiting on the deck.", {
+        "key": "jarvis", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": "package:tea-deck"}))
+    assert end(mine, key="jarvis").status_code == 409
+
+    wid = workflow_store.start("Tea", "tea", [])
+    jarvis_wait = workflow_store.WorkflowEvent(wid, "wait_started", None, "Waiting on Tim.",
+                                               {"key": "his", "until": "package:tea-deck"})
+    workflow_store.record(jarvis_wait)
+    r = wired.client.post(f"/api/workflows/{wid}/events", auth=mine, json={
+        "kind": "wait_started", "summary": "Waiting on the deck.",
+        "detail": {"key": "mine", "until": "package:tea-deck"}})
+    assert r.status_code == 200, r.text
+
+    def ended(auth, key):
+        return wired.client.post(f"/api/workflows/{wid}/events", auth=auth, json={
+            "kind": "wait_ended", "summary": "Done waiting.", "detail": {"key": key}})
+    assert ended(theirs, "mine").status_code == 409
+    assert ended(mine, "his").status_code == 409, "JARVIS's own wait is never an agent's"
+    assert ended(mine, "mine").status_code == 200
+    assert workflow_store.snapshot(wid).open_waits == ["his"]
+
+
+def test_the_sweep_ends_what_packages_set_aside_or_replaced_left_waiting(
+        wired, shown, marks, item, monkeypatch):
+    aside = _arrived(wired, _agent_zip(), work=item.id, project="a")
+    replaced = _arrived(wired, _agent_zip("1.0.2"), work=item.id, project="b")
+    for key, inbox_id in (("aside", aside), ("replaced", replaced)):
+        _report(wired, item.id, "piece", "Waiting on the package.", **{
+            "key": key, "who": {"kind": "tim"}, "state": "waiting_on_tim",
+            "until": f"package:{inbox_id}"})
+    # Recorded as before: closed and replaced, with nothing waiting moved.
+    with monkeypatch.context() as m:
+        m.setattr(wait_links, "settle", lambda unit, found, now: wait_links.Settled())
+        m.setattr(wait_links, "carry", lambda unit, moved, now: wait_links.Settled())
+        m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
+        m.setattr(package_inbox, "_close_vote", lambda *a: wait_links.Settled())
+        wired.client.post(f"/api/packages/inbox/{aside}/close", headers=BROWSER)
+        newer = _arrived(wired, _agent_zip("1.0.3"), project="b")
+    work_records.entry(replaced, superseded_by=None)
+    # Read raw: every read of the record sweeps.
+    raw = {p["key"]: p for p in records.get(work_store.path_of(item.id)).data["pieces"]}
+    assert raw["aside"]["state"] == raw["replaced"]["state"] == "waiting_on_tim"
+    assert _decision(item.id, package_inbox.vote_key(aside))[0] is not None
+    package_inbox.settle_closed()
+    wait_links.sweep()
+    pieces = _piece(item.id)
+    assert pieces["aside"].state == "ready"
+    assert pieces["replaced"].until == [f"package:{newer}"], "it waits on the newer one"
+    for inbox_id in (aside, replaced):
+        assert _decision(item.id, package_inbox.vote_key(inbox_id))[0] is None
+
+
+def test_the_server_closes_left_votes_before_the_sweep_at_start(wired):
+    import inspect
+    source = inspect.getsource(wired.server._start_on_records)
+    assert source.index("package_inbox.settle_closed") < source.index("wait_links.sweep")
+
+
 # -- the sweep --------------------------------------------------------------------
 
 def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monkeypatch):

@@ -17,6 +17,25 @@ of the Work list have taken in the last five minutes. It turns amber once
 one takes over two seconds, and Updates notes it if a report takes over
 five.
 
+## Closing or replacing a package ends what waited on it
+
+Setting a package aside now ends everything that waited on it, as signing it
+off always did: a Work item's piece waiting on the package moves on, a
+workflow's wait on it ends, and the item's "Is it clear?" question about it
+closes, shown as closed when you set its package aside rather than as an
+answer. When an agent sends a newer version that replaces an open package,
+whatever waited on the old one now waits on the newer one, which is the one
+you can open, and the newer one stays with the same Work item. Waits left
+open by packages closed or replaced before this update are cleared the next
+time JARVIS starts. An agent may end a wait it placed itself; a wait JARVIS
+or another agent placed still ends only with your answer.
+
+The check a decision package passes before it reaches you now measures
+every picture on every slide, not only the options' pictures, at both
+screen sizes. An SVG picture must say its size (width and height in pixels
+on its `<svg>`); one that does not is refused before the package is built,
+since it can show as a blank slide.
+
 ## The knowledge index builds itself, and says how far it is
 
 Settings → Knowledge (and the Knowledge view) shows the index being built:
