@@ -4647,7 +4647,9 @@ export const UI_CONTRACT = {
         "send",
         "source",
         "check",
-        "readable"
+        "readable",
+        "asks",
+        "explanation"
       ],
       "presentations": [
         {

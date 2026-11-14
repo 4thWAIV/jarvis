@@ -4,7 +4,14 @@ Work: `work-4429d24c58b0`. Root coordinates the live primary checkout; this work
 
 ## Validate the release candidate
 
-The pinned source is `4thWAIV/agent-guard`, release `0.1.108172209-pre-release`, commit `c918581ffda7a6fad7c05dde13f54aeb5760fdfb`, asset `evolang-kit.zip`, SHA256 `0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0`.
+The pinned source is `4thWAIV/agent-guard`, release `0.1.108421045-pre-release`, commit `4055170833b59796623c88f6f1608bb1d002118d`, asset `evolang-kit.zip` (168,631 bytes, from `https://github.com/4thWAIV/agent-guard/releases/download/0.1.108421045-pre-release/evolang-kit.zip`), SHA256 `e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c`. It marks each declaration card with `data-declaration` (the declaration's id) and each member row with `data-member` (the member's name; a name several members of one declaration share is `name#1`, `name#2`, counting among the rows that share it, never the bare name, which the story helper reports as ambiguous: Tim's answer of 2026-11-13), and its page loads `/api/packages/story.js` from its own origin, so a story can point at them; tests/test_voice_page_kit_selectors.py runs against it (`KIT_WITH_MEMBERS`).
+
+Releases adopted, newest first:
+
+| Release | Commit | SHA256 of evolang-kit.zip |
+|---|---|---|
+| `0.1.108421045-pre-release` | `4055170833b59796623c88f6f1608bb1d002118d` | `e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c` |
+| `0.1.108172209-pre-release` | `c918581ffda7a6fad7c05dde13f54aeb5760fdfb` | `0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0` |
 
 Run the language/package/capture regression and actual frame sequentially, so frontend rebuilds cannot remove assets during another server fixture's import. `JARVIS_LANGUAGE_KIT_ASSET` supplies the external pinned ZIP; `JARVIS_LANGUAGE_REVIEW_DIR` selects isolated frame evidence.
 
