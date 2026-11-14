@@ -179,10 +179,13 @@ def test_the_usage_poll_starts_and_stops_as_soon_as_it_is_changed(client, monkey
         assert server._usage_task is None or server._usage_task.done()
         await server._change_setting("usage_poll", True)
         task = server._usage_task
-        await asyncio.sleep(0.05)
+        for _ in range(200):
+            if reads:
+                break
+            await asyncio.sleep(0.01)
         assert reads and not task.done()
         await server._change_setting("usage_poll", False)
-        await asyncio.sleep(0.01)
+        await asyncio.wait([task], timeout=5)
         assert task.done() and server._usage_task is None
     asyncio.run(scenario())
 
@@ -216,3 +219,21 @@ def test_the_page_s_own_dev_server_port_is_refused(port):
         settings_service.check(settings_specs.spec("port"), port)
     assert e.value.code == "devPort"
     assert settings_service.check(settings_specs.spec("port"), 8350) == 8350
+
+
+def test_an_untrusted_start_file_is_still_said_after_the_start_that_found_it():
+    """The start that finds a hand-edited file records the start that served
+    over it; Settings, Server still says why until he saves there."""
+    settings_service.change("port", 9124)
+    raw = json.loads(start_settings.path().read_text())
+    raw["body"]["values"]["port"] = 9999
+    start_settings.path().write_text(json.dumps(raw))
+    assert start_settings.problem() == start_settings.TAMPERED
+    start_settings.remember_served({"host": "127.0.0.1", "port": 8340, "https": True})
+    assert start_settings.problem() == start_settings.TAMPERED
+    assert start_settings.document()["problem"]["at"]
+    start_settings.fall_back()
+    assert start_settings.problem() == start_settings.TAMPERED
+    assert settings_service.view("server")["start"]["problem"] == start_settings.TAMPERED
+    settings_service.change("port", 9125)
+    assert start_settings.problem() is None

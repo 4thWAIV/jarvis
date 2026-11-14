@@ -55,7 +55,9 @@ def _sign(body: dict) -> str:
 
 
 def _empty() -> dict:
-    return {"values": {}, "last_good": None, "imported_from_env": None}
+    # `problem`: why the file found at a start was not trusted, and when,
+    # kept in the file JARVIS wrote in its place until he saves in Settings.
+    return {"values": {}, "last_good": None, "imported_from_env": None, "problem": None}
 
 
 def document() -> dict:
@@ -95,9 +97,25 @@ def document() -> dict:
 
 
 def problem() -> Optional[str]:
-    """`tampered` or `unreadable` when the file there was not trusted, else None."""
-    document()
-    return _problem.get(str(path()))
+    """`tampered` or `unreadable` when the file there was not trusted, or
+    when the file JARVIS wrote in its place still says so (until he saves
+    in Settings), else None."""
+    doc = document()
+    found = _problem.get(str(path()))
+    if found:
+        return found
+    kept = doc.get("problem")
+    return kept.get("kind") if isinstance(kept, dict) else None
+
+
+def _keeping_problem(doc: dict) -> dict:
+    """`doc` to be written over the file there: an untrusted file's problem
+    is kept in what replaces it, so Settings, Server can still say why."""
+    found = _problem.get(str(path()))
+    if found:
+        doc["problem"] = {"kind": found,
+                          "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return doc
 
 
 def saved(key: str) -> Any:
@@ -133,6 +151,7 @@ def change(values: dict, *, imported: bool = False) -> dict:
     with _lock:
         doc = dict(document())
         doc["values"] = {**doc["values"], **values}
+        doc["problem"] = None       # his save in Settings: what he sees now is what he chose
         if imported:
             doc["imported_from_env"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return _write(doc)
@@ -145,7 +164,7 @@ def remember_served(values: dict) -> None:
         if doc.get("last_good") == values:
             return
         doc["last_good"] = values
-        _write(doc)
+        _write(_keeping_problem(doc))
 
 
 def bindable(host: str, port: int) -> bool:
@@ -173,4 +192,4 @@ def fall_back() -> dict:
         good = doc.get("last_good") or {}
         doc["values"] = {**doc["values"], **{k: good.get(k, settings_specs.spec(k).default)
                                              for k in ("host", "port", "https")}}
-        return _write(doc)
+        return _write(_keeping_problem(doc))

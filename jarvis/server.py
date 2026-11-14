@@ -2284,10 +2284,11 @@ def _follow_usage_poll() -> None:
     """Start the usage poll while Settings has it on and stop it once off:
     at start and on every change of the setting, so it takes effect at once."""
     global _usage_task
-    running = _usage_task is not None and not _usage_task.done()
-    if _usage_poll_enabled() and not running:
+    if _usage_task is not None and _usage_task.done():
+        _usage_task = None
+    if _usage_poll_enabled() and _usage_task is None:
         _usage_task = _spawn(_poll_usage())
-    elif running and not _usage_poll_enabled():
+    elif _usage_task is not None and not _usage_poll_enabled():
         _usage_task.cancel()
         _usage_task = None
 
