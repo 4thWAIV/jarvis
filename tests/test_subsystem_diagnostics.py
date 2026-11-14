@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from jarvis import subsystem_diagnostics as sd
 from jarvis.run_store import Message
 from tests.fixtures.waiting import until_async
+from tests.test_brain_page_parity import wired  # noqa: F401  (the fixture)
 
 NOW = 1_000_000.0
 ORIGIN = {"Origin": "http://localhost:5173"}
@@ -424,7 +425,7 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows", "folders", "knowledge", "team_server"]
+                   "workflows", "work", "folders", "knowledge", "team_server"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail", "name_said", "said"} for c in s["checks"])
@@ -505,6 +506,84 @@ def test_communications_down_and_back_are_one_update(server, monkeypatch):
     assert item.state == "pending"
     # ok>down, down>unknown, unknown>degraded, degraded>down: four changes.
     assert hints == [{"type": "subsystems"}] * 4
+
+
+# ── the Work tracker ─────────────────────────────────────────────────────
+
+def test_the_work_tracker_s_states():
+    lat = sd.Latencies()
+    s = sd.work(lat, NOW)
+    assert (s.state, s.summary) == (sd.IDLE, "No report in the last 5 min")
+    lat.note(sd.WRITE, 0.4, now=NOW - 10)
+    lat.note(sd.WRITE, 1.2, now=NOW - 5)
+    lat.note(sd.READ, 0.01, now=NOW - 5)
+    s = sd.work(lat, NOW)
+    assert (s.state, s.summary) == (sd.OK, "2 reports in the last 5 min, the slowest 1.2 s")
+    assert [c.state for c in s.checks] == [sd.OK, sd.OK]
+    lat.note(sd.WRITE, 2.5, now=NOW - 1)
+    s = sd.work(lat, NOW)
+    assert s.state == sd.DEGRADED
+    assert s.summary == "Reports: The slowest report in the last 5 min took 2.5 s"
+    # Past the window it is forgotten.
+    assert sd.work(lat, NOW + sd.WORK_LATENCY_WINDOW_SEC + 5).state == sd.IDLE
+
+
+def test_a_slow_read_of_the_list_is_degraded_too():
+    lat = sd.Latencies()
+    lat.note(sd.WRITE, 0.1, now=NOW - 1)
+    lat.note(sd.READ, 3.0, now=NOW - 1)
+    s = sd.work(lat, NOW)
+    assert s.state == sd.DEGRADED and s.checks[1].state == sd.DEGRADED
+
+
+def test_the_work_routes_are_timed_live(wired):
+    from tests.agent_key_fixtures import onboarded_auth
+    sd.work_routes.items.clear()
+    folder = wired.tmp / "speech"
+    folder.mkdir()
+    item = __import__("jarvis.work_store", fromlist=["x"]).create("Speech", "folder", str(folder))
+    agent = onboarded_auth(("work",), "sess-timed")
+    wired.client.post(f"/api/work/{item.id}/events", auth=agent,
+                      json={"kind": "update", "summary": "Wired.", "detail": {}})
+    wired.client.get("/api/work")
+    kinds = [k for _, k, _ in sd.work_routes.items]
+    assert kinds == [sd.WRITE, sd.READ]
+
+
+def test_a_work_report_slower_than_the_alarm_is_one_silent_update(server, monkeypatch):
+    from jarvis.attention_store import AttentionStore
+    store = AttentionStore()
+    looks = iter(range(4))
+    sd.work_routes.items.clear()
+
+    def subsystems():
+        n = next(looks, None)
+        if n is None:
+            raise RuntimeError("no more looks")
+        if n == 1:
+            sd.work_routes.note(sd.WRITE, sd.WORK_WRITES_ALARM_SEC + 1)
+        if n == 3:
+            sd.work_routes.items.clear()
+        return [_subsystem("communications", sd.OK)]
+
+    monkeypatch.setattr(server, "_subsystems", subsystems)
+    monkeypatch.setattr(server, "attention_record", store)
+    monkeypatch.setattr(server, "speech", None)
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda h: None)
+    monkeypatch.setattr(server, "SUBSYSTEMS_POLL_SEC", 0.001)
+
+    async def run():
+        task = asyncio.create_task(server._watch_subsystems())
+        await until_async(lambda: "subsystems" in sd.beats and sd.beats["subsystems"].failures)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    sd.work_routes.items.clear()
+    item = store.get("work_routes", "writes")
+    assert (item.event, item.facts) == ("slow", {"seconds": sd.WORK_WRITES_ALARM_SEC + 1})
+    assert not item.audible and item.state == "resolved"
+    assert [h["event"] for h in store.history(item.id)] == ["slow"], "recorded once"
 
 
 # ── the team server ──────────────────────────────────────────────────────

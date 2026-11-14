@@ -293,6 +293,7 @@ SAMPLES = {
     "_HEX": "0" * 64,
     "_TEXT": "jref:1:node-1:folder:01a0ca40@3/docs/a.md#sha256=" + "0" * 64,
     "_WINDOWS_DRIVE_PATH_RE": "C:\\Users\\someone\\src\\jarvis",
+    "KEY_PATTERN": "Zx3_kQ9-pL2mN8rT4vW6yA1b",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

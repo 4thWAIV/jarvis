@@ -19,6 +19,10 @@ heartbeats and outcomes kept here).
   - Voice input: voice_diagnostics.summary, judged, not repeated.
   - Brain, voice output (Fish Audio), the tool channel (the brain's MCP child
     to /internal/tool) and the workflow monitor.
+  - The Work tracker: how long its routes took, measured live (`work_routes`:
+    each report's write and each read of the list), degraded once a write
+    passes WORK_WRITES_SLOW_SEC; the server's watch records an attention item
+    once one passes WORK_WRITES_ALARM_SEC.
   - The folder catalog: its folders' availability and how far discovery
     has read, never worse than degraded.
   - The team server: team_client's own status, never worse than degraded,
@@ -30,6 +34,7 @@ page and speaks when communications go down and come back.
 """
 from __future__ import annotations
 
+import functools
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -86,6 +91,15 @@ VOICE_DROPPING_SEC = 60.0
 TOOL_SERVER = "jarvis"
 
 WORKFLOW_LOOP = "workflow silence"
+
+# The Work routes: how far back their timings are judged, a write or a read
+# slower than this is degraded, and a write slower than the alarm is an
+# attention item (server._watch_subsystems).
+WORK_LATENCY_WINDOW_SEC = 300.0
+WORK_WRITES_SLOW_SEC = 2.0
+WORK_READS_SLOW_SEC = 2.0
+WORK_WRITES_ALARM_SEC = 5.0
+WRITE, READ = "write", "read"
 FOLDERS_LOOP = "folder discovery"
 
 
@@ -173,6 +187,14 @@ SAID: dict[str, str | dict[str, str]] = {
     "workflowsQuiet": {"one": "{count} workflow has gone quiet", "other": "{count} workflows have gone quiet"},
     "workflowsRunning": {"one": "{count} workflow running", "other": "{count} workflows running"},
     "workflowsNone": "No workflows running",
+    "workWritesNone": "No report in the last {window}",
+    "workWritesOk": {"one": "{count} report in the last {window}, the slowest {seconds}",
+                     "other": "{count} reports in the last {window}, the slowest {seconds}"},
+    "workWritesSlow": "The slowest report in the last {window} took {seconds}",
+    "workReadsNone": "No read of the Work list in the last {window}",
+    "workReadsOk": {"one": "{count} read in the last {window}, the slowest {seconds}",
+                    "other": "{count} reads in the last {window}, the slowest {seconds}"},
+    "workReadsSlow": "The slowest read of the Work list in the last {window} took {seconds}",
     "foldersOff": "Not running",
     "foldersUnavailable": ("{count} of {total} not available ({missing} missing, {denied} access denied, "
                            "{elsewhere} on an unavailable node)"),
@@ -232,6 +254,7 @@ NAMES: dict[str, str] = {
     "voice_output": "Voice output",
     "tool_channel": "Tool channel",
     "workflows": "Workflow monitor",
+    "work": "Work tracker",
     "folders": "Folder catalog",
     "team_server": "Team server",
     "knowledge": "Knowledge engine",
@@ -253,6 +276,8 @@ NAMES: dict[str, str] = {
     "toolServer": "JARVIS's tools in the brain",
     "workflowsRunning": "Workflows",
     "workflowsWatch": "Watch for quiet",
+    "workWrites": "Reports",
+    "workReads": "Work list",
     "folderList": "Folders",
     "discovery": "Discovery",
     "discoveryLoop": "Discovery loop",
@@ -378,6 +403,43 @@ class Outcomes:
 # it reached /internal/tool.
 voice_output_calls = Outcomes()
 tool_calls = Outcomes()
+
+
+class Latencies:
+    """How long each call of a kind took, the last few: (at, kind, seconds)."""
+
+    def __init__(self, keep: int = 200) -> None:
+        self.items: deque = deque(maxlen=keep)
+
+    def note(self, kind: str, seconds: float, now: Optional[float] = None) -> None:
+        self.items.append((time.time() if now is None else now, kind, seconds))
+
+    def recent(self, kind: str, now: float,
+               window: float = WORK_LATENCY_WINDOW_SEC) -> list[float]:
+        """How long each call of `kind` within `window` before `now` took."""
+        return [s for at, k, s in list(self.items) if k == kind and now - at <= window]
+
+    def slowest(self, kind: str, now: float) -> Optional[float]:
+        return max(self.recent(kind, now), default=None)
+
+    def timed(self, kind: str):
+        """A decorator: each call of the async function is noted as `kind`,
+        however it ends."""
+        def wrap(fn):
+            @functools.wraps(fn)
+            async def timed(*args, **kwargs):
+                started = time.perf_counter()
+                try:
+                    return await fn(*args, **kwargs)
+                finally:
+                    self.note(kind, time.perf_counter() - started)
+            return timed
+        return wrap
+
+
+# Each report's write to the Work tracker and each read of its list
+# (work_api.py), as long as each took.
+work_routes = Latencies()
 
 
 # ── the probes ───────────────────────────────────────────────────────────
@@ -658,6 +720,29 @@ def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     return s
 
 
+def work(latencies: Latencies, now: float) -> Subsystem:
+    """The Work tracker: how long its reports' writes and its list's reads
+    took in the last WORK_LATENCY_WINDOW_SEC. Slow is degraded, never down:
+    a slow write still lands."""
+    window = age(WORK_LATENCY_WINDOW_SEC)
+    checks = []
+    for kind, code, slow in ((WRITE, "workWrites", WORK_WRITES_SLOW_SEC),
+                             (READ, "workReads", WORK_READS_SLOW_SEC)):
+        took = latencies.recent(kind, now)
+        if not took:
+            line = (IDLE, say(code + "None", window=window))
+        elif max(took) > slow:
+            line = (DEGRADED, say(code + "Slow", window=window, seconds=f"{max(took):.1f} s"))
+        else:
+            line = (OK, say(code + "Ok", count=len(took), window=window,
+                            seconds=f"{max(took):.1f} s"))
+        checks.append(check(kind + "s", code, *line))
+    s = from_checks("work", checks, (checks[0].said, checks[0].detail))
+    if s.state == OK and checks[0].state == IDLE:
+        s.state = IDLE
+    return s
+
+
 def folder_catalog(health: Optional[dict], b: Optional[Beat], now: float) -> Subsystem:
     """The folder catalog (folder_service.health): whether its folders are
     there, and how far discovery has read the sessions' records. Never
@@ -831,6 +916,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         voice_output(has_fish_key, voice_output_calls, now, local_voice),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
+        work(work_routes, now),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
         team_server(team or {}, now, data_paths.node_id_minted()),

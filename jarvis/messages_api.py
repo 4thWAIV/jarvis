@@ -54,7 +54,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from jarvis import (agent_rights, conversation_log, package_inbox, package_inbox_api,
-                    packages_api, reporters, web_auth, work_store)
+                    packages_api, report_keys, reporters, web_auth, work_store)
 
 MESSAGES_PATH = "/api/messages"
 # A message says something short; anything longer is a package's.
@@ -724,7 +724,7 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused(why, 404 if "no message" in why else 409)
         return {"message": message_json(item)}
 
-    app.add_api_route(MESSAGES_PATH, send, methods=["POST"])
+    app.add_api_route(MESSAGES_PATH, report_keys.once(send), methods=["POST"])
     app.add_api_route(MESSAGES_PATH + "/work", by_work, methods=["GET"])
     app.add_api_route(MESSAGES_PATH + "/work/{work_id}", one_work, methods=["GET"])
     app.add_api_route(MESSAGES_PATH + "/general", no_work, methods=["GET"])

@@ -513,6 +513,34 @@ the brain passes back as `at`, and `when` ("today 15:42"), words for him
 only, since "today" means another day after midnight. No message is ever
 found through the brain's memory notes.
 
+## Reports land once
+Every report an agent sends through the reporters' one client
+(`workflow_report.report`: work_report.py's, workflow_report.py's and
+message.py's) carries an idempotency key of its own, `?report=` on its
+route (`REPORT_QUERY`, in the query so it is signed with the request).
+`report_keys.once` wraps every reporting route (`POST /api/work`,
+`/api/work/{id}/events`, `/api/workflows`, `/api/workflows/{id}/events`,
+`/api/messages`): it claims the key as its caller's before the write (one
+`report` document a key, `/reports/<principal>/<key>.report`, `pending`
+with this run's `BOOT`) and keeps the route's answer with it once the write
+is done (`done`, its status and body). A key is never freed: a route that
+raises (its write may have landed before a later step failed) leaves it
+`unknown`, and an answer that cannot be kept is logged and still goes back,
+since the write landed. The caller is `report_keys.owner`: the reporter the
+gate proved (`reporters.recorded`), else `held:<fingerprint>` for a key
+JARVIS holds but has not onboarded; a request with neither is refused a
+key (403). A repeated key writes nothing: it is answered with the original
+answer (`X-JARVIS-Report: repeated`), refused 409 while the first is still
+being written, and `unknown` when its write raised or an earlier run of the
+server claimed it and never finished. `GET /api/reports/<key>` says what
+is on record for one of the caller's own keys (`agent_rights.OWN_REPORTS`, in every grant that may
+report, whatever its scope). A report the client does not hear back from
+within its timeout is unknown, not failed (`TimedOut`): it asks that route
+and reports the answer it finds, waits while it is pending
+(`REPORT_WAIT_SEC`), or sends the report once more with the same key, and
+says the key when it still cannot tell. Keys are kept `KEEP_SEC` (seven
+days) and pruned at server start (`report_keys.prune`).
+
 ## Messages from sessions
 An agent reaches Tim one way: a signed message, `python -m jarvis.message
 --work <id> "<text>" [--package <zip>] --as <session id>` (`POST
@@ -592,7 +620,9 @@ package's, recorded by its own script, in a unit of its own, `settle_now`): a `w
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
-at server start and on every read of either record, first carrying one on a
+at server start and on every read of either record (but a writer's own
+return and the worker inventory's read of the active workflows, which the
+Work view's tick sweeps for), first carrying one on a
 package its sender replaced to the newer version (`wait_links.replaced_package`,
 the server's `_package_replaced`); at start `package_inbox.settle_closed`
 first closes the votes of packages already set aside or replaced. A
@@ -785,13 +815,33 @@ with `work_report.py --as <session id>`, signed with their own key holding
 the `work` right, or with a work-item key (see "Agent keys") (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`. The
 view is held (`work_view.py`, `server.work_held`): built at startup, each
-item worked out again only when it changes (a write, `work_store.on_changed`;
-its live owners, its clock thresholds (`work_store.next_change`) and its
-source on the one-second `tick`, never on a request; its packages, projects
-or agents' names), and each change is one `work_item`,
+item worked out again only when it changes (a write, `work_store.on_changed`,
+which only hands the item's id to the view's own thread, `start` and
+`drain`, so a report's write never waits on the view; its live owners, its
+clock thresholds (`work_store.next_change`) and its source on the
+one-second `tick`, never on a request; its packages, projects or agents'
+names), and each change is one `work_item`,
 `work_item_history` or `work_item_removed` frame on `/ws/sessions`, after
-the write, with the view's revision. `/api/work` returns the held view and
-reads nothing; the page (`work.ts` `applyWorkFrame`) replaces one item by
+the write, with the view's revision. The view's lock is never held while
+anything is read or composed: each composition is made outside it and
+swapped in (`_commit`) only when its stamp (the record's revision, then the
+order it began in) is newer than the one held, so an older composition
+never overwrites a newer one. A project or an agent's name changing hands
+the items it touches to the view to be read again (`projects_changed`,
+`names_changed`), so the new one beats any composition under way, and the
+projects a composition begun before a project changed are never kept for
+the next (`_projects_gen`). Items written while the view is built stay
+handed over and are worked out once it is (`drain` waits for `load`). A
+writer returns its item as written, with no
+sweep (`work_store._written`; the tick sweeps every `SWEEP_EVERY_SEC`), and
+the route answers with the view's JSON once it has caught up, else that
+item worked out with what the view holds (`WorkView.shown`). Every report
+carries an idempotency key and lands at most once (`report_keys.py`, see
+"Reports land once"). `/api/work` returns the held view and
+reads nothing, and composes nothing (a read of one item composes that item
+only when its clock threshold has passed); a test seeds 300 packages and 50
+open items and fails a write or a read that takes a second or more while
+the tick works (`tests/test_work_latency.py`); the page (`work.ts` `applyWorkFrame`) replaces one item by
 id and reads the list in full only on a reconnect or a revision gap (a
 `work` hint now only re-reads the open item's events, packages and keys); a
 decision, blocked and done are attention items, each resolved once it is no
@@ -1548,8 +1598,8 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel, the workflow monitor, the folder catalog and the team
-server connection
+output, the tool channel, the workflow monitor, the Work tracker, the folder
+catalog and the team server connection
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
@@ -1570,7 +1620,14 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back.
+they are back. The Work tracker row is its routes' latency, measured live
+(`subsystem_diagnostics.work_routes`, each report's write and each read of
+`/api/work` timed as it is served, `work_api.timed`), judged over the last
+`WORK_LATENCY_WINDOW_SEC` (five minutes): degraded once a write or a read
+passes two seconds (`WORK_WRITES_SLOW_SEC`, `WORK_READS_SLOW_SEC`), never
+down, since a slow write still lands; the watch records a silent attention
+item (`work_routes`, `slow`) once a write passes `WORK_WRITES_ALARM_SEC`
+(five seconds), resolved once none in the window is slow.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view). Every name and line JARVIS writes itself is sent as a
@@ -2583,6 +2640,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   command (see "One channel")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `report_keys.py` — Each report landing at most once: its idempotency
+  key, the reporting routes' wrapper and the lookup a timed-out reporter
+  asks (see "Reports land once")
 - `wait_links.py` — What a wait on him waits for (its link), which answer
   ends it, settling in the answer's transaction, and the sweep (see "The
   workflow monitor" and "The Work tracker")

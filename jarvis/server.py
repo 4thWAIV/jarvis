@@ -108,7 +108,7 @@ from jarvis import brain_activity, tool_activity
 from jarvis import agent_directory, worker_inventory
 from jarvis import conversation_log
 from jarvis import workflow_store
-from jarvis import work_api, work_store, work_view
+from jarvis import report_keys, work_api, work_store, work_view
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -3289,6 +3289,8 @@ async def _start_on_records() -> None:
     # set aside) ends now, one on a replaced package moving to its newer one.
     await asyncio.to_thread(package_inbox.settle_closed)
     await asyncio.to_thread(wait_links.sweep)
+    # Reports' keys past their keeping (report_keys.py).
+    await asyncio.to_thread(report_keys.prune)
 
     # The language chosen in Settings, and its speech model
     # (language_setting.py). Put in force before the brain starts: its launch
@@ -4057,7 +4059,7 @@ def _collect_worker_inventory() -> dict:
             return missing
     names = read_source('Agent names', run_store.agent_names, {})
     runs = read_source('Managed runs', lambda: run_store.list_runs(status=["queued", "running"], limit=10000), [])
-    workflows = read_source('Workflows', workflow_store.active, [])
+    workflows = read_source('Workflows', lambda: workflow_store.active(sweep=False), [])
     capacity = read_source('Worker capacity', run_executor_instance.capacity, None)
     result = worker_inventory.build(snap, names, runs, brain_activity.feed.since(), time.time(),
                                    workflows=workflows, capacity=capacity,
@@ -11653,6 +11655,7 @@ def _workflow_refused(e: Exception) -> JSONResponse:
 
 
 @app.post("/api/workflows")
+@report_keys.once
 async def api_start_workflow(req: WorkflowStartRequest, request: Request):
     """Begin recording a workflow. Its reporter (an access key in the
     `workflows` category) then sends each step to /events; who it is is the
@@ -11672,6 +11675,7 @@ async def api_start_workflow(req: WorkflowStartRequest, request: Request):
 
 
 @app.post("/api/workflows/{workflow_id}/events")
+@report_keys.once
 async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest,
                                     request: Request):
     """Record one step. Written before anything is said or shown. Dismissing
@@ -12777,15 +12781,21 @@ TOOL_HANDLERS["diagnostics"] = tool_diagnostics
 TAINTING_TOOLS["diagnostics"] = "JARVIS's diagnostics, which quote agents' names and errors"
 
 
+# The attention item for Work reports slower than
+# subsystem_diagnostics.WORK_WRITES_ALARM_SEC.
+WORK_ROUTES_KIND = "work_routes"
+
+
 async def _watch_subsystems() -> None:
     """Look at every subsystem every few seconds. A state that moved tells
     the pages to read again; communications going down, and coming back,
-    are said once each. Never raises out."""
+    are said once each, and a Work report slower than the alarm is recorded
+    once, resolved once none is slow. Never raises out."""
     states: dict[str, str] = {}
-    said_down = False
+    said_down = said_slow = False
 
     async def look_at_subsystems() -> None:
-        nonlocal states, said_down
+        nonlocal states, said_down, said_slow
         now = {s.id: s for s in await asyncio.to_thread(_subsystems)}
         if states and {k: s.state for k, s in now.items()} != states:
             _send_to_session_clients({"type": "subsystems"})
@@ -12802,6 +12812,19 @@ async def _watch_subsystems() -> None:
                                            subsystem_diagnostics.DEGRADED):
             said_down = False
             _attention_resolved("communications", "agents")
+        # A Work report slower than the alarm is a silent update, resolved
+        # once none in the window is slow.
+        slowest = subsystem_diagnostics.work_routes.slowest(subsystem_diagnostics.WRITE,
+                                                             time.time())
+        if slowest is not None and slowest > subsystem_diagnostics.WORK_WRITES_ALARM_SEC \
+                and not said_slow:
+            said_slow = True
+            _attend(WORK_ROUTES_KIND, "writes", "slow", facts={"seconds": round(slowest, 1)},
+                    audible=False)
+        elif said_slow and (slowest is None
+                            or slowest <= subsystem_diagnostics.WORK_WRITES_SLOW_SEC):
+            said_slow = False
+            _attention_resolved(WORK_ROUTES_KIND, "writes")
 
     await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 
@@ -13218,8 +13241,11 @@ WORK_TICK_SEC = 1.0
 async def _watch_work() -> None:
     """Build the held Work view, then once a second bring its items' live
     owners, clocks and sources up to date (work_view.WorkView.tick), off the
-    loop. Never raises out but for cancellation."""
+    loop; the items writes hand it are worked out on its own thread
+    (work_view.WorkView.start), so no write waits on it. Never raises out
+    but for cancellation."""
     await asyncio.to_thread(work_held.load)
+    work_held.start()
 
     async def look() -> None:
         await asyncio.to_thread(work_held.tick)
@@ -13227,6 +13253,7 @@ async def _watch_work() -> None:
 
 
 work_api.mount(app, _work_recorded, work_held)
+report_keys.mount(app)
 
 
 def _work_who(piece, names: work_api.WhoNames) -> str:

@@ -174,8 +174,8 @@ def test_the_reporter_starts_a_workflow_for_an_item(monkeypatch):
     monkeypatch.setattr(workflow_report, "_client", lambda *a: Client())
     assert workflow_report.main(["workflow_report.py", "start", "Build", "--project", "j",
                                  "--work", "work-9"]) == 0
-    assert posted == [("/api/workflows", {"name": "Build", "project": "j", "phases": [],
-                                          "work": "work-9"})]
+    assert [(path.partition("?")[0], body) for path, body in posted] == [
+        ("/api/workflows", {"name": "Build", "project": "j", "phases": [], "work": "work-9"})]
 
 
 # -- what went away ------------------------------------------------------------------------------
