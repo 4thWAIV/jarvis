@@ -396,11 +396,19 @@ each source's attention kind and event) names it as `message` in
 migration 3). Read and Reply are on each message where the page shows it
 (`MessageCard.tsx`, round 2 below); Updates no longer lists messages one
 by one. Read (`POST
-/api/messages/{id}/read`, the brain's `read_aloud`, `server.read_aloud`)
-speaks that message only ("<agent> answers:", "<name> writes:", or its
-own words for a board, a decision or a package; a session's message is
-marked read) and its update is seen only once heard in full
-(`_speak_message`, the approved speech entry point). Reply (`POST
+/api/messages/{id}/read`) is a turn of his, never words spoken past the
+brain (`docs/planning/brain-reads/design.md`): "Read me message 42." on
+record as his typed request with the id (`detail` `via` read, `message`),
+through `server._take_his_turn`, the one way in for every turn of his (the
+voice socket's too: clear and rotation answers, the read-backs waiting for
+his answer, which a Read closes and never approves, and `_handle_utterance`);
+409 with no voice, and a brain that is down shows the failed reply. The brain
+answers with `read_aloud`, which speaks nothing: it gives the brain that
+message only, walled (from, its Work item, its words, the package it carries;
+a session's message is marked read), to read him in its reply and sum up;
+the message is read, and its update seen, only once that reply is heard in
+full (`_message_read_to_him`, `_turn_reads`, `_seen_once_heard`; the reply
+waited for up to `READ_ALOUD_TIMEOUT`). Reply (`POST
 .../reply`, the brain's `reply`) goes to the proven sender
 (`_reply_capture`): a capture to the agent (a subagent's through its
 parent, "To Planning, for Feynman."), to a package's proven sending
@@ -438,7 +446,7 @@ first new), `/work/{id}` (its conversation, oldest first, his replies in it)
 and `/general` (no item, newest first, no person's), and `POST
 /api/messages/{id}/mark` (`read` or `done`, `server._mark_message`); the
 brain's `messages_to_him` (walled) and acting `mark_message` call the same
-functions. Read heard in full marks it read; his reply (`_reply_capture`
+functions. A message read him in full marks it read; his reply (`_reply_capture`
 keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
 answered once it goes (`_reply_went`, on `sent`); his answer to a Work
 decision marks it answered, and withdrawn or signed off done
@@ -498,6 +506,57 @@ the page or by voice) is what `read_aloud` ("read it", `next` for "next"),
 `open_inbox_package` ("open it": the package it carries, a page package's
 story told at once through `_package_story`, waiting at each question) and
 `reply` act on when no message is named.
+A message he names by its time is the one meant, never a wrong one: every
+tool and route that takes a message finds it through one function,
+`messages_api.resolve` (a `MessageSpec`; the server's `_message_meant` for
+the tools, `_message_to_him` for a route's id). `read_aloud`, `reply`,
+`mark_message` and `open_inbox_package` take `message` (its id) or `at` (his
+local time, the Mac's zone, as he said or typed it: "15:42", "3:42", "3:42
+pm", "3:42 p.m.", "15:42 h", "today"/"yesterday" or "hoy"/"ayer" before it,
+"2026-11-12 15:42"; `parse_time`) with `from`, `work` and `new`. A time is
+matched to the minute against each message's recorded time; one with no day
+looks back a day (`BARE_TIME_WINDOW_SEC`, so the same minute yesterday is
+never today's), and "3:42" with no am or pm is 3:42 and 15:42 both, but a
+zero-padded hour ("09:05") or a dated time is the 24-hour clock JARVIS
+writes. A Work item is named by id or title (`_work_ids`; a title shared by
+several items looks in all of them), with no time in its whole thread. An
+id given with a description is used only when the message fits it
+(`_id_as_described`); otherwise both come back to ask which. Exactly
+one match is the message; several come back (at most `CANDIDATES_MAX`) to
+ask him which, by time and sender, walled; none says so and names the
+nearest by minute, both when two are as near. Every message's JSON, and
+each one given to ask which, carries `local` ("2026-11-12 15:42"), the form
+the brain passes back as `at`, and `when` ("today 15:42"), words for him
+only, since "today" means another day after midnight. No message is ever
+found through the brain's memory notes.
+
+## Reports land once
+Every report an agent sends through the reporters' one client
+(`workflow_report.report`: work_report.py's, workflow_report.py's and
+message.py's) carries an idempotency key of its own, `?report=` on its
+route (`REPORT_QUERY`, in the query so it is signed with the request).
+`report_keys.once` wraps every reporting route (`POST /api/work`,
+`/api/work/{id}/events`, `/api/workflows`, `/api/workflows/{id}/events`,
+`/api/messages`): it claims the key as its caller's before the write (one
+`report` document a key, `/reports/<principal>/<key>.report`, `pending`
+with this run's `BOOT`) and keeps the route's answer with it once the write
+is done (`done`, its status and body). A key is never freed: a route that
+raises (its write may have landed before a later step failed) leaves it
+`unknown`, and an answer that cannot be kept is logged and still goes back,
+since the write landed. The caller is `report_keys.owner`: the reporter the
+gate proved (`reporters.recorded`), else `held:<fingerprint>` for a key
+JARVIS holds but has not onboarded; a request with neither is refused a
+key (403). A repeated key writes nothing: it is answered with the original
+answer (`X-JARVIS-Report: repeated`), refused 409 while the first is still
+being written, and `unknown` when its write raised or an earlier run of the
+server claimed it and never finished. `GET /api/reports/<key>` says what
+is on record for one of the caller's own keys (`agent_rights.OWN_REPORTS`, in every grant that may
+report, whatever its scope). A report the client does not hear back from
+within its timeout is unknown, not failed (`TimedOut`): it asks that route
+and reports the answer it finds, waits while it is pending
+(`REPORT_WAIT_SEC`), or sends the report once more with the same key, and
+says the key when it still cannot tell. Keys are kept `KEEP_SEC` (seven
+days) and pruned at server start (`report_keys.prune`).
 
 ## Messages from sessions
 An agent reaches Tim one way: a signed message, `python -m jarvis.message
@@ -578,7 +637,9 @@ package's, recorded by its own script, in a unit of its own, `settle_now`): a `w
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
-at server start and on every read of either record, first carrying one on a
+at server start and on every read of either record (but a writer's own
+return and the worker inventory's read of the active workflows, which the
+Work view's tick sweeps for), first carrying one on a
 package its sender replaced to the newer version (`wait_links.replaced_package`,
 the server's `_package_replaced`); at start `package_inbox.settle_closed`
 first closes the votes of packages already set aside or replaced. A
@@ -771,13 +832,33 @@ with `work_report.py --as <session id>`, signed with their own key holding
 the `work` right, or with a work-item key (see "Agent keys") (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`. The
 view is held (`work_view.py`, `server.work_held`): built at startup, each
-item worked out again only when it changes (a write, `work_store.on_changed`;
-its live owners, its clock thresholds (`work_store.next_change`) and its
-source on the one-second `tick`, never on a request; its packages, projects
-or agents' names), and each change is one `work_item`,
+item worked out again only when it changes (a write, `work_store.on_changed`,
+which only hands the item's id to the view's own thread, `start` and
+`drain`, so a report's write never waits on the view; its live owners, its
+clock thresholds (`work_store.next_change`) and its source on the
+one-second `tick`, never on a request; its packages, projects or agents'
+names), and each change is one `work_item`,
 `work_item_history` or `work_item_removed` frame on `/ws/sessions`, after
-the write, with the view's revision. `/api/work` returns the held view and
-reads nothing; the page (`work.ts` `applyWorkFrame`) replaces one item by
+the write, with the view's revision. The view's lock is never held while
+anything is read or composed: each composition is made outside it and
+swapped in (`_commit`) only when its stamp (the record's revision, then the
+order it began in) is newer than the one held, so an older composition
+never overwrites a newer one. A project or an agent's name changing hands
+the items it touches to the view to be read again (`projects_changed`,
+`names_changed`), so the new one beats any composition under way, and the
+projects a composition begun before a project changed are never kept for
+the next (`_projects_gen`). Items written while the view is built stay
+handed over and are worked out once it is (`drain` waits for `load`). A
+writer returns its item as written, with no
+sweep (`work_store._written`; the tick sweeps every `SWEEP_EVERY_SEC`), and
+the route answers with the view's JSON once it has caught up, else that
+item worked out with what the view holds (`WorkView.shown`). Every report
+carries an idempotency key and lands at most once (`report_keys.py`, see
+"Reports land once"). `/api/work` returns the held view and
+reads nothing, and composes nothing (a read of one item composes that item
+only when its clock threshold has passed); a test seeds 300 packages and 50
+open items and fails a write or a read that takes a second or more while
+the tick works (`tests/test_work_latency.py`); the page (`work.ts` `applyWorkFrame`) replaces one item by
 id and reads the list in full only on a reconnect or a revision gap (a
 `work` hint now only re-reads the open item's events, packages and keys); a
 decision, blocked and done are attention items, each resolved once it is no
@@ -1031,7 +1112,9 @@ helper (`jarvis/package_story.js`, one copy, served at
 `/api/packages/story.js`) rings the targets and runs the beat's `show` and
 `click` actions. `package_story` frames on the voice socket say a story's
 state. The beats are spoken as the sender's narration and never reach the
-brain; the tool gives back only the slides' titles, walled. The
+brain; the tool gives back only the slides' titles, walled. The brain is
+told which slides were read him (by number, through `_note_spoken`) when the
+story waits for an answer, pauses or ends (`StoryTeller._told`). The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
 (a page with a story). Every package an agent sends Tim is made with
@@ -1040,7 +1123,13 @@ one command, `python -m jarvis.make_package <content.json | folder>`
 that says how: a deck's content (a decision package, or a presentation
 when it has no decisions; `decision_package.py` reads, expands and checks
 it, refusing an SVG picture whose root has no width and height in pixels
-(`svg_size_problem`), the shared deck's `new_deck.py` builds it) or a hand-made package's
+(`svg_size_problem`), the shared deck's `new_deck.py` builds it; every deck is a briefing,
+`decision_package.briefing_problems`: its own `purpose` and one-sentence
+`conclusion` (deck/0.1's), a first slide of words that shows the
+conclusion and with its narration carries the purpose, and each decision's
+`why_you` and `evidence`, drawn as its lead-in slide before it; an
+architecture package's opening is its document's, its explanation opening
+with the purpose and conclusion) or a hand-made package's
 folder (only `purpose` given; read back through
 `work_packages.recognise`). A deck is checked end to end in an isolated
 JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
@@ -1532,9 +1621,9 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel, the workflow monitor, the folder catalog, the team
-server connection and the server's start setup (`start_setup`: a trial and
-the last going back, never worse than degraded)
+output, the tool channel, the workflow monitor, the Work tracker, the folder
+catalog, the team server connection and the server's start setup
+(`start_setup`: a trial and the last going back, never worse than degraded)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
@@ -1555,7 +1644,14 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back.
+they are back. The Work tracker row is its routes' latency, measured live
+(`subsystem_diagnostics.work_routes`, each report's write and each read of
+`/api/work` timed as it is served, `work_api.timed`), judged over the last
+`WORK_LATENCY_WINDOW_SEC` (five minutes): degraded once a write or a read
+passes two seconds (`WORK_WRITES_SLOW_SEC`, `WORK_READS_SLOW_SEC`), never
+down, since a slow write still lands; the watch records a silent attention
+item (`work_routes`, `slow`) once a write passes `WORK_WRITES_ALARM_SEC`
+(five seconds), resolved once none in the window is slow.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view). Every name and line JARVIS writes itself is sent as a
@@ -2057,8 +2153,8 @@ facts fit its walled block whole (`attention.fitting`, under
 `DIGEST_WORDS_CHARS`), so played (or SILENT) finishes with the revisions of
 only the items the brain was shown; the rest wait for the next. Seen is his
 act: his click, his mark, or hearing it read in full. The brain's reading
-tools (`read_message_reply` on an answer, `read_session_message`,
-`mark_people_message_read`) note the pending update they read on a turn he
+tools (`read_aloud` on a message, `read_message_reply` on an answer,
+`read_session_message`, `mark_people_message_read`) note the pending update they read on a turn he
 drove (`server._read_to_him`), and once that turn's reply has been heard in
 full (`speech.wait_for`, every chunk played) it is seen at the revision read
 (`server._seen_once_heard`, `attention_api.mark_seen_source`); a reply cut
@@ -2084,6 +2180,15 @@ the same `attention_api` functions as `/api/attention*`.
 `tests/test_speech_call_sites.py` fails any call to the voice outside the
 approved entry points it lists, and drives every routine producer against a
 voice that must stay silent.
+Nothing he asks to hear is spoken past the brain: the brain reads it in its
+own reply (a message, his Read included; see "One channel"). Two kinds stay
+direct, because their exact words are the point: a read-back for his
+approval (a capture from its box, `api_capture_read`; a command's and a
+keypress's, `_perform_command`, `_perform_dialog`) and a package story's
+slides. Each tells the brain at its next turn what was read, its number or
+id and how it went (`server._note_spoken`, into `_notes_for_brain`), and so
+does "say that again" of one of them (`_note_replayed`, from
+`SpeechScheduler.last_spoken`).
 
 ## Quiet voice input
 The contract is `docs/planning/quiet-conversation/contract.md` (states,
@@ -2560,6 +2665,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   command (see "One channel")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `report_keys.py` — Each report landing at most once: its idempotency
+  key, the reporting routes' wrapper and the lookup a timed-out reporter
+  asks (see "Reports land once")
 - `wait_links.py` — What a wait on him waits for (its link), which answer
   ends it, settling in the answer's transaction, and the sweep (see "The
   workflow monitor" and "The Work tracker")

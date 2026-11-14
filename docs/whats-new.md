@@ -16,6 +16,41 @@ settings. Opening the page at the new setup confirms it. The command-line
 `--host`, `--port` and `--ssl` are still for one run only and are never
 tried or kept.
 
+## JARVIS reads you your messages himself, and finds the one you mean
+
+Read on a message no longer plays it past the conversation. It asks JARVIS
+for you, "Read me message 42.", which shows in the Conversation as your own
+request; JARVIS reads you the message and sums it up in a sentence, so when
+you ask about it afterwards he knows what you heard. It is marked read only
+once you have heard his reply to the end; cut him off and it stays new. If
+JARVIS's brain is down, the reply says why instead.
+
+You can name a message by when it came: "read the message from 3:42", "the
+one at 15:42 from Bridge", "mark yesterday's 9:05 done". The time is your
+Mac's own time, to the minute, with "today" or "yesterday" if you like.
+JARVIS reads, replies to, marks or opens exactly that message; when two fit
+(the same minute, or 3:42 in the morning and the afternoon) he asks which,
+and when none does he says so and names the nearest.
+
+Read-backs for your approval (a message before it is sent, a command, a
+keypress) and a package's story are still read word for word, and JARVIS
+now knows what was read and how it went, so you can ask him about it.
+
+## Work reports answer at once, and land once
+
+An agent's report to the Work tab no longer waits while JARVIS brings the
+Work list up to date: the report is written and answered at once, and the
+list catches up a moment later on its own. A report whose answer is slow to
+come back is no longer taken for failed: every report carries a key of its
+own, so the agent asks JARVIS whether it landed and sends it again only if
+it did not, and JARVIS never records the same report twice. The same holds
+for workflow reports and agents' messages to you.
+
+Diagnostics has a new row, Work tracker, showing how long reports and reads
+of the Work list have taken in the last five minutes. It turns amber once
+one takes over two seconds, and Updates notes it if a report takes over
+five.
+
 ## Closing or replacing a package ends what waited on it
 
 Setting a package aside now ends everything that waited on it, as signing it
@@ -56,6 +91,17 @@ program paths, the address, the extra origins and the Fish key are changed
 only by your click. The Fish key is kept in your Keychain. The first start
 copies whatever your old `.env` held into Settings, once, and says when in
 Settings → Server; after that the file is not read.
+
+## A package opens with its purpose, and every decision with its lead-in
+
+Every deck an agent sends you now opens by saying what it is for and its
+answer or what it asks, before any data: its first slide shows the
+conclusion and JARVIS says the purpose over it. A deck that opens on a
+table, a set of figures or a question is refused before it reaches you.
+Each decision now comes after a slide of its own, "Before you decide",
+giving the question, why it is yours to decide and not an agent's, and
+the facts it rests on; a decision without them is refused too. An
+architecture package's explanation opens the same way.
 
 ## The knowledge index builds itself, and says how far it is
 

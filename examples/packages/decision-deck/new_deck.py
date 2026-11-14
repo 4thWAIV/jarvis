@@ -196,14 +196,22 @@ def story(deck: dict) -> dict:
     decision slide is explained, then asks, then waits (`waits`) until
     results/decisions.json has its answer; a child question is asked only
     once its parent has an answer that opens it (`asks_when`). A
+    decision's lead-in slide (a content slide whose `lead_in` names it) is
+    told as the first beat of that decision's own story slide, never on its
+    own: the story asks, waits and resumes at that slide, so the question is
+    never asked, the first time or on resume, without its lead-in. A
     presentation (no decisions) is told straight through."""
     decisions = deck.get("decisions", [])
     by_id = {d["id"]: d for d in decisions}
     opened = parents(deck)
     ask = ASK.get(deck.get("language", "en"), ASK["en"])
+    lead_ins = {s["lead_in"]: (n, s) for n, s in enumerate(order(deck), 1)
+                if s.get("lead_in") in by_id}
     slides = []
     for n, s in enumerate(order(deck), 1):
         go = {"click": f"#go-{n}"}
+        if s.get("lead_in") in by_id:
+            continue                         # told with its decision, below
         if "decision" in s:
             d = by_id[s["decision"]]
             k = decisions.index(d) + 1
@@ -217,6 +225,16 @@ def story(deck: dict) -> dict:
             ]
             slide = {"title": d.get("short") or d["id"], "target": f"#d-{d['id']}",
                      "waits": d["id"], "beats": beats}
+            if d["id"] in lead_ins:
+                # Its lead-in first, on its own slide. Each beat then goes
+                # to its slide itself (the first of each part clicks it), so
+                # the story slide names no one target to show on every beat.
+                ln, lead = lead_ins[d["id"]]
+                lid = lead.get("id") or f"s{ln}"
+                beats.insert(0, {"say": spoken(lead.get("say") or lead["title"]),
+                                 "actions": [{"click": f"#go-{ln}"}],
+                                 "targets": [f"#{lid} h2"]})
+                del slide["target"]
             if d["id"] in opened:
                 slide["asks_when"] = opened[d["id"]]
             slides.append(slide)

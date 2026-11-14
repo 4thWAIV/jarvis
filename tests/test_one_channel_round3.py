@@ -174,8 +174,8 @@ def test_the_reporter_starts_a_workflow_for_an_item(monkeypatch):
     monkeypatch.setattr(workflow_report, "_client", lambda *a: Client())
     assert workflow_report.main(["workflow_report.py", "start", "Build", "--project", "j",
                                  "--work", "work-9"]) == 0
-    assert posted == [("/api/workflows", {"name": "Build", "project": "j", "phases": [],
-                                          "work": "work-9"})]
+    assert [(path.partition("?")[0], body) for path, body in posted] == [
+        ("/api/workflows", {"name": "Build", "project": "j", "phases": [], "work": "work-9"})]
 
 
 # -- what went away ------------------------------------------------------------------------------
@@ -278,10 +278,12 @@ def test_whats_new_reads_each_item_s_new_messages_then_the_general_ones(wired, m
 
     monkeypatch.setattr(server, "speech", _Speech())
     said = asyncio.run(server.tool_read_aloud({}))
-    assert said.startswith(f"Reading message {b2['id']}")
-    assert server.speech.said == ["Diagnostics writes: B two."]
+    assert said.startswith(f"Message {b2['id']},") and "B two." in said
+    assert server.speech.said == [], "the brain reads it in its reply"
     said = asyncio.run(server.tool_read_aloud({"next": True}))
-    assert said.startswith(f"Reading message {a1['id']}") and server._message_on == a1["id"]
+    assert said.startswith(f"Message {a1['id']},") and server._message_on == a1["id"]
+    said = asyncio.run(server.tool_read_aloud({}))
+    assert said.startswith(f"Message {a1['id']},"), "\"read it\" is the one he is on"
 
 
 def test_read_it_with_no_message_on_says_how_to_start(wired):

@@ -78,6 +78,9 @@ class Telling:
     utterances: list = field(default_factory=list)
     task: Optional[asyncio.Task] = None
     stopped: bool = False
+    told: list = field(default_factory=list)     # slides read him since the brain was told
+    cut: list = field(default_factory=list)      # slides begun but not heard in full since
+    under_way: Optional[int] = None              # the slide sounding now, not yet settled
 
 
 @dataclass(frozen=True)
@@ -111,19 +114,22 @@ class StoryTeller:
     package, "") or (None, why not); `announce(frame)` sends a
     `package_story` frame to every page; `floor_free()` says nobody is
     speaking or about to (his turn, the brain's reply); `note(text)` tells
-    the brain at its next turn."""
+    the brain at its next turn; `spoken(what, which, how)` tells it which
+    slides were read him word for word and where the story stands."""
 
     def __init__(self, speech: Callable[[], object],
                  open_page: Callable[[str], Awaitable[tuple[Optional[Package], str]]],
                  announce: Callable[[dict], Awaitable[None]],
                  floor_free: Callable[[], bool] = lambda: True,
                  note: Callable[[str], None] = lambda _text: None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 spoken: Callable[[str, str, str], None] = lambda *_: None):
         self._speech = speech
         self._open_page = open_page
         self._announce = announce
         self._floor_free = floor_free
         self._note = note
+        self._spoken = spoken
         self._clock = clock
         self._lock = asyncio.Lock()
         self.telling: Optional[Telling] = None
@@ -173,7 +179,7 @@ class StoryTeller:
                 return Told(None, problem=(
                     f"Its story is told in {names[story.language]}, and I am speaking "
                     f"{names[language]}; switch the language first."))
-            await self._stop_locked("told again")
+            await self._stop_locked("to be told again")
             telling = Telling(package, story, slide, slide, explicit)
             self.telling = telling
             telling.task = asyncio.create_task(self._tell(speech, telling))
@@ -209,10 +215,13 @@ class StoryTeller:
                 before = record.get(slide.waits) if slide.waits else None
                 t.slide, t.state, t.question = number, TELLING, None
                 utt = speech.narrate(t.story.cues(t.package.id, number))
-                t.utterances = [utt]
+                t.utterances, t.under_way = [utt], number
                 await self._announce(self._frame(t))
                 heard = await speech.wait_for(utt, timeout=SLIDE_TIMEOUT_SEC)
                 t.utterances = []
+                # Only a slide heard in full was read him word for word.
+                (t.told if heard else t.cut).append(number)
+                t.under_way = None
                 if t.stopped:
                     break
                 if slide.waits:
@@ -226,10 +235,10 @@ class StoryTeller:
                     paused = True
                     t.state = PAUSED
                     await self._announce(self._frame(t))
-                    self._note(f"The story of package {t.package.id} is paused at slide "
-                               f"{number} of {len(t.story.slides)}: he spoke over it. "
-                               f"tell_package_story with action resume goes on from where it "
-                               f"left off; stop ends it.")
+                    self._told(t, f"he spoke over slide {number} of "
+                                  f"{len(t.story.slides)}, so the story is paused there; "
+                                  f"tell_package_story with action resume goes on from where "
+                                  f"it left off, and stop ends it")
                     return                       # still running, on this slide
                 number += 1
         except asyncio.CancelledError:
@@ -251,9 +260,12 @@ class StoryTeller:
                 self.ended = Ended(t.package, t.story, t.slide, state,
                                    "at its end" if state == FINISHED else "", self._clock())
             if state == FINISHED or not t.stopped:
-                # A stop announces its own end (_stop_locked).
+                # A stop announces its own end and tells the brain (_stop_locked).
                 t.state = state
                 await self._announce(self._frame(t))
+                self._told(t, "the story was told to its end" if state == FINISHED else
+                           f"the story could not go on and ended at slide {t.slide} of "
+                           f"{len(t.story.slides)}")
 
     async def _wait_for_answer(self, t: Telling, slide: Slide, before) -> None:
         """WAITING until `slide`'s question has an answer it did not have
@@ -262,9 +274,9 @@ class StoryTeller:
         await self._announce(self._frame(t))
         # The question's id is the sender's words: it reaches the brain only
         # walled, through tell_package_story's status.
-        self._note(f"The story of package {t.package.id} is waiting for his answer on "
-                   f"slide {t.slide} of {len(t.story.slides)}; it goes on by itself once "
-                   f"that is recorded (tell_package_story status gives the question).")
+        self._told(t, f"the story is waiting for his answer on slide {t.slide} of "
+                      f"{len(t.story.slides)}; it goes on by itself once that is recorded "
+                      f"(tell_package_story status gives the question)")
         log.info("story of %s waits for %s", t.package.id, slide.waits)
         while not t.stopped:
             record = await asyncio.to_thread(read_answers, t.package, t.story)
@@ -274,6 +286,21 @@ class StoryTeller:
                 t.question = None
                 return
             await asyncio.sleep(ANSWER_POLL_SEC)
+
+    def _told(self, t: Telling, how: str) -> None:
+        """Tell the brain which slides were read him since it was last told,
+        and where the story stands. Their titles are the sender's words:
+        tell_package_story's status gives them, walled."""
+        if t.under_way is not None:          # cut off as it ended
+            t.cut.append(t.under_way)
+            t.under_way = None
+        told, t.told = t.told, []
+        cut, t.cut = [c for c in t.cut if c not in told], []
+        if cut:
+            how += f"; {_slides(cut)} began but {'was' if len(set(cut)) == 1 else 'were'} " \
+                   f"cut short, not heard in full"
+        self._spoken(f"{_slides(told)} of its story" if told else "nothing more of its story",
+                     f"package {t.package.id}", how)
 
     async def _wait_for_floor(self, t: Telling) -> None:
         """Until nobody has been speaking or about to for FLOOR_SETTLE_SEC:
@@ -329,6 +356,8 @@ class StoryTeller:
         self.ended = Ended(telling.package, telling.story, telling.slide, STOPPED, by,
                            self._clock())
         await self._announce(self._frame(telling))
+        self._told(telling, f"it was stopped {by}, at slide {telling.slide} of "
+                            f"{len(telling.story.slides)}")
         log.info("story of %s stopped %s at slide %d (it was %s)", telling.package.id, by,
                  telling.slide, state_before)
         return telling
@@ -357,6 +386,16 @@ class StoryTeller:
         if t.question:
             frame["question"] = t.question
         return frame
+
+
+def _slides(numbers: list) -> str:
+    """Slide numbers as words: "slide 2", "slides 1 to 3", "slides 1, 3 and 4"."""
+    numbers = sorted(set(numbers))
+    if len(numbers) == 1:
+        return f"slide {numbers[0]}"
+    if numbers == list(range(numbers[0], numbers[-1] + 1)):
+        return f"slides {numbers[0]} to {numbers[-1]}"
+    return "slides " + ", ".join(map(str, numbers[:-1])) + f" and {numbers[-1]}"
 
 
 def read_answers(package: Package, story: Story) -> dict:
