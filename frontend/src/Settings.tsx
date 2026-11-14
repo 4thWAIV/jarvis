@@ -835,7 +835,7 @@ function LanguageKitStatus() {
       )}
       {held && confirming && <p className="update-confirm">{t("left.updates.kitConfirm", { version: held.version })}</p>}
       {held && (
-        <button className="settings-btn primary" ref={activateUi.whole} onClick={() => void activate()} disabled={busy}>
+        <button data-ui-action="domain" className="settings-btn primary" ref={activateUi.whole} onClick={() => void activate()} disabled={busy}>
           {confirming ? t("left.updates.kitYesActivate", { version: held.version }) : t("left.updates.kitActivate")}</button>
       )}
       {refused && <p className="update-refused"><span data-original-detail="">{refused}</span></p>}
