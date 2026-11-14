@@ -364,7 +364,7 @@ export const leftEn = {
   "left.voice.testPassed": "Fish Audio generated speech successfully.",
   "left.voice.invalidKey": "Fish Audio rejected the API key. Check the key and try again.",
   "left.voice.noCredit": "Fish Audio says this model needs API credit. Check Developer → API Billing in Fish Audio.",
-  "left.voice.badVoiceId": "Fish Audio rejected the speech request. Check Voice ID and restart the server after saving it.",
+  "left.voice.badVoiceId": "Fish Audio rejected the speech request. Check the Voice ID and save it again.",
   "left.voice.testFailed": "Could not test Fish Audio. Check the API key and connection, then try again.",
   "left.voice.voiceId": "Voice ID",
 

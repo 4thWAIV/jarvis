@@ -6,8 +6,9 @@ binds) and `records_once` (once the records are open) read `.env` with the
 one parser (`parse_env_lines`), copy each setting it holds into its place
 (the start file, the Keychain, its area's record, brains.json or
 engines.json) and record that it was done (`/settings/env-import.settings`,
-and the start file's `imported_from_env`). After that `.env` is never read
-again; nothing loads it into the environment.
+and the start file's `imported_from_env`). After that `.env` is read only
+for the data folder it may name (`_follow_data_folder`, until Settings has
+a data folder control); nothing loads it into the environment.
 """
 from __future__ import annotations
 

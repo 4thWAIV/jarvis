@@ -312,3 +312,46 @@ def test_a_data_folder_this_process_was_given_wins_over_dotenv(monkeypatch, tmp_
     monkeypatch.setattr(settings_import, "_data_dir_from_env", None)
     settings_import.start_file_once()
     assert data_paths.data_dir() == given and settings_import.data_dir_from_env() is None
+
+
+def test_one_failed_keychain_read_never_hides_the_fish_key(monkeypatch):
+    """A Keychain still locked just after login, or a read that timed out,
+    is asked again; a key once found is kept."""
+    from jarvis import data_paths, team_client
+    monkeypatch.setattr(settings_service, "_secrets", {})
+    asked = []
+
+    class Flaky:
+        def __init__(self, service=None):
+            pass
+
+        def get(self, account):
+            asked.append(account)
+            if len(asked) == 1:
+                raise TimeoutError("security timed out")
+            return "fishkey1"
+    monkeypatch.setattr(team_client, "KeychainStore", Flaky)
+    monkeypatch.setattr(team_client, "CredentialManagerStore", Flaky)
+    clock = [1000.0]
+    monkeypatch.setattr(settings_service.time, "monotonic", lambda: clock[0])
+    assert settings_service.value("fish_api_key") == ""
+    assert settings_service.value("fish_api_key") == ""        # not asked again at once
+    assert len(asked) == 1
+    clock[0] += settings_service.SECRET_RETRY_SEC + 1
+    assert settings_service.value("fish_api_key") == "fishkey1"
+    clock[0] += 3600
+    assert settings_service.value("fish_api_key") == "fishkey1" and len(asked) == 2
+    assert data_paths.data_dir()
+
+
+def test_the_page_restarts_the_server_one_way():
+    """The menu's Restart Server and Settings, Server's Restart now share
+    MenuControl's restartServer, which reloads only on a restart taken."""
+    from pathlib import Path
+    src = Path(__file__).resolve().parent.parent / "frontend" / "src"
+    posting = [p.name for p in src.rglob("*.ts*") if '"/api/restart"' in p.read_text()
+               and p.name != "uiContract.ts"]
+    assert posting == ["MenuControl.tsx"]
+    menu = (src / "MenuControl.tsx").read_text()
+    assert "if (res.ok)" in menu
+    assert "restartServer()" in (src / "Settings.tsx").read_text()

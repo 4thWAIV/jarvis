@@ -346,7 +346,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.voice.testPassed": "Fish Audio generó audio correctamente.",
   "left.voice.invalidKey": "Fish Audio rechazó la clave de API. Compruébela y vuelva a intentarlo.",
   "left.voice.noCredit": "Fish Audio indica que este modelo requiere crédito de API. Revise Developer → API Billing en Fish Audio.",
-  "left.voice.badVoiceId": "Fish Audio rechazó la solicitud. Compruebe el ID de voz y reinicie el servidor después de guardarlo.",
+  "left.voice.badVoiceId": "Fish Audio rechazó la solicitud. Compruebe el ID de voz y guárdelo de nuevo.",
   "left.voice.testFailed": "No se pudo probar Fish Audio. Compruebe la clave de API y la conexión, y vuelva a intentarlo.",
   "left.voice.voiceId": "ID de voz",
 

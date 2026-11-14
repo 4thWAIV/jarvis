@@ -22,6 +22,7 @@ import math
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
@@ -35,7 +36,12 @@ _lock = threading.RLock()
 _held: dict[str, Any] = {}
 # engine key -> {setting key -> value}: what was read from that engine's records.
 _loaded: dict[str, dict[str, Any]] = {}
-_secrets: dict[str, dict[str, str]] = {}
+# data folder -> {setting key -> (value, when read)}: a secret found is kept;
+# none found (missing, or a Keychain that could not be read: locked just
+# after login, a timeout, a denied prompt) is asked again after
+# SECRET_RETRY_SEC, so one failed read never hides the key until a restart.
+_secrets: dict[str, dict[str, tuple[str, float]]] = {}
+SECRET_RETRY_SEC = 30.0
 
 
 class Refused(ValueError):
@@ -77,12 +83,15 @@ def _secret(key: str) -> str:
     folder = str(data_paths.data_dir())
     with _lock:
         known = _secrets.setdefault(folder, {})
-        if key not in known:
-            try:
-                known[key] = _secret_store().get(_secret_account(key)) or ""
-            except Exception:  # noqa: BLE001 - a store that cannot be read holds nothing
-                known[key] = ""
-        return known[key]
+        found = known.get(key)
+        if found is not None and (found[0] or time.monotonic() - found[1] < SECRET_RETRY_SEC):
+            return found[0]
+        try:
+            secret = _secret_store().get(_secret_account(key)) or ""
+        except Exception:  # noqa: BLE001 - a store that cannot be read holds nothing now
+            secret = ""
+        known[key] = (secret, time.monotonic())
+        return secret
 
 
 def value(key: str) -> Any:
@@ -364,7 +373,7 @@ def change(key: str, new: Any, *, by: str = "tim") -> Any:
         else:
             store.delete(_secret_account(key))
         with _lock:
-            _secrets.setdefault(str(data_paths.data_dir()), {})[key] = checked
+            _secrets.setdefault(str(data_paths.data_dir()), {})[key] = (checked, time.monotonic())
     else:
         from jarvis import records
         records.update(record_path(s.area),

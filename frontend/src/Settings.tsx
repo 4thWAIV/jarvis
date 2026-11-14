@@ -39,7 +39,7 @@ import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SettingsFields, settingsValues } from "./SettingsFields";
 import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { closeMenu, reloadAfterRestart } from "./MenuControl";
+import { closeMenu, reloadAfterRestart, restartServer } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { VoiceInputSettingsControl } from "./VoiceInputSettingsControl";
 import { TeamSection } from "./TeamSection";
@@ -819,12 +819,6 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
   const values = useSyncExternalStore(settingsValues.subscribe, settingsValues.get).value;
   const known = status !== null && !failed;
   const pending = (values?.settings ?? []).some((s) => s.pending_restart);
-  const restart = async () => {
-    try {
-      await fetch("/api/restart", { method: "POST" });
-      reloadAfterRestart(t("menu.restarting"));
-    } catch { /* the server did not take it; the button stays to try again */ }
-  };
   return (
     <>
       {failed && (
@@ -844,7 +838,7 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
       )}
       <SettingsFields area="server" />
       {pending && <p className="settings-restart-notice">{t("left.server.pending")}</p>}
-      <button data-ui-action="restart" className="settings-btn" ref={restartUi.whole} onClick={() => void restart()}>
+      <button data-ui-action="restart" className="settings-btn" ref={restartUi.whole} onClick={() => void restartServer()}>
         {t("left.server.restartNow")}</button>
       <SettingsRow label={t("left.server.port")} labelRef={port.part("label")}>
         <span className="settings-value" ref={port.whole}>{known ? status.server_port : "—"}</span>
