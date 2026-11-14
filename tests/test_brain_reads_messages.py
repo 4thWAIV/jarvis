@@ -246,7 +246,7 @@ def test_the_story_slides_read_him_are_told_to_the_brain():
     told = []
     teller = story_teller.StoryTeller(lambda: None, None, None,
                                       spoken=lambda *a: told.append(a))
-    t = SimpleNamespace(package=SimpleNamespace(id="p-1"), told=[1, 2, 3])
+    t = SimpleNamespace(package=SimpleNamespace(id="p-1"), told=[1, 2, 3], cut=[], under_way=None)
     teller._told(t, "the story is waiting for his answer on slide 3 of 5")
     teller._told(t, "the story was told to its end")
     assert told == [("slides 1 to 3 of its story", "package p-1",
@@ -263,3 +263,65 @@ def test_the_server_tells_the_brain_of_story_slides_through_the_one_helper(serve
     [note] = _notes(server)
     assert note == ("Outside your turn JARVIS read him slide 1 of its story (package p-1) word "
                     "for word: the story was told to its end.")
+
+
+# -- a story stopped, spoken over or failed still tells the brain what he heard ----------
+
+from tests.test_package_story import Teller, deck  # noqa: E402,F401  (a fixture)
+from tests.test_speech import h  # noqa: E402,F401  (a fixture)
+from tests.fixtures.waiting import until_async  # noqa: E402
+from tests.test_work_packages import marks  # noqa: E402,F401  (a fixture)
+
+
+def _telling(h):
+    """The tests' teller, its brain notes kept."""
+    t = Teller(h)
+    t.notes = []
+    t.teller._spoken = lambda *a: t.notes.append(a)
+    return t
+
+
+@pytest.mark.asyncio
+async def test_a_story_stopped_tells_the_brain_the_slides_heard_and_the_one_cut_short(h, deck):
+    t = _telling(h)
+    await t.teller.tell(deck.id)
+    await h.ack_all(until=lambda: ("telling", 2) in t.states())
+    await t.first_heard()                    # slide 2 begins, and he presses Stop
+    await t.teller.stop()
+    assert t.notes == [("slide 1 of its story", f"package {deck.id}",
+                        "it was stopped on the page, at slide 2 of 3; slide 2 began but was "
+                        "cut short, not heard in full")]
+    await t.teller.stop()
+    assert len(t.notes) == 1, "a second Stop tells the brain nothing new"
+
+
+@pytest.mark.asyncio
+async def test_a_slide_spoken_over_is_not_told_as_read_word_for_word(h, deck):
+    t = _telling(h)
+    await t.teller.tell(deck.id)
+    await t.first_heard()
+    await h.sched.barge_in(reason="he spoke")
+    assert await until_async(lambda: t.notes), t.states()
+    [(what, _, how)] = t.notes
+    assert what == "nothing more of its story"
+    assert how.startswith("he spoke over slide 1 of 3")
+    assert how.endswith("slide 1 began but was cut short, not heard in full")
+
+
+@pytest.mark.asyncio
+async def test_a_story_that_fails_tells_the_brain_where_it_ended(h, deck, monkeypatch):
+    t = _telling(h)
+    real = h.sched.narrate
+    calls = []
+
+    def narrate(cues):
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("no voice")
+        return real(cues)
+    monkeypatch.setattr(h.sched, "narrate", narrate)
+    await t.teller.tell(deck.id)
+    await t.ended()
+    assert t.states()[-1] == ("stopped", 2)
+    assert t.notes == [("slide 1 of its story", f"package {deck.id}",
+                        "the story could not go on and ended at slide 2 of 3")]

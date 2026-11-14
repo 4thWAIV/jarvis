@@ -79,6 +79,8 @@ class Telling:
     task: Optional[asyncio.Task] = None
     stopped: bool = False
     told: list = field(default_factory=list)     # slides read him since the brain was told
+    cut: list = field(default_factory=list)      # slides begun but not heard in full since
+    under_way: Optional[int] = None              # the slide sounding now, not yet settled
 
 
 @dataclass(frozen=True)
@@ -177,7 +179,7 @@ class StoryTeller:
                 return Told(None, problem=(
                     f"Its story is told in {names[story.language]}, and I am speaking "
                     f"{names[language]}; switch the language first."))
-            await self._stop_locked("told again")
+            await self._stop_locked("to be told again")
             telling = Telling(package, story, slide, slide, explicit)
             self.telling = telling
             telling.task = asyncio.create_task(self._tell(speech, telling))
@@ -213,13 +215,15 @@ class StoryTeller:
                 before = record.get(slide.waits) if slide.waits else None
                 t.slide, t.state, t.question = number, TELLING, None
                 utt = speech.narrate(t.story.cues(t.package.id, number))
-                t.utterances = [utt]
+                t.utterances, t.under_way = [utt], number
                 await self._announce(self._frame(t))
                 heard = await speech.wait_for(utt, timeout=SLIDE_TIMEOUT_SEC)
                 t.utterances = []
+                # Only a slide heard in full was read him word for word.
+                (t.told if heard else t.cut).append(number)
+                t.under_way = None
                 if t.stopped:
                     break
-                t.told.append(number)
                 if slide.waits:
                     await self._wait_for_answer(t, slide, before)
                     if t.stopped:
@@ -256,11 +260,12 @@ class StoryTeller:
                 self.ended = Ended(t.package, t.story, t.slide, state,
                                    "at its end" if state == FINISHED else "", self._clock())
             if state == FINISHED or not t.stopped:
-                # A stop announces its own end (_stop_locked).
+                # A stop announces its own end and tells the brain (_stop_locked).
                 t.state = state
                 await self._announce(self._frame(t))
-                if state == FINISHED:
-                    self._told(t, "the story was told to its end")
+                self._told(t, "the story was told to its end" if state == FINISHED else
+                           f"the story could not go on and ended at slide {t.slide} of "
+                           f"{len(t.story.slides)}")
 
     async def _wait_for_answer(self, t: Telling, slide: Slide, before) -> None:
         """WAITING until `slide`'s question has an answer it did not have
@@ -286,7 +291,14 @@ class StoryTeller:
         """Tell the brain which slides were read him since it was last told,
         and where the story stands. Their titles are the sender's words:
         tell_package_story's status gives them, walled."""
+        if t.under_way is not None:          # cut off as it ended
+            t.cut.append(t.under_way)
+            t.under_way = None
         told, t.told = t.told, []
+        cut, t.cut = [c for c in t.cut if c not in told], []
+        if cut:
+            how += f"; {_slides(cut)} began but {'was' if len(set(cut)) == 1 else 'were'} " \
+                   f"cut short, not heard in full"
         self._spoken(f"{_slides(told)} of its story" if told else "nothing more of its story",
                      f"package {t.package.id}", how)
 
@@ -344,6 +356,8 @@ class StoryTeller:
         self.ended = Ended(telling.package, telling.story, telling.slide, STOPPED, by,
                            self._clock())
         await self._announce(self._frame(telling))
+        self._told(telling, f"it was stopped {by}, at slide {telling.slide} of "
+                            f"{len(telling.story.slides)}")
         log.info("story of %s stopped %s at slide %d (it was %s)", telling.package.id, by,
                  telling.slide, state_before)
         return telling
