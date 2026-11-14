@@ -3248,6 +3248,7 @@ async def _start_on_records() -> None:
     # area's record held in memory, before anything below reads one.
     await asyncio.to_thread(settings_import.records_once)
     await asyncio.to_thread(settings_service.load)
+    settings_service.note_started("record")
     # His voice settings held in memory before a page connects, so listening
     # and speaking never wait on the engine (voice_control.py).
     try:
@@ -3304,6 +3305,21 @@ async def _start_on_records() -> None:
     log.info("JARVIS server starting")
 
 
+SERVING_LOOK_SEC = 0.25
+
+
+async def _remember_once_serving(served: dict) -> None:
+    """Record `served` as the start that served once uvicorn is listening
+    (its `started`, set after the sockets are bound and the startup is
+    done); a start whose bind fails exits first and records nothing."""
+    while not settings_service.listening():
+        await asyncio.sleep(SERVING_LOOK_SEC)
+    try:
+        await asyncio.to_thread(start_settings.remember_served, served)
+    except OSError as e:
+        log.warning("the start that served was not recorded: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     global cached_projects
@@ -3321,15 +3337,12 @@ async def lifespan(application: FastAPI):
     # Where this server is, for `python -m jarvis.update` (server_address.py).
     server_address.record()
     # The start that served, what a later start falls back to when Settings'
-    # address cannot be bound (start_settings.fall_back). Only from main(),
-    # the launcher that reads the start file.
-    started = settings_service.in_force_at_start()
-    if started:
-        try:
-            await asyncio.to_thread(start_settings.remember_served,
-                                    {k: started[k] for k in ("host", "port", "https")})
-        except OSError as e:
-            log.warning("the start that served was not recorded: %s", e)
+    # address cannot be bound (start_settings.fall_back): recorded once the
+    # server is listening, never before the bind. Only from main(), the
+    # launcher that reads the start file.
+    served = settings_service.served_at_start()
+    if served:
+        _spawn(_remember_once_serving(served))
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     # The knowledge engine before anything else; the page waits for it.
@@ -17649,18 +17662,26 @@ def main() -> None:
     env_names.publish("JARVIS_PORT", str(args.port))
     env_names.publish("JARVIS_SCHEME", proto)
     env_names.publish("JARVIS_BIND_HOST", args.host)
-    settings_service.note_started({"host": args.host, "port": args.port, "https": use_ssl,
-                                   **{k: _setting(k) for k in ("brain_autostart", "debug_docs",
-                                                               "knowledge_memory_mb")}})
+    # What Settings saved as this process starts: a setting saved
+    # differently since waits for a restart (settings_service.described).
+    settings_service.note_started("start")
 
-    uvicorn.run(
-        "jarvis.server:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level="info",
-        **ssl_kwargs,
-    )
+    if args.reload:
+        uvicorn.run("jarvis.server:app", host=args.host, port=args.port, reload=True,
+                    log_level="info", **ssl_kwargs)
+        return
+    # uvicorn.run's own path, with the server kept, so the start that served
+    # is recorded only once it is listening (`_remember_once_serving`).
+    server = uvicorn.Server(uvicorn.Config("jarvis.server:app", host=args.host, port=args.port,
+                                           log_level="info", **ssl_kwargs))
+    settings_service.note_serving({"host": args.host, "port": args.port, "https": use_ssl},
+                                  lambda: server.started)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        sys.exit(3)        # uvicorn's STARTUP_FAILURE
 
 
 if __name__ == "__main__":

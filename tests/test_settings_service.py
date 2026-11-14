@@ -237,3 +237,52 @@ def test_an_untrusted_start_file_is_still_said_after_the_start_that_found_it():
     assert settings_service.view("server")["start"]["problem"] == start_settings.TAMPERED
     settings_service.change("port", 9125)
     assert start_settings.problem() is None
+
+
+@pytest.fixture
+def fresh_start(monkeypatch):
+    monkeypatch.setattr(settings_service, "_started", {})
+    monkeypatch.setattr(settings_service, "_served", {})
+    monkeypatch.setattr(settings_service, "_listening", None)
+
+
+def _pending(key):
+    return settings_service.described(settings_specs.spec(key)).get("pending_restart")
+
+
+def test_every_setting_that_waits_for_a_restart_says_so_once_changed(fresh_start):
+    """A record setting too (Brain effort), not only the start file's."""
+    settings_service.note_started("start")
+    settings_service.note_started("record")
+    assert _pending("brain_effort") is False and _pending("port") is False
+    settings_service.change("brain_effort", "high")
+    settings_service.change("port", 8351)
+    assert _pending("brain_effort") is True and _pending("port") is True
+    assert _pending("specs_poll") is None          # takes effect at once
+
+
+def test_https_with_no_certificates_is_not_a_change_waiting(fresh_start):
+    """What is compared is what was saved at start against what is saved
+    now, never the bind (no certificates: served over HTTP)."""
+    settings_service.note_started("start")
+    settings_service.note_serving({"host": "127.0.0.1", "port": 8340, "https": False},
+                                  lambda: True)
+    assert settings_service.value("https") is True
+    assert _pending("https") is False
+
+
+def test_the_start_that_served_is_recorded_only_once_it_is_listening(fresh_start, monkeypatch):
+    from jarvis import server
+    monkeypatch.setattr(server, "SERVING_LOOK_SEC", 0.01)
+    up = [False]
+    served = {"host": "127.0.0.1", "port": 8402, "https": False}
+    settings_service.note_serving(served, lambda: up[0])
+
+    async def scenario():
+        task = asyncio.create_task(server._remember_once_serving(served))
+        await asyncio.sleep(0.1)
+        assert start_settings.document()["last_good"] is None and not task.done()
+        up[0] = True
+        await asyncio.wait_for(task, 5)
+    asyncio.run(scenario())
+    assert start_settings.document()["last_good"] == served

@@ -45,7 +45,7 @@ export const leftEn = {
   "left.fields.refused.pageOnly": "Only your click on Settings changes this.",
   "left.fields.refused.unknown": "There is no such setting.",
   "left.server.restartNow": "Restart now",
-  "left.server.pending": "Some start-up settings have changed: restart JARVIS to use them.",
+  "left.server.pending": "Some settings that take effect at the next start have changed: restart JARVIS to use them.",
   "left.server.startTampered": "The start-up settings file was changed outside Settings, so JARVIS started on the defaults. Choose them again here.",
   "left.server.startUnreadable": "The start-up settings file could not be read, so JARVIS started on the defaults. Choose them again here.",
   "left.server.imported": "Settings were copied from the old .env file on {when}; it is no longer read.",

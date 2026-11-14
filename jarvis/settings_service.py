@@ -23,7 +23,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
 from jarvis import settings_specs, start_settings
@@ -162,17 +162,44 @@ def let_go(key: Optional[str] = None) -> None:
             _held.pop(key, None)
 
 
-def in_force_at_start() -> dict:
-    """The start settings this process started with (set by server.main)."""
-    return dict(_started)
-
-
+# Every setting that takes effect at the next start, as saved when this
+# process started: the start file's from server.main, the records' once they
+# are loaded. A setting saved differently since waits for a restart.
 _started: dict[str, Any] = {}
+# The address, port and HTTPS this run binds (flags for one run included),
+# and whether it is listening yet: what the start that served records.
+_served: dict[str, Any] = {}
+_listening: Optional[Callable[[], bool]] = None
 
 
-def note_started(values: dict) -> None:
-    _started.clear()
-    _started.update(values)
+def note_started(store: str) -> None:
+    """Note the saved value of every restart setting kept in `store`
+    (``start`` from server.main, ``record`` once the records are loaded)."""
+    values = {s.key: value(s.key) for s in settings_specs.SPECS
+              if s.restart and s.store == store}
+    with _lock:
+        _started.update(values)
+
+
+def note_serving(served: dict, listening: Callable[[], bool]) -> None:
+    """What this run binds, and how to tell it is listening (server.main)."""
+    global _listening
+    with _lock:
+        _served.clear()
+        _served.update(served)
+        _listening = listening
+
+
+def served_at_start() -> dict:
+    """The host, port and HTTPS this run binds, or {} when server.main did not start it."""
+    with _lock:
+        return dict(_served)
+
+
+def listening() -> bool:
+    """Whether this run's server is listening (bound and serving) yet."""
+    check = _listening
+    return bool(check and check())
 
 
 # -- checking ----------------------------------------------------------------
@@ -380,8 +407,11 @@ def described(s: Spec) -> dict:
         out["min"], out["max"] = s.minimum, s.maximum
     if s.kind == "choice":
         out["choices"] = list(s.choice_values())
-    if s.store == "start" and s.restart and _started:
-        out["pending_restart"] = _started.get(s.key, s.default) != v
+    if s.restart:
+        with _lock:
+            known, at_start = s.key in _started, _started.get(s.key)
+        if known:
+            out["pending_restart"] = at_start != v
     return out
 
 

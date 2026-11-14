@@ -98,7 +98,7 @@ Then check its status once; run this again until `installed` is `True` or the in
   py -3.12 -m venv $Old
   & "$Old\Scripts\python.exe" -m pip install .\previous\jarvis-0.1.0-py3-none-any.whl
   $env:JARVIS_DATA_DIR = "$env:USERPROFILE\jarvis-data-pre-upgrade"
-  & "$Old\Scripts\python.exe" -m jarvis --host 127.0.0.1
+  & "$Old\Scripts\python.exe" -m jarvis
   ```
 
 ## What was tested

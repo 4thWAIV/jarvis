@@ -40,7 +40,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.fields.refused.pageOnly": "Solo su clic en la configuración cambia esto.",
   "left.fields.refused.unknown": "No existe ese ajuste.",
   "left.server.restartNow": "Reiniciar ahora",
-  "left.server.pending": "Algunos ajustes de inicio cambiaron: reinicie JARVIS para usarlos.",
+  "left.server.pending": "Algunos ajustes que se aplican en el próximo inicio cambiaron: reinicie JARVIS para usarlos.",
   "left.server.startTampered": "El archivo de ajustes de inicio se cambió fuera de la configuración, así que JARVIS se inició con los valores predeterminados. Vuelva a elegirlos aquí.",
   "left.server.startUnreadable": "No se pudo leer el archivo de ajustes de inicio, así que JARVIS se inició con los valores predeterminados. Vuelva a elegirlos aquí.",
   "left.server.imported": "La configuración se copió del antiguo archivo .env el {when}; ya no se lee.",
