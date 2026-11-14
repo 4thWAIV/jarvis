@@ -770,3 +770,12 @@ def new_messages() -> list[ConversationItem]:
         r["about"] is not None or r["counterpart_kind"] != str(Counterpart.PERSON)),
         [["state", "=", new]])
     return [_item(r) for r in sorted(rows, key=lambda r: r["id"])]
+
+
+def messages_between(lo: float, hi: float) -> list[ConversationItem]:
+    """Every message to him that arrived at or after `lo` and before `hi`
+    (epoch seconds), oldest first: what a message named by its time is
+    looked for among (messages_api.resolve)."""
+    rows = _found(lambda r: _is_message(r) and lo <= float(r["at"]) < hi,
+                  [["at", ">=", float(lo)], ["at", "<", float(hi)], *_STATED])
+    return [_item(r) for r in sorted(rows, key=lambda r: r["id"])]
