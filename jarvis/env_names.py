@@ -52,6 +52,8 @@ WIRING_NAMES: dict[str, str] = {
     "JARVIS_SOURCE": "JARVIS's source folder, for a package's command",
     "PACKAGE_DIR": "a package's own folder, for its command",
     "MSYS_NO_PATHCONV": "keeps Git for Windows' openssl from rewriting a path",
+    "PYTHONPATH": "the checkout's parent, so the brain's MCP child can import jarvis "
+                  "(its mcp.json `env`)",
     "JARVIS_API_TARGET": "where the Vite dev server proxies /api (frontend/vite.config.ts)",
     "JARVIS_VITE_PORT": "the Vite dev server's port (frontend/vite.config.ts)",
 }

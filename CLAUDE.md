@@ -2847,7 +2847,8 @@ None of these is for a person to set; each is listed in `env_names.py`.
   folder of an isolated instance: a test, the decision check),
   `JARVIS_PYTHON`, `JARVIS_SOURCE`, `PACKAGE_DIR` (a package's command),
   `MSYS_NO_PATHCONV`, `JARVIS_API_TARGET`, `JARVIS_VITE_PORT` (a parent
-  pointing Vite at an isolated JARVIS).
+  pointing Vite at an isolated JARVIS), `PYTHONPATH` (the checkout's
+  parent, in the brain's MCP child's `env`).
 - PLATFORM, read to find things or to scrub them from a child:
   `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `HOME`, `PATH`,

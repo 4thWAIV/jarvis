@@ -63,10 +63,33 @@ def test_nothing_reads_the_environment_but_env_names():
     assert not found, "read the environment through env_names:\n" + "\n".join(found)
 
 
+def _names_set_by_hand(tree: ast.Module, path: Path) -> list[tuple[str, str]]:
+    """Names given to a child some other way than `env_names.child`: the keys
+    of an `"env": {...}` literal (a generated mcp.json) and `env["X"] = ...`
+    on a child's environment once `child` has built it."""
+    out = []
+    for node in ast.walk(tree):
+        where = f"{path.relative_to(ROOT)}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and key.value == "env" \
+                        and isinstance(value, ast.Dict):
+                    out += [(k.value, where) for k in value.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) \
+                        and target.value.id in ("env", "environment") \
+                        and isinstance(target.slice, ast.Constant) \
+                        and isinstance(target.slice.value, str):
+                    out.append((target.slice.value, where))
+    return out
+
+
 def _names_used(path: Path) -> list[tuple[str, str]]:
     tree = ast.parse(path.read_text(), str(path))
     constants = _constants(tree)
-    out = []
+    out = _names_set_by_hand(tree, path)
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name) and node.func.value.id == "env_names"):
@@ -98,6 +121,15 @@ def test_every_name_used_is_listed_and_none_is_a_setting():
             if kind is None or kind == env_names.SETTING:
                 bad.append(f"{where} {name} ({kind or 'not listed'})")
     assert not bad, "\n".join(bad)
+
+
+def test_names_set_in_a_child_s_env_by_hand_are_seen():
+    found = {name for path in _sources() for name, _where in _set_by_hand_in(path)}
+    assert {"PYTHONPATH", "JARVIS_TOOL_URL", "CODEX_HOME"} <= found
+
+
+def _set_by_hand_in(path: Path) -> list[tuple[str, str]]:
+    return _names_set_by_hand(ast.parse(path.read_text(), str(path)), path)
 
 
 def test_the_vite_config_reads_only_listed_wiring():
@@ -255,3 +287,18 @@ def test_the_registry_says_what_each_name_is_for():
                   env_names.PLATFORM_PREFIXES):
         assert all(isinstance(v, str) and v for v in table.values())
     assert json.dumps(sorted(env_names.setting_names()))
+
+
+def test_no_guide_tells_anyone_to_set_a_setting_in_the_environment():
+    """The brain's persona, the skills it and the sessions are taught, and
+    the README name a setting by its Settings control, never by the
+    environment name `.env` once held it."""
+    files = [ROOT / "jarvis" / "jarvis_home" / "CLAUDE.md", ROOT / "README.md"]
+    files += sorted((ROOT / "jarvis" / "skills").rglob("SKILL.md"))
+    files += sorted((ROOT / "jarvis" / "session_skills").rglob("SKILL.md"))
+    names = set(env_names.setting_names())
+    found = [f"{path.relative_to(ROOT)}:{n}: {name}"
+             for path in files
+             for n, line in enumerate(path.read_text().splitlines(), 1)
+             for name in names if re.search(rf"\b{name}\b", line)]
+    assert not found, "name the Settings control instead:\n" + "\n".join(found)

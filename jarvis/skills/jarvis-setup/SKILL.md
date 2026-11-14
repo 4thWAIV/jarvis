@@ -193,10 +193,12 @@ it. It is not only the web: `server.TAINTING_TOOLS` names every reader that
 marks a turn — repository files, other sessions' transcripts, run output,
 documents, the user's own screen — and everything that acts is shut, bar
 `answer_dialog` (one keystroke) and the tools that only fetch more to read.
-That refusal is opt-in (`JARVIS_REFUSE_UNTRUSTED_ACTIONS`, off by default). If
-someone reports "JARVIS refused to start a run right after reading my Jira
-ticket", or right after reading a README — it is on, and this is it working.
-Asking again re-opens it; unsetting the variable turns it off.
+That refusal is opt-in: Settings, Safety, "Refuse to act after reading
+others' words" (the setting `refuse_untrusted_actions`, off by default; the
+brain's `set_jarvis_setting` changes it too). If someone reports "JARVIS
+refused to start a run right after reading my Jira ticket", or right after
+reading a README — it is on, and this is it working. Asking again re-opens
+it; switching it off in Settings, Safety turns it off.
 
 ## If something here is wrong
 

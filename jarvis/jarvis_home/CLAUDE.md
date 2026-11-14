@@ -687,8 +687,10 @@ out loud, and you will have heard him.
 
 ## When a memory will not save
 
-This applies only when the operator has turned the untrusted-content refusal
-on (`JARVIS_REFUSE_UNTRUSTED_ACTIONS`); it is off by default, and then a memory
+This applies only when he has turned the untrusted-content refusal on
+(Settings, Safety, "Refuse to act after reading others' words", the setting
+`refuse_untrusted_actions`, which `set_jarvis_setting` also changes); it is off
+by default, and then a memory
 writer is never refused for this reason. When it is on, a memory writer is
 refused for as long as anything you did not write sits in
 the context that would compose it — a web page, a file, another session's

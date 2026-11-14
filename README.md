@@ -119,7 +119,7 @@ Recognition currently uses Kroko through sherpa-onnx. The model and runtime are 
 
 SQLite records and Markdown memory live under `data/` in a checkout. `JARVIS_DATA_DIR` selects another data directory. An installed copy keeps configuration and data under `~/Library/Application Support/JARVIS`. MCP connections are configured through the brain home's `connections.json`; the setup guide explains the format.
 
-The service binds to loopback by default. Host/origin checks, internal tool tokens and each agent's own signing key (with its rights) protect specific application boundaries. Development runs can have full user privileges, and `JARVIS_SKIP_PERMISSIONS` defaults on. The foreign-content action refusal is opt-in through `JARVIS_REFUSE_UNTRUSTED_ACTIONS`. These controls are not a universal sandbox or transactional rollback system. See [jarvis/web_auth.py](jarvis/web_auth.py), [jarvis/agent_rights.py](jarvis/agent_rights.py) and [jarvis/run_executor.py](jarvis/run_executor.py) for their implementation.
+The service binds to loopback by default. Host/origin checks, internal tool tokens and each agent's own signing key (with its rights) protect specific application boundaries. Development runs can have full user privileges: Settings, Agents, "Runs skip permission prompts" (`skip_permissions`) is on by default. The foreign-content action refusal is opt-in in Settings, Safety, "Refuse to act after reading others' words" (`refuse_untrusted_actions`). These controls are not a universal sandbox or transactional rollback system. See [jarvis/web_auth.py](jarvis/web_auth.py), [jarvis/agent_rights.py](jarvis/agent_rights.py) and [jarvis/run_executor.py](jarvis/run_executor.py) for their implementation.
 
 ## Development
 
