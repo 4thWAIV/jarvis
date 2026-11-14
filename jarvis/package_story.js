@@ -91,8 +91,21 @@
   // only when it matches exactly one element, and reported, never widened,
   // when it matches none or several.
   var PRECISE = /\[\s*data-(declaration|member)\s*[~|^$*]?=/;
+  // A member's name carried once is the name itself; a name several members
+  // of one declaration share is name#1, name#2, ... (Tim's answer of
+  // 2026-11-13). The bare shared name matches no row, and is ambiguous, not
+  // missing: it names every row that shares it.
+  var BARE_MEMBER = /\[\s*data-member\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\]/;
+  function shared(selector) {
+    var m = BARE_MEMBER.exec(selector);
+    if (!m || m[1].indexOf("#") >= 0) return false;
+    var prefix = m[1].slice(0, -1) + "#" + m[1].slice(-1);
+    return matches(selector.replace(m[0], "[data-member^=" + prefix + "]")).length > 1;
+  }
   function ambiguous(selector) {
-    return PRECISE.test(selector) && matches(selector).length > 1;
+    if (!PRECISE.test(selector)) return false;
+    var n = matches(selector).length;
+    return n > 1 || (n === 0 && shared(selector));
   }
 
   // The box around every visible element a selector matches, or null.

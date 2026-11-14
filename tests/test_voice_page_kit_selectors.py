@@ -11,15 +11,23 @@ never the note row under it), and report a member that is not there as
 missing and a selector matching both GetValue rows as ambiguous, never
 widening either.
 
+The test appends one declaration of its own to the fixture, SharedStore,
+whose two members share the name Get (the fixture itself stays the kit's
+copy). Tim's answer of 2026-11-13 (identity-spelling, among-the-shared): a
+name carried once is the name itself; a shared name is name#place, counting
+from 1 among the rows that share it; a bare shared name is ambiguous. So
+Get#1 and Get#2 each ring exactly their own row, and the bare Get, which
+the kit's page marks on no row, is reported as ambiguous, not missing.
+
 The fixture is a draft the kit renders, not a checked revision: the language
 types a member's name as `name` ([A-Za-z_][A-Za-z0-9_]*), so the kit's check
 refuses the quoted one.
 
 Only a kit whose page loads the story helper and marks member rows with
-data-member can be pointed at like this. Until such a kit is adopted, the
-test skips saying so, with the active kit's digest and the digest it needs
-(KIT_WITH_MEMBERS, filled in once the kit's release gives one); it never
-falls back to plain names. Needs the kit asset (JARVIS_LANGUAGE_KIT_ASSET)."""
+data-member can be pointed at like this: release 0.1.108421045-pre-release
+(KIT_WITH_MEMBERS, its asset's SHA-256). With any other kit adopted the
+test skips saying so, with the active kit's digest and the digest it needs;
+it never falls back to plain names. Needs the kit asset (JARVIS_LANGUAGE_KIT_ASSET)."""
 import asyncio
 import json
 import os
@@ -40,13 +48,40 @@ pytestmark = pytest.mark.page
 FIXTURE = Path(__file__).parent / "fixtures" / "architecture" / "quoted-members.yaml"
 QUOTED = 'Get"It\'s\\Value'
 # The released kit whose page marks member rows (data-member) and loads the
-# story helper: its SHA-256, once its release gives one. None until then.
-KIT_WITH_MEMBERS = None
+# story helper: release 0.1.108421045-pre-release, its asset's SHA-256.
+KIT_WITH_MEMBERS = "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c"
+# Two members of one declaration sharing a name, appended to the fixture.
+SHARED = b"""- constant:
+    id: SharedStore
+    is: element
+    value:
+      form: interface
+      does: Holds values two members read under the same name.
+      reach: internal
+      exactness: loose
+      groups: none
+      members:
+      - name: Get
+        kind: method
+        reach: public
+        type: none
+        does: Answers one value.
+      - name: Get
+        kind: method
+        reach: public
+        type: none
+        does: Answers one value under a default.
+      sits: {package: jarvis, assembly: none, namespace: none}
+      relates: {implements: none, answers: none, holds: none}
+"""
 
 THE_QUOTED_ROW = package_story.target("QuotedStore", member=QUOTED)
 ITS_GET_VALUE = package_story.target("QuotedStore", member="GetValue")
 ABSENT = package_story.target("QuotedStore", member="NotAMember")
 BOTH_GET_VALUES = '[data-member="GetValue"]'
+FIRST_GET = package_story.target("SharedStore", member="Get#1")
+SECOND_GET = package_story.target("SharedStore", member="Get#2")
+BARE_GET = package_story.target("SharedStore", member="Get")
 BEATS = [(THE_QUOTED_ROW, "The member whose name carries a quote, an apostrophe and a "
                           "backslash, and nothing else, is pointed at now."),
          (ITS_GET_VALUE, "Now GetValue of QuotedStore only, never the one of the same name "
@@ -54,7 +89,11 @@ BEATS = [(THE_QUOTED_ROW, "The member whose name carries a quote, an apostrophe 
          (ABSENT, "A member that is not on this page at all is reported, and nothing is "
                   "pointed at for it."),
          (BOTH_GET_VALUES, "GetValue alone names two rows on this page, so it is reported "
-                           "as ambiguous and neither is pointed at.")]
+                           "as ambiguous and neither is pointed at."),
+         (FIRST_GET, "The first of SharedStore's two members named Get, by its place."),
+         (SECOND_GET, "And the second, by its place."),
+         (BARE_GET, "Get alone is shared by both, so it is reported as ambiguous and "
+                    "neither is pointed at.")]
 
 
 def rendered_view(tmp_path: Path) -> tuple[bytes, str]:
@@ -65,7 +104,7 @@ def rendered_view(tmp_path: Path) -> tuple[bytes, str]:
     with decision_check._data_dir(tmp_path / "kit-data"):
         installed = lk.stage(Path(asset), lk.Release(lk.PINNED_VERSION, lk.PINNED_COMMIT,
                                                      lk.PINNED_DIGEST, ("gate", "release")))
-        rendered = installed.run("render", FIXTURE.read_bytes())
+        rendered = installed.run("render", FIXTURE.read_bytes().rstrip(b"\n") + b"\n" + SHARED)
     assert rendered.ok and rendered.view, "the kit's render drew nothing"
     return rendered.view, installed.release.digest
 
@@ -154,13 +193,17 @@ async def test_the_helper_rings_exactly_the_one_intended_member_row(
     (out / "trace.json").write_text(json.dumps({"kit": digest, "seen": seen, "rings": rings,
                                                 "reports": reports}, indent=2))
     by = {s["target"]: s for s in seen}
-    for target, member in ((THE_QUOTED_ROW, QUOTED), (ITS_GET_VALUE, "GetValue")):
+    for target, member, declaration in ((THE_QUOTED_ROW, QUOTED, "QuotedStore"),
+                                        (ITS_GET_VALUE, "GetValue", "QuotedStore"),
+                                        (FIRST_GET, "Get#1", "SharedStore"),
+                                        (SECOND_GET, "Get#2", "SharedStore")):
         assert by[target]["count"] == 1, by[target]
         [row] = by[target]["rows"]
         assert (row["tag"], row["note"], row["member"], row["declaration"]) == \
-            ("TR", False, member, "QuotedStore"), row
+            ("TR", False, member, declaration), row
         assert any(r["target"] == target and r["shown"] for r in rings), target
     assert [t for m in reports if m["type"] == "story.missing" for t in m["targets"]] == [ABSENT]
     assert [t for m in reports if m["type"] == "story.ambiguous" for t in m["targets"]] == \
-        [BOTH_GET_VALUES]
+        [BOTH_GET_VALUES, BARE_GET]
+    assert by[BARE_GET]["count"] == 0, "no row is marked with the bare shared name"
     assert by[BOTH_GET_VALUES]["count"] == 2, "the ambiguous selector names both rows"
