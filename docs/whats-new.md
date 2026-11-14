@@ -1,6 +1,26 @@
 # The new JARVIS workspace
 
-Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## JARVIS reads you your messages himself, and finds the one you mean
+
+Read on a message no longer plays it past the conversation. It asks JARVIS
+for you, "Read me message 42.", which shows in the Conversation as your own
+request; JARVIS reads you the message and sums it up in a sentence, so when
+you ask about it afterwards he knows what you heard. It is marked read only
+once you have heard his reply to the end; cut him off and it stays new. If
+JARVIS's brain is down, the reply says why instead.
+
+You can name a message by when it came: "read the message from 3:42", "the
+one at 15:42 from Bridge", "mark yesterday's 9:05 done". The time is your
+Mac's own time, to the minute, with "today" or "yesterday" if you like.
+JARVIS reads, replies to, marks or opens exactly that message; when two fit
+(the same minute, or 3:42 in the morning and the afternoon) he asks which,
+and when none does he says so and names the nearest.
+
+Read-backs for your approval (a message before it is sent, a command, a
+keypress) and a package's story are still read word for word, and JARVIS
+now knows what was read and how it went, so you can ask him about it.
 
 ## The knowledge index builds itself, and says how far it is
 

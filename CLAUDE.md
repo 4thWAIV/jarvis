@@ -379,11 +379,19 @@ each source's attention kind and event) names it as `message` in
 migration 3). Read and Reply are on each message where the page shows it
 (`MessageCard.tsx`, round 2 below); Updates no longer lists messages one
 by one. Read (`POST
-/api/messages/{id}/read`, the brain's `read_aloud`, `server.read_aloud`)
-speaks that message only ("<agent> answers:", "<name> writes:", or its
-own words for a board, a decision or a package; a session's message is
-marked read) and its update is seen only once heard in full
-(`_speak_message`, the approved speech entry point). Reply (`POST
+/api/messages/{id}/read`) is a turn of his, never words spoken past the
+brain (`docs/planning/brain-reads/design.md`): "Read me message 42." on
+record as his typed request with the id (`detail` `via` read, `message`),
+through `server._take_his_turn`, the one way in for every turn of his (the
+voice socket's too: clear and rotation answers, the read-backs waiting for
+his answer, which a Read closes and never approves, and `_handle_utterance`);
+409 with no voice, and a brain that is down shows the failed reply. The brain
+answers with `read_aloud`, which speaks nothing: it gives the brain that
+message only, walled (from, its Work item, its words, the package it carries;
+a session's message is marked read), to read him in its reply and sum up;
+the message is read, and its update seen, only once that reply is heard in
+full (`_message_read_to_him`, `_turn_reads`, `_seen_once_heard`; the reply
+waited for up to `READ_ALOUD_TIMEOUT`). Reply (`POST
 .../reply`, the brain's `reply`) goes to the proven sender
 (`_reply_capture`): a capture to the agent (a subagent's through its
 parent, "To Planning, for Feynman."), to a package's proven sending
@@ -421,7 +429,7 @@ first new), `/work/{id}` (its conversation, oldest first, his replies in it)
 and `/general` (no item, newest first, no person's), and `POST
 /api/messages/{id}/mark` (`read` or `done`, `server._mark_message`); the
 brain's `messages_to_him` (walled) and acting `mark_message` call the same
-functions. Read heard in full marks it read; his reply (`_reply_capture`
+functions. A message read him in full marks it read; his reply (`_reply_capture`
 keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
 answered once it goes (`_reply_went`, on `sent`); his answer to a Work
 decision marks it answered, and withdrawn or signed off done
@@ -481,6 +489,22 @@ the page or by voice) is what `read_aloud` ("read it", `next` for "next"),
 `open_inbox_package` ("open it": the package it carries, a page package's
 story told at once through `_package_story`, waiting at each question) and
 `reply` act on when no message is named.
+A message he names by its time is the one meant, never a wrong one: every
+tool and route that takes a message finds it through one function,
+`messages_api.resolve` (a `MessageSpec`; the server's `_message_meant` for
+the tools, `_message_to_him` for a route's id). `read_aloud`, `reply`,
+`mark_message` and `open_inbox_package` take `message` (its id) or `at` (his
+local time, the Mac's zone, as he said or typed it: "15:42", "3:42", "3:42
+pm", "3:42 p.m.", "15:42 h", "today"/"yesterday" or "hoy"/"ayer" before it,
+"2026-11-12 15:42"; `parse_time`) with `from`, `work` and `new`. A time is
+matched to the minute against each message's recorded time; one with no day
+looks back a day (`BARE_TIME_WINDOW_SEC`, so the same minute yesterday is
+never today's), and "3:42" with no am or pm is 3:42 and 15:42 both. Exactly
+one match is the message; several come back (at most `CANDIDATES_MAX`) to
+ask him which, by time and sender, walled; none says so and names the
+nearest by minute, both when two are as near. Every message's JSON carries
+`local` ("2026-11-12 15:42") and `when` ("today 15:42"), both forms `at`
+takes. No message is ever found through the brain's memory notes.
 
 ## Messages from sessions
 An agent reaches Tim one way: a signed message, `python -m jarvis.message
@@ -1004,7 +1028,9 @@ helper (`jarvis/package_story.js`, one copy, served at
 `/api/packages/story.js`) rings the targets and runs the beat's `show` and
 `click` actions. `package_story` frames on the voice socket say a story's
 state. The beats are spoken as the sender's narration and never reach the
-brain; the tool gives back only the slides' titles, walled. The
+brain; the tool gives back only the slides' titles, walled. The brain is
+told which slides were read him (by number, through `_note_spoken`) when the
+story waits for an answer, pauses or ends (`StoryTeller._told`). The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
 (a page with a story). Every package an agent sends Tim is made with
@@ -2019,8 +2045,8 @@ facts fit its walled block whole (`attention.fitting`, under
 `DIGEST_WORDS_CHARS`), so played (or SILENT) finishes with the revisions of
 only the items the brain was shown; the rest wait for the next. Seen is his
 act: his click, his mark, or hearing it read in full. The brain's reading
-tools (`read_message_reply` on an answer, `read_session_message`,
-`mark_people_message_read`) note the pending update they read on a turn he
+tools (`read_aloud` on a message, `read_message_reply` on an answer,
+`read_session_message`, `mark_people_message_read`) note the pending update they read on a turn he
 drove (`server._read_to_him`), and once that turn's reply has been heard in
 full (`speech.wait_for`, every chunk played) it is seen at the revision read
 (`server._seen_once_heard`, `attention_api.mark_seen_source`); a reply cut
@@ -2046,6 +2072,15 @@ the same `attention_api` functions as `/api/attention*`.
 `tests/test_speech_call_sites.py` fails any call to the voice outside the
 approved entry points it lists, and drives every routine producer against a
 voice that must stay silent.
+Nothing he asks to hear is spoken past the brain: the brain reads it in its
+own reply (a message, his Read included; see "One channel"). Two kinds stay
+direct, because their exact words are the point: a read-back for his
+approval (a capture from its box, `api_capture_read`; a command's and a
+keypress's, `_perform_command`, `_perform_dialog`) and a package story's
+slides. Each tells the brain at its next turn what was read, its number or
+id and how it went (`server._note_spoken`, into `_notes_for_brain`), and so
+does "say that again" of one of them (`_note_replayed`, from
+`SpeechScheduler.last_spoken`).
 
 ## Quiet voice input
 The contract is `docs/planning/quiet-conversation/contract.md` (states,
