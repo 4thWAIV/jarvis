@@ -37,6 +37,9 @@ def read_handoff(path: Path) -> dict:
         if (not isinstance(value.get(key), list) or not value[key]
                 or any(not isinstance(item, str) or not item.strip() for item in value[key])):
             problems.append(f"Author handoff needs a nonempty {key} list of text.")
+    if "approval" in value and not isinstance(value["approval"], bool):
+        problems.append("Author handoff's approval is true (ask Tim to approve the architecture "
+                        "design) or false.")
     if problems:
         raise Refused(problems)
     return value
@@ -52,6 +55,22 @@ class Document:
     folder: Path
 
 
+def _pointing(document: Document) -> str:
+    """Whether this revision's rendered page can be pointed at: only a kit
+    page that loads the story helper can (language_projection.project
+    refuses a pointing story otherwise)."""
+    from jarvis import package_story
+    try:
+        view = (document.folder / "view.html").read_bytes()
+    except OSError:
+        view = b""
+    if package_story.HELPER_PATH.encode() in view:
+        return ("Its view.html loads the story helper, so a beat may point at the targets the "
+                "guide lists, each matching exactly one element of view.html.")
+    return ("Its view.html does not load the story helper, so the story may not point: "
+            "give beats no targets or actions.")
+
+
 def _assignment(document: Document | None) -> str:
     """What the fresh author writes, and the exact check it runs last."""
     if document is None:
@@ -64,10 +83,15 @@ def _assignment(document: Document | None) -> str:
             "revision is in " + str(document.folder) + ": source.yaml is the canonical YAML, "
             "view.html its rendered page, check.json the checker's evidence and document.json "
             "its identity, coverage and what lies outside the language. JARVIS projects that "
-            "exact revision into the package itself; you write only its plain explanation, "
-            "package/UNDERSTANDING.md (nothing else under package/), for the handoff's audience "
-            "and questions: walk one concrete input through the architecture as the skill "
-            "says, and say plainly what its coverage leaves unresolved or outside the language. "
+            "exact revision into the package itself, with the handoff's purpose as its purpose; "
+            "you write its plain explanation, package/UNDERSTANDING.md, for the handoff's "
+            "audience and questions: walk one concrete input through the architecture as the "
+            "skill says, and say plainly what its coverage leaves unresolved or outside the "
+            "language. You may also write package/story.json, the walk-through JARVIS tells "
+            "over the rendered page, with any questions the reader should answer declared in "
+            "its `questions` (the guide's Architecture documents section has the format; the "
+            "factory adds the standard vote last, so never ask it). " + _pointing(document)
+            + " Nothing else goes under package/. "
             "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
             "installation’s exact command: " + session_skill._module("make_package", cert=False)
             + " package --check-only --document " + document.document_id + " --revision "
@@ -152,8 +176,8 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
         candidates = [p for p in (folder / "content.json", folder / "package") if p.exists()]
         if document is not None and candidates != [folder / "package"]:
-            raise OSError("Author must produce package/UNDERSTANDING.md, and no content.json, in "
-                          + str(folder))
+            raise OSError("Author must produce package/UNDERSTANDING.md (and optionally "
+                          "package/story.json), and no content.json, in " + str(folder))
         if len(candidates) != 1:
             raise OSError("Author must produce exactly one content.json or package/ source in " + str(folder))
         result = candidates[0]

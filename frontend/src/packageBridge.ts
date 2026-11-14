@@ -25,7 +25,9 @@
  * playing and `story.clear` as they end or the voice stops; the frame's
  * helper (jarvis/package_story.js) points at the targets. The frame says
  * `story.ready` once its helper has loaded (the beat playing now is posted
- * again) and `story.missing` {beat, targets} for selectors it could not find.
+ * again), `story.missing` {beat, targets} for selectors it could not find,
+ * and `story.ambiguous` {beat, targets} for precise targets (a declaration's
+ * or a member's) that matched several elements, none of which it rang.
  * JARVIS also posts `story.state` {state, slide, question?} whenever the
  * story's state changes (telling, waiting for his answer, paused, finished,
  * stopped), so a deck can show which question is waiting for him.
@@ -165,6 +167,10 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     else if (message.type === "layout.restore" && tookOver(packageId)) byHand("layout.restore", {});
     else if (message.type === "story.missing" && Array.isArray(message.targets)) {
       events.onStoryMissing({ words: () => t("main.package.story.notFound"),
+                              detail: message.targets.map(String).join(", ") });
+    }
+    else if (message.type === "story.ambiguous" && Array.isArray(message.targets)) {
+      events.onStoryMissing({ words: () => t("main.package.story.ambiguous"),
                               detail: message.targets.map(String).join(", ") });
     }
   };

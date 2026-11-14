@@ -319,7 +319,17 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
             if member is None:
                 raise ValueError(f"The architecture package is missing {name}.")
             return bundle_archive.read_member(archive, member, limit=PAGE_FILE_MAX_BYTES)
-        gate(read_architecture, communication)
+        # The fresh author's source the zip carries (author_proof.attach),
+        # by its path under .jarvis/author/: the gate holds it to the
+        # explanation and story the canonical revision binds.
+        author = None
+        if isinstance(communication, dict) and communication.get("kind") == "architecture":
+            from jarvis.author_proof import FOLDER
+            prefix = f"{root}{'/'.join(FOLDER)}/"
+            author = {path[len(prefix):]: bundle_archive.read_member(
+                          archive, member, limit=PAGE_FILE_MAX_BYTES)
+                      for path, member in files.items() if path.startswith(prefix)}
+        gate(read_architecture, communication, author)
     except (ValueError, OSError, bundle_archive.ArchiveError) as e:
         return Recognition(None, root, f"Architecture publication refused: {e}")
     for key, named in manifest.named_files().items():
@@ -331,13 +341,20 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
             return Recognition(None, root, f"Its understanding member {name!r} is not in the zip.")
     if manifest.story:
         try:
-            package_story.parse(bundle_archive.read_member(
+            told = package_story.parse(bundle_archive.read_member(
                 archive, files[f"{root}{manifest.story}"],
                 limit=package_story.STORY_MAX_BYTES))
         except bundle_archive.ArchiveError as e:
             return Recognition(None, root, f"Its story file cannot be read: {e}")
         except package_story.StoryError as e:
             return Recognition(None, root, f"Its story file {manifest.story!r} is not valid: {e}")
+        # His approval of an architecture design is asked only by the factory,
+        # in an architecture package, where the gate above holds it.
+        if any(s.waits == package_story.APPROVAL_QUESTION for s in told.slides) and \
+                (manifest.communication or {}).get("kind") != "architecture":
+            return Recognition(None, root, "Its story asks his approval of an architecture "
+                                           "design, which only an architecture package made "
+                                           "by the factory may ask.")
     return Recognition(manifest, root)
 
 

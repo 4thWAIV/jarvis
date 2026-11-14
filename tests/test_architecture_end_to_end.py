@@ -10,6 +10,7 @@ and checked by the real ssh-keygen; the fresh author is the stand-in claude
 of tests/architecture_author.py, which runs the real check command. Needs
 the pinned kit asset (JARVIS_LANGUAGE_KIT_ASSET; the language-kit workflow).
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -33,9 +34,23 @@ pytestmark = pytest.mark.ssh_keygen
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSION = "sess-architect-e2e"
-# JARVIS_ARCHITECTURE_REAL_AUTHOR=1 runs it once with the real Claude author
-# (this Mac's claude and its login) in place of the stand-in.
-REAL_AUTHOR = os.getenv("JARVIS_ARCHITECTURE_REAL_AUTHOR") == "1"
+# JARVIS_ARCHITECTURE_REAL_AUTHOR=claude (or 1) or codex runs it once with that
+# real fresh author (this Mac's claude or codex and its login) in place of the
+# stand-in, through the factory's own path for that engine.
+_REAL = os.getenv("JARVIS_ARCHITECTURE_REAL_AUTHOR", "")
+ENGINE = "codex" if _REAL == "codex" else "claude"
+REAL_AUTHOR = _REAL in ("1", "claude", "codex")
+# What the author is asked to write besides its explanation: a walk-through
+# with one question for the reader (the stand-in copies this one).
+STORY = {"title": "The architecture inbox", "questions": [
+    {"id": "hold-after-sign-off", "question": "Should the inbox keep a package after sign-off?",
+     "options": [{"id": "keep", "name": "Keep it", "says": "It stays readable in History."},
+                 {"id": "drop", "name": "Drop it", "says": "It goes once signed off."}],
+     "recommended": "keep", "reason": "A signed-off package is still evidence."}],
+    "slides": [{"title": "What it holds",
+                "beats": [{"say": "The inbox holds each architecture package until it is signed off."}]},
+               {"title": "After sign-off", "waits": "hold-after-sign-off",
+                "beats": [{"say": "Should it keep a package after sign-off?"}]}]}
 
 SOURCE = """scope: [review]
 language: arch
@@ -72,17 +87,27 @@ def world(tmp_path):
     (page / "index.html").write_text("<!doctype html><title>JARVIS</title>")
     transcripts = tmp_path / "author-claude-root"
     env = {**os.environ, "PYTHONPATH": str(ROOT), "AGENT_CWD": str(tmp_path)}
+    codex_home = {"JARVIS_CODEX_SESSIONS_HOME": str(tmp_path / "codex-home")}
     if REAL_AUTHOR:
-        # The real Claude author, on this Mac's own login: its transcript is
-        # in ~/.claude, where both JARVIS processes look, so the agent's key
-        # is there too, under a session of this run's own, removed after.
+        # The real author, on this Mac's own login: its transcript is in
+        # ~/.claude or ~/.codex, where both JARVIS processes look; the
+        # agent's key is in ~/.claude, under a session of this run's own,
+        # removed after.
         session = f"sess-architect-e2e-{uuid.uuid4().hex[:8]}"
         home, extra = Path.home() / ".claude", {}
         env.pop("CLAUDE_CONFIG_DIR", None)
+        if ENGINE == "codex":
+            # The real Codex author's rollout is in this Mac's own Codex home,
+            # which the suite otherwise points at a folder of each test's own.
+            codex_home = {"JARVIS_CODEX_SESSIONS_HOME": str(Path.home() / ".codex")}
+            env.update(codex_home)
     else:
         session, home = SESSION, tmp_path / "agent-home"
         extra = {"JARVIS_CLAUDE_CONFIG_DIRS": str(transcripts)}
+        story = tmp_path / "authored-story.json"
+        story.write_text(json.dumps(STORY))
         env.update({"CLAUDE_CONFIG_DIR": str(home), "AUTHOR_TEST_CLAUDE_ROOT": str(transcripts),
+                    "AUTHOR_TEST_STORY": str(story),
                     "JARVIS_CLAUDE_PATH": str(architecture_author.install(
                         tmp_path / "bin", f"author-{uuid.uuid4().hex[:12]}")),
                     **extra})
@@ -98,7 +123,7 @@ def world(tmp_path):
         decision_check.seed(data, public, session)
 
     jarvis = decision_check.Isolated(folder, "en", page, before, is_the_check=False, extra_env={
-        **extra, "JARVIS_CODEX_SESSIONS_HOME": str(tmp_path / "codex-home")})
+        **extra, **codex_home})
     work = made["work"]
     try:
         env.update({"JARVIS_URL": jarvis.base, "JARVIS_DATA_DIR": str(data)})
@@ -161,12 +186,16 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     handoff = tmp_path / "handoff.json"
     handoff.write_text(json.dumps({
         "purpose": "Explain the proposed architecture inbox", "audience": "Tim",
-        "questions": ["What holds an architecture package?"],
+        "questions": ["What holds an architecture package?",
+                      "Walk Tim through the page in a story, and ask him in it, as a declared "
+                      "question, whether the inbox should keep a package after sign-off.",
+                      "Tim is asked to approve this design: say what he would be approving."],
+        "approval": True,
         "evidence": [str(source)]}))
     out = tmp_path / "out"
     made = agent(env, "jarvis.make_package", "--document", checked["document_id"],
                  "--revision", checked["revision"], "--handoff", str(handoff),
-                 "--engine", "claude", "--session", session, "--work", work.id,
+                 "--engine", ENGINE, "--session", session, "--work", work.id,
                  "--project", "architecture-e2e", "--deliver-to", jarvis.base, "--out", str(out))
     assert made.returncode == 0, made.stdout + made.stderr
     record = json.loads((out / "delivery.json").read_text())
@@ -207,6 +236,92 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     assert result["source"]["text"] == SOURCE
     assert result["understanding"]["origin"] == "fresh-author"
     assert "ArchitectureInbox" in result["understanding"]["text"]
+    assert frame["package"]["purpose"] == "Explain the proposed architecture inbox", \
+        "the package states the handoff's purpose"
+
+    # The author's story, composed once with the vote, asks its questions in
+    # the head; answers chosen here (this JARVIS only, never Tim's) return by
+    # the existing path, with nothing edited, closed or consented for him.
+    author_story = next((out / "author").glob("*/package/story.json"), None)
+    assert author_story is not None, "the handoff asked the author for a walk-through"
+    answered, captures, approval_shown = {}, "", {}
+    if author_story is not None:
+        folder = jarvis.package_folder(record["package"])
+        canonical = json.loads((folder / "canonical.json").read_text())
+        assert canonical["understanding"]["story_sha256"] == hashlib.sha256(
+            author_story.read_bytes()).hexdigest()
+        with decision_check._data_dir(data):
+            from jarvis import work_packages
+            package = work_packages.find(record["package"])
+            told = package.story()
+            vote = package_inbox.page_vote(package)
+        assert [s.waits for s in told.slides].count("understood") == 1
+        assert told.slides[-1].waits == "understood", "the standard vote, once, last"
+        assert vote["question"] == "understood"
+        assert [s.waits for s in told.slides][-2:] == ["approve-architecture", "understood"], \
+            "the factory asks his approval, once, just before the vote"
+        for asked in [q for q in vote["asks"] if q["applies"] and q.get("kind") != "approval"][:1]:
+            ok, said = jarvis.tool("answer_package_decision", package=record["inbox"],
+                                   decision=asked["id"], option=asked["options"][0]["id"],
+                                   words="Isolated test answer.")
+            assert ok and said.startswith("Recorded."), said
+            answered[asked["id"]] = asked["options"][0]["id"]
+        # His approval of this exact revision, given in this JARVIS alone.
+        ok, said = jarvis.tool("answer_package_decision", package=record["inbox"],
+                               decision="approve-architecture", option="approve")
+        assert ok and said.startswith("Recorded."), said
+        answered["approve-architecture"] = "approve"
+        import urllib.request
+        with urllib.request.urlopen(urllib.request.Request(
+                f"{jarvis.base}/api/packages",
+                headers={"Authorization": f"Bearer {jarvis.token}"}), timeout=30) as response:
+            listed = json.loads(response.read())["packages"]
+        shown = next(p for p in listed if p["id"] == record["package"])["vote"]
+        approval = next(q for q in shown["asks"] if q.get("kind") == "approval")
+        assert (approval["answer"], approval["stale"], approval["answered_revision"]) == \
+            ("approve", False, checked["revision"]), approval
+        assert shown["question"] == "understood" and shown["answer"] is None, \
+            "approval is shown apart from Got it, which stays unanswered"
+        approval_shown = {"approval": approval, "vote": {k: shown[k] for k in
+                                                         ("question", "answer", "note")}}
+        ok, said = jarvis.tool("sign_off_package", package=record["inbox"])
+        assert ok, said
+        with urllib.request.urlopen(urllib.request.Request(
+                f"{jarvis.base}/api/work/{work.id}",
+                headers={"Authorization": f"Bearer {jarvis.token}"}), timeout=30) as response:
+            item = json.loads(response.read())
+        item = item.get("item", item)
+        with decision_check._data_dir(data):
+            entry = package_inbox.get(record["inbox"])
+        assert item["state"] != "done" and not item.get("closed_at"), \
+            "his review is not taken for done, and the Work item stays open"
+        assert entry.state == package_inbox.CLOSED
+        # The answers stay in the package's own record, keyed by question,
+        # the vote unanswered: signed off early, nothing is taken as his.
+        recorded = json.loads((folder / "results" / "decisions.json").read_text())
+        assert {k: recorded[k]["answer"] for k in answered} == answered
+        assert "understood" not in recorded
+        assert recorded["approve-architecture"]["subject"] == {
+            k: checked[k] for k in ("document_id", "revision", "source_revision", "kit_digest")}, \
+            "his approval names the exact checked revision it was given to"
+        ok, captures = jarvis.tool("list_captures")
+        assert ok, captures
+        if entry.capture_id:
+            # A running sender: the answers wait as a capture, read back and
+            # sent only on his yes (the in-process tests check its words).
+            mine = next(line for line in captures.splitlines()
+                        if line.startswith(f"Capture {entry.capture_id} "))
+            for key, option in answered.items():
+                assert f"{key}: {option}" in mine, mine
+            assert "understood: not answered" in mine
+            assert "approved by him" not in mine and "staged to send" not in mine, mine
+        else:
+            # The sending session is not running here: nothing is sent.
+            assert "not running" in said and captures.startswith("No capture boxes"), said
+        regrounded = agent(env, "jarvis.language_document", "--as", session, "ground",
+                           "--json", json.dumps({"package_id": record["package"]}))
+        assert json.loads(regrounded.stdout)["result"]["revision"] == checked["revision"], \
+            "no architecture edit: the canonical revision is unchanged"
 
     # The same package with an author proof naming a session that never
     # checked it is held, not admitted: this JARVIS checks the proof.
@@ -224,9 +339,26 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         [held] = agent_key_store.held()
     assert held.kind == "package" and held.session_id == session
 
-    (tmp_path / "evidence.json").write_text(json.dumps({
+    # The evidence, kept where a review asks for it (JARVIS_LANGUAGE_REVIEW_DIR):
+    # the handoff, the author's own folder (receipt, source, its check's
+    # output), the signed zip and what was observed.
+    keep = Path(os.getenv("JARVIS_LANGUAGE_REVIEW_DIR") or tmp_path) / f"isolated-{ENGINE}"
+    keep.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(out / "author", keep / "author", dirs_exist_ok=True)
+    shutil.copy(handoff, keep / "handoff.json")
+    shutil.copy(record["zip"], keep / Path(record["zip"]).name)
+    receipt = json.loads(next((out / "author").glob("*/author-receipt.json")).read_text())
+    with zipfile.ZipFile(record["zip"]) as z:
+        claim = json.loads(z.read(next(n for n in z.namelist()
+                                       if n.endswith(package_signature.FILE))))["author"]
+    (keep / "evidence.json").write_text(json.dumps({
+        "engine": ENGINE, "real_author": REAL_AUTHOR,
         "delivery": record, "grounded": {k: result[k] for k in (
             "document_id", "revision", "source_revision")},
-        "opened": frame["package"]["id"], "understanding": result["understanding"],
-        "author": json.loads(next((out / "author").glob("*/author-receipt.json")).read_text()),
+        "opened": frame["package"]["id"], "purpose": frame["package"]["purpose"],
+        "understanding": result["understanding"], "author": receipt, "author_claim": claim,
+        "admission": {"inbox": record["inbox"], "from_session": entry.from_session,
+                      "unproven_claim": entry.unproven_claim, "held_after": "none"},
+        "answered_in_isolation": answered, "captures_after_sign_off": captures,
+        "approval_shown": approval_shown,
         "held_forgery": held.what}, indent=2))

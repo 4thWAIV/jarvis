@@ -47,6 +47,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from jarvis import package_story
+
 log = logging.getLogger(__name__)
 
 DECISION, WORK, WORKFLOW, PACKAGE = "decision", "work", "workflow", "package"
@@ -60,6 +62,9 @@ DISMISSED, SUPERSEDED = "dismissed", "superseded"
 # A wait ended by the agent that placed it, through its report route.
 ENDED = "ended"
 KINDS = (DECISION, WORK, WORKFLOW, PACKAGE)
+# A package question a wait on which ends only on his approval of the
+# revision in force (package_inbox.Question.ends_waits), never on sign-off.
+APPROVAL_ONLY = frozenset({package_story.APPROVAL_QUESTION})
 
 # How long a wait with no link may stay open before it is flagged.
 UNLINKED_AFTER_SEC = 24 * 3600
@@ -129,7 +134,12 @@ class Answer:
         if link.kind != self.kind or link.ref not in self.refs:
             return False
         if self.kind == PACKAGE:
-            return self.key is None or link.key == self.key
+            if self.key is None:
+                # His sign-off ends a wait on the package or on any of its
+                # questions, but never a wait on his approval: only his
+                # approve of the revision in force ends that one.
+                return link.key not in APPROVAL_ONLY
+            return link.key == self.key
         return link.key == self.key
 
     @property

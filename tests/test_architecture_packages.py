@@ -210,7 +210,10 @@ def test_a_checked_document_reaches_the_inbox_author_proven_and_grounds(
     authored = work_packages.page_file(package, "UNDERSTANDING.md")
     assert canonical["understanding"] == {"origin": language_projection.FRESH_AUTHOR,
                                           "member": "UNDERSTANDING.md",
-                                          "markdown_sha256": hashlib.sha256(authored).hexdigest()}
+                                          "markdown_sha256": hashlib.sha256(authored).hexdigest(),
+                                          "purpose": "Explain the proposed document store"}
+    assert package.manifest.purpose == "Explain the proposed document store", \
+        "the package states the handoff's purpose"
     assert work_packages.page_file(package, "source.yaml").decode() == draft["source"]
     assert work_packages.page_file(package, "index.html") == open(
         checked["references"]["view"], "rb").read()
@@ -231,6 +234,69 @@ def test_a_checked_document_reaches_the_inbox_author_proven_and_grounds(
     assert result["source"]["text"] == draft["source"]
     assert result["understanding"]["text"] == authored.decode()
     assert result["understanding"]["origin"] == language_projection.FRESH_AUTHOR
+
+
+AUTHORED_STORY = {"title": "The document store", "questions": [
+    {"id": "ownership-clear", "question": "Is what the store owns clear?",
+     "options": [{"id": "clear", "name": "Clear", "says": "Nothing to change."},
+                 {"id": "unclear", "name": "Unclear", "says": "Explain it again."}]}],
+    "slides": [{"title": "What it owns", "beats": [{"say": "The store owns its documents."}]},
+               {"title": "Clear?", "waits": "ownership-clear",
+                "beats": [{"say": "Is what it owns clear?"}]}]}
+
+
+def test_the_author_s_story_is_composed_once_and_its_question_is_asked_in_the_head(
+        factory, draft, tmp_path, capsys, monkeypatch):  # noqa: F811
+    agent()
+    story = tmp_path / "authored-story.json"
+    story.write_text(json.dumps(AUTHORED_STORY))
+    monkeypatch.setenv("AUTHOR_TEST_STORY", str(story))
+    checked = language_document_api.Adapter().documents.validate(**validate_arguments(draft),
+                                                                 source=draft["source"])
+    assert make(tmp_path, checked) == 0, capsys.readouterr().out
+    record = json.loads((tmp_path / "out" / "delivery.json").read_text())
+    package = work_packages.find(record["package"])
+    canonical = json.loads(work_packages.page_file(package, "canonical.json"))
+    assert canonical["understanding"]["story_sha256"] == hashlib.sha256(
+        story.read_bytes()).hexdigest()
+    told = package.story()
+    assert [s.waits for s in told.slides] == [None, "ownership-clear",
+                                              package_inbox.UNDERSTOOD_ID], "one vote, last"
+    with zipfile.ZipFile(record["zip"]) as z:
+        names = [n for n in z.namelist() if "/.jarvis/author/" in n or n.startswith(".jarvis/author/")]
+        assert sorted(n.split(".jarvis/author/")[1] for n in names) == [
+            "package/UNDERSTANDING.md", "package/story.json"]
+    vote = package_inbox.page_vote(package)
+    assert vote["question"] == "understood"
+    assert [q["id"] for q in vote["asks"]] == ["ownership-clear"]
+    said = _call(factory, "answer_package_decision", package=record["inbox"],
+                 decision="ownership-clear", option="unclear", words="Say who writes them.")["text"]
+    assert said.startswith("Recorded."), said
+    answers = json.loads(work_packages.read_result(package, "decisions.json"))
+    assert answers["ownership-clear"]["answer"] == "unclear"
+    assert "understood" not in answers, "the vote stays his to give"
+
+
+def test_an_author_story_with_extra_files_or_the_vote_is_refused_at_its_own_check(
+        tmp_path, capsys):
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "UNDERSTANDING.md").write_text("# The store\n")
+    check = [str(package), "--check-only", "--document", "document-x", "--revision", "a" * 64]
+    (package / "story.json").write_text(json.dumps(AUTHORED_STORY))
+    assert make_package.main(check) == 0
+    assert "UNDERSTANDING.md and package/story.json" in capsys.readouterr().out
+    (package / "story.json").write_text(json.dumps({**AUTHORED_STORY, "slides": [
+        {"title": "Got it?", "waits": "understood", "beats": [{"say": "Got it?"}]}]}))
+    assert make_package.main(check) == 1
+    assert "reserved question" in capsys.readouterr().out
+    (package / "story.json").write_text('{"title": "a", "title": "b", "slides": []}')
+    assert make_package.main(check) == 1
+    assert "twice in one object" in capsys.readouterr().out
+    (package / "story.json").write_text(json.dumps(AUTHORED_STORY))
+    (package / "notes.md").write_text("extra")
+    assert make_package.main(check) == 1
+    assert "optionally, story.json" in capsys.readouterr().out
 
 
 def test_a_document_goes_only_on_its_own_work_item(factory, draft, tmp_path, capsys):  # noqa: F811
