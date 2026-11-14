@@ -104,7 +104,7 @@ function Recorded({ item, message: m, packages }: { item: WorkItem; message: ToH
 
 /** A Work decision's recorded end, in words: what he chose, or how it closed. */
 function answeredWords(a: WorkAnswered, say: ReturnType<typeof useT>): string {
-  return a.where === "withdrawn" || a.where === "signed_off"
+  return a.where !== "page" && a.where !== "voice"
     ? say(`main.work.answeredBy.${a.where}`, { answer: a.answer })
     : say("main.messages.chose", { answer: a.answer });
 }

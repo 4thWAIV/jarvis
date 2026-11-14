@@ -21,9 +21,12 @@ holds it (`until`: wait_links links, `decision:<key>` one of the item's open
 decisions, `work:<item>:<key>`, `workflow:<id>:<key>`,
 `package:<id>[:<decision>]`, or a blocker's words), and no report moves it
 on (`_move`): only his answer to each link, by any route, in the same
-transaction (`end_waits`), or `cleared` for a blocker in words. It then
-moves to `then` (ready by default). One already answered is released when
-the record is next read (`sweep_waits`). Done is his alone to give: no
+transaction (`end_waits`), or `cleared` for a blocker in words, or the
+reporter that put it on hold ending its own wait (`wait_ended`, never one
+another reporter, JARVIS or he placed). It then moves to `then` (ready by
+default). One already answered is released when the record is next read
+(`sweep_waits`). A hold on a package its sender replaced with a newer
+version holds on the newer one instead (`carry_waits`). Done is his alone to give: no
 report says done; his review (APPROVED, REVIEW_RETURNED, WORK_ADDED) is.
 
 Read-time only, never stored: the item's state, worked out from its pieces
@@ -126,9 +129,18 @@ WITHDRAWN = "withdrawn"
 # never a reporter's to send (package sign-off, server._sign_off_package).
 DECISION_SIGNED_OFF = "decision_signed_off"
 SIGNED_OFF = "signed_off"
+# The same event closes a decision whose package he set aside, or whose
+# package its sender replaced with a newer version (`close_with_package`):
+# `where` says which, never an answer.
+DISMISSED, SUPERSEDED = wait_links.DISMISSED, wait_links.SUPERSEDED
+PACKAGE_CLOSED = (SIGNED_OFF, DISMISSED, SUPERSEDED)
+# How a decision closed with no answer of his: withdrawn, or with its package.
+NOT_ANSWERED = (WITHDRAWN,) + PACKAGE_CLOSED
 # `closed` moves an item to History for good; nothing more is reported to it.
 CLOSED = "closed"
-REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
+# A reporter ending a wait it put on a piece (or on the item) itself.
+WAIT_ENDED = "wait_ended"
+REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED, WAIT_ENDED)
 # His review of an item, his alone (the page, his voice), never a reporter's:
 # done is his to give. APPROVED makes the item and every piece done;
 # REVIEW_RETURNED ("not done yet") sends it back to working with his note;
@@ -304,7 +316,8 @@ class Answered:
     key: str
     question: str
     answer: str               # his answer, the asker's reason for withdrawing it, or ""
-    where: str                # page or voice; `withdrawn`; `signed_off` (no answer)
+    where: str                # page or voice; `withdrawn`; `signed_off`, `dismissed` or
+                              # `superseded` (closed with its package, no answer)
     answered_at: float
     package: str = ""
 
@@ -753,12 +766,17 @@ def record(event: WorkEvent) -> WorkItem:
             # A closed item takes nothing more, his review included; only a
             # late answer to a decision it asked.
             raise WorkRefused("That work item is closed; it is kept in History. Start a new one.")
-        kept = _apply(doc, event.item_id, event.kind, summary, detail, now)
+        given = {**detail, "by": event.reporter} if event.kind == WAIT_ENDED else detail
+        kept = _apply(doc, event.item_id, event.kind, summary, given, now)
         doc.update(latest_update=summary, revision=doc["revision"] + 1, updated_at=now)
         if event.kind in REPORTED_KINDS:
             doc["reported_at"] = now
         if event.kind == PIECE:
             _piece(doc, kept["key"])["reporter"] = event.reporter
+        if event.kind in (PIECE, UPDATE) and kept.get("until"):
+            # Who put it on hold: the one reporter that may end that wait itself.
+            (_piece(doc, kept["key"]) if event.kind == PIECE else doc)["held_by"] = \
+                event.reporter
         _add_event(doc, event.kind, summary, kept, now, event.reporter)
         _stage(unit, doc)
         if event.kind in (DECISION_MADE, DECISION_SIGNED_OFF, DECISION_WITHDRAWN):
@@ -959,6 +977,8 @@ def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: 
                 "package": package}
     if kind == DECISION_WITHDRAWN:
         return _withdraw(doc, item_id, summary, detail, now)
+    if kind == WAIT_ENDED:
+        return _end_own_wait(doc, item_id, summary, detail, now)
     key = _slug(detail.get("key"), "The decision's key")
     asked = _decision(doc, key)
     if kind == DECISION_SIGNED_OFF:
@@ -1076,6 +1096,60 @@ def _withdraw(doc: dict, item_id: str, reason: str, detail: dict, now: float) ->
         raise WorkRefused(f"Only the agent that asked decision {key} can withdraw it.")
     asked.update(withdrawn_at=now, withdrawn_reason=reason)
     return {"key": key}
+
+
+def _placer(item_id: str, holder: dict, piece: Optional[str]) -> str:
+    """Who put a piece (or the item) on hold, as the route proved it: kept
+    on it, or, for a hold from before that was kept, the reporter of the
+    latest report that put it there."""
+    if holder.get("held_by"):
+        return holder["held_by"]
+    kind = PIECE if piece is not None else UPDATE
+    for e in reversed(events(item_id, 0, {kind})):
+        if (piece is None or e.detail.get("key") == piece) and e.detail.get("until"):
+            return e.reporter
+    return ""
+
+
+def _end_own_wait(doc: dict, item_id: str, summary: str, detail: dict, now: float) -> dict:
+    """The reporter that put a piece (or the item, with no pieces) on hold
+    ends that wait itself: some or all of what holds it (`until`, every hold
+    when none is named). Never a hold another reporter, JARVIS or he placed.
+    Once nothing holds it, it moves to its `then` (ready by default)."""
+    piece = _slug(detail["key"], "The piece's key") if detail.get("key") else None
+    if piece is None and doc["pieces"]:
+        raise WorkRefused("This item's waits are its pieces': name the piece (key).")
+    holder = _piece(doc, piece) if piece is not None else doc
+    if holder is None:
+        raise WorkRefused(f"This item has no piece {piece}.")
+    holds = list(holder.get("until") or [])
+    what = f"Piece {piece}" if piece is not None else "The item"
+    if holder["state"] not in HELD or not holds:
+        raise WorkRefused(f"{what} is not waiting on anything.")
+    placer = _placer(item_id, holder, piece)
+    if not placer or placer != detail.get("by"):
+        raise WorkRefused(f"{what} was not put on hold by you: only the reporter that put it "
+                          f"on hold ends its wait, else his answer does.")
+    given = detail.get("until")
+    wanted = [str(h) for h in (given if isinstance(given, list) else [given])] if given else holds
+    wanted = [str(_link(h) or h) for h in wanted]
+    unknown = [h for h in wanted if h not in holds]
+    if unknown:
+        raise WorkRefused(f"{what} does not wait on {', '.join(unknown)}; it waits on "
+                          f"{', '.join(holds)}.")
+    left = [h for h in holds if h not in wanted]
+    kept: dict = {"wait_ended": [{"link": h, "by": "reporter", "how": wait_links.ENDED,
+                                  "answered_at": now} for h in wanted], "until": left}
+    if left:
+        holder["until"] = left
+    else:
+        kept["state"] = holder["then_state"] or READY
+        holder.update(state=kept["state"], until=[], then_state="", waiting_since=None,
+                      held_by="")
+    if piece is not None:
+        holder.update(note=summary, note_at=now)
+        kept["key"] = piece
+    return kept
 
 
 def _after(doc: dict, item_id: str, key: str, value) -> list[str]:
@@ -1273,7 +1347,7 @@ def _closed_how(r) -> tuple[str, str, float]:
         return r["answer"], r["answered_where"], r["answered_at"]
     if r["withdrawn_at"] is not None:
         return r["withdrawn_reason"], WITHDRAWN, r["withdrawn_at"]
-    return "", SIGNED_OFF, r["signed_off_at"]
+    return "", r.get("closed_why") or SIGNED_OFF, r["signed_off_at"]
 
 
 def _source_folder(kind: str, path: str) -> str:
@@ -1780,13 +1854,71 @@ def end_waits(unit, found: "wait_links.Answer", now: float) -> set:
         now)
 
 
+def carry_waits(unit, replaced, now: float) -> set:
+    """Every hold whose link `replaced(link)` gives a wait_links.Replaced for
+    now holds on the newer package, in `unit`: the same hold, renamed, as
+    JARVIS's entry in the item's log. The items it moved."""
+    moved = set()
+    for doc in list(_held_docs(unit)):
+        item_id = doc["id"]
+        for holder, piece, holds, _then in list(_held(doc)):
+            renamed = []
+            for h in holds:
+                link = _link(h)
+                found = replaced(link) if link is not None else None
+                new = found.relink(link) if found is not None else None
+                if new is not None:
+                    renamed.append((h, str(new), found))
+            if not renamed:
+                continue
+            names = dict((old, new) for old, new, _ in renamed)
+            holder["until"] = list(dict.fromkeys(names.get(h, h) for h in holds))
+            summary = _one_line(f"{renamed[-1][2].said()}: now waits on "
+                                f"{', '.join(holder['until'])}.", SUMMARY_MAX)
+            detail = {"wait_moved": [{"from": old, "to": new} for old, new, _ in renamed],
+                      "until": holder["until"]}
+            if piece is not None:
+                holder.update(note=summary, note_at=now)
+                detail["key"] = piece
+            _note(doc, item_id, PIECE if piece is not None else UPDATE, summary, detail, now)
+            moved.add(item_id)
+        if item_id in moved:
+            _stage(unit, doc)
+    return moved
+
+
+def close_with_package(unit, item_id: str, key: str, why: str, now: float,
+                       actor: str = "") -> "wait_links.Settled":
+    """The decision `key` of item `item_id`, asked about a package he has set
+    aside (`DISMISSED`) or its sender replaced (`SUPERSEDED`), is closed with
+    it, in the caller's unit: the package's act, never an answer of his
+    (`decision_signed_off` with `where`), and what held on it is released.
+    Nothing when the item or an open decision of that key is not there."""
+    doc = _take(unit, item_id)
+    asked = _decision(doc, key) if doc is not None else None
+    if asked is None or not _is_open(asked):
+        return wait_links.Settled()
+    asked.update(signed_off_at=now, closed_why=why)
+    summary = _one_line(wait_links.answer(wait_links.WORK, {item_id}, key, why, now).said(),
+                        SUMMARY_MAX)
+    _note(doc, item_id, DECISION_SIGNED_OFF, summary, {"key": key, "where": why}, now)
+    _stage(unit, doc)
+    moved = wait_links.settle(unit, wait_links.answer(wait_links.WORK, {item_id}, key, why, now,
+                                                      actor), now)
+    moved.work.add(item_id)
+    return moved
+
+
 def sweep_waits() -> "wait_links.Settled":
-    """Release every hold whose answer was already given (at start, and on
+    """Carry every hold on a replaced package to its newer version, then
+    release every hold whose answer was already given (at start, and on
     every read: wait_links.sweep)."""
     def run(unit) -> set:
-        return _release_answered(
+        now = time.time()
+        carried = carry_waits(unit, wait_links.replaced_package, now)
+        return carried | _release_answered(
             unit, lambda link, item_id: wait_links.already(unit, link, wait_links.WORK, item_id),
-            time.time())
+            now)
     moved = _records.atomic(run, by=_records.JARVIS, change="wait_ended",
                            summary="His answers already given release what waited on them.")
     return wait_links.Settled(work=moved)

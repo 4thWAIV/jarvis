@@ -444,6 +444,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.work.answeredBy.page": "Usted respondió en la página: {answer}",
   "main.work.answeredBy.voice": "Usted respondió de viva voz: {answer}",
   "main.work.answeredBy.signed_off": "Cerrada al firmar su paquete, sin respuesta",
+  "main.work.answeredBy.dismissed": "Cerrada al apartar usted su paquete, sin respuesta",
+  "main.work.answeredBy.superseded": "Cerrada cuando una versión más nueva reemplazó su paquete",
   "main.work.answeredBy.withdrawn": "Retirada por el agente que la hizo: {answer}",
   "main.work.nothingBlocking": "Nada lo está frenando",
   "main.work.blocker.decision": "Se necesita su decisión: {title}",

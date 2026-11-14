@@ -118,6 +118,28 @@ def test_pictures_must_be_images_beside_the_content(tmp_path):
     assert problems(tmp_path, deck) == []
 
 
+@pytest.mark.parametrize("root,said", [
+    ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">', "no width and no height"),
+    ('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="200">', "width='100%'"),
+    ('<svg xmlns="http://www.w3.org/2000/svg" width="320">', "no height"),
+    ('<svg xmlns="http://www.w3.org/2000/svg" width="0" height="200">', "width='0'"),
+])
+def test_an_svg_with_no_size_of_its_own_is_refused_on_a_slide_and_an_option(
+        tmp_path, root, said):
+    """An <svg> without width and height in pixels can draw as nothing: a
+    blank slide that passed every check. Refused wherever it is pictured."""
+    deck = small_deck()
+    content = write(tmp_path, deck)
+    (tmp_path / "pictures" / "plate.svg").write_text(root + '<rect width="10" height="10"/></svg>')
+    found = dp.problems_of(deck, content.parent)
+    assert any("Picture pictures/plate.svg" in p and said in p and "width and height in pixels"
+               in p for p in found), found
+    (tmp_path / "pictures" / "plate.svg").write_text(
+        "<?xml version='1.0'?>\n<svg xmlns='http://www.w3.org/2000/svg' width='320px' "
+        "height=\"200\" viewBox='0 0 320 200'><rect width='10' height='10'/></svg>")
+    assert dp.problems_of(deck, content.parent) == []
+
+
 def test_it_builds_with_the_shared_builder(tmp_path):
     content = write(tmp_path / "in", small_deck())
     archive = dp.build(content, tmp_path / "out", dp.validate(content))
