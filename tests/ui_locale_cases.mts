@@ -27,8 +27,12 @@ import {
 // left.updates.prName: "PR 42" is GitHub's own name for a pull request, in both.
 // main.conversation.overlapLead: "· {second}", a mark before words worded by their own key.
 // main.knowledge.index.serves: "{kinds}: {paths}", kinds and property paths, no words of its own.
+// left.fields.choice.{fahrenheit,celsius,chrome,firefox}, left.field.https: a unit's or a
+// product's own name, the same in both.
 const SAME_IN_BOTH = new Set<string>(["units.megabytes", "left.brains.engines.model", "right.subsystem.said.teamError", "left.updates.prName",
-                                      "main.conversation.overlapLead", "main.knowledge.index.serves"]);
+                                      "main.conversation.overlapLead", "main.knowledge.index.serves",
+                                      "left.fields.choice.fahrenheit", "left.fields.choice.celsius",
+                                      "left.fields.choice.chrome", "left.fields.choice.firefox", "left.field.https"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });

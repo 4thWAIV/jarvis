@@ -35,6 +35,8 @@
  *     updates waiting read again (attention.ts).
  *   - "projects" (and every (re)connect): a project record changed; the
  *     Projects list and the open project read again (projects.ts).
+ *   - "settings" (and every (re)connect): a setting was changed, on the
+ *     page or by the brain; Settings reads them again (SettingsFields.tsx).
  *   - "inbox" (and every (re)connect): a message to him arrived or moved, or
  *     he answered one on a Work item; the Inbox, the Work rows' counts and
  *     an open item's Messages tab read again (messagesToHim.ts).
@@ -59,6 +61,7 @@ import { countSessionMessage, voiceChanged } from "./voiceHealth";
 import { applyWorkFrame, WORK_FRAMES, workChanged, workResync, type WorkFrame } from "./work";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
+import { settingsChanged } from "./SettingsFields";
 import { VOICE_INPUT_SETTINGS_FRAME } from "./voiceControl";
 import { voiceInputSettingsChanged } from "./voiceSettings";
 
@@ -92,6 +95,7 @@ export function startSessionsSocket(): void {
     if (msg.type === "attention" || snapshot) bump(attentionChanged);
     if (msg.type === INBOX_HINT || snapshot) bump(inboxChanged);
     if (msg.type === BUNDLES_HINT || snapshot) bump(bundlesChanged);
+    if (msg.type === "settings" || snapshot) bump(settingsChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
     }
