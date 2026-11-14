@@ -179,6 +179,9 @@ _started: dict[str, Any] = {}
 # and whether it is listening yet: what the start that served records.
 _served: dict[str, Any] = {}
 _listening: Optional[Callable[[], bool]] = None
+# Whether this run's address, port and HTTPS are Settings' (no command-line
+# flag): only such a start is put on trial or confirms a setup.
+_from_settings = False
 
 
 def note_started(store: str) -> None:
@@ -190,13 +193,23 @@ def note_started(store: str) -> None:
         _started.update(values)
 
 
-def note_serving(served: dict, listening: Callable[[], bool]) -> None:
-    """What this run binds, and how to tell it is listening (server.main)."""
-    global _listening
+def note_serving(served: dict, listening: Callable[[], bool], *,
+                 from_settings: bool = True) -> None:
+    """What this run binds, how to tell it is listening, and whether it is
+    Settings' setup rather than one run's flags (server.main)."""
+    global _listening, _from_settings
     with _lock:
         _served.clear()
         _served.update(served)
         _listening = listening
+        _from_settings = from_settings
+
+
+def from_settings_at_start() -> bool:
+    """Whether this run binds Settings' setup: False for a run given
+    --host, --port or --ssl, which is never put on trial."""
+    with _lock:
+        return bool(_served) and _from_settings
 
 
 def served_at_start() -> dict:
@@ -435,4 +448,8 @@ def view(area: Optional[str] = None) -> dict:
             "start": {"problem": start_settings.problem(),
                       "imported_from_env": doc.get("imported_from_env"),
                       "data_dir_from_env": settings_import.data_dir_from_env(),
-                      "file": str(start_settings.path())}}
+                      "file": str(start_settings.path()),
+                      # A changed setup waiting for a page to reach it, and
+                      # the last time JARVIS went back (start_settings.status).
+                      **start_settings.status(),
+                      "overridden": bool(served_at_start()) and not from_settings_at_start()}}

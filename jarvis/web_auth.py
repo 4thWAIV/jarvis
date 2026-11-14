@@ -570,6 +570,24 @@ SIGNED_BODY_MAX = 34 * 1024 * 1024
 on_unrecognised = None
 
 
+# Told (no arguments, on the event loop, never allowed to fail the request)
+# when a page JARVIS serves reaches it: a WebSocket or a state-changing
+# request admitted by its Origin and carrying no Authorization, so never the
+# tool token or an agent's key. What confirms a start setup on trial
+# (start_settings, server._page_reached).
+on_page_reached = None
+
+
+def _note_page(scope: dict) -> None:
+    hook = on_page_reached
+    if hook is None or scope.get(ADMITTED) != BY_ORIGIN or _header(scope, b"authorization"):
+        return
+    try:
+        hook()
+    except Exception:                                       # pragma: no cover
+        log.warning("the page's arrival was not noted", exc_info=True)
+
+
 def admission(origin: Optional[str], authorization: Optional[str]) -> Optional[str]:
     """How an unsigned request is admitted (BY_ORIGIN, BY_TOKEN), or None.
     A signed one is judged by `_signed`, an old access key by
@@ -753,6 +771,7 @@ class OriginGuard:
                 # turns it into an HTTP 403 and the socket never opens.
                 await send({"type": "websocket.close", "code": 1008})
                 return
+            _note_page(scope)
         elif kind == "http" and scope.get("method", "").upper() in MUTATING_METHODS:
             if not scope_authorized(scope):
                 self._log_refusal(scope, scope.get("method", "?"))
@@ -764,6 +783,7 @@ class OriginGuard:
                                       "signature that covers it."})
                 await response(scope, receive, send)
                 return
+            _note_page(scope)
         await self.app(scope, receive, send)
 
     @staticmethod

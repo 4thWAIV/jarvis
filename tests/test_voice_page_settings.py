@@ -82,6 +82,8 @@ class _Server:
         self.default = "anthropic"
         self.update = _update_status()
         self.language, self.spanish_installed = "en", False
+        # Laid over the start file's own view (start_settings.status): a trial, a going back.
+        self.start: dict = {}
         self.engines = {"kinds": {"package_author": {"pick": "requester"},
                                   "run": {"pick": "fixed", "engine": "claude", "model": None},
                                   "build": {"pick": "fixed", "engine": "claude", "model": None},
@@ -220,8 +222,10 @@ class _Server:
             from jarvis import settings_service
             if route.request.method == "POST":
                 self.posts.append(("values", json.loads(route.request.post_data or "{}")))
+            view = settings_service.view()
+            view["start"].update(self.start)
             await route.fulfill(status=200, content_type="application/json",
-                                body=json.dumps(settings_service.view()))
+                                body=json.dumps(view))
         await page.route("**/api/settings/values**", values)
         await page.route_web_socket("**/ws/**", lambda ws: None)
 
@@ -703,4 +707,40 @@ async def test_knowledge_settings_show_how_far_the_index_build_is(page_playwrigh
         await _open_settings(page)
         await page.locator('.settings-nav').get_by_role('button', name='Knowledge', exact=True).click()
         await async_api.expect(page.locator('[data-build="done"]')).to_contain_text('all 1,500 items and 12,000 sections done')
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_server_counts_down_a_start_trial_and_says_when_jarvis_went_back(page_playwright, page_url):
+    """Confirm or revert (start_settings): a changed start setup on trial
+    counts down to going back; a going back is said, with where to and why."""
+    import time
+    worked = {"host": "127.0.0.1", "port": 8340, "https": True}
+    tried = {"host": "127.0.0.1", "port": 8341, "https": True}
+    async with page_playwright as p:
+        server = _Server()
+        server.start = {"trial": {"setup": tried, "fallback": worked, "began": time.time(),
+                                  "deadline": time.time() + 45, "seconds_left": 45}}
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        trial = page.locator("#settings-server [data-start-trial]")
+        await async_api.expect(trial).to_contain_text(
+            "Trying the new start setup at https://127.0.0.1:8341")
+        await async_api.expect(trial).to_contain_text("JARVIS goes back to https://127.0.0.1:8340")
+        first = await trial.text_content()
+        await page.wait_for_function(
+            "(t) => document.querySelector('#settings-server [data-start-trial]').textContent !== t",
+            arg=first)
+        await browser.close()
+
+        server = _Server()
+        server.start = {"reverted": {"at": time.time() - 60, "when": "", "why": "unreached",
+                                     "from": tried, "to": worked}, "window_sec": 60}
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        reverted = page.locator("#settings-server [data-start-reverted]")
+        await async_api.expect(reverted).to_contain_text(
+            "no page reached https://127.0.0.1:8341 within 60 seconds, so JARVIS went back to "
+            "https://127.0.0.1:8340")
+        assert await page.locator("#settings-server [data-start-trial]").count() == 0
         await browser.close()

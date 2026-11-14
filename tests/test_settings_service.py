@@ -271,18 +271,23 @@ def test_https_with_no_certificates_is_not_a_change_waiting(fresh_start):
     assert _pending("https") is False
 
 
-def test_the_start_that_served_is_recorded_only_once_it_is_listening(fresh_start, monkeypatch):
+def test_the_start_that_served_is_recorded_only_once_a_page_reaches_it(fresh_start,
+                                                                      monkeypatch):
     from jarvis import server
     monkeypatch.setattr(server, "SERVING_LOOK_SEC", 0.01)
+    monkeypatch.setattr(server, "TRIAL_LOOK_SEC", 0.01)
     up = [False]
     served = {"host": "127.0.0.1", "port": 8402, "https": False}
     settings_service.note_serving(served, lambda: up[0])
 
     async def scenario():
-        task = asyncio.create_task(server._remember_once_serving(served))
+        monkeypatch.setattr(server, "_page_reached_event", asyncio.Event())
+        task = asyncio.create_task(server._confirm_or_revert(served))
+        await asyncio.sleep(0.1)
+        up[0] = True
         await asyncio.sleep(0.1)
         assert start_settings.document()["last_good"] is None and not task.done()
-        up[0] = True
+        server._page_reached()
         await asyncio.wait_for(task, 5)
     asyncio.run(scenario())
     assert start_settings.document()["last_good"] == served

@@ -42,7 +42,22 @@ export interface SettingView {
 export interface SettingsValues {
   settings: SettingView[];
   start: { problem: "tampered" | "unreadable" | null; imported_from_env: string | null;
-           data_dir_from_env: string | null; file: string };
+           data_dir_from_env: string | null; file: string;
+           /** A changed start setup waiting for a page to reach it (start_settings.status). */
+           trial: { setup: StartSetup; fallback: StartSetup; began: number; deadline: number;
+                    seconds_left: number } | null;
+           /** The last time JARVIS went back to the last setup that worked. */
+           reverted: { at: number; when: string; why: "unreached" | "unbindable";
+                       from: StartSetup; to: StartSetup } | null;
+           window_sec: number; overridden: boolean };
+}
+
+export interface StartSetup { host: string; port: number; https: boolean; allowed_origins?: string[] }
+
+/** A start setup's address as a page would open it. */
+export function startAddress(s: StartSetup): string {
+  const host = s.host.includes(":") ? `[${s.host}]` : s.host;
+  return `${s.https ? "https" : "http"}://${host}:${s.port}`;
 }
 
 interface Refusal { message: string; code: string; values: Record<string, string | number> }

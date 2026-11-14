@@ -2,6 +2,20 @@
 
 Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A start setting the page cannot reach goes back by itself
+
+When you change the address, port, HTTPS or the page's extra origins in
+Settings, Server and restart, JARVIS now tries the new setup and keeps the
+last one that worked to fall back on. If no page reaches JARVIS at the new
+setup within 60 seconds, it goes back to the one that worked and restarts
+on it, so you are never locked out. Settings, Server counts down while a
+new setup is being tried, and says when JARVIS went back, from what, to
+what and why; Updates waiting and Diagnostics (the Server row's Start
+setup) say so too, and JARVIS answers the same when you ask about its
+settings. Opening the page at the new setup confirms it. The command-line
+`--host`, `--port` and `--ssl` are still for one run only and are never
+tried or kept.
+
 ## JARVIS reads you your messages himself, and finds the one you mean
 
 Read on a message no longer plays it past the conversation. It asks JARVIS

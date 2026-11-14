@@ -841,6 +841,12 @@ EXEMPT = {
         "it reads only its own checks' `state`, a fixed word, and timings the "
         "Work routes noted of themselves; the line it builds carries counts and "
         "seconds and goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.start_setup": (
+        "it prints only the start setups' addresses, built by "
+        "start_settings.address from the signed start file JARVIS alone writes "
+        "(a host Settings checked, a port, a scheme), and fixed words; the row "
+        "goes to the Diagnostics tab as text and is never worse than degraded, "
+        "so _watch_subsystems never names it to the brain or the speaker"),
     "subsystem_diagnostics.team_server": (
         "it prints the team's name, the member's login and the client's own "
         "error line, which come from the team server, into the team row's "
