@@ -3,8 +3,8 @@ before it goes to Tim (decision_package.py).
 
 The isolated JARVIS is JARVIS's own server (decision_check_server.py) in a
 child process on a free loopback port above 19000, with its own temporary
-data folder, a temporary copy of the .env, no speech model and the brain
-never spawned. The voice page is built with vite into a cached temporary
+data folder, its settings held for it (a stand-in Fish key, its own
+speech models folder), no speech model and the brain never spawned. The voice page is built with vite into a cached temporary
 folder (never jarvis/web), which that JARVIS serves, so the page, its
 sockets and the package frame have its own origin, as the live page has.
 
@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from jarvis import env_names
 from jarvis import agent_key_store, data_paths, package_signature, package_story
 
 FRONTEND = data_paths.SOURCE_ROOT / "frontend"
@@ -161,15 +162,16 @@ def free_port() -> int:
 @contextlib.contextmanager
 def _data_dir(path: Path):
     """data_paths answering for another data folder, for this block only."""
-    before = os.environ.get("JARVIS_DATA_DIR")
-    os.environ["JARVIS_DATA_DIR"] = str(path)
+    had = env_names.is_set("JARVIS_DATA_DIR")
+    before = env_names.read("JARVIS_DATA_DIR")
+    env_names.publish("JARVIS_DATA_DIR", str(path))
     try:
         yield
     finally:
-        if before is None:
-            os.environ.pop("JARVIS_DATA_DIR", None)
+        if had:
+            env_names.publish("JARVIS_DATA_DIR", before)
         else:
-            os.environ["JARVIS_DATA_DIR"] = before
+            env_names.withdraw("JARVIS_DATA_DIR")
 
 
 class Isolated:
@@ -181,11 +183,12 @@ class Isolated:
 
     def __init__(self, folder: Path, language: str, page: Path,
                  before=None, *, is_the_check: bool = True,
-                 extra_env: dict | None = None):
+                 extra_env: dict | None = None, settings: dict | None = None):
         """`is_the_check`: a deck signed by the seeded key unpacks without
         its passed statement (this is its check). False for a JARVIS that
         admits packages exactly as the live one does (author proof
-        included). `extra_env` adds to its environment."""
+        included). `extra_env` adds WIRING names to its environment;
+        `settings` holds settings in it (settings_service.hold)."""
         self.folder = folder
         self.data = folder / "data"
         self.data.mkdir(parents=True, exist_ok=True)
@@ -194,33 +197,28 @@ class Isolated:
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         self.log = folder / "jarvis.log"
-        env_copy = folder / "env"
-        live_env = data_paths.env_file_path()
-        lines = live_env.read_text().splitlines() if live_env.is_file() else []
-        # The Fish key is never called (the voice is a stand-in), and never
-        # copied; one is set, so the page does not open first-time setup.
-        lines = [line for line in lines if not line.strip().startswith("FISH_API_KEY")]
-        env_copy.write_text("\n".join(lines + [f"FISH_API_KEY={STAND_IN_KEY}"]) + "\n")
-        env_copy.chmod(0o600)
-        env = {**os.environ,
-               "JARVIS_DATA_DIR": str(self.data), "JARVIS_ENV_FILE": str(env_copy),
-               "JARVIS_STT_MODEL_DIR": str(folder / "models"),
-               "JARVIS_BRAIN_AUTOSTART": "0",
-               # Its records live in an engine of its own, in its own folder.
-               "JARVIS_ENGINE_AUTOSTART": "1", "JARVIS_KNOWLEDGE": "0",
-               "JARVIS_FOLDER_DISCOVERY": "0",
-               "JARVIS_REFUSE_UNTRUSTED_ACTIONS": "0", "JARVIS_TTS_PROVIDER": "fish",
-               # It is the check: a deck signed by the key it is seeded with
-               # unpacks without the statement that it passed (it has not yet).
-               "JARVIS_DECISION_CHECK_SERVER": "1",
-               "FISH_API_KEY": STAND_IN_KEY,
-               "PYTHONUNBUFFERED": "1", **(extra_env or {})}
-        if not is_the_check:
-            env.pop("JARVIS_DECISION_CHECK_SERVER")
+        # Its settings, held in its own process and never saved: the Fish key
+        # is never called (the voice is a stand-in), and one is set so the
+        # page does not open first-time setup; no brain, no indexing, no
+        # discovery, the refusal off and its own speech models folder.
+        held = {"fish_api_key": STAND_IN_KEY, "tts_provider": "fish",
+                "stt_model_dir": str(folder / "models"), "brain_autostart": False,
+                "knowledge_enabled": False, "folder_discovery": False,
+                "refuse_untrusted_actions": False, **(settings or {})}
+        wiring = {"JARVIS_DATA_DIR": str(self.data),
+                  # Its records live in an engine of its own, in its own folder.
+                  "JARVIS_ENGINE_AUTOSTART": "1", "PYTHONUNBUFFERED": "1",
+                  **(extra_env or {})}
+        if is_the_check:
+            # It is the check: a deck signed by the key it is seeded with
+            # unpacks without the statement that it passed (it has not yet).
+            wiring["JARVIS_DECISION_CHECK_SERVER"] = "1"
+        env = env_names.child(drop=("JARVIS_DECISION_CHECK_SERVER",), **wiring)
         with self.log.open("wb") as log:
             self.process = subprocess.Popen(
                 [sys.executable, "-m", "jarvis.decision_check_server", "--port", str(self.port),
-                 "--language", language, "--page", str(page)],
+                 "--language", language, "--page", str(page),
+                 "--settings", json.dumps(held)],
                 cwd=str(data_paths.SOURCE_ROOT), env=env, stdout=log, stderr=log,
                 stdin=subprocess.DEVNULL, start_new_session=True)
         self._wait_ready()
@@ -1081,9 +1079,13 @@ def check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, st
         return _check(archive, deck, folder, signer, session)
 
 
-def seed(data: Path, public_key: str, session: str) -> None:
+def seed(data: Path, public_key: str, session: str, *, kit_directory: Path | None = None) -> None:
     """The agent's public key, onboarded in the isolated JARVIS's record:
     written into its engine's folder before its server starts there."""
+    if kit_directory is not None:
+        # Copy only the verified version this architecture declares. The isolated
+        # receiver still runs the normal canonical gate against those exact bytes.
+        shutil.copytree(kit_directory, data / "language-kits" / "versions" / kit_directory.name)
     from jarvis import records
     with _data_dir(data), records.opened_at(data_paths.knowledge_dir()):
         key = agent_key_store.submit(public_key, session)
@@ -1109,9 +1111,14 @@ def _check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, s
         dist = built_page()
         # Signed by the agent's key, which the isolated JARVIS knows as an
         # onboarded agent's, as the live one does (seeded before it starts).
+        communication = manifest.get("communication") or {}
+        kit_directory = None
+        if communication.get("kind") == "architecture":
+            from jarvis import language_kit
+            kit_directory = language_kit.active(communication.get("kit_digest")).directory
         jarvis = Isolated(Path(tempfile.mkdtemp(prefix="jarvis-decision-check-")),
                           deck.get("language", "en"), dist,
-                          before=lambda data: seed(data, signer[1], session))
+                          before=lambda data: seed(data, signer[1], session, kit_directory=kit_directory))
         checked = folder / f"checked-{archive.name}"
         package_signature.sign(archive, checked, signer[0], signer[1], session)
         delivered = deliver(checked, jarvis.base, says_of(deck.get("title") or archive.stem),

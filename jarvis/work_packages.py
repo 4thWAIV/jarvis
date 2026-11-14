@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator, Callable, Optional
 
+from jarvis import env_names
 from jarvis import bundle_archive, data_paths, folder_readers, package_story, spoken_words
 from jarvis.folder_contract import FolderError
 from jarvis.messaging_files import QUARANTINE_ATTRIBUTE
@@ -639,7 +640,7 @@ async def run(package: Package, command: str,
     together, no input; stopped, with everything it started, at `timeout`."""
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash", "-c", command, cwd=str(package.folder),
-        env={**os.environ, **command_env(package)}, stdin=asyncio.subprocess.DEVNULL,
+        env=env_names.child(**command_env(package)), stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         start_new_session=True)
     tail = bytearray()

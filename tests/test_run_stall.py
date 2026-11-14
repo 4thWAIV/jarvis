@@ -25,6 +25,7 @@ import json
 import pytest
 
 from jarvis import stream_parser
+from tests.settings_fixtures import hold_setting
 
 
 # --- the pure decision ----------------------------------------------------
@@ -108,7 +109,7 @@ def test_malformed_events_do_not_raise():
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

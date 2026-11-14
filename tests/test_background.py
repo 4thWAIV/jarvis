@@ -70,3 +70,30 @@ def test_the_backend_is_the_process_the_server_recorded(monkeypatch):
     found = background.find_backend()
     assert found.running and found.pid == os.getpid()
     assert "https://127.0.0.1:8340" in found.line()
+
+
+def test_the_backend_is_started_where_settings_say(monkeypatch, tmp_path, capsys):
+    """No --host or --port: those are one run's own and would outlast every
+    change in Settings, Server, so the start file decides."""
+    from tests.settings_fixtures import hold_setting
+    hold_setting("port", 8350)
+    assert background.backend_port() == 8350
+    root = tmp_path / "checkout"
+    (root / "frontend").mkdir(parents=True)
+    (root / "cert.pem").write_text("c")
+    (root / "key.pem").write_text("k")
+    monkeypatch.setattr(background, "checkout", lambda: root)
+    looked = []
+    monkeypatch.setattr(background, "_port_open", lambda port: looked.append(port) or False)
+    spawned = []
+
+    class Proc:
+        pid = os.getpid()
+
+    monkeypatch.setattr(background, "_spawn", lambda name, argv, cwd: spawned.append(
+        (name, argv)) or Proc())
+    monkeypatch.setattr(background, "_vite_argv", lambda root: ["vite"])
+    monkeypatch.setattr(background, "_write_state", lambda state: None)
+    assert background.start(wait=False) == 0
+    assert spawned[0] == ("backend", [sys.executable, "-m", "jarvis"])
+    assert 8350 in looked

@@ -3,46 +3,62 @@
 ## Overview
 JARVIS is a voice-first macOS workspace for conversation, coding agents and workflows. Its React interface centres on Conversation, with agent threads, workflow details and voice diagnostics opening alongside it. Claude and Codex are available as conversational brain providers. The project direction is in `docs/roadmap.md`; current user-facing changes are in `docs/whats-new.md`. Keep planned successor engines distinct from implemented prototype functionality.
 
+## Settings only
+Every choice a person makes is a Settings control. No one ever leaves the
+dashboard for any reason: nothing a person sets is read from the
+environment, and no step asks anyone to edit `.env`. A setting is one of
+`settings_specs.py`'s list, read through `settings_service.value` and
+changed only through `server._change_setting` (the page's routes and the
+brain's `set_jarvis_setting` alike); it is a record
+(`/settings/<area>.settings`), a Keychain item (a secret) or the start file
+only Settings writes (`start_settings.py`, the few chosen before the records
+are open), each with a brain tool to read it and one to change it. The
+environment carries only WIRING, PLATFORM and TEST names, every one listed
+in `env_names.py`, the one reader; a new environment read, or a setting
+with no Settings control, brain tool or words in both catalogs, fails
+`tests/test_env_registry.py`. The list of settings is "Settings" below.
+
 ## Quick Start
 Read `jarvis/skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
 facts (Chrome for the voice page, the per-port permission trap, subscription vs. API
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
-When a user clones this repo and starts Claude Code, help them:
-1. Copy jarvis/.env.example to .env
-2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
+When a user clones this repo and starts Claude Code, help them (every setting is chosen in Settings; there is no `.env` to edit):
+1. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
-3. Get a Fish Audio API key from fish.audio (required — there is no fallback
-   voice)
-4. Make the virtual environment and install Python dependencies:
+2. Get a Fish Audio API key from fish.audio (required — there is no fallback
+   voice); first-time setup opens Settings, Voice for it once the page loads
+3. Make the virtual environment and install Python dependencies:
    `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
-5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
+4. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
-5a. Install the current local Kroko speech model:
+4a. Install the current local Kroko speech model:
    `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
    adds the Spanish model, `--language all` both)
-5b. Install the knowledge engine's embedding model (vector search, about
+4b. Install the knowledge engine's embedding model (vector search, about
    135 MB): `.venv/bin/python scripts/setup_embedding_model.py`
-6. Install frontend dependencies: cd frontend && npm install
-7. Generate the SSL certs — see below, they are NOT optional:
+5. Install frontend dependencies: cd frontend && npm install
+6. Generate the SSL certs (see below):
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
-8. Run the backend: .venv/bin/python -m jarvis --host 127.0.0.1
-9. Run the frontend: cd frontend && npm run dev
-10. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
-11. Click to enable audio, speak to JARVIS
-12. Teach your own Claude Code and Codex sessions to reach you through
+7. Run the backend: .venv/bin/python -m jarvis (it listens where Settings,
+   Server says: 127.0.0.1:8340 until changed there)
+8. Run the frontend: cd frontend && npm run dev
+9. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
+10. Click to enable audio, speak to JARVIS
+11. Teach your own Claude Code and Codex sessions to reach you through
     JARVIS: `.venv/bin/python -m jarvis.session_skill install`
 
-**The certs are required for the dev-server workflow**, despite `server.py`
-treating them as optional. JARVIS serves HTTPS only when `cert.pem` and
-`key.pem` are both in its configuration directory (the repository root in a checkout), but `frontend/vite.config.ts` hard-codes its
-proxy target as `https://localhost:8340`. Measured with a stand-in backend on
-8340 and `npx vite`: with a plain-HTTP backend the Vite dev server itself
-answers 200 while every proxied `/api` request returns **500**; with an HTTPS
-backend the same request returns 200. The page loads either way, which is why
-this presents as "the UI is up but nothing works" rather than as an error.
+**The Vite proxy and JARVIS must agree on the scheme.** JARVIS serves HTTPS
+only when `cert.pem` and `key.pem` are both in its configuration directory
+(the repository root in a checkout) and Settings, Server has HTTPS on.
+`frontend/vite.config.ts` reads the same start file (its port and HTTPS,
+trusted only when its signature checks) and whether the certs are there, so
+both sides follow Settings. Measured before that, when Vite hard-coded
+`https://localhost:8340`: with a plain-HTTP backend the Vite dev server
+itself answers 200 while every proxied `/api` request returns **500**, which
+presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
@@ -114,8 +130,9 @@ this presents as "the UI is up but nothing works" rather than as an error.
   a hostile page reading the GETs that cannot be gated (a same-origin GET
   carries no `Origin` to check). The `Host` header IS checked on every
   request including reads, because DNS rebinding is the way around "no
-  CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
-  and then needs `JARVIS_ALLOWED_ORIGINS`.
+  CORS". The address is Settings, Server (`host`, `127.0.0.1` by default);
+  `0.0.0.0` still works and warns, and then needs Settings' Allowed origins
+  (`allowed_origins`).
   An onboarded agent signs each request with its own key instead (see
   "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
   (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
@@ -379,11 +396,19 @@ each source's attention kind and event) names it as `message` in
 migration 3). Read and Reply are on each message where the page shows it
 (`MessageCard.tsx`, round 2 below); Updates no longer lists messages one
 by one. Read (`POST
-/api/messages/{id}/read`, the brain's `read_aloud`, `server.read_aloud`)
-speaks that message only ("<agent> answers:", "<name> writes:", or its
-own words for a board, a decision or a package; a session's message is
-marked read) and its update is seen only once heard in full
-(`_speak_message`, the approved speech entry point). Reply (`POST
+/api/messages/{id}/read`) is a turn of his, never words spoken past the
+brain (`docs/planning/brain-reads/design.md`): "Read me message 42." on
+record as his typed request with the id (`detail` `via` read, `message`),
+through `server._take_his_turn`, the one way in for every turn of his (the
+voice socket's too: clear and rotation answers, the read-backs waiting for
+his answer, which a Read closes and never approves, and `_handle_utterance`);
+409 with no voice, and a brain that is down shows the failed reply. The brain
+answers with `read_aloud`, which speaks nothing: it gives the brain that
+message only, walled (from, its Work item, its words, the package it carries;
+a session's message is marked read), to read him in its reply and sum up;
+the message is read, and its update seen, only once that reply is heard in
+full (`_message_read_to_him`, `_turn_reads`, `_seen_once_heard`; the reply
+waited for up to `READ_ALOUD_TIMEOUT`). Reply (`POST
 .../reply`, the brain's `reply`) goes to the proven sender
 (`_reply_capture`): a capture to the agent (a subagent's through its
 parent, "To Planning, for Feynman."), to a package's proven sending
@@ -421,7 +446,7 @@ first new), `/work/{id}` (its conversation, oldest first, his replies in it)
 and `/general` (no item, newest first, no person's), and `POST
 /api/messages/{id}/mark` (`read` or `done`, `server._mark_message`); the
 brain's `messages_to_him` (walled) and acting `mark_message` call the same
-functions. Read heard in full marks it read; his reply (`_reply_capture`
+functions. A message read him in full marks it read; his reply (`_reply_capture`
 keeps `reply_to` and `about` on the capture, and the TO_AGENT item) marks it
 answered once it goes (`_reply_went`, on `sent`); his answer to a Work
 decision marks it answered, and withdrawn or signed off done
@@ -481,6 +506,57 @@ the page or by voice) is what `read_aloud` ("read it", `next` for "next"),
 `open_inbox_package` ("open it": the package it carries, a page package's
 story told at once through `_package_story`, waiting at each question) and
 `reply` act on when no message is named.
+A message he names by its time is the one meant, never a wrong one: every
+tool and route that takes a message finds it through one function,
+`messages_api.resolve` (a `MessageSpec`; the server's `_message_meant` for
+the tools, `_message_to_him` for a route's id). `read_aloud`, `reply`,
+`mark_message` and `open_inbox_package` take `message` (its id) or `at` (his
+local time, the Mac's zone, as he said or typed it: "15:42", "3:42", "3:42
+pm", "3:42 p.m.", "15:42 h", "today"/"yesterday" or "hoy"/"ayer" before it,
+"2026-11-12 15:42"; `parse_time`) with `from`, `work` and `new`. A time is
+matched to the minute against each message's recorded time; one with no day
+looks back a day (`BARE_TIME_WINDOW_SEC`, so the same minute yesterday is
+never today's), and "3:42" with no am or pm is 3:42 and 15:42 both, but a
+zero-padded hour ("09:05") or a dated time is the 24-hour clock JARVIS
+writes. A Work item is named by id or title (`_work_ids`; a title shared by
+several items looks in all of them), with no time in its whole thread. An
+id given with a description is used only when the message fits it
+(`_id_as_described`); otherwise both come back to ask which. Exactly
+one match is the message; several come back (at most `CANDIDATES_MAX`) to
+ask him which, by time and sender, walled; none says so and names the
+nearest by minute, both when two are as near. Every message's JSON, and
+each one given to ask which, carries `local` ("2026-11-12 15:42"), the form
+the brain passes back as `at`, and `when` ("today 15:42"), words for him
+only, since "today" means another day after midnight. No message is ever
+found through the brain's memory notes.
+
+## Reports land once
+Every report an agent sends through the reporters' one client
+(`workflow_report.report`: work_report.py's, workflow_report.py's and
+message.py's) carries an idempotency key of its own, `?report=` on its
+route (`REPORT_QUERY`, in the query so it is signed with the request).
+`report_keys.once` wraps every reporting route (`POST /api/work`,
+`/api/work/{id}/events`, `/api/workflows`, `/api/workflows/{id}/events`,
+`/api/messages`): it claims the key as its caller's before the write (one
+`report` document a key, `/reports/<principal>/<key>.report`, `pending`
+with this run's `BOOT`) and keeps the route's answer with it once the write
+is done (`done`, its status and body). A key is never freed: a route that
+raises (its write may have landed before a later step failed) leaves it
+`unknown`, and an answer that cannot be kept is logged and still goes back,
+since the write landed. The caller is `report_keys.owner`: the reporter the
+gate proved (`reporters.recorded`), else `held:<fingerprint>` for a key
+JARVIS holds but has not onboarded; a request with neither is refused a
+key (403). A repeated key writes nothing: it is answered with the original
+answer (`X-JARVIS-Report: repeated`), refused 409 while the first is still
+being written, and `unknown` when its write raised or an earlier run of the
+server claimed it and never finished. `GET /api/reports/<key>` says what
+is on record for one of the caller's own keys (`agent_rights.OWN_REPORTS`, in every grant that may
+report, whatever its scope). A report the client does not hear back from
+within its timeout is unknown, not failed (`TimedOut`): it asks that route
+and reports the answer it finds, waits while it is pending
+(`REPORT_WAIT_SEC`), or sends the report once more with the same key, and
+says the key when it still cannot tell. Keys are kept `KEEP_SEC` (seven
+days) and pruned at server start (`report_keys.prune`).
 
 ## Messages from sessions
 An agent reaches Tim one way: a signed message, `python -m jarvis.message
@@ -561,7 +637,9 @@ package's, recorded by its own script, in a unit of its own, `settle_now`): a `w
 `answered_at`), the workflow's state settled again. Only the server's answer
 routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
 answer already given ends at once, and `wait_links.sweep` ends any left open
-at server start and on every read of either record, first carrying one on a
+at server start and on every read of either record (but a writer's own
+return and the worker inventory's read of the active workflows, which the
+Work view's tick sweeps for), first carrying one on a
 package its sender replaced to the newer version (`wait_links.replaced_package`,
 the server's `_package_replaced`); at start `package_inbox.settle_closed`
 first closes the votes of packages already set aside or replaced. A
@@ -754,13 +832,33 @@ with `work_report.py --as <session id>`, signed with their own key holding
 the `work` right, or with a work-item key (see "Agent keys") (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`. The
 view is held (`work_view.py`, `server.work_held`): built at startup, each
-item worked out again only when it changes (a write, `work_store.on_changed`;
-its live owners, its clock thresholds (`work_store.next_change`) and its
-source on the one-second `tick`, never on a request; its packages, projects
-or agents' names), and each change is one `work_item`,
+item worked out again only when it changes (a write, `work_store.on_changed`,
+which only hands the item's id to the view's own thread, `start` and
+`drain`, so a report's write never waits on the view; its live owners, its
+clock thresholds (`work_store.next_change`) and its source on the
+one-second `tick`, never on a request; its packages, projects or agents'
+names), and each change is one `work_item`,
 `work_item_history` or `work_item_removed` frame on `/ws/sessions`, after
-the write, with the view's revision. `/api/work` returns the held view and
-reads nothing; the page (`work.ts` `applyWorkFrame`) replaces one item by
+the write, with the view's revision. The view's lock is never held while
+anything is read or composed: each composition is made outside it and
+swapped in (`_commit`) only when its stamp (the record's revision, then the
+order it began in) is newer than the one held, so an older composition
+never overwrites a newer one. A project or an agent's name changing hands
+the items it touches to the view to be read again (`projects_changed`,
+`names_changed`), so the new one beats any composition under way, and the
+projects a composition begun before a project changed are never kept for
+the next (`_projects_gen`). Items written while the view is built stay
+handed over and are worked out once it is (`drain` waits for `load`). A
+writer returns its item as written, with no
+sweep (`work_store._written`; the tick sweeps every `SWEEP_EVERY_SEC`), and
+the route answers with the view's JSON once it has caught up, else that
+item worked out with what the view holds (`WorkView.shown`). Every report
+carries an idempotency key and lands at most once (`report_keys.py`, see
+"Reports land once"). `/api/work` returns the held view and
+reads nothing, and composes nothing (a read of one item composes that item
+only when its clock threshold has passed); a test seeds 300 packages and 50
+open items and fails a write or a read that takes a second or more while
+the tick works (`tests/test_work_latency.py`); the page (`work.ts` `applyWorkFrame`) replaces one item by
 id and reads the list in full only on a reconnect or a revision gap (a
 `work` hint now only re-reads the open item's events, packages and keys); a
 decision, blocked and done are attention items, each resolved once it is no
@@ -1014,7 +1112,9 @@ helper (`jarvis/package_story.js`, one copy, served at
 `/api/packages/story.js`) rings the targets and runs the beat's `show` and
 `click` actions. `package_story` frames on the voice socket say a story's
 state. The beats are spoken as the sender's narration and never reach the
-brain; the tool gives back only the slides' titles, walled. The
+brain; the tool gives back only the slides' titles, walled. The brain is
+told which slides were read him (by number, through `_note_spoken`) when the
+story waits for an answer, pauses or ends (`StoryTeller._told`). The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
 (a page with a story). Every package an agent sends Tim is made with
@@ -1023,7 +1123,13 @@ one command, `python -m jarvis.make_package <content.json | folder>`
 that says how: a deck's content (a decision package, or a presentation
 when it has no decisions; `decision_package.py` reads, expands and checks
 it, refusing an SVG picture whose root has no width and height in pixels
-(`svg_size_problem`), the shared deck's `new_deck.py` builds it) or a hand-made package's
+(`svg_size_problem`), the shared deck's `new_deck.py` builds it; every deck is a briefing,
+`decision_package.briefing_problems`: its own `purpose` and one-sentence
+`conclusion` (deck/0.1's), a first slide of words that shows the
+conclusion and with its narration carries the purpose, and each decision's
+`why_you` and `evidence`, drawn as its lead-in slide before it; an
+architecture package's opening is its document's, its explanation opening
+with the purpose and conclusion) or a hand-made package's
 folder (only `purpose` given; read back through
 `work_packages.recognise`). A deck is checked end to end in an isolated
 JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
@@ -1515,8 +1621,9 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel, the workflow monitor, the folder catalog and the team
-server connection
+output, the tool channel, the workflow monitor, the Work tracker, the folder
+catalog, the team server connection and the server's start setup
+(`start_setup`: a trial and the last going back, never worse than degraded)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
@@ -1537,7 +1644,14 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back.
+they are back. The Work tracker row is its routes' latency, measured live
+(`subsystem_diagnostics.work_routes`, each report's write and each read of
+`/api/work` timed as it is served, `work_api.timed`), judged over the last
+`WORK_LATENCY_WINDOW_SEC` (five minutes): degraded once a write or a read
+passes two seconds (`WORK_WRITES_SLOW_SEC`, `WORK_READS_SLOW_SEC`), never
+down, since a slow write still lands; the watch records a silent attention
+item (`work_routes`, `slow`) once a write passes `WORK_WRITES_ALARM_SEC`
+(five seconds), resolved once none in the window is slow.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view). Every name and line JARVIS writes itself is sent as a
@@ -1652,8 +1766,9 @@ before it reads None), and a retry goes through
 `review_document` and `approve_document` find a build by its project. Every
 committed change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
 (one store for both views), `FoldersView.tsx` and `FolderDetail.tsx` in the
-centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
-routes and tools off and keeps the records.
+centre and `FoldersPanel.tsx` on the right. Settings, Knowledge, Folder
+catalog (`folders`) off switches the routes and tools off at the next start
+and keeps the records.
 
 ## Project records
 His projects are records of truth, one `project` document each
@@ -1876,8 +1991,9 @@ Diagnostics row. Settings → Knowledge controls indexing through
 `knowledge_settings`, persisted at `/settings/knowledge.settings` in the existing
 record store. The server, ingest/content workers and engine read the same setting.
 The engine reads it locally at startup to avoid calling its own HTTP endpoint.
-`JARVIS_KNOWLEDGE` is a compatibility input only until Settings saves a choice;
-a saved false overrides it. `set_knowledge_settings` and POST
+It is on until Settings saves a choice (`knowledge_enabled`, its record
+field `enabled`); `.env`'s old `JARVIS_KNOWLEDGE` is copied in once.
+`set_knowledge_settings` and POST
 `/api/knowledge/settings` use the same implementation. Pausing stops content and
 ingest workers and pauses background embedding, while storage health, record
 reads/writes and searches over existing data remain available. Changes apply
@@ -1937,7 +2053,7 @@ the brain's knowledge tools call the same `knowledge_api` functions.
 `context_service.pack` is the context pack: tier 0 from notes and topics,
 tier 1 with the engine's search; `work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
-`JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
+Settings, Knowledge's `run_context` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
 Each registered folder's files are items under `/folders/<folder id>/` in
 the engine; `knowledge_api.folder_counts` reads each active folder's count
@@ -2037,8 +2153,8 @@ facts fit its walled block whole (`attention.fitting`, under
 `DIGEST_WORDS_CHARS`), so played (or SILENT) finishes with the revisions of
 only the items the brain was shown; the rest wait for the next. Seen is his
 act: his click, his mark, or hearing it read in full. The brain's reading
-tools (`read_message_reply` on an answer, `read_session_message`,
-`mark_people_message_read`) note the pending update they read on a turn he
+tools (`read_aloud` on a message, `read_message_reply` on an answer,
+`read_session_message`, `mark_people_message_read`) note the pending update they read on a turn he
 drove (`server._read_to_him`), and once that turn's reply has been heard in
 full (`speech.wait_for`, every chunk played) it is seen at the revision read
 (`server._seen_once_heard`, `attention_api.mark_seen_source`); a reply cut
@@ -2064,6 +2180,15 @@ the same `attention_api` functions as `/api/attention*`.
 `tests/test_speech_call_sites.py` fails any call to the voice outside the
 approved entry points it lists, and drives every routine producer against a
 voice that must stay silent.
+Nothing he asks to hear is spoken past the brain: the brain reads it in its
+own reply (a message, his Read included; see "One channel"). Two kinds stay
+direct, because their exact words are the point: a read-back for his
+approval (a capture from its box, `api_capture_read`; a command's and a
+keypress's, `_perform_command`, `_perform_dialog`) and a package story's
+slides. Each tells the brain at its next turn what was read, its number or
+id and how it went (`server._note_spoken`, into `_notes_for_brain`), and so
+does "say that again" of one of them (`_note_replayed`, from
+`SpeechScheduler.last_spoken`).
 
 ## Quiet voice input
 The contract is `docs/planning/quiet-conversation/contract.md` (states,
@@ -2295,12 +2420,11 @@ when the saved one's model is missing (preflight checks the same model,
 `startup_model`). `GET`/`POST /api/settings/language` are the routes; the
 brain's `speech_models` read starts with the language.
 
-The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
-in .env) is now used: `spoken_words.address` turns it into a fixed word
+The Honorific setting (Settings, You: Sir, Ma'am, Señor, None;
+`honorific`) is now used: `spoken_words.address` turns it into a fixed word
 from one table, `spoken_words._ADDRESS`, each honorific's word in each
-language (sir is señor in Spanish, ma'am is señora), and any value not on
-that list counting as the default, sir, so nothing typed into .env reaches
-the prompt. `brain.address_rule` adds a launch-prompt line only when
+language (sir is señor in Spanish, ma'am is señora); the setting takes only
+those values, so nothing else reaches the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
 
@@ -2412,7 +2536,10 @@ with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
 ## Key Files
-- `server.py` — Main server, WebSocket handler, HTTP API, action system
+- `server.py` — Main server, WebSocket handler, HTTP API, action system;
+  `kill -USR1 <pid>` appends every thread's Python stack to
+  `server-stacks.log` in the data folder (`_stacks_on_signal`), for a
+  server that stops answering
 - `brain.py` — The voice brain: one long-lived `claude -p` process on the
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
@@ -2541,6 +2668,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   command (see "One channel")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `report_keys.py` — Each report landing at most once: its idempotency
+  key, the reporting routes' wrapper and the lookup a timed-out reporter
+  asks (see "Reports land once")
 - `wait_links.py` — What a wait on him waits for (its link), which answer
   ends it, settling in the answer's transaction, and the sweep (see "The
   workflow monitor" and "The Work tracker")
@@ -2787,78 +2917,112 @@ Note that `docs/superpowers/specs` and `docs/superpowers/plans` are still a
 live convention: `builds.py` and `specs.py` create them **inside the projects
 JARVIS builds**. It is only this repository's own copies that are gone.
 
-## Environment Variables
-- `ANTHROPIC_API_KEY` — **read by nothing.** Not asked for in setup, not read
-  by any module, and the `anthropic` SDK is not a dependency: JARVIS's brain
-  and every spawned run go through your Claude Code subscription login.
-  `claude_env.child_env()` scrubs every `ANTHROPIC_*` variable from every
-  spawned Claude Code child (brain and run pipeline alike) so the CLI can
-  never bill an API key instead, and `preflight.py`'s `anthropic_key_leftover`
-  check warns you if one is sitting in your `.env` — that is the only place
-  the name appears in live code.
-- `JARVIS_BRAIN_MODEL` (optional, default `sonnet`) — model for the brain,
-  always passed explicitly as `--model`
-- `JARVIS_BRAIN_AUTOSTART` (optional, default `1`) — `0` builds the brain but
-  never spawns it (every test sets this)
-- `JARVIS_BRAIN_CONTEXT_BUDGET` (optional, default `900000`) — tokens of
-  conversation before JARVIS asks to compact its context. It never rotates
-  without the user's yes; he is asked again every ten turns, and the Claude
-  CLI's own auto-compact is the backstop if he never agrees
-- `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
-  rejection is not enough with a given microphone
-- `FISH_API_KEY` (required) — Fish Audio TTS
-- `FISH_VOICE_ID` (optional) — Voice model ID
-- `USER_NAME` (optional) — Your name for JARVIS to use
-- `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the
-  knowledge engine holding every record (`knowledge/`), runs' output and the
-  voice log as files, memory Markdown, usage.json, the tool token, the running
-  server's address (`server-address.json`). Defaults to `data/`
-  (`data_paths.py`). Set it to run an isolated instance without touching live
-  data — the test suite gives every test a fresh one this way.
-- `JARVIS_SKIP_PERMISSIONS` (optional) — Defaults to true; passes
-  `--dangerously-skip-permissions` to spawned runs, which have no TTY to
-  answer a permission prompt
-- `WEATHER_LOCATION_LABEL` / `WEATHER_LATITUDE` / `WEATHER_LONGITUDE` /
-  `WEATHER_UNIT` (all optional) — override the auto-detected (public-IP)
-  weather location and units
-- `JARVIS_ALLOWED_ORIGINS` (optional) — extra origins the web boundary
-  accepts, comma-separated. Only needed when the page is opened at an
-  address JARVIS does not serve from itself (a LAN IP, a tunnel). Their
-  host names are also what the `Host` check accepts, so a `.local` or
-  tailscale name has to be listed here to work at all
-- `JARVIS_DEBUG_DOCS` (optional, default off) — serve `/docs`, `/redoc` and
-  `/openapi.json`. That console has a "Try it out" button on every route
-- `JARVIS_REFUSE_UNTRUSTED_ACTIONS` (optional, default off) — `1`/`true`/`yes`/`on`
-  turns ON the untrusted-content action refusal: a turn that has read foreign
-  text may not act, and memory writers are refused for the rest of that
-  generation. Off by default, so JARVIS keeps acting after reading foreign
-  content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
-- `JARVIS_STT_MODEL_DIR` (optional) — the folder holding the local speech
-  models, one folder per model (`<root>/<model name>`). Defaults to
-  `<data>/models`; `scripts/setup_speech_input.py` and the install route
-  install there, checked against the release's SHA-256
-- `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
-  settings endpoints read and write. Defaults to the repo's own; the test
-  suite redirects it so no test reads or rewrites the developer's real
-  configuration
+## Settings
+Every setting, by its Settings section and key (`settings_specs.py`).
+"Next start" marks one that takes effect when JARVIS next starts; "his
+click" one that only his click on Settings changes (the brain reads it and
+never changes it). The rest the brain changes with `set_jarvis_setting`,
+or the section's own tool where one is named.
+- You: `user_name`, `honorific` (the section's own Save, both through
+  `/api/settings/preferences`), `weather_location_label`,
+  `weather_latitude`, `weather_longitude` (empty: found from the public IP),
+  `weather_unit`, `default_browser` (Chrome or Firefox).
+- Voice and language: `fish_api_key` (the Keychain, his click; it is never
+  read back), `fish_voice_id`, `tts_provider`, `local_voice`,
+  `mute_mic_during_speech` (a fallback if echo rejection is not enough),
+  `stt_model_dir` (next start; empty: `<data>/models`), beside the
+  language and voice input settings of their own.
+- Brains: `brain_effort`, `brain_turn_timeout`, `brain_context_budget`
+  (tokens before JARVIS asks to compact; it never rotates without his yes),
+  each next start; `claude_path`, `codex_path` (next start, his click);
+  `usage_poll` (starts and stops the poll at once). The brain and its model
+  are the brains' cards (brains.json), read by `brains_settings` and changed
+  by the acting `set_brain` through `server._change_brain`, the routes' own;
+  a run's model is the engine choice (engines.json).
+- Agents: `run_timeout_sec`, `run_idle_sec`, `skip_permissions` (passes
+  `--dangerously-skip-permissions` to runs, which have no TTY),
+  `steer_cancel_window`, `claude_config_dirs`, `codex_sessions_home`,
+  `watch_interval` (next start), `specs_poll`.
+- Projects: `projects_dir`, `project_roots`, `scan_budget`, `scan_cache`.
+- Knowledge: `knowledge_enabled` (its own switch and
+  `set_knowledge_settings`), `run_context`, `folders` and
+  `folder_discovery` (next start), `knowledge_memory_mb` (the start file,
+  next start; empty: 384, or 256 under 16 GB).
+- Safety: `refuse_untrusted_actions` (off: a turn that has read foreign text
+  may still act; on, it may not, and memory writers are refused for the rest
+  of that generation).
+- Team: `team_dev_servers` (origins JARVIS may sign in to over plain http or
+  a private address, for a team server run locally).
+- Server, the start file (`start_settings.py`, signed with the tool token, a
+  hand-edited file ignored and said so): `host` (his click), `port`,
+  `https` (when the certificates are there), `brain_autostart`, each next
+  start; `allowed_origins` (his click; also the host names the `Host`
+  check accepts); `debug_docs` (`/docs`, next start). The address is only
+  one that still serves this Mac (127.0.0.1, ::1, localhost, 0.0.0.0, ::)
+  and the port never the page's dev server's; Vite reads the start file
+  again whenever it changes. Confirm or revert (Tim's decision
+  unreachable-after-start-change): a start from Settings whose setup
+  (`start_settings.SETUP_KEYS`: host, port, HTTPS, allowed origins)
+  differs from the last one a page reached is a trial once uvicorn is
+  listening (`start_settings.begin_trial`, `server._confirm_or_revert`),
+  that setup its fallback. A page reaching it (`web_auth.on_page_reached`,
+  `server._page_reached`: a socket or a state-changing request admitted
+  by the page's own origin with no Authorization, never the tool token or
+  an agent's key) confirms it (`start_settings.remember_served`, the one
+  writer of `last_good`); none within `start_settings.TRIAL_WINDOW_SEC`
+  (60 s) and JARVIS goes back (`start_settings.fall_back`, the one
+  rollback) and restarts through `_restart_server`. With no setup reached
+  yet there is no trial. A start whose address cannot be bound goes back
+  the same way before it binds. Each going back is `reverted` in the start
+  file (when, from, to, why: `unreached` or `unbindable`), shown in
+  Settings, Server until he next saves a start setting, as a silent
+  `start_setup` attention item at the next start, and on the Diagnostics
+  `server` row's Start setup check (degraded for `REVERT_NOTICE_SEC`); a
+  pending trial is counted down in Settings, Server, and
+  `jarvis_settings` says the same. Every next-start setting, the records'
+  too, says it waits for a restart once saved differently from the start
+  (`settings_service.note_started`). Restart now is `/api/restart`, through
+  `MenuControl.restartServer` as the menu's. The command-line `--host`,
+  `--port` and `--ssl` stay as one run's own, saved nowhere and never put
+  on trial or confirmed (`settings_service.from_settings_at_start`);
+  `jarvis.background` passes none.
+- Updates has no setting.
+`.env` is read once, by `settings_import` at the first start after this
+(`/settings/env-import.settings` records it, and Settings, Server says
+when), and never again, but for a `JARVIS_DATA_DIR` it names, which the
+start follows (and Settings, Server says so) until Settings has a data
+folder control; nothing loads it into the environment. A command run in
+its own process reads the saved settings first
+(`settings_service.load_once`). The old
+names are each setting's `env` in `settings_specs.py`, or
+`settings_specs.ELSEWHERE` for the brain, its model and a run's model.
 
-- `JARVIS_TEAM_DEV_SERVERS` (optional) — comma-separated exact origins
-  (e.g. `http://127.0.0.1:18080`) JARVIS may connect to as a team server
-  despite being plain http or on a private address. For running a team
-  server locally only
-
-- `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
-  the folder catalog's routes and tools off; its records are kept
-- `JARVIS_ENGINE_AUTOSTART` (optional, default on) — `0` never starts the
-  knowledge engine (every test sets this; see "The knowledge engine")
-- `JARVIS_KNOWLEDGE` (optional, default on) — `0` turns off the knowledge
-  engine's ingest, embedding and tools; the engine itself runs either way
-- `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
-  the context pack for its project (see "The knowledge engine")
-- `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
-  — the engine's memory budget, which its footprint is reported against
-- `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
-  background discovery and availability look (every test sets this)
+## Not settings
+None of these is for a person to set; each is listed in `env_names.py`.
+- WIRING, set by JARVIS for itself and its children: `JARVIS_BIND_HOST`,
+  `JARVIS_PORT`, `JARVIS_SCHEME` (published by `server.main`),
+  `JARVIS_TOOL_URL`, `JARVIS_TOOL_TOKEN_FILE` (the brain's MCP child),
+  `JARVIS_AGENT_SESSION`, `JARVIS_ACCESS_KEY`, `JARVIS_URL` (an agent's
+  commands), `JARVIS_DECISION_CHECK_SERVER`, `JARVIS_DATA_DIR` (the data
+  folder of an isolated instance: a test, the decision check),
+  `JARVIS_PYTHON`, `JARVIS_SOURCE`, `PACKAGE_DIR` (a package's command),
+  `MSYS_NO_PATHCONV`, `JARVIS_API_TARGET`, `JARVIS_VITE_PORT` (a parent
+  pointing Vite at an isolated JARVIS), `PYTHONPATH` (the checkout's
+  parent, in the brain's MCP child's `env`).
+- PLATFORM, read to find things or to scrub them from a child:
+  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `HOME`, `PATH`,
+  `TMPDIR`, `USER`, `PYTHONUNBUFFERED`, `CODEX_API_KEY`, and by prefix
+  `ANTHROPIC_*` (read by nothing but the scrub: `claude_env.child_env()`
+  removes every one from every Claude Code child, and preflight's
+  `anthropic_key_leftover` check warns of one), `CLAUDE_CODE_*` and
+  `OPENAI_*`.
+- TEST, the suite's harness: `JARVIS_ENV_FILE` (the `.env` the one-time copy
+  reads), `JARVIS_ENGINE_AUTOSTART` (`0` never starts the knowledge engine;
+  JARVIS cannot run without it, so it is no setting),
+  `JARVIS_ENGINE_EPHEMERAL`. A test sets a setting only with
+  `tests/settings_fixtures.hold_setting` (`settings_service.hold`, this
+  process only, never saved).
 
 ## Testing
 The team server has its own suite: `cd team_server/tests && pytest` with its
@@ -2921,9 +3085,13 @@ A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to e
   same service or function as its route (`tests/test_brain_page_parity.py`).
   Changes are ACTING_TOOLS; reads carrying other people's words are wrapped
   as untrusted. Left out on purpose: settings that hold secrets (API keys and
-  the Fish key test), `/api/restart` on its own (`update_jarvis` restarts,
+  the Fish key test), the settings only his click changes (the brain's
+  programs, the address and the extra origins: read by `jarvis_settings`,
+  never changed), `/api/restart` on its own (`update_jarvis` restarts,
   through the same `_restart_server`, once an update is in), and the sign-in
   and connect flows that need a browser approval
+- Every setting is a Settings control (see "Settings only"); no step tells a
+  person to edit `.env` or set an environment variable
 - AppleScript for Terminal and Chrome control (no OAuth needed)
 - Records are documents in the knowledge engine (`records.py`), never
   SQL; long-term memory is plain Markdown files instead (`jarvis_memory.py`) —

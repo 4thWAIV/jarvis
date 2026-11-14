@@ -16,6 +16,7 @@ import pytest
 
 from jarvis import brain_accounts, brain_provider, brains_config, data_paths, usage_store
 from jarvis.brain_provider import Account
+from tests.settings_fixtures import hold_setting
 
 KEY = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
 OTHER_KEY = base64.urlsafe_b64encode(bytes(range(1, 33))).rstrip(b"=").decode()
@@ -271,7 +272,7 @@ async def test_claude_signed_out_or_unreadable_has_no_email(monkeypatch):
 @pytest.mark.asyncio
 async def test_codex_reads_the_email_from_its_account_read(monkeypatch):
     from jarvis import codex_provider
-    monkeypatch.setenv("JARVIS_CODEX_PATH", f"{sys.executable} {FAKE_CODEX}")
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
     account = await codex_provider.CodexProvider().account()
     assert account.signed_in and account.email == "never-shown@example.com"
     assert account.org_id is None and "never-shown" not in repr(account)

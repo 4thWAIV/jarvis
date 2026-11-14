@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.settings_fixtures import default_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -47,7 +48,7 @@ HOSTILE_ORIGIN = "http://evil.example"
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("JARVIS_ALLOWED_ORIGINS", raising=False)
+    default_setting("allowed_origins")
     monkeypatch.setenv("JARVIS_PORT", "8340")
     from jarvis import data_paths
     importlib.reload(data_paths)

@@ -35,7 +35,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "menu.updates": "Buscar actualizaciones",
   "menu.restart": "Reiniciar el servidor",
   "menu.restarting": "Reiniciando el servidor.",
-  "menu.restartFailed": "No se pudo reiniciar: el servidor no respondió.",
+  "menu.restartFailed": "El servidor no se reinició: lo rechazó o no respondió.",
 
   "language.label": "Idioma",
   "language.loading": "Cargando el modelo de voz; tarda unos segundos.",

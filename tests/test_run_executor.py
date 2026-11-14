@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from jarvis import claude_provider
 from tests.fixtures.waiting import LIMIT_SEC, until_async
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -539,14 +540,14 @@ def test_command_forks_when_resuming(env):
 
 def test_command_respects_skip_permissions_opt_out(env, monkeypatch):
     store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_SKIP_PERMISSIONS", "false")
+    hold_setting("skip_permissions", "false")
     importlib.reload(mod)
     ex = mod.RunExecutor(store, claude_path="claude")
     assert "--dangerously-skip-permissions" not in ex.claude._command("run-1", None)
 
 
 # -- explicit model selection ------------------------------------------------
-# --model is now always explicit: explicit argument, else JARVIS_RUN_MODEL,
+# --model is now always explicit: explicit argument (the engine choice's),
 # else "sonnet" — and the flag itself must never be omitted, since relying on
 # the CLI's own default silently changed behaviour once before (brain.py's
 # BrainConfig sets the same precedent for the voice path).
@@ -567,20 +568,14 @@ def test_command_uses_explicit_model_argument(env):
     assert cmd[cmd.index("--model") + 1] == "haiku"
 
 
-def test_command_falls_back_to_env_model(env, monkeypatch):
+def test_the_environment_never_chooses_a_run_s_model(env, monkeypatch):
+    """A run's model is the engine choice's (Settings, Brains), handed to
+    spawn; JARVIS_RUN_MODEL, which `.env` once held, is read by nothing."""
     store, mod, tmp = env
     monkeypatch.setenv("JARVIS_RUN_MODEL", "opus")
     ex = mod.RunExecutor(store, claude_path="claude")
     cmd = ex.claude._command("run-1", None)
-    assert cmd[cmd.index("--model") + 1] == "opus"
-
-
-def test_command_explicit_argument_overrides_env(env, monkeypatch):
-    store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_RUN_MODEL", "opus")
-    ex = mod.RunExecutor(store, claude_path="claude")
-    cmd = ex.claude._command("run-1", None, model="haiku")
-    assert cmd[cmd.index("--model") + 1] == "haiku"
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
 
 
 def _argv_capturing_claude(tmp_path: Path, marker: Path,
@@ -608,19 +603,6 @@ async def test_explicit_model_reaches_the_child_argv(env):
     assert run["status"] == store.RunStatus.SUCCEEDED
     argv = json.loads(marker.read_text())
     assert argv[argv.index("--model") + 1] == "haiku"
-
-
-@pytest.mark.asyncio
-async def test_spawn_without_model_falls_back_to_env(env, monkeypatch):
-    store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_RUN_MODEL", "opus")
-    marker = tmp / "argv.json"
-    ex = mod.RunExecutor(store, claude_path=_argv_capturing_claude(tmp, marker))
-    run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
-    await ex.wait_for(run_id)
-
-    argv = json.loads(marker.read_text())
-    assert argv[argv.index("--model") + 1] == "opus"
 
 
 @pytest.mark.asyncio
@@ -1062,8 +1044,8 @@ def test_the_module_default_timeout_is_finite_and_generous(env):
 
 def test_the_default_timeout_is_overridable_by_env(env, monkeypatch):
     store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_RUN_TIMEOUT_SEC", "42")
-    assert mod.RunExecutor(store, claude_path="claude")._default_timeout == 42
+    hold_setting("run_timeout_sec", "420")
+    assert mod.RunExecutor(store, claude_path="claude")._default_timeout == 420
 
 
 # ==========================================================================
@@ -1708,15 +1690,18 @@ def test_the_idle_bound_is_generous_enough_for_a_real_build(env):
 
 def test_the_idle_bound_is_overridable_by_env(env, monkeypatch):
     store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_RUN_IDLE_SEC", "90")
+    hold_setting("run_idle_sec", "90")
     ex = mod.RunExecutor(store, claude_path="claude")
     assert ex._idle_sec == 90.0
 
 
 @pytest.mark.parametrize("bad", ["0", "-5", "not-a-number"])
 def test_the_idle_bound_cannot_be_switched_off(env, monkeypatch, bad):
+    """Settings refuses it at the door, and the bound stays the default."""
+    from jarvis import settings_service
     store, mod, tmp = env
-    monkeypatch.setenv("JARVIS_RUN_IDLE_SEC", bad)
+    with pytest.raises(settings_service.Refused):
+        hold_setting("run_idle_sec", bad)
     ex = mod.RunExecutor(store, claude_path="claude")
     assert ex._idle_sec == float(mod._IDLE_OUTPUT_SEC)
 

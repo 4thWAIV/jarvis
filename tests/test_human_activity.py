@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_voice_ws import FakeBrain, _drain_until
+from tests.settings_fixtures import hold_setting
 
 PAGE = {"Origin": "http://localhost:5173"}
 
@@ -82,7 +83,7 @@ def test_an_unknown_source_is_refused(data_dir):
 
 @pytest.fixture
 def server(monkeypatch, data_dir):
-    monkeypatch.setenv("FISH_API_KEY", "fish-test")
+    hold_setting("fish_api_key", "fish-test")
     from jarvis import run_store
     importlib.reload(run_store)
     from jarvis import server

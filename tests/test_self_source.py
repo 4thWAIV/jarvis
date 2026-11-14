@@ -21,12 +21,13 @@ import os
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 
 @pytest.fixture
 def ready(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store
@@ -57,7 +58,7 @@ def test_his_own_root_is_derived_from_the_code_not_configured(ready):
 
 def test_the_root_ignores_the_environment(ready, monkeypatch):
     monkeypatch.setenv("JARVIS_DATA_DIR", "/nowhere")
-    monkeypatch.setenv("JARVIS_PROJECTS_DIR", "/nowhere")
+    hold_setting("projects_dir", "/nowhere")
     server = ready
     assert (server._jarvis_source_root() / "jarvis" / "server.py").is_file()
 
@@ -134,9 +135,9 @@ async def test_the_refusal_is_not_simply_everything_failing(ready):
     non-secret file must come back."""
     server = ready
     answer = await server.tool_read_file({"project": "jarvis",
-                                          "path": "jarvis/.env.example"})
+                                          "path": "jarvis/transcribeProtocol.json"})
     assert answer != server.REPO_SENSITIVE_REFUSAL
-    assert "FISH_API_KEY" in answer, "the documented template should read fine"
+    assert "version" in answer, "a neighbouring file should read fine"
 
 
 @pytest.mark.asyncio

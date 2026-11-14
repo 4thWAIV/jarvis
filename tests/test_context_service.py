@@ -11,6 +11,7 @@ import pytest
 from jarvis import context_service as cs
 from jarvis import jarvis_memory, knowledge_links as kl
 from tests.test_spawn_run_tool import _Executor, ready, wired  # noqa: F401
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 def seed_world():
@@ -67,7 +68,7 @@ def test_a_late_engine_gives_tier_zero_marked_partial():
 @pytest.mark.asyncio
 async def test_a_run_gets_no_context_while_the_switch_is_off(ready, monkeypatch):
     server, store, ex = ready
-    monkeypatch.delenv("JARVIS_RUN_CONTEXT", raising=False)
+    default_setting("run_context")
     seed_world()
     await server.tool_spawn_run({"project": "chitauri", "prompt": "build it"})
     assert ex.spawned[0]["prompt"] == server.UNATTENDED_PREAMBLE + "build it"
@@ -76,7 +77,7 @@ async def test_a_run_gets_no_context_while_the_switch_is_off(ready, monkeypatch)
 @pytest.mark.asyncio
 async def test_a_run_gets_its_projects_context_first_and_his_words_last(ready, monkeypatch):
     server, store, ex = ready
-    monkeypatch.setenv("JARVIS_RUN_CONTEXT", "1")
+    hold_setting("run_context", "1")
     seed_world()
     await server.tool_spawn_run({"project": "chitauri", "prompt": "add a refusal list to the step checker"})
     prompt = ex.spawned[0]["prompt"]

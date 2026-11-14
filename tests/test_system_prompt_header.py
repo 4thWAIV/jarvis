@@ -39,6 +39,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -268,7 +269,7 @@ def test_the_server_supplies_names_that_are_already_ordinary(monkeypatch,
     """
     import importlib
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

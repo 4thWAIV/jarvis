@@ -45,8 +45,11 @@ def test_a_copy_outside_a_checkout_uses_the_installed_root(tmp_path):
     site = tmp_path / "Prog Fïles é" / "site"
     (site / "jarvis").mkdir(parents=True)
     (site / "jarvis" / "__init__.py").write_text("")
-    src = Path(__file__).resolve().parent.parent / "jarvis" / "data_paths.py"
-    (site / "jarvis" / "data_paths.py").write_bytes(src.read_bytes())
+    package = Path(__file__).resolve().parent.parent / "jarvis"
+    # data_paths and the one environment reader it asks (env_names, which
+    # lists the settings by settings_specs), as an installed copy has them.
+    for name in ("data_paths.py", "env_names.py", "settings_specs.py"):
+        (site / "jarvis" / name).write_bytes((package / name).read_bytes())
     data = tmp_path / "dåta é"
     code = ("import sys, json; sys.path.insert(0, sys.argv[1]); "
             "from jarvis import data_paths as d; "

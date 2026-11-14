@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from jarvis import spoken_words
 from jarvis.speech import SentenceSplitter
 from tests.test_system_prompt_header import assert_prompt_is_jarviss_own
+from tests.settings_fixtures import hold_setting
 
 REPO = Path(__file__).parent.parent
 
@@ -85,7 +86,7 @@ def _capture_synth(server, monkeypatch):
         return None
 
     monkeypatch.setattr(server.tts, "synthesize_chunk", synth)
-    monkeypatch.setattr(server, "FISH_API_KEY", "key")
+    hold_setting("fish_api_key", "key")
     return calls
 
 

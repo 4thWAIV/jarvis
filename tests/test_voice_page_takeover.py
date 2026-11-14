@@ -29,6 +29,7 @@ from tests.test_voice_page_packages import _through, jarvis_app  # noqa: F401
 from tests.test_voice_page_workflows import _Server, _Sessions
 from tests.voice_page_input import start_listening
 from tests.fixtures.waiting import settled, until_async
+from tests.settings_fixtures import hold_setting
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -254,7 +255,7 @@ def room_app(monkeypatch, tmp_path):
     page loads the story helper and keeps every `layout` it is told, and
     one marked "wide"."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    hold_setting("brain_autostart", "0")
     import importlib
     from jarvis import data_paths, run_store, work_packages
     importlib.reload(data_paths)

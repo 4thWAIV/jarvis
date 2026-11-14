@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
+from tests.settings_fixtures import hold_setting
 
 
 def test_read_roster_unions_both_roots_and_parses_every_observed_field(tmp_path):
@@ -241,7 +242,7 @@ def test_project_name_is_unaffected_for_a_normal_non_worktree_path():
 
 
 def test_config_roots_includes_both_defaults_and_the_env_extras(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", f"{tmp_path}/x{os.pathsep}{tmp_path}/y")
+    hold_setting("claude_config_dirs", f"{tmp_path}/x{os.pathsep}{tmp_path}/y")
     roots = sw.config_roots()
     names = [r.name for r in roots]
     assert ".claude" in names and ".claude-orcha" in names

@@ -47,6 +47,21 @@ export function reloadAfterRestart(said: string): void {
   setTimeout(() => window.location.reload(), RELOAD_AFTER_MS);
 }
 
+/** Restart the server: the menu's Restart Server and Settings, Server's
+ *  Restart now. Only a restart the server took reloads the page; one it
+ *  refused (the records still moving, a 403) or never answered is said. */
+export async function restartServer(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/restart", { method: "POST" });
+    if (res.ok) {
+      reloadAfterRestart(t("menu.restarting"));
+      return true;
+    }
+  } catch { /* no answer: said below */ }
+  notice("Status", t("menu.restartFailed"));
+  return false;
+}
+
 const SOCKET = { rail: "rail.right", side: "right" } as const;
 
 export function MenuControl() {
@@ -66,12 +81,7 @@ export function MenuControl() {
 
   const restart = async () => {
     closeMenu();
-    try {
-      await fetch("/api/restart", { method: "POST" });
-      reloadAfterRestart(t("menu.restarting"));
-    } catch {
-      notice("Status", t("menu.restartFailed"));
-    }
+    await restartServer();
   };
 
   // The click that opens it must not reach the document's listener that

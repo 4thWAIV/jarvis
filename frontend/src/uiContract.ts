@@ -1176,8 +1176,11 @@ export const UI_CONTRACT = {
             "you",
             "voice",
             "brains",
+            "agents",
+            "projects",
             "team",
             "knowledge",
+            "safety",
             "updates",
             "server"
           ]
@@ -1215,8 +1218,11 @@ export const UI_CONTRACT = {
             "you",
             "voice",
             "brains",
+            "agents",
+            "projects",
             "team",
             "knowledge",
+            "safety",
             "updates",
             "server"
           ]
@@ -3110,8 +3116,11 @@ export const UI_CONTRACT = {
         "you",
         "voice",
         "brains",
+        "agents",
+        "projects",
         "team",
         "knowledge",
+        "safety",
         "updates",
         "server"
       ],
@@ -3219,7 +3228,45 @@ export const UI_CONTRACT = {
         "engineRun",
         "engineBuild",
         "engineAgentPackage",
-        "engineOverride"
+        "engineOverride",
+        "weatherLocationLabel",
+        "weatherLatitude",
+        "weatherLongitude",
+        "weatherUnit",
+        "defaultBrowser",
+        "muteMicDuringSpeech",
+        "sttModelDir",
+        "brainEffort",
+        "brainTurnTimeout",
+        "brainContextBudget",
+        "claudePath",
+        "codexPath",
+        "usagePoll",
+        "runTimeoutSec",
+        "runIdleSec",
+        "skipPermissions",
+        "steerCancelWindow",
+        "claudeConfigDirs",
+        "codexSessionsHome",
+        "watchInterval",
+        "specsPoll",
+        "projectsDir",
+        "projectRoots",
+        "scanBudget",
+        "scanCache",
+        "runContext",
+        "folders",
+        "folderDiscovery",
+        "knowledgeMemoryMb",
+        "refuseUntrustedActions",
+        "teamDevServers",
+        "serverHost",
+        "serverPortChoice",
+        "serverHttps",
+        "brainAutostart",
+        "allowedOrigins",
+        "debugDocs",
+        "restartNow"
       ],
       "presentations": [
         {
@@ -5113,8 +5160,8 @@ export interface CommandArgs {
   "reminder.later": { };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
   "settings.close": { };
-  "settings.open": { section?: "you" | "voice" | "brains" | "team" | "knowledge" | "updates" | "server"; setup?: boolean; };
-  "settings.section": { section: "you" | "voice" | "brains" | "team" | "knowledge" | "updates" | "server"; };
+  "settings.open": { section?: "you" | "voice" | "brains" | "agents" | "projects" | "team" | "knowledge" | "safety" | "updates" | "server"; setup?: boolean; };
+  "settings.section": { section: "you" | "voice" | "brains" | "agents" | "projects" | "team" | "knowledge" | "safety" | "updates" | "server"; };
   "subagent.open": { sessionId: string; agentId: string; };
   "subsystem.close": { };
   "subsystem.open": { subsystemId: string; };

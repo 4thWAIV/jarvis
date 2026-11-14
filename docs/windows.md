@@ -67,7 +67,7 @@ from Settings):
 .\.venv\Scripts\python.exe -m jarvis.background stop
 ```
 
-- `start` launches the backend (`python -m jarvis --host 127.0.0.1`) and
+- `start` launches the backend (`python -m jarvis`) and
   Vite, each in its own hidden console, so closing the PowerShell window
   that ran it leaves both running. It waits until both answer, then prints
   where they are. It refuses while either already runs, and while port 8340
@@ -92,7 +92,7 @@ shared folder): clone it again under your user profile.
 To run in the foreground instead, two windows:
 
 ```powershell
-.\.venv\Scripts\python.exe -m jarvis --host 127.0.0.1
+.\.venv\Scripts\python.exe -m jarvis
 ```
 
 ```powershell

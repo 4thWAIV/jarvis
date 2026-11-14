@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixtures.waiting import until, until_async
+from tests.settings_fixtures import hold_setting
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -36,7 +37,7 @@ class FakeBrain:
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("FISH_API_KEY", "fish-test")
+    hold_setting("fish_api_key", "fish-test")
     from jarvis import data_paths
     importlib.reload(data_paths)
     from jarvis import run_store

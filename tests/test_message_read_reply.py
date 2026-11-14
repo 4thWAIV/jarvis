@@ -5,8 +5,13 @@ message to him is one record (conversation_log), and the page's Read and
 Reply and the brain's read_aloud and reply act on it by its id, through the
 same functions: an agent's own message (the signed route, `_record_message`),
 an agent's answer, a decision, a package, a person's message. Session
-message files and needs boards are gone (round 3). Nothing here reads a
-real data/.
+message files and needs boards are gone (round 3).
+
+His Read is a turn of his ("Read me message 42."), never words spoken past
+the brain (docs/planning/brain-reads/design.md): the brain reads the message
+with read_aloud and reads it to him in its reply, so it knows what he
+heard; the message is read, and its update seen, only once that reply has
+been heard in full. Nothing here reads a real data/.
 """
 
 import asyncio
@@ -84,39 +89,106 @@ def _message_of(client, kind: str, source) -> int:
     return entry["message"]
 
 
-def test_read_speaks_that_one_message_and_it_is_seen_once_heard(server, monkeypatch, attention):
+def _asked(server, monkeypatch) -> list:
+    """The turns of his that reach the brain, by their words: what his Read
+    asks for. The brain's turn itself is not run."""
+    asked = []
+
+    def handle(text, heard=None):
+        asked.append(text)
+
+        async def nothing():
+            return None
+        return nothing()
+    monkeypatch.setattr(server, "_handle_utterance", handle)
+    return asked
+
+
+def _read_on_his_turn(server, monkeypatch, item_id, heard=True) -> str:
+    """The brain's read_aloud on a turn he drove, then that turn's reply
+    heard in full (`heard`) or cut short: what the tool gave the brain."""
+    reads = []
+    monkeypatch.setattr(server, "_turn_reads", reads)
+    monkeypatch.setattr(server, "brain_instance", SimpleNamespace(current_origin="user"))
+    out = asyncio.run(server.tool_read_aloud({"message": item_id}))
+    server._seen_once_heard(reads, SimpleNamespace(chunks=["Agent Guard writes: ..."]), heard)
+    return out
+
+
+def test_read_asks_the_brain_for_that_one_message_and_speaks_nothing(server, monkeypatch,
+                                                                     attention):
     from fastapi.testclient import TestClient
     m = _taken(server, monkeypatch, attention)
+    asked = _asked(server, monkeypatch)
     client = TestClient(server.app)
-    item = m.id
-    r = client.post(f"/api/messages/{item}/read", headers=ORIGIN)
-    assert r.status_code == 200 and r.json()["reading"], r.text
-    assert server.said == ["Agent Guard writes: Status. All good."], "that message only"
-    assert server.conversation_log.get(item).state == "read", "read once heard in full"
+    r = client.post(f"/api/messages/{m.id}/read", headers=ORIGIN)
+    assert r.status_code == 200 and r.json() == {"id": m.id, "asking": True}, r.text
+    assert asked == [f"Read me message {m.id}."], "one turn of his, naming the exact message"
+    assert server.said == [], "nothing is spoken past the brain"
+    [turn] = [i for i in server.conversation_log.page() if i.kind == "typed"]
+    assert (turn.text, turn.detail["via"], turn.detail["message"]) == (
+        f"Read me message {m.id}.", "read", m.id), "his request, on record with the id"
+    assert server._message_on == m.id
+    assert server.conversation_log.get(m.id).state == "new", "asking is not hearing it"
+    (entry,) = attention.items(("pending", "seen", "resolved"))
+    assert entry.state == "pending"
+    assert client.post("/api/messages/999/read", headers=ORIGIN).status_code == 404
+    assert client.post(f"/api/messages/{m.id}/read").status_code == 403, "his click only"
+    assert asked == [f"Read me message {m.id}."]
+
+
+def test_read_with_no_voice_is_refused_and_asks_nothing(server, monkeypatch, attention):
+    from fastapi.testclient import TestClient
+    m = _taken(server, monkeypatch, attention)
+    asked = _asked(server, monkeypatch)
+    monkeypatch.setattr(server, "speech", None)
+    r = TestClient(server.app).post(f"/api/messages/{m.id}/read", headers=ORIGIN)
+    assert r.status_code == 409 and asked == []
+
+
+def test_read_is_asked_in_the_language_in_force(server, monkeypatch, attention, spanish):
+    from fastapi.testclient import TestClient
+    m = _taken(server, monkeypatch, attention)
+    asked = _asked(server, monkeypatch)
+    TestClient(server.app).post(f"/api/messages/{m.id}/read", headers=ORIGIN)
+    assert asked == [f"Léeme el mensaje {m.id}."]
+
+
+def test_the_brain_is_given_that_message_to_read_and_it_is_read_once_heard(server, monkeypatch,
+                                                                         attention):
+    m = _taken(server, monkeypatch, attention)
+    out = _read_on_his_turn(server, monkeypatch, m.id)
+    head, _, block = out.partition("\n")
+    assert head.startswith(f"Message {m.id}, at {server.messages_api.local_time(m.at)} (his local "
+                           f"time, today ") and "sum it up" in head
+    assert "Agent Guard" not in head and "All good" not in head, "the sender's words are walled"
+    assert block.startswith("<session-output") and 'untrusted="true"' in block
+    assert "Agent Guard" in block and "Status\\n\\nAll good." in block
+    assert server.said == [], "the brain reads it, in its own reply"
+    assert server.conversation_log.get(m.id).state == "read", "read once heard in full"
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "seen"
-    assert client.post("/api/messages/999/read", headers=ORIGIN).status_code == 404
-    assert client.post(f"/api/messages/{item}/read").status_code == 403, "his click only"
 
 
-def test_read_cut_off_leaves_the_entry_pending(server, monkeypatch, attention):
-    from fastapi.testclient import TestClient
+def test_a_reply_cut_off_leaves_the_message_new_and_its_entry_pending(server, monkeypatch,
+                                                                      attention):
     m = _taken(server, monkeypatch, attention)
-    server.speech.heard = False
-    client = TestClient(server.app)
-    client.post(f"/api/messages/{m.id}/read", headers=ORIGIN)
+    _read_on_his_turn(server, monkeypatch, m.id, heard=False)
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "pending"
     assert server.conversation_log.get(m.id).state == "new"
 
 
-def test_the_brain_reads_it_aloud_through_the_same_call(server, monkeypatch, attention):
+def test_the_route_and_the_tool_name_a_message_through_the_one_resolver(server):
     import inspect
-    m = _taken(server, monkeypatch, attention)
-    said = asyncio.run(server.tool_read_aloud({"message": m.id}))
-    assert said.startswith("Reading message") and server.said == ["Agent Guard writes: Status. All good."]
-    assert "read_aloud(" in inspect.getsource(server.api_read_message)
-    assert "read_aloud(" in inspect.getsource(server.tool_read_aloud)
+    assert "_message_to_him" in inspect.getsource(server.api_read_message)
+    assert "messages_api.resolve(" in inspect.getsource(server._message_to_him)
+    assert "messages_api.resolve(" in inspect.getsource(server._message_meant)
+    for tool in (server.tool_read_aloud, server.tool_reply, server.tool_mark_message):
+        assert "_message_meant" in inspect.getsource(tool), tool.__name__
+    assert "_message_meant" in inspect.getsource(server._carried_by)
+    assert "speech." not in inspect.getsource(server.api_read_message)
+    assert "speech." not in inspect.getsource(server.tool_read_aloud)
 
 
 def test_reply_is_a_capture_to_its_sender_read_back_and_sent_on_his_yes(server, monkeypatch,
@@ -176,23 +248,24 @@ def _answered(server, monkeypatch, attention, reply="Done: all tests pass."):
     return _message_of(TestClient(server.app), "agent_message", mid)
 
 
-def test_read_speaks_an_agent_s_answer_and_it_is_seen_once_heard(server, monkeypatch, attention):
+def test_the_brain_reads_an_agent_s_answer_and_it_is_seen_once_heard(server, monkeypatch,
+                                                                    attention):
     from fastapi.testclient import TestClient
     item = _answered(server, monkeypatch, attention)
+    asked = _asked(server, monkeypatch)
     client = TestClient(server.app)
-    r = client.post(f"/api/messages/{item}/read", headers=ORIGIN)
-    assert r.status_code == 200 and r.json()["reading"], r.text
-    assert server.said == ["Agent Guard answers: Done: all tests pass."], "that answer only"
+    assert client.post(f"/api/messages/{item}/read", headers=ORIGIN).status_code == 200
+    assert asked == [f"Read me message {item}."]
+    out = _read_on_his_turn(server, monkeypatch, item)
+    assert "Done: all tests pass." in out.partition("\n")[2], "that answer only"
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "seen"
     assert client.post(f"/api/messages/{item}/read").status_code == 403, "his click only"
 
 
 def test_an_answer_cut_off_stays_pending(server, monkeypatch, attention):
-    from fastapi.testclient import TestClient
     item = _answered(server, monkeypatch, attention)
-    server.speech.heard = False
-    TestClient(server.app).post(f"/api/messages/{item}/read", headers=ORIGIN)
+    _read_on_his_turn(server, monkeypatch, item, heard=False)
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "pending"
 
@@ -219,8 +292,8 @@ def test_the_brain_finds_the_message_in_its_updates(server, monkeypatch, attenti
     out = asyncio.run(server.tool_attention_updates({}))
     assert f'"message":{item}' in out
     said = asyncio.run(server.tool_read_aloud({"message": item}))
-    assert said.startswith("Reading message") and server.said == [
-        "Agent Guard answers: Done: all tests pass."]
+    assert said.startswith(f"Message {item},") and "Done: all tests pass." in said
+    assert server.said == []
 
 
 # --- one channel, phase 3: the same Read and Reply for every channel's message -------
@@ -247,8 +320,8 @@ def test_a_decision_is_read_aloud_and_replied_to_through_its_asking_key(server, 
     attention.record("work", "work-1", "decision_needed", untrusted={"work": "Speech"})
     client = TestClient(server.app)
     assert _message_of(client, "work", "work-1") == item.id
-    client.post(f"/api/messages/{item.id}/read", headers=ORIGIN)
-    assert server.said == ["Decision needed on Speech: Which model?"]
+    out = _read_on_his_turn(server, monkeypatch, item.id)
+    assert "Decision needed on Speech: Which model?" in out.partition("\n")[2]
     (entry,) = attention.items(("pending", "seen", "resolved"))
     assert entry.state == "seen"
     r = client.post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
@@ -283,8 +356,9 @@ def test_a_person_s_message_is_read_aloud_and_replied_to_as_a_draft(server, monk
                     "team_server", cl.Source.PERSON_MESSAGE, mid)
     attention.record("arrival", mid, "arrived", untrusted={"sender": "Ana"})
     client = TestClient(server.app)
-    client.post(f"/api/messages/{_message_of(client, 'arrival', mid)}/read", headers=ORIGIN)
-    assert server.said == ["Ana writes: Lunch. At noon?"]
+    out = _read_on_his_turn(server, monkeypatch, _message_of(client, "arrival", mid))
+    assert "Ana" in out.partition("\n")[2] and "Lunch\\n\\nAt noon?" in out
+    assert attention.get("arrival", mid).state == "seen"
     r = client.post(f"/api/messages/{item.id}/reply", headers=ORIGIN)
     assert r.status_code == 200 and r.json() == {"capture": None, "to": "Ana"}
     assert f"reply_to {mid}" in server._with_notes_for_brain("")

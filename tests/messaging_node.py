@@ -4,11 +4,11 @@ its messaging, paired to a local team server, in its own data directory.
 
     python -m tests.messaging_node        (from the checkout's root)
 
-Its environment names the data directory, the env file and the team
-server and its own loopback port (JARVIS_DATA_DIR, JARVIS_ENV_FILE,
-JARVIS_TEAM_DEV_SERVERS, JARVIS_PORT,
-JARVIS_BRAIN_AUTOSTART=0); the saved team connection is already in the data
-directory. The device session's credential arrives as one line on stdin
+Its environment names the data directory, the env file and its own
+loopback port (JARVIS_DATA_DIR, JARVIS_ENV_FILE, JARVIS_PORT), and the
+settings it holds for this process (MESSAGING_NODE_SETTINGS, JSON: the team
+server as a local team server, no brain); the saved team connection is
+already in the data directory. The device session's credential arrives as one line on stdin
 and is kept in memory only (never the Keychain, never an argument).
 
 Nothing here reaches outside the test: the session watcher (which reads
@@ -17,6 +17,7 @@ the brain account refresh are not started.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -44,6 +45,9 @@ async def _nothing(*args, **kwargs):
 
 def main() -> None:
     secret = sys.stdin.readline().strip()
+    from jarvis import settings_service
+    for key, value in json.loads(os.environ.get("MESSAGING_NODE_SETTINGS", "{}")).items():
+        settings_service.hold(key, value)
     from jarvis import team_client
     team_client.connection = team_client.TeamConnection(store=_Secrets(secret))
     team_client.KeychainStore = None          # nothing may reach the real Keychain

@@ -18,6 +18,7 @@ import pytest
 
 from jarvis import preflight
 from jarvis.preflight import Check, STATUS_FAIL, STATUS_OK, STATUS_WARN
+from tests.settings_fixtures import hold_setting, default_setting
 
 
 def _fake_run_subprocess(responses):
@@ -402,13 +403,13 @@ def test_the_startup_check_never_takes_a_picture(monkeypatch):
 # --- FISH_API_KEY -------------------------------------------------------------
 
 def test_fish_api_key_present(monkeypatch):
-    monkeypatch.setenv("FISH_API_KEY", "sk-fish-abc123")
+    hold_setting("fish_api_key", "sk-fish-abc123")
     check = preflight._check_fish_api_key_sync()
     assert check.status == STATUS_OK
 
 
 def test_fish_api_key_absent(monkeypatch):
-    monkeypatch.delenv("FISH_API_KEY", raising=False)
+    default_setting("fish_api_key")
     check = preflight._check_fish_api_key_sync()
     assert check.status == STATUS_FAIL
     assert check.remedy
@@ -534,7 +535,7 @@ async def test_run_checks_never_raises_even_with_a_broken_check(monkeypatch):
 async def test_run_checks_runs_all_registered_checks(monkeypatch):
     monkeypatch.setattr(preflight.shutil, "which", lambda name: None)  # claude missing -> fast fail
     monkeypatch.setattr(preflight.sys, "platform", "linux")  # accessibility skipped -> fast warn
-    monkeypatch.delenv("FISH_API_KEY", raising=False)
+    default_setting("fish_api_key")
     monkeypatch.setattr(preflight, "_settings_path", lambda: preflight.Path("/nonexistent/settings.json"))
     from jarvis import session_skill
     monkeypatch.setattr(session_skill, "status", lambda: {})  # never the real ~/.claude
@@ -554,7 +555,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
 
 def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(preflight.sys, "platform", "darwin")
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
+    hold_setting("stt_model_dir", str(tmp_path / "no-model"))
     check = preflight._check_speech_input_sync()
     assert check.status == STATUS_WARN
     assert "setup_speech_input.py" in check.remedy
@@ -563,7 +564,7 @@ def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypa
 
 def test_speech_input_on_windows_names_the_settings_path_when_the_model_is_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(preflight.sys, "platform", "win32")
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
+    hold_setting("stt_model_dir", str(tmp_path / "no-model"))
     check = preflight._check_speech_input_sync()
     assert check.status == STATUS_WARN
     assert check.remedy == "Install it in JARVIS's Settings, Voice and language (English speech model)."
@@ -577,7 +578,7 @@ def test_speech_input_is_ok_with_every_model_file_and_loads_nothing(monkeypatch,
     folder.mkdir()
     for name in transcriber.MODEL_FILES:
         (folder / name).write_text("x")
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path))
+    hold_setting("stt_model_dir", str(tmp_path))
     monkeypatch.setattr(transcriber, "SherpaEngine", None)   # building one would fail
     assert preflight._check_speech_input_sync().status == STATUS_OK
 

@@ -45,12 +45,6 @@ def client(monkeypatch, tmp_path):
     importlib.reload(server)
     run_store.init_db()
 
-    # Redirect .env reads/writes to an isolated file so these tests never
-    # touch the real project .env.
-    env_file = tmp_path / ".env"
-    env_file.write_text("")
-    monkeypatch.setattr(server, "_env_file_path", lambda: env_file)
-
     with TestClient(server.app,
                     headers={"Origin": "http://localhost:5173"}) as c:
         yield c, server
@@ -134,9 +128,8 @@ def test_lifespan_no_longer_warns_about_a_missing_api_key():
 # ---------------------------------------------------------------------------
 
 def test_settings_keys_rejects_the_workspace_id(client):
-    """Nothing reads ANTHROPIC_WORKSPACE_ID any more, and writing it into
-    `.env` would trip preflight's own anthropic_key_leftover warning. The
-    endpoint must not offer to create that state."""
+    """Nothing reads ANTHROPIC_WORKSPACE_ID any more. The endpoint must not
+    offer to keep it."""
     c, server = client
     r = c.post("/api/settings/keys", json={
         "key_name": "ANTHROPIC_WORKSPACE_ID",
@@ -144,8 +137,6 @@ def test_settings_keys_rejects_the_workspace_id(client):
     })
     assert r.status_code == 400
     assert r.json()["success"] is False
-    _, parsed = server._read_env()
-    assert "ANTHROPIC_WORKSPACE_ID" not in parsed
 
 
 def test_settings_keys_rejects_unknown_name(client):
@@ -160,17 +151,14 @@ def test_settings_keys_rejects_unknown_name(client):
 
 def test_settings_keys_still_accepts_the_keys_jarvis_actually_uses(client):
     c, server = client
-    for name, value in (("FISH_API_KEY", "fish-abc"),
-                        ("FISH_VOICE_ID", "voice-abc"),
-                        ("USER_NAME", "Tony"),
-                        ("HONORIFIC", "sir")):
+    from jarvis import settings_service
+    for name, value in (("fish_api_key", "fish-abc"), ("fish_voice_id", "voice-abc")):
         r = c.post("/api/settings/keys",
                    json={"key_name": name, "key_value": value})
         assert r.status_code == 200, name
         assert r.json()["success"] is True
-    _, parsed = server._read_env()
-    assert parsed["FISH_API_KEY"] == "fish-abc"
-    assert parsed["USER_NAME"] == "Tony"
+    assert settings_service.value("fish_api_key") == "fish-abc"
+    assert settings_service.value("fish_voice_id") == "voice-abc"
 
 
 def test_settings_status_does_not_report_a_workspace_id(client):

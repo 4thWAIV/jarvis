@@ -82,8 +82,7 @@ def language_rule(language: str, honorific: Optional[str], explicit: bool = Fals
 #     `~/.claude/sessions/<pid>.json`. `session_watch._parse_entry` never
 #     stats that cwd, so the directory need not exist — a roster entry can
 #     claim any name at all, of any length, any number of times.
-#   * the USER NAME, out of `USER_NAME` in the `.env` the settings endpoints
-#     write.
+#   * the USER NAME, Settings, You (`user_name`).
 #   * the TAINT LABEL, which for one of the user's own MCP servers is
 #     `name.split("__")[1]` — a server name, not a word this repository chose.
 #
@@ -191,21 +190,23 @@ class BrainConfig:
 
     @classmethod
     def from_env(cls, home: Path) -> "BrainConfig":
-        # The page's choice (brains.json), unless .env names one.
-        from jarvis import brains_config
-        provider = os.getenv("JARVIS_BRAIN_PROVIDER") or brains_config.load()["default"]
+        # The page's choices: the brain and its model (brains.json), the rest
+        # Settings (settings_service).
+        from jarvis import brains_config, settings_service
+        provider = brains_config.load()["default"]
+        value = settings_service.value
         return cls(
             home=home,
             provider=provider,
-            model=(os.getenv("JARVIS_BRAIN_MODEL") or brains_config.model_for(provider)
+            model=(brains_config.model_for(provider)
                    or brain_provider.provider(provider).default_model),
-            effort=os.getenv("JARVIS_BRAIN_EFFORT", "low"),
-            claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
-            codex_path=os.getenv("JARVIS_CODEX_PATH") or None,
-            turn_timeout=float(os.getenv("JARVIS_BRAIN_TURN_TIMEOUT", "90")),
-            context_budget=int(os.getenv("JARVIS_BRAIN_CONTEXT_BUDGET", "900000")),
-            user_name=os.getenv("USER_NAME", ""),
-            honorific=os.getenv("HONORIFIC", ""),
+            effort=value("brain_effort"),
+            claude_path=value("claude_path") or None,
+            codex_path=value("codex_path") or None,
+            turn_timeout=float(value("brain_turn_timeout")),
+            context_budget=int(value("brain_context_budget")),
+            user_name=value("user_name"),
+            honorific=value("honorific"),
         )
 
 
@@ -569,7 +570,7 @@ class Brain:
 
     def launch_prompt(self) -> str:
         now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
-        # `USER_NAME` out of the `.env` the settings endpoints write. It is
+        # His name, Settings, You (`user_name`). It is
         # the user's own value and it is still a header line: an ordinary
         # name goes in, anything else is left out rather than substituted.
         said_name = plain_phrase(self.config.user_name) if self.config.user_name else None

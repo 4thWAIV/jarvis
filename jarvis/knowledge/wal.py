@@ -64,7 +64,8 @@ EPHEMERAL_ENV = "JARVIS_ENGINE_EPHEMERAL"
 def ephemeral() -> bool:
     """A throwaway engine (the test suite's, `JARVIS_ENGINE_EPHEMERAL=1`)
     never waits for the drive: every fsync is skipped. Never set in use."""
-    return os.environ.get(EPHEMERAL_ENV) == "1"
+    from jarvis import env_names
+    return env_names.read(EPHEMERAL_ENV) == "1"
 
 
 def fsync(fd: int) -> None:

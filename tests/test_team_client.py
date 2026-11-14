@@ -18,6 +18,7 @@ import pytest
 from jarvis import data_paths, team_client
 from jarvis.team_client import TeamConnection, TeamError
 from tests.fixtures.waiting import until_async
+from tests.settings_fixtures import hold_setting
 
 URL = "https://team.example"
 SERVER_ID = "srv-1"
@@ -133,7 +134,7 @@ def test_url_normalized():
 def test_dev_exception_is_explicit(monkeypatch):
     with pytest.raises(TeamError):
         team_client.normalize_url("http://127.0.0.1:18080")
-    monkeypatch.setenv("JARVIS_TEAM_DEV_SERVERS", "http://127.0.0.1:18080")
+    hold_setting("team_dev_servers", "http://127.0.0.1:18080")
     assert team_client.normalize_url("http://127.0.0.1:18080") == "http://127.0.0.1:18080"
 
 

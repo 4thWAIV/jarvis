@@ -14,6 +14,7 @@ from jarvis import attachment_locations, data_paths
 from jarvis import messaging_wire as wire
 from jarvis.attachment_locations import AttachmentLocations
 from tests.test_messaging_files import MATT, SERVER, TIM, World, chunks
+from tests.settings_fixtures import hold_setting
 
 NODE = "00000000-0000-4000-8000-00000000c0de"
 
@@ -492,7 +493,7 @@ def _spawn_world(wired, monkeypatch, project: Path, skip: bool):
     monkeypatch.setattr(server, "_resolve_project_or_explain",
                         lambda ref: ("proj", str(project), None))
     monkeypatch.setattr(server, "_live_session_redirect", lambda *a: None)
-    monkeypatch.setattr(server, "_SKIP_PERMISSIONS", skip)
+    hold_setting("skip_permissions", skip)
     return w, loc, message_id, ref, spawned
 
 
@@ -557,7 +558,7 @@ def test_a_package_s_agent_is_handed_the_zip_it_was_unpacked_from(wired, monkeyp
         spawned.append(prompt)
         return "run-1"
     monkeypatch.setattr(wired.server.run_executor_instance, "spawn", fake_spawn)
-    monkeypatch.setattr(wired.server, "_SKIP_PERMISSIONS", True)
+    hold_setting("skip_permissions", True)
     from jarvis import work_packages
     package = work_packages.find("stats").id
     assert "Started" in _call(wired, "run_package_agent", package=package)["text"]

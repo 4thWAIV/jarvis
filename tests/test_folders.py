@@ -20,6 +20,7 @@ from jarvis import (data_paths, folder_discovery, folder_policy, folder_readers,
 from jarvis.folder_contract import FolderError, Reader, TEXT_MAX_LINES
 from jarvis.folder_service import FolderService
 from jarvis.folder_store import FolderStore
+from jarvis import settings_service
 
 NODE = "node-a"
 
@@ -236,7 +237,7 @@ def test_a_provider_home_is_read_only_through_its_history_reader(svc, claude_roo
 
 
 def test_a_codex_home_opens_only_its_sessions(svc, tmp_path):
-    home = Path(os.environ["JARVIS_CODEX_SESSIONS_HOME"])
+    home = Path(settings_service.value("codex_sessions_home"))
     _tree(home, {"auth.json": "{}", "sessions/2026/10/30/rollout-x.jsonl": "", "config.toml": ""})
     assert _err(svc.register, request_key="a", path=str(home)) == "forbidden"
     f = _register(svc, home / "sessions")["folder"]
@@ -627,7 +628,7 @@ def test_ignore_persists_until_the_evidence_changes(svc, store, claude_root, tmp
     assert cand["id"] not in {c["id"] for c in svc.candidates()["candidates"]}
     assert cand["id"] in {c["id"] for c in svc.candidates(state="ignored")["candidates"]}
     # Codex now works there too: new evidence brings it back.
-    _codex_db(Path(os.environ["JARVIS_CODEX_SESSIONS_HOME"]), [("t1", str(work))])
+    _codex_db(Path(settings_service.value("codex_sessions_home")), [("t1", str(work))])
     folder_discovery.discover(store, NODE)
     assert cand["id"] in {c["id"] for c in svc.candidates()["candidates"]}
     svc.candidate_action(cand["id"], "ignore")
@@ -653,11 +654,11 @@ def _codex_db(home: Path, threads: list[tuple[str, str]]) -> None:
 def test_codex_threads_are_discovered_from_the_user_s_home_only(svc, store, claude_root,
                                                                 tmp_path):
     work = _tree(tmp_path / "work" / "eta", {})
-    _codex_db(Path(os.environ["JARVIS_CODEX_SESSIONS_HOME"]), [("t9", str(work))])
+    _codex_db(Path(settings_service.value("codex_sessions_home")), [("t9", str(work))])
     folder_discovery.discover(store, NODE)
     paths = {c["path"] for c in svc.candidates()["candidates"]}
     assert os.path.realpath(work) in paths
-    sessions = os.path.realpath(Path(os.environ["JARVIS_CODEX_SESSIONS_HOME"]) / "sessions")
+    sessions = os.path.realpath(Path(settings_service.value("codex_sessions_home")) / "sessions")
     assert sessions in paths
     f = _register(svc, work)["folder"]
     s = svc.detail(f["id"])["sessions"][0]
