@@ -409,10 +409,42 @@ class Store:
     def get(self, family: int, key: bytes, at: Optional[int] = None) -> Optional[Version]:
         """The newest version at or below `at`, or None; a tombstone comes
         back as a Version whose value is None."""
-        for v in self.versions(family, key):
-            if at is None or v.lsn <= at:
-                return v
-        return None
+        return self.newest(family, key, at)
+
+    def newest(self, family: int, key: bytes, at: Optional[int] = None, *,
+               live: bool = False) -> Optional[Version]:
+        """The newest version of `key` at or below `at` (with `live`, the
+        newest that is not a tombstone), read without the rest of its
+        history: the memtables first, then the segments newest first by
+        their highest LSN, stopping once no segment left can hold a newer
+        version than the one found. An item rewritten thousands of times
+        keeps every version (`HISTORY_FAMILIES`), so collecting them all
+        from every segment, as `versions` does, made each read of it
+        slower with every write."""
+        mems, segs = self._sources(family)
+        best: Optional[Version] = None
+
+        def take(found: Iterable[Version]) -> None:
+            nonlocal best
+            for v in found:  # newest first in every source
+                if (at is None or v.lsn <= at) and not (live and v.value is None):
+                    if best is None or v.lsn > best.lsn:
+                        best = v
+                    return
+
+        for mem in mems:
+            with self._lock:
+                found = mem.versions_of(family, key)
+            take(found)
+        for _, seg in sorted(segs, key=lambda gs: -gs[1].lsn_max):
+            if best is not None and seg.lsn_max <= best.lsn:
+                break
+            if at is not None and seg.lsn_min > at:
+                continue
+            found = seg.newest(key, at, live)
+            if found is not None and (best is None or found.lsn > best.lsn):
+                best = found
+        return best
 
     def value(self, family: int, key: bytes, at: Optional[int] = None) -> Optional[bytes]:
         v = self.get(family, key, at)

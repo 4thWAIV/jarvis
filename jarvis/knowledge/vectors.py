@@ -650,11 +650,8 @@ class VectorIndex:
     def _delete_ops(self, key: bytes, ordinal: Optional[int]) -> list[Op]:
         if ordinal is None:
             return []
-        doc = None
-        for v in self.store.versions(DOCS, key):
-            if v.value is not None:
-                doc = decode_doc(v.value)[1]
-                break
+        v = self.store.newest(DOCS, key, live=True)
+        doc = None if v is None else decode_doc(v.value)[1]
         if doc is not None and doc["_kind"] == kinds.ITEM:
             return self.item_tombstones(ordinal)
         prop = embedded_prop(doc["_kind"]) if doc else None
@@ -686,19 +683,19 @@ class VectorIndex:
             o = self.docs._ord_from_store(key)
             if o is None:
                 continue
-            for v in self.store.versions(DOCS, key):
-                if v.value is not None:
-                    kind_name = decode_doc(v.value)[1]["_kind"]
-                    if kind_name == kinds.ITEM:
-                        out |= {vec_key(name, o, item_prop(p)) for name, space in self.spaces.items()
-                                if is_item_space(name) for p in space.props.get(o, ())}
-                        break
-                    prop = embedded_prop(kind_name)
-                    if prop:
-                        out |= {vec_key(name, o, prop) for name in self.spaces if not is_item_space(name)}
-                        if self.space_id:
-                            out.add(vec_key(self.space_id, o, prop))
-                    break
+            v = self.store.newest(DOCS, key, live=True)
+            if v is None:
+                continue
+            kind_name = decode_doc(v.value)[1]["_kind"]
+            if kind_name == kinds.ITEM:
+                out |= {vec_key(name, o, item_prop(p)) for name, space in self.spaces.items()
+                        if is_item_space(name) for p in space.props.get(o, ())}
+                continue
+            prop = embedded_prop(kind_name)
+            if prop:
+                out |= {vec_key(name, o, prop) for name in self.spaces if not is_item_space(name)}
+                if self.space_id:
+                    out.add(vec_key(self.space_id, o, prop))
         return {VECS: out}
 
     # -- embedding in the background --------------------------------------------
