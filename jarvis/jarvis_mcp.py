@@ -151,6 +151,25 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "change_queued_message",
+        "description": (
+            "Cancel, or send now, a message to a session that is waiting in the queue "
+            "(list_messages says 'waiting its turn') — the agent's thread's Cancel and Send "
+            "now — only when he asks. Cancel takes it off the queue for good; it was never "
+            "sent. Send now sends it ahead of what it waits behind, but only while its "
+            "session is between turns (one message per turn): mid-turn or at a prompt it "
+            "stays queued and you are told why."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "integer",
+                            "description": "The message's number, from list_messages."},
+                "action": {"type": "string", "enum": ["cancel", "send_now"]},
+            },
+            "required": ["message", "action"],
+        },
+    },
+    {
         "name": "read_message_reply",
         "description": (
             "A session's answer to one message you sent, by the message's number, "
@@ -2720,19 +2739,29 @@ TOOL_SPECS = [
     {
         "name": "review_work",
         "description": (
-            "His review of a work item, only when he gives it, the Work view's Approve, Not "
-            "done yet and Add work: `approve` makes it done (done is his alone to give; "
-            "refused while a decision of his is open or a piece waits); `not_done` sends it "
-            "back to working with his note in `words`; `add_work` adds a new piece in his "
-            "`words`. Its agents are told."),
+            "His review of a work item, or his act on it, only when he gives it: the Work "
+            "item header's Approve, Not done yet, Add work, Release hold, Close item and "
+            "Reassign piece. `approve` makes it done (done is his alone to give; refused "
+            "while a decision of his is open or a piece waits); `not_done` sends it back to "
+            "working with his note in `words`; `add_work` adds a new piece in his `words`; "
+            "`release_hold` lets a held `piece` go on whatever holds it (omit `piece` for an "
+            "item with no pieces); `close` moves the item to History for good; `reassign` "
+            "puts a `piece` on another listed agent (`to`, as he names it). Each is recorded "
+            "as his, and its agents are told."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "item": {"type": "string", "description": "Its title as he said it, or its id."},
-                "action": {"type": "string", "enum": ["approve", "not_done", "add_work"]},
+                "action": {"type": "string", "enum": ["approve", "not_done", "add_work",
+                                                      "release_hold", "close", "reassign"]},
                 "words": {"type": "string",
                           "description": "His note (not_done) or the work to add (add_work), "
                                          "in his words."},
+                "piece": {"type": "string",
+                          "description": "The piece's key (release_hold, reassign), from "
+                                         "work_status."},
+                "to": {"type": "string",
+                       "description": "The agent to put the piece on (reassign), as he names it."},
             },
             "required": ["item", "action"],
         },

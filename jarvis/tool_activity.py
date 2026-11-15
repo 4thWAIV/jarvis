@@ -78,7 +78,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (
-        "session_detail", "read_session_reply", "list_messages",
+        "session_detail", "read_session_reply", "list_messages", "change_queued_message",
         "read_message_reply",
         "read_aloud", "reply", "messages_to_him", "mark_message",
         "capture", "read_capture", "list_captures",

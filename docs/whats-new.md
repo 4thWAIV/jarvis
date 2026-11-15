@@ -2,6 +2,27 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Work that is stuck has an owner and a way out, on the page and by voice
+
+A piece of work held on something nobody will answer no longer needs its
+agent or a terminal. A Work item's header has Release hold (a held piece goes
+on), Reassign piece (to another agent on your list) and Close item (it moves
+to History), beside Approve, Not done yet and Add work; JARVIS does the same
+when you ask by voice, and each is recorded as yours. A hold with no link to
+an answer that has lasted over a day, and a stalled item, now show in Updates
+waiting naming who holds it.
+
+A message waiting in the queue behind an earlier one has Send now and Cancel
+on the agent's thread (and by voice). Send now still waits while the session
+is in the middle of a turn, and says so.
+
+A message to a person that could not go after you approved it now shows as
+failed in the Inbox, with the reason and Retry, and in Updates waiting,
+instead of sitting as approved forever.
+
+Diagnostics now watches the Work view and the agent keys' loop: a Work view
+that could not be built shows on the Work tracker row and is tried again.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

@@ -3994,6 +3994,7 @@ export const UI_CONTRACT = {
         "blocking",
         "reports",
         "review",
+        "acts",
         "needs",
         "tab.messages",
         "tab.overview",
@@ -4040,6 +4041,7 @@ export const UI_CONTRACT = {
             "blocking",
             "reports",
             "review",
+            "acts",
             "needs",
             "tab.messages",
             "tab.overview",
@@ -4501,7 +4503,9 @@ export const UI_CONTRACT = {
         "answer",
         "agent",
         "expand",
-        "restore"
+        "restore",
+        "sendNow",
+        "cancel"
       ],
       "presentations": [
         {
@@ -4617,7 +4621,9 @@ export const UI_CONTRACT = {
         "answer",
         "agent",
         "expand",
-        "restore"
+        "restore",
+        "sendNow",
+        "cancel"
       ],
       "presentations": [
         {

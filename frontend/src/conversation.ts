@@ -102,6 +102,19 @@ export const getThread = (sessionId: string, before?: number | null) =>
   getJson<ConversationPage>(`/api/conversation/agents/${encodeURIComponent(sessionId)}`
     + (before != null ? `?before=${before}` : "")).then(noteAgents);
 
+/** His Cancel or Send now on a message waiting in the queue (the agent's
+ *  thread): POST /api/agent-messages/{id}/queued, the same call as the
+ *  brain's change_queued_message. Resolves with JARVIS's refusal, shown as
+ *  it came (Send now while the session is mid-turn says why), or null. */
+export async function changeQueued(messageId: number, action: "cancel" | "send_now"): Promise<Said | null> {
+  const res = await fetch(`/api/agent-messages/${messageId}/queued`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+  conversationChanged.set(conversationChanged.get() + 1);
+  if (res.ok) return null;
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  return body.error ? { original: body.error } : { words: () => t("main.thread.queuedRefused", { status: res.status }) };
+}
+
 /** What a message's status is called on the page. */
 export const statusWords = (status: string): string => codeWords("main.message.status", status) ?? status;
 

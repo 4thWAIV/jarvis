@@ -343,7 +343,14 @@ instead of sent (`server._message_must_wait`), and the session watcher sends
 each session's oldest queued message once it is between turns and has
 answered the one before (`SessionWatcher.send_queued`). Sent mid-turn, Claude
 Code would fold it into the turn under way and its one answer would become
-the reply to both. Queued messages survive a restart. `sent` only means the provider took it (bytes on the inbox socket,
+the reply to both. Queued messages survive a restart. A queued message has
+his Cancel and Send now on the agent's thread (`AgentThread.tsx`, through
+`RecordItem`'s `queuedActs`; `POST /api/agent-messages/{id}/queued`) and the
+brain's acting `change_queued_message`, both `server._change_queued_message`
+over `SessionWatcher.change_queued` (the same lock as `send_queued`): Cancel
+records it `cancelled`; Send now sends it ahead of what it waits behind (an
+earlier message still open or queued), but only while its session is between
+turns, else it stays queued and the refusal says why. `sent` only means the provider took it (bytes on the inbox socket,
 or `codex queue` exiting 0). The session watcher (`SessionWatcher`, given the
 store as `messages`) follows every open message on every poll through its
 session's provider: `track(session, message) -> Tracking` finds it in the
@@ -881,8 +888,25 @@ centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
 the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
-their evidence. The page changes nothing but his answers and his review,
-so the only other acting tool is `review_work`.
+their evidence. The page changes nothing but his answers, his review and
+his acts, so the only other acting tool is `review_work`. His acts on work
+nobody else can unstick are `work_api.act` (`work_store.HIS_ACTS`, in
+`HIS_KINDS`, recorded as his with `where` page or voice, never a
+reporter's): `release_hold` (`hold_released`: a held piece, or an item with
+no pieces, goes to its `--then`, ready by default, whatever holds it),
+`close` (`closed_by_him`: to History for good, its work-item keys revoked
+and its news resolved, as a reporter's close) and `reassign` (`reassigned`:
+a piece not done onto another agent the agent directory knows, ready for it,
+a held piece staying held). The page's are Release hold, Reassign piece and
+Close item (asked once) beside the review in the item's header
+(`WorkDetail.tsx` `HisActs`, `POST /api/work/{id}/act`); the brain's are
+`review_work`'s `release_hold`, `close` and `reassign` (with `piece` and
+`to`, an agent's name resolved by `agent_directory.find`). Each is written
+for the item's agents to `answers_dir()/<project>/<item>-act-<revision>.md`.
+A hold that names nothing open over a day is a silent `work_unlinked`
+attention item naming the piece and who holds it (`server._attend_unlinked`,
+from the quiet watch), resolved once none is left; a stalled item's
+`work_stalled` item names who was on it (`stalled_on`) when JARVIS can.
 Each Work row and piece, and each phase and task of a workflow's detail,
 shows its live activity from the record (`nodeActivity.tsx`): working (a
 working or verifying piece or item, a running workflow item, whose
@@ -951,7 +975,13 @@ hand-over is the owner's approval (`MessageApprovals.approve`). Nothing
 reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on
 record as `submitting`; an edit after review makes a new revision that
-must be reviewed again. `messaging_runtime.py` builds the one store
+must be reviewed again. A send the delivery loop holds for the owner (no
+retry time: `not_approved`, `snapshot_missing`, a refusal, files that never
+went) is `failed`, never left `approved` (which `_due` never tries again):
+the Queue shows its reason and Retry, and every move to `failed`
+(`Delivery._transition`, `on_failed`) records the `human_send` attention
+item (`failed`, the failure as a fact, who it was for as other people's
+words; `MessagingRuntime._send_failed`). `messaging_runtime.py` builds the one store
 (`messaging_store.py`: one `message` document per message from draft to
 accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
 each step a version; a `thread` document per thread, its work state,
@@ -1651,7 +1681,11 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back. The attention row (`subsystem_diagnostics.attention`,
+they are back. The agent keys' look (`AGENT_KEYS_LOOP`, its heartbeat) is a
+check of the communications row (idle until it starts), and the held Work
+view's loop (`WORK_LOOP`: `_watch_work` builds the view inside its retried
+look, so a load that raises is a failed heartbeat tried again, never a task
+that died quietly) is a check of the Work tracker row. The attention row (`subsystem_diagnostics.attention`,
 "Updates") is down while the attention record is not open, with the reason
 `server._start_attention` met (`_attention_problem`), since `_attend` drops
 every update meanwhile. The brain's row offers Start brain while it is down

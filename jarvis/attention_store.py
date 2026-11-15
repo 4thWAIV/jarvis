@@ -401,7 +401,8 @@ Clock = Callable[[], float]
 # Kinds that are counted and listed but never spoken, by the digest or
 # anyone: a package Tim was sent (package_inbox.py) waits in his backlog
 # until he asks for it. Recorded silent, and never raised to audible.
-SILENT_KINDS = frozenset({"package", "work_follow_up", "work_stalled", "language_kit"})
+SILENT_KINDS = frozenset({"package", "work_follow_up", "work_stalled", "work_unlinked",
+                          "language_kit"})
 
 
 def _load_last_started() -> Optional[float]:

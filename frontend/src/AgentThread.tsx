@@ -13,6 +13,10 @@ import { WorkerPhase } from "./WorkerStatus";
  * `conversation.record.expand`, the same commands the brain runs; a
  * record further back is looked for a page at a time, by its id.
  *
+ * A message waiting in the queue offers his Send now (only while the
+ * session is between turns; JARVIS says why not) and Cancel
+ * (`changeQueued`, the brain's `change_queued_message`).
+ *
  * Under the header, the agent's own key (agent_key_store.py): its
  * fingerprint and where it stands, when and how he onboarded it, its
  * rights, and Revoke (the `key` and `revoke` parts).
@@ -83,7 +87,7 @@ export function AgentThread({ sessionId, name }: { sessionId: string; name: stri
         {earlier != null && <button type="button" className="history-earlier" ref={ui.part("earlier")}
                                     {...bindingProps(bind("thread.earlier", {}))}>{t("main.conversation.earlier")}</button>}
         {live.value && rows.length === 0 && <p className="workflow-empty">{t("main.thread.empty")}</p>}
-        {rows.map((r) => <RecordItem key={r.key} item={r.item!} answer={r.answer} restorable={r.restorable}
+        {rows.map((r) => <RecordItem key={r.key} item={r.item!} answer={r.answer} restorable={r.restorable} queuedActs
                                      place={{ region: "main", view: "main.thread", kind: "threadRecord",
                                               key: `${sessionId}/${r.key}` }} />)}
       </div>

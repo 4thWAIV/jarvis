@@ -422,6 +422,56 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         await browser.close()
 
 
+class _Held(_Review):
+    """One item whose one piece is blocked: his acts are offered."""
+
+    def __init__(self):
+        super().__init__()
+        held = _review_item("work-r", "blocked", False, None)
+        held["pieces"][0]["state"] = "blocked"
+        held["pieces"][0]["until"] = ["the font licence"]
+        self.items = {"work-r": held}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_his_release_hold_and_close_item_post_his_acts(page_playwright, page_url):
+    """Release hold picks the held piece and posts his act; Close item asks
+    once before it posts."""
+    work = _Held()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+
+        await page.click(".right-tabs [role=tab][title=Work]")
+        await page.click(".work-row[data-work-id=work-r]")
+        acts = page.locator("#work-detail .work-acts")
+        await acts.wait_for(timeout=15000)
+        await acts.get_by_role("button", name="Release hold").click()
+        await async_api.expect(acts.locator("select")).to_have_value("design")
+        await acts.locator("button[type=submit]").click()
+        await _posted(work, 1)
+        assert work.posted[0] == ("api/work/work-r/act",
+                                  {"action": "release_hold", "piece": "design", "to": ""})
+        await acts.get_by_role("button", name="Close item").click()
+        await acts.get_by_role("button", name="Yes, close it").click()
+        await _posted(work, 2)
+        assert work.posted[1] == ("api/work/work-r/act", {"action": "close", "piece": "", "to": ""})
+        assert errors == [], errors
+        await browser.close()
+
+
 class _Needs(_Review):
     """One item stalled, one that needs his decision."""
 

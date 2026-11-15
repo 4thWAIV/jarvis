@@ -350,6 +350,22 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._agent_or_explain": (
+        "it reads only an agent's session id from the agent directory to build the "
+        "`agent:<session id>` its caller records; what it says is fixed words and a count, never "
+        "an agent's name or any session's words"),
+    "server._work_holder": (
+        "it names who holds a Work item up for an attention item's untrusted block only (the "
+        "`agent` of `untrusted`, walled wherever it is shown or given to the brain); it is never "
+        "put in a header or said as JARVIS's own words"),
+    "session_watch.change_queued": (
+        "it reads a queued message's own status and its session's state word and between-turns "
+        "flag to decide Cancel or Send now; what it returns is fixed words and the message's "
+        "number, never the message's text or the agent's name"),
+    "work_store._his_act": (
+        "it reads a piece's who and state fields to record his act (release, close, reassign) on "
+        "the item's document; it prints nothing, and its refusals are fixed words with the "
+        "piece's key, which the record already checked as a slug"),
     "background.line": (
         "it prints one of JARVIS's own two processes for the person at the terminal: its name, pid, "
         "state word from process_inspect and the server's own recorded address; no session's or "

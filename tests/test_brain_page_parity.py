@@ -138,7 +138,7 @@ NEW_READS = ("team_status", "find_github_user", "team_network", "people", "peopl
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
-            "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
+            "dismiss_workflow", "retry_run", "change_queued_message", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone", "set_motion",
             "reply",
@@ -184,6 +184,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("answer_workflow_decision", {"workflow": "x", "answer": "yes"}),
     ("dismiss_workflow", {"workflow": "x"}),
     ("retry_run", {"run": "x"}),
+    ("change_queued_message", {"message": 1, "action": "cancel"}),
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
     ("set_voice_input_settings", {"stop": "discard"}),
@@ -580,6 +581,36 @@ class _StoppedBrain(_Brain):
         self.starts += 1
         self.failed = False
         return True
+
+
+def test_change_queued_message_is_the_thread_s_cancel_and_send_now(wired, monkeypatch):
+    """The agent's thread's Cancel and Send now on a queued message, and the
+    brain's acting tool, go through one call to the watcher's lock; a send
+    refused (the session mid-turn) says why on both."""
+    calls = []
+    answers = {"cancel": (True, "message 4 is cancelled; it was never sent"),
+               "send_now": (False, "its session is in the middle of a turn; message 4 "
+                                   "stays queued")}
+
+    class Watcher:
+        def change_queued(self, message_id, action):
+            calls.append((message_id, action))
+            return answers[action]
+
+    monkeypatch.setattr(wired.server, "session_watcher", Watcher())
+    r = wired.client.post("/api/agent-messages/4/queued", headers=BROWSER,
+                          json={"action": "cancel"})
+    assert r.status_code == 200 and r.json()["said"].endswith("never sent")
+    r = wired.client.post("/api/agent-messages/4/queued", headers=BROWSER,
+                          json={"action": "send_now"})
+    assert r.status_code == 409 and "middle of a turn" in r.json()["error"]
+    out = _call(wired, "change_queued_message", message=4, action="send_now")
+    assert out["ok"] and "Nothing changed" in out["text"] and "middle of a turn" in out["text"]
+    out = _call(wired, "change_queued_message", message=4, action="cancel")
+    assert "Done, sir" in out["text"]
+    assert calls == [(4, "cancel"), (4, "send_now"), (4, "send_now"), (4, "cancel")]
+    assert wired.client.post("/api/agent-messages/4/queued", headers=BROWSER,
+                             json={"action": "explode"}).status_code == 409
 
 
 def test_start_brain_and_the_diagnostics_row_s_start_brain_share_one_start(wired):
