@@ -62,8 +62,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <section className="package-head" ref={ui.part("header")}>
         <div className="package-head-words">
-          <h2>{info.communication?.title ?? info.name}</h2>
-          <p>{info.purpose}</p>
+          <h2 title={info.communication?.title ?? info.name}>{info.communication?.title ?? info.name}</h2>
+          <p title={info.purpose}>{info.purpose}</p>
           {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
         </div>
         {info.vote?.question && <VoteControls id={info.id} vote={info.vote} onSaid={setSaid} part={ui.part} />}

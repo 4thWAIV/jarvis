@@ -2,8 +2,8 @@
 open (its story's controls, its source, checker evidence and explanation,
 long questions with their context, his approval and the vote) still gives
 its own page most of the view, at the checker's window sizes and at a
-laptop's. The questions and the explanation sit beside the page, or under
-it when the view is narrow, scrolling within their own space; nothing
+laptop's. The questions and the explanation sit beside the page at every
+width, scrolling within their own space; nothing
 around the page may squeeze it. A package once drew its page an inch high
 under its chrome; this holds it."""
 import asyncio
@@ -72,8 +72,8 @@ async def test_the_document_keeps_most_of_the_view_with_everything_open(
             whole = await view.bounding_box()
             side = await page.locator(".package-side").bounding_box()
             assert frame["height"] >= HEIGHT_SHARE * whole["height"], (window, frame, whole)
-            if side["x"] > frame["x"] + frame["width"] - 1:          # beside the page
-                assert frame["width"] >= WIDTH_SHARE * whole["width"], (window, frame, whole)
+            assert side["x"] >= frame["x"] + frame["width"] - 1, "the side column is beside the page"
+            assert frame["width"] >= WIDTH_SHARE * whole["width"], (window, frame, whole)
             # The questions stay reachable: the side column scrolls, the view does not.
             assert await page.locator('.package-asks [data-question]').first.is_visible()
             assert await page.evaluate(

@@ -2427,20 +2427,23 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
    questions and the explanation sit in a side column beside it, scrolling
    within its height, never above it (tests/test_voice_page_package_layout.py
    holds the frame to its share at every size). */
-.package-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px;
-                 flex: none; max-height: 5.5em; overflow: auto; }
-.package-tools > .package-story { flex: 0 1 auto; }
+.package-tools { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 16px;
+                 flex: none; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+                 scrollbar-width: thin; }
+.package-tools > .package-story { flex: none; flex-wrap: nowrap; }
 .package-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .package-body > .package-frame { flex: 1 1 auto; min-width: 0; height: 100%; }
-.package-side { flex: 0 0 clamp(260px, 28%, 420px); min-height: 0; overflow: auto;
+/* Beside the page at every width: under it, the page would lose a third of
+   its height; beside it, the page keeps all of it. */
+.package-side { flex: 0 0 clamp(200px, 32%, 420px); min-height: 0; overflow: auto;
                 display: flex; flex-direction: column; gap: 8px;
                 border: 1px solid var(--ui-edge); border-radius: 8px; }
-@media (max-width: 1100px) {
-  /* Too narrow for a column: the side goes under the page, held to a third. */
-  .package-body { flex-direction: column; }
-  .package-body > .package-frame { height: auto; flex: 1 1 auto; min-height: 66%; }
-  .package-side { flex: 0 1 auto; max-height: 34%; }
-}
+/* The head keeps to one line: the title and purpose shortened, their full
+   words on hover (PackageView.tsx), so a narrow view does not lose the page
+   to a wrapped head. */
+#package-view .package-head { flex: none; }
+#package-view .package-head h2,
+#package-view .package-head-words p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .package-story select { max-width: 320px; font: inherit; }
 .package-story-now { color: rgba(255, 255, 255, 0.7); }
 

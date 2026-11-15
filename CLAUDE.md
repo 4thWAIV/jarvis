@@ -1074,7 +1074,7 @@ of tools (`.package-tools`: the story's controls, an architecture
 package's source, checker evidence and explanation links) take what they
 need, and the package's own page takes the rest of the view's height;
 the questions and the explanation sit in a side column beside it
-(`.package-side`, under it below 1100 px, held to a third), scrolling in
+(`.package-side`, beside it at every width; the head and tools keep to one line each), scrolling in
 their own space. Nothing new goes above the page: it joins the tools row
 or the side column, and `tests/test_voice_page_package_layout.py` holds
 the page to 60 percent of the view's height (and 55 percent of its width

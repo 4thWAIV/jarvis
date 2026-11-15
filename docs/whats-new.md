@@ -7,7 +7,7 @@ Updated 2026-11-14. This guide describes functionality present in the checkout. 
 A package opens with its own page filling the centre. The story's
 controls and an architecture package's links to its source, checker
 evidence and explanation share one row above it, and its questions and
-explanation open in a column beside it (under it on a narrow window), so
+explanation open in a column beside it, so
 answering a question or reading the explanation never shrinks the
 document you came to read.
 
