@@ -672,6 +672,16 @@ EXEMPT = {
         "summary, a header or a spoken line. Driven by tests/test_attention_records.py")
        for name in ("_mark", "_next_id", "begin_digest", "documents", "record", "resolve",
                     "write")},
+    "attention_store.open_sources": (
+        "it returns the source ids of one kind's unresolved items as data for a "
+        "producer to compare and resolve; it builds no text. Driven by "
+        "tests/test_language_kit_updates.py"),
+    "language_kit_updates.status": (
+        "it reads JARVIS's own updates.json and the active kit's validated release "
+        "fields and returns them as data; the held candidate's version is a release "
+        "tag validated before it was stored. Nothing becomes a trusted brain header: "
+        "Settings draws it as text and the attention item's facts are JARVIS's own. "
+        "Driven by tests/test_language_kit_updates.py"),
     "ui_control.map_lines": (
         "it reads a command's `id` only after checking it is a command declared "
         "in the UI contract, so the id it prints is the contract's own; the "

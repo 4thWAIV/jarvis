@@ -2128,6 +2128,32 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 `self_update.repo_root` at temporary repositories
 (`conftest._never_update_or_restart_the_real_checkout`).
 
+## The language kit
+The architecture language kit (`language_kit.py`: the pinned upstream
+release, staged, smoke-tested and activated by digest under
+`<data>/language-kits/`) is kept current by `language_kit_updates.py`,
+which checks the publisher's pre-release channel every six hours once a kit
+is adopted. A candidate whose language files (`language_kit.LANGUAGE_FILES`)
+differ from the active kit's is refused (`language_kit.ReviewRequired`,
+naming them), as is one held after a rollback; the refusal is kept with
+that candidate as `held` in `updates.json` (version, digest, `reason`
+`review` or `refused`, the files that changed, `since`), and
+`compatibility_review_required` and the refusal's `error` go with it:
+`status` clears them whenever nothing is held or the held digest is the
+active one, a 304 included, and every activation (`activate-reviewed`,
+`adopt-pinned`, an automatic one) clears them. While held it is one silent
+attention item (`language_kit_updates.attend`, kind `language_kit`, in
+`attention_store.SILENT_KINDS`, source the candidate digest, so a check
+that refuses it again changes nothing), resolved once the candidate is
+active or no longer held; the updater's loop attends after every check, so
+an activation from the command line is seen within a minute. Settings,
+Updates shows the held candidate and why, with Activate (his click, twice;
+`POST /api/language-kits/activate`, `packages_api.his_click`), and the
+brain's acting `activate_language_kit` (the held digest) calls the same
+`language_kit_updates.approve_held`, which activates only exactly the
+candidate held. `GET /api/language-kits/status` and `language_document`'s
+capabilities read the status.
+
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
 not picked up, answered or not sent; an agent's message;
