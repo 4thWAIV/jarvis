@@ -75,7 +75,7 @@ def _pointing(document: Document) -> str:
 def _assignment(document: Document | None) -> str:
     """What the fresh author writes, and the exact check it runs last."""
     if document is None:
-        return ("Write a deck to content.json in your working directory, or write a folder "
+        return ("Write a deck to content.json or a presentation/1 deck to presentation.yaml in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
                 "source, and your evidence/review notes in evidence.md. A deck gives its "
                 "\"purpose\" and one-sentence \"conclusion\", opens with a slide that shows "
@@ -191,12 +191,12 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
             raise OSError("Author did not report a distinct fresh session identity.")
         if (folder / "author-blocked.md").exists():
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
-        candidates = [p for p in (folder / "content.json", folder / "package") if p.exists()]
+        candidates = [p for p in (folder / "content.json", folder / "presentation.yaml", folder / "package") if p.exists()]
         if document is not None and candidates != [folder / "package"]:
             raise OSError("Author must produce package/UNDERSTANDING.md (and optionally "
                           "package/story.json), and no content.json, in " + str(folder))
         if len(candidates) != 1:
-            raise OSError("Author must produce exactly one content.json or package/ source in " + str(folder))
+            raise OSError("Author must produce exactly one content.json, presentation.yaml or package/ source in " + str(folder))
         result = candidates[0]
         if result.is_symlink() or not result.resolve().is_relative_to(folder.resolve()):
             raise OSError("Author source must belong to its fresh output folder.")

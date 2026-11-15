@@ -103,7 +103,7 @@ async def test_the_package_page_runs_without_an_origin_and_saves_through_the_bri
         # the clip, its levels and a note saved into results/.
         await frame.locator("#record").click()
         await async_api.expect(frame.locator("#level")).to_contain_text("dBFS", timeout=15000)
-        await async_api.expect(page.locator("#package-view .package-status")).to_have_text("")
+        await async_api.expect(page.locator("#package-view .package-status")).to_have_count(0)
         await frame.locator("#note").fill("<b>heard fine</b>")
         await frame.locator("#save").click()
         await async_api.expect(frame.locator("#status")).to_contain_text("Saved results/clip.wav")

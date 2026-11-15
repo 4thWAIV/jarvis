@@ -728,11 +728,17 @@ def build(content: Path, out: Path, deck: dict) -> Path:
             shutil.rmtree(folder, ignore_errors=True)
             module.build_deck(deck, content.parent, folder)
             prepare_deck(folder, deck, module, content.parent)
-            code = module.zip_package.main([str(folder), str(archive)])
+            archive_deck(folder, archive, module)
     except (module.Bad, KeyError, ValueError, OSError) as e:
         raise Refused([f"The builder refused it: {e}"])
-    if code != 0 or not archive.is_file():
-        raise Refused([f"The builder refused it: {said.getvalue().strip()}"])
+    return archive
+
+
+def archive_deck(folder: Path, archive: Path, module=None) -> Path:
+    """One archive operation for the shared deck's JSON and YAML compilers."""
+    module = module or builder()
+    if module.zip_package.main([str(folder), str(archive)]) != 0 or not archive.is_file():
+        raise Refused(["The shared deck archive builder refused the generated package."])
     return archive
 
 

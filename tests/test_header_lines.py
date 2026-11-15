@@ -1154,6 +1154,18 @@ EXEMPT = {
     "decision_check._check_resume": (
         "it records, in the command's printout, the deck's own decision ids and the "
         "isolated JARVIS's resume answer and story frames"),
+    'make_package.make_presentation': (
+        'it builds the archive filename from schema-validated presentation id and version, and returns the authored title as package metadata; compiler refusals go to the author command, never a trusted session header'),
+    'presentation._deck': (
+        'it projects the authored presentation into shared deck data, including chart labels and values; that content stays package content, never a trusted session or run header'),
+    'presentation._targets': (
+        'it builds accessible names and provenance entries for authored slide objects, including chart labels and units; these are JSON package data and DOM text, never trusted brain headers'),
+    'presentation_check.check_layout': (
+        'it checks an isolated generated page and records source member ids and browser geometry in measurements.json; no session record is read and no result becomes a trusted brain header'),
+    'presentation_source._semantics': (
+        'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
+    'presentation_source.identities': (
+        'it walks authored YAML mappings to index source ids and raises a duplicate-id compiler diagnostic with the source location; no session record or live brain header is involved'),
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),

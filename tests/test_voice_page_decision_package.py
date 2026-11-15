@@ -132,7 +132,7 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         # Each decision is led in by its own slide (why it is his, its evidence).
         assert shots == ["01-s1.png", "02-lead-where.png", "03-d-where.png",
-                         "04-lead-when.png", "05-d-when.png", "06-answers.png"]
+                         "04-lead-when.png", "05-d-when.png", "06-answers.png", "package-border.png"]
     for check in ("first time: the story waits at where", "first time: the story waits at when",
                   "first time: every question answered, in order (where, when)",
                   "stop by the page during narration: stopped within 1s",
@@ -187,7 +187,7 @@ def test_the_command_checks_a_presentation_and_its_one_vote(
                    for line in lines), (size, said)
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         assert shots == ["01-s1.png", "02-s2.png", "03-s3.png", "04-d-approve-package.png",
-                         "05-answers.png"]
+                         "05-answers.png", "package-border.png"]
     for check in ("the story went on to its end", "every beat told pointed",
                   "the story waits at approve-package",
                   "every question answered, in order (approve-package)",

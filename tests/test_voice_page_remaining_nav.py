@@ -500,10 +500,25 @@ async def test_a_folders_zip_and_a_packages_story_controls_are_pointed_at_and_re
 
             voice.ws.send(json.dumps({"type": "package_page", "package": info}))
             await page.locator("#package-view .package-story").wait_for()
-            for part in ("story", "tell", "fromSlide", "stop"):
-                result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+            async def point(part, reveal="never"):
+                result = await voice.request({"kind": "indicate", "reveal": reveal, "target": {
                     "region": "main", "view": "main.package", "kind": "packageView", "key": package.id,
                     "part": part}})
+                assert result["status"] == "completed", (part, result)
                 assert _arrived(result), part
+
+            for part in ("story", "tell", "chapters", "more"):
+                await point(part)
+            # Revealing a hidden selector runs the registered Chapters command.
+            await point("fromSlide", "navigate")
+            assert await page.locator('.package-border-overlay select').is_visible()
+            _completed(await voice.navigate("package.slide", {"slide": 2}))
+            assert await page.locator('.package-border-overlay select').input_value() == "2"
+            _completed(await voice.navigate("package.menu", {"show": "closed"}))
+            # Stop occupies Tell's slot only when the server says it is running.
+            voice.ws.send(json.dumps({"type": "package_story", "package": package.id,
+                                     "state": "telling", "slide": 2, "slides": len(info["story"]["slides"])}))
+            await page.locator('[data-story-action="stop"]').wait_for()
+            await point("stop")
         finally:
             await browser.close()

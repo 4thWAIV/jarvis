@@ -100,6 +100,17 @@ async def _state(page, words: str, timeout: float = 60000):
     await async_api.expect(page.locator(".package-story-now")).to_have_text(words, timeout=timeout)
 
 
+async def _tell_from(page, slide: str):
+    # The shared transport shows Stop while waiting. Stop before selecting
+    # another starting slide, then Tell through the existing host action.
+    await page.locator("#package-view [data-story-action=stop]").click()
+    await _state(page, "Stopped.")
+    await page.locator("#package-view [data-package-menu=chapters]").click()
+    await page.select_option("#package-view .package-border-overlay select", slide)
+    await page.keyboard.press("Escape")
+    await page.locator("#package-view [data-story-action=tell]").click()
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time(
         page_playwright, page_url, walkthrough, voice, tmp_path):
@@ -123,15 +134,16 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             voice.ws.send(json.dumps({"type": "package_page",
                                       "package": packages_api.describe(package)}))
             await page.locator("#package-view iframe").wait_for()
-            vote = page.locator(".package-head .package-vote")
-            assert await vote.get_by_role("button", name="Approve").count() == 1, "the vote, once"
+            assert await page.get_by_role("button", name="Approve").count() == 1, "the vote, once"
             assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
-            slides = await page.locator("#package-view .package-story select option").all_inner_texts()
+            await page.locator("#package-view [data-package-menu=chapters]").click()
+            slides = await page.locator("#package-view .package-border-overlay select option").all_inner_texts()
+            await page.keyboard.press("Escape")
             assert slides[-1].endswith("Approve it?") and \
                 sum("Approve it?" in s for s in slides) == 1
 
             # Told from the start, it waits at his question.
-            await page.locator("#package-view .package-story button").first.click()
+            await page.locator("#package-view [data-story-action=tell]").click()
             await _ringed(page, "(r) => r.target === '#water' && r.shown")
             await _state(page, "Waiting for your answer on slide 2 of 5.")
             trace.append({"waiting": 2, "audio_frames": len(voice.audio)})
@@ -149,11 +161,10 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             trace.append({"answered": {"kettle": "electric"}, "slides_told": told})
 
             # Stop from the page, within a second; then nothing more.
-            await page.select_option("#package-view .package-story select", "1")
-            await page.locator("#package-view .package-story button").first.click()
+            await _tell_from(page, "1")
             await _ringed(page, "(r) => r.beat === '1.1' && r.added > Date.now() - 5000")
             pressed = time.monotonic()
-            await page.click("#package-view .package-story button:has-text('Stop')")
+            await page.locator("#package-view [data-story-action=stop]").click()
             await _state(page, "Stopped.", timeout=STOP_WITHIN_SEC * 1000)
             stopped_in = time.monotonic() - pressed
             assert stopped_in <= STOP_WITHIN_SEC, stopped_in
@@ -165,15 +176,15 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             # Continue resumes at the first applicable question with no answer:
             # the vote (kettle answered, the follow-up not opened).
             before = len(voice.audio)
-            await page.click("#package-view .package-story button:has-text('Continue')")
+            await page.locator("#package-view [data-package-menu=more]").click()
+            await page.get_by_role("button", name="Continue", exact=True).click()
             await _state(page, "Waiting for your answer on slide 5 of 5.")
             resumed = [m["cue"]["slide"] for m in voice.audio[before:]]
             assert resumed and set(resumed) == {5}, resumed
             trace.append({"resumed_at": 5})
 
             # Stop from JARVIS (the brain's tell_package_story stop), within a second.
-            await page.select_option("#package-view .package-story select", "4")
-            await page.locator("#package-view .package-story button").first.click()
+            await _tell_from(page, "4")
             await _state(page, "Telling slide 4 of 5.")
             asked = time.monotonic()
             done, said = await server._package_story("stop", package.id, None)
@@ -276,7 +287,7 @@ async def test_a_precise_target_rings_exactly_one_element_or_is_reported(
             voice.ws.send(json.dumps({"type": "package_page",
                                       "package": packages_api.describe(package)}))
             await page.locator("#package-view iframe").wait_for()
-            await page.locator("#package-view .package-story button").first.click()
+            await page.locator("#package-view [data-story-action=tell]").click()
             # While Loaded's beat plays, its ring is drawn nowhere.
             hidden = await _inner(page).wait_for_function(
                 """(t) => { const r = [...document.querySelectorAll('.jarvis-story-ring')]

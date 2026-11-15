@@ -120,7 +120,12 @@ def deck_of(content: Path) -> dict:
     """The deck in full form, its version worked out when not given, or
     Refused with every problem."""
     from jarvis import package_inbox
-    raw = dp.read(content)
+    return prepare_deck(dp.read(content), content.parent)
+
+
+def prepare_deck(raw: dict, source_dir: Path) -> dict:
+    """Shared briefing, decision and understanding policy for every deck language."""
+    from jarvis import package_inbox
     refuse_vote_ids(raw.get("decisions") if isinstance(raw, dict) else None)
     deck = dp.expand(raw)
     if isinstance(deck, dict) and not deck.get("decisions") and deck.get("slides"):
@@ -132,11 +137,11 @@ def deck_of(content: Path) -> dict:
     # A briefing (dp.briefing_problems): its purpose and conclusion as the
     # author wrote them, the opening that shows them and each decision's
     # lead-in. The standard vote is JARVIS's own and needs none.
-    problems = dp.problems_of(deck, content.parent) + dp.briefing_problems(raw, deck)
+    problems = dp.problems_of(deck, source_dir) + dp.briefing_problems(raw, deck)
     if not problems:
         from jarvis.package_understanding import validate_deck_inputs
         try:
-            validate_deck_inputs(deck, dp.builder(), content.parent)
+            validate_deck_inputs(deck, dp.builder(), source_dir)
         except ValueError as error:
             problems.append(str(error))
     if problems:
@@ -182,6 +187,23 @@ def deck_kind(deck: dict) -> str:
 def make_deck(content: Path, out: Path) -> Made:
     deck = deck_of(content)
     return Made(dp.build(content, out, deck), deck["title"], deck_kind(deck), deck)
+
+
+def is_presentation(source: Path) -> bool:
+    return source.is_file() and source.suffix.lower() in {".yaml", ".yml"}
+
+
+def make_presentation(source: Path, out: Path) -> Made:
+    from jarvis.presentation import compile_deck
+    from jarvis.presentation_source import DeckCompileError
+    try:
+        compiled = compile_deck(source, out / "compiled")
+    except DeckCompileError as error:
+        raise dp.Refused([str(error)]) from None
+    deck = dp.read(compiled.package_source / "deck-data.js")
+    archive = out / f"{deck['name']}-{deck['version']}.zip"
+    dp.archive_deck(compiled.package_source, archive)
+    return Made(archive, deck["title"], deck_kind(deck), deck)
 
 
 # -- a folder ---------------------------------------------------------------------------
@@ -624,7 +646,17 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             return 0
         if args.check_only:
             check_vote(source, args.work)
-            if source.is_dir():
+            if is_presentation(source):
+                from jarvis.presentation import compile_deck
+                from jarvis.presentation_source import DeckCompileError
+                try:
+                    with tempfile.TemporaryDirectory(prefix="presentation-check-") as temporary:
+                        compiled = compile_deck(source, Path(temporary))
+                        deck = dp.read(compiled.package_source / "deck-data.js")
+                    print(f"The presentation source is right: {deck['name']}, with measured layout and existing story checks.")
+                except DeckCompileError as error:
+                    raise dp.Refused([str(error)]) from None
+            elif source.is_dir():
                 manifest = manifest_of(source)
                 print(f"The folder is right: a {manifest['runs']} package, "
                       f"{manifest['name']}-{manifest['version']}.")
@@ -674,8 +706,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                                                  handed.get("approval") is True)
                     else:
                         check_vote(authored_source, args.work)
-                        made = (make_folder(authored_source, out) if authored_source.is_dir()
-                                else make_deck(authored_source, out))
+                        # YAML compilation owns fresh staging for each visual repair;
+                        # it never overwrites an already checked generated package.
+                        if is_presentation(authored_source):
+                            made = await asyncio.to_thread(make_presentation, authored_source, attempt_out)
+                        else:
+                            made = (make_folder(authored_source, out) if authored_source.is_dir()
+                                    else make_deck(authored_source, out))
                     author = with_author(made, authored_source, args.session)
                     print(f"Built a {made.kind}: {made.archive}")
                     if signer is None:
