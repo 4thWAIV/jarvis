@@ -312,6 +312,10 @@
   }
 
   function contentSlide(s, n) {
+    if (window.JarvisPresentation) {
+      var composed = window.JarvisPresentation.render(s.id);
+      if (composed) return composed;
+    }
     var section = el("section", "slide content");
     section.id = s.id || "s" + n;
     head(section, s.kicker, s.title);
@@ -412,6 +416,7 @@
     var recorded = section.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
     views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
+    if (window.JarvisPresentation) window.JarvisPresentation.decorateDecision(section, d);
     return section;
   }
 
@@ -573,6 +578,8 @@
   document.getElementById("prev").addEventListener("click", function () { show(current - 1); });
   document.getElementById("next").addEventListener("click", function () { show(current + 1); });
   document.addEventListener("keydown", function (e) {
+    // A modal inspection makes the deck inert, including global shortcuts.
+    if (stage.inert) return;
     var t = e.target && e.target.tagName;
     if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;
     if (e.key === "ArrowRight" || e.key === "PageDown") { show(current + 1); e.preventDefault(); }
@@ -584,6 +591,10 @@
   // ── fitting the frame ─────────────────────────────────────────────────
   var stage = document.getElementById("stage");
   function fit() {
+    if (window.JarvisPresentation) {
+      window.JarvisPresentation.fit(stage);
+      return;
+    }
     // Never larger than MAX_SCALE: body text stays at most about 22 px.
     var s = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
     stage.style.transform = "scale(" + s + ")";

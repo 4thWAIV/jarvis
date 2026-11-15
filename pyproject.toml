@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0.0",
+    "PyYAML>=6.0.2",
     "websockets>=13.0",
     "playwright>=1.40.0",
     # Local speech recognition (transcriber.py). Pinned: the engine's model
@@ -44,6 +45,7 @@ jarvis = [
     "ui_contract/*.json",
     "ui_contract/families/*.json",
     "package_story.js",
+    "presentation_assets/*",
     "language_authoring.md",
     "jarvis_home/*",
     "skills/**/*",

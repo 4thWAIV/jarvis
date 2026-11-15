@@ -1,0 +1,29 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________ test_details_suspends_background_slide_shortcuts _______________
+
+presentation_page = <function presentation_page.<locals>.load at 0x10778e8e0>
+
+    def test_details_suspends_background_slide_shortcuts(presentation_page):
+        page, _ = presentation_page()
+        page.locator('#go-2').evaluate('e=>e.click()')
+        current = page.locator('.slide.current').get_attribute('id')
+        for cycle in range(2):
+            page.evaluate('window.JarvisPresentation.inspect()')
+            overlay = page.locator('.presentation-inspector')
+            overlay.locator('button').nth(1).click()
+            description = overlay.locator('[role=status]').inner_text()
+            # Both public calls and the host message meet at the renderer boundary.
+            page.evaluate('window.JarvisPresentation.inspect()')
+            page.evaluate("window.postMessage({jarvis:'package',type:'presentation.inspect'},'*')")
+            page.wait_for_timeout(30)
+>           assert overlay.count() == 1, cycle
+E           AssertionError: 0
+E           assert 3 == 1
+E            +  where 3 = count()
+E            +    where count = <Locator frame=<Frame name= url='file:///private/var/folders/s5/lkpmbqsn17gcvx02hzxcdvr80000gn/T/pytest-of-timothystoc...test-222/test_details_suspends_backgrou0/browser-compiled/street-trial/index.html'> selector='.presentation-inspector'>.count
+
+tests/test_presentation.py:303: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_presentation.py::test_details_suspends_background_slide_shortcuts
+1 failed in 3.76s

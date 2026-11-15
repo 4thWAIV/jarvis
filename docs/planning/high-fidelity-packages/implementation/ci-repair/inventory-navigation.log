@@ -1,0 +1,65 @@
+........................................................................ [ 17%]
+........................................................................ [ 34%]
+........................................................................ [ 51%]
+........................................................................ [ 68%]
+........................................................................ [ 85%]
+E.............................................ss.....s..s...             [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_session_detail_keeps_every_foreign_field_out_of_its_header[socket_path] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b963ee0>
+tmp_path = PosixPath('/private/var/folders/s5/lkpmbqsn17gcvx02hzxcdvr80000gn/T/pytest-of-timothystockstill/pytest-200/test_session_detail_keeps_ever13')
+
+    @pytest.fixture
+    def server(monkeypatch, tmp_path):
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        hold_setting("brain_autostart", "0")
+        from jarvis import data_paths
+        importlib.reload(data_paths)
+        from jarvis import run_store
+        importlib.reload(run_store)
+        from jarvis import server as server_module
+>       importlib.reload(server_module)
+
+tests/test_header_lines.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/Cellar/python@3.13/3.13.9/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py:129: in reload
+    _bootstrap._exec(spec, module)
+<frozen importlib._bootstrap>:866: in _exec
+    ???
+<frozen importlib._bootstrap_external>:1027: in exec_module
+    ???
+<frozen importlib._bootstrap>:488: in _call_with_frames_removed
+    ???
+jarvis/server.py:17955: in <module>
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <starlette.staticfiles.StaticFiles object at 0x10cf97ee0>
+directory = '/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/presentation-source-to-slide/jarvis/web/assets'
+packages = None, html = False, check_dir = True, follow_symlink = False
+
+    def __init__(
+        self,
+        *,
+        directory: PathLike | None = None,
+        packages: list[str | tuple[str, str]] | None = None,
+        html: bool = False,
+        check_dir: bool = True,
+        follow_symlink: bool = False,
+    ) -> None:
+        self.directory = directory
+        self.packages = packages
+        self.all_directories = self.get_directories(directory, packages)
+        self.html = html
+        self.config_checked = False
+        self.follow_symlink = follow_symlink
+        if check_dir and directory is not None and not os.path.isdir(directory):
+>           raise RuntimeError(f"Directory '{directory}' does not exist")
+E           RuntimeError: Directory '/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/presentation-source-to-slide/jarvis/web/assets' does not exist
+
+../../../.venv/lib/python3.13/site-packages/starlette/staticfiles.py:57: RuntimeError
+=========================== short test summary info ============================
+ERROR tests/test_header_lines.py::test_session_detail_keeps_every_foreign_field_out_of_its_header[socket_path]
+415 passed, 4 skipped, 87 deselected, 1 error in 112.53s (0:01:52)

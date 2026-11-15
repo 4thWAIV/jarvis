@@ -1,0 +1,26 @@
+{
+  "incoming_main": "19fd4ef3b9ecc8cd5bfe205a70d875bf2f751145",
+  "implementation_parent": "74bf58609ef47e0d6fb081ca9cf6bd211cdb85e8",
+  "conflicts": {
+    "docs/making-a-package.md": "Preserve mandatory same-author visual review and add YAML to supported author source/check-only inputs.",
+    "jarvis/decision_check.py": "Preserve custom-page image/render checks; retain compact-border checks on generated decks.",
+    "jarvis/make_package.py": "Route YAML through the existing visual-review and bounded repair loop, compile off the async loop, and use fresh per-attempt staging."
+  },
+  "design_conflict": null,
+  "unrelated_open_prs_merged": false,
+  "checks": {
+    "focused_factory_author_visual_and_presentation": "157 passed",
+    "image_visibility": "10 passed",
+    "actual_custom_page_views": "2 passed",
+    "typescript": "passed",
+    "isolated_street_production": "passed"
+  },
+  "evidence": [
+    "main-merge-tests.log",
+    "main-image-checks.log",
+    "main-custom-page.log",
+    "main-typescript.log",
+    "street/result.json"
+  ],
+  "remaining_owner": "Planning owns PR145 CI, release coordination and the Merge/Hold package."
+}

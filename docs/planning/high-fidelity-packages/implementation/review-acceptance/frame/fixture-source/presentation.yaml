@@ -1,0 +1,249 @@
+version: presentation/1
+id: street-trial
+title: A cooler city block
+purpose: Explain how a planted street can reduce stormwater runoff.
+conclusion: Give rain a planted route from the roof to the street.
+language: en
+requires:
+- presentation-core/1
+theme:
+  background: '#0b151e'
+  foreground: '#e6edf5'
+  accent: '#6fd5ac'
+  muted: '#aec3cf'
+  font: system-sans
+  bodyPx: 16
+  headingPx: 28
+  minimumPx: 16
+  gapPx: 12
+layouts:
+- id: opening-layout
+  regions:
+  - id: opening-title
+    rect:
+      x: 0
+      y: 0
+      width: 100
+      height: 35
+  - id: opening-body
+    rect:
+      x: 0
+      y: 35
+      width: 100
+      height: 65
+- id: street-layout
+  regions:
+  - id: street-heading
+    rect:
+      x: 0
+      y: 0
+      width: 100
+      height: 20
+  - id: street-diagram
+    rect:
+      x: 0
+      y: 20
+      width: 45
+      height: 80
+  - id: street-image
+    rect:
+      x: 45
+      y: 20
+      width: 55
+      height: 35
+  - id: street-bars
+    rect:
+      x: 45
+      y: 55
+      width: 55
+      height: 45
+assets:
+- id: planted-art
+  path: planted.svg
+  sha256: e92976f488621aee5ccb6be48b11560c02792ef58061a94ef71a0c0fcb41e55b
+  mime: image/svg+xml
+  width: 240
+  height: 120
+  source:
+    reference: sample-evidence
+- id: paved-art
+  path: paved.svg
+  sha256: 52e52ccc71f14df49700fb8a5f9c2c2d9f2cd515c17df0404afb1cd7e5a16693
+  mime: image/svg+xml
+  width: 240
+  height: 120
+  source:
+    reference: sample-evidence
+references:
+- id: sample-evidence
+  kind: authored-example
+  locator: Illustrative street trial
+  revision: example-1
+  description: Invented runoff values and original illustrative art; these are not
+    observed trial results.
+slides:
+- id: opening
+  type: content
+  title: Give rain a planted route
+  layout: opening-layout
+  objects:
+  - id: purpose-text
+    type: text
+    region: opening-body
+    source:
+      reference: sample-evidence
+    paragraphs:
+    - id: purpose-text-paragraph
+      role: paragraph
+      runs:
+      - id: purpose-text-words
+        text: Explain how a planted street can reduce stormwater runoff.
+        emphasis: normal
+  - id: recommendation
+    type: text
+    region: opening-title
+    source:
+      reference: sample-evidence
+    paragraphs:
+    - id: recommendation-paragraph
+      role: heading
+      runs:
+      - id: recommendation-words
+        text: Give rain a planted route from the roof to the street.
+        emphasis: normal
+  readingOrder:
+  - recommendation
+  - purpose-text
+  narration:
+  - id: opening-cue
+    say: Explain how a planted street can reduce stormwater runoff. Give rain a planted
+      route from the roof to the street.
+    focus:
+    - recommendation-words
+  notes: Illustrative source-to-slide acceptance deck.
+- id: compare-runoff
+  type: content
+  title: Compare two illustrative runoff routes
+  layout: street-layout
+  objects:
+  - id: runoff-comparison
+    type: bar
+    region: street-bars
+    source:
+      reference: sample-evidence
+    bars:
+    - id: paved-runoff
+      label: Paved
+      value: 85
+      source:
+        reference: sample-evidence
+    - id: planted-runoff
+      label: Planted
+      value: 40
+      source:
+        reference: sample-evidence
+    units: '% runoff'
+    domain:
+    - 0
+    - 100
+    alt: 'Illustrative runoff: paved 85 percent; planted 40 percent.'
+  - id: street-art
+    type: image
+    region: street-image
+    source:
+      reference: sample-evidence
+    asset: planted-art
+    alt: An illustrative planted route receives roof runoff.
+    fit: contain
+  - id: water-route
+    type: vector
+    region: street-diagram
+    source:
+      reference: sample-evidence
+    viewBox:
+      x: 0
+      y: 0
+      width: 240
+      height: 300
+    alt: Water flows from a roof through a pipe into planted soil.
+    members:
+    - id: roof
+      type: path
+      d: M 15 90 L 95 30 L 175 90 Z
+      fill: '#7899b0'
+      stroke: none
+      strokePx: 0
+      alt: The roof collects rain.
+    - id: pipe
+      type: path
+      d: M 180 90 L 195 90 L 195 220 L 215 220
+      fill: none
+      stroke: '#7cd3ee'
+      strokePx: 6
+      alt: The pipe carries roof runoff.
+    - id: soil
+      type: rect
+      rect:
+        x: 175
+        y: 230
+        width: 55
+        height: 50
+      radius: 2
+      fill: '#ad8a55'
+      stroke: none
+      strokePx: 0
+      alt: Planted soil receives runoff.
+  - id: comparison-title
+    type: text
+    region: street-heading
+    source:
+      reference: sample-evidence
+    paragraphs:
+    - id: comparison-title-paragraph
+      role: heading
+      runs:
+      - id: comparison-title-words
+        text: A planted route retains more rain in this example.
+        emphasis: normal
+  readingOrder:
+  - comparison-title
+  - water-route
+  - street-art
+  - runoff-comparison
+  narration:
+  - id: roof-cue
+    say: The roof collects rain.
+    focus:
+    - roof
+  - id: soil-cue
+    say: The pipe carries water into planted soil.
+    focus:
+    - pipe
+    - soil
+  - id: runoff-cue
+    say: These invented numbers show 85 percent runoff for paving and 40 percent for
+      planting.
+    focus:
+    - paved-runoff
+    - planted-runoff
+  notes: Values are illustrative, not measured.
+- id: trial-choice
+  type: decision
+  decision: choose-street-trial
+decisions:
+- id: choose-street-trial
+  question: Approve a planted-street trial?
+  why_you: You decide whether to commit the trial budget.
+  evidence:
+  - The trial compares planted and paved runoff on the same block.
+  options:
+  - id: approve-trial
+    name: Run the trial
+    says: Compare planted and paved runoff on one block.
+    picture: planted-art
+  - id: keep-paving
+    name: Keep the paved route
+    says: Keep the current route and do not start the trial.
+    picture: paved-art
+  recommended: approve-trial
+  reason: A trial would measure whether the planted route retains more rain.

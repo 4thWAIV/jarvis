@@ -1,0 +1,18 @@
+{
+  "frontend/src/PackageBorder.tsx": "ec42b21446069f21e320a579782bba6cd47a580fb686ae25810c991642f8b63c",
+  "frontend/src/PackageIcons.tsx": "4dfd849ef07e616e595730d33d150be271f55c5c8d2aa6b5ee7daf5a210c7543",
+  "frontend/src/PackageView.tsx": "857244585dc7520df8d3da9a8e849ca224198d9f4102f04f7cd27378dd9447d5",
+  "frontend/src/packageBridge.ts": "4c2c7538d5c5047e00e0760251c5049c9b880d6a4d34fada74e03aa8b2787ade",
+  "frontend/src/style.css": "4eb64c7081ec9cf306e765d59d8f0bcdd8fd27a8686d5d6a3070a54dc7ebe397",
+  "jarvis/author_proof.py": "db2e84ac300bf4ba77be610fff463a546237d5787254d59077df45961ce6559f",
+  "jarvis/decision_check.py": "27d7430c270cb79e5a6b2cc72cf1623baec8653bde4c00ed2ba8ddcb8d223c8b",
+  "jarvis/make_package.py": "db27bfecbf7960fb87d9f16cd1071a52b99d7452687a9a3e2655442f477de13d",
+  "jarvis/package_story.js": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090",
+  "jarvis/presentation.py": "c2abc7e0f871210214f8f8a1d1e7365594247a810014df429f71793e682d18e4",
+  "jarvis/presentation_assets/presentation.css": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+  "jarvis/presentation_assets/presentation.js": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+  "jarvis/presentation_check.py": "622b3dfbeb23be0fe34a04ce6976e1cb57fe0a5532a5bc68adc8e488263a6415",
+  "jarvis/presentation_schema.py": "18b55b13873ae59c9d3901e59c41cedc3a85b2904562f1a030373890ca017beb",
+  "jarvis/presentation_source.py": "f96c0b902bb72830db03bb2b32846f90ec1da049a1bc9a53e7e95396c8c8b44e",
+  "tests/test_presentation.py": "e10b96e5a5ac5fe0dae23dd01a578b014c502aedde5f600326b7f4d708703a12"
+}
