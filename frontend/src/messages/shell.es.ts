@@ -137,6 +137,12 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "move.longer": "Está tardando un poco más de lo previsto",
   "move.safe": "Puede detener JARVIS sin riesgo: el próximo inicio empieza el traslado de nuevo, y jarvis.db nunca se modifica.",
   "move.failed.title": "JARVIS no pudo iniciar con sus registros",
-  "move.failed.kept": "jarvis.db está intacto. Al iniciar JARVIS de nuevo, se intenta el traslado otra vez.",
+  "move.failed.kept": "jarvis.db está intacto. Reintentar inicia JARVIS de nuevo, y con ello el traslado otra vez.",
   "move.failed.back": "Para volver a la versión que tenía antes, consulte “If the records move fails” en docs/whats-new.md.",
+  "move.engine.title": "JARVIS no pudo abrir sus registros",
+  "move.engine.kept": "Sus registros están intactos: el motor de conocimiento que los guarda no respondió. Reintentar inicia JARVIS de nuevo.",
+  "move.start.kept": "Sus registros están intactos. Reintentar inicia JARVIS de nuevo.",
+  "move.retry": "Reintentar",
+  "move.retrying": "Iniciando JARVIS de nuevo…",
+  "move.retryRefused": "JARVIS no se inició de nuevo: {error}",
 };

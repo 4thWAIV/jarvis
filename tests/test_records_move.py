@@ -193,3 +193,91 @@ async def test_the_brain_reads_the_move_as_the_page_does(jarvis_db):
     said = await server.tool_records_move({})
     assert "3 rows of 1 tables, proven both ways" in said
     assert "records_move" in server.TAINT_EXEMPT_TOOLS
+
+
+# ── a start that failed: kept up, said, and tried again from the page ─────
+
+def _restartable_app(restarts: list) -> FastAPI:
+    app = _gated_app()
+
+    @app.post("/api/restart")
+    async def restart():
+        restarts.append(True)
+        return {"status": "restarting"}
+
+    return app
+
+
+def test_while_a_start_has_failed_only_the_page_s_try_again_goes_through_the_gate():
+    restarts = []
+    with TestClient(_restartable_app(restarts)) as client:
+        records_move.begin()
+        # While the records move, nothing restarts JARVIS through the gate.
+        assert client.post("/api/restart", headers=PAGE).status_code == 503
+        records_move.failed("EngineNotUp: no answer", records_move.ENGINE)
+        st = client.get("/api/records/move").json()
+        assert st["state"] == "failed" and st["cause"] == "engine" and st["boot"] == records_move.BOOT
+        r = client.get("/api/runs")
+        assert r.status_code == 503 and "could not open its records: EngineNotUp" in r.json()["detail"]
+        # No Origin (not the page), or a credential (the tool token, an
+        # agent's key): still the gate's answer.
+        assert client.post("/api/restart").status_code == 503
+        assert client.post("/api/restart", headers={**PAGE, "Authorization": "Bearer x"}).status_code == 503
+        assert restarts == []
+        assert client.post("/api/restart", headers=PAGE).json() == {"status": "restarting"}
+        assert restarts == [True]
+        # Every other route still waits.
+        assert client.post("/api/runs", headers=PAGE).status_code == 503
+
+
+def test_a_failed_move_is_tried_again_from_the_page_too():
+    restarts = []
+    with TestClient(_restartable_app(restarts)) as client:
+        records_move.failed("CutoverFailed: the records differ")
+        assert client.get("/api/records/move").json()["cause"] == "move"
+        assert client.post("/api/restart", headers=PAGE).status_code == 200
+    assert restarts == [True]
+    assert "Try again" in records_move.said()
+
+
+def test_an_engine_that_never_answers_leaves_the_server_up_saying_why(monkeypatch):
+    """`start_knowledge_engine` raising EngineNotUp no longer takes the
+    server down: it serves the records gate's failed state with the reason,
+    and the page's Try again reaches the one restart."""
+    from jarvis import knowledge_client, server
+    restarted = []
+
+    async def no_engine():
+        raise knowledge_client.EngineNotUp("the knowledge engine did not answer within 60 s "
+                                           "(state restarting); the engine's log ends:\nlast words")
+    monkeypatch.setattr(server, "start_knowledge_engine", no_engine)
+    monkeypatch.setattr(server, "_restart_server", restarted.append)
+    began = []
+
+    async def start_on_records():
+        began.append(True)
+    monkeypatch.setattr(server, "_start_on_records", start_on_records)
+    with TestClient(server.app, headers=PAGE) as client:
+        st = client.get("/api/records/move").json()
+        assert st["state"] == "failed" and st["cause"] == "engine"
+        assert "last words" in st["reason"]
+        r = client.get("/api/runs")
+        assert r.status_code == 503 and "did not answer within 60 s" in r.json()["detail"]
+        assert client.post("/api/restart").json() == {"status": "restarting"}
+        assert restarted == ["the page's Restart Server"]
+    assert began == []                     # nothing that needs the records started
+    assert "could not open its records" in records_move.said()
+
+
+def test_a_start_on_the_records_that_fails_leaves_the_server_up_saying_why(monkeypatch):
+    from jarvis import server
+
+    async def broken():
+        raise RuntimeError("the settings record is unreadable")
+    monkeypatch.setattr(server, "_start_on_records", broken)
+    monkeypatch.setattr(server.records_cutover, "needed", lambda: False)
+    with TestClient(server.app, headers=PAGE) as client:
+        st = client.get("/api/records/move").json()
+        assert st["state"] == "failed" and st["cause"] == "start"
+        assert "RuntimeError: the settings record is unreadable" in st["reason"]
+        assert client.get("/api/runs").status_code == 503

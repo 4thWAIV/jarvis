@@ -147,7 +147,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
             "change_knowledge_seed", "install_embedding_model", "set_knowledge_settings", "change_project", "change_project_folder",
             "change_project_candidate", "change_work", "change_accomplishment",
-            "set_engine_setting", "set_jarvis_setting", "set_brain", "activate_language_kit")
+            "set_engine_setting", "set_jarvis_setting", "set_brain", "start_brain", "activate_language_kit")
 # Acting tools that give back somebody else's words (a received file's name).
 # read_aloud gives the brain the message he asked to hear, to read him itself.
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package",
@@ -218,6 +218,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("change_accomplishment", {"action": "record", "project": "x", "title": "x"}),
     ("set_engine_setting", {"override_stressed": True}),
     ("set_brain", {"brain": "openai", "action": "add"}),
+    ("start_brain", {}),
     ("activate_language_kit", {"digest": "0" * 64}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
@@ -562,6 +563,52 @@ def test_retry_run_resumes_a_finished_run_and_refuses_a_live_one(wired, monkeypa
     assert got["text"].startswith("Started the work in chitauri again, sir")
     assert spawned == [("make it blue", "chitauri", str(wired.tmp), "voice", run_id, None)]
     assert server.last_started_run == "new-run"
+
+
+# ── starting the brain again ─────────────────────────────────────────────
+
+class _StoppedBrain(_Brain):
+    """A brain that has failed (its restart budget used, or its login
+    expired), counting each start."""
+    restarting = False
+
+    def __init__(self, origin="user"):
+        super().__init__(origin)
+        self.failed, self.running, self.starts = True, False, 0
+
+    async def start(self):
+        self.starts += 1
+        self.failed = False
+        return True
+
+
+def test_start_brain_and_the_diagnostics_row_s_start_brain_share_one_start(wired):
+    """The brain's acting `start_brain` and `POST /api/brain/start` call the
+    same `_start_brain`: a failed brain is started, one that is serving or
+    already starting is left alone."""
+    import inspect
+    from jarvis import data_paths
+    server = wired.server
+    assert "_start_brain(" in inspect.getsource(server.tool_start_brain)
+    assert "_start_brain(" in inspect.getsource(server.api_brain_start)
+    stopped = _StoppedBrain()
+    server.brain_instance = stopped
+    r = wired.client.post("/internal/tool",
+                          headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}"},
+                          json={"tool": "start_brain", "arguments": {}})
+    assert r.json()["text"] == "Starting the brain again, sir; Diagnostics shows how it goes."
+    assert stopped.starts == 1 and {"type": "subsystems"} in wired.hints
+    # From the page: the same start, and the same refusal once it serves.
+    again = _StoppedBrain()
+    server.brain_instance = again
+    page = {"Origin": "http://localhost:5173"}
+    assert wired.client.post("/api/brain/start", headers=page).json() == {"outcome": "started"}
+    assert again.starts == 1
+    again.ready = True
+    assert wired.client.post("/api/brain/start", headers=page).json() == {"outcome": "ready"}
+    assert wired.client.post("/api/brain/start").status_code == 403, "the page's origin only"
+    server.brain_instance = None
+    assert wired.client.post("/api/brain/start", headers=page).json() == {"outcome": "not_up"}
 
 
 # ── speech models ────────────────────────────────────────────────────────

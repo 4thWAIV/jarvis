@@ -189,6 +189,8 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "80cbfefd04b81228fdb12d089059d9716314da89be1f032ae8809e522d6b20f9",  # a held kit and a failed brain, merged
+    "900d1bf94e05e22d6303197fb5264454b996410091b5d4a9a0aafbb9fbb50fef",  # a failed brain is started again
     "43d66995d736d6959a45d4a66cd9805cda71a1f16d8eb2b04077a8f64f79dada",  # a held language kit is activated by his word
     "fff9c0cd0fe916a353d14add621c90e2eaf91cccba63e992224f8b350f2f9a79",  # settings only, merged with messages read through the brain
     "58ce45c76c0667bf74eafc7858b9bb305c7885d56d1fe5181a7cac1248ced3a8",  # the untrusted-content refusal is a Settings control
