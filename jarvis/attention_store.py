@@ -401,7 +401,7 @@ Clock = Callable[[], float]
 # Kinds that are counted and listed but never spoken, by the digest or
 # anyone: a package Tim was sent (package_inbox.py) waits in his backlog
 # until he asks for it. Recorded silent, and never raised to audible.
-SILENT_KINDS = frozenset({"package", "work_follow_up", "work_stalled"})
+SILENT_KINDS = frozenset({"package", "work_follow_up", "work_stalled", "language_kit"})
 
 
 def _load_last_started() -> Optional[float]:
@@ -513,6 +513,14 @@ class AttentionStore:
         if changed:
             self._changed()
         return changed
+
+    def open_sources(self, kind: str) -> list[str]:
+        """The source ids of this kind's items not resolved (pending or
+        seen): what a producer that keeps one item per source looks over to
+        resolve those whose source no longer wants him."""
+        return [r.data["source_id"]
+                for r in records.scan(f"{ROOT}/{_folder(kind)}", types=[ITEM_TYPE], where=[_IS_ITEM])
+                if _is_item_path(r.path) and r.data["state"] != RESOLVED]
 
     def get(self, kind: str, source_id: str) -> Optional[Item]:
         rec = records.get(item_path(kind, source_id))

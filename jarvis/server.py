@@ -3327,7 +3327,9 @@ async def _start_on_records() -> None:
     await start_session_watcher()
     start_folders()
     start_knowledge()
-    language_kit_updates.runtime.start()
+    # A held kit candidate is a silent attention item (language_kit_updates.attend);
+    # the record starts below, so it is read when the item is written.
+    language_kit_updates.runtime.start(attention=lambda: attention_record)
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -9330,7 +9332,7 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
 
-from jarvis import language_document_api, language_kit_updates
+from jarvis import language_document_api, language_kit, language_kit_updates
 language_documents = language_document_api.Adapter()
 language_document_api.mount(app, language_documents)
 
@@ -9341,6 +9343,19 @@ async def tool_language_document(args):
 TOOL_HANDLERS["language_document"] = tool_language_document
 ACTING_TOOLS.add("language_document")
 TAINTING_TOOLS["language_document"] = "canonical source and its author's coverage declaration"
+
+
+async def tool_activate_language_kit(args: dict) -> str:
+    """Settings, Updates' Activate: the held kit candidate, on his word."""
+    try:
+        state = await asyncio.to_thread(language_kit_updates.approve_held, str(args.get("digest") or ""))
+    except (language_kit.KitError, OSError) as e:
+        return f"Nothing was activated: {e}"
+    return f"Language kit {state['active']['version']} is active now."
+
+TOOL_HANDLERS["activate_language_kit"] = tool_activate_language_kit
+ACTING_TOOLS.add("activate_language_kit")
+TAINT_EXEMPT_TOOLS["activate_language_kit"] = "it activates the held kit on his word, it does not read"
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,

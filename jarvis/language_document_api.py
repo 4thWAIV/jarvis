@@ -162,3 +162,17 @@ def mount(app, adapter: Adapter) -> None:
     async def kit_status():
         return await asyncio.to_thread(language_kit_updates.status)
     app.add_api_route("/api/language-kits/status", kit_status, methods=["GET"])
+
+    async def kit_activate(request: Request, body: dict = Body(default_factory=dict)):
+        # His click only: the page's Activate in Settings, Updates. The
+        # brain's activate_language_kit calls the same approve_held.
+        from jarvis import packages_api
+        if not packages_api.his_click(request):
+            return JSONResponse({"error": "Only his click on the page activates a language kit."},
+                                status_code=403)
+        try:
+            return JSONResponse(await asyncio.to_thread(
+                language_kit_updates.approve_held, str(body.get("digest") or "")))
+        except (kit.KitError, OSError) as error:
+            return JSONResponse({"error": str(error)}, status_code=409)
+    app.add_api_route("/api/language-kits/activate", kit_activate, methods=["POST"])

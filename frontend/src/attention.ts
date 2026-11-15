@@ -97,9 +97,10 @@ export function itemName(item: AttentionItem): string {
 }
 
 /** One item in words: its kind and event's catalog entry, with the name it
- *  is about; the codes themselves for a pair the catalog has no words for. */
+ *  is about and its facts (JARVIS's own: a kit's version, the files that
+ *  changed); the codes themselves for a pair the catalog has no words for. */
 export function itemWords(item: AttentionItem): string {
   const name = itemName(item) || t("main.updates.someone");
-  const words = codeWords("main.updates.event", `${item.kind}.${item.event}`, { name });
+  const words = codeWords("main.updates.event", `${item.kind}.${item.event}`, { ...item.facts, name });
   return words ?? `${item.kind}: ${item.event}${itemName(item) ? ` (${itemName(item)})` : ""}`;
 }
