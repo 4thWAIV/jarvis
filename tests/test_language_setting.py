@@ -405,7 +405,7 @@ def test_spanish_chosen_without_its_model_is_one_silent_update_until_it_changes(
     data_paths.language_path().write_text(json.dumps({"language": "es"}))
     server._attend_language_at_start(language_setting.load())
     item = store.get("language", "speech_model")
-    assert (item.event, item.facts) == ("model_missing", {"chosen": "Spanish", "using": "English"})
+    assert (item.event, item.facts) == ("model_missing", {"chosen": "es", "using": "en"})
     assert not item.audible and item.state == "pending"
     server._language_published({"type": "language", "language": "es"})
     assert frames == [{"type": "language", "language": "es"}]

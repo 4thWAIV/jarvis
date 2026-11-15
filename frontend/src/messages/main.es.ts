@@ -1154,6 +1154,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.communications.down": "Las comunicaciones con los agentes no funcionan",
   "main.updates.event.work_routes.slow": "Los informes de trabajo tardan más de cinco segundos; vea Diagnóstico, Seguimiento del trabajo",
   "main.updates.event.messaging.failing": "Los mensajes entre personas han fallado {failures} veces seguidas; vea Diagnóstico, Servidor del equipo",
+  "main.updates.language.en": "inglés",
+  "main.updates.language.es": "español",
   "main.updates.event.language.model_missing": "Eligió {chosen}, pero su modelo de voz no está instalado, así que JARVIS usa {using}; descárguelo en Ajustes, Voz e idioma",
   "main.updates.event.work_key.expiring": "La clave del elemento de trabajo {name} vence el {date}; renuévela en el Resumen del elemento",
   "main.updates.event.brain.down": "El cerebro no funciona; vea Diagnóstico",

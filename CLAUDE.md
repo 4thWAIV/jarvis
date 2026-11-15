@@ -2506,7 +2506,9 @@ prompt carries the language rule), `language_setting.load` puts the saved
 language in force and gives speech input its model, or English for that run
 when the saved one's model is missing (preflight checks the same model,
 `startup_model`); then, once the attention record is open, one silent
-`language` item (`model_missing`, the language chosen and the one used,
+`language` item (`model_missing`, the codes of the language chosen and the
+one used, which the page names in the reader's language through
+`main.updates.language.<code>`, attention.ts `languagesNamed`;
 `server._attend_language_at_start`), resolved when a language is next put
 in force (`server._language_published`, the hook `language_setting.change`
 publishes through). `GET`/`POST /api/settings/language` are the routes; the

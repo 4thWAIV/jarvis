@@ -1201,6 +1201,8 @@ export const mainEn = {
   "main.updates.event.communications.down": "Communications with the agents are down",
   "main.updates.event.work_routes.slow": "Work reports are taking over five seconds; see Diagnostics, Work tracker",
   "main.updates.event.messaging.failing": "Messages between people have failed {failures} times in a row to get through; see Diagnostics, Team server",
+  "main.updates.language.en": "English",
+  "main.updates.language.es": "Spanish",
   "main.updates.event.language.model_missing": "You chose {chosen}, but its speech model is not installed, so JARVIS is using {using}; download it in Settings, Voice and language",
   "main.updates.event.work_key.expiring": "The work-item key for {name} runs out on {date}; Renew it on the item's Overview",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",

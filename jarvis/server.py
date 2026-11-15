@@ -3570,13 +3570,13 @@ def _attend_language_at_start(model) -> None:
     """The language he chose is not the one JARVIS started in (its speech
     model is not installed: language_setting.startup_model): one silent
     attention item saying so, resolved once the language changes
-    (`_language_published`)."""
+    (`_language_published`). The languages are their codes: the page names
+    each in the reader's language (attention.ts `itemWords`)."""
     chosen = language_setting.saved()
     if chosen == model.language:
         return
     _attend(LANGUAGE_KIND, "speech_model", "model_missing", audible=False,
-            facts={"chosen": language_setting.NAMES.get(chosen, chosen),
-                   "using": language_setting.NAMES.get(model.language, model.language)})
+            facts={"chosen": chosen, "using": model.language})
 
 
 def _language_published(frame: dict) -> None:
