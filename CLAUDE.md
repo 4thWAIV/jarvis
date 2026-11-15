@@ -1096,7 +1096,9 @@ keyboard focus enters it; reduced motion and `data-motion="steady"` keep it
 shown. Only its controls take the pointer, and none once it has faded, so
 the document under it (a deck's strip of slides) stays his to click; a
 pointer's route to a part drawn over another part is not blocked by what
-lies under it (`uiPipeline.otherParts`). One focus layer
+lies under it (`uiPipeline.otherParts`), and a faded bar comes back the
+moment the brain points at the package (`VisualTarget.unveil`, called by
+`uiAttention.indicate` before it looks). One focus layer
 (`PackageFocus.tsx`) serves a decision and a narrated beat: given a rect
 in the frame's coordinates, a dim level (`DIM`) and content, it keeps the
 part lit and ringed, dims the rest, and presents a card beside it joined by
