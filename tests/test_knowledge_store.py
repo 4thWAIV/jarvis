@@ -445,3 +445,74 @@ def test_a_stopped_compaction_child_holds_up_no_read(tmp_path):
         assert val(s, "during") == "yes"
     finally:
         s.close()
+
+
+# --- the newest version without the history ----------------------------------
+
+def _newest_by_history(store: Store, key: bytes, at=None, live=False):
+    """The answer `Store.newest` must give, read the old way: every version."""
+    return next((v for v in store.versions(DOCS, key)
+                 if (at is None or v.lsn <= at) and not (live and v.value is None)), None)
+
+
+def test_newest_matches_every_version_across_flushes_compaction_and_tombstones(store):
+    lsns = []
+    for round_ in range(12):
+        ops = [put(f"k{i}", f"r{round_}-{i}") for i in range(20) if (i + round_) % 3]
+        ops += [delete(f"k{i}") for i in range(20) if (i + round_) % 5 == 0]
+        lsns.append(store.commit(ops))
+        if round_ % 3 == 2:
+            store.flush()
+        if round_ == 7:
+            store.compact(store.manifest.generations()[:2])   # overlapping LSN ranges after it
+    keys = [f"k{i}".encode() for i in range(20)] + [b"absent"]
+    for key in keys:
+        for at in [None, *lsns, 0]:
+            for live in (False, True):
+                assert store.newest(DOCS, key, at, live=live) == _newest_by_history(store, key, at, live)
+        assert store.get(DOCS, key) == _newest_by_history(store, key)
+
+
+def test_a_long_history_is_read_newest_first_without_decoding_its_block(store):
+    """One key rewritten until its history alone is a block many times the
+    size at which a read streams it, beside small keys in the same block."""
+    history = []
+    for i in range(160):
+        value = (f"{i:05d}" * 2000).encode()            # 10 kB, compressible
+        if i % 40 == 39:
+            history.append(store.commit([delete("hot")]))
+        else:
+            history.append(store.commit([put("hot", value), put("hou", f"small{i}")]))
+    store.commit([put("hot", b"last" * 2500), put("hou", "small-last")])
+    store.flush()
+    seg = store.segments[DOCS][0][1]
+    index = max(0, __import__("bisect").bisect_right(seg.first_keys, b"hot") - 1)
+    raw = sg.BLOCK_HEAD.unpack(sg.pread(seg.fd, sg.BLOCK_HEAD.size, seg.offsets[index]))[2]
+    assert raw > sg.STREAM_OVER_BYTES
+    store.pool.drop_file(seg.file_id)
+    for key in (b"hot", b"hou"):
+        for at in [None, *history[::7]]:
+            for live in (False, True):
+                assert store.newest(DOCS, key, at, live=live) == _newest_by_history(store, key, at, live)
+        store.pool.drop_file(seg.file_id)
+        got = store.newest(DOCS, key)
+        assert store.pool.get((seg.file_id, index)) is None      # the block was never kept whole
+        assert got == _newest_by_history(store, key)
+    assert store.value(DOCS, b"hot") == b"last" * 2500
+
+
+def test_an_uncompressed_long_history_streams_too(tmp_path):
+    """A block that does not compress is stored as it is; it streams alike."""
+    rng = __import__("random").Random(7)
+    versions = [sg.Version(b"hot", 1000 - i, rng.randbytes(9000) if i % 5 else None) for i in range(60)]
+    versions += [sg.Version(b"hou", 5, b"small")]
+    path = tmp_path / "s.docs"
+    sg.write_segment(path, DOCS, 1, versions)
+    seg = sg.Segment(path, sg.BlockPool())
+    assert seg.newest(b"hot") == versions[0]
+    assert seg.newest(b"hot", live=True) == versions[1]
+    assert seg.newest(b"hot", at=996) == versions[4]
+    assert seg.newest(b"hot", at=995, live=True) == versions[6]
+    assert seg.newest(b"hou") == versions[-1]
+    assert seg.newest(b"hot", at=1) is None
+    seg.close()

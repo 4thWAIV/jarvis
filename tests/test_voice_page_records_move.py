@@ -92,3 +92,58 @@ async def test_a_failed_move_says_so_and_why(page_url):
             await async_api.expect(shown).to_contain_text("docs/whats-new.md")
         finally:
             await browser.close()
+
+
+class _Restarting:
+    """A server whose start failed (`cause`), until Try again posts
+    /api/restart: then a new one (another `boot`) that is ready."""
+
+    def __init__(self, cause):
+        self.cause, self.restarts = cause, 0
+
+    async def move(self, route):
+        body = (_status("ready") | {"boot": "second"}) if self.restarts else \
+            (_status("failed", reason="the knowledge engine did not answer within 60 s")
+             | {"cause": self.cause, "boot": "first"})
+        await route.fulfill(content_type="application/json", body=json.dumps(body))
+
+    async def restart(self, route):
+        assert route.request.method == "POST"
+        self.restarts += 1
+        await route.fulfill(content_type="application/json", body=json.dumps({"status": "restarting"}))
+
+
+@pytest.mark.asyncio
+async def test_an_engine_that_did_not_come_up_says_why_and_try_again_starts_jarvis_again(page_url):
+    server = _Restarting("engine")
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server.move)
+        await page.route("**/api/restart", server.restart)
+        try:
+            shown = page.locator("#records-move.failed")
+            await async_api.expect(shown.locator("h1")).to_have_text("JARVIS could not open its records")
+            await async_api.expect(shown.locator(".records-move-reason")).to_contain_text("did not answer")
+            await async_api.expect(shown).not_to_contain_text("docs/whats-new.md")
+            await shown.locator("#records-move-retry").click()
+            # The new server answers: the page loads again, on the workspace.
+            await async_api.expect(page.locator("#records-move")).to_have_count(0, timeout=15000)
+            await page.wait_for_selector(".right-tabs [role=tab]", timeout=15000)
+            assert server.restarts == 1
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_move_has_try_again_too(page_url):
+    server = _Restarting("move")
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server.move)
+        await page.route("**/api/restart", server.restart)
+        try:
+            retry = page.locator("#records-move.failed #records-move-retry")
+            await async_api.expect(retry).to_have_text("Try again")
+            await retry.click()
+            await async_api.expect(page.locator("#records-move")).to_have_count(0, timeout=15000)
+            assert server.restarts == 1
+        finally:
+            await browser.close()

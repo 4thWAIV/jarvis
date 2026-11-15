@@ -164,6 +164,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_engine_setting",
     "mcp__jarvis__brains_settings",
     "mcp__jarvis__set_brain",
+    "mcp__jarvis__start_brain",
     # Every other setting in Settings (settings_specs.py): reading them, and
     # the acting change the Settings route also calls.
     "mcp__jarvis__jarvis_settings",
@@ -237,6 +238,8 @@ ALLOWED_TOOLS = [
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
+    # Settings, Updates' held language kit, activated on his word.
+    "mcp__jarvis__activate_language_kit",
     # The records move into the engine (records_move.py), as the page shows it.
     "mcp__jarvis__records_move",
     "mcp__jarvis__agent_keys",

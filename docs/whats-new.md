@@ -1,6 +1,53 @@
 # The new JARVIS workspace
 
-Updated 2026-11-13. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Nothing stops in silence: every stop says why and offers a way on
+
+When JARVIS cannot start on its records, the page now says so instead of
+showing nothing. If the knowledge engine that holds the records does not
+answer, JARVIS stays up and the page covers the workspace with "JARVIS could
+not open its records", why (the engine's own reason and the end of its log)
+and a Try again button that starts JARVIS again. A records move that failed,
+or a start that failed after the records opened, shows the same Try again;
+you no longer need a terminal to retry.
+
+A brain that stopped (its login expired, or it crashed too often) now has
+Start brain on its Diagnostics row, and JARVIS starts it when you ask by
+voice. Signing a brain in again from Settings starts it again by itself.
+
+Diagnostics has a new Updates row: if the record that holds the updates
+meant for you cannot be opened, the row is down and says why, rather than
+updates going missing without a word.
+
+## A language kit waiting for your review tells you, and you activate it in Settings
+
+When a newer architecture language kit changes its language files, JARVIS
+keeps the working kit and holds the new one for your review. It used to say
+so only in a status file; now it is an update in Updates waiting (shown,
+never spoken), naming the kit's version and the files that changed, once
+per kit rather than at every six-hourly check. Settings, Updates shows the
+held kit and why, with Activate: press it, confirm, and the new kit is
+active; documents already written stay on the kit they were checked with.
+You can also tell JARVIS to activate it. The update goes away by itself
+once the kit is active, and the status no longer claims a review is
+needed for the kit already running.
+
+## The knowledge engine no longer slows down as records are rewritten
+
+Every record keeps all of its versions, and some are rewritten every few
+seconds or minutes (the brains' usage for the day, folder checks, the
+message sync position). Reading such a record used to unpack its whole
+history, hundreds of megabytes for one day's usage, so the engine got
+slower with every write until the page and the brain's reads timed out
+while the engine still said it was running. Reading a record now reads
+only its newest version: a folder discovery pass costs the engine a
+quarter of what it did, and a read of the day's usage takes milliseconds
+instead of seconds.
+
+## Package checks run while the screen is locked
+
+The check every package passes before it reaches you now keeps the display awake, and wakes it if it is asleep. While the display slept under a locked screen the browser's audio stopped, so a package built overnight failed its check for no fault of its own.
 
 ## A start setting the page cannot reach goes back by itself
 

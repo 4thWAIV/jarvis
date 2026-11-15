@@ -157,6 +157,12 @@ export const shellEn = {
   "move.longer": "Taking a little longer than expected",
   "move.safe": "It is safe to stop JARVIS now: the next start begins the move again, and jarvis.db is never changed.",
   "move.failed.title": "JARVIS could not start on its records",
-  "move.failed.kept": "jarvis.db is untouched. Starting JARVIS again tries the move again.",
+  "move.failed.kept": "jarvis.db is untouched. Try again starts JARVIS again, which tries the move again.",
   "move.failed.back": "To go back to the version you had before, see “If the records move fails” in docs/whats-new.md.",
+  "move.engine.title": "JARVIS could not open its records",
+  "move.engine.kept": "Your records are untouched: the knowledge engine that holds them did not answer. Try again starts JARVIS again.",
+  "move.start.kept": "Your records are untouched. Try again starts JARVIS again.",
+  "move.retry": "Try again",
+  "move.retrying": "Starting JARVIS again…",
+  "move.retryRefused": "JARVIS did not start again: {error}",
 } as const;

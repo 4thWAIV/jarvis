@@ -100,7 +100,13 @@ presents as "the UI is up but nothing works" rather than as an error.
   (`records_cutover.STEPS`), the time left by the plan
   (`records_cutover.plan`: rows times `STEP_SEC_PER_ROW`, measured) and
   that stopping is safe; a failed move or start leaves the server up
-  saying why. The plan refuses too little free disk first
+  saying why, with the cause (`records_move.MOVE`, `ENGINE`: the engine
+did not come up, or `START`: what needs the records failed to start, with
+or without a move) and Try again on the page: `POST /api/restart` is the one
+route the gate lets through while it has failed, from the page's own
+`Origin` with no Authorization (`records_move.RETRY`), and the page waits
+for a new server (`status()`'s `boot`, this process's id) before it loads
+again. The plan refuses too little free disk first
   (`NotEnoughSpace`, `space_needed`). Every call the move makes has its
   own deadline (`knowledge_move.MOVE_DEADLINE_SEC`, 300 s), never the
   record deadline, and each copy write names the version it expects, so a
@@ -1622,7 +1628,8 @@ is written under the orb any more: it goes to that view's Messages
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
 output, the tool channel, the workflow monitor, the Work tracker, the folder
-catalog, the team server connection and the server's start setup
+catalog, the knowledge engine, the attention record ("Updates"), the team
+server connection and the server's start setup
 (`start_setup`: a trial and the last going back, never worse than degraded)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
@@ -1644,7 +1651,16 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back. The Work tracker row is its routes' latency, measured live
+they are back. The attention row (`subsystem_diagnostics.attention`,
+"Updates") is down while the attention record is not open, with the reason
+`server._start_attention` met (`_attention_problem`), since `_attend` drops
+every update meanwhile. The brain's row offers Start brain while it is down
+(`SubsystemView.tsx` `StartBrain`, `POST /api/brain/start`), and the brain's
+acting `start_brain` calls the same `server._start_brain`, which starts a
+failed or stopped brain (`Brain.start` clears the failure and its restart
+budget) and leaves one serving or already starting alone; a brain sign-in
+that finishes (`api_brains_sign_in`) starts the brain again when the brain
+in force, on that provider, has failed. The Work tracker row is its routes' latency, measured live
 (`subsystem_diagnostics.work_routes`, each report's write and each read of
 `/api/work` timed as it is served, `work_api.timed`), judged over the last
 `WORK_LATENCY_WINDOW_SEC` (five minutes): degraded once a write or a read
@@ -1849,6 +1865,12 @@ their folder), written in one commit. Every write is a version tagged with
 who (`by`: person, agent, model), what kind of change and its summary, kept
 through compaction (`store.HISTORY_FAMILIES`) with `get` at a version or a
 time, `history` and `diff`; a delete is a version, only forget erases.
+Reading an item's newest version never reads its history (`Store.newest`:
+the memtables, then the segments by their highest LSN, stopping once none
+left can hold a newer one); a block over `segment.STREAM_OVER_BYTES` holds
+one key's long history and is never decoded whole: its first read walks it
+once, decompressing in pieces, and keeps only each key's newest and newest
+live version in the pool (`Segment._heads`).
 Transactions of several items take conditions (`expect_version`, `absent`)
 checked under the store's commit lock, which every write takes
 (`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and
@@ -1977,9 +1999,13 @@ through `knowledge_client.Supervisor` (loopback only, its own token,
 `knowledge-address.json`; its stderr appended to its own log,
 `knowledge-engine.log`, kept under 1 MB) and waits up to `READY_WAIT_SEC`
 (60 s), off the event loop, for its health before serving the page. JARVIS's
-records live in it, so past that the server does not start
+records live in it, so past that nothing that needs them starts
 (`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
-the engine's log; the decision check's failure carries the same tail). It
+the engine's log; the decision check's failure carries the same tail), but
+the server stays up: `lifespan` puts the records gate in its failed state
+(`records_move.failed(..., records_move.ENGINE)`), so every gated route
+answers 503 with that reason and the page shows it ("JARVIS could not open
+its records") with Try again. It
 listens through `loopback_http.LoopbackThreadingHTTPServer`, never the
 stdlib's bind, whose reverse lookup of 127.0.0.1 takes about 35 s on the
 macOS CI runner. The supervisor restarts it at once when it
@@ -2122,6 +2148,32 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 `self_update.repo_root` at temporary repositories
 (`conftest._never_update_or_restart_the_real_checkout`).
 
+## The language kit
+The architecture language kit (`language_kit.py`: the pinned upstream
+release, staged, smoke-tested and activated by digest under
+`<data>/language-kits/`) is kept current by `language_kit_updates.py`,
+which checks the publisher's pre-release channel every six hours once a kit
+is adopted. A candidate whose language files (`language_kit.LANGUAGE_FILES`)
+differ from the active kit's is refused (`language_kit.ReviewRequired`,
+naming them), as is one held after a rollback; the refusal is kept with
+that candidate as `held` in `updates.json` (version, digest, `reason`
+`review` or `refused`, the files that changed, `since`), and
+`compatibility_review_required` and the refusal's `error` go with it:
+`status` clears them whenever nothing is held or the held digest is the
+active one, a 304 included, and every activation (`activate-reviewed`,
+`adopt-pinned`, an automatic one) clears them. While held it is one silent
+attention item (`language_kit_updates.attend`, kind `language_kit`, in
+`attention_store.SILENT_KINDS`, source the candidate digest, so a check
+that refuses it again changes nothing), resolved once the candidate is
+active or no longer held; the updater's loop attends after every check, so
+an activation from the command line is seen within a minute. Settings,
+Updates shows the held candidate and why, with Activate (his click, twice;
+`POST /api/language-kits/activate`, `packages_api.his_click`), and the
+brain's acting `activate_language_kit` (the held digest) calls the same
+`language_kit_updates.approve_held`, which activates only exactly the
+candidate held. `GET /api/language-kits/status` and `language_document`'s
+capabilities read the status.
+
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
 not picked up, answered or not sent; an agent's message;
@@ -2135,7 +2187,9 @@ its exact read-back) is first an item in
 id), each change its next revision and a version whose `events` holds it,
 every digest it was shown in on it (`presentations`), JARVIS's own facts
 apart from other people's words (`untrusted`); each digest is
-`/attention/digests/<id>.digest`. `server._attend` is the one way in. `attention.py` is
+`/attention/digests/<id>.digest`. `server._attend` is the one way in. While the record is not open
+(`_start_attention` failed) an item is dropped and logged, and Diagnostics'
+attention row is down saying why. `attention.py` is
 the one admission policy: engaged (his last trusted interaction within
 `engagement_sec`, not away; a connected page is not engagement), the
 conversation controller's floor `idle`, `settled_exchange_sec` since it was
@@ -3087,7 +3141,8 @@ A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to e
   as untrusted. Left out on purpose: settings that hold secrets (API keys and
   the Fish key test), the settings only his click changes (the brain's
   programs, the address and the extra origins: read by `jarvis_settings`,
-  never changed), `/api/restart` on its own (`update_jarvis` restarts,
+  never changed), `/api/restart` on its own (and the records gate's Try
+  again over it, which only shows while nothing the brain needs is up) (`update_jarvis` restarts,
   through the same `_restart_server`, once an update is in), and the sign-in
   and connect flows that need a browser approval
 - Every setting is a Settings control (see "Settings only"); no step tells a

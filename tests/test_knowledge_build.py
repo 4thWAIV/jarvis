@@ -233,7 +233,10 @@ def test_a_changed_item_goes_back_to_pass_one(tmp_path, monkeypatch):
         tx.put("/folders/f/a.md", {"title": "a", "mtime": 20.0}, content=_sections(6, "alpha"))
         tx.put("/folders/f/b.md", {"title": "b", "mtime": 10.0}, content=_sections(6, "beta"))
         uds.transaction(TIM, tx, change="test")
-        assert _until(lambda: engine.vectors.build_health()["sections_embedded"] >= 4)
+        # The pass is the stage the build is on, which moves once the thread
+        # takes its next job, a moment after the commit that counts the rows.
+        assert _until(lambda: (lambda h: h["sections_embedded"] >= 4 and h["pass"] == 3)(
+            engine.vectors.build_health()))
         held = engine.vectors.build_health()
         assert held["items_embedded"] == 2 and held["pass"] == 3
         uds.transaction(TIM, Transaction().put("/folders/f/b.md", {"title": "b", "mtime": 30.0},

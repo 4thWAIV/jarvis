@@ -194,6 +194,7 @@ def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch
 
 
 def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch):
+    passing_check(monkeypatch)
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     folder = tmp_path / "in" / "Plain Page"
@@ -216,6 +217,7 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
 
 
 def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, monkeypatch):
+    passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
@@ -253,6 +255,7 @@ def test_a_deck_s_vote_is_in_its_language_else_the_one_in_force(
 
 def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
         tmp_path, monkeypatch):
+    passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     in_force("es")
     folder = tmp_path / "in" / "Plain Page"
@@ -320,7 +323,7 @@ def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
 def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("a folder is no deck"))
+    passing_check(monkeypatch)
     assert mp.main([str(page_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--project", "globe", "--session", "sess-1",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
@@ -394,6 +397,23 @@ def test_a_deck_given_as_a_folder_is_refused(tmp_path):
     with pytest.raises(dp.Refused) as refused:
         mp.make_folder(EXAMPLES / "decision-deck", tmp_path)
     assert "made from its content file" in " ".join(refused.value.problems)
+
+
+def test_bounded_image_failure_reports_on_existing_work_without_a_package(tmp_path, monkeypatch):
+    delivery, checks = _Delivery(), []
+    monkeypatch.setattr(dp, "post", delivery)
+    def failed(*args):
+        checks.append(args)
+        return decision_check.Result(failures=["entry: picture missing.svg did not load"])
+    monkeypatch.setattr(decision_check, "check", failed)
+    assert mp.main([str(write(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
+                    "--session", "sess-1", "--work", "image-work",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 1
+    assert len(checks) == 2
+    [(url, signer, body)] = delivery.calls
+    assert url.endswith("/api/messages?work=image-work")
+    assert signer is not None and "package" not in body
+    assert "picture missing.svg did not load" in body["says"]
 
 
 # -- a briefing: the opening and each decision's lead-in --------------------------------
@@ -530,3 +550,40 @@ def test_evidence_lines_are_strings_with_words(tmp_path):
     assert "the evidence is 161 characters; at most 160" in refused_for(tmp_path, deck)
     deck["decisions"][0]["evidence"], deck["decisions"][0]["why_you"] = ["Fine."], "y" * 161
     assert "the why_you is 161 characters; at most 160" in refused_for(tmp_path, deck)
+
+
+def test_yaml_uses_same_author_visual_repair_and_fresh_staging(tmp_path, monkeypatch):
+    """Both reviewed attempts compile YAML; only the accepted archive delivers."""
+    import shutil
+    from jarvis import package_author
+    from tests.author_fixtures import accept_visual_review
+
+    source_dir = tmp_path / 'source'
+    shutil.copytree(EXAMPLES.parent / 'presentations/street', source_dir)
+    source = source_dir / 'presentation.yaml'
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, 'post', delivery)
+    passing_check(monkeypatch)
+    reviewed = []
+    shared_review = package_author.review
+
+    async def review(authored_source, archive, result, turn, folder):
+        reviewed.append(archive)
+        async def reply(prompt):
+            request = Path(prompt.split('Read ', 1)[1].split('. Open EVERY', 1)[0])
+            accept_visual_review(request, status='repair' if len(reviewed) == 1 else 'accepted')
+        return await shared_review(authored_source, archive, result, reply, folder)
+
+    monkeypatch.setattr(package_author, 'review', review)
+    out = tmp_path / 'out'
+    assert mp.main([str(source), '--out', str(out), '--session', 'sess-1',
+                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
+    assert len(reviewed) == 2 and reviewed[0] != reviewed[1]
+    assert [path.parent.name for path in reviewed] == ['review-1', 'review-2']
+    assert len(delivery.calls) == 1
+    delivered = json.loads((out / 'delivery.json').read_text())
+    assert delivered['zip'] == str(reviewed[-1])
+    with zipfile.ZipFile(reviewed[-1]) as package:
+        receipt = json.loads(package.read('.jarvis/visual-review.json'))
+        assert receipt['review']['status'] == 'accepted'
+        assert package.read('source.yaml') == source.read_bytes()

@@ -549,6 +549,11 @@ export const leftEn = {
   "left.updates.kitNotAdopted": "The architecture language kit has not been adopted on this installation.",
   "left.updates.kitLastCheck": "Last update check: {when}.",
   "left.updates.kitCompatibility": "A candidate is staged for review. The working kit remains active.",
+  "left.updates.kitHeldReview": "Kit {version} is waiting for your review: its language files changed ({files}). The working kit stays active until you activate it.",
+  "left.updates.kitHeldRefused": "Kit {version} is held back:",
+  "left.updates.kitActivate": "Activate",
+  "left.updates.kitConfirm": "Activate kit {version}? New architecture documents are checked with it; documents already written stay on the kit they were checked with.",
+  "left.updates.kitYesActivate": "Yes, activate {version}",
   "left.updates.kitUnavailable": "The language-kit status could not be read.",
   "left.updates.kitReading": "Reading the language-kit status…",
 } as const;
