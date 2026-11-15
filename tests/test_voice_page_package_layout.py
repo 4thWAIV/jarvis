@@ -21,8 +21,9 @@ from tests.test_voice_page_language_documents import canonical_server  # noqa: F
 
 pytestmark = pytest.mark.page
 
+# As long as a story allows (package_story: a context at most 200 characters).
 LONG = ("Choosing either route starts language-design work. Each new word still needs "
-        "individual approval; this answer does not approve vocabulary or an implementation. ") * 4
+        "individual approval; this answer approves no vocabulary and no implementation of it.")[:200]
 EXPLANATION = "# The document store\n\n" + "\n\n".join(
     f"## Part {i}\n\nThe store keeps part {i} of every revision, and says so here at length "
     "so the explanation is longer than any side column." for i in range(30))
