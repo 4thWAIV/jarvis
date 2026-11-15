@@ -2,6 +2,18 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## JARVIS no longer rewrites records when nothing changed
+
+Every record keeps every version, and a few writers rewrote whole records
+when only a time had moved, so their history grew without end (one day's
+usage record reached hundreds of megabytes). Now each writes only when
+something you can see changed: a weekly usage reading is kept when its
+figures change, or once every ten minutes otherwise, so the burn-down
+still has a point every ten minutes; the messaging sync position is
+written only when it moves; and the folder catalog's "last checked",
+"seen" and discovery times are kept in memory, still shown as they are,
+and written at most every fifteen minutes.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

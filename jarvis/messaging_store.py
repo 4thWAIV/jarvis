@@ -630,9 +630,14 @@ class MessagingStore:
         return self.store_page_changes(server_id, owner_github_id, node_id, page)[0]
 
     def store_page_changes(self, server_id: str, owner_github_id: int, node_id: UUID,
-                           page: wire.SyncPage) -> tuple[list[UUID], bool]:
+                           page: wire.SyncPage, *,
+                           keep_position: bool = True) -> tuple[list[UUID], bool]:
         """`store_page`, and whether any record changed (a rescan of what is
-        already here changes nothing, and so publishes no hint)."""
+        already here changes nothing, and so publishes no hint). Without
+        `keep_position` the page's continuation is not written: the
+        delivery loop keeps a pass's position in hand between its pages
+        and writes only where the pass stops, so a rescan of what is
+        already here writes nothing at all."""
         def go(docs: Docs):
             new: list[UUID] = []
             for e in page.entries:
@@ -642,13 +647,18 @@ class MessagingStore:
                         docs, server_id, owner_github_id, e.message.message_id):
                     new.append(e.message.message_id)
             changed = any(docs.changed(p) for p in list(docs.cur))
-            self._set_sync(docs, server_id, owner_github_id, node_id, page.continuation)
+            if keep_position:
+                self._set_sync(docs, server_id, owner_github_id, node_id, page.continuation)
             return new, changed
         return self._write(go)
 
     def _set_sync(self, docs: Docs, server_id, owner, node_id, continuation) -> None:
         path = self._sync_path(owner)
         doc = docs.get(path, lambda: _sync_doc(owner))
+        here = next((s for s in doc["sync"]
+                     if s["server_id"] == server_id and s["node_id"] == str(node_id)), None)
+        if here is not None and continuation is not ... and here["continuation"] == continuation:
+            return      # the position did not move: nothing to write (every version is kept)
         doc["sync"] = [s for s in doc["sync"]
                        if not (s["server_id"] == server_id and s["node_id"] == str(node_id))]
         if continuation is not ...:

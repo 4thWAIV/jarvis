@@ -226,6 +226,67 @@ def test_a_rescan_of_what_is_here_changes_nothing(serve):
     assert store.store_page_changes(*NS, UUID(int=1), page(entry(serve, TIM, m))) == ([], False)
 
 
+def _sync_versions(owner=TIM) -> int:
+    path = sqlite_store()._sync_path(owner)
+    return len(records.history(path))
+
+
+def test_a_sync_position_that_did_not_move_is_not_written_again(serve):
+    """Every version is kept, so the same position written each pass would
+    grow its history without end."""
+    store = sqlite_store()
+    m = send(serve, MATT, 2, TIM, "Once.").message
+    store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, m), continuation="c1"))
+    written = _sync_versions()
+    store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, m), continuation="c1"))
+    store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, m), continuation="c1"))
+    assert _sync_versions() == written
+    store.store_page(*NS, UUID(int=1), page(entry(serve, TIM, m), continuation="c2"))
+    assert _sync_versions() == written + 1 and store.sync_position(*NS, UUID(int=1)) == "c2"
+    store.restart_sync(*NS, UUID(int=1))
+    assert store.sync_position(*NS, UUID(int=1)) is None
+
+
+def test_a_page_in_the_middle_of_a_pass_does_not_write_the_position(serve):
+    store = sqlite_store()
+    m = send(serve, MATT, 2, TIM, "Once.").message
+    store.store_page_changes(*NS, UUID(int=1), page(entry(serve, TIM, m), continuation="c1"),
+                             keep_position=False)
+    assert store.message(*NS, m.message_id) is not None, "the page itself is kept"
+    assert store.sync_position(*NS, UUID(int=1)) is None
+
+
+def test_a_rescan_pass_of_the_delivery_loop_writes_no_sync_position(serve):
+    """A pass that pages through what is already here (each page a new
+    continuation, the last none) writes the position only where it stops,
+    and that is where it already was: nothing."""
+    from jarvis import messaging_client
+    store = sqlite_store()
+    a = send(serve, MATT, 2, TIM, "a").message
+    b = send(serve, MATT, 2, TIM, "b").message
+    pages = [page(entry(serve, TIM, a), continuation="tok-1"), page(entry(serve, TIM, b))]
+
+    class Transport:
+        def __init__(self):
+            self.left = list(pages)
+
+        async def sync(self, node, continuation, limit):
+            return self.left.pop(0)
+
+    class Pairing:
+        ns = NS
+
+    loop = messaging_client.Delivery.__new__(messaging_client.Delivery)
+    loop.store, loop.node_id = store, lambda: UUID(int=1)
+    loop._present = lambda pairing, message: None
+    asyncio.run(loop._sync(Transport(), Pairing()))
+    written = _sync_versions()
+    asyncio.run(loop._sync(Transport(), Pairing()))
+    asyncio.run(loop._sync(Transport(), Pairing()))
+    assert _sync_versions() == written
+    assert store.sync_position(*NS, UUID(int=1)) is None
+
+
 def test_an_edit_never_replaces_a_send_that_is_out():
     ids = fakes.SeqIds()
     store = sqlite_store()
