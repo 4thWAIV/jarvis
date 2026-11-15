@@ -794,19 +794,68 @@ function LanguageKitStatus() {
   const live = useLiveRead(async () => {
     const response = await fetch("/api/language-kits/status");
     if (!response.ok) throw new Error(t("left.updates.kitUnavailable"));
-    return response.json() as Promise<{ active: { version: string } | null; adopted?: boolean; active_error?: string; last_check: number | null; error?: string; compatibility_review_required?: boolean }>;
+    return response.json() as Promise<KitStatus>;
   });
   useEffect(() => { const timer = setInterval(live.refresh, 60000); return () => clearInterval(timer); }, [live.refresh]);
   const state = live.value;
+  const held = state?.held ?? null;
+  const activateUi = useSettingsItem("activateLanguageKit", t("left.updates.kitActivate"), held !== null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  // His click, twice: Activate, then "Yes, activate" (language_kit_updates.approve_held).
+  const activate = async () => {
+    if (!held) return;
+    if (!confirming) { setConfirming(true); return; }
+    setBusy(true);
+    setRefused(null);
+    try {
+      const res = await fetch("/api/language-kits/activate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ digest: held.digest }) });
+      if (!res.ok) setRefused(((await res.json()) as { error?: string }).error ?? t("left.updates.kitUnavailable"));
+    } catch {
+      setRefused(t("left.updates.kitUnavailable"));
+    }
+    setBusy(false);
+    setConfirming(false);
+    live.refresh();
+  };
   return <SettingsRow label={label} labelRef={target.part("label")}>
     <div ref={target.whole}>
       <p>{state?.active ? t("left.updates.kitActive", { version: state.active.version }) : state ? t("left.updates.kitNotAdopted") : t("left.updates.kitReading")}</p>
       {state?.last_check ? <p>{t("left.updates.kitLastCheck", { when: formatDateTime(state.last_check * 1000, { dateStyle: "short", timeStyle: "short" }) })}</p> : null}
-      {state?.compatibility_review_required && <p>{t("left.updates.kitCompatibility")}</p>}
-      {(live.error || state?.error) && <p role="status">{live.error || state?.error}</p>}
+      {held && (
+        <div role="status" className="settings-state" data-kit-held="">
+          <StatusDot status="yellow" />
+          {held.reason === "review"
+            ? t("left.updates.kitHeldReview", { version: held.version, files: held.changed.join(", ") })
+            : <>{t("left.updates.kitHeldRefused", { version: held.version })} <span data-original-detail="">{held.detail}</span></>}
+        </div>
+      )}
+      {held && confirming && <p className="update-confirm">{t("left.updates.kitConfirm", { version: held.version })}</p>}
+      {held && (
+        <button data-ui-action="domain" className="settings-btn primary" ref={activateUi.whole} onClick={() => void activate()} disabled={busy}>
+          {confirming ? t("left.updates.kitYesActivate", { version: held.version }) : t("left.updates.kitActivate")}</button>
+      )}
+      {refused && <p className="update-refused"><span data-original-detail="">{refused}</span></p>}
+      {!held && state?.compatibility_review_required && <p>{t("left.updates.kitCompatibility")}</p>}
+      {(live.error || (!held && state?.error)) && <p role="status">{live.error || state?.error}</p>}
       {state?.adopted && state.active_error && <p role="status">{state.active_error}</p>}
     </div>
   </SettingsRow>;
+}
+
+/** language_kit_updates.status: the active kit, the last check, and the
+ *  candidate held back from activation for his review, if any. */
+interface KitStatus {
+  active: { version: string } | null;
+  adopted?: boolean;
+  active_error?: string;
+  last_check: number | null;
+  error?: string | null;
+  compatibility_review_required?: boolean;
+  held?: { version: string; digest: string; reason: "review" | "refused"; changed: string[]; detail: string } | null;
 }
 
 /** The start setup on trial, counting down to going back, and the last

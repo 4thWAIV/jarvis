@@ -526,6 +526,11 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.updates.kitNotAdopted": "El kit del lenguaje de arquitectura no se ha adoptado en esta instalación.",
   "left.updates.kitLastCheck": "Última búsqueda de actualizaciones: {when}.",
   "left.updates.kitCompatibility": "Un candidato espera revisión. El kit actual sigue activo.",
+  "left.updates.kitHeldReview": "El kit {version} espera su revisión: cambiaron sus archivos de lenguaje ({files}). El kit actual sigue activo hasta que usted lo active.",
+  "left.updates.kitHeldRefused": "El kit {version} quedó retenido:",
+  "left.updates.kitActivate": "Activar",
+  "left.updates.kitConfirm": "¿Activar el kit {version}? Los nuevos documentos de arquitectura se revisan con él; los ya escritos siguen con el kit con que se revisaron.",
+  "left.updates.kitYesActivate": "Sí, activar {version}",
   "left.updates.kitUnavailable": "No se pudo leer el estado del kit de lenguaje.",
   "left.updates.kitReading": "Leyendo el estado del kit de lenguaje…",
 };

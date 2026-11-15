@@ -147,7 +147,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
             "change_knowledge_seed", "install_embedding_model", "set_knowledge_settings", "change_project", "change_project_folder",
             "change_project_candidate", "change_work", "change_accomplishment",
-            "set_engine_setting", "set_jarvis_setting", "set_brain")
+            "set_engine_setting", "set_jarvis_setting", "set_brain", "activate_language_kit")
 # Acting tools that give back somebody else's words (a received file's name).
 # read_aloud gives the brain the message he asked to hear, to read him itself.
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package",
@@ -218,6 +218,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("change_accomplishment", {"action": "record", "project": "x", "title": "x"}),
     ("set_engine_setting", {"override_stressed": True}),
     ("set_brain", {"brain": "openai", "action": "add"}),
+    ("activate_language_kit", {"digest": "0" * 64}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -1070,3 +1071,33 @@ def test_muting_speech_stops_what_is_sounding_at_once(wired, monkeypatch):
     assert stopped == []
     asyncio.run(change(True))
     assert stopped == ["his speech mute"]
+
+
+# ── the held language kit ──────────────────────────────────────────────────
+
+def test_the_held_language_kit_is_activated_by_his_click_or_his_word_through_one_call(
+        wired, monkeypatch):
+    """Settings, Updates' Activate and activate_language_kit both call
+    language_kit_updates.approve_held; the route takes only his click."""
+    from jarvis import data_paths, language_kit, language_kit_updates
+    asked: list[str] = []
+
+    def approve(digest):
+        asked.append(digest)
+        if digest != "a" * 64:
+            raise language_kit.KitError("The language kit waiting for review is 0.2.0; nothing was activated.")
+        return {"active": {"version": "0.2.0", "digest": digest}, "held": None}
+    monkeypatch.setattr(language_kit_updates, "approve_held", approve)
+    token = {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
+    r = wired.client.post("/api/language-kits/activate", json={"digest": "a" * 64}, headers=token)
+    assert r.status_code == 403 and asked == []
+    page = {"Origin": "http://localhost:5173"}
+    r = wired.client.post("/api/language-kits/activate", json={"digest": "b" * 64}, headers=page)
+    assert r.status_code == 409 and "nothing was activated" in r.json()["error"]
+    r = wired.client.post("/api/language-kits/activate", json={"digest": "a" * 64}, headers=page)
+    assert r.status_code == 200 and r.json()["active"]["version"] == "0.2.0"
+    said = _call(wired, "activate_language_kit", digest="a" * 64)
+    assert said["ok"] and "Language kit 0.2.0 is active now." in said["text"]
+    refused = _call(wired, "activate_language_kit", digest="b" * 64)
+    assert "Nothing was activated" in refused["text"]
+    assert asked == ["b" * 64, "a" * 64, "a" * 64, "b" * 64]
