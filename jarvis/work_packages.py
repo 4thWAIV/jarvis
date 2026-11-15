@@ -229,12 +229,14 @@ class Package:
 
     def story(self) -> Optional[package_story.Story]:
         """The story it tells, or None for a package without one; a story
-        file changed since it was unpacked and no longer valid is refused."""
+        file changed since it was unpacked and no longer valid is refused.
+        As it is told now: the retired Got it slide of a package delivered
+        before is the standard vote (package_story.current)."""
         if not self.manifest.story:
             return None
         try:
             raw = page_file(self, self.manifest.story)
-            return package_story.parse(raw)
+            return package_story.current(package_story.parse(raw))
         except package_story.StoryError as e:
             raise PackageError(f"{self.id}'s story cannot be told: {e}") from None
 

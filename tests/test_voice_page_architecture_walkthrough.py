@@ -120,7 +120,9 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             box = await frame.bounding_box()
             head = page.locator(".package-head")
             assert PURPOSE in await head.inner_text(), "the handoff's purpose is in the head"
-            assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, once"
+            vote = page.locator(".package-head .package-vote")
+            assert await vote.get_by_role("button", name="Approve").count() == 1, "the vote, once"
+            assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
 
             # The first question by click, with his words; the follow-up is
             # asked only once his answer opens it.
@@ -197,7 +199,8 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 assert asked["ownership-clear"]["answer"] == "unclear"
                 assert asked["ownership-clear"]["note"] == "Who writes a revision?"
                 assert asked["which-part"]["answer"] == "ownership"
-                assert asked["understood"] is None, "signed off early: the vote stays unanswered"
+                assert asked["approve-package"] is None, \
+                    "signed off early: the vote stays unanswered"
                 trace.append({"signed_off": first, "answers": {
                     k: (v or {}).get("answer") for k, v in asked.items()}})
             await context.close()
@@ -208,9 +211,9 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
 @pytest.mark.asyncio(loop_scope="session")
 async def test_his_approval_of_the_design_in_the_actual_view(
         page_playwright, canonical_server, draft, tmp_path):  # noqa: F811
-    """In this test JARVIS only: the factory's approval question shown apart
-    from Got it; Got it leaves it unanswered; Request changes needs his
-    words; Approve is recorded for the revision shown; a newer checked
+    """In this test JARVIS only: the factory's approval question is the one
+    vote it asks (no second approval, never Got it); Request changes needs
+    his words; Approve is recorded for the revision shown; a newer checked
     revision of the document shows his approval stale."""
     from tests import dashboard_page
     server, _published, _checked, base, tmp = canonical_server
@@ -236,13 +239,9 @@ async def test_his_approval_of_the_design_in_the_actual_view(
         approval = page.locator('.package-asks [data-kind="approval"]')
         await approval.wait_for()
         assert subject["revision"][:12] in (await approval.locator(".package-approval-head").inner_text()).lower()
-        assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, apart"
-
-        # Got it is acknowledgement: his approval stays unanswered.
-        await page.get_by_role("button", name="Got it").click()
-        await page.locator(".package-vote-recorded", has_text="Got it").wait_for()
-        assert package_inbox.page_vote(package)["asks"][0]["answer"] is None
-        trace.append({"clicked": "got-it", "approval": None})
+        assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
+        assert await page.locator(".package-head .package-vote").count() == 0, \
+            "his approval is already Approve or not: no second vote"
 
         # Request changes needs his words.
         changes = approval.get_by_role("button", name="Request changes")
@@ -259,7 +258,7 @@ async def test_his_approval_of_the_design_in_the_actual_view(
         record = json.loads(work_packages.read_result(package, "decisions.json"))
         assert record["approve-architecture"]["answer"] == "approve"
         assert record["approve-architecture"]["subject"] == subject
-        assert record["understood"]["answer"] == "got-it", "two answers, kept apart"
+        assert not {"understood", "approve-package"} & set(record), "the one vote"
         await page.screenshot(path=str(out / "approved.png"))
         trace.append({"clicked": "approve", "recorded": record["approve-architecture"]})
 

@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from jarvis import language_setting, spoken_words, work_packages
+from jarvis import language_setting, package_story, spoken_words, work_packages
 from jarvis.package_story import Slide, Story
 from jarvis.work_packages import Package, PackageError
 
@@ -400,7 +400,9 @@ def _slides(numbers: list) -> str:
 
 def read_answers(package: Package, story: Story) -> dict:
     """The story's answers file as it is now: {question: entry}, {} when
-    there is none or it is not a JSON object."""
+    there is none or it is not a JSON object. An answer given before to
+    the retired vote (Got it) stands for the standard vote its slide is
+    now (package_story.current), so that slide is not asked again."""
     if not story.answers:
         return {}
     name = story.answers.split("/", 1)[1]
@@ -409,7 +411,12 @@ def read_answers(package: Package, story: Story) -> dict:
         body = json.loads(raw) if raw else {}
     except (PackageError, ValueError):
         return {}
-    return body if isinstance(body, dict) else {}
+    if not isinstance(body, dict):
+        return {}
+    if isinstance(body.get(package_story.LEGACY_VOTE_QUESTION), dict) and \
+            package_story.VOTE_QUESTION not in body:
+        body[package_story.VOTE_QUESTION] = body[package_story.LEGACY_VOTE_QUESTION]
+    return body
 
 
 def stop_words(text: str) -> bool:

@@ -63,13 +63,15 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
                        "returns": ["results/decisions.json", "results/decisions.md"],
                        "brief": "UNDERSTANDING.md", "understanding": understood}
     [vote] = seen[0]["decisions"]
-    assert vote["id"] == package_inbox.UNDERSTOOD_ID
-    assert [o["name"] for o in vote["options"]] == ["Got it", "I have questions"]
+    assert vote["id"] == package_inbox.VOTE_ID == "approve-package"
+    assert [(o["id"], o["name"]) for o in vote["options"]] == [("approve", "Approve"),
+                                                               ("reject", "Reject")]
+    assert vote["needs_words"] == ["reject"], "Reject is recorded only with his words"
     story = json.loads(z.read("story.json"))
     titles = [s["title"] for s in story["slides"]]
     assert titles[:3] == ["Friday's lunch has moved", "What changed", "What you need to do"], \
         "its own slides first, its opening first of all"
-    assert [s.get("waits") for s in story["slides"]].index("understood") == 3, \
+    assert [s.get("waits") for s in story["slides"]].index("approve-package") == 3, \
         "the vote at the end, after every slide of its own"
     assert len(seen) == 1 and len(delivery.calls) == 1
     assert "Built a presentation" in capsys.readouterr().out
@@ -190,7 +192,7 @@ def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch
     assert mp.main([str(write(tmp_path / "in", presentation())), "--work", "work-1",
                     "--out", str(tmp_path / "out"), "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, _body)] = delivery.calls
-    assert "work=work-1" in url and seen[0]["decisions"][-1]["id"] == "understood"
+    assert "work=work-1" in url and seen[0]["decisions"][-1]["id"] == "approve-package"
 
 
 def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch):
@@ -208,7 +210,7 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(out)
     assert story["answers"] == "results/decisions.json"
-    assert [s.get("waits") for s in story["slides"]] == ["understood"]
+    assert [s.get("waits") for s in story["slides"]] == ["approve-package"]
     [archive] = out.glob("*.zip")
     manifest = json.loads(zipfile.ZipFile(archive).read("package.json"))
     assert manifest["story"] == "story.json" and "results/decisions.json" in manifest["returns"]
@@ -225,7 +227,7 @@ def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, 
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(tmp_path / "a")
     assert [s["title"] for s in story["slides"]][:-1] == [s["title"] for s in given["slides"]]
-    assert story["slides"][-1]["waits"] == "understood"
+    assert story["slides"][-1]["waits"] == "approve-package"
     # A story that already waits on its own question is left as it is.
     given["answers"] = "results/mine.json"
     given["slides"][-1]["waits"] = "go-ahead"
@@ -240,10 +242,10 @@ def in_force(language: str) -> None:
 
 
 @pytest.mark.parametrize("given, saved, words", [
-    ("es", "en", ["Entendido", "Tengo preguntas"]),
-    ("en", "es", ["Got it", "I have questions"]),
-    (None, "es", ["Entendido", "Tengo preguntas"]),
-    (None, "en", ["Got it", "I have questions"]),
+    ("es", "en", ["Aprobar", "Rechazar"]),
+    ("en", "es", ["Approve", "Reject"]),
+    (None, "es", ["Aprobar", "Rechazar"]),
+    (None, "en", ["Approve", "Reject"]),
 ])
 def test_a_deck_s_vote_is_in_its_language_else_the_one_in_force(
         tmp_path, monkeypatch, given, saved, words):
@@ -267,11 +269,57 @@ def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
     assert mp.main([str(folder), "--out", str(tmp_path / "a"),
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     story = built_story(tmp_path / "a")
-    assert story["language"] == "es" and story["slides"][-1]["title"] == "¿Entendido?"
+    assert story["language"] == "es" and story["slides"][-1]["title"] == "¿Lo aprueba?"
     # A page's own story names no language, so it is told in English: so is its vote.
     assert mp.main([str(page_folder(tmp_path / "f")), "--out", str(tmp_path / "b"),
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    assert built_story(tmp_path / "b")["slides"][-1]["title"] == "Got it?"
+    assert built_story(tmp_path / "b")["slides"][-1]["title"] == "Approve it?"
+
+
+# -- Got it is retired --------------------------------------------------------------------
+
+@pytest.mark.parametrize("decision, said", [
+    ("understood", "Got it, which is retired"),
+    ("approve-package", "the standard vote, which the command adds itself"),
+])
+def test_a_deck_that_declares_the_vote_is_refused(tmp_path, capsys, decision, said):
+    content = presentation() | {"decisions": [{
+        "id": decision, "question": "Is it clear?", "reason": "So he can say.",
+        "recommended": "got-it", "text_only": "A reply is not a choice between looks at all.",
+        "why_you": "It is yours.", "evidence": ["It is here."],
+        "options": [{"id": "got-it", "name": "Got it", "says": "Clear."},
+                    {"id": "questions", "name": "I have questions", "says": "Ask."}]}]}
+    assert mp.main([str(write(tmp_path, content)), "--check-only"]) == 1
+    assert said in capsys.readouterr().out
+
+
+def test_a_page_whose_story_asks_got_it_is_refused(tmp_path, monkeypatch, capsys):
+    passing_check(monkeypatch)
+    monkeypatch.setattr(dp, "post", _Delivery())
+    folder = page_folder(tmp_path / "in")
+    given = json.loads((folder / "story.json").read_text())
+    given["answers"] = "results/decisions.json"
+    given["slides"].append({"title": "Got it?", "waits": "understood",
+                            "beats": [{"say": "Got it, or do you have questions?"}]})
+    (folder / "story.json").write_text(json.dumps(given))
+    assert mp.main([str(folder), "--out", str(tmp_path / "a"),
+                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 1
+    assert "Got it, which is retired" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("question", ["approve-item", "merge-pr"])
+def test_a_deck_that_already_asks_approval_gets_no_second_vote(tmp_path, question):
+    """A review package (approve-item) or a merge package (merge-pr) is
+    already Approve or not: no approve-package follows it."""
+    content = presentation() | {"decisions": [{
+        "id": question, "question": "Approve it?", "reason": "It is done.",
+        "recommended": "approve", "text_only": "A verdict is a reply, not a choice between looks.",
+        "why_you": "Only you approve.", "evidence": ["Every check passed."],
+        "options": [{"id": "approve", "name": "Approve", "says": "Done."},
+                    {"id": "hold", "name": "Hold", "says": "Not yet."}]}]}
+    deck = mp.deck_of(write(tmp_path, content))
+    assert [d["id"] for d in deck["decisions"]] == [question]
+    assert mp.deck_kind(deck) == "decision package"
 
 
 @pytest.mark.parametrize("check_only", [False, True])

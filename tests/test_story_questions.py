@@ -55,7 +55,7 @@ def raw(value) -> bytes:
 def test_an_authored_story_composes_once_with_the_standard_vote():
     told = package_story.parse(package_story.compose(package_story.authored(raw(AUTHORED)), "en"))
     assert [s.waits for s in told.slides] == [None, "sign-surface", "which-signature",
-                                              package_inbox.UNDERSTOOD_ID]
+                                              package_inbox.VOTE_ID]
     assert told.answers == package_inbox.STORY_ANSWERS and told.language == "en"
     assert [q.id for q in told.questions] == ["sign-surface", "which-signature"]
     again = package_story.compose(package_story.authored(raw(AUTHORED)), "en")
@@ -66,16 +66,35 @@ def test_an_authored_story_composes_once_with_the_standard_vote():
 @pytest.mark.parametrize("language", ["en", "es"])
 def test_with_no_story_the_composition_is_the_standard_vote_alone(language):
     assert package_story.compose(None, language) == package_story.encode(
-        package_inbox.with_understood_slide(None, language))
+        package_inbox.with_vote_slide(None, language))
 
 
 @pytest.mark.parametrize("language", ["en", "es"])
-def test_approval_is_composed_once_just_before_the_vote(language):
+def test_approval_is_composed_once_last_with_no_second_vote(language):
     told = package_story.parse(package_story.compose(
         package_story.authored(raw({**AUTHORED, "language": language})), language, True))
-    assert [s.waits for s in told.slides][-2:] == [package_inbox.APPROVAL_ID,
-                                                   package_inbox.UNDERSTOOD_ID]
-    assert [s.waits for s in told.slides].count(package_inbox.APPROVAL_ID) == 1
+    waits = [s.waits for s in told.slides]
+    assert waits[-1] == package_inbox.APPROVAL_ID and waits.count(package_inbox.APPROVAL_ID) == 1
+    assert not set(waits) & set(package_inbox.VOTE_IDS), "it is already Approve or not"
+
+
+@pytest.mark.parametrize("approval", [False, True])
+def test_the_composition_of_before_is_recognised_and_asked_as_the_vote(approval):
+    """A story composed before Got it was retired (the old vote last) is
+    still the factory's for the gate, and is told and asked as the
+    standard vote (package_story.current); nothing composes it now."""
+    authored = package_story.authored(raw(AUTHORED))
+    before = package_story.compose(authored, "en", approval, legacy=True)
+    told = package_story.parse(before)
+    assert told.slides[-1].waits == package_inbox.LEGACY_VOTE_ID
+    assert before != package_story.compose(authored, "en", approval)
+    now = package_story.current(told)
+    assert [s.waits for s in now.slides][-1] == package_inbox.VOTE_ID
+    assert now.slides[-1].title == package_inbox.vote_slide("en")["title"]
+    assert [s.waits for s in now.slides][:-1] == [s.waits for s in told.slides][:-1], \
+        "every other question is asked as before"
+    assert package_story.current(package_story.parse(
+        package_story.compose(authored, "en", approval))) is not None
 
 
 def test_an_author_never_asks_approval_itself():
@@ -110,6 +129,8 @@ def test_a_target_is_written_as_css_strings():
      "option 1 has a field"),
     (raw({**AUTHORED, "slides": [{"title": "Vote", "waits": "understood",
                                   "beats": [{"say": "Got it?"}]}]}), "reserved question"),
+    (raw({**AUTHORED, "slides": [{"title": "Vote", "waits": "approve-package",
+                                  "beats": [{"say": "Approve?"}]}]}), "reserved question"),
     (raw({**AUTHORED, "slides": [{"title": "Page's own", "waits": "elsewhere",
                                   "beats": [{"say": "?"}]}]}), "does not declare"),
     (b"\xff\xfe", "not valid UTF-8 JSON"),
@@ -123,6 +144,7 @@ def test_an_authored_story_is_read_strictly(bad, said):
 
 @pytest.mark.parametrize("questions, said", [
     ([{**SURFACE, "id": "understood"}, FOLLOW], "reserved"),
+    ([{**SURFACE, "id": "approve-package"}, FOLLOW], "reserved"),
     ([{**SURFACE, "id": "approve-item"}, FOLLOW], "reserved"),
     ([SURFACE, FOLLOW, FOLLOW], "same id"),
     ([{**SURFACE, "options": options("sign")}, FOLLOW], "at least two options"),
@@ -173,7 +195,7 @@ def test_the_head_shows_each_declared_question_with_whether_it_applies(
         wired, shown, marks, tmp_path):
     inbox_id = send(wired, story_zip(composed())).json()["inbox"]["id"]
     vote = package_inbox.page_vote(package_of(inbox_id))
-    assert (vote["question"], vote["answer"]) == ("understood", None)
+    assert (vote["question"], vote["answer"]) == ("approve-package", None)
     assert [(q["id"], q["applies"], q["answer"]) for q in vote["asks"]] == [
         ("sign-surface", True, None), ("which-signature", False, None)]
     assert vote["asks"][0]["options"][1] == {"id": "change-a-signature",
@@ -204,7 +226,8 @@ def test_click_and_voice_record_a_declared_answer_where_the_story_waits(
     assert package_inbox.get(inbox_id).decisions_total == 3
     story = package.story()
     assert [story.slides[n - 1].waits for n in story.open_questions(record)] == [
-        "which-signature", "understood"], "the story resumes at the first applicable unanswered"
+        "which-signature", "approve-package"], \
+        "the story resumes at the first applicable unanswered"
 
 
 def test_an_unanswered_question_stays_unanswered_when_he_signs_off_early(
@@ -214,7 +237,7 @@ def test_an_unanswered_question_stays_unanswered_when_he_signs_off_early(
     _call(wired, "sign_off_package", package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert "sign-surface: sign" in capture["text"]
-    assert "understood: not answered" in capture["text"], capture["text"]
+    assert "approve-package: not answered" in capture["text"], capture["text"]
     assert "which-signature" not in capture["text"] or \
         "- which-signature: not answered" in capture["text"]
 

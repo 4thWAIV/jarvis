@@ -153,6 +153,11 @@ def mount(app: FastAPI,
                 if canonical_revision is not None:
                     raise PackageError("The requested package has no canonical architecture revision.")
                 data = await asyncio.to_thread(work_packages.page_file, package, path)
+                from jarvis import package_inbox
+                if path == package_inbox.DECK_DATA and \
+                        await asyncio.to_thread(package_inbox.is_decision_package, package):
+                    # An old deck's retired vote is shown as the approval.
+                    data = await asyncio.to_thread(package_inbox.deck_data_shown, package, data)
         except (ValueError, PackageError) as e:
             return _refused(e)
         return Response(data, media_type=media_type(path),

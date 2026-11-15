@@ -173,7 +173,7 @@ def test_a_key_not_onboarded_is_held_with_its_work_item_in_error_until_he_switch
     assert arrived and arrived[0].from_session == PLAN and arrived[0].work_id == wid
     assert package_inbox.get(error.id).state == "closed"
     assert work_store.get(wid).state != "error"
-    assert [d.key for d in work_store.get(wid).decisions] == [f"understood-{arrived[0].id}"], \
+    assert [d.key for d in work_store.get(wid).decisions] == [f"approve-package-{arrived[0].id}"], \
         "released, its vote is asked on the item"
     assert not Path(held.path).exists()
 

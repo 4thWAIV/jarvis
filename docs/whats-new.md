@@ -2,6 +2,21 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Every package asks Approve or Reject; Got it is gone
+
+A package that asks you nothing of its own now ends with Approve or Reject
+instead of Got it. Approve records at once. Reject opens a field for what
+to change, and goes only with your words, which go back to the agent that
+sent it; on a package sent for a Work item they are also on that item, as
+your answer. In Spanish they are Aprobar and Rechazar. A package that
+already asks for your approval (a review of a Work item, a merge, an
+architecture design) asks it once, with no second vote.
+
+Got it can no longer be offered, chosen or recorded. A package that arrived
+before this and still waits on Got it asks Approve or Reject in its place,
+and every other question in it works as before; an answer you already gave
+to Got it stays on record as you gave it.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

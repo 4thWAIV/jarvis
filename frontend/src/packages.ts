@@ -42,12 +42,16 @@ import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
 
 /** What a page asks in the view's head (package_inbox.page_vote): the
- *  standard vote's answer (Got it, or I have questions with his words;
- *  `question` is null when it carries none), and the questions its story
- *  declares, each with whether it applies yet and his answer. */
+ *  standard vote's answer (Approve, or Reject with his words saying what to
+ *  change; `question` is null when it carries none), and the questions its
+ *  story declares, each with whether it applies yet and his answer. An
+ *  answer given before Got it was retired comes as any other id, read back
+ *  by `answer_name` and never asked again. */
 export interface PageVote {
   question: string | null;
-  answer: "got-it" | "questions" | "later" | "none" | null;
+  answer: "approve" | "reject" | "later" | "none" | string | null;
+  /** His answer by its name, as recorded ("" while unanswered). */
+  answer_name?: string;
   note: string;
   asks?: HeaderQuestion[];
 }

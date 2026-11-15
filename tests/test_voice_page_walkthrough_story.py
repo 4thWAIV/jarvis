@@ -123,9 +123,12 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             voice.ws.send(json.dumps({"type": "package_page",
                                       "package": packages_api.describe(package)}))
             await page.locator("#package-view iframe").wait_for()
-            assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, once"
+            vote = page.locator(".package-head .package-vote")
+            assert await vote.get_by_role("button", name="Approve").count() == 1, "the vote, once"
+            assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
             slides = await page.locator("#package-view .package-story select option").all_inner_texts()
-            assert slides[-1].endswith("Got it?") and sum("Got it?" in s for s in slides) == 1
+            assert slides[-1].endswith("Approve it?") and \
+                sum("Approve it?" in s for s in slides) == 1
 
             # Told from the start, it waits at his question.
             await page.locator("#package-view .package-story button").first.click()
@@ -182,7 +185,7 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             await page.screenshot(path=str(out / "walkthrough-story.png"))
 
             record = json.loads((package.folder / "results" / "decisions.json").read_text())
-            assert record["kettle"]["answer"] == "electric" and "understood" not in record
+            assert record["kettle"]["answer"] == "electric" and "approve-package" not in record
             assert package_inbox.get(inbox_id).decisions_total == 2, \
                 "the question asked and the vote; the follow-up not opened"
             trace.append({"answers": {k: v["answer"] for k, v in record.items()}})

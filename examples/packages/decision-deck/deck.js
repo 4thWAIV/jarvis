@@ -400,7 +400,8 @@
     var words = vote.appendChild(el("input", "words"));
     words.type = "text";
     words.maxLength = 500;
-    words.placeholder = "Your words (optional)";
+    words.placeholder = (d.needs_words || []).length ? "Your words (needed for " +
+      d.needs_words.map(function (id) { return optionOf(d, id).name; }).join(", ") + ")" : "Your words (optional)";
     words.setAttribute("aria-label", "Your words on " + d.id);
     words.addEventListener("change", function () {
       if (!record[d.id]) return;            // kept until he chooses
@@ -413,8 +414,19 @@
     return section;
   }
 
+  // An option the decision's needs_words lists (the standard vote's Reject)
+  // is recorded only with his words.
+  function needsWords(d, answer) {
+    return (d.needs_words || []).indexOf(answer) >= 0;
+  }
+
   function choose(d, answer) {
     var words = views[d.id].words.value.trim();
+    if (needsWords(d, answer) && !words) {
+      views[d.id].words.focus();
+      say(optionOf(d, answer).name + " needs your words: say what to change.");
+      return;
+    }
     change(function () { record[d.id] = entry(d, answer, words); });
   }
 
@@ -447,6 +459,13 @@
       pick.appendChild(el("option", "", "None of these")).value = "none";
       pick.addEventListener("change", function () {
         var answer = pick.value, note = record[d.id] ? record[d.id].note : "";
+        if (needsWords(d, answer) && !note) {
+          pick.value = record[d.id] ? record[d.id].answer : "";
+          show(slideOf(d.id));
+          views[d.id].words.focus();
+          say(optionOf(d, answer).name + " needs your words: say what to change.");
+          return;
+        }
         change(function () { record[d.id] = entry(d, answer, note); });
       });
       var state = li.appendChild(el("span", "state"));
