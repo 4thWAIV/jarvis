@@ -86,17 +86,22 @@
     return rects.filter(r=>r.width>0&&r.height>0).map(r=>r.toJSON());
   }
   // The semantic traversal is separate from ordinary Tab navigation.
+  let inspector=null;
   function inspect() {
+    // UI and brain requests share this boundary: one active inspector owns
+    // the stage's inert state until it closes, including repeated requests.
+    if(inspector?.isConnected)return;
     const opener=document.activeElement;
+    const stage=document.getElementById("stage"), wasInert=stage.inert;
     const overlay=node("section");overlay.className="presentation-inspector";overlay.setAttribute("role","dialog");overlay.setAttribute("aria-modal","true");overlay.setAttribute("aria-label","Presentation source and objects");
     overlay.append(node("h2",doc.title),node("p",doc.purpose),node("p",`Source revision: ${model.source_sha256}`));
     const current=document.querySelector(".slide.current");
     const members=model.targets.filter(t=>t.slide===current?.dataset.sourceSlide);
-    const close=node("button","Return to presentation");close.onclick=()=>{overlay.remove();document.getElementById("stage").inert=false;opener?.focus();parent.postMessage({jarvis:"package",type:"presentation.inspection.closed"},"*");};overlay.append(close);
+    const close=node("button","Return to presentation");close.onclick=()=>{if(inspector!==overlay)return;overlay.remove();inspector=null;stage.inert=wasInert;opener?.focus();parent.postMessage({jarvis:"package",type:"presentation.inspection.closed"},"*");};overlay.append(close);
     members.forEach(target=>{const button=node("button",target.accessible_name);button.onclick=()=>{const reference=references.get(target.reference);const frozen=model.frozen_references?.[target.reference];description.textContent=`${target.accessible_name}. ${reference.description} Source: ${reference.locator}. Revision: ${reference.revision}. Member: ${target.source_member||target.member}.${frozen?` Frozen evidence: ${frozen.path}. SHA-256: ${frozen.sha256}.`:""}`;};overlay.append(button);});
     const description=node("p");description.setAttribute("role","status");overlay.append(description);
     overlay.onkeydown=e=>{if(e.key==="Escape")close.click();if(e.key==="Tab"){const buttons=[...overlay.querySelectorAll("button")];if(e.shiftKey&&document.activeElement===buttons[0]){e.preventDefault();buttons.at(-1).focus();}else if(!e.shiftKey&&document.activeElement===buttons.at(-1)){e.preventDefault();buttons[0].focus();}}};
-    document.getElementById("stage").inert=true;document.body.append(overlay);close.focus();
+    inspector=overlay;stage.inert=true;document.body.append(overlay);close.focus();
   }
   const style=document.documentElement.style;
   Object.entries({"--ground":doc.theme.background,"--text":doc.theme.foreground,"--accent":doc.theme.accent,"--muted":doc.theme.muted,"--body":doc.theme.bodyPx+"px","--heading":doc.theme.headingPx+"px"}).forEach(([k,v])=>style.setProperty(k,v));

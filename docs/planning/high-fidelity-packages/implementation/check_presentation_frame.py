@@ -57,6 +57,13 @@ async def inspect_app(server, made, package_id, result):
                     await view.locator('[data-presentation-action=inspect]').click()
                     overlay=d.inner.locator('.presentation-inspector')
                     await overlay.wait_for()
+                    client=next(frame['clientId'] for _,frame in d.frames if frame.get('type')=='ui_welcome')
+                    async def inspect_by_brain():
+                        ok,said=await d.tool('ui_navigate',command='package.inspect',args={},client=client)
+                        assert ok and 'status: completed' in said,said
+                    for _ in range(2):await inspect_by_brain()
+                    assert await overlay.count()==1
+                    assert await d.inner.locator('#stage').evaluate('e=>e.inert')
                     labels=await overlay.locator('button').all_text_contents()
                     expected_names=await d.inner.evaluate("""()=>{
                       const model=window.PRESENTATION;
@@ -80,6 +87,24 @@ async def inspect_app(server, made, package_id, result):
                     await d.page.wait_for_function("document.activeElement?.dataset.packageMenu==='more'")
                     assert d.answers()==before
                     result.passed.append('420px frame: reversed source objects follow readingOrder in Details; modal navigation keys keep the slide fixed; Escape restores focus and leaves answers unchanged.')
+                    # Reopen through the complete brain command path after Escape.
+                    for _ in range(2):await inspect_by_brain()
+                    await overlay.wait_for()
+                    assert await overlay.count()==1
+                    assert await d.inner.locator('#stage').evaluate('e=>e.inert')
+                    for key in ('PageDown','PageUp','ArrowRight','ArrowLeft','Home','End'):
+                        await d.page.keyboard.press(key)
+                        assert await d.current_slide()==current,key
+                    await overlay.locator('button').first.click()
+                    await overlay.wait_for(state='detached')
+                    assert not await d.inner.locator('#stage').evaluate('e=>e.inert')
+                    await d.page.wait_for_function("document.activeElement?.dataset.packageMenu==='more'")
+                    assert d.answers()==before
+                    await d.inner.locator('#go-1').focus()
+                    await d.page.keyboard.press('PageDown')
+                    assert await d.current_slide()!=current
+                    await d.inner.locator('#go-1').evaluate('e=>e.click()')
+                    result.passed.append('Repeated brain ui_navigate package.inspect requests keep one inspector; Escape and Return close it, reopening remains isolated, focus returns, and background navigation resumes only after close.')
                     await d.page.set_viewport_size({'width':1440,'height':900})
                     await view.locator('[data-package-menu=more]').click()
                     await view.locator('[data-presentation-action=document]').click()

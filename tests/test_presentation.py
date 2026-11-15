@@ -291,12 +291,24 @@ def test_details_suspends_background_slide_shortcuts(presentation_page):
     page, _ = presentation_page()
     page.locator('#go-2').evaluate('e=>e.click()')
     current = page.locator('.slide.current').get_attribute('id')
-    page.evaluate('window.JarvisPresentation.inspect()')
-    for key in ('PageDown', 'PageUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'):
-        page.keyboard.press(key)
-        assert page.locator('.slide.current').get_attribute('id') == current, key
-        assert page.locator('.presentation-inspector').is_visible()
-    page.keyboard.press('Escape')
-    page.locator('.presentation-inspector').wait_for(state='detached')
+    for cycle in range(2):
+        page.evaluate('window.JarvisPresentation.inspect()')
+        overlay = page.locator('.presentation-inspector')
+        overlay.locator('button').nth(1).click()
+        description = overlay.locator('[role=status]').inner_text()
+        # Both public calls and the host message meet at the renderer boundary.
+        page.evaluate('window.JarvisPresentation.inspect()')
+        page.evaluate("window.postMessage({jarvis:'package',type:'presentation.inspect'},'*')")
+        page.wait_for_timeout(30)
+        assert overlay.count() == 1, cycle
+        assert overlay.locator('[role=status]').inner_text() == description
+        assert page.locator('#stage').evaluate('e=>e.inert')
+        for key in ('PageDown', 'PageUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'):
+            page.keyboard.press(key)
+            assert page.locator('.slide.current').get_attribute('id') == current, key
+            assert overlay.is_visible()
+        page.keyboard.press('Escape')
+        overlay.wait_for(state='detached')
+        assert not page.locator('#stage').evaluate('e=>e.inert')
     page.keyboard.press('PageDown')
     assert page.locator('.slide.current').get_attribute('id') != current
