@@ -2,6 +2,12 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Decks use the whole slide
+
+A deck's words grow with the space it has, and a slide with pictures gives
+them every pixel its words leave, so a picture is as large as the slide
+allows instead of a small box.
+
 ## The knowledge engine no longer slows down as records are rewritten
 
 Every record keeps all of its versions, and some are rewritten every few
