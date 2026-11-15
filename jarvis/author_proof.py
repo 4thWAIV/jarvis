@@ -51,7 +51,6 @@ WINDOW_SEC = 6 * 3600.0
 RECHECK_SEC = 10 * 60.0
 # Clocks of two processes on one Mac: how far after arrival a line may be.
 SLACK_SEC = 60.0
-TAIL_BYTES = 8 * 1024 * 1024
 HEAD_BYTES = 256 * 1024
 _SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _LEFT_OUT = {bundle_archive.METADATA_FILE, bundle_archive.METADATA_FOLDER}
@@ -282,12 +281,34 @@ def _is_check(call: str) -> bool:
     return "make_package" in call and "--check-only" in call
 
 
+def _lines_with(path: Path, needles: tuple[bytes, ...]) -> Iterator[dict]:
+    """Each JSON object of the transcript, from its first line to its last,
+    whose line holds one of `needles`; the rest are passed over unparsed.
+    Read one line at a time, so a long transcript (screenshots make one
+    tens of megabytes) is never held whole."""
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                if not any(n in raw for n in needles):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict):
+                    yield obj
+    except OSError:
+        return
+
+
 def checked(path: Path, digest: str, at: float) -> bool:
-    """Whether the transcript's end shows the session's own check-only run
-    printing exactly `digest`, within WINDOW_SEC before `at`."""
+    """Whether the transcript shows the session's own check-only run
+    printing exactly `digest`, within WINDOW_SEC before `at`. The whole
+    transcript is looked through: the check may be followed by any amount of
+    the author's later work."""
     checks: set[str] = set()
     want = MARK + digest
-    for obj in session_watch.tail_objects(path, TAIL_BYTES):
+    for obj in _lines_with(path, (b"--check-only", want.encode())):
         for cid, call in _calls(obj):
             if _is_check(call):
                 checks.add(cid)

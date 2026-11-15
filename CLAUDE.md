@@ -1185,7 +1185,7 @@ that admits one (the inbox, a held package released or looked at again,
 a zip on this Mac through `_local_package_problem`): the digest
 recomputed from the zip's own bytes, the author session's own transcript
 (Claude Code's `projects/*/<id>.jsonl` or Codex's rollout, no link
-followed, its end read) begun with the author prompt
+followed, read whole, a line at a time) begun with the author prompt
 (`author_proof.PROMPT_HEAD`), not the sender, and its own check-only call
 printing exactly that digest within `WINDOW_SEC` (6 h) before arrival; one
 author session vouches for one package's bytes

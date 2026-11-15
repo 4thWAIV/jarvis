@@ -2,6 +2,14 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A package's author check is found wherever it is
+
+JARVIS confirms a package's fresh author checked it by reading that
+author's own transcript. It read only the last 8 MB, so an author whose
+screenshot review came after its check had its package held although the
+check was there. It now reads the whole transcript a line at a time and
+finds the check wherever it is; a 30 MB transcript takes about a tenth of a
+second.
 ## More things that block work now tell you and can be fixed from the dashboard
 
 Diagnostics has a new Setup row listing every startup check that did not
