@@ -1075,7 +1075,17 @@ acting `run_package_agent` and recorded in the run's `package_id` (a run
 written before it reads None; one active run per package, and a
 retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
-he agrees. A page package's
+he agrees. The document first: in `PackageView.tsx` the head and one row
+of tools (`.package-tools`: the story's controls, an architecture
+package's source, checker evidence and explanation links) take what they
+need, and the package's own page takes the rest of the view's height;
+the questions and the explanation sit in a side column beside it
+(`.package-side`, beside it at every width; the head and tools keep to one line each), scrolling in
+their own space. Nothing new goes above the page: it joins the tools row
+or the side column, and `tests/test_voice_page_package_layout.py` holds
+the page to 60 percent of the view's height (and 55 percent of its width
+beside the column) with everything open, at the checker's sizes and a
+laptop's. A page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
 (`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by

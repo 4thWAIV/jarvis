@@ -18,6 +18,15 @@ When JARVIS brings in a new kit by itself, it now tells you: one update in
 Updates waiting (shown, never spoken) naming the kit now in force and the
 one it replaced, so a kit never changes unseen.
 
+## A package's page keeps most of the view
+
+A package opens with its own page filling the centre. The story's
+controls and an architecture package's links to its source, checker
+evidence and explanation share one row above it, and its questions and
+explanation open in a column beside it, so
+answering a question or reading the explanation never shrinks the
+document you came to read.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of
