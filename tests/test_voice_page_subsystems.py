@@ -369,3 +369,48 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_p
         await page.wait_for_selector(f"{row}.state-ok")
         assert await until_async(lambda: _drawn_over(orb, 30)), "the small orbs did not come back"
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_brain_that_is_down_has_start_brain_on_its_row(page_playwright, page_url):
+    """The brain's view, while it is down, offers Start brain: it posts to
+    /api/brain/start and says what the server answered."""
+    started = []
+
+    async def subsystems(route):
+        body = _record()
+        for row in body["subsystems"]:
+            if row["id"] == "brain":
+                row.update(state="down", summary="Its login has expired")
+        await route.fulfill(content_type="application/json", body=json.dumps(body))
+
+    async def start(route):
+        started.append(route.request.method)
+        await route.fulfill(content_type="application/json", body=json.dumps({"outcome": "started"}))
+
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/diagnostics/subsystems", subsystems)
+        await page.route("**/api/brain/start", start)
+        await page.goto(page_url)
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        await page.click(".subsystem-row[data-subsystem='brain']", timeout=10000)
+        button = page.locator("#subsystem-start-brain")
+        await async_api.expect(button).to_have_text("Start brain")
+        await button.click()
+        await async_api.expect(page.locator(".subsystem-action-said")).to_have_text(
+            "Starting the brain again.")
+        assert started == ["POST"]
+        # Another subsystem's view has no Start brain.
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        await page.click(".subsystem-row[data-subsystem='communications']")
+        await page.wait_for_selector("#subsystem-detail[data-subsystem='communications']")
+        assert await page.locator("#subsystem-start-brain").count() == 0
+        await browser.close()

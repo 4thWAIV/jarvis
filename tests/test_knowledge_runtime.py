@@ -303,6 +303,7 @@ def test_the_engine_is_started_before_the_rest_of_startup():
     # The rest of startup is `_start_on_records`, run once the records are in
     # the engine (at once, or after the records move, records_move.py).
     source = inspect.getsource(server.lifespan)
-    assert source.index("await start_knowledge_engine()") < source.index("_start_on_records()")
+    assert source.index("await start_knowledge_engine()") < source.index("_start_records_now()")
+    assert "_start_on_records()" in inspect.getsource(server._start_records_now)
     assert "_start_on_records()" in inspect.getsource(server._move_records_then_start)
     assert "run_store.init_db()" in inspect.getsource(server._start_on_records)

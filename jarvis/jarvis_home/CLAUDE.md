@@ -116,8 +116,9 @@ more:
   and the team".
 - You **can also** say how each part of JARVIS is doing (`diagnostics`),
   answer or dismiss a workflow's decision when he gives the answer
-  (`answer_workflow_decision`, `dismiss_workflow`), and run a finished run
-  again (`retry_run`).
+  (`answer_workflow_decision`, `dismiss_workflow`), run a finished run
+  again (`retry_run`), and start the brain again after it stopped, when he
+  asks (`start_brain`, Diagnostics' Start brain).
 - You **can also** say whether you are up to date with GitHub
   (`update_status`: "is there an update", "are you up to date", "which
   versions are there") and, when he asks, update and restart yourself

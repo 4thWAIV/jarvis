@@ -88,7 +88,10 @@ def test_lifespan_actually_calls_it():
     import inspect
     # The startup that needs the records runs once they are in the engine
     # (server._start_on_records), from lifespan at once or after the move.
-    assert "_start_on_records()" in inspect.getsource(server.lifespan)
+    # lifespan starts it through _start_records_now, which keeps the server
+    # up saying why when it fails.
+    assert "_start_records_now()" in inspect.getsource(server.lifespan)
+    assert "_start_on_records()" in inspect.getsource(server._start_records_now)
     src = inspect.getsource(server._start_on_records)
     assert "_run_preflight" in src, (
         "lifespan must run the preflight checks; they were dead code for a "

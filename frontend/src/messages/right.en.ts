@@ -256,6 +256,8 @@ export const rightEn = {
   "right.subsystem.name.knowledgePace": "Pace",
   "right.subsystem.name.knowledgeEmbedder": "Embedder",
   "right.subsystem.name.knowledgeIngest": "Ingest",
+  "right.subsystem.name.attention": "Updates",
+  "right.subsystem.name.attentionRecord": "Updates record",
   "right.subsystem.name.team_server": "Team server",
   "right.subsystem.name.watcher": "Session watcher",
   "right.subsystem.name.outgoing": "Messages to agents",
@@ -418,6 +420,8 @@ export const rightEn = {
   "right.subsystem.said.startOverridden": "Started with command-line flags for this run; nothing is put on trial",
   "right.subsystem.said.startAsSaved": "Running on the start setup saved in Settings",
   "right.subsystem.said.startNotFromFile": "Not started from the start file; nothing is put on trial",
+  "right.subsystem.said.attentionNotOpen": "Not open, so updates for you are not recorded: {error}",
+  "right.subsystem.said.attentionOpen": "Open; updates for you are recorded",
   // This page's own row (subsystems.ts pageSubsystem).
   "right.subsystem.said.pageReadFailed": "Can't read JARVIS ({error})",
   "right.subsystem.said.pageReading": "Reading",

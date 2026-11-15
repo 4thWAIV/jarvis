@@ -240,7 +240,10 @@ def test_a_package_he_set_aside_is_no_review(wired, marks, tmp_path, item):
 def test_the_server_applies_them_at_start(wired):
     import inspect
     # At start, once the records are in the engine (server._start_on_records).
-    assert "_start_on_records()" in inspect.getsource(wired.server.lifespan)
+    # lifespan starts it through _start_records_now, which keeps the server
+    # up saying why when it fails.
+    assert "_start_records_now()" in inspect.getsource(wired.server.lifespan)
+    assert "_start_on_records()" in inspect.getsource(wired.server._start_records_now)
     assert "_apply_package_reviews" in inspect.getsource(wired.server._start_on_records)
 
 
