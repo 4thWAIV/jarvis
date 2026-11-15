@@ -50,14 +50,23 @@ export function reloadAfterRestart(said: string): void {
 /** Restart the server: the menu's Restart Server and Settings, Server's
  *  Restart now. Only a restart the server took reloads the page; one it
  *  refused (the records still moving, a 403) or never answered is said. */
-export async function restartServer(): Promise<boolean> {
+/** Ask the server to restart: null once it took it, else the refusal's
+ *  words. The one place the page posts /api/restart. */
+export async function postRestart(): Promise<string | null> {
   try {
     const res = await fetch("/api/restart", { method: "POST" });
-    if (res.ok) {
-      reloadAfterRestart(t("menu.restarting"));
-      return true;
-    }
-  } catch { /* no answer: said below */ }
+    if (res.ok) return null;
+    return `${res.status} ${res.statusText}`.trim();
+  } catch (e) {
+    return String(e);
+  }
+}
+
+export async function restartServer(): Promise<boolean> {
+  if (await postRestart() === null) {
+    reloadAfterRestart(t("menu.restarting"));
+    return true;
+  }
   notice("Status", t("menu.restartFailed"));
   return false;
 }

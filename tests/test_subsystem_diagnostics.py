@@ -426,7 +426,7 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows", "work", "folders", "knowledge", "team_server", "server"]
+                   "workflows", "work", "folders", "knowledge", "attention", "team_server", "server"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail", "name_said", "said"} for c in s["checks"])
@@ -662,3 +662,36 @@ def test_a_voice_cause_s_code_rides_beside_its_english():
     assert s.summary == "Falling behind: Machine busy (load 16.9)"
     assert s.said == sd.Said("voiceBehind", {"cause": "Machine busy (load 16.9)",
                                              "causeSaid": {"code": "machineBusy", "values": {"load": 16.9}}})
+
+
+# ── the attention record ─────────────────────────────────────────────────
+
+def test_the_attention_record_s_states():
+    s = sd.attention(True, None)
+    assert (s.state, s.summary) == (sd.OK, "Open; updates for you are recorded")
+    s = sd.attention(False, "EngineError: no answer")
+    assert (s.state, s.summary) == (sd.DOWN, "Not open, so updates for you are not recorded: "
+                                             "EngineError: no answer")
+    assert s.said == sd.Said("attentionNotOpen", {"error": "EngineError: no answer"})
+    assert [c.id for c in s.checks] == ["record"]
+    assert sd.attention(False, None).state == sd.UNKNOWN
+
+
+def test_an_attention_record_that_does_not_open_is_down_on_the_route_with_why(server, monkeypatch):
+    """`_start_attention` failing no longer drops every update in silence:
+    the attention row is down with the reason, and the page is hinted."""
+    from jarvis import attention_store
+
+    def broken(**kw):
+        raise RuntimeError("the attention documents cannot be read")
+    monkeypatch.setattr(attention_store, "AttentionStore", broken)
+    hints = []
+    monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
+    server._start_attention()
+    assert server.attention_record is None and {"type": "subsystems"} in hints
+    rows = {s["id"]: s for s in TestClient(server.app).get(
+        "/api/diagnostics/subsystems", headers=ORIGIN).json()["subsystems"]}
+    row = rows["attention"]
+    assert row["state"] == "down" and "the attention documents cannot be read" in row["summary"]
+    assert row["said"]["code"] == "attentionNotOpen"
+    server._attend("run", "r1", "finished")          # dropped, and never raises

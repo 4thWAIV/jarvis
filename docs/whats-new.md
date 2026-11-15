@@ -2,6 +2,24 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Nothing stops in silence: every stop says why and offers a way on
+
+When JARVIS cannot start on its records, the page now says so instead of
+showing nothing. If the knowledge engine that holds the records does not
+answer, JARVIS stays up and the page covers the workspace with "JARVIS could
+not open its records", why (the engine's own reason and the end of its log)
+and a Try again button that starts JARVIS again. A records move that failed,
+or a start that failed after the records opened, shows the same Try again;
+you no longer need a terminal to retry.
+
+A brain that stopped (its login expired, or it crashed too often) now has
+Start brain on its Diagnostics row, and JARVIS starts it when you ask by
+voice. Signing a brain in again from Settings starts it again by itself.
+
+Diagnostics has a new Updates row: if the record that holds the updates
+meant for you cannot be opened, the row is down and says why, rather than
+updates going missing without a word.
+
 ## A language kit waiting for your review tells you, and you activate it in Settings
 
 When a newer architecture language kit changes its language files, JARVIS

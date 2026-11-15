@@ -164,6 +164,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_engine_setting",
     "mcp__jarvis__brains_settings",
     "mcp__jarvis__set_brain",
+    "mcp__jarvis__start_brain",
     # Every other setting in Settings (settings_specs.py): reading them, and
     # the acting change the Settings route also calls.
     "mcp__jarvis__jarvis_settings",

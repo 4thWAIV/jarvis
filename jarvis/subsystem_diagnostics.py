@@ -25,6 +25,8 @@ heartbeats and outcomes kept here).
     once one passes WORK_WRITES_ALARM_SEC.
   - The folder catalog: its folders' availability and how far discovery
     has read, never worse than degraded.
+  - The attention record (attention_store.py): down while it is not open,
+    with the reason, since every update meant for him is dropped meanwhile.
   - The team server: team_client's own status, never worse than degraded,
     since JARVIS works without it.
   - The server's start setup (start_settings.status): a changed setup on
@@ -252,6 +254,8 @@ SAID: dict[str, str | dict[str, str]] = {
     "startOverridden": "Started with command-line flags for this run; nothing is put on trial",
     "startAsSaved": "Running on the start setup saved in Settings",
     "startNotFromFile": "Not started from the start file; nothing is put on trial",
+    "attentionNotOpen": "Not open, so updates for you are not recorded: {error}",
+    "attentionOpen": "Open; updates for you are recorded",
 }
 
 # The English of every subsystem's and check's name, by code.
@@ -270,6 +274,8 @@ NAMES: dict[str, str] = {
     "knowledgePace": "Pace",
     "knowledgeEmbedder": "Embedder",
     "knowledgeIngest": "Ingest",
+    "attention": "Updates",
+    "attentionRecord": "Updates record",
     "watcher": "Session watcher",
     "outgoing": "Messages to agents",
     "queued": "Queued messages",
@@ -907,6 +913,20 @@ def team_server(team: dict, now: float, minted: Optional[dict] = None) -> Subsys
     return subsystem("team_server", shown[0], shown[1], checks)
 
 
+def attention(open_: bool, problem: Optional[str]) -> Subsystem:
+    """The attention record: every update meant for him (an agent's message,
+    a run ending, a person writing) goes through it, so while it is not open
+    each is dropped. Down with the reason it could not be opened; not
+    started (unknown) before startup reaches it."""
+    if open_:
+        shown = (OK, say("attentionOpen"))
+    elif problem:
+        shown = (DOWN, say("attentionNotOpen", error=problem))
+    else:
+        shown = (UNKNOWN, say("notStarted"))
+    return subsystem("attention", shown[0], shown[1], [check("record", "attentionRecord", *shown)])
+
+
 def start_setup(start: Optional[dict], now: float) -> Subsystem:
     """The server's start setup (start_settings.status, with `from_file`
     and `overridden` from settings_service): a trial waiting for a page,
@@ -947,6 +967,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
            knowledge_health: Optional[dict] = None,
            local_voice: Optional[dict] = None,
            start: Optional[dict] = None,
+           attention_open: bool = False, attention_problem: Optional[str] = None,
            now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
@@ -963,6 +984,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         work(work_routes, now),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
+        attention(attention_open, attention_problem),
         team_server(team or {}, now, data_paths.node_id_minted()),
         start_setup(start, now),
     ]
