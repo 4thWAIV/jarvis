@@ -15,6 +15,22 @@ You can also tell JARVIS to activate it. The update goes away by itself
 once the kit is active, and the status no longer claims a review is
 needed for the kit already running.
 
+## The knowledge engine no longer slows down as records are rewritten
+
+Every record keeps all of its versions, and some are rewritten every few
+seconds or minutes (the brains' usage for the day, folder checks, the
+message sync position). Reading such a record used to unpack its whole
+history, hundreds of megabytes for one day's usage, so the engine got
+slower with every write until the page and the brain's reads timed out
+while the engine still said it was running. Reading a record now reads
+only its newest version: a folder discovery pass costs the engine a
+quarter of what it did, and a read of the day's usage takes milliseconds
+instead of seconds.
+
+## Package checks run while the screen is locked
+
+The check every package passes before it reaches you now keeps the display awake, and wakes it if it is asleep. While the display slept under a locked screen the browser's audio stopped, so a package built overnight failed its check for no fault of its own.
+
 ## A start setting the page cannot reach goes back by itself
 
 When you change the address, port, HTTPS or the page's extra origins in
@@ -155,6 +171,24 @@ semantic state colors keep their identities.
 The choice is saved in this browser, applies before the page is drawn and follows
 changes made in another JARVIS tab on the same origin. It does not change server
 settings or anyone else's appearance.
+
+## Architecture packages that walk you through
+
+An architecture package now states the purpose its sender gave, and its
+author's explanation opens in place above the page (Read the explanation),
+drawn as formatted text with safe links rather than as raw Markdown in a new
+tab. Its author may also write a walk-through JARVIS tells over the rendered
+page and ask real questions, not only Got it: each question appears in the
+package's head with its options, is answered by a click or by voice, and
+follow-up questions appear once an answer opens them. The standard vote is
+still asked once, last. Signing off early keeps every unanswered question
+marked unanswered. When its sender asks for it, an architecture package also
+asks for your approval of the design, apart from Got it and first in its
+head: Approve, or Request changes with what to change. Your answer is kept
+with the exact checked revision you gave it to, and once a newer revision or
+kit is checked it is shown stale and counts for nothing. Pointing at a declaration or a member needs a kit whose
+page loads the story helper; until then a walk-through narrates without
+pointing.
 
 ## Conversation is the main view
 

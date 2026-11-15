@@ -26,9 +26,9 @@ except ImportError:   # Windows: the kit is unavailable there (no sandbox-exec)
 from jarvis import bundle_archive, data_paths
 
 REPOSITORY = "4thWAIV/agent-guard"
-PINNED_VERSION = "0.1.108172209-pre-release"
-PINNED_COMMIT = "c918581ffda7a6fad7c05dde13f54aeb5760fdfb"
-PINNED_DIGEST = "0112ee38bec63affd08d952d249336c6dbf8602076baab94ff7982b996297ef0"
+PINNED_VERSION = "0.1.108421045-pre-release"
+PINNED_COMMIT = "4055170833b59796623c88f6f1608bb1d002118d"
+PINNED_DIGEST = "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c"
 ASSET = "evolang-kit.zip"
 REQUIRED_CHECKS = frozenset({"gate", "release"})
 REQUIRED_FILES = frozenset({"kit.js", "page.js", "metalang.yaml", "arch.yaml",

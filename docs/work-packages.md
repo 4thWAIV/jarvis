@@ -154,11 +154,12 @@ with the reason if it is not valid.
 | `language` | `en` (the default) or `es`. JARVIS tells it only while it is speaking that language. |
 | `slides` | The slides, in order, at most 60. Each has a `title` (shown in the slide list, and to the brain so he can ask for a slide by name), an optional `target` (the slide's own element: every beat of the slide first scrolls it into view) and its `beats`, in order, at most 40. |
 | `say` | A beat's words, at most 800 characters. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
-| `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. |
+| `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. A precise target, one naming `data-declaration` or `data-member`, is ringed only when it matches exactly one element; matching none or several, it is reported and nothing is ringed. |
 | `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
 | `answers` | Optional: `results/<name>.json`, a JSON object in the package's results keyed by question id (a decision deck's `results/decisions.json`). Needed when any slide `waits`. |
 | `waits` | Optional, on a slide: the id of the question it asks. Once the slide has been heard the story says nothing more until that question has an answer in `answers` (one it did not have when the slide began), then goes on by itself once nobody is speaking. |
 | `asks_when` | Optional, on a slide that waits: `{"question", "answers"}`. The slide's question is asked only once that question has one of those answers; otherwise it is passed over. |
+| `questions` | Optional: the questions the story asks in the package view's head, outside the page, each `{"id", "question", "options": [{"id", "name", "says"}], "recommended"?, "reason"?, "context"?}` (two to six options, a deck's word limits, never the ids `understood` or `approve-item`). Each must be waited on by one slide. He answers it by click in the head or by voice, through the inbox's one answer route, and his answer is written to `answers` as decide.py writes a deck's; one that does not apply yet (`asks_when`) cannot be answered. A slide that waits for a question the story does not declare is the page's own to ask and record, as before. |
 
 The page loads JARVIS's helper, which draws the pointer and the rings and
 runs the actions inside the page's own frame:

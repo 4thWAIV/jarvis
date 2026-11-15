@@ -393,14 +393,14 @@ def test_the_head_s_buttons_and_his_voice_record_the_same_answer(
     assert calls == [("understood", "questions", "Why two keys?")]
     package = work_packages.find(package_inbox.get(inbox_id).package_id)
     assert package_inbox.page_vote(package) == {
-        "question": "understood", "answer": "questions", "note": "Why two keys?"}
+        "question": "understood", "answer": "questions", "note": "Why two keys?", "asks": []}
 
 
 def test_the_view_shows_the_vote_and_a_reload_shows_his_answer(wired, shown, marks, tmp_path):
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
     assert wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER).status_code == 200
     frame = shown[-1]["package"]
-    assert frame["vote"] == {"question": "understood", "answer": None, "note": ""}
+    assert frame["vote"] == {"question": "understood", "answer": None, "note": "", "asks": []}
     answer_by(wired, "page", inbox_id, "got-it")
     assert wired.server._package_shown["vote"]["answer"] == "got-it", \
         "a page that connects now shows his answer"

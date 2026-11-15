@@ -399,10 +399,8 @@ class DocumentStore:
                         col.src[o] = 0
 
     def _ord_from_store(self, key: bytes) -> Optional[int]:
-        for v in self.store.versions(DOCS, key):
-            if v.value is not None:
-                return DOC_HEAD.unpack_from(v.value, 0)[0]
-        return None
+        v = self.store.newest(DOCS, key, live=True)
+        return None if v is None else DOC_HEAD.unpack_from(v.value, 0)[0]
 
     # -- writing ----------------------------------------------------------
     def _check(self, doc: dict) -> dict:

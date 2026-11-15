@@ -1,0 +1,50 @@
+# A small arch document for selector tests, shared with the kit's own tests:
+# QuotedStore has a member whose name holds a double quote, a single quote and
+# a backslash, and a member GetValue; PlainStore has a member of the same name,
+# GetValue. The kit's check refuses the first name (a member's name is `name`,
+# [A-Za-z_][A-Za-z0-9_]*), so this is a draft the kit renders, never a checked
+# revision: it tests how a rendered page's targets are escaped and matched.
+scope: [review]
+language: arch
+import: [[metalang]]
+title: Two stores whose members share names
+declare:
+- constant:
+    id: QuotedStore
+    is: element
+    value:
+      form: interface
+      does: Holds values under keys a reader may write with quotes.
+      reach: internal
+      exactness: loose
+      groups: none
+      members:
+      - name: 'Get"It''s\Value'
+        kind: method
+        reach: public
+        type: none
+        does: Answers the value written under a quoted key.
+      - name: GetValue
+        kind: method
+        reach: public
+        type: none
+        does: Answers one value.
+      sits: {package: jarvis, assembly: none, namespace: none}
+      relates: {implements: none, answers: none, holds: none}
+- constant:
+    id: PlainStore
+    is: element
+    value:
+      form: interface
+      does: Holds values under plain keys.
+      reach: internal
+      exactness: loose
+      groups: none
+      members:
+      - name: GetValue
+        kind: method
+        reach: public
+        type: none
+        does: Answers one value, as QuotedStore's member of the same name does.
+      sits: {package: jarvis, assembly: none, namespace: none}
+      relates: {implements: none, answers: none, holds: none}
