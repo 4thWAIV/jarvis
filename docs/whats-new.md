@@ -19,6 +19,12 @@ count and time over the last five minutes), and `kill -USR1` on the engine
 writes what every one of its threads is doing to
 `knowledge-engine-stacks.log` beside its log.
 
+## Decks use the whole slide
+
+A deck's words grow with the space it has, and a slide with pictures gives
+them every pixel its words leave, so a picture is as large as the slide
+allows instead of a small box.
+
 ## A package's page keeps most of the view
 
 A package opens with its own page filling the centre. The story's
