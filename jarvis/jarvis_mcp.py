@@ -2878,6 +2878,20 @@ TOOL_SPECS = [
                                        "for the latest."},
         }},
     },
+    {
+        "name": "activate_language_kit",
+        "description": (
+            "Only when he says so: activate the architecture language kit held for his "
+            "review, Settings, Updates' Activate. A newer kit is held when its language files "
+            "changed (or it was held after a rollback); attention_updates names it, its "
+            "version, digest and the files that changed. Pass that digest; any other is "
+            "refused and nothing is activated. Documents already written stay on the kit "
+            "they were checked with."),
+        "inputSchema": {"type": "object", "properties": {
+            "digest": {"type": "string",
+                       "description": "The held candidate's SHA-256 digest, from its update."},
+        }, "required": ["digest"]},
+    },
     # The page's navigation and white attention (server.py, ui_control.py).
     *ui_contract.tool_specs(),
 ]

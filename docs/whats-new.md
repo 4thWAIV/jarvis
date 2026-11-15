@@ -8,6 +8,19 @@ A deck's words grow with the space it has, and a slide with pictures gives
 them every pixel its words leave, so a picture is as large as the slide
 allows instead of a small box.
 
+## A language kit waiting for your review tells you, and you activate it in Settings
+
+When a newer architecture language kit changes its language files, JARVIS
+keeps the working kit and holds the new one for your review. It used to say
+so only in a status file; now it is an update in Updates waiting (shown,
+never spoken), naming the kit's version and the files that changed, once
+per kit rather than at every six-hourly check. Settings, Updates shows the
+held kit and why, with Activate: press it, confirm, and the new kit is
+active; documents already written stay on the kit they were checked with.
+You can also tell JARVIS to activate it. The update goes away by itself
+once the kit is active, and the status no longer claims a review is
+needed for the kit already running.
+
 ## The knowledge engine no longer slows down as records are rewritten
 
 Every record keeps all of its versions, and some are rewritten every few
