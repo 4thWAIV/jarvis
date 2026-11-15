@@ -259,7 +259,9 @@ def test_the_check_fails_a_slide_whose_picture_draws_as_nothing(tmp_path):
         for item in src.infolist():
             body = src.read(item)
             if item.filename.endswith("deck.css"):
-                body += b'\n.pictures > .picture {flex:0 1 auto} .pictures > .picture img {width:auto}'
+                body += (b'\n.pictures > .picture {flex:0 1 auto} .pictures > .picture img {width:auto}'
+                         b'\n.slide.content.fill .picture {flex:0 1 auto}'
+                         b' .slide.content.fill .picture img {flex:none; width:auto; height:auto}')
             if item.filename.endswith("pictures/blank.svg"):
                 body = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
                         b'<rect width="320" height="200" fill="#38bdf8"/></svg>')

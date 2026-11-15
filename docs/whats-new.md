@@ -17,6 +17,12 @@ before this and still waits on Got it asks Approve or Reject in its place,
 and every other question in it works as before; an answer you already gave
 to Got it stays on record as you gave it.
 
+## Decks use the whole slide
+
+A deck's words grow with the space it has, and a slide with pictures gives
+them every pixel its words leave, so a picture is as large as the slide
+allows instead of a small box.
+
 ## A package's page keeps most of the view
 
 A package opens with its own page filling the centre. The story's
