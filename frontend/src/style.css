@@ -4284,6 +4284,20 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   --centre-right: calc(var(--ray-lane) + var(--rail-width) + var(--caption-gap));
   --centre-header-height: 44px;
 }
+/* A page package taken over has the whole display but the rail: the left
+   column folds to the orb alone, small, in the gutter at the page's left
+   edge (it is where every ray starts, so it stays), and every centre view's
+   left edge moves out to it. The team server and the brains are in the
+   takeover bar (TakeoverBar.tsx), and Restore layout or closing brings the
+   column back. */
+:root[data-takeover="package"] { --panel-edge: var(--ray-lane); }
+:root[data-takeover="package"] #left-column {
+  left: 4px; width: calc(var(--ray-lane) - 8px); height: auto;
+}
+:root[data-takeover="package"] #orb-control { height: calc(var(--ray-lane) - 8px); }
+:root[data-takeover="package"] #left-column > :not(#orb-control),
+:root[data-takeover="package"] #brain-logo { display: none; }
+.takeover-left { display: flex; gap: 6px; flex: none; }
 #takeover-bar {
   position: fixed;
   top: var(--centre-header-top);

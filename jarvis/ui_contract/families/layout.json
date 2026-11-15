@@ -22,7 +22,7 @@
      "effects": []}
   ],
   "kinds": [
-    {"kind": "takeoverBar", "entity": null, "label": "Takeover bar", "parts": ["name", "state", "readback", "restore"],
+    {"kind": "takeoverBar", "entity": null, "label": "Takeover bar", "parts": ["name", "state", "readback", "restore", "teamServer", "brains"],
      "presentations": [{"view": "main.takeover"}]}
   ]
 }

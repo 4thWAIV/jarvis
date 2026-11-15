@@ -923,6 +923,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.takeover.readbackTitle": "Muestre el mensaje que espera su sí",
   "main.takeover.sheet": "Mensajes que esperan su sí",
   "main.takeover.restore": "Restaurar diseño",
+  "main.takeover.teamServer": "Servidor del equipo",
+  "main.takeover.brains": "Cerebros",
   "main.takeover.restoreTitle": "Vuelva a mostrar las pestañas del centro y el panel derecho",
   "main.takeover.rail": "Pestañas del panel derecho",
   "main.package.wide": "Hecho para la vista ampliada: Ampliar le da el centro y el lado derecho.",

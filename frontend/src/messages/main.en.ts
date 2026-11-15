@@ -964,6 +964,8 @@ export const mainEn = {
   "main.takeover.readbackTitle": "Show the message waiting for your yes",
   "main.takeover.sheet": "Messages waiting for your yes",
   "main.takeover.restore": "Restore layout",
+  "main.takeover.teamServer": "Team server",
+  "main.takeover.brains": "Brains",
   "main.takeover.restoreTitle": "Bring back the centre tabs and the right panel",
   "main.takeover.rail": "Right panel tabs",
   "main.package.wide": "Made for the wider layout: Take over gives it the centre and the right side.",

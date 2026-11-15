@@ -4921,7 +4921,9 @@ export const UI_CONTRACT = {
         "name",
         "state",
         "readback",
-        "restore"
+        "restore",
+        "teamServer",
+        "brains"
       ],
       "presentations": [
         {

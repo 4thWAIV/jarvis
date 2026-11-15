@@ -211,6 +211,16 @@ async def test_reading_the_document_fills_the_display_and_the_bar_fades_and_retu
             assert frame["height"] >= 0.9 * view["height"], (frame, view)
             assert frame["y"] <= bar_box["y"] + 2, "the bar is over the top of the document, not above it"
             assert bar_box["height"] <= 60, f"one thin bar: {bar_box}"
+            # The whole display but the rail: the left column folds to the orb
+            # in the gutter, and the document starts there (the gutter is the
+            # 4vw ray lane, then the caption gap and the view's corridor).
+            assert frame["x"] <= 0.04 * 1440 + 12 + 16 + 4, f"the document starts at the gutter: {frame}"
+            orb = await page.evaluate(RECT, "#orb-control")
+            assert orb["x"] + orb["width"] <= 0.04 * 1440 and orb["width"] > 0, f"the orb, in the gutter: {orb}"
+            await async_api.expect(page.locator("#team-server-tile")).to_be_hidden()
+            await async_api.expect(page.locator("#brain-usage")).to_be_hidden()
+            # What the column offers is in the takeover bar.
+            await async_api.expect(page.locator("#takeover-bar .takeover-left button").first).to_have_text("Team server")
             assert await _opacity(page) == "1"
             # Between its controls, the document under the bar takes the click.
             under = await page.evaluate(
@@ -234,6 +244,12 @@ async def test_reading_the_document_fills_the_display_and_the_bar_fades_and_retu
             await async_api.expect(bar).to_have_attribute("data-faded", "true", timeout=8000)
             await page.locator("#package-view .package-done").focus()
             await async_api.expect(bar).to_have_attribute("data-faded", "false")
+
+            # Restore layout brings the left column back, and the view moves in.
+            await page.click("#takeover-bar .takeover-restore")
+            await async_api.expect(page.locator("#brain-usage")).to_be_visible()
+            restored = await page.evaluate(RECT, "#package-view iframe")
+            assert restored["x"] > frame["x"] + 150, (restored, frame)
         finally:
             await voice.speech.stop()
         await browser.close()
