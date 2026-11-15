@@ -827,7 +827,9 @@ these records, never from an agent's memory: `python -m jarvis.status_briefing
 (`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
 `need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
 `work_status` reads them) writes `handoff.json` (a make_package handoff, the
-composition as its `briefing`) and `status-evidence.json`, and nothing
+composition as its `briefing`, asking one decision, `approve-status`:
+approve, or reject with his words on what is missing or wrong, with its
+lead-in) and `status-evidence.json`, and nothing
 else: per item, what needs him first (his acts, every held piece and what
 holds it, stalled pieces, the item stalled or answered with no follow-up,
 each with who and since when; or one line that nothing needs him), then

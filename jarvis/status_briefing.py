@@ -12,7 +12,10 @@ into `--out`:
 
   handoff.json          the make_package handoff (`purpose`, `audience`,
                         `questions`, `evidence`), with the composition
-                        itself as `briefing`
+                        itself as `briefing` and the one decision it asks,
+                        `approve-status`: Approve (the status is complete
+                        and accurate) or Reject (with his words on what is
+                        missing or wrong), with its lead-in
   status-evidence.json  the composition in full, every fact with the
                         evidence the record holds for it
 
@@ -284,6 +287,32 @@ def _evidence_text(e: dict) -> str:
         f"package {e['value']}" if e["kind"] == "package" else e["value"])
 
 
+# Every package asks Approve or Reject (no information-only package): a
+# status briefing asks him whether the status is complete and accurate.
+DECISION_ID = "approve-status"
+APPROVE, REJECT = "approve", "reject"
+
+
+def decision(briefing: dict) -> dict:
+    """The one decision the briefing asks, with its lead-in (the question,
+    why it is his, and the evidence it rests on)."""
+    since = briefing["since"]
+    return {
+        "id": DECISION_ID,
+        "question": "Is this status complete and accurate?",
+        "why_you": "You steer this work: what you approve or correct here is what the "
+                   "agents work to next.",
+        "evidence": [f"./{EVIDENCE}: every fact read from the Work record, each with its "
+                     f"commit, PR or path, since {since}."],
+        "options": [
+            {"id": APPROVE, "name": "Approve",
+             "says": "Approve: this status is complete and accurate"},
+            {"id": REJECT, "name": "Reject",
+             "says": "Reject: say what is missing or wrong", "needs_words": True},
+        ],
+    }
+
+
 def handoff(briefing: dict) -> dict:
     """make_package's handoff (package_author.read_handoff's shape) for the
     briefing: the evidence file first, then every piece of evidence the
@@ -310,12 +339,13 @@ def handoff(briefing: dict) -> dict:
             f"What finished since {briefing['since']}, and where is the evidence?",
         ],
         "evidence": evidence,
-        "decision": "information only",
+        "decision": decision(briefing),
         "shape": ("A status presentation (human-package-author, Status presentations): "
                   "problems before progress; per item, what needs Tim first, then what is "
                   "moving, then what is done since the time given; every fact with its "
                   "evidence from the record; an item that needs nothing of him says so in "
-                  "one line; no recap of what he can see on the Work tab without its cause."),
+                  "one line; no recap of what he can see on the Work tab without its cause. "
+                  "It ends with the one decision given, approve-status, with its lead-in."),
         "work": [i["id"] for i in items],
         "briefing": briefing,
     }
