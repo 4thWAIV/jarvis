@@ -133,10 +133,6 @@ export interface VisualTarget {
   element(): Element | null;
   /** One declared part's element; null when that part is not shown. */
   part(part: string): Element | null;
-  /** Bring a part that is on the page but faded out of the way back into
-   *  view, at once, before it is pointed at (a page package's bar,
-   *  PackageView.tsx). Most presentations have nothing to bring back. */
-  unveil?(part?: string): void;
 }
 
 const targets = new Map<string, VisualTarget>();
@@ -272,8 +268,7 @@ export function elementOf(target: VisualTarget, part?: string): Element | null {
  *  `part(name)` are callback refs for its elements. Registered while
  *  mounted with a reference (null registers nothing: no entity, no target),
  *  so an unmounted object leaves no target and no branch behind. */
-export function useUiTarget(spec: { ref: TargetRef; label: string; socket: Socket;
-                                    unveil?: (part?: string) => void } | null) {
+export function useUiTarget(spec: { ref: TargetRef; label: string; socket: Socket } | null) {
   const whole = useRef<Element | null>(null);
   const parts = useRef(new Map<string, Element>());
   const latest = useRef(spec);
@@ -289,7 +284,6 @@ export function useUiTarget(spec: { ref: TargetRef; label: string; socket: Socke
       socket: now.socket,
       element: () => whole.current,
       part: (name) => parts.current.get(name) ?? null,
-      unveil: (part) => latest.current?.unveil?.(part),
     });
   }, [id]);
   return {

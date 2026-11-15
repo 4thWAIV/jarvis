@@ -22,10 +22,12 @@
  * and the Work tab give.
  *
  * Reading: a package takes over the page as it opens (packages.ts), and
- * while it has, its head and tools are one thin bar over the top of its
- * document (`.package-bar`) that fades after a few seconds without the
- * pointer and comes back when the pointer reaches the top or keyboard focus
- * enters it; with reduced motion or Steady it stays. Restored, the head and
+ * while it has, its head and tools are one thin bar along the top of its
+ * document (`.package-bar`), in a row of its own so it covers nothing of
+ * the document, that fades back (dimmed, every control still where it is
+ * and still taking his click) after a few seconds without the pointer and
+ * comes back when the pointer reaches it or keyboard focus enters it; with
+ * reduced motion or Steady it stays. Restored, the head and
  * tools stand above the document as before.
  *
  * Focus (PackageFocus.tsx): when a question is his (the story waits on it,
@@ -78,10 +80,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
   // The author's explanation, read in place beside the page.
   const [reading, setReading] = useState(false);
   useEffect(() => setReading(false), [info.id]);
-  // Pointed at by the brain, a faded bar comes back first (uiAttention.ts).
-  const unveil = useRef<() => void>(() => undefined);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
-                           label: info.name, socket: CENTRE_SOCKET, unveil: () => unveil.current() });
+                           label: info.name, socket: CENTRE_SOCKET });
   // Where the frame says each focused part is, by key ("beat:<beat>", or
   // "q:<question>" for a question's part); missing: not said yet.
   const [where, setWhere] = useState<Record<string, FrameRect | null>>({});
@@ -161,7 +161,6 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const arranged = useSyncExternalStore(layout.subscribe, layout.get);
   const bar = arranged.mode === "takeover" && arranged.view === "package" && arranged.key === info.id;
   const fading = useFadingBar(bar);
-  unveil.current = fading.unveil;
   const voteInCard = current !== null && current === info.vote?.question;
 
   const tools = (info.story || info.communication?.kind === "architecture") && <div className="package-tools">
@@ -233,12 +232,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
   return (
     <div id="package-view" data-package={info.id} data-layout={bar ? "bar" : "page"} ref={ui.whole}>
       {bar
-        ? <>
-            <div className="package-bar-reveal" aria-hidden="true" onPointerEnter={fading.props.onPointerEnter}
-                 onPointerLeave={fading.props.onPointerLeave} />
-            <div className="package-bar" data-faded={fading.faded ? "true" : "false"}
-                 ref={(el) => { fading.ref(el); ui.part("bar")(el); }} {...fading.props}>{head}</div>
-          </>
+        ? <div className="package-bar" data-faded={fading.faded ? "true" : "false"}
+               ref={ui.part("bar")} {...fading.props}>{head}</div>
         : <>{head}{tools}</>}
       <div className="package-body">
         <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
@@ -261,16 +256,15 @@ export function PackageView({ info }: { info: PackageInfo }) {
   );
 }
 
-/** The bar's fading: shown at first, faded once the pointer has been away
- *  from it for BAR_FADES_AFTER_MS, back as soon as the pointer is over it
- *  (the top of the document) or keyboard focus is in it. Never faded with
- *  reduced motion or Steady. Its height is the view's
- *  `--package-bar-height`, which keeps the side column below it. */
+/** The bar's fading: shown at first, faded (dimmed, never gone: it stays
+ *  where it is and every control in it still takes his click) once the
+ *  pointer has been away from it for BAR_FADES_AFTER_MS, back as soon as
+ *  the pointer is over it or keyboard focus is in it. Never faded with
+ *  reduced motion or Steady. */
 function useFadingBar(active: boolean) {
   const [faded, setFaded] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const held = useRef({ pointer: false, focus: false });
-  const el = useRef<HTMLElement | null>(null);
   const later = useCallback(() => {
     clearTimeout(timer.current);
     const steady = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ||
@@ -284,26 +278,8 @@ function useFadingBar(active: boolean) {
     later();
     return () => clearTimeout(timer.current);
   }, [active, later]);
-  useEffect(() => {
-    const bar = el.current;
-    const view = bar?.closest<HTMLElement>("#package-view");
-    if (!active || !bar || !view) return undefined;
-    const fit = () => view.style.setProperty("--package-bar-height", `${bar.offsetHeight}px`);
-    fit();
-    const watch = new ResizeObserver(fit);
-    watch.observe(bar);
-    return () => { watch.disconnect(); view.style.removeProperty("--package-bar-height"); };
-  }, [active]);
   return {
     faded: active && faded,
-    /** Shown at once (its controls take the pointer again in the same
-     *  frame), then fading again as usual. */
-    unveil: () => {
-      if (el.current) el.current.dataset.faded = "false";
-      show();
-      later();
-    },
-    ref: (node: HTMLElement | null) => { el.current = node; },
     props: {
       onPointerEnter: () => { held.current.pointer = true; show(); },
       onPointerMove: show,

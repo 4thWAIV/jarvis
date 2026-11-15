@@ -1091,17 +1091,14 @@ effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
 as before; taken over, the left column folds to the orb alone in the
 gutter, `data-takeover="package"` on the root moving `--panel-edge` out to
 the ray lane, and the takeover bar holds Team server and the running
-brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, its head and tools are one thin bar over the
-top of its document (`.package-bar`, `PackageView.tsx` `useFadingBar`)
-that fades after `BAR_FADES_AFTER_MS` without the pointer and returns when
-the pointer reaches the top (`.package-bar-reveal`, a strip along it) or
-keyboard focus enters it; reduced motion and `data-motion="steady"` keep it
-shown. Only its controls take the pointer, and none once it has faded, so
-the document under it (a deck's strip of slides) stays his to click; a
-pointer's route to a part drawn over another part is not blocked by what
-lies under it (`uiPipeline.otherParts`), and a faded bar comes back the
-moment the brain points at the package (`VisualTarget.unveil`, called by
-`uiAttention.indicate` before it looks). One focus layer
+brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, its head and tools are one thin bar along the top of its
+document (`.package-bar`, `PackageView.tsx` `useFadingBar`), in a row of its
+own, never over the document (a deck's own controls along its top, and the
+package check's clicks, must work at a first click with nothing to reveal
+first), that fades back to 35 percent after `BAR_FADES_AFTER_MS` without
+the pointer, every control still in place and taking his click, and returns
+when the pointer reaches it or keyboard focus enters it; reduced motion and
+`data-motion="steady"` keep it shown. One focus layer
 (`PackageFocus.tsx`) serves a decision and a narrated beat: given a rect
 in the frame's coordinates, a dim level (`DIM`) and content, it keeps the
 part lit and ringed, dims the rest, and presents a card beside it joined by

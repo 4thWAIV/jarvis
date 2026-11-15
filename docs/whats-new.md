@@ -9,8 +9,9 @@ tab icons on the right goes to its document, the left column folding to
 the orb alone at the page's edge (Team server and Brains move into the bar
 along the top, and Restore layout brings the column back). Its title and
 tools become one
-thin bar over the top of the document, which fades after a few seconds and
-comes back when you move the pointer to the top or tab into it. When a
+thin bar along the top of the document, which dims after a few seconds
+(still there, every button still works) and brightens when you move the
+pointer to it or tab into it. When a
 question is yours, because the story is waiting on it or you chose Show in
 the document beside it, the part of the document it is about stays lit and
 everything else dims; the question, why it is yours, the evidence and the

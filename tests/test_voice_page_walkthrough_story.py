@@ -26,7 +26,7 @@ from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import FAKE_TRANSCRIPTION
 from tests.test_voice_page_story import (RECORD, STORY_BROWSER_ARGS, _inner, _ringed,  # noqa: F401
                                          jarvis_app, voice)
-from tests.voice_page_input import show_package_bar, start_listening
+from tests.voice_page_input import start_listening
 
 pytestmark = pytest.mark.page
 
@@ -128,7 +128,6 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             assert slides[-1].endswith("Got it?") and sum("Got it?" in s for s in slides) == 1
 
             # Told from the start, it waits at his question.
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.locator("#package-view .package-story button").first.click()
             await _ringed(page, "(r) => r.target === '#water' && r.shown")
             await _state(page, "Waiting for your answer on slide 2 of 5.")
@@ -147,12 +146,10 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             trace.append({"answered": {"kettle": "electric"}, "slides_told": told})
 
             # Stop from the page, within a second; then nothing more.
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.select_option("#package-view .package-story select", "1")
             await page.locator("#package-view .package-story button").first.click()
             await _ringed(page, "(r) => r.beat === '1.1' && r.added > Date.now() - 5000")
             pressed = time.monotonic()
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.click("#package-view .package-story button:has-text('Stop')")
             await _state(page, "Stopped.", timeout=STOP_WITHIN_SEC * 1000)
             stopped_in = time.monotonic() - pressed
@@ -165,7 +162,6 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             # Continue resumes at the first applicable question with no answer:
             # the vote (kettle answered, the follow-up not opened).
             before = len(voice.audio)
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.click("#package-view .package-story button:has-text('Continue')")
             await _state(page, "Waiting for your answer on slide 5 of 5.")
             resumed = [m["cue"]["slide"] for m in voice.audio[before:]]
@@ -173,7 +169,6 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             trace.append({"resumed_at": 5})
 
             # Stop from JARVIS (the brain's tell_package_story stop), within a second.
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.select_option("#package-view .package-story select", "4")
             await page.locator("#package-view .package-story button").first.click()
             await _state(page, "Telling slide 4 of 5.")
@@ -278,7 +273,6 @@ async def test_a_precise_target_rings_exactly_one_element_or_is_reported(
             voice.ws.send(json.dumps({"type": "package_page",
                                       "package": packages_api.describe(package)}))
             await page.locator("#package-view iframe").wait_for()
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.locator("#package-view .package-story button").first.click()
             # While Loaded's beat plays, its ring is drawn nowhere.
             hidden = await _inner(page).wait_for_function(

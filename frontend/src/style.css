@@ -2445,32 +2445,23 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #package-view .package-head h2,
 #package-view .package-head-words p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Reading (PackageView.tsx): while a package has taken over the page, its
-   head and tools are one thin bar over the top of its document, which
-   takes the whole view. The bar fades after a few seconds without the
-   pointer and comes back when the pointer reaches it or keyboard focus
-   enters it; with reduced motion or Steady it stays. The side column keeps
-   below it (--package-bar-height, measured). */
+   head and tools are one thin bar along the top of its document, in a row
+   of its own (it covers nothing of the document, whose own controls along
+   its top stay his to click), and the document takes the rest of the view.
+   The bar fades back after a few seconds without the pointer, dimmed but
+   never gone (every control still where it is and taking his click), and
+   comes back when the pointer reaches it or keyboard focus enters it; with
+   reduced motion or Steady it stays. */
 #package-view[data-layout="bar"] { gap: 4px; }
-.package-bar { position: absolute; z-index: 4; top: 0; left: var(--ui-corridor); right: var(--ui-corridor);
-               padding: 5px 10px; border: 1px solid var(--ui-edge); border-radius: 8px;
-               background: rgba(2, 6, 23, 0.9); backdrop-filter: blur(6px);
-               transition: opacity 0.4s ease; pointer-events: none; }
-/* Only its controls take the pointer, and only while it shows: between
-   them, and everywhere once it has faded, the document under the bar is
-   still his to click (a deck's own strip of slides along its top). A strip
-   along the very top, or keyboard focus, brings it back. */
-.package-bar :is(button, a, select, input, label) { pointer-events: auto; }
-.package-bar[data-faded="true"] :is(button, a, select, input, label) { pointer-events: none; }
-.package-bar-reveal { position: absolute; z-index: 4; top: 0; height: 8px;
-                      left: var(--ui-corridor); right: var(--ui-corridor); }
-.package-bar[data-faded="true"] { opacity: 0; }
+.package-bar { flex: none; padding: 4px 10px; border: 1px solid var(--ui-edge); border-radius: 8px;
+               background: rgba(2, 6, 23, 0.9); transition: opacity 0.4s ease; }
+.package-bar[data-faded="true"] { opacity: 0.35; }
 .package-bar .package-head { gap: 10px; flex-wrap: nowrap; }
 .package-bar .package-head-words { flex-direction: row; align-items: baseline; gap: 8px; flex: 1 1 10em; }
 .package-bar .package-head-words h2 { font-size: 15px; flex: 0 1 auto; min-width: 0; }
 .package-bar .package-head-words p { flex: 1 1 0; min-width: 0; font-size: 12px; }
 .package-bar .package-wide { display: none; }
 .package-bar .package-tools { flex: 0 1 auto; min-width: 0; }
-#package-view[data-layout="bar"] .package-side { margin-top: var(--package-bar-height, 0px); }
 @media (prefers-reduced-motion: reduce) {
   .package-bar { transition: none; }
   .package-bar[data-faded="true"] { opacity: 1; }

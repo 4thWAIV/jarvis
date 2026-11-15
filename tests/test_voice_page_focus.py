@@ -37,7 +37,7 @@ from tests.test_voice_page_captions import FAKE_TRANSCRIPTION
 from tests.test_voice_page_story import STORY_BROWSER_ARGS, _Voice, _synthesize
 from tests.fixtures.waiting import until_async
 from tests.settings_fixtures import hold_setting
-from tests.voice_page_input import show_package_bar, start_listening
+from tests.voice_page_input import start_listening
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -208,8 +208,9 @@ async def test_reading_the_document_fills_the_display_and_the_bar_fades_and_retu
             view = await page.evaluate(RECT, "#package-view")
             frame = await page.evaluate(RECT, "#package-view iframe")
             bar_box = await page.evaluate(RECT, "#package-view .package-bar")
-            assert frame["height"] >= 0.9 * view["height"], (frame, view)
-            assert frame["y"] <= bar_box["y"] + 2, "the bar is over the top of the document, not above it"
+            assert frame["height"] >= 0.88 * view["height"], (frame, view)
+            # A row of its own: it covers nothing of the document.
+            assert frame["y"] >= bar_box["y"] + bar_box["height"] - 1, (frame, bar_box)
             assert bar_box["height"] <= 60, f"one thin bar: {bar_box}"
             # The whole display but the rail: the left column folds to the orb
             # in the gutter, and the document starts there (the gutter is the
@@ -222,22 +223,23 @@ async def test_reading_the_document_fills_the_display_and_the_bar_fades_and_retu
             # What the column offers is in the takeover bar.
             await async_api.expect(page.locator("#takeover-bar .takeover-left button").first).to_have_text("Team server")
             assert await _opacity(page) == "1"
-            # Between its controls, the document under the bar takes the click.
-            under = await page.evaluate(
-                "([x, y]) => document.elementFromPoint(x, y).tagName",
-                [frame["x"] + 30, bar_box["y"] + bar_box["height"] / 2])
-            assert under == "IFRAME", under
             await _shot(page, "reading-bar-shown", tmp_path)
 
             # The pointer away (over the document): the bar fades.
             await page.mouse.move(frame["x"] + frame["width"] / 2, frame["y"] + frame["height"] / 2)
             await page.wait_for_function(
-                "getComputedStyle(document.querySelector('.package-bar')).opacity === '0'", timeout=8000)
+                "getComputedStyle(document.querySelector('.package-bar')).opacity === '0.35'", timeout=8000)
             assert await bar.get_attribute("data-faded") == "true"
             await _shot(page, "reading-bar-faded", tmp_path)
+            # Faded, it is still there and Done still takes a first click where
+            # it was: nothing hidden to find first.
+            done = await page.evaluate(RECT, "#package-view .package-done")
+            hit = await page.evaluate("([x, y]) => document.elementFromPoint(x, y).className",
+                                      [done["x"] + done["width"] / 2, done["y"] + done["height"] / 2])
+            assert "package-done" in hit, hit
 
-            # The pointer at the very top: back at once.
-            await page.mouse.move(bar_box["x"] + 200, bar_box["y"] + 3)
+            # The pointer at the bar: back at once.
+            await page.mouse.move(bar_box["x"] + 200, bar_box["y"] + bar_box["height"] / 2)
             await async_api.expect(bar).to_have_attribute("data-faded", "false")
             # Away again, it fades; keyboard focus entering it brings it back.
             await page.mouse.move(frame["x"] + frame["width"] / 2, frame["y"] + frame["height"] / 2)
@@ -347,7 +349,6 @@ async def test_the_story_lights_each_beat_and_presents_the_question_it_waits_on(
     async with page_playwright as p:
         browser, page = await _opened(p, page_url, focus_app, voice)
         try:
-            await show_package_bar(page)
             await page.locator("#package-view .package-story button", has_text="Tell the story").click()
             # Narration: the beat's targets lit, the rest dimmed lightly, its words beside them.
             told = page.locator(".package-focus[data-kind='narration']")
@@ -385,7 +386,6 @@ async def test_the_story_lights_each_beat_and_presents_the_question_it_waits_on(
             await page.keyboard.press("Escape")
             await async_api.expect(page.locator(".package-focus")).to_have_count(0)
             await async_api.expect(page.locator('.package-asks [data-question="clear"]')).to_be_visible()
-            await show_package_bar(page)
             await page.locator("#package-view .package-story button", has_text="Stop").click()
         finally:
             await voice.speech.stop()

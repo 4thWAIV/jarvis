@@ -23,7 +23,6 @@ from tests.test_brain_page_parity import wired  # noqa: F401  (a fixture)
 from tests.test_language_documents import draft, installed_kit  # noqa: F401  (fixtures)
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_language_documents import canonical_server  # noqa: F401
-from tests.voice_page_input import show_package_bar
 
 pytestmark = pytest.mark.page
 
@@ -149,7 +148,6 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 assert await pressed.get_attribute("aria-pressed") == "true", key
 
             # The explanation, read in place.
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.get_by_role("button", name="Read the explanation").click()
             panel = page.locator("#package-explanation")
             await panel.locator("h3", has_text="The document store").wait_for()
@@ -181,7 +179,6 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             reopened = await http.post(f"/api/packages/inbox/{second}/open", headers={"Origin": base})
             assert reopened.status_code == 200 and not reopened.json()["problem"], reopened.text
             await page.locator(f'#package-view[data-package*="walkthrough-two"]').wait_for()
-            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.get_by_role("button", name="Read the explanation").click()
             await panel.locator("h3", has_text="The second explanation").wait_for()
             assert "The document store" not in await panel.inner_text()
@@ -191,7 +188,6 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 back = await http.post(f"/api/packages/inbox/{first}/open", headers={"Origin": base})
                 assert back.status_code == 200
                 await page.locator(f'#package-view[data-package*="walkthrough-one"]').wait_for()
-                await show_package_bar(page)  # a faded bar lets the pointer through
                 await page.locator(".package-done").click()
                 await view.wait_for(state="detached")
                 entry = package_inbox.get(first)
@@ -243,7 +239,6 @@ async def test_his_approval_of_the_design_in_the_actual_view(
         assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, apart"
 
         # Got it is acknowledgement: his approval stays unanswered.
-        await show_package_bar(page)  # a faded bar lets the pointer through
         await page.get_by_role("button", name="Got it").click()
         await page.locator(".package-vote-recorded", has_text="Got it").wait_for()
         assert package_inbox.page_vote(package)["asks"][0]["answer"] is None
