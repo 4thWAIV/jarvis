@@ -2,6 +2,18 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Status briefings lead with what needs you, built from the Work record
+
+An agent preparing a status presentation on your Work items now builds it
+from the items' own records, not from what it remembers:
+`python -m jarvis.status_briefing --work <id> --out <folder>`. For each item
+the presentation starts with what needs you (decisions, packages waiting,
+held and stalled pieces, who is on each and since when), then what is
+moving, then what finished since a given time, and every fact carries its
+evidence: the commit, pull request or file the agent reported. An item that
+needs nothing of you says so in one line. `--check` shows first which
+pieces have no note or no evidence on record.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

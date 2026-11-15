@@ -821,7 +821,22 @@ link to an answer". Every answer of his is written for its asker to
 (`work_api.write_answer`; the project is the source folder's last name;
 outbound only, nothing watches it), and `work_report.py answers --since
 <time>` (`GET /api/work/answers`, in the `work` key category) lists every
-answer to the calling key's own decisions. The Workflows view stays below the list, under its
+answer to the calling key's own decisions. A status briefing is built from
+these records, never from an agent's memory: `python -m jarvis.status_briefing
+--work <id> [--work <id> ...] --out <folder> [--since <time>]`
+(`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
+`need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
+`work_status` reads them) writes `handoff.json` (a make_package handoff, the
+composition as its `briefing`) and `status-evidence.json`, and nothing
+else: per item, what needs him first (his acts, every held piece and what
+holds it, stalled pieces, the item stalled or answered with no follow-up,
+each with who and since when; or one line that nothing needs him), then
+pieces reported working with their latest note, then what finished since
+`--since` (24 hours by default) from the log, every fact with its piece's
+evidence; items needing him first. The session then sends it with
+`make_package --handoff`. `--check` writes nothing and lists pieces with no
+note, and pieces past planned or ready with no evidence (exit 1 when any).
+The Workflows view stays below the list, under its
 own heading. The record is `work_store.py`: one document per item,
 `/work/<id>.work` (records), its pieces and decisions inline and its events
 the document's versions (`records.history(path, fields=["events"])`;
