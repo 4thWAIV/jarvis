@@ -380,9 +380,44 @@ def test_every_page_hears_it_and_a_page_that_connects_reads_it(monkeypatch, tmp_
     hold_setting("brain_autostart", "0")
     from jarvis import server
     importlib.reload(server)
-    assert language_setting._publish == server._send_to_session_clients
+    # Every page is told through the server's own hook, which also settles
+    # the update saying a chosen language could not start.
+    assert language_setting._publish == server._language_published
     with TestClient(server.app) as c:
         spoken_words.set_active_language("es")              # after startup's load()
         with c.websocket_connect("/ws/sessions", headers=PAGE) as ws:
             first = ws.receive_json()
     assert first["type"] == "snapshot" and first["language"] == "es"
+
+
+# ── a chosen language whose model is missing ─────────────────────────────
+
+def test_spanish_chosen_without_its_model_is_one_silent_update_until_it_changes(
+        server, monkeypatch):
+    """Spanish saved but its model not installed, so JARVIS starts in
+    English: one silent `language` item says so, and the next language put
+    in force (the model installed and Spanish chosen) resolves it."""
+    from jarvis import attention_store
+    store = attention_store.AttentionStore()
+    monkeypatch.setattr(server, "attention_record", store)
+    frames = []
+    monkeypatch.setattr(server, "_send_to_session_clients", frames.append)
+    data_paths.language_path().write_text(json.dumps({"language": "es"}))
+    server._attend_language_at_start(language_setting.load())
+    item = store.get("language", "speech_model")
+    assert (item.event, item.facts) == ("model_missing", {"chosen": "Spanish", "using": "English"})
+    assert not item.audible and item.state == "pending"
+    server._language_published({"type": "language", "language": "es"})
+    assert frames == [{"type": "language", "language": "es"}]
+    assert store.get("language", "speech_model").state == "resolved"
+
+
+def test_a_language_started_as_chosen_is_no_update(server, monkeypatch):
+    from jarvis import attention_store
+    store = attention_store.AttentionStore()
+    monkeypatch.setattr(server, "attention_record", store)
+    server._attend_language_at_start(language_setting.load())
+    _put(SPANISH)
+    data_paths.language_path().write_text(json.dumps({"language": "es"}))
+    server._attend_language_at_start(language_setting.load())
+    assert store.get("language", "speech_model") is None

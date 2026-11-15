@@ -189,6 +189,7 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "22c6b09f7abe48a6010644ec7b2ddbfee127c6a4247353e033ec0905618bbebc",  # install the session skill and renew a work-item key by his word
     "80cbfefd04b81228fdb12d089059d9716314da89be1f032ae8809e522d6b20f9",  # a held kit and a failed brain, merged
     "900d1bf94e05e22d6303197fb5264454b996410091b5d4a9a0aafbb9fbb50fef",  # a failed brain is started again
     "43d66995d736d6959a45d4a66cd9805cda71a1f16d8eb2b04077a8f64f79dada",  # a held language kit is activated by his word

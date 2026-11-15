@@ -2,6 +2,29 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## More things that block work now tell you and can be fixed from the dashboard
+
+Diagnostics has a new Setup row listing every startup check that did not
+pass: the talk-to-jarvis skill your agents need to reach you, Accessibility,
+Screen Recording and the rest, each in plain words. When the skill is
+missing or out of date, Setup has Install skill, and JARVIS installs it
+when you ask by voice; no terminal command is needed.
+
+When messages between people keep failing to get through, the Team server
+row says so (it never turns red for it) and an update appears in Updates
+waiting, gone once a delivery succeeds. When the knowledge engine's file
+reader keeps crashing and restarting, the Knowledge engine row is degraded
+and says how often and with what exit code.
+
+A run you started from the dashboard that fails or runs out of time is now
+an update too, as runs JARVIS starts always were. If you chose Spanish but
+its speech model is missing, so JARVIS started in English, an update says
+so until the language changes. A work-item key a few days from its 30-day
+end is an update naming its Work item, and the item's Overview has Renew
+beside Revoke (JARVIS renews it by voice too). A workflow blocker reported
+by something other than an agent's own key is an update on the workflow,
+cleared once the blocker is.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

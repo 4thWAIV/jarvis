@@ -557,6 +557,20 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "renew_work_key",
+        "description": (
+            "Give a work-item key another 30 days, as his Renew on the Work item's Overview: "
+            "by its fingerprint, or by the Work item (id or title) when it has one live key. "
+            "Only when he asks."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {"type": "string", "description": "The key's SHA256 fingerprint."},
+                "item": {"type": "string", "description": "The Work item's id or title."},
+            },
+        },
+    },
+    {
         "name": "spawn_run",
         "description": (
             "Start NEW agent work in a project, on Claude Code or Codex, as a "
@@ -2834,6 +2848,14 @@ TOOL_SPECS = [
             "Start the brain again after it stopped (its login expired, or it crashed "
             "repeatedly) — Diagnostics' Start brain on the brain's row — only when he asks. "
             "It does nothing while the brain is running or already starting."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "install_session_skill",
+        "description": (
+            "Install (or bring up to date) the talk-to-jarvis skill in every Claude Code and "
+            "Codex home on this Mac, so agents' sessions can reach him: Diagnostics, Setup's "
+            "Install skill. Only when he asks."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {

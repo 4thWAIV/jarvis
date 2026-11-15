@@ -107,6 +107,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__voice_input_settings,mcp__jarvis__set_voice_input_settings,"
         "mcp__jarvis__engine_settings,mcp__jarvis__set_engine_setting,"
         "mcp__jarvis__brains_settings,mcp__jarvis__set_brain,mcp__jarvis__start_brain,"
+        "mcp__jarvis__install_session_skill,"
         "mcp__jarvis__jarvis_settings,mcp__jarvis__set_jarvis_setting,mcp__jarvis__play_cue,"
         "mcp__jarvis__skip_reading,mcp__jarvis__stop_speaking,"
         "mcp__jarvis__voice_turn,mcp__jarvis__quiet_microphone,mcp__jarvis__set_motion,"
@@ -137,7 +138,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__retry_run,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"
         "mcp__jarvis__activate_language_kit,mcp__jarvis__records_move,"
-        "mcp__jarvis__agent_keys,mcp__jarvis__revoke_agent_key,"
+        "mcp__jarvis__agent_keys,mcp__jarvis__revoke_agent_key,mcp__jarvis__renew_work_key,"
         "mcp__jarvis__ui_map,mcp__jarvis__ui_navigate,"
         "mcp__jarvis__ui_indicate,mcp__jarvis__ui_journey,mcp__jarvis__ui_clear,"
         # The CLI's own two, and the only built-ins here: without them JARVIS

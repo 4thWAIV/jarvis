@@ -336,6 +336,48 @@ def test_a_work_key_in_an_agent_package_reports_on_its_item_alone_and_ends_with_
                        {"kind": "update", "summary": "x"}).status_code == 403
 
 
+def test_a_work_key_near_its_end_is_one_silent_update_and_he_renews_it(wired):
+    """A live work-item key within WORK_KEY_WARN_SEC of its end is a silent
+    `work_key` item naming its Work item; his Renew on the item's Overview
+    (the renew route, from the page) and the brain's acting `renew_work_key`
+    both give it another 30 days through `_renew_work_key`, the same
+    `agent_key_store.renew_work_key` as the issuer's `agent_key renew`, and
+    the update goes."""
+    import inspect
+    from types import SimpleNamespace
+    from jarvis import agent_key_store
+    from tests.test_brain_page_parity import _call
+    server, hints, store, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    wid = _start_work(client, agent, folder)
+    worker = Agent(home, "s-worker")
+    key = agent_key_store.add_work_key(worker.public, wid, f"agent:{PLAN}")
+    assert "agent_key_store.renew_work_key(" in inspect.getsource(server._renew_work_key)
+    assert "_renew_work_key(" in inspect.getsource(server.api_renew_work_key)
+    assert "_renew_work_key(" in inspect.getsource(server.tool_renew_work_key)
+
+    server._look_after_agent_keys()
+    assert store.get("work_key", key.fingerprint) is None, "a month left: nothing to say"
+    near = key.expires_at - server.WORK_KEY_WARN_SEC + 60
+    server._look_after_agent_keys(near)
+    server._look_after_agent_keys(near + 5)
+    item = store.get("work_key", key.fingerprint)
+    assert item.event == "expiring" and not item.audible and item.state == "pending"
+    assert item.untrusted == {"work": "Keys"} and item.facts["item"] == wid
+    assert [h["event"] for h in store.history(item.id)] == ["expiring"], "said once"
+
+    r = client.post(f"/api/agent-keys/work-keys/{key.fingerprint}/renew", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["expires_at"] > key.expires_at
+    assert store.get("work_key", key.fingerprint).state == "resolved"
+    assert {"type": "work"} in hints
+    said = _call(SimpleNamespace(server=server, client=client), "renew_work_key", item=wid)
+    assert said["text"].startswith("Renewed, sir"), said
+    assert client.post("/api/agent-keys/work-keys/SHA256:nope/renew",
+                       headers=ORIGIN).status_code == 409
+
+
 def test_an_agent_grants_a_work_key_into_a_folder(wired, monkeypatch, capsys, tmp_path):
     from jarvis import agent_key, agent_key_store, workflow_report
     server, *_, folder, home = wired

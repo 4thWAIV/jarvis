@@ -67,6 +67,7 @@ from jarvis.message import ASK_WITH_A_PACKAGE
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
+from jarvis import session_skill
 from jarvis import private_files
 from jarvis import project_maker
 from jarvis import projects_view
@@ -2192,9 +2193,11 @@ def _on_run_event(message: dict) -> None:
     own try/except swallowed it, and announcements silently never happened
     while every test passed. Hence the assertion rather than a comment.
 
-    Only runs JARVIS himself started (origin "voice") are narrated. The user
-    runs plenty of other things — from the dashboard, from work mode, from a
-    terminal — and those are not his to talk about.
+    Runs JARVIS himself started (origin "voice") are attention items however
+    they end. A run started from the dashboard (origin "api") is one only
+    when it failed or ran out of time: he started it, and an ending that
+    needs him must reach him even when he has looked away. Runs from
+    elsewhere (a terminal, work mode) are not his to talk about.
 
     Never raises: a subscriber that throws is caught by `_publish`, but a
     failed announcement must not even cost the executor that catch.
@@ -2209,9 +2212,14 @@ def _on_run_event(message: dict) -> None:
             if run.get("status") != run_store.RunStatus.CANCELLED:
                 _attend_package_run(run)
             return
+        status = run.get("status")
+        if run.get("origin") == "api" and status in (run_store.RunStatus.FAILED,
+                                                     run_store.RunStatus.TIMED_OUT):
+            _attend("run", run.get("id") or "", status,
+                    untrusted={"project": str(run.get("project_name") or "")})
+            return
         if run.get("origin") != "voice":
             return
-        status = run.get("status")
         if status == run_store.RunStatus.SUCCEEDED:
             outcome = _run_outcome(run)
             # Exit zero, but nothing was built, is not "done": it is recorded
@@ -2416,19 +2424,27 @@ async def _watch_agents() -> None:
 _background: set[asyncio.Task] = set()
 
 
+# The startup checks' results (preflight.run_checks), kept for Diagnostics'
+# Setup row; None until they have run.
+_preflight_checks: Optional[list] = None
+
+
 async def _run_preflight() -> None:
-    """Run the first-run environment checks and log what is wrong, each
-    failure with its remedy.
+    """Run the first-run environment checks, keep their results for
+    Diagnostics' Setup row (subsystem_diagnostics.setup) and log what is
+    wrong, each failure with its remedy.
 
     preflight.py was once never called, which is why an expired login reached
     the user as "my language systems are down" and nothing else. It runs at
     startup now, and nothing of it is spoken: startup is never narrated. What
-    failed is on the Diagnostics tab and in the log, and an expired login is
-    also the brain's attention item and a failed reply's reason.
+    failed is on the Diagnostics tab's Setup row and in the log, and an
+    expired login is also the brain's attention item and a failed reply's
+    reason.
 
     `run_checks` never raises and time-boxes every check, but this is startup:
     a bug here must not cost the user their server.
     """
+    global _preflight_checks
     try:
         checks = await preflight.run_checks(provider_checks=_brain_provider().preflight())
     except Exception:
@@ -2440,8 +2456,10 @@ async def _run_preflight() -> None:
             log.info("preflight %s: ok", c.name)
         else:
             log.warning("preflight %s: %s — %s", c.name, c.message, c.remedy)
+    _preflight_checks = list(checks)
+    _send_to_session_clients({"type": "subsystems"})
 
-    # Nothing is said: what failed is on the Diagnostics tab and in the log.
+
 
 
 def _session_providers() -> list:
@@ -3337,6 +3355,9 @@ async def _start_on_records() -> None:
     # each stored snapshot is a `network` hint (network.ts reads it again).
     # Not signed in once startup settles, an attention item (team_reminder.py).
     _start_attention()
+    # Spanish chosen but its model missing, so English for this run: said
+    # once, silently, now the record is open.
+    _attend_language_at_start(speech_model)
     team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}),
                    attention=attention_record)
     _start_messaging()
@@ -3540,8 +3561,34 @@ app.add_middleware(web_auth.OriginGuard)
 records_move.mount(app)
 transcription_api.mount(app)
 speech_models.mount(app)
+# The attention item for a language chosen whose speech model is missing,
+# so JARVIS started in English (`_attend_language_at_start`).
+LANGUAGE_KIND = "language"
+
+
+def _attend_language_at_start(model) -> None:
+    """The language he chose is not the one JARVIS started in (its speech
+    model is not installed: language_setting.startup_model): one silent
+    attention item saying so, resolved once the language changes
+    (`_language_published`)."""
+    chosen = language_setting.saved()
+    if chosen == model.language:
+        return
+    _attend(LANGUAGE_KIND, "speech_model", "model_missing", audible=False,
+            facts={"chosen": language_setting.NAMES.get(chosen, chosen),
+                   "using": language_setting.NAMES.get(model.language, model.language)})
+
+
+def _language_published(frame: dict) -> None:
+    """A language put in force (language_setting.change): every page is
+    told, and the item saying his choice could not start is resolved, the
+    choice now in force being the one saved."""
+    _send_to_session_clients(frame)
+    _attention_resolved(LANGUAGE_KIND, "speech_model")
+
+
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
-                       publish=_send_to_session_clients)
+                       publish=_language_published)
 def _follow_patience() -> float:
     """His patience (the total of his pause intervals) put in force for
     when JARVIS may start talking: the same wait the turn controller holds
@@ -4451,6 +4498,8 @@ def _revoke_agent_key(key, by: str, why: str):
     done = agent_key_store.revoke(key.fingerprint, by, why)
     if done is not None:
         _attention_resolved("agent_key", key.fingerprint)
+        if key.work_id:
+            _work_key_settled(key.fingerprint)
         _refuse_held(key.fingerprint, key.session_id if key.state != "onboarded" else "")
         _hint_from_any_thread({"type": "work" if key.work_id else "agents"})
     return done
@@ -4504,11 +4553,58 @@ def _look_after_agent_keys(now: Optional[float] = None) -> None:
         item = work_store.get(key.work_id)
         if item is None or item.closed_at is not None or item.history:
             agent_key_store.revoke(key.fingerprint, "jarvis", "its work item ended")
+            _work_key_settled(key.fingerprint)
         elif not key.admitted(now):
             agent_key_store.revoke(key.fingerprint, "jarvis", "its 30 days ran out")
+            _work_key_settled(key.fingerprint)
+        else:
+            _attend_work_key_ending(key, item, now)
 
 
 AGENT_KEYS_POLL_SEC = 5.0
+# A work-item key this close to its end is a silent attention item, so he
+# can Renew it before its agent's reports start being refused.
+WORK_KEY_WARN_SEC = 3 * 86400.0
+WORK_KEY_KIND = "work_key"
+# The expiry each warned key was warned for: the item is written once, not
+# on every look.
+_work_keys_warned: dict[str, float] = {}
+
+
+def _attend_work_key_ending(key, item, now: Optional[float] = None) -> None:
+    """A live work-item key within WORK_KEY_WARN_SEC of its end: one silent
+    attention item (`work_key`, `expiring`) naming the item and the day it
+    ends, resolved once it is renewed, revoked or ended."""
+    now = time.time() if now is None else now
+    ends = key.expires_at
+    if ends is None or ends - now > WORK_KEY_WARN_SEC:
+        if key.fingerprint in _work_keys_warned:
+            _work_key_settled(key.fingerprint)
+        return
+    if _work_keys_warned.get(key.fingerprint) == ends:
+        return
+    _work_keys_warned[key.fingerprint] = ends
+    _attend(WORK_KEY_KIND, key.fingerprint, "expiring", audible=False,
+            facts={"date": time.strftime("%Y-%m-%d", time.localtime(ends)), "item": key.work_id},
+            untrusted={"work": str(item.title or key.work_id)})
+
+
+def _work_key_settled(fingerprint: str) -> None:
+    """A work-item key renewed, revoked or ended: its warning goes."""
+    _work_keys_warned.pop(fingerprint, None)
+    _attention_resolved(WORK_KEY_KIND, fingerprint)
+
+
+def _renew_work_key(fingerprint: str, by: str):
+    """Another 30 days for a live work-item key: his Renew on the item's
+    Overview and the brain's acting `renew_work_key` (by Tim), and the
+    issuing agent's `agent_key renew`, all through
+    `agent_key_store.renew_work_key`. The key, or None. Blocking."""
+    key = agent_key_store.renew_work_key(fingerprint, by)
+    if key is not None:
+        _work_key_settled(fingerprint)
+        _hint_from_any_thread({"type": "work"})
+    return key
 
 
 async def _watch_agent_keys() -> None:
@@ -4609,12 +4705,16 @@ async def api_issue_work_key(req: WorkKeyGrant, request: Request):
 
 @app.post(web_auth.SUBMIT_PATH + "/work-keys/{fingerprint:path}/renew")
 async def api_renew_work_key(fingerprint: str, request: Request):
-    """The issuing agent giving its work-item key another 30 days."""
-    principal = web_auth.principal(request.scope) or ""
-    key = await asyncio.to_thread(agent_key_store.renew_work_key, fingerprint, principal)
+    """The issuing agent giving its work-item key another 30 days
+    (`agent_key renew`), or his Renew on the item's Overview (a page
+    JARVIS serves)."""
+    page = request.scope.get(web_auth.ADMITTED) == web_auth.BY_ORIGIN
+    by = agent_key_store.ON_THE_PAGE if page else (web_auth.principal(request.scope) or "")
+    key = await asyncio.to_thread(_renew_work_key, fingerprint, by)
     if key is None:
         return JSONResponse(status_code=409, content={
-            "error": "Only the agent that issued a live work-item key renews it."})
+            "error": ("That is not a live work-item key." if page else
+                      "Only the agent that issued a live work-item key renews it.")})
     return {"fingerprint": key.fingerprint, "expires_at": key.expires_at}
 
 
@@ -4816,6 +4916,8 @@ TAINT_EXEMPT_TOOLS = {
         "it prints agent names through the same `_said_name` wall as every spoken "
         "session name, and JARVIS's own record of keys, fingerprints and rights"),
     "revoke_agent_key": "it revokes a key in JARVIS's own record, it does not read",
+    "renew_work_key": ("it renews a key in JARVIS's own record and says its fingerprints "
+                       "and end date, it does not read"),
     "list_agents": (
         "it prints only agent and project names, each through the same "
         "`_said_name` wall as every spoken session name, and JARVIS's own "
@@ -11788,9 +11890,15 @@ def _workflow_message(w, event) -> None:
     by the one writer (`_record_message`); it stays in the workflow as its
     state too. Only an agent's own key's report is one: nothing else proves
     a sender. A wait on him is on a package, whose message already says it;
-    a decision is only ever a package (`api_record_workflow_event`). Never
+    a decision is only ever a package (`api_record_workflow_event`). A
+    blocker from any other reporter (the tool token, an access key during
+    the cut-over) proves no sender, so it is the workflow's attention item
+    instead (`_attend_unproven_blocker`), resolved once it is cleared. Never
     raises."""
-    if event.kind != "blocker_raised" or not event.reporter.startswith(reporters.AGENT_PREFIX):
+    if not event.reporter.startswith(reporters.AGENT_PREFIX):
+        _attend_unproven_blocker(w, event)
+        return
+    if event.kind != "blocker_raised":
         return
     session = event.reporter[len(reporters.AGENT_PREFIX):]
     try:
@@ -11803,6 +11911,21 @@ def _workflow_message(w, event) -> None:
                         f"{w.name}: blocked: {event.summary}")
     except Exception:
         log.warning("workflow %s: its blocker was not sent as a message", w.id, exc_info=True)
+
+
+def _attend_unproven_blocker(w, event) -> None:
+    """A blocker raised by a reporter that is not an agent's key: the
+    workflow's own attention item (`workflow`, `blocker_raised`), so it
+    still reaches him; its clearing resolves it. Never raises."""
+    try:
+        if event.kind == "blocker_raised":
+            _attend("workflow", w.id, "blocker_raised", untrusted={"workflow": str(w.name or "")})
+        elif event.kind == "blocker_cleared" and attention_record is not None:
+            item = attention_record.get("workflow", str(w.id))
+            if item is not None and item.event == "blocker_raised":
+                _attention_resolved("workflow", w.id)
+    except Exception:
+        log.warning("workflow %s: its blocker was not attended", w.id, exc_info=True)
 
 
 class WorkflowEventRequest(BaseModel):
@@ -12206,6 +12329,57 @@ async def tool_start_brain(args: dict) -> str:
 TOOL_HANDLERS["start_brain"] = tool_start_brain
 ACTING_TOOLS.add("start_brain")
 TAINT_EXEMPT_TOOLS["start_brain"] = "it starts the brain and says a fixed outcome, it does not read"
+
+
+# --- Installing the talk-to-jarvis skill (Diagnostics, Setup) ----------------
+#
+# The Setup row's Install skill (`POST /api/setup/session-skill`) and the
+# brain's acting `install_session_skill` share `_install_session_skill`, the
+# same `session_skill.install` as `python -m jarvis.session_skill install`.
+
+
+def _install_session_skill() -> dict:
+    """Write the talk-to-jarvis skill into every Claude Code and Codex home,
+    then look at it again, so the Setup row moves at once. Blocking."""
+    global _preflight_checks
+    try:
+        written = session_skill.install()
+    except OSError as e:
+        log.warning("session skill: could not install (%s)", e)
+        return {"outcome": "failed", "error": str(e), "installed": 0}
+    check = preflight._check_session_skill_sync()
+    if _preflight_checks is not None:
+        _preflight_checks = [check if c.name == check.name else c for c in _preflight_checks]
+    log.info("session skill: installed in %d home(s)", len(written))
+    _hint_from_any_thread({"type": "subsystems"})
+    return {"outcome": "installed" if written else "no_home", "installed": len(written),
+            "current": check.ok}
+
+
+@app.post("/api/setup/session-skill")
+async def api_install_session_skill():
+    """Diagnostics' Setup row's Install skill."""
+    return await asyncio.to_thread(_install_session_skill)
+
+
+_SKILL_INSTALL_SAID = {
+    "installed": "Installed, sir: every Claude Code and Codex session can reach you again.",
+    "no_home": "There is no Claude Code or Codex home on this Mac to install it in, sir.",
+    "failed": "The skill could not be written, sir; Diagnostics, Setup says why.",
+}
+
+
+async def tool_install_session_skill(args: dict) -> str:
+    """Diagnostics' Install skill by voice, through the same
+    `_install_session_skill`. An ACTING tool."""
+    done = await asyncio.to_thread(_install_session_skill)
+    return _SKILL_INSTALL_SAID[done["outcome"]]
+
+
+TOOL_HANDLERS["install_session_skill"] = tool_install_session_skill
+ACTING_TOOLS.add("install_session_skill")
+TAINT_EXEMPT_TOOLS["install_session_skill"] = ("it writes the skill JARVIS renders and says a fixed "
+                                               "outcome, it does not read")
 
 
 # A cue played once on his page, as Settings' Test button plays it.
@@ -12982,7 +13156,19 @@ def _subsystems() -> list:
         start={**start_settings.status(),
                "from_file": bool(settings_service.served_at_start()),
                "overridden": not settings_service.from_settings_at_start()},
-        attention_open=attention_record is not None, attention_problem=_attention_problem)
+        attention_open=attention_record is not None, attention_problem=_attention_problem,
+        preflight=_preflight_checks, messaging=_messaging_delivery())
+
+
+def _messaging_delivery() -> Optional[dict]:
+    """Messages between people's delivery loop as Diagnostics reads it
+    (messaging_client.Delivery: failed passes in a row, the last error's
+    code), or None while its loops are not running."""
+    m = messaging
+    if m is None or not m.running():
+        return None
+    d = m.delivery
+    return {"failures": d.failures, "last_error": d.last_error, "stale": d.stale}
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -13056,6 +13242,9 @@ TAINTING_TOOLS["diagnostics"] = "JARVIS's diagnostics, which quote agents' names
 # The attention item for Work reports slower than
 # subsystem_diagnostics.WORK_WRITES_ALARM_SEC.
 WORK_ROUTES_KIND = "work_routes"
+# The attention item for messages between people failing to get through
+# (subsystem_diagnostics.MESSAGING_FAILURES_IN_A_ROW passes in a row).
+MESSAGING_KIND = "messaging"
 
 
 async def _watch_subsystems() -> None:
@@ -13064,10 +13253,10 @@ async def _watch_subsystems() -> None:
     are said once each, and a Work report slower than the alarm is recorded
     once, resolved once none is slow. Never raises out."""
     states: dict[str, str] = {}
-    said_down = said_slow = False
+    said_down = said_slow = said_messaging = False
 
     async def look_at_subsystems() -> None:
-        nonlocal states, said_down, said_slow
+        nonlocal states, said_down, said_slow, said_messaging
         now = {s.id: s for s in await asyncio.to_thread(_subsystems)}
         if states and {k: s.state for k, s in now.items()} != states:
             _send_to_session_clients({"type": "subsystems"})
@@ -13097,6 +13286,18 @@ async def _watch_subsystems() -> None:
                             or slowest <= subsystem_diagnostics.WORK_WRITES_SLOW_SEC):
             said_slow = False
             _attention_resolved(WORK_ROUTES_KIND, "writes")
+        # Messages between people failing to get through, pass after pass:
+        # a silent update, resolved once a pass goes through.
+        delivery = _messaging_delivery()
+        failures = (delivery or {}).get("failures") or 0
+        if failures >= subsystem_diagnostics.MESSAGING_FAILURES_IN_A_ROW and not said_messaging:
+            said_messaging = True
+            _attend(MESSAGING_KIND, "delivery", "failing",
+                    facts={"failures": failures, "error": str(delivery.get("last_error") or "")},
+                    audible=False)
+        elif said_messaging and failures == 0:
+            said_messaging = False
+            _attention_resolved(MESSAGING_KIND, "delivery")
 
     await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 
@@ -13969,6 +14170,27 @@ def tool_revoke_agent_key(args: dict) -> str:
             else "That key was already revoked, sir.")
 
 
+def tool_renew_work_key(args: dict) -> str:
+    """Another 30 days for a work-item key, as his Renew on the item's
+    Overview: by its fingerprint, or the one live key of a Work item."""
+    wanted = str(args.get("fingerprint") or "").strip()
+    if not wanted:
+        item = str(args.get("item") or "").strip()
+        keys = [k for k in agent_key_store.work_keys()
+                if item and (k.work_id == item
+                             or getattr(work_store.get(k.work_id), "title", None) == item)]
+        if len(keys) != 1:
+            return ("That item has no live work-item key, sir." if not keys else
+                    "That item has several keys, sir; which fingerprint? "
+                    + ", ".join(k.fingerprint for k in keys))
+        wanted = keys[0].fingerprint
+    key = _renew_work_key(wanted, agent_key_store.BY_VOICE)
+    if key is None:
+        return "That is not a live work-item key, sir."
+    return ("Renewed, sir: it now runs to "
+            + time.strftime("%Y-%m-%d", time.localtime(key.expires_at)) + ".")
+
+
 def tool_rename_agent(args: dict) -> str:
     """Give an agent its official name, the one messages are addressed by."""
     agent, problem = _find_agent(args)
@@ -13992,9 +14214,10 @@ TOOL_HANDLERS.update({
     "rename_agent": tool_rename_agent,
     "agent_keys": tool_agent_keys,
     "revoke_agent_key": tool_revoke_agent_key,
+    "renew_work_key": tool_renew_work_key,
 })
 # They change the user's own list; only he may ask for that.
-ACTING_TOOLS.update({"set_agent_active", "rename_agent", "revoke_agent_key"})
+ACTING_TOOLS.update({"set_agent_active", "rename_agent", "revoke_agent_key", "renew_work_key"})
 
 
 # ---------------------------------------------------------------------------
