@@ -27,10 +27,11 @@ docs/making-a-package.md is the whole of how to use it. In short:
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
-The command checks the author's result, builds and zips it, checks it again (a deck
-end to end in an isolated JARVIS, decision_check.py; a folder through the
-receiver's own reading of the zip, work_packages.recognise), and only then
-sends it to the live JARVIS as a message carrying it (POST /api/messages,
+The command checks the author's result, builds and zips it, checks every
+HTML package view in an isolated JARVIS (decision_check.py), and returns
+the actual screenshots and built bytes to the same author for visual
+inspection. One repair and re-render is allowed. Only after both checks
+accept the unchanged result does it sign and send it to the live JARVIS as a message carrying it (POST /api/messages,
 messages_api.py): on the Work item `--work` names (else his Inbox), saying
 `--says`, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
@@ -47,6 +48,7 @@ import re
 import shutil
 import sys
 import tempfile
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -226,7 +228,12 @@ def manifest_of(folder: Path) -> dict:
         if re.search(r"""type\s*=\s*["']?module""", page):
             problems.append(f"{entry.name} loads a script as a module, which the package frame "
                             f"cannot run: use ordinary <script src> tags.")
-        if manifest.get("story") and STORY_HELPER not in page:
+        # An architecture package's page is the kit's own render, checked
+        # byte for byte; its projection refuses a story that points at it
+        # while that page cannot load the helper (language_projection.project).
+        communication = manifest.get("communication")
+        architecture = isinstance(communication, dict) and communication.get("kind") == "architecture"
+        if manifest.get("story") and STORY_HELPER not in page and not architecture:
             problems.append(f"{entry.name} does not load the story helper, so the story points "
                             f"at nothing: add <script src=\"{STORY_HELPER}\"></script>.")
     if not problems:
@@ -319,19 +326,32 @@ def make_folder(folder: Path, out: Path) -> Made:
 
 # -- an architecture document ------------------------------------------------------------
 
-def understanding_in(source: Path) -> bytes:
+@dataclass(frozen=True)
+class Explanation:
+    """A fresh author's explanation of an architecture document: its
+    UNDERSTANDING.md and, when it wrote one, its story's bytes."""
+    markdown: bytes
+    story: bytes | None
+
+
+def understanding_in(source: Path) -> Explanation:
     """The fresh author's explanation of an architecture document: a folder
-    holding UNDERSTANDING.md and nothing else (JARVIS projects the checked
-    revision around it), readable author Markdown within 1 MiB; or Refused."""
-    from jarvis import language_kit, language_projection, package_understanding
+    holding UNDERSTANDING.md, readable author Markdown within 1 MiB, and
+    optionally story.json, a story read strictly (package_story.authored)
+    that composes with the standard vote (package_story.compose), and
+    nothing else (JARVIS projects the checked revision around them); or
+    Refused."""
+    from jarvis import language_kit, language_projection, package_story, package_understanding
     member = language_projection.MEMBER
     try:
         files = author_proof.source_files(source)
     except ValueError as e:
         raise dp.Refused([str(e)]) from None
-    if not source.is_dir() or set(files) != {f"{source.name}/{member}"}:
+    allowed = {f"{source.name}/{member}", f"{source.name}/{STORY_FILE}"}
+    if not source.is_dir() or f"{source.name}/{member}" not in files or set(files) - allowed:
         raise dp.Refused([f"An architecture document's explanation is a folder holding only "
-                          f"{member}; {source} holds {', '.join(sorted(files)) or 'nothing'}."])
+                          f"{member} and, optionally, {STORY_FILE}; {source} holds "
+                          f"{', '.join(sorted(files)) or 'nothing'}."])
     try:
         package_understanding.markdown_text(source, member)
     except ValueError as e:
@@ -339,7 +359,15 @@ def understanding_in(source: Path) -> bytes:
     body = (source / member).read_bytes()
     if len(body) > language_kit.MAX_SOURCE_BYTES:
         raise dp.Refused([f"{member} must fit within 1 MiB."])
-    return body
+    story = None
+    if f"{source.name}/{STORY_FILE}" in files:
+        story = (source / STORY_FILE).read_bytes()
+        try:
+            authored = package_story.authored(story)
+            package_story.compose(authored, authored.get("language") or built_language())
+        except package_story.StoryError as e:
+            raise dp.Refused([f"{STORY_FILE}: {e}"]) from None
+    return Explanation(body, story)
 
 
 def document_of(document_id: str, revision: str, base: str,
@@ -388,15 +416,19 @@ def document_evidence(envelope: dict, out: Path) -> Path:
     return folder
 
 
-def make_architecture(envelope: dict, source: Path, out: Path) -> Made:
+def make_architecture(envelope: dict, source: Path, out: Path, purpose: str,
+                      approval: bool = False) -> Made:
     """JARVIS's projection of the checked revision (language_projection.project,
-    as the brain's publish) around the fresh author's explanation, built and
+    as the brain's publish) around the fresh author's explanation and story,
+    stating the handoff's `purpose` and, when the handoff asks for it
+    (`approval`), asking his approval of this exact revision, built and
     read back as any folder package (make_folder)."""
     from jarvis import language_projection
-    understanding = understanding_in(source)
+    explained = understanding_in(source)
     folder = Path(tempfile.mkdtemp(prefix="projection-", dir=out)) / "architecture"
     try:
-        language_projection.project(envelope, folder, understanding)
+        language_projection.project(envelope, folder, explained.markdown, explained.story,
+                                    purpose, built_language(), approval)
     except (ValueError, OSError) as e:
         raise dp.Refused([f"The checked revision cannot be projected: {e}"]) from None
     made = make_folder(folder, out)
@@ -428,6 +460,17 @@ def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
     why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
     if why:
         raise dp.Refused([why])
+    if made.kind == ARCHITECTURE_KIND:
+        # The receiver's gate holds the attached source to the bound
+        # explanation and story; read the zip back as it will.
+        from jarvis import bundle_archive, work_packages
+        try:
+            with bundle_archive.open_archive(made.archive) as z:
+                recognised = work_packages.recognise(z, bundle_archive.list_members(z))
+        except bundle_archive.ArchiveError as e:
+            raise dp.Refused([f"JARVIS would refuse the zip: {e}"]) from None
+        if recognised.manifest is None:
+            raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
     return claim
 
 
@@ -465,8 +508,8 @@ def check_vote(source: Path, work: str) -> None:
 
 # -- checking ------------------------------------------------------------------------
 
-def _check(made: Made, out: Path, signer: tuple[Path, str], session: str) -> bool:
-    """A deck end to end in an isolated JARVIS; True when every check passed."""
+def _check(made: Made, out: Path, signer: tuple[Path, str], session: str):
+    """Inspect every rendered package kind in the existing isolated JARVIS."""
     from jarvis import decision_check
     print("Checking it in an isolated JARVIS…", flush=True)
     result = decision_check.check(made.archive, made.deck, out / "check", signer, session)
@@ -481,11 +524,11 @@ def _check(made: Made, out: Path, signer: tuple[Path, str], session: str) -> boo
         print("Screenshots:")
         for shot in result.screenshots:
             print(f"  {shot}")
-        return False
+        return result
     print(f"Every check passed ({len(result.passed)}). Screenshots are in {out / 'check'}.")
     for line in result.passed:
         print(f"  ok: {line}")
-    return True
+    return result
 
 
 # -- the command -----------------------------------------------------------------------
@@ -542,13 +585,16 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     if source is not None and not source.exists():
         print(f"There is nothing at {source}.")
         return 1
+    review_started = False
+    signer = None
     try:
         if args.check_only and args.document:
             # The author's own check of its explanation; the factory projects
             # and checks the revision around it once the author is done.
-            understanding_in(source)
-            print(f"The explanation is right: {source.name}/UNDERSTANDING.md, for architecture "
-                  f"document {args.document} revision {args.revision}.")
+            explained = understanding_in(source)
+            told = f" and {source.name}/{STORY_FILE}" if explained.story is not None else ""
+            print(f"The explanation is right: {source.name}/UNDERSTANDING.md{told}, for "
+                  f"architecture document {args.document} revision {args.revision}.")
             print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
@@ -585,31 +631,77 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             args.work = envelope["work_id"]
             document = package_author.Document(args.document, args.revision,
                                                document_evidence(envelope, out))
+        from jarvis import agent_keys
+        signer = agent_keys.signer_for(args.session)
+        made = author = review = None
+
+        async def finish(authored_source, turn):
+            import asyncio
+            nonlocal made, author, review, review_started
+            for attempt in range(2):
+                attempt_out = out / f"review-{attempt + 1}"
+                try:
+                    if envelope is not None:
+                        # The package states the handoff's purpose: the originating
+                        # session's, never the author's (it is bound in canonical.json).
+                        handed = package_author.read_handoff(args.handoff)
+                        made = make_architecture(envelope, authored_source, out, handed["purpose"],
+                                                 handed.get("approval") is True)
+                    else:
+                        check_vote(authored_source, args.work)
+                        made = (make_folder(authored_source, out) if authored_source.is_dir()
+                                else make_deck(authored_source, out))
+                    author = with_author(made, authored_source, args.session)
+                    print(f"Built a {made.kind}: {made.archive}")
+                    if signer is None:
+                        raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
+                    review_started = True
+                    result = await asyncio.to_thread(_check, made, attempt_out, signer, args.session)
+                    review = await package_author.review(authored_source, made.archive, result,
+                                                         turn, authored_source.parent / attempt_out.name)
+                    status = review["review"]["status"]
+                    if status in ("accepted", "not-applicable"):
+                        return review
+                    why = review["review"].get("notes") or "Author did not accept the visual inspection."
+                    if status == "blocked" or attempt == 1:
+                        raise dp.Refused([str(why)])
+                    # The repair turn has already changed source and run check-only.
+                    continue
+                except dp.Refused as error:
+                    if signer is None or attempt == 1 or (review and review["review"]["status"] == "blocked"):
+                        raise
+                    await turn("The rendered package cannot be delivered: "
+                               + "\n".join(error.problems)
+                               + "\nRepair your source/assets within this same assignment, then run "
+                               "the supplied check-only command after your final change. This is "
+                               "the one repair attempt. The factory will build and render again.")
+            raise dp.Refused(["Visual review did not accept a rendered package after repair."])
+
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
-                                        document=document)
-        if envelope is not None:
-            made = make_architecture(envelope, source, out)
-        else:
-            check_vote(source, args.work)
-            made = make_folder(source, out) if source.is_dir() else make_deck(source, out)
-        author = with_author(made, source, args.session)
+                                        document=document, finish=finish)
+        if made is None or review is None:
+            raise dp.Refused(["The same fresh author did not finish the rendered visual review."])
+        if author_proof._sha(made.archive) != review["archive_sha256"] or \
+                author_proof.source_digest(source) != review["source_sha256"]:
+            raise dp.Refused(["Built bytes changed after visual acceptance; render and review again."])
+        # The existing signature covers both the exact built/template bytes and
+        # the author's receipt identifying their pre-signing archive digest.
+        package_signature.add_files(made.archive, {".jarvis/visual-review.json":
+                                    (json.dumps(review, indent=2) + "\n").encode()})
     except dp.Refused as e:
-        print("Not built. These need changing:")
+        print("Not delivered. These need changing:" if review_started else "Not built. These need changing:")
         for line in e.problems:
             print(f"  - {line}")
-        return 1
-    from jarvis import agent_keys
-    # The session's own key, else (an agent package's run, working in it) the
-    # work-item key in this folder or above. Nothing goes without one.
-    signer = agent_keys.signer_for(args.session)
-    if signer is None:
-        print("Not delivered: there is no key to sign it with. Give --session <your session "
-              "id>, having made and submitted your key (python -m jarvis.agent_key init, then "
-              "submit), and once Tim has switched your agent on.")
-        return 1
-    print(f"Built a {made.kind}: {made.archive}")
-    if made.deck is not None and not _check(made, out, signer, args.session):
+        if review_started and args.work and signer:
+            from jarvis import message
+            text = "Package not delivered after visual review: " + "; ".join(e.problems)
+            try:
+                dp.post(args.deliver_to.rstrip("/") + message.ROUTE + "?"
+                        + urllib.parse.urlencode({"work": args.work}), "",
+                        message.body(text[:2000], None), signer=signer)
+            except OSError as report_error:
+                print(f"The failure could not be reported on Work {args.work}: {report_error}")
         return 1
     try:
         decision = made.deck is not None and bool(made.deck.get("decisions"))

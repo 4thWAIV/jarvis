@@ -14,6 +14,9 @@
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
 //                 the selectors (targets or actions) that found nothing visible
+//                 {jarvis: "package", type: "story.ambiguous", beat, targets}
+//                 precise targets (a declaration's or a member's) that matched
+//                 several elements: none of them is ringed
 //                 {jarvis: "package", type: "layout.restore"} on Option+Shift+T
 //                 pressed inside the frame: keys pressed here never reach
 //                 JARVIS's page, so the restore key is passed on. Restore
@@ -22,7 +25,8 @@
 // An action is {show: selector} (scrolled into view) or {click: selector}
 // (clicked: a detail view's opener or its close button), run in order
 // before the targets are found. A target is one selector; every element it
-// matches is ringed as one. Everything here is built with createElement and
+// matches is ringed as one, except a precise target (one naming
+// data-declaration or data-member), which must match exactly one. Everything here is built with createElement and
 // textContent: nothing from the story is ever parsed as HTML.
 (function () {
   "use strict";
@@ -82,9 +86,32 @@
     }
   }
 
+  // A precise target names one declaration or one member of a rendered
+  // document ([data-declaration="..."], [data-member="..."]): it is ringed
+  // only when it matches exactly one element, and reported, never widened,
+  // when it matches none or several.
+  var PRECISE = /\[\s*data-(declaration|member)\s*[~|^$*]?=/;
+  // A member's name carried once is the name itself; a name several members
+  // of one declaration share is name#1, name#2, ... (Tim's answer of
+  // 2026-11-13). The bare shared name matches no row, and is ambiguous, not
+  // missing: it names every row that shares it.
+  var BARE_MEMBER = /\[\s*data-member\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\]/;
+  function shared(selector) {
+    var m = BARE_MEMBER.exec(selector);
+    if (!m || m[1].indexOf("#") >= 0) return false;
+    var prefix = m[1].slice(0, -1) + "#" + m[1].slice(-1);
+    return matches(selector.replace(m[0], "[data-member^=" + prefix + "]")).length > 1;
+  }
+  function ambiguous(selector) {
+    if (!PRECISE.test(selector)) return false;
+    var n = matches(selector).length;
+    return n > 1 || (n === 0 && shared(selector));
+  }
+
   // The box around every visible element a selector matches, or null.
   function box(selector) {
     var r = null;
+    if (ambiguous(selector)) return null;
     matches(selector).forEach(function (el) {
       var b = el.getBoundingClientRect();
       if (b.width <= 0 || b.height <= 0) return;
@@ -140,7 +167,7 @@
   function act(action, missing) {
     var kind = action.show ? "show" : action.click ? "click" : null;
     var selector = kind && String(action[kind]);
-    var el = selector ? matches(selector)[0] : null;
+    var el = selector && !ambiguous(selector) ? matches(selector)[0] : null;
     if (!el) {
       if (selector) missing.push(selector);
       return;
@@ -185,7 +212,10 @@
       setTimeout(function () {
         if (!beat || beat.id !== id) return;
         var unseen = missing.filter(function (s) { return !box(s); });
-        if (unseen.length) tell({ type: "story.missing", beat: id, targets: unseen });
+        var several = unseen.filter(ambiguous);
+        var none = unseen.filter(function (s) { return !ambiguous(s); });
+        if (none.length) tell({ type: "story.missing", beat: id, targets: none });
+        if (several.length) tell({ type: "story.ambiguous", beat: id, targets: several });
       }, 700);
     }
   }

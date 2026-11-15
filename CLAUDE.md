@@ -1865,6 +1865,12 @@ their folder), written in one commit. Every write is a version tagged with
 who (`by`: person, agent, model), what kind of change and its summary, kept
 through compaction (`store.HISTORY_FAMILIES`) with `get` at a version or a
 time, `history` and `diff`; a delete is a version, only forget erases.
+Reading an item's newest version never reads its history (`Store.newest`:
+the memtables, then the segments by their highest LSN, stopping once none
+left can hold a newer one); a block over `segment.STREAM_OVER_BYTES` holds
+one key's long history and is never decoded whole: its first read walks it
+once, decompressing in pieces, and keeps only each key's newest and newest
+live version in the pool (`Segment._heads`).
 Transactions of several items take conditions (`expect_version`, `absent`)
 checked under the store's commit lock, which every write takes
 (`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and

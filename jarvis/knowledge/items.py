@@ -477,10 +477,9 @@ class Items:
     def _current(self, path: str) -> tuple[Optional[dict], int]:
         """The live document and the item's newest version number (a
         tombstone's included), under the commit lock."""
-        versions = self._versions(path)
-        if not versions:
+        top = self.store.newest(DOCS, path.encode())
+        if top is None:
             return None, 0
-        top = versions[0]
         if top.value is not None:
             o, doc = decode_doc(top.value)
             doc["_lsn"], doc["_ord"] = top.lsn, o
@@ -488,7 +487,7 @@ class Items:
         number = self._tombstone_entry(path, top.lsn).get("version")
         if number is None:
             number = max((int(decode_doc(v.value)[1].get("_version") or 0)
-                          for v in versions if v.value is not None), default=0) + 1
+                          for v in self._versions(path) if v.value is not None), default=0) + 1
         return None, int(number)
 
     # -- writing ----------------------------------------------------------------

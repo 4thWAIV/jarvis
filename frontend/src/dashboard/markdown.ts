@@ -27,15 +27,84 @@
  *   these documents are FULL of, and treating those as emphasis mangles
  *   more text than it decorates. Asterisks only.
  *   Tables, footnotes, HTML blocks. Absent from specs; absent here.
+ *
+ * WHAT A CALLER MAY OPT INTO (`MarkdownOptions`)
+ *   `links`: `[text](url)` becomes an anchor only for an absolute http,
+ *   https or mailto URL, opened in a new tab with no opener and no
+ *   referrer; any other destination (javascript:, data:, relative, a
+ *   malformed one) stays the characters it is. A package's explanation
+ *   (PackageView) asks for them; the specs and replies do not.
+ *   `tables`: a pipe table (a header row, a `|---|` row, then rows) as a
+ *   table of text cells.
  */
 
 import { el } from "./ui";
 
+export interface MarkdownOptions {
+  links?: boolean;
+  tables?: boolean;
+}
+
+// The options of the one render under way (rendering is synchronous).
+let options: MarkdownOptions = {};
+
 /** Render Markdown into a fresh element. Never returns markup. */
-export function markdown(text: string, className = "md"): HTMLElement {
+export function markdown(text: string, className = "md", opted: MarkdownOptions = {}): HTMLElement {
   const root = el("div", className);
-  for (const node of blocks(splitLines(text))) root.append(node);
+  const before = options;
+  options = opted;
+  try {
+    for (const node of blocks(splitLines(text))) root.append(node);
+  } finally {
+    options = before;
+  }
   return root;
+}
+
+const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+/** The URL an author's link may open, or null to keep it as characters. */
+export function safeLink(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return LINK_SCHEMES.has(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/;
+
+function cells(line: string): string[] {
+  return line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+}
+
+function tableAt(lines: string[], start: number): [HTMLElement, number] {
+  const table = el("table", "md-table");
+  const head = el("thead");
+  const top = el("tr");
+  for (const cell of cells(lines[start])) {
+    const th = el("th");
+    for (const part of inline(cell)) th.append(part);
+    top.append(th);
+  }
+  head.append(top);
+  table.append(head);
+  const body = el("tbody");
+  let i = start + 2;
+  while (i < lines.length && TABLE_ROW.test(lines[i])) {
+    const tr = el("tr");
+    for (const cell of cells(lines[i])) {
+      const td = el("td");
+      for (const part of inline(cell)) td.append(part);
+      tr.append(td);
+    }
+    body.append(tr);
+    i++;
+  }
+  table.append(body);
+  return [table, i];
 }
 
 function splitLines(text: string): string[] {
@@ -74,6 +143,13 @@ function blocks(lines: string[]): Node[] {
       // it has no business naming a stylesheet selector.
       pre.append(el("code", undefined, body.join("\n")));
       out.push(pre);
+      continue;
+    }
+
+    if (options.tables && TABLE_ROW.test(line) && TABLE_RULE.test(lines[i + 1] ?? "")) {
+      const [table, next] = tableAt(lines, i);
+      out.push(table);
+      i = next;
       continue;
     }
 
@@ -199,23 +275,47 @@ function listAt(lines: string[], start: number): [HTMLElement, number] {
 // is never read as two italics. Asterisks only — see the header.
 const INLINE = /(`+)([\s\S]+?)\1|\*\*([\s\S]+?)\*\*/g;
 
+const LINK = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+
+/** Plain text with the links a caller opted into, then emphasis. */
+function linked(text: string): Node[] {
+  if (!options.links) return emphasis(text);
+  const out: Node[] = [];
+  let last = 0;
+  LINK.lastIndex = 0;
+  for (let m = LINK.exec(text); m; m = LINK.exec(text)) {
+    const href = safeLink(m[2]);
+    if (!href) continue;
+    if (m.index > last) out.push(...emphasis(text.slice(last, m.index)));
+    const a = el("a", "md-link", m[1]);
+    a.setAttribute("href", href);
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+    a.title = href;
+    out.push(a);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(...emphasis(text.slice(last)));
+  return out;
+}
+
 /** Inline spans as text nodes and elements. Never markup. */
 function inline(text: string): Node[] {
   const out: Node[] = [];
   let last = 0;
   INLINE.lastIndex = 0;
   for (let m = INLINE.exec(text); m; m = INLINE.exec(text)) {
-    if (m.index > last) out.push(...emphasis(text.slice(last, m.index)));
+    if (m.index > last) out.push(...linked(text.slice(last, m.index)));
     if (m[2] !== undefined) {
       out.push(el("code", "md-inline-code", m[2].trim()));
     } else {
       const strong = el("strong", "md-strong");
-      for (const part of emphasis(m[3])) strong.append(part);
+      for (const part of linked(m[3])) strong.append(part);
       out.push(strong);
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(...emphasis(text.slice(last)));
+  if (last < text.length) out.push(...linked(text.slice(last)));
   return out;
 }
 
