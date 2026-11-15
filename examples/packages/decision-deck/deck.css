@@ -14,7 +14,9 @@
   --chosen-ink: #03140d;
   --later: #fbbf24;
   --quiet: #64748b;
-  --body: 18px;
+  /* Text grows with the frame: the floor is what the checks read at the
+     checker's sizes, and a larger frame shows larger words. */
+  --body: clamp(18px, 1.55vw, 26px);
   --top: 46px;
   --bottom: 46px;
   /* JARVIS's microphone corner sits over the frame's lower right; the
@@ -91,17 +93,17 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .slide > * { flex: none; margin: 0; }
 .slide.content { overflow-y: auto; }
 .kicker { color: var(--muted); }
-h2 { font-size: 26px; line-height: 1.2; font-weight: 650; }
+h2 { font-size: clamp(26px, 2.6vw, 42px); line-height: 1.2; font-weight: 650; }
 code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); }
 
 .body { display: flex; flex-direction: column; gap: 10px; }
 .body > * { margin: 0; }
-.lead { font-size: 21px; }
+.lead { font-size: clamp(21px, 2vw, 32px); }
 .note { color: var(--muted); }
 .points { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .facts { list-style: none; padding: 0; display: flex; gap: 14px; }
 .facts li { flex: 1; background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; }
-.facts b { display: block; font-size: 26px; color: var(--accent); }
+.facts b { display: block; font-size: clamp(26px, 2.6vw, 42px); color: var(--accent); }
 .table { border-collapse: collapse; width: 100%; }
 .table th, .table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
 .table thead th { color: var(--muted); font-weight: 600; }
@@ -109,6 +111,13 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .picture { margin: 0; min-width: 0; }
 .picture img { display: block; max-width: 100%; max-height: 300px; object-fit: contain; border-radius: 6px; }
 .picture figcaption { color: var(--muted); margin-top: 4px; }
+/* A content slide with pictures: the words take what they need and the
+   pictures fill every pixel left, as a decision's do (.decision.fill). */
+.slide.content.fill .body { flex: 1 1 0; min-height: 0; }
+.slide.content.fill .body > .pictures { flex: 1 1 0; min-height: 140px; align-items: stretch; }
+.slide.content.fill .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.slide.content.fill .picture img { flex: 1 1 0; min-height: 0; width: 100%; height: 100%;
+                                   max-height: none; object-fit: contain; }
 
 /* ── a decision ──
    One question a slide. Every option is a card with its picture as large as
