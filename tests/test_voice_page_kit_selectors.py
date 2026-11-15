@@ -41,7 +41,7 @@ from tests.test_voice_page_captions import FAKE_TRANSCRIPTION
 from tests.test_voice_page_story import (RECORD, STORY_BROWSER_ARGS, _inner,  # noqa: F401
                                          jarvis_app, voice)
 from tests.test_voice_page_walkthrough_story import _state, _through
-from tests.voice_page_input import start_listening
+from tests.voice_page_input import show_package_bar, start_listening
 
 pytestmark = pytest.mark.page
 
@@ -174,6 +174,7 @@ async def test_the_helper_rings_exactly_the_one_intended_member_row(
             await frame.locator("[data-declaration]").first.wait_for(timeout=15000)
             assert await frame.locator("[data-member]").count() > 0, \
                 f"kit {digest} is the release that marks members, yet draws no data-member"
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.locator("#package-view .package-story button").first.click()
             await _state(page, "Waiting for your answer on slide 2 of 2.")
             await asyncio.sleep(1.0)              # the helper's settle before it reports

@@ -437,14 +437,18 @@ const marginOf = (target: VisualTarget, box: DOMRect): number =>
 /** The boxes of the object's other declared parts on show, beside the
  *  addressed part `part` (element `el`): never the whole itself (a row
  *  registered as its own `row` part holds the leaf), nor a part holding
- *  `el` or inside it. */
+ *  `el` or inside it, nor a part `el` is drawn over (a bar over a page
+ *  package's document, PackageView.tsx): what lies under the part cannot
+ *  be kept clear of on the way to it. */
 function otherParts(target: VisualTarget, part: string, el: Element): DOMRect[] {
   const whole = target.element();
+  const at = boxOf(el);
   const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
   return decl.flatMap((other) => {
     const o = other === part ? null : elementOf(target, other);
     const box = o && o !== whole && !o.contains(el) && !el.contains(o) ? boxOf(o) : null;
-    return box ? [box] : [];
+    const under = box && at && box.left < at.right && at.left < box.right && box.top < at.bottom && at.top < box.bottom;
+    return box && !under ? [box] : [];
   });
 }
 

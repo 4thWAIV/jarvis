@@ -29,6 +29,7 @@ from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
 from tests.fixtures.waiting import until_async
 from tests.settings_fixtures import hold_setting
+from tests.voice_page_input import show_package_bar
 
 pytestmark = pytest.mark.page
 
@@ -211,6 +212,7 @@ async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_
         done = page.locator("#package-view .package-head .package-done")
         await async_api.expect(done).to_be_visible()
         assert await page.locator("#package-view iframe .package-done").count() == 0
+        await show_package_bar(page)  # a faded bar lets the pointer through
         await done.click()
         await async_api.expect(page.locator("#package-view")).to_have_count(0)
         assert await until_async(lambda: (package_inbox.get(inbox_id).closed_why,
@@ -268,10 +270,12 @@ async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
         def recorded():
             return package_inbox.questions(package)[0].answer
 
+        await show_package_bar(page)  # a faded bar lets the pointer through
         await vote.get_by_role("button", name="Got it").click()
         await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text("Recorded: Got it.")
         assert recorded()["answer"] == "got-it"
 
+        await show_package_bar(page)  # a faded bar lets the pointer through
         await vote.get_by_role("button", name="I have questions").click()
         await vote.locator(".package-vote-words").fill("Why two keys?")
         await _shot(page, "vote-2-his-words")

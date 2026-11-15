@@ -1085,7 +1085,38 @@ their own space. Nothing new goes above the page: it joins the tools row
 or the side column, and `tests/test_voice_page_package_layout.py` holds
 the page to 60 percent of the view's height (and 55 percent of its width
 beside the column) with everything open, at the checker's sizes and a
-laptop's. A page package's
+laptop's. The document uses the whole display: a page package takes over
+the page as it opens (`package.open` runs `uiNavigation.takeOverShown`,
+effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
+as before), and while it has, its head and tools are one thin bar over the
+top of its document (`.package-bar`, `PackageView.tsx` `useFadingBar`)
+that fades after `BAR_FADES_AFTER_MS` without the pointer and returns when
+the pointer reaches the top (`.package-bar-reveal`, a strip along it) or
+keyboard focus enters it; reduced motion and `data-motion="steady"` keep it
+shown. Only its controls take the pointer, and none once it has faded, so
+the document under it (a deck's strip of slides) stays his to click; a
+pointer's route to a part drawn over another part is not blocked by what
+lies under it (`uiPipeline.otherParts`). One focus layer
+(`PackageFocus.tsx`) serves a decision and a narrated beat: given a rect
+in the frame's coordinates, a dim level (`DIM`) and content, it keeps the
+part lit and ringed, dims the rest, and presents a card beside it joined by
+a line (centred over a light dim when there is no part). Where a part is
+comes only from the frame's helper (`story.focus` {key, rect} through the
+bridge; the page asks for a question's part with `focus.show` {key,
+targets}), never from the frame's DOM. A question is in focus when the
+story waits on it or he chose Show in the document beside it in the side
+column; its part is the waiting slide's targets (`Story.outline`'s
+`focus`: its beats' targets, else its own element); its card (the
+question, why him, the evidence, the options with the recommended one
+marked, his words) is the side column's own `QuestionItem` over one
+`usePackageQuestions`, so both answer through the inbox's one answer route;
+the standard vote's card is `VoteControls`. A told beat (its cue now
+carries `say`) lights its targets, dims the rest to 35 percent and shows
+JARVIS's words with Pause (the reading skipped: the slide not heard in full,
+the story pauses there) and Stop; paused, with Continue (told again from
+that slide). Escape (or the card's ×) leaves focus; the side column stays
+for every question. `tests/test_voice_page_focus.py` holds each mode. A
+page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
 (`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
@@ -2496,7 +2527,7 @@ default; the confirmations use it too.
 A workflow (or subagent) or a page package shown in the centre can take
 over the page. It is route state, `uiNavigation.ts` `layout`: normal, or
 `{mode: "takeover", view, key, flyout, sheet}`, read-only outside the
-module, never stored (a reload starts normal). It holds only while
+module, never stored (a reload starts normal; a page package shown again takes over again as it opens). It holds only while
 `mainView` is that view and its slot holds that key (`detailSlot`'s third
 argument names a takeover slot's item): every command that changes either
 restores it in its own handler (`settleLayout`) and returns

@@ -22,7 +22,7 @@ import wave
 
 import pytest
 
-from tests.voice_page_input import start_listening
+from tests.voice_page_input import show_package_bar, start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
@@ -217,6 +217,7 @@ async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_ur
         try:
             assert await page.locator("#package-view iframe").get_attribute("sandbox") == \
                 "allow-scripts"
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.click("#package-view .package-story button:has-text('Tell the story')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "Telling slide 1 of 3.")
@@ -272,11 +273,13 @@ async def test_stop_ends_the_voice_and_the_rings_and_a_slide_can_be_chosen(
     async with page_playwright as p:
         browser, page, frame = await _deck(p, page_url, jarvis_app, voice)
         try:
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.select_option("#package-view .package-story select", "2")
             await page.click("#package-view .package-story button:has-text('Tell the story')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "Telling slide 2 of 3.")
             await _ringed(page, "(r) => r.beat === '2.1'")
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.click("#package-view .package-story button:has-text('Stop')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text("Stopped.")
             await async_api.expect(frame.locator(".jarvis-story-ring")).to_have_count(0)
@@ -329,6 +332,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
                 "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
             await async_api.expect(title).to_have_text("Three things a good pot of tea needs")
 
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.click("#package-view .package-story button:has-text('Tell the story')")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "The story is told.", timeout=90000)

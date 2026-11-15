@@ -2,6 +2,20 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A package's document uses the whole display, and what needs you is put beside it
+
+A package now opens taking over the page. Its title and tools become one
+thin bar over the top of the document, which fades after a few seconds and
+comes back when you move the pointer to the top or tab into it. When a
+question is yours, because the story is waiting on it or you chose Show in
+the document beside it, the part of the document it is about stays lit and
+everything else dims; the question, why it is yours, the evidence and the
+options (the recommended one marked) appear beside that part, joined to it
+by a line, and you answer there exactly as in the side column. While
+JARVIS tells the story, each part he is talking about is lit and his words
+are shown beside it, with Pause and Stop. Escape leaves the focus; the side
+column still lists every question.
+
 ## A package's page keeps most of the view
 
 A package opens with its own page filling the centre. The story's

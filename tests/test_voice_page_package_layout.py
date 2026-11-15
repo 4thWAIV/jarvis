@@ -18,6 +18,7 @@ from tests.test_language_documents import draft, installed_kit  # noqa: F401  (f
 from tests.test_voice_page_architecture_walkthrough import STORY, sent
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_language_documents import canonical_server  # noqa: F401
+from tests.voice_page_input import show_package_bar
 
 pytestmark = pytest.mark.page
 
@@ -66,6 +67,7 @@ async def test_the_document_keeps_most_of_the_view_with_everything_open(
             view = page.locator("#package-view")
             await view.wait_for()
             await page.locator('.package-asks [data-kind="approval"]').wait_for()
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.get_by_role("button", name="Read the explanation").click()
             await page.locator("#package-explanation h3").first.wait_for()
             frame = await page.locator("#package-view iframe").bounding_box()

@@ -85,8 +85,8 @@ async def test_the_package_page_runs_without_an_origin_and_saves_through_the_bri
                                      timeout=10000)
 
         voice.send({"type": "package_page", "package": packages_api.describe(package)})
-        await async_api.expect(page.locator(".centre-tabs [aria-label='mic-check-page']")) \
-            .to_have_attribute("aria-selected", "true")
+        # Shown, it takes over the page (its document uses the whole display).
+        await async_api.expect(page.locator("#takeover-bar .takeover-name")).to_have_text("mic-check-page")
         frame_el = page.locator("#package-view iframe")
         assert await frame_el.get_attribute("sandbox") == "allow-scripts"
         assert await frame_el.get_attribute("allow") is None
@@ -127,6 +127,7 @@ async def test_the_package_page_runs_without_an_origin_and_saves_through_the_bri
         assert not (package.folder / "out.txt").exists()
 
         # Kept while another view is shown, and closed by its button.
+        await page.click("#takeover-bar .takeover-restore")
         await page.click(".centre-tabs [aria-label='Conversation']")
         await page.click(".centre-tabs [aria-label='mic-check-page']")
         await async_api.expect(frame.locator("#status")).to_contain_text("Saved results/clip.wav")

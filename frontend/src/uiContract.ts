@@ -2165,7 +2165,7 @@ export const UI_CONTRACT = {
     },
     {
       "id": "package.open",
-      "label": "Open a page work package in the centre",
+      "label": "Open a page work package in the centre; it takes over the page as it opens",
       "view": "main.package",
       "args": {
         "packageId": {
@@ -2189,6 +2189,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "layout.restored"
+        },
+        {
+          "effect": "layout.taken-over"
         }
       ],
       "family": "packages"
@@ -4650,7 +4653,11 @@ export const UI_CONTRACT = {
         "check",
         "readable",
         "asks",
-        "explanation"
+        "explanation",
+        "bar",
+        "focus",
+        "focusClose",
+        "pause"
       ],
       "presentations": [
         {

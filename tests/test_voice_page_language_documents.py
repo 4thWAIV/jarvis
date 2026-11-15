@@ -15,6 +15,7 @@ from jarvis import language_documents, language_projection
 from tests.test_brain_page_parity import wired
 from tests.test_language_documents import draft, installed_kit
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+from tests.voice_page_input import show_package_bar
 
 pytestmark = pytest.mark.page
 
@@ -80,6 +81,7 @@ async def test_upstream_architecture_in_real_frame_with_source_evidence(page_pla
             assert "canonical_revision=" + checked["revision"] in source_url
             # The explanation is read in place, through the canonical gate,
             # drawn by the app's Markdown renderer: no raw Markdown tab.
+            await show_package_bar(page)  # a faded bar lets the pointer through
             await page.get_by_role("button", name="Read the explanation").click()
             explained = page.locator("#package-explanation")
             await explained.locator("h3", has_text="A proposed document store").wait_for()

@@ -71,3 +71,13 @@ async def route_settings(page, stop="keep", switch="stop", status=200, sounds=Tr
 
     await page.route(SETTINGS_PATH, handle)
     return posted
+
+
+async def show_package_bar(page) -> None:
+    """Bring a page package's bar back if it has faded (PackageView.tsx):
+    the pointer to the strip along the very top, as he would. Faded, its
+    controls let the pointer through to the document."""
+    if await page.locator("#package-view .package-bar[data-faded='true']").count():
+        strip = await page.locator("#package-view .package-bar-reveal").bounding_box()
+        await page.mouse.move(strip["x"] + strip["width"] / 2, strip["y"] + strip["height"] / 2)
+        await page.locator("#package-view .package-bar[data-faded='false']").wait_for()

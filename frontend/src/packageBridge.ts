@@ -32,6 +32,15 @@
  * story's state changes (telling, waiting for his answer, paused, finished,
  * stopped), so a deck can show which question is waiting for him.
  *
+ * And focus (PackageFocus.tsx): the frame's helper reports where the part
+ * being focused is, `story.focus` {key, rect}, in the frame's own
+ * coordinates ({left, top, width, height}, or null when none of it is
+ * visible): for each beat (key "beat:<beat>") as it is shown and whenever
+ * it moves, and for the part a question is about, which JARVIS asks for
+ * with `focus.show` {key, targets} (brought into view, never ringed there)
+ * until `focus.clear`. The page never reads the frame's DOM: the frame has
+ * no origin, so where a part is comes only from the frame itself.
+ *
  * And the room it has (takeover mode, uiNavigation.ts `layout`): JARVIS
  * posts `layout` {mode, width, height} once the frame has loaded and
  * whenever the layout or the frame's size changes (the frame's own page
@@ -61,7 +70,29 @@ export interface BridgeEvents {
   onStoryMissing(said: Said): void;
   /** The frame asked for more room: offer Take over. */
   onLayoutRequest(): void;
+  /** Where a focused part is in the frame's coordinates, or null. */
+  onFocus?(key: string, rect: FrameRect | null): void;
 }
+
+/** A box in the frame's own coordinates, as its helper reports it. */
+export interface FrameRect { left: number; top: number; width: number; height: number }
+
+/** What the view holds of a connected frame. */
+export interface Bridge {
+  /** Stop hearing the frame. */
+  close(): void;
+  /** Ask the frame to bring the part `targets` name into view and report
+   *  it under `key`; null asks it to stop. */
+  focus(key: string | null, targets?: string[]): void;
+}
+
+const asRect = (value: unknown): FrameRect | null => {
+  if (!value || typeof value !== "object") return null;
+  const r = value as Record<string, unknown>;
+  const n = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  return n(r.left) && n(r.top) && n(r.width) && n(r.height)
+    ? { left: Number(r.left), top: Number(r.top), width: Number(r.width), height: Number(r.height) } : null;
+};
 
 /** Whether this package is what has taken over the page. */
 const tookOver = (packageId: string) => {
@@ -77,9 +108,11 @@ function asBlob(data: unknown): Blob | null {
   return data instanceof Blob ? data : null;
 }
 
-/** Hear `frame`'s requests for package `packageId`; returns the way to stop. */
+/** Hear `frame`'s requests for package `packageId`. */
 export function connectBridge(frame: HTMLIFrameElement, packageId: string,
-                              events: BridgeEvents): () => void {
+                              events: BridgeEvents): Bridge {
+  // The focus asked for, posted again once the frame (re)loads its helper.
+  let asked: { key: string; targets: string[] } | null = null;
   let stopListening: (() => void) | null = null;
   const post = (message: Record<string, unknown>, transfer: Transferable[] = []) =>
     frame.contentWindow?.postMessage({ jarvis: BRIDGE, ...message }, "*", transfer);
@@ -162,8 +195,11 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     if (!message || typeof message !== "object" || message.jarvis !== BRIDGE) return;
     if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
-    else if (message.type === "story.ready") { showCue(true); showState(); }
+    else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); }
     else if (message.type === "layout.request") events.onLayoutRequest();
+    else if (message.type === "story.focus" && typeof message.key === "string") {
+      events.onFocus?.(message.key, asRect(message.rect));
+    }
     else if (message.type === "layout.restore" && tookOver(packageId)) byHand("layout.restore", {});
     else if (message.type === "story.missing" && Array.isArray(message.targets)) {
       events.onStoryMissing({ words: () => t("main.package.story.notFound"),
@@ -175,8 +211,12 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     }
   };
 
+  const askFocus = () => {
+    if (asked) post({ type: "focus.show", key: asked.key, targets: asked.targets });
+  };
+
   window.addEventListener("message", onMessage);
-  return () => {
+  const close = () => {
     window.removeEventListener("message", onMessage);
     unsubscribe();
     unsubscribeState();
@@ -184,5 +224,17 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     resized.disconnect();
     frame.removeEventListener("load", loaded);
     stopListening?.();
+  };
+  return {
+    close,
+    focus(key, targets = []) {
+      if (key === null) {
+        if (asked) post({ type: "focus.clear" });
+        asked = null;
+        return;
+      }
+      asked = { key, targets };
+      askFocus();
+    },
   };
 }

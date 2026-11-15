@@ -177,15 +177,28 @@ class Story:
         slide = self.slides[number - 1]
         go = [{"show": slide.target}] if slide.target else []
         return [(beat.say, {"package": package_id, "beat": f"{number}.{n}", "slide": number,
-                            "targets": list(beat.targets),
+                            "say": beat.say, "targets": list(beat.targets),
                             "actions": go + [{kind: sel} for kind, sel in beat.actions]})
                 for n, beat in enumerate(slide.beats, 1)]
 
     def outline(self) -> dict:
-        """What the page shows of it: its title and its slides' titles."""
+        """What the page shows of it: its title, its slides' titles, the
+        slides that ask, and for each question a slide waits on the part of
+        the page it is about (`focus`): that slide's beats' targets, else
+        its own element, else none (the page's focus layer, PackageFocus.tsx,
+        lights it while the question is his)."""
         return {"title": self.title, "language": self.language,
                 "slides": [s.title for s in self.slides],
-                "asks": [n for n, s in enumerate(self.slides, 1) if s.waits]}
+                "asks": [n for n, s in enumerate(self.slides, 1) if s.waits],
+                "focus": {s.waits: _about(s) for s in self.slides if s.waits}}
+
+
+def _about(slide: Slide) -> list[str]:
+    """The part of the page a waiting slide's question is about: every
+    target its beats ring, in order and once each, else the slide's own
+    element, else nothing."""
+    targets = list(dict.fromkeys(t for beat in slide.beats for t in beat.targets))
+    return targets or ([slide.target] if slide.target else [])
 
 
 def _text(value, what: str, limit: int) -> str:

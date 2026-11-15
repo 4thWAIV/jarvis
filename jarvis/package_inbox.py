@@ -609,7 +609,7 @@ def page_vote(package: Package) -> Optional[dict]:
 
     def ask(q: Question) -> dict:
         shown = {"id": q.id, "question": q.question, "context": q.context,
-                 "options": q.options, "recommended": q.recommended, "applies": q.applies,
+                 "reason": q.reason, "options": q.options, "recommended": q.recommended, "applies": q.applies,
                  "answer": q.answer["answer"] if q.answer else None,
                  "note": q.answer["note"] if q.answer else ""}
         if q.id == APPROVAL_ID:

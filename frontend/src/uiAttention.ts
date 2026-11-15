@@ -242,6 +242,7 @@ export async function indicate(ref: TargetRef, options: IndicateOptions): Promis
   if (isQuiet()) return fail("unavailable", "quiet-page" satisfies AvailabilityReason);
   options.onEvent("resolving", cueId);
   let target = findTarget(ref);
+  target?.unveil?.(ref.part);
   const seen = visibilityOf(target ? elementOf(target, ref.part) : null);
   if (seen !== "visible") {
     if ((options.reveal ?? "never") === "never") {

@@ -10,6 +10,11 @@
 //
 //   from JARVIS   {jarvis: "package", type: "story.cue", beat, targets, actions}
 //                 {jarvis: "package", type: "story.clear"}
+//                 {jarvis: "package", type: "focus.show", key, targets} the
+//                 part a question is about: brought into view and reported
+//                 (story.focus) until focus.clear; never ringed here, the
+//                 page draws its light and ring around it
+//                 {jarvis: "package", type: "focus.clear"}
 //   to JARVIS     {jarvis: "package", type: "story.ready"} once loaded, so a
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
@@ -17,6 +22,14 @@
 //                 {jarvis: "package", type: "story.ambiguous", beat, targets}
 //                 precise targets (a declaration's or a member's) that matched
 //                 several elements: none of them is ringed
+//                 {jarvis: "package", type: "story.focus", key, rect} where the
+//                 part being focused is, in this frame's own coordinates
+//                 ({left, top, width, height}, the box around every element
+//                 its targets match), or rect null when none is visible: for
+//                 a beat (key "beat:<beat>") while it is shown, and for a
+//                 focus JARVIS asked for (its own key) until focus.clear;
+//                 posted again whenever it moves (a scroll, a resize), so
+//                 the page's focus layer (PackageFocus.tsx) follows it
 //                 {jarvis: "package", type: "layout.restore"} on Option+Shift+T
 //                 pressed inside the frame: keys pressed here never reach
 //                 JARVIS's page, so the restore key is passed on. Restore
@@ -60,6 +73,8 @@
   var rings = [];        // [{selector, el}]
   var pointer = null;
   var frame = 0;
+  var asked = null;      // {key, targets} while JARVIS asks for a focus
+  var reported = {};     // key -> the rect last told, as text
 
   function tell(message) {
     message.jarvis = "package";
@@ -151,17 +166,65 @@
     }
   }
 
+  // The box around every target, unpadded, or null when none is visible.
+  function around(targets) {
+    var r = null;
+    targets.forEach(function (selector) {
+      var b = box(selector);
+      if (!b) return;
+      r = r ? { left: Math.min(r.left, b.left), top: Math.min(r.top, b.top),
+                right: Math.max(r.right, b.right), bottom: Math.max(r.bottom, b.bottom) } : b;
+    });
+    return r && { left: Math.round(r.left), top: Math.round(r.top),
+                  width: Math.round(r.right - r.left), height: Math.round(r.bottom - r.top) };
+  }
+
+  // Tell JARVIS where a focus is, only when that has changed.
+  function report(key, targets) {
+    var rect = targets ? around(targets) : null;
+    var now = JSON.stringify(rect);
+    if (reported[key] === now) return;
+    reported[key] = now;
+    tell({ type: "story.focus", key: key, rect: rect });
+  }
+
   function follow() {
     place();
-    frame = beat ? requestAnimationFrame(follow) : 0;
+    if (beat) report("beat:" + beat.id, beat.targets);
+    if (asked) report(asked.key, asked.targets);
+    frame = beat || asked ? requestAnimationFrame(follow) : 0;
   }
 
   function clear() {
+    if (beat) report("beat:" + beat.id, null);
     beat = null;
     rings.forEach(function (ring) { ring.el.remove(); });
     rings = [];
     if (pointer) { pointer.remove(); pointer = null; }
-    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+    if (frame && !asked) { cancelAnimationFrame(frame); frame = 0; }
+  }
+
+  // JARVIS asks to focus the part a question is about: brought into view
+  // and reported until focus.clear. Nothing is clicked and nothing ringed.
+  function focusOn(message) {
+    var key = String(message.key || "");
+    var targets = (Array.isArray(message.targets) ? message.targets : []).map(String);
+    asked = { key: key, targets: targets };
+    delete reported[key];
+    var first = null;
+    targets.some(function (selector) {
+      first = ambiguous(selector) ? null : matches(selector)[0] || null;
+      return !!first;
+    });
+    if (first) first.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    report(key, targets);
+    if (!frame) frame = requestAnimationFrame(follow);
+  }
+
+  function unfocus() {
+    if (asked) delete reported[asked.key];
+    asked = null;
+    if (frame && !beat) { cancelAnimationFrame(frame); frame = 0; }
   }
 
   function act(action, missing) {
@@ -204,8 +267,9 @@
       root.appendChild(pointer);
     }
     place();
+    report("beat:" + id, targets);
     targets.forEach(function (selector) { if (!box(selector)) missing.push(selector); });
-    frame = requestAnimationFrame(follow);
+    if (!frame) frame = requestAnimationFrame(follow);
     // A target can come into view as a `show` scrolls: look again once it
     // has settled before calling it missing.
     if (missing.length) {
@@ -226,6 +290,8 @@
     if (!m || typeof m !== "object" || m.jarvis !== "package") return;
     if (m.type === "story.cue") cue(m);
     else if (m.type === "story.clear") clear();
+    else if (m.type === "focus.show") focusOn(m);
+    else if (m.type === "focus.clear") unfocus();
   });
   window.addEventListener("resize", place);
   window.addEventListener("keydown", function (event) {
