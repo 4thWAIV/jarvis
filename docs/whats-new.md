@@ -2,6 +2,22 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A new language kit no longer voids your architecture approval, and says when it arrives
+
+The architecture language kit is published again on every change its
+publisher makes, and most releases change nothing in the language itself.
+Your approval of an architecture design used to count for nothing as soon
+as any new kit came into force, so the package had to be made and asked
+again with nobody telling you why. Now your approval, and a question still
+waiting for it, stand while the new kit's language files (`metalang.yaml`,
+`arch.yaml`, `propose.yaml`) are the same as those the design was checked
+under. A kit that changes any of them still makes the approval stale, and
+that kit waits for your review in Settings, Updates as before.
+
+When JARVIS brings in a new kit by itself, it now tells you: one update in
+Updates waiting (shown, never spoken) naming the kit now in force and the
+one it replaced, so a kit never changes unseen.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of
