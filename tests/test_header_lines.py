@@ -1143,6 +1143,14 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.finish": (
+        "the factory's private author continuation compares fixed review states and sends "
+        "build diagnostics back to that same author; it prints only to its CLI, never a "
+        "trusted header in the live brain; refusal paths are tested in test_make_package.py"),
+    "package_author.review": (
+        "the private author review reads fixed acceptance states and records archive member "
+        "names in a JSON request file; these do not enter live-brain headers; malformed and "
+        "missing inspection receipts are driven by test_package_visual_review.py"),
     "make_package.deck_kind": (
         "it reads the deck's decision ids only to compare them with the vote's own id, and "
         "returns one of two fixed words, presentation or decision package"),
