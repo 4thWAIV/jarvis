@@ -67,7 +67,7 @@ _NOT_STARTED = (work_store.PLANNED, work_store.READY)
 _MOVING = (work_store.WORKING, work_store.ACTIVITY_UNKNOWN)
 # What a piece report moving to finishes, as far as a reporter can say.
 _FINISHED = (work_store.VERIFYING, work_store.DONE)
-_RELATIVE = re.compile(r"(\d+(?:\.\d+)?)\s*([mhd])")
+_RELATIVE = re.compile(r"(\d+(?:\.\d+)?) ?([mhd])")
 _UNIT_SEC = {"m": 60, "h": 3600, "d": 86400}
 
 
