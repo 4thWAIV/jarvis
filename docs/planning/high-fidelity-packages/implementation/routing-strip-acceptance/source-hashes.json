@@ -1,0 +1,9 @@
+{
+  "frontend/src/style.css": "f34b142c3715a76d45e5ebb852bbd42d7a343acaab6cf7957dc5932c8c0a5d60",
+  "frontend/src/packages.ts": "3464a37cbde7413b127a5657f4bbc6ad63de23f853a3b5441b64a64693e55ff9",
+  "frontend/src/PackageBorder.tsx": "1a66c5fede497917e48ca0a5f9a963ac54c8e5fce81ee690357813a90252089d",
+  "frontend/src/PackageView.tsx": "77d840dc25bb8f4907f5add1e847c6905d332b6ef1871cfae8ba527a9d71076f",
+  "jarvis/presentation_assets/presentation.js": "46e3ec60270ade0c3a9e3be7e7b77d64d65187fc873a82eeca4696e203ff4187",
+  "examples/packages/decision-deck/deck.js": "eeb12db92a52813c7bf506d79d3e196aa409814dcc45d0e3611d35e3119b1c01",
+  "examples/packages/decision-deck/deck.css": "1ecb87b3131723fa30e0b09e3f1f7a42eefd7e6759747d53e4ceba18da83db5b"
+}

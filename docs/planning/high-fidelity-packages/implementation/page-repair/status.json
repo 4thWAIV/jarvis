@@ -1,0 +1,15 @@
+{
+  "state": "verifying",
+  "reason": "Approved routing geometry is applied and focused acceptance passes.",
+  "tests": {
+    "vote_controls": "12 passed",
+    "ui": "14 passed",
+    "navigation_experiment": "passed with proposed gutter; no production pass claimed"
+  },
+  "proposal": "proposed-corridor.patch",
+  "next": "Planning independent review, hosted CI and merge-decision package.",
+  "base": "d5106892b3b046c69f5522975bb67454f489a1db",
+  "preservation": "Prior Details and independent page repairs are included; approved routing strip is now applied.",
+  "approval": "../routing-strip-acceptance/approval.json",
+  "acceptance": "../routing-strip-acceptance/results.json"
+}

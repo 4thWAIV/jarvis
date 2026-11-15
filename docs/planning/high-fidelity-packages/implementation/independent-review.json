@@ -1,0 +1,16 @@
+{
+  "status": "no remaining blockers reported for the three review fixes",
+  "reported_by": "Planning, following independent re-review",
+  "source": "Planning collaboration message in this execution thread",
+  "findings": [
+    "Reversed object declarations preserve readingOrder in inspection.",
+    "Paragraph range rectangles match the presentation API and narration at widths 388, 300 and 550.",
+    "All six deck navigation keys leave the Details background unchanged; Escape restores navigation."
+  ],
+  "reviewed_sha256": {
+    "jarvis/presentation.py": "c2abc7e0f871210214f8f8a1d1e7365594247a810014df429f71793e682d18e4",
+    "jarvis/presentation_assets/presentation.js": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+    "jarvis/package_story.js": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090",
+    "examples/packages/decision-deck/deck.js": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+  }
+}

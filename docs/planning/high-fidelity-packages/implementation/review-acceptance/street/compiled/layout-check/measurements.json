@@ -1,0 +1,356 @@
+{
+  "source_sha256": "57ed86d491ceafb632f58d6a4384d3ee7d9f56b26360af9b974ade4593e509cd",
+  "profiles": [
+    {
+      "profile": "app-1280",
+      "slide": 1,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 661.625,
+        "height": 602
+      }
+    },
+    {
+      "profile": "app-1280",
+      "slide": 2,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 661.625,
+        "height": 602
+      }
+    },
+    {
+      "profile": "app-1280",
+      "slide": 3,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 661.625,
+        "height": 602
+      }
+    },
+    {
+      "profile": "app-1280",
+      "slide": 4,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 661.625,
+        "height": 602
+      }
+    },
+    {
+      "profile": "app-1280",
+      "slide": 5,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 661.625,
+        "height": 602
+      }
+    },
+    {
+      "profile": "app-1440",
+      "slide": 1,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 808.8125,
+        "height": 702
+      }
+    },
+    {
+      "profile": "app-1440",
+      "slide": 2,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 809,
+        "height": 702
+      }
+    },
+    {
+      "profile": "app-1440",
+      "slide": 3,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 809,
+        "height": 702
+      }
+    },
+    {
+      "profile": "app-1440",
+      "slide": 4,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 809,
+        "height": 702
+      }
+    },
+    {
+      "profile": "app-1440",
+      "slide": 5,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 809,
+        "height": 702
+      }
+    },
+    {
+      "profile": "fixture-662",
+      "slide": 1,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 630,
+        "height": 453
+      }
+    },
+    {
+      "profile": "fixture-662",
+      "slide": 2,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 630,
+        "height": 453
+      }
+    },
+    {
+      "profile": "fixture-662",
+      "slide": 3,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 630,
+        "height": 453
+      }
+    },
+    {
+      "profile": "fixture-662",
+      "slide": 4,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 630,
+        "height": 453
+      }
+    },
+    {
+      "profile": "fixture-662",
+      "slide": 5,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 630,
+        "height": 453
+      }
+    },
+    {
+      "profile": "fixture-809",
+      "slide": 1,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 777,
+        "height": 553
+      }
+    },
+    {
+      "profile": "fixture-809",
+      "slide": 2,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 777,
+        "height": 553
+      }
+    },
+    {
+      "profile": "fixture-809",
+      "slide": 3,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 777,
+        "height": 553
+      }
+    },
+    {
+      "profile": "fixture-809",
+      "slide": 4,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 777,
+        "height": 553
+      }
+    },
+    {
+      "profile": "fixture-809",
+      "slide": 5,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 777,
+        "height": 553
+      }
+    },
+    {
+      "profile": "takeover",
+      "slide": 1,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 1248,
+        "height": 764
+      }
+    },
+    {
+      "profile": "takeover",
+      "slide": 2,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 1248,
+        "height": 764
+      }
+    },
+    {
+      "profile": "takeover",
+      "slide": 3,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 1248,
+        "height": 764
+      }
+    },
+    {
+      "profile": "takeover",
+      "slide": 4,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 1248,
+        "height": 764
+      }
+    },
+    {
+      "profile": "takeover",
+      "slide": 5,
+      "issues": [],
+      "linear": false,
+      "canvas": {
+        "width": 1248,
+        "height": 764
+      }
+    },
+    {
+      "profile": "narrow",
+      "slide": 1,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "narrow",
+      "slide": 2,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "narrow",
+      "slide": 3,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "narrow",
+      "slide": 4,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "narrow",
+      "slide": 5,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "text-200-percent",
+      "slide": 1,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "text-200-percent",
+      "slide": 2,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "text-200-percent",
+      "slide": 3,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "text-200-percent",
+      "slide": 4,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    },
+    {
+      "profile": "text-200-percent",
+      "slide": 5,
+      "issues": [],
+      "linear": true,
+      "canvas": {
+        "width": 388,
+        "height": 602
+      }
+    }
+  ],
+  "failures": []
+}

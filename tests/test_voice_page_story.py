@@ -151,6 +151,10 @@ def _through(server, client):
             await route.fulfill(status=200 if done else 409, content_type="application/json",
                                 body=json.dumps({"said": said} if done else {"error": said}))
             return
+        if request.method == "DELETE" and path.endswith("/page"):
+            await server._close_package_page(path.split("/")[3])
+            await route.fulfill(status=204)
+            return
         r = await asyncio.to_thread(client.request, request.method, path)
         await route.fulfill(status=r.status_code, headers=dict(r.headers), body=r.content)
     return handle
@@ -217,7 +221,7 @@ async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_ur
         try:
             assert await page.locator("#package-view iframe").get_attribute("sandbox") == \
                 "allow-scripts"
-            await page.click("#package-view .package-story button:has-text('Tell the story')")
+            await page.click("#package-view [data-story-action=tell]")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "Telling slide 1 of 3.")
             # Part way through: the detail view the story opened is open,
@@ -272,12 +276,14 @@ async def test_stop_ends_the_voice_and_the_rings_and_a_slide_can_be_chosen(
     async with page_playwright as p:
         browser, page, frame = await _deck(p, page_url, jarvis_app, voice)
         try:
-            await page.select_option("#package-view .package-story select", "2")
-            await page.click("#package-view .package-story button:has-text('Tell the story')")
+            await page.click("#package-view [data-package-menu=chapters]")
+            await page.select_option("#package-view .package-border-overlay select", "2")
+            await page.keyboard.press("Escape")
+            await page.click("#package-view [data-story-action=tell]")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "Telling slide 2 of 3.")
             await _ringed(page, "(r) => r.beat === '2.1'")
-            await page.click("#package-view .package-story button:has-text('Stop')")
+            await page.click("#package-view [data-story-action=stop]")
             await async_api.expect(page.locator(".package-story-now")).to_have_text("Stopped.")
             await async_api.expect(frame.locator(".jarvis-story-ring")).to_have_count(0)
             rings = await _inner(page).evaluate("window.__rings")
@@ -329,7 +335,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
                 "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
             await async_api.expect(title).to_have_text("Three things a good pot of tea needs")
 
-            await page.click("#package-view .package-story button:has-text('Tell the story')")
+            await page.click("#package-view [data-story-action=tell]")
             await async_api.expect(page.locator(".package-story-now")).to_have_text(
                 "The story is told.", timeout=90000)
             starts = await page.evaluate("window.__audioStarts")
@@ -339,3 +345,21 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
         await browser.close()
     beats = _rings_follow_the_audio(voice, starts, rings)
     assert list(beats)[:2] == ["1.1", "1.2"] and len(beats) == 12
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_closing_the_package_withdraws_its_speech(page_playwright, page_url, jarvis_app, voice):
+    async with page_playwright as p:
+        browser, page, frame = await _deck(p, page_url, jarvis_app, voice)
+        try:
+            await page.click('#package-view [data-story-action=tell]')
+            await _ringed(page, "(r) => r.beat === '1.1'")
+            await page.click('#package-view .workflow-close')
+            await async_api.expect(page.locator('#package-view')).to_have_count(0)
+            await asyncio.sleep(0.5)
+            heard = len(voice.audio)
+            await asyncio.sleep(1)
+            assert len(voice.audio) == heard, 'closing withdraws subsequent speech chunks'
+        finally:
+            await voice.speech.stop()
+        await browser.close()

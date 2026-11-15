@@ -1,0 +1,53 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_a_folders_zip_and_a_packages_story_controls_are_pointed_at_and_reached __
+
+page_url = 'http://127.0.0.1:49627/index.html'
+tmp_path = PosixPath('/private/var/folders/s5/lkpmbqsn17gcvx02hzxcdvr80000gn/T/pytest-of-timothystockstill/pytest-224/test_a_folders_zip_and_a_packa0')
+
+    @pytest.mark.asyncio
+    async def test_a_folders_zip_and_a_packages_story_controls_are_pointed_at_and_reached(page_url, tmp_path):
+        """The Folders view's Open package on a .zip's preview, then a page
+        package with a story: its story box, Tell the story, the slide to start
+        from and Stop."""
+        aurora = FOLDERS[0]["id"]
+        _, package, info = _story_deck(tmp_path)
+        async with async_api.async_playwright() as p:
+            browser, page, voice = await _open(p, page_url, ("**/api/folders**", _ZipFolders()),
+                                               ("**/api/packages**", _packages(package, [info])))
+            try:
+                await voice.navigate("main.tab.select", {"tab": "folders"})
+                _completed(await voice.navigate("folders.open", {"folderId": aurora}))
+                await page.locator(".folder-detail .folder-entry:has-text('story-deck.zip')").wait_for()
+                _completed(await voice.navigate("folder.preview", {"folderId": aurora, "path": "story-deck.zip"}))
+                await async_api.expect(page.locator(".folder-preview button:has-text('Open package')")).to_be_visible()
+                result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+                    "region": "main", "view": "main.folders", "kind": "folder", "key": aurora,
+                    "part": "openPackage"}})
+                assert _arrived(result)
+    
+                voice.ws.send(json.dumps({"type": "package_page", "package": info}))
+                await page.locator("#package-view .package-story").wait_for()
+                for part in ("story", "tell", "fromSlide", "stop"):
+                    result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+                        "region": "main", "view": "main.package", "kind": "packageView", "key": package.id,
+                        "part": part}})
+>                   assert result["status"] == "completed", (part, result)
+E                   AssertionError: ('story', {'type': 'ui_result', 'requestId': 'req-5', 'clientId': 'page-69e81bd7-19cf-4b97', 'epoch': 1, ...})
+E                   assert 'blocked' == 'completed'
+E                     
+E                     - completed
+E                     + blocked
+
+tests/test_voice_page_remaining_nav.py:507: AssertionError
+----------------------------- Captured stdout call -----------------------------
+/private/var/folders/s5/lkpmbqsn17gcvx02hzxcdvr80000gn/T/pytest-of-timothystockstill/pytest-224/test_a_folders_zip_and_a_packa0/story-deck.zip (3 KiB)
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/timothystockstill/code/macos/4thWAIV/jarvis/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_voice_page_remaining_nav.py::test_a_folders_zip_and_a_packages_story_controls_are_pointed_at_and_reached
+1 failed, 1 warning in 6.05s

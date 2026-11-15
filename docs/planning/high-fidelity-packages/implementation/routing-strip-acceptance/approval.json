@@ -1,0 +1,9 @@
+{
+  "path": "/Users/timothystockstill/code/macos/4thWAIV/jarvis/data/packages/room-to-point-at-presentation-controls-1.0.0-local89b/results/decisions.json",
+  "sha256": "b723d0968487c07eee0886997be498b59652600ca48d7704edbc5c71cdb82f1f",
+  "decision": "approve-routing-strip",
+  "answer": "approve",
+  "at": "2026-11-15T10:12:37-06:00",
+  "base": "5c231ebe9156bb93eb96e02c22e1f4061cae26dd",
+  "incoming_main": "bdd9ab3c5a03e9bd67031af99ceba19a9d9decee"
+}

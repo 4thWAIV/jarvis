@@ -1,0 +1,212 @@
+version: presentation/1
+id: product-walkthrough
+title: Share a reviewed file
+purpose: Explain how to choose, review and share a file.
+conclusion: Review the file before sharing it.
+language: en
+requires:
+- presentation-core/1
+theme:
+  background: '#0b151e'
+  foreground: '#e6edf5'
+  accent: '#6fd5ac'
+  muted: '#aec3cf'
+  font: system-sans
+  bodyPx: 16
+  headingPx: 28
+  minimumPx: 16
+  gapPx: 12
+layouts:
+- id: opening-layout
+  regions:
+  - id: opening-title
+    rect:
+      x: 0
+      y: 0
+      width: 100
+      height: 35
+  - id: opening-body
+    rect:
+      x: 0
+      y: 35
+      width: 100
+      height: 65
+- id: screen-layout
+  regions:
+  - id: screens-title
+    rect:
+      x: 0
+      y: 0
+      width: 100
+      height: 20
+  - id: choose-region
+    rect:
+      x: 0.0
+      y: 20
+      width: 33.333333333333336
+      height: 50
+  - id: review-region
+    rect:
+      x: 33.333333333333336
+      y: 20
+      width: 33.333333333333336
+      height: 50
+  - id: send-region
+    rect:
+      x: 66.66666666666667
+      y: 20
+      width: 33.333333333333336
+      height: 50
+  - id: screen-caption
+    rect:
+      x: 0
+      y: 70
+      width: 100
+      height: 30
+assets:
+- id: choose-screen
+  path: choose.png
+  sha256: 492a58b0496b0ad987a4546b2830985b684750f6ef628af21dbf9c6241c678c2
+  mime: image/png
+  width: 300
+  height: 220
+  source:
+    reference: walkthrough-evidence
+- id: review-screen
+  path: review.png
+  sha256: 10c7c04dfa1e291f8b5ef1b3dfa13d588296f37315e7f51b2bda2bd1f60f5fce
+  mime: image/png
+  width: 300
+  height: 220
+  source:
+    reference: walkthrough-evidence
+- id: send-screen
+  path: send.png
+  sha256: b0de98907bbcecd7cf096984f8f78ca17ffff97bbc23555e5143fb401d3333a8
+  mime: image/png
+  width: 300
+  height: 220
+  source:
+    reference: walkthrough-evidence
+references:
+- id: walkthrough-evidence
+  kind: authored-example
+  locator: Original illustrative app screens
+  revision: example-1
+  description: Screenshots of a fictional file-sharing workflow created for presentation
+    acceptance.
+slides:
+- id: opening
+  type: content
+  title: Review before sharing
+  layout: opening-layout
+  objects:
+  - id: recommendation
+    type: text
+    region: opening-title
+    source:
+      reference: walkthrough-evidence
+    paragraphs:
+    - id: recommendation-paragraph
+      role: heading
+      runs:
+      - id: recommendation-words
+        text: Review the file before sharing it.
+        emphasis: normal
+  - id: purpose-text
+    type: text
+    region: opening-body
+    source:
+      reference: walkthrough-evidence
+    paragraphs:
+    - id: purpose-text-paragraph
+      role: paragraph
+      runs:
+      - id: purpose-text-words
+        text: Explain how to choose, review and share a file.
+        emphasis: normal
+  readingOrder:
+  - recommendation
+  - purpose-text
+  narration:
+  - id: opening-cue
+    say: Explain how to choose, review and share a file. Review the file before sharing
+      it.
+    focus:
+    - recommendation-words
+  notes: Illustrative product walkthrough.
+- id: screen-journey
+  type: content
+  title: Choose, review and share
+  layout: screen-layout
+  objects:
+  - id: screen-sequence
+    type: text
+    region: screens-title
+    source:
+      reference: walkthrough-evidence
+    paragraphs:
+    - id: screen-sequence-paragraph
+      role: heading
+      runs:
+      - id: screen-sequence-words
+        text: Choose, review, then share.
+        emphasis: normal
+  - id: choose-image
+    type: image
+    region: choose-region
+    source:
+      reference: walkthrough-evidence
+    asset: choose-screen
+    alt: Choose a file using Open.
+    fit: contain
+  - id: review-image
+    type: image
+    region: review-region
+    source:
+      reference: walkthrough-evidence
+    asset: review-screen
+    alt: Review the changes before sharing.
+    fit: contain
+  - id: send-image
+    type: image
+    region: send-region
+    source:
+      reference: walkthrough-evidence
+    asset: send-screen
+    alt: Send the reviewed result.
+    fit: contain
+  - id: screen-explanation
+    type: text
+    region: screen-caption
+    source:
+      reference: walkthrough-evidence
+    paragraphs:
+    - id: screen-explanation-paragraph
+      role: paragraph
+      runs:
+      - id: screen-explanation-words
+        text: The review step gives you a chance to correct the file before anyone
+          receives it.
+        emphasis: normal
+  readingOrder:
+  - screen-sequence
+  - choose-image
+  - review-image
+  - send-image
+  - screen-explanation
+  narration:
+  - id: choose-cue
+    say: Choose the file you want to share.
+    focus:
+    - choose-image
+  - id: review-cue
+    say: Review its changes before sending.
+    focus:
+    - review-image
+  - id: send-cue
+    say: Share the reviewed result.
+    focus:
+    - send-image
+  notes: The screenshots depict an invented application.
+decisions: []

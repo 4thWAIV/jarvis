@@ -1,0 +1,7 @@
+{
+  "path": "/tmp/presentation-approved-routing-kit/evolang-kit.zip",
+  "release": "0.1.108421045-pre-release",
+  "repository": "4thWAIV/agent-guard",
+  "sha256": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
+  "reason": "The temporary asset path from earlier acceptance no longer existed. Restored the exact pinned release for architecture-layout retry."
+}
