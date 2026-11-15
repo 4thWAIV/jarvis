@@ -1,0 +1,15 @@
+{
+  "state": "ready-for-independent-review",
+  "approval": "approval.json",
+  "main": "bdd9ab3c5a03e9bd67031af99ceba19a9d9decee",
+  "tests": {
+    "build": "passed",
+    "source_ui": "45 passed",
+    "pages": "27 passed; one missing temporary kit fixture setup error",
+    "architecture_pages": "4 passed including the layout retry with restored pinned kit",
+    "frame": "passed",
+    "yaml_street": "passed"
+  },
+  "remaining": "Planning owns independent review, hosted CI and fresh-author Merge/Hold package.",
+  "remote_status": "Push status is recorded on Work; no merge approval is asserted."
+}

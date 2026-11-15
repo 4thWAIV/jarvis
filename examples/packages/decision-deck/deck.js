@@ -321,6 +321,8 @@
     head(section, s.kicker, s.title);
     var body = section.appendChild(el("div", "body"));
     (s.blocks || []).forEach(function (b) { body.appendChild(block(b)); });
+    // Pictures fill what the words leave (deck.css, .slide.content.fill).
+    if ((s.blocks || []).some(function (b) { return b.picture || b.pictures; })) section.classList.add("fill");
     return section;
   }
 

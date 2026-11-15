@@ -33,6 +33,15 @@ async def inspect_app(server, made, package_id, result):
                     assert abs(geometry['height']-expected)<.1,(touch,geometry)
                     sizes=await view.locator('.package-icon').evaluate_all('els=>els.map(e=>[e.clientWidth,e.clientHeight])')
                     assert all(w==(44 if touch else 32) and h==(44 if touch else 32) for w,h in sizes),sizes
+                    outer=await view.bounding_box()
+                    frame=await d.iframe.bounding_box()
+                    assert abs(geometry['y']-outer['y']-16)<.1,(outer,geometry)
+                    assert abs(frame['y']-geometry['y']-geometry['height'])<.1,(frame,geometry)
+                    await view.locator('[data-package-menu=more]').click()
+                    menu=await view.locator('.package-border-overlay').bounding_box()
+                    assert abs(menu['y']-geometry['y']-geometry['height'])<.1,(menu,geometry)
+                    await view.locator('.package-border-overlay').get_by_role('button',name='Return',exact=True).click()
+                    result.passed.append(f"{'Coarse' if touch else 'Normal'} pointer: approved 16px routing strip, unchanged {expected}px border, and menu starts below that border.")
                     if touch:
                         await view.screenshot(path=str(OUT/'coarse-pointer.png'))
                         result.passed.append('Coarse pointer: 48px border and 44px icon targets.')

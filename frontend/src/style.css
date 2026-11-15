@@ -4509,7 +4509,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .records-move-reason { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Package controls occupy the measured frame, leaving no empty transport/status rows. */
-#package-view { gap:0; padding:0 16px; container-type:inline-size; }
+#package-view { gap:0; padding:var(--ui-corridor) 16px 0; container-type:inline-size; }
 #package-view .package-border { flex:none; height:36px; min-height:36px; gap:3px; border-radius:8px 8px 0 0; background:var(--ui-surface,#162331); border-bottom:1px solid rgba(255,255,255,.15); }
 #package-view .package-story { display:flex; flex-wrap:nowrap; align-items:center; gap:3px; }
 #package-view .package-icon { width:32px; height:32px; min-width:32px; flex:0 0 32px; display:grid; place-items:center; padding:0; border:0; border-radius:5px; background:transparent; color:inherit; }
@@ -4521,7 +4521,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #package-view .package-done { margin-left:5px; box-shadow:-4px 0 rgba(255,255,255,.15); color:var(--ui-accent); }
 #package-view .package-frame { border-radius:0 0 8px 8px; border-width:0; }
 #package-view .package-status { flex:none; padding:4px 8px; min-height:0; }
-.package-border-overlay { position:absolute; inset:36px 16px 0; z-index:20; padding:24px; overflow:auto; background:var(--ui-surface,#162331); }
+.package-border-overlay { position:absolute; inset:calc(36px + var(--ui-corridor)) 16px 0; z-index:20; padding:24px; overflow:auto; background:var(--ui-surface,#162331); }
 /* The opaque host menu covers the frame; keep its retained layout out of visual routing. */
 #package-view .package-frame[inert] { visibility:hidden; }
 .package-border-overlay h2 { margin:18px 0!important; }
@@ -4533,5 +4533,5 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 @media (pointer:coarse) {
   #package-view .package-border { height:48px; min-height:48px; }
   #package-view .package-icon { width:44px; height:44px; min-width:44px; flex-basis:44px; }
-  .package-border-overlay { top:48px; }
+  .package-border-overlay { top:calc(48px + var(--ui-corridor)); }
 }

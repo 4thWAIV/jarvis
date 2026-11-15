@@ -1,14 +1,15 @@
 {
-  "state": "blocked",
-  "reason": "Planning decision on top routing corridor changes the approved canvas height",
-  "pushed": false,
+  "state": "verifying",
+  "reason": "Approved routing geometry is applied and focused acceptance passes.",
   "tests": {
     "vote_controls": "12 passed",
     "ui": "14 passed",
     "navigation_experiment": "passed with proposed gutter; no production pass claimed"
   },
   "proposal": "proposed-corridor.patch",
-  "next": "Wait for geometry approval, apply the approved change, run final navigation/layout/frame checks, and await Planning push timing.",
+  "next": "Planning independent review, hosted CI and merge-decision package.",
   "base": "d5106892b3b046c69f5522975bb67454f489a1db",
-  "preservation": "Independent repairs committed locally; geometry remains unapplied."
+  "preservation": "Prior Details and independent page repairs are included; approved routing strip is now applied.",
+  "approval": "../routing-strip-acceptance/approval.json",
+  "acceptance": "../routing-strip-acceptance/results.json"
 }
