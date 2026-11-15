@@ -135,6 +135,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__answer_package_decision,mcp__jarvis__sign_off_package,"
         "mcp__jarvis__close_inbox_package,"
         "mcp__jarvis__retry_run,"
+        "mcp__jarvis__change_queued_message,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"
         "mcp__jarvis__activate_language_kit,mcp__jarvis__records_move,"
         "mcp__jarvis__agent_keys,mcp__jarvis__revoke_agent_key,"
