@@ -268,6 +268,8 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.name.folderList": "Carpetas",
   "right.subsystem.name.discovery": "Descubrimiento",
   "right.subsystem.name.discoveryLoop": "Ciclo de descubrimiento",
+  "right.subsystem.name.workView": "Vista de trabajo",
+  "right.subsystem.name.agentKeysLoop": "Llaves de agentes",
   "right.subsystem.name.page": "Esta página",
   "right.subsystem.name.read": "Lectura de JARVIS",
   "right.subsystem.name.socket": "Actualizaciones en vivo",

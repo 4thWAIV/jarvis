@@ -4522,7 +4522,7 @@ async def _watch_agent_keys() -> None:
     async def look() -> None:
         await asyncio.to_thread(_look_after_agent_keys)
 
-    await _every(AGENT_KEYS_POLL_SEC, "agent keys", look)
+    await _every(AGENT_KEYS_POLL_SEC, subsystem_diagnostics.AGENT_KEYS_LOOP, look)
 
 
 class AgentKeySubmission(BaseModel):
@@ -13515,13 +13515,16 @@ async def _watch_work() -> None:
     owners, clocks and sources up to date (work_view.WorkView.tick), off the
     loop; the items writes hand it are worked out on its own thread
     (work_view.WorkView.start), so no write waits on it. Never raises out
-    but for cancellation."""
-    await asyncio.to_thread(work_held.load)
-    work_held.start()
-
+    but for cancellation. Building it is part of the look, so a load that
+    fails is logged, shown on the Work tracker's Diagnostics row (its
+    heartbeat) and tried again on the next look, never a task that died
+    quietly with the Work tab empty."""
     async def look() -> None:
+        if not work_held.built:
+            await asyncio.to_thread(work_held.load)
+            work_held.start()
         await asyncio.to_thread(work_held.tick)
-    await _every(WORK_TICK_SEC, "work view", look)
+    await _every(WORK_TICK_SEC, subsystem_diagnostics.WORK_LOOP, look)
 
 
 work_api.mount(app, _work_recorded, work_held)

@@ -281,6 +281,8 @@ export const rightEn = {
   "right.subsystem.name.folderList": "Folders",
   "right.subsystem.name.discovery": "Discovery",
   "right.subsystem.name.discoveryLoop": "Discovery loop",
+  "right.subsystem.name.workView": "Work view",
+  "right.subsystem.name.agentKeysLoop": "Agent keys",
   "right.subsystem.name.page": "This page",
   "right.subsystem.name.read": "Reading JARVIS",
   "right.subsystem.name.socket": "Live updates",
