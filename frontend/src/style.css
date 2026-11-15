@@ -4522,6 +4522,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #package-view .package-frame { border-radius:0 0 8px 8px; border-width:0; }
 #package-view .package-status { flex:none; padding:4px 8px; min-height:0; }
 .package-border-overlay { position:absolute; inset:36px 16px 0; z-index:20; padding:24px; overflow:auto; background:var(--ui-surface,#162331); }
+/* The opaque host menu covers the frame; keep its retained layout out of visual routing. */
+#package-view .package-frame[inert] { visibility:hidden; }
 .package-border-overlay h2 { margin:18px 0!important; }
 .package-border-overlay select { max-width:100%; }
 .package-border-overlay .folder-button { margin:4px; }

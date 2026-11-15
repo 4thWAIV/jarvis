@@ -35,6 +35,7 @@
  * to the frame, so a deck shows which question JARVIS is waiting on.
  */
 
+import { registerRevealer } from "./uiNavigationReveal";
 import { liveRead, type LiveStore } from "./liveRead";
 import { t, type Said } from "./locale";
 import { createStore } from "./store";
@@ -181,6 +182,14 @@ registerCommand("package.inspect", {
 registerCommand("package.document", {
   availability: () => currentControls()?.presentation ? { available: true } : { available: false, reason: "no-entity" },
   execute: ({ enabled }) => { currentControls()!.document(enabled); return { status: "completed", effects: [] }; },
+});
+
+registerRevealer("main.package", "packageView", async (ref, { navigate }) => {
+  if (ref.key !== openPackage.get()?.id) return "no-entity";
+  const menu = ref.part === "fromSlide" ? "chapters"
+    : ["resume", "inspect", "document", "takeover", "return"].includes(ref.part ?? "") ? "more" : null;
+  if (!menu) return "no-entity";
+  return await navigate("package.menu", { show: menu }) ? true : "no-entity";
 });
 
 /** Packages the server has described in a `package_page` frame, by id,
