@@ -61,6 +61,8 @@ export interface BridgeEvents {
   onStoryMissing(said: Said): void;
   /** The frame asked for more room: offer Take over. */
   onLayoutRequest(): void;
+  onPresentationReady?(): void;
+  onPresentationReturnFocus?(): void;
 }
 
 /** Whether this package is what has taken over the page. */
@@ -153,14 +155,16 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   const resized = new ResizeObserver(showLayout);
   resized.observe(frame);
   const unsubscribeLayout = layout.subscribe(showLayout);
-  const loaded = () => { told = ""; showLayout(); };
+  const loaded = () => { told = ""; showLayout(); post({ type: "presentation.probe" }); };
   frame.addEventListener("load", loaded);
 
   const onMessage = (event: MessageEvent) => {
     if (event.source !== frame.contentWindow) return;
     const message = event.data;
     if (!message || typeof message !== "object" || message.jarvis !== BRIDGE) return;
-    if (message.type === "save") void save(message);
+    if (message.type === "presentation.inspection.closed") events.onPresentationReturnFocus?.();
+    if (message.type === "presentation.ready" && message.version === "presentation/1") events.onPresentationReady?.();
+    else if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
     else if (message.type === "story.ready") { showCue(true); showState(); }
     else if (message.type === "layout.request") events.onLayoutRequest();

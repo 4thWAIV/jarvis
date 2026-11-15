@@ -119,7 +119,9 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             assert await frame.get_attribute("sandbox") == "allow-scripts", "the sandbox is kept"
             box = await frame.bounding_box()
             head = page.locator(".package-head")
-            assert PURPOSE in await head.inner_text(), "the handoff's purpose is in the head"
+            await head.get_by_role("button", name="More", exact=True).click()
+            assert PURPOSE in await page.locator(".package-border-overlay").inner_text(), "the handoff purpose is in Details"
+            await page.keyboard.press("Escape")
             assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, once"
 
             # The first question by click, with his words; the follow-up is

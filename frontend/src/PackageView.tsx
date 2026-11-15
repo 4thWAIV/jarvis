@@ -26,52 +26,45 @@
  * brain does.
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge } from "./packageBridge";
 import { answerInbox, signOff } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
-import { entryUrl, packageFileUrl, packageVote, readPackageText, storyRunning, storyState, tellStory,
+import { entryUrl, packageFileUrl, packageVote, readPackageText,
          type HeaderQuestion, type PackageInfo, type PageVote } from "./packages";
-import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { TakeoverButton } from "./TakeoverBar";
+import { PackageBorder } from "./PackageBorder";
+import { PackageIcon } from "./PackageIcons";
 
 export function PackageView({ info }: { info: PackageInfo }) {
   const t = useT();
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [listening, setListening] = useState(false);
+  const [presentation, setPresentation] = useState(false);
   // Made for the wider layout, or its page asked for room: Take over is lit.
   const [asked, setAsked] = useState(false);
   const offered = info.layout === "wide" || asked;
   // The author's explanation, read in place beside the page.
   const [reading, setReading] = useState(false);
-  useEffect(() => setReading(false), [info.id]);
+  useEffect(() => { setReading(false); setPresentation(false); }, [info.id]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   useEffect(() => {
     if (!frame.current) return undefined;
     return connectBridge(frame.current, info.id, {
-      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true),
+      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true), onPresentationReady: () => setPresentation(true),
+      onPresentationReturnFocus: () => document.querySelector<HTMLButtonElement>("#package-view [data-package-menu=more]")?.focus(),
     });
   }, [info.id]);
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
-      <section className="package-head" ref={ui.part("header")}>
-        <div className="package-head-words">
-          <h2>{info.communication?.title ?? info.name}</h2>
-          <p>{info.purpose}</p>
-          {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
-        </div>
-        {info.vote?.question && <VoteControls id={info.id} vote={info.vote} onSaid={setSaid} part={ui.part} />}
-        <DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />
-        <TakeoverButton partRef={ui.part("takeover")} lit={offered} />
-        <button type="button" className="workflow-close" title={t("main.common.close")}
-                aria-label={t("main.common.close")} ref={ui.part("close")}
-                {...bindingProps(bind("package.close", {}))}>×</button>
-      </section>
+      <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
+        command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, slide: value, enabled: value}, "*")}
+        done={<DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />} />
+      {info.vote?.question && <VoteControls id={info.id} vote={info.vote} onSaid={setSaid} part={ui.part} />}
       {info.communication?.kind === "architecture" && <section className="package-canonical" aria-label={t("main.package.canonical")}>
         <p>{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</p>
         <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
@@ -89,13 +82,12 @@ export function PackageView({ info }: { info: PackageInfo }) {
       {reading && info.communication?.readable &&
         <Explanation key={`${info.id}:${info.communication.revision ?? ""}`} info={info}
                      target={ui.part("explanation")} />}
-      {info.story && <StoryControls info={info} onSaid={setSaid} part={ui.part} />}
       <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
               title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
-      <p className="package-status" role="status">
+      {(listening || said) && <p className="package-status" role="status">
         {listening ? `${t("main.package.listening")} ` : ""}
         {said && <SaidText said={said} className="package-said" />}
-      </p>
+      </p>}
     </div>
   );
 }
@@ -109,13 +101,13 @@ function DoneButton({ id, onSaid, target }: {
   const t = useT();
   const [busy, setBusy] = useState(false);
   return (
-    <button type="button" className="settings-btn primary package-done" data-ui-action="domain"
-            disabled={busy} ref={target} title={t("main.package.doneTitle")}
+    <button type="button" className="package-icon package-done" data-ui-action="domain"
+            disabled={busy} ref={target} title={t("main.package.doneTitle")} aria-label={t("main.package.done")}
             onClick={() => {
               setBusy(true);
               void signOff(id).then((why) => { setBusy(false); onSaid(why); });
             }}>
-      {t("main.package.done")}</button>
+      <PackageIcon name="done"/></button>
   );
 }
 
@@ -290,53 +282,6 @@ function Explanation({ info, target }: { info: PackageInfo; target: (el: Element
       {state === "loading" && <p role="status">{t("main.package.explanation.loading")}</p>}
       {state === "failed" && <p role="alert">{t("main.package.explanation.failed", { why })}</p>}
       <div ref={body} />
-    </section>
-  );
-}
-
-type StoryPart = "story" | "tell" | "fromSlide" | "resume" | "stop";
-
-function StoryControls({ info, onSaid, part }: {
-  info: PackageInfo; onSaid: (s: Said | null) => void; part: (name: StoryPart) => (el: Element | null) => void }) {
-  const t = useT();
-  const state = useSyncExternalStore(storyState.subscribe, storyState.get);
-  const [slide, setSlide] = useState(1);
-  const [busy, setBusy] = useState(false);
-  const running = storyRunning(state, info.id);
-  const mine = state?.package === info.id ? state : null;
-  const slides = info.story?.slides ?? [];
-  const act = async (action: "tell" | "resume" | "stop") => {
-    setBusy(true);
-    const problem = await tellStory(info.id, action, action === "tell" ? slide : undefined);
-    setBusy(false);
-    onSaid(problem);
-  };
-  return (
-    <section className="package-story" aria-label={t("main.package.story.label")} ref={part("story")}>
-      <button data-ui-action="domain" type="button" className="folder-button" disabled={busy}
-              ref={part("tell")} onClick={() => void act("tell")}>
-        {running ? t("main.package.story.tellFrom") : t("main.package.story.tell")}
-      </button>
-      <label>
-        {t("main.package.story.fromSlide")}{" "}
-        <select data-ui-action="input" value={slide} ref={part("fromSlide")}
-                onChange={(e) => setSlide(Number(e.target.value))}>
-          {slides.map((title, n) => <option key={n} value={n + 1}>{n + 1}. {title}</option>)}
-        </select>
-      </label>
-      {!running && (info.story?.asks?.length ?? 0) > 0 && (
-        <button data-ui-action="domain" type="button" className="folder-button" disabled={busy}
-                ref={part("resume")} onClick={() => void act("resume")}>{t("main.package.story.continue")}</button>
-      )}
-      <button data-ui-action="domain" type="button" className="folder-button" disabled={busy || !running}
-              ref={part("stop")} onClick={() => void act("stop")}>{t("main.package.story.stop")}</button>
-      <span className="package-story-now" role="status">
-        {mine?.state === "telling" ? t("main.package.story.telling", { slide: mine.slide, slides: mine.slides })
-          : mine?.state === "waiting" ? t("main.package.story.waiting", { slide: mine.slide, slides: mine.slides })
-            : mine?.state === "paused" ? t("main.package.story.paused", { slide: mine.slide, slides: mine.slides })
-              : mine?.state === "finished" ? t("main.package.story.told")
-                : mine?.state === "stopped" ? t("main.package.story.stopped") : ""}
-      </span>
     </section>
   );
 }

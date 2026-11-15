@@ -1,0 +1,101 @@
+{
+  "street": {
+    "result": "docs/planning/high-fidelity-packages/implementation/review-acceptance/street/result.json",
+    "ok": true,
+    "renderer_hashes": {
+      "deck.js": {
+        "source": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05",
+        "compiled": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+      },
+      "deck.css": {
+        "source": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889",
+        "compiled": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889"
+      },
+      "presentation.js": {
+        "source": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+        "compiled": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9"
+      },
+      "presentation.css": {
+        "source": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+        "compiled": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0"
+      }
+    },
+    "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+  },
+  "walkthrough": {
+    "result": "docs/planning/high-fidelity-packages/implementation/review-acceptance/walkthrough/result.json",
+    "ok": true,
+    "renderer_hashes": {
+      "deck.js": {
+        "source": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05",
+        "compiled": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+      },
+      "deck.css": {
+        "source": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889",
+        "compiled": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889"
+      },
+      "presentation.js": {
+        "source": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+        "compiled": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9"
+      },
+      "presentation.css": {
+        "source": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+        "compiled": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0"
+      }
+    },
+    "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+  },
+  "maximum-yaml": {
+    "result": "docs/planning/high-fidelity-packages/implementation/review-acceptance/maximum-yaml/result.json",
+    "ok": true,
+    "renderer_hashes": {
+      "deck.js": {
+        "source": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05",
+        "compiled": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+      },
+      "deck.css": {
+        "source": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889",
+        "compiled": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889"
+      },
+      "presentation.js": {
+        "source": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+        "compiled": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9"
+      },
+      "presentation.css": {
+        "source": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+        "compiled": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0"
+      }
+    },
+    "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+  },
+  "maximum-json": {
+    "result": "docs/planning/high-fidelity-packages/implementation/review-acceptance/maximum-json/result.json",
+    "ok": true,
+    "renderer_hashes": {
+      "deck.js": {
+        "source": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05",
+        "compiled": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+      },
+      "deck.css": {
+        "source": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889",
+        "compiled": "40ad0724e07c0e525f02849af68734ba4d3fb37ec9dbdb88f45ba06f53ba4889"
+      }
+    },
+    "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+  },
+  "frame": {
+    "result": "docs/planning/high-fidelity-packages/implementation/review-acceptance/frame/result.json",
+    "ok": true,
+    "renderer_hashes": {
+      "presentation.js": {
+        "source": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+        "compiled": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9"
+      },
+      "presentation.css": {
+        "source": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+        "compiled": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0"
+      }
+    },
+    "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+  }
+}

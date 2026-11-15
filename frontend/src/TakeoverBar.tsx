@@ -28,7 +28,7 @@ import { ControlSummary } from "./conversation/ConversationControl";
 import { useT } from "./locale";
 import { MicHost } from "./MicControl";
 import { bind, bindingProps, layout } from "./uiNavigation";
-import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useUiTarget } from "./uiRegistry";
 import "./conversation/conversation.css";
 
@@ -61,14 +61,14 @@ export function TakeoverBar({ name }: { name: string }) {
  *  drawn while something has taken over: Restore layout is in the bar.
  *  `lit` while it is offered: a package made for the wider layout, or one
  *  whose page asked for room. */
-export function TakeoverButton({ partRef, lit = false }: { partRef: (el: Element | null) => void; lit?: boolean }) {
+export function TakeoverButton({ partRef, lit = false, icon }: { partRef: (el: Element | null) => void; lit?: boolean; icon?: ReactNode }) {
   const t = useT();
   const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
   if (takenOver) return null;
   return (
-    <button type="button" className={`folder-button takeover-enter${lit ? " lit" : ""}`} title={t("main.takeover.enterTitle")}
+    <button type="button" className={`${icon ? "package-icon" : "folder-button"} takeover-enter${lit ? " lit" : ""}`} title={t("main.takeover.enterTitle")} aria-label={t("main.takeover.enter")}
             ref={partRef} {...bindingProps(bind("layout.takeover", {}))}>
-      {t("main.takeover.enter")}
+      {icon ?? t("main.takeover.enter")}
     </button>
   );
 }
