@@ -15,6 +15,8 @@ from jarvis.presentation_schema import (BarObject, ContentSlide, Ellipse, ImageO
                                        Presentation, Rectangle, ShapePath, TextObject, VectorObject)
 
 
+_NUMBER = re.compile(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?\Z")
+
 @dataclass(frozen=True)
 class DeckDiagnostic:
     code: str
@@ -88,8 +90,6 @@ def read_source(path: Path) -> Source:
     if node is None:
         source.fail("parse", "Source must contain one YAML mapping.")
 
-    number = re.compile(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?\Z")
-
     def visit(node, at: tuple):
         locations[at] = (node.start_mark.line + 1, node.start_mark.column + 1)
         if isinstance(node, yaml.MappingNode):
@@ -105,7 +105,7 @@ def read_source(path: Path) -> Source:
                     earlier = marks[name]
                     source.fail("parse", f"Duplicate mapping key {name!r}: first at {earlier}, again at "
                                 f"{key.start_mark.line + 1}:{key.start_mark.column + 1}.", at)
-                if key.style is None and (number.fullmatch(name) or name in {"true", "false", "null", "~"}):
+                if key.style is None and (_NUMBER.fullmatch(name) or name in {"true", "false", "null", "~"}):
                     source.fail("parse", "Mapping keys must be strings.", at)
                 marks[name] = f"{key.start_mark.line + 1}:{key.start_mark.column + 1}"
                 result[name] = visit(value, at + (name,))
@@ -119,7 +119,7 @@ def read_source(path: Path) -> Source:
             return value == "true"
         if value in {"null", "~", ""}:
             return None
-        if number.fullmatch(value):
+        if _NUMBER.fullmatch(value):
             return float(value) if any(c in value for c in ".eE") else int(value)
         if value.lower() in {".inf", "-.inf", "+.inf", ".nan"}:
             source.fail("schema", "Nonfinite numbers are not supported.", at)

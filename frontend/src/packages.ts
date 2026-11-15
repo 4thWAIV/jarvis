@@ -145,6 +145,44 @@ const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id, 
  *  controls run `package.open` and `package.close`. */
 export const openPackage = packageSlot.value;
 
+/** Mounted border actions are the same handlers for clicks and brain navigation.
+ * Nothing here starts narration or records an answer. Unmounting removes the
+ * adapter so a request cannot act on an old package. */
+export interface PackageControls {
+  packageId: string;
+  slides: number;
+  presentation: boolean;
+  menu(show: "chapters" | "more" | "closed"): void;
+  select(slide: number, closeMenu: boolean): void;
+  inspect(): void;
+  document(enabled: boolean): void;
+}
+let controls: PackageControls | null = null;
+export function mountPackageControls(value: PackageControls): () => void {
+  controls = value;
+  return () => { if (controls === value) controls = null; };
+}
+const currentControls = () => controls?.packageId === openPackage.get()?.id ? controls : null;
+const availableControls = () => ({ available: !!currentControls(), reason: "not-mounted" as const });
+registerCommand("package.menu", {
+  availability: ({ show }) => show === "chapters" && !currentControls()?.slides
+    ? { available: false, reason: "no-entity" } : availableControls(),
+  execute: ({ show }) => { currentControls()!.menu(show); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.slide", {
+  availability: ({ slide }) => currentControls() && slide <= currentControls()!.slides
+    ? { available: true } : { available: false, reason: "no-entity" },
+  execute: ({ slide, closeMenu = false }) => { currentControls()!.select(slide, closeMenu); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.inspect", {
+  availability: () => currentControls()?.presentation ? { available: true } : { available: false, reason: "no-entity" },
+  execute: () => { currentControls()!.inspect(); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.document", {
+  availability: () => currentControls()?.presentation ? { available: true } : { available: false, reason: "no-entity" },
+  execute: ({ enabled }) => { currentControls()!.document(enabled); return { status: "completed", effects: [] }; },
+});
+
 /** Packages the server has described in a `package_page` frame, by id,
  *  for one that is not in the list read yet. */
 const described = new Map<string, PackageInfo>();
