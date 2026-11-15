@@ -329,3 +329,21 @@ def test_an_unreadable_claim_proves_nothing(tmp_path):
     assert new_session() != new_session()
     assert os.sep not in author_proof.Claim.of(
         {"engine": "codex", "session": "thread-1", "source": "0" * 64}).session
+
+
+@pytest.mark.parametrize("engine", ["claude", "codex"])
+def test_a_check_followed_by_a_long_review_still_proves_its_author(tmp_path, engine):
+    """A fresh author's check stands however much it did after it: a
+    screenshot review afterwards adds tens of megabytes of tool results."""
+    session, digest, at = new_session(engine), "a" * 64, time.time()
+    path = write_transcript(engine, session, digest, at=at - 60, path=tmp_path / "t.jsonl")
+    shot = "iVBORw0KGgo" + "A" * (1024 * 1024)
+    with path.open("a") as fh:
+        for n in range(20):
+            fh.write(json.dumps({"type": "user", "timestamp": "2026-11-15T00:00:00Z",
+                                 "message": {"content": [{"type": "tool_result",
+                                                          "tool_use_id": f"shot{n}",
+                                                          "content": shot}]}}) + "\n")
+    assert path.stat().st_size > 20 * 1024 * 1024
+    assert author_proof.checked(path, digest, at)
+    assert not author_proof.checked(path, "b" * 64, at)
