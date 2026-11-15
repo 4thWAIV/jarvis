@@ -4,7 +4,11 @@ Updated 2026-11-14. This guide describes functionality present in the checkout. 
 
 ## A package's document uses the whole display, and what needs you is put beside it
 
-A package now opens taking over the page. Its title and tools become one
+A package now opens taking over the page: everything but the slim rail of
+tab icons on the right goes to its document, the left column folding to
+the orb alone at the page's edge (Team server and Brains move into the bar
+along the top, and Restore layout brings the column back). Its title and
+tools become one
 thin bar over the top of the document, which fades after a few seconds and
 comes back when you move the pointer to the top or tab into it. When a
 question is yours, because the story is waiting on it or you chose Show in

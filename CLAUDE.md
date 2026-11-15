@@ -1088,7 +1088,10 @@ beside the column) with everything open, at the checker's sizes and a
 laptop's. The document uses the whole display: a page package takes over
 the page as it opens (`package.open` runs `uiNavigation.takeOverShown`,
 effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
-as before), and while it has, its head and tools are one thin bar over the
+as before; taken over, the left column folds to the orb alone in the
+gutter, `data-takeover="package"` on the root moving `--panel-edge` out to
+the ray lane, and the takeover bar holds Team server and the running
+brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, its head and tools are one thin bar over the
 top of its document (`.package-bar`, `PackageView.tsx` `useFadingBar`)
 that fades after `BAR_FADES_AFTER_MS` without the pointer and returns when
 the pointer reaches the top (`.package-bar-reveal`, a strip along it) or
