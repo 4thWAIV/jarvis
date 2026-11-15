@@ -18,6 +18,12 @@ When JARVIS brings in a new kit by itself, it now tells you: one update in
 Updates waiting (shown, never spoken) naming the kit now in force and the
 one it replaced, so a kit never changes unseen.
 
+## Decks use the whole slide
+
+A deck's words grow with the space it has, and a slide with pictures gives
+them every pixel its words leave, so a picture is as large as the slide
+allows instead of a small box.
+
 ## A package's page keeps most of the view
 
 A package opens with its own page filling the centre. The story's
