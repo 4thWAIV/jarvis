@@ -1175,6 +1175,7 @@ export const mainEn = {
   "main.updates.event.sign_in.not_signed_in": "This JARVIS is not signed in to a team server",
   "main.updates.event.human_send.not_approved": "Your message to {name} changed after review and was not sent",
   "main.updates.event.human_send.snapshot_missing": "A file's private copy is missing, so your message to {name} was not sent",
+  "main.updates.event.human_send.failed": "Your message to {name} was not sent: open it in the Inbox to see why and retry",
   "main.updates.event.workflow.phase_started": "{name} started a new phase",
   "main.updates.event.workflow.decision_needed": "{name} needs your decision",
   "main.updates.event.workflow.blocker_raised": "{name} is blocked",

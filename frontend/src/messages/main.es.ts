@@ -1128,6 +1128,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.sign_in.not_signed_in": "Este JARVIS no ha iniciado sesión en un servidor de equipo",
   "main.updates.event.human_send.not_approved": "Su mensaje para {name} cambió después de revisarlo y no se envió",
   "main.updates.event.human_send.snapshot_missing": "Falta la copia privada de un archivo, así que su mensaje para {name} no se envió",
+  "main.updates.event.human_send.failed": "Su mensaje para {name} no se envió: ábralo en la Bandeja de entrada para ver por qué y reintentar",
   "main.updates.event.workflow.phase_started": "{name} empezó una nueva fase",
   "main.updates.event.workflow.decision_needed": "{name} necesita su decisión",
   "main.updates.event.workflow.blocker_raised": "{name} está bloqueado",
