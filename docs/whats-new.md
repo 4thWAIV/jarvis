@@ -20,6 +20,12 @@ JARVIS tells the story, each part he is talking about is lit and his words
 are shown beside it, with Pause and Stop. Escape leaves the focus; the side
 column still lists every question.
 
+## Decks use the whole slide
+
+A deck's words grow with the space it has, and a slide with pictures gives
+them every pixel its words leave, so a picture is as large as the slide
+allows instead of a small box.
+
 ## A package's page keeps most of the view
 
 A package opens with its own page filling the centre. The story's
