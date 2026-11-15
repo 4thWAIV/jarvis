@@ -965,20 +965,35 @@ def _awake():
                 held.wait(5)
 
 
+# How many window sizes the fit tries before it gives the frame size it has.
+FIT_STEPS = 10
+
+
 async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, int]:
     """Size the window so the package frame is exactly `frame_size`: the
     lines the centre shows above its views (the sign-in reminder, updates)
     come and go, and the package is checked at the frame size, not at the
-    window's. The frame's size after."""
-    size = (0, 0)
-    for _ in range(4):
+    window's. The frame's size after.
+    The frame may take only a share of each pixel the window gains (a side
+    column beside it takes the rest), so each step is scaled by how much
+    the last one moved the frame."""
+    size, before, gain = (0, 0), None, [1.0, 1.0]
+    for _ in range(FIT_STEPS):
         box = await iframe.bounding_box()
         size = (round(box["width"]), round(box["height"]))
         if size == frame_size:
             break
         view = page.viewport_size
-        await page.set_viewport_size({"width": view["width"] + frame_size[0] - size[0],
-                                      "height": view["height"] + frame_size[1] - size[1]})
+        here = (view["width"], view["height"])
+        if before is not None:
+            for i in (0, 1):
+                moved, grown = size[i] - before[1][i], here[i] - before[0][i]
+                if grown and moved:
+                    gain[i] = min(1.5, max(0.2, moved / grown))
+        before = (here, size)
+        await page.set_viewport_size({
+            "width": here[0] + round((frame_size[0] - size[0]) / gain[0]),
+            "height": here[1] + round((frame_size[1] - size[1]) / gain[1])})
         await asyncio.sleep(0.3)
     return size
 
