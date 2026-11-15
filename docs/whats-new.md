@@ -23,6 +23,15 @@ instead of sitting as approved forever.
 Diagnostics now watches the Work view and the agent keys' loop: a Work view
 that could not be built shows on the Work tracker row and is tried again.
 
+## A package's page keeps most of the view
+
+A package opens with its own page filling the centre. The story's
+controls and an architecture package's links to its source, checker
+evidence and explanation share one row above it, and its questions and
+explanation open in a column beside it, so
+answering a question or reading the explanation never shrinks the
+document you came to read.
+
 ## Nothing stops in silence: every stop says why and offers a way on
 
 When JARVIS cannot start on its records, the page now says so instead of

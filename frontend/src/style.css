@@ -2422,6 +2422,28 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
 .package-story { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The document first: the head and one row of tools take what they need,
+   and the package's own page takes the rest of the view's height. The
+   questions and the explanation sit in a side column beside it, scrolling
+   within its height, never above it (tests/test_voice_page_package_layout.py
+   holds the frame to its share at every size). */
+.package-tools { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 16px;
+                 flex: none; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+                 scrollbar-width: thin; }
+.package-tools > .package-story { flex: none; flex-wrap: nowrap; }
+.package-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+.package-body > .package-frame { flex: 1 1 auto; min-width: 0; height: 100%; }
+/* Beside the page at every width: under it, the page would lose a third of
+   its height; beside it, the page keeps all of it. */
+.package-side { flex: 0 0 clamp(200px, 32%, 420px); min-height: 0; overflow: auto;
+                display: flex; flex-direction: column; gap: 8px;
+                border: 1px solid var(--ui-edge); border-radius: 8px; }
+/* The head keeps to one line: the title and purpose shortened, their full
+   words on hover (PackageView.tsx), so a narrow view does not lose the page
+   to a wrapped head. */
+#package-view .package-head { flex: none; }
+#package-view .package-head h2,
+#package-view .package-head-words p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .package-story select { max-width: 320px; font: inherit; }
 .package-story-now { color: rgba(255, 255, 255, 0.7); }
 
@@ -4371,20 +4393,14 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .worker-counter > summary::-webkit-details-marker { display: none; }
 .worker-counter > summary small { font-size: 9px; color: #b9d6e9; }
 .worker-counter[open] { border-color: var(--ui-accent); }
-.package-canonical {
-  padding: 8px 16px;
-  font-size: 0.85rem;
-  border-bottom: 1px solid var(--ui-edge);
-}
-.package-canonical p { margin: 0 0 4px; }
+.package-canonical { font-size: 0.85rem; display: flex; align-items: center; gap: 0 4px;
+                     min-width: 0; flex: 1 1 20em; white-space: nowrap; }
+.package-canonical-state { color: rgba(255, 255, 255, 0.6); overflow: hidden; text-overflow: ellipsis;
+                           min-width: 4em; flex: 0 1 auto; }
 .package-canonical a { color: var(--ui-accent); text-decoration: underline; }
 .package-canonical .link-button { color: var(--ui-accent); text-decoration: underline; }
 /* The questions a story declares, answered in the head (PackageView.tsx). */
-.package-asks { padding: 8px 16px; display: grid; gap: 8px; border-bottom: 1px solid var(--ui-edge);
-                flex: 0 1 auto; min-height: 8.5em; overflow: auto; }
-/* With the questions and the explanation open, the package's own page keeps
-   at least this much of the view; they scroll within the rest. */
-#package-view .package-frame { min-height: 40%; }
+.package-asks { padding: 8px 12px; display: grid; gap: 8px; flex: none; }
 .package-ask-question { margin: 0 0 4px; font-weight: 600; }
 .package-ask-context { margin: 0 0 4px; color: rgba(255, 255, 255, 0.7); font-size: 0.85rem; }
 .package-ask-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -4396,12 +4412,9 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-approval-stale { color: #f5a623; }
 /* The author's explanation, read in place above the page. */
 .package-explanation {
-  flex: 0 1 auto;
-  min-height: 4em;
-  max-height: 40vh;
-  overflow: auto;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--ui-edge);
+  flex: none;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ui-edge);
   overflow-wrap: anywhere;
 }
 .package-explanation .md-link { color: var(--ui-accent); text-decoration: underline; }
