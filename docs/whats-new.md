@@ -2,6 +2,15 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A package's page keeps most of the view
+
+A package opens with its own page filling the centre. The story's
+controls and an architecture package's links to its source, checker
+evidence and explanation share one row above it, and its questions and
+explanation open in a column beside it (under it on a narrow window), so
+answering a question or reading the explanation never shrinks the
+document you came to read.
+
 ## The knowledge engine no longer slows down as records are rewritten
 
 Every record keeps all of its versions, and some are rewritten every few

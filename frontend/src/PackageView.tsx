@@ -46,6 +46,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
   // Made for the wider layout, or its page asked for room: Take over is lit.
   const [asked, setAsked] = useState(false);
   const offered = info.layout === "wide" || asked;
+  const asking = (info.vote?.asks?.length ?? 0) > 0;
   // The author's explanation, read in place beside the page.
   const [reading, setReading] = useState(false);
   useEffect(() => setReading(false), [info.id]);
@@ -72,26 +73,38 @@ export function PackageView({ info }: { info: PackageInfo }) {
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>
       </section>
-      {info.communication?.kind === "architecture" && <section className="package-canonical" aria-label={t("main.package.canonical")}>
-        <p>{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</p>
-        <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
-        <a href={packageFileUrl(info, "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
-        {info.communication.readable && <> {" · "}
-          <button type="button" className="link-button" ref={ui.part("readable")} data-ui-action="domain"
-                  aria-expanded={reading} aria-controls="package-explanation"
-                  onClick={() => setReading(!reading)}>
-            {reading ? t("main.package.readableHide") : t("main.package.readable")}</button>
-        </>}
-      </section>}
-      {(info.vote?.asks?.length ?? 0) > 0 &&
-        <HeaderQuestions key={info.id} id={info.id} asks={info.vote!.asks!} onSaid={setSaid}
-                         target={ui.part("asks")} />}
-      {reading && info.communication?.readable &&
-        <Explanation key={`${info.id}:${info.communication.revision ?? ""}`} info={info}
-                     target={ui.part("explanation")} />}
-      {info.story && <StoryControls info={info} onSaid={setSaid} part={ui.part} />}
-      <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
-              title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
+      {/* One row of tools under the head: the story's controls and, for an
+          architecture package, its source, checker evidence and explanation.
+          Everything else beside the document goes in the side column; the
+          document's frame keeps the view's height (docs: "The document
+          first"). */}
+      {(info.story || info.communication?.kind === "architecture") && <div className="package-tools">
+        {info.story && <StoryControls info={info} onSaid={setSaid} part={ui.part} />}
+        {info.communication?.kind === "architecture" && <section className="package-canonical" aria-label={t("main.package.canonical")}
+                 title={t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}>
+          <span className="package-canonical-state">{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</span>{" "}
+          <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
+          <a href={packageFileUrl(info, "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
+          {info.communication.readable && <> {" · "}
+            <button type="button" className="link-button" ref={ui.part("readable")} data-ui-action="domain"
+                    aria-expanded={reading} aria-controls="package-explanation"
+                    onClick={() => setReading(!reading)}>
+              {reading ? t("main.package.readableHide") : t("main.package.readable")}</button>
+          </>}
+        </section>}
+      </div>}
+      <div className="package-body">
+        <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
+                title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
+        {(asking || (reading && info.communication?.readable)) && <aside className="package-side">
+          {asking &&
+            <HeaderQuestions key={info.id} id={info.id} asks={info.vote!.asks!} onSaid={setSaid}
+                             target={ui.part("asks")} />}
+          {reading && info.communication?.readable &&
+            <Explanation key={`${info.id}:${info.communication.revision ?? ""}`} info={info}
+                         target={ui.part("explanation")} />}
+        </aside>}
+      </div>
       <p className="package-status" role="status">
         {listening ? `${t("main.package.listening")} ` : ""}
         {said && <SaidText said={said} className="package-said" />}
