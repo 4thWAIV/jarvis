@@ -85,7 +85,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "restore_capture", "clear_capture", "merge_captures",
         "steer_session", "answer_dialog", "enable_session_inbox",
         "list_workers", "list_agents", "rename_agent", "set_agent_active", "agent_keys",
-        "revoke_agent_key",
+        "revoke_agent_key", "renew_work_key",
         "conversation_history",
         "draft_message", "attach_message_files", "request_message_review",
         "send_message", "set_message_task", "add_companion_files",
@@ -109,6 +109,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "package_inbox", "open_inbox_package", "answer_package_decision",
         "sign_off_package", "close_inbox_package",
         "install_speech_model", "update_jarvis", "start_brain", "activate_language_kit",
+        "install_session_skill",
     ),
     # The page shown or pointed at: the white attention path's tools.
     UI: (

@@ -12,7 +12,10 @@
  *
  * The brain's row has Start brain while it is down (stopped after crashing,
  * its login expired, no process): `POST /api/brain/start`, the same
- * `_start_brain` as the brain's acting `start_brain`.
+ * `_start_brain` as the brain's acting `start_brain`. The Setup row has
+ * Install skill while the talk-to-jarvis skill is missing or out of date:
+ * `POST /api/setup/session-skill`, the same `_install_session_skill` as the
+ * brain's acting `install_session_skill`.
  */
 
 import { useState } from "react";
@@ -72,6 +75,7 @@ export function SubsystemView({ id }: { id: string }) {
       )}
       {s?.messages && <Messages messages={s.messages} partRef={ui.part("messages")} />}
       {id === "brain" && s?.state === "down" && <StartBrain />}
+      {id === "setup" && s?.checks.some((c) => c.id === "session_skill") && <InstallSkill />}
       {id === "knowledge" && (
         <p>
           <button type="button" className="knowledge-open"
@@ -116,6 +120,41 @@ function StartBrain() {
     <p className="subsystem-action">
       <button type="button" data-ui-action="domain" id="subsystem-start-brain" className="knowledge-open"
               disabled={asked} onClick={() => void start()}>{t("main.subsystem.brain.start")}</button>
+      {said && <span className="subsystem-action-said" role="status"> {said}</span>}
+    </p>
+  );
+}
+
+const INSTALL_OUTCOMES = {
+  installed: "main.subsystem.setup.installed",
+  no_home: "main.subsystem.setup.noHome",
+} as const;
+
+/** Install skill: writes the talk-to-jarvis skill into every Claude Code and
+ *  Codex home, and says what the server answered; the row moves with the
+ *  "subsystems" hint the install sends. */
+function InstallSkill() {
+  const t = useT();
+  const [asked, setAsked] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const install = async () => {
+    setAsked(true);
+    try {
+      const res = await fetch("/api/setup/session-skill", { method: "POST" });
+      const body = res.ok ? (await res.json()) as { outcome?: string; error?: string } : null;
+      const key = INSTALL_OUTCOMES[(body?.outcome ?? "") as keyof typeof INSTALL_OUTCOMES];
+      setSaid(key ? t(key) : t("main.subsystem.setup.failed", {
+        error: body?.error ?? `${res.status} ${res.statusText}`.trim() }));
+    } catch (e) {
+      setSaid(t("main.subsystem.setup.failed", { error: String(e) }));
+    } finally {
+      setAsked(false);
+    }
+  };
+  return (
+    <p className="subsystem-action">
+      <button type="button" data-ui-action="domain" id="subsystem-install-skill" className="knowledge-open"
+              disabled={asked} onClick={() => void install()}>{t("main.subsystem.setup.install")}</button>
       {said && <span className="subsystem-action-said" role="status"> {said}</span>}
     </p>
   );

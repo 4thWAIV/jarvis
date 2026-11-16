@@ -414,3 +414,51 @@ async def test_a_brain_that_is_down_has_start_brain_on_its_row(page_playwright, 
         await page.wait_for_selector("#subsystem-detail[data-subsystem='communications']")
         assert await page.locator("#subsystem-start-brain").count() == 0
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_setup_with_the_skill_missing_has_install_skill(page_playwright, page_url):
+    """The Setup row's view, while the talk-to-jarvis skill is missing,
+    offers Install skill: it posts to /api/setup/session-skill and says what
+    the server answered. No other view has it."""
+    installed = []
+
+    async def subsystems(route):
+        body = _record()
+        body["subsystems"].append({
+            "id": "setup", "name": "Setup", "state": "degraded",
+            "summary": "Talk-to-jarvis skill: missing",
+            "checks": [{"id": "session_skill", "name": "Talk-to-jarvis skill", "state": "degraded",
+                        "detail": "The talk-to-jarvis skill is missing"}]})
+        await route.fulfill(content_type="application/json", body=json.dumps(body))
+
+    async def install(route):
+        installed.append(route.request.method)
+        await route.fulfill(content_type="application/json",
+                            body=json.dumps({"outcome": "installed", "installed": 3, "current": True}))
+
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/diagnostics/subsystems", subsystems)
+        await page.route("**/api/setup/session-skill", install)
+        await page.goto(page_url)
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        await page.click(".subsystem-row[data-subsystem='setup']", timeout=10000)
+        button = page.locator("#subsystem-install-skill")
+        await async_api.expect(button).to_have_text("Install skill")
+        await button.click()
+        await async_api.expect(page.locator(".subsystem-action-said")).to_have_text(
+            "Installed: agents' sessions can reach you.")
+        assert installed == ["POST"]
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        await page.click(".subsystem-row[data-subsystem='communications']")
+        await page.wait_for_selector("#subsystem-detail[data-subsystem='communications']")
+        assert await page.locator("#subsystem-install-skill").count() == 0
+        await browser.close()

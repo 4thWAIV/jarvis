@@ -51,6 +51,10 @@ log = logging.getLogger("jarvis.knowledge_runtime")
 
 INGEST_EVERY_SEC = 600.0
 CONTENT_RESTART_SEC = 5.0
+# How far back the content child's starts are counted, so one crash-looping
+# is told from one started a few times over a long life (Diagnostics'
+# knowledge row, subsystem_diagnostics.CONTENT_STARTS_DEGRADED).
+CONTENT_CRASH_WINDOW_SEC = 600.0
 INGEST_AGAIN_SEC = 5.0
 PROPOSALS_EVERY_SEC = 60.0
 PACE_EVERY_SEC = 1.0
@@ -208,10 +212,14 @@ class ContentScheduler:
         self.due_at = 0.0
         self.starts = 0
         self.last_exit: Optional[int] = None
+        # When it last ended on its own, and when it was started, on `clock`.
+        self.last_exit_at: Optional[float] = None
+        self.started_at: list[float] = []
 
     def __call__(self, mode: str) -> None:
         if self.proc is not None and self.proc.poll() is not None:
             self.last_exit = self.proc.returncode
+            self.last_exit_at = self._clock()
             self._forget()
             self.due_at = self._clock() + CONTENT_RESTART_SEC
         engine = self.supervisor.pid()
@@ -233,6 +241,9 @@ class ContentScheduler:
         self.engine_pid = engine
         self.mode = None
         self.starts += 1
+        now = self._clock()
+        self.started_at = [t for t in self.started_at
+                           if now - t < CONTENT_CRASH_WINDOW_SEC] + [now]
         try:
             content_pid_path().write_text(str(self.proc.pid))
         except OSError:
@@ -276,7 +287,13 @@ class ContentScheduler:
             state = json.loads(state_path().read_text())
         except (OSError, ValueError):
             state = {}
+        now = self._clock()
         return {"running": self.proc is not None, "starts": self.starts, "last_exit": self.last_exit,
+                # Started within CONTENT_CRASH_WINDOW_SEC, and how long ago it
+                # last ended on its own: a crash loop, told apart from a long life.
+                "recent_starts": sum(now - t < CONTENT_CRASH_WINDOW_SEC for t in self.started_at),
+                "window_sec": CONTENT_CRASH_WINDOW_SEC,
+                "last_exit_ago": (now - self.last_exit_at) if self.last_exit_at is not None else None,
                 "paused": self.mode == "hold", **{k: v for k, v in state.items() if k != "paused"}}
 
 

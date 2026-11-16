@@ -165,6 +165,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__brains_settings",
     "mcp__jarvis__set_brain",
     "mcp__jarvis__start_brain",
+    "mcp__jarvis__install_session_skill",
     # Every other setting in Settings (settings_specs.py): reading them, and
     # the acting change the Settings route also calls.
     "mcp__jarvis__jarvis_settings",
@@ -244,6 +245,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__records_move",
     "mcp__jarvis__agent_keys",
     "mcp__jarvis__revoke_agent_key",
+    "mcp__jarvis__renew_work_key",
     # The page's navigation and white attention (ui_control.py): ui_map reads
     # (untrusted block); ui_navigate, ui_indicate and ui_journey are ACTING_TOOLS.
     "mcp__jarvis__ui_map",

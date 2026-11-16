@@ -32,7 +32,10 @@ import {
 const SAME_IN_BOTH = new Set<string>(["units.megabytes", "left.brains.engines.model", "right.subsystem.said.teamError", "left.updates.prName",
                                       "main.conversation.overlapLead", "main.knowledge.index.serves",
                                       "left.fields.choice.fahrenheit", "left.fields.choice.celsius",
-                                      "left.fields.choice.chrome", "left.fields.choice.firefox", "left.field.https"]);
+                                      "left.fields.choice.chrome", "left.fields.choice.firefox", "left.field.https",
+                                      // The Setup row's check with no code of its own is only its
+                                      // message, and Claude Code is a product's name.
+                                      "right.subsystem.said.setupCheck", "right.subsystem.name.setupClaudeCli"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });
@@ -106,6 +109,16 @@ const cases = [
     assert.equal(language.get(), "en");
     reported("fr");                           // not a language JARVIS has: ignored
     assert.equal(language.get(), "en");
+  }),
+  check("a language update names each language in the reader's language", () => {
+    // attention.ts `languagesNamed`: the server sends codes, the catalog names them.
+    const said = (lang: "en" | "es") => translate(lang, "main.updates.event.language.model_missing", {
+      chosen: translate(lang, "main.updates.language.es"), using: translate(lang, "main.updates.language.en") });
+    assert.equal(said("es"), "Eligió español, pero su modelo de voz no está instalado, así que JARVIS usa "
+                 + "inglés; descárguelo en Ajustes, Voz e idioma");
+    assert.equal(said("en"), "You chose Spanish, but its speech model is not installed, so JARVIS is using "
+                 + "English; download it in Settings, Voice and language");
+    assert.ok(!said("es").includes("Spanish") && !said("es").includes("English"));
   }),
   check("a missing key or value is reported, never hidden", () => {
     const dynamic = "tabs.right.nowhere" as MessageKey;

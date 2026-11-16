@@ -426,7 +426,8 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows", "work", "folders", "knowledge", "attention", "team_server", "server"]
+                   "workflows", "work", "folders", "knowledge", "attention", "team_server", "server",
+                   "setup"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail", "name_said", "said"} for c in s["checks"])
@@ -695,3 +696,137 @@ def test_an_attention_record_that_does_not_open_is_down_on_the_route_with_why(se
     assert row["state"] == "down" and "the attention documents cannot be read" in row["summary"]
     assert row["said"]["code"] == "attentionNotOpen"
     server._attend("run", "r1", "finished")          # dropped, and never raises
+
+
+# ── Setup: the startup checks ────────────────────────────────────────────
+
+def _pf(name, status="ok", code=None, message="words"):
+    from jarvis import preflight
+    return preflight.Check(name=name, status=status, message=message, code=code)
+
+
+def test_setup_before_the_checks_have_run_is_unknown():
+    s = sd.setup(None)
+    assert (s.id, s.state, s.said.code) == ("setup", sd.UNKNOWN, "setupNotRun")
+
+
+def test_setup_lists_each_failing_check_by_its_own_name_never_worse_than_degraded():
+    s = sd.setup([_pf("claude_cli"), _pf("session_skill", "warn", "missing"),
+                  _pf("accessibility", "fail", "not_granted"),
+                  _pf("screen_recording", "fail", "not_granted"),
+                  _pf("speech_input", "warn", None, "The model is missing."),
+                  _pf("some_new_check", "warn", None, "Something else.")])
+    assert s.state == sd.DEGRADED
+    checks = {c.id: c for c in s.checks}
+    assert list(checks) == ["session_skill", "accessibility", "screen_recording",
+                            "speech_input", "some_new_check"], "only the failing ones"
+    assert checks["session_skill"].said.code == "setupSkillMissing"
+    assert checks["session_skill"].name_said.code == "setupSessionSkill"
+    assert checks["accessibility"].said.code == "setupAccessibilityNotGranted"
+    assert checks["screen_recording"].said.code == "setupScreenNotGranted"
+    # No code of its own: the check's own message, said through setupCheck.
+    assert checks["speech_input"].said == sd.Said("setupCheck", {"message": "The model is missing."})
+    # A check with no name code is shown by its own name.
+    assert checks["some_new_check"].name_said is None and checks["some_new_check"].name == "some_new_check"
+    assert s.said.code == "badCheck" and s.summary.startswith("Talk-to-jarvis skill: ")
+
+
+def test_setup_with_every_check_passing_is_ok():
+    s = sd.setup([_pf("claude_cli"), _pf("session_skill")])
+    assert (s.state, s.said.code) == (sd.OK, "setupOk")
+    assert sd.setup([_pf("session_skill", "warn", "out_of_date")]).checks[0].said.code == "setupSkillOld"
+
+
+def test_the_route_s_setup_row_follows_the_kept_checks(server, monkeypatch):
+    hints = []
+    monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
+
+    async def checks(provider_checks=()):
+        return [_pf("session_skill", "warn", "missing")]
+    monkeypatch.setattr(server.preflight, "run_checks", checks)
+    rows = {s["id"]: s for s in TestClient(server.app).get(
+        "/api/diagnostics/subsystems", headers=ORIGIN).json()["subsystems"]}
+    assert rows["setup"]["state"] == "unknown"
+    asyncio.run(server._run_preflight())
+    assert {"type": "subsystems"} in hints
+    rows = {s["id"]: s for s in TestClient(server.app).get(
+        "/api/diagnostics/subsystems", headers=ORIGIN).json()["subsystems"]}
+    assert rows["setup"]["state"] == "degraded"
+    assert [c["said"]["code"] for c in rows["setup"]["checks"]] == ["setupSkillMissing"]
+
+
+def test_install_skill_on_the_page_and_by_voice_share_one_install(wired, monkeypatch, tmp_path):
+    """Setup's Install skill (`POST /api/setup/session-skill`) and the
+    brain's acting `install_session_skill` call the same
+    `_install_session_skill` (session_skill.install), and the row moves."""
+    import inspect
+    from jarvis import preflight, session_skill
+    server = wired.server
+    assert "_install_session_skill" in inspect.getsource(server.tool_install_session_skill)
+    assert "_install_session_skill" in inspect.getsource(server.api_install_session_skill)
+    assert "session_skill.install()" in inspect.getsource(server._install_session_skill)
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    monkeypatch.setattr(session_skill.session_watch, "config_roots", lambda: [claude])
+    monkeypatch.setattr(session_skill.codex_sessions, "codex_home", lambda: tmp_path / "no-codex")
+    server._preflight_checks = [preflight._check_session_skill_sync()]
+    assert sd.setup(server._preflight_checks).state == sd.DEGRADED
+    from tests.test_brain_page_parity import _call
+    assert _call(wired, "install_session_skill")["text"].startswith("Installed, sir")
+    assert (claude / "skills").is_dir()
+    assert sd.setup(server._preflight_checks).state == sd.OK, "the row moves at once"
+    assert {"type": "subsystems"} in wired.hints
+    page = {"Origin": "http://localhost:5173"}
+    body = wired.client.post("/api/setup/session-skill", headers=page).json()
+    assert body["outcome"] == "installed" and body["current"] is True
+    assert wired.client.post("/api/setup/session-skill").status_code == 403, "the page's origin only"
+
+
+# ── messages between people's delivery ───────────────────────────────────
+
+def test_delivery_failing_is_a_check_on_the_team_row_never_worse_than_degraded():
+    team = {"state": "connected", "team": {"name": "T"}}
+    s = sd.team_server(team, NOW, None, {"failures": 0, "last_error": None})
+    assert s.state == sd.OK and {c.id: c.said.code for c in s.checks}["messaging"] == "messagingOk"
+    s = sd.team_server(team, NOW, None, {"failures": 1, "last_error": "unavailable"})
+    assert s.state == sd.OK and s.checks[-1].said.code == "messagingRetrying"
+    s = sd.team_server(team, NOW, None, {"failures": sd.MESSAGING_FAILURES_IN_A_ROW,
+                                         "last_error": "unavailable"})
+    assert s.state == sd.DEGRADED and s.said.code == "badCheck"
+    assert s.summary == "Messages between people: 3 delivery passes failed in a row: unavailable"
+    assert all(c.id != "messaging" for c in sd.team_server(team, NOW).checks), \
+        "no loops running: no check"
+
+
+def test_delivery_failing_in_a_row_is_one_silent_update(server, monkeypatch):
+    from jarvis.attention_store import AttentionStore
+    store = AttentionStore()
+    looks = iter([0, sd.MESSAGING_FAILURES_IN_A_ROW, sd.MESSAGING_FAILURES_IN_A_ROW + 1, 0])
+    current = {}
+
+    def subsystems():
+        n = next(looks, None)
+        if n is None:
+            raise RuntimeError("no more looks")
+        current["failures"] = n
+        return [_subsystem("communications", sd.OK)]
+
+    monkeypatch.setattr(server, "_subsystems", subsystems)
+    monkeypatch.setattr(server, "_messaging_delivery",
+                        lambda: {"failures": current.get("failures", 0), "last_error": "unavailable"})
+    monkeypatch.setattr(server, "attention_record", store)
+    monkeypatch.setattr(server, "speech", None)
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda h: None)
+    monkeypatch.setattr(server, "SUBSYSTEMS_POLL_SEC", 0.001)
+
+    async def run():
+        task = asyncio.create_task(server._watch_subsystems())
+        await until_async(lambda: "subsystems" in sd.beats and sd.beats["subsystems"].failures)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    item = store.get("messaging", "delivery")
+    assert (item.event, item.facts) == ("failing", {"failures": 3, "error": "unavailable"})
+    assert not item.audible and item.state == "resolved", "resolved once a pass went through"
+    assert [h["event"] for h in store.history(item.id)] == ["failing"], "recorded once"

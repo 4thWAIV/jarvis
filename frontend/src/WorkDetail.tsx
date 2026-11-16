@@ -42,7 +42,7 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { inboxMessages, threadOf } from "./messagesToHim";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
-import { revokeAgentKey } from "./agents";
+import { renewWorkKey, revokeAgentKey } from "./agents";
 import { openInbox } from "./packageInbox";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
@@ -316,7 +316,8 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
 }
 
 /** One work-item key (made by `make_package --work` or `agent_key grant`):
- *  who issued it, when it ends, and his Revoke. The detail is read again
+ *  who issued it, when it ends, his Renew (another 30 days, as the
+ *  issuer's `agent_key renew`) and his Revoke. The detail is read again
  *  on the "work" hint every key change sends. */
 function ItemKey({ itemKey }: { itemKey: NonNullable<WorkItem["work_keys"]>[number] }) {
   const t = useT();
@@ -326,6 +327,9 @@ function ItemKey({ itemKey }: { itemKey: NonNullable<WorkItem["work_keys"]>[numb
       {t("main.work.itemKey", { name: itemKey.issued_by || t("main.work.itemKeyNobody"),
                                  when: formatDateTime(itemKey.expires_at * 1000, { dateStyle: "medium" }) })}{" "}
       <code className="work-path">{itemKey.fingerprint}</code>{" "}
+      <button data-ui-action="domain" type="button" className="thread-key-renew"
+              onClick={() => { setFailed(null); renewWorkKey(itemKey.fingerprint).catch((e: Error) => setFailed(e.message)); }}>
+        {t("main.work.keyRenew")}</button>{" "}
       <button data-ui-action="domain" type="button" className="thread-key-revoke"
               onClick={() => { setFailed(null); revokeAgentKey(itemKey.fingerprint).catch((e: Error) => setFailed(e.message)); }}>
         {t("main.thread.keyRevoke")}</button>

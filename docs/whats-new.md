@@ -10,6 +10,28 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
+## More things that block work now tell you and can be fixed from the dashboard
+
+Diagnostics has a new Setup row listing every startup check that did not
+pass: the talk-to-jarvis skill your agents need to reach you, Accessibility,
+Screen Recording and the rest, each in plain words. When the skill is
+missing or out of date, Setup has Install skill, and JARVIS installs it
+when you ask by voice; no terminal command is needed.
+
+When messages between people keep failing to get through, the Team server
+row says so (it never turns red for it) and an update appears in Updates
+waiting, gone once a delivery succeeds. When the knowledge engine's file
+reader keeps crashing and restarting, the Knowledge engine row is degraded
+and says how often and with what exit code.
+
+A run you started from the dashboard that fails or runs out of time is now
+an update too, as runs JARVIS starts always were. If you chose Spanish but
+its speech model is missing, so JARVIS started in English, an update says
+so until the language changes. A work-item key a few days from its 30-day
+end is an update naming its Work item, and the item's Overview has Renew
+beside Revoke (JARVIS renews it by voice too). A workflow blocker reported
+by something other than an agent's own key is an update on the workflow,
+cleared once the blocker is.
 ## A new language kit no longer voids your architecture approval, and says when it arrives
 
 The architecture language kit is published again on every change its
