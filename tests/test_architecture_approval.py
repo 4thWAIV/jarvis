@@ -9,10 +9,12 @@ retired; an architecture package delivered before, still carrying it, asks
 Approve or Reject in its place. His answer is recorded through the
 existing answer route with the {document_id, revision, source_revision,
 kit_digest} it was given to; request changes needs his words. A newer checked
-revision of the document, or another kit, makes it stale: shown so, counted
-as unanswered, and ending nothing. A wait on package:<id>:approve-architecture
-ends only on approve of the revision in force, never on request changes or a
-sign-off.
+revision of the document, or a kit with other language files, makes it
+stale: shown so, counted as unanswered, and ending nothing; a kit release
+with the same language files leaves it standing. A wait on
+package:<id>:approve-architecture
+ends only on approve of the revision in force, never on request changes or
+a sign-off.
 
 Needs the pinned kit asset (JARVIS_LANGUAGE_KIT_ASSET; the language-kit
 workflow)."""
@@ -236,7 +238,7 @@ def test_a_newer_checked_revision_makes_his_approval_stale(wired, shown, marks, 
     assert newer["check"]["ok"] and newer["revision"] != revision["revision"]
     q = approval(inbox_id)
     assert q.stale and not q.counts() and not q.ends_waits()
-    assert "(stale: a newer revision or kit has been checked since)" in q.answered_id()
+    assert "(stale: a newer revision has been checked since, or the kit's language changed)" in q.answered_id()
     asked = package_inbox.page_vote(package_of(inbox_id))["asks"][0]
     assert asked["stale"] and asked["answered_revision"] == revision["revision"]
     wid = waiting_on(inbox_id)
@@ -244,18 +246,46 @@ def test_a_newer_checked_revision_makes_his_approval_stale(wired, shown, marks, 
     assert package_inbox.counts(package_inbox.questions(package_of(inbox_id)))[0] == 0
 
 
-def test_another_kit_makes_his_approval_stale(wired, shown, marks, tmp_path, draft, monkeypatch):  # noqa: F811
+def kit_in_force(monkeypatch, **files):
+    """Another kit release comes into force: a new digest, its files those
+    of the kit the revision was checked under with `files` changed."""
+    real = language_projection.kit.active
+
+    class Released:
+        def __init__(self, installed):
+            self.directory = installed.directory
+            self.release = type("R", (), {"digest": "f" * 64})()
+            self.record = {**installed.record, "files": {**installed.record["files"], **files}}
+    monkeypatch.setattr(language_projection.kit, "active",
+                        lambda digest=None: real(digest) if digest else Released(real()))
+
+
+def test_a_kit_with_other_language_files_makes_his_approval_stale(
+        wired, shown, marks, tmp_path, draft, monkeypatch):  # noqa: F811
     inbox_id, _ = sent(wired, draft, tmp_path)
     ok, said = answer(wired, "page", inbox_id, package_inbox.APPROVAL_ID, "approve")
     assert ok, said
     assert not approval(inbox_id).stale
-    real = language_projection.kit.active
+    kit_in_force(monkeypatch, **{"arch.yaml": "0" * 64})
+    q = approval(inbox_id)
+    assert q.stale and not q.counts() and not q.ends_waits()
 
-    class Other:
-        def __init__(self, installed):
-            self.release = type("R", (), {"digest": "f" * 64})()
-    monkeypatch.setattr(language_projection.kit, "active", lambda *a: Other(real(*a)))
-    assert approval(inbox_id).stale
+
+@pytest.mark.parametrize("changed", ["style.css", "kit.js", "page.js"])
+def test_a_kit_release_with_the_same_language_files_leaves_his_approval_standing(
+        wired, shown, marks, tmp_path, draft, monkeypatch, changed):  # noqa: F811
+    """Every push to the publisher's dev or main is a kit pre-release, most
+    changing nothing in the language: his approval is not voided by one."""
+    inbox_id, revision = sent(wired, draft, tmp_path)
+    kit_in_force(monkeypatch, **{changed: "0" * 64})
+    asked = approval(inbox_id)
+    assert asked.answer is None and not asked.stale, "an open question is unchanged"
+    ok, said = answer(wired, "page", inbox_id, package_inbox.APPROVAL_ID, "approve")
+    assert ok, said
+    q = approval(inbox_id)
+    assert not q.stale and q.counts() and q.ends_waits()
+    assert q.answer["subject"]["kit_digest"] == revision["kit_digest"] != "f" * 64
+    assert package_inbox.counts(package_inbox.questions(package_of(inbox_id)))[0] >= 1
 
 
 # -- a package delivered before Got it was retired -------------------------------------------

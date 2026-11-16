@@ -140,6 +140,31 @@ def test_with_knowledge_off_ingest_is_switched_off_and_the_engine_can_be_fine():
     assert checks["embedder"].state == sd.IDLE and checks["embedder"].said.code == "knowledgeIngestOff"
 
 
+_RUNNING = {"state": "running", "pace": "free", "engine": {"store": {"writable": True},
+                                                           "keyword": {"chunks": 1}, "vectors": {}}}
+
+
+@pytest.mark.parametrize("content, state, code", [
+    ({"running": True, "recent_starts": 1, "last_exit": None, "last_exit_ago": None},
+     sd.OK, "knowledgeContentOk"),
+    ({"running": True, "recent_starts": 3, "last_exit": 1, "last_exit_ago": 4.0, "window_sec": 600},
+     sd.DEGRADED, "knowledgeContentLooping"),
+    ({"running": False, "recent_starts": 1, "last_exit": -9, "last_exit_ago": 2.0, "window_sec": 600},
+     sd.DEGRADED, "knowledgeContentExited"),
+    # An exit long ago, started again since and running: no longer worth seeing.
+    ({"running": True, "recent_starts": 1, "last_exit": 1, "last_exit_ago": 900.0, "window_sec": 600},
+     sd.OK, "knowledgeContentOk"),
+])
+def test_a_crash_looping_file_reader_makes_the_row_degraded_with_why(content, state, code):
+    s = sd.knowledge({**_RUNNING, "content": content}, 0)
+    checks = {c.id: c for c in s.checks}
+    assert checks["content"].said.code == code
+    assert s.state == state
+    if state == sd.DEGRADED:
+        assert s.said == sd.Said("badCheck", {"check": "content"})
+        assert s.summary.startswith("File reader: The file reader ")
+
+
 def test_the_row_says_the_pace_and_the_embedder():
     s = sd.knowledge({"state": "running", "pace": "free", "pace_reason": "free",
                       "engine": {"store": {"writable": True}, "keyword": {"chunks": 1},

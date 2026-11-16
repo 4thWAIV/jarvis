@@ -88,6 +88,12 @@ class ReviewRequest(BaseModel):
     words: str = ""
 
 
+class ActRequest(BaseModel):
+    action: str
+    piece: str = ""
+    to: str = ""
+
+
 # ── who, by name ────────────────────────────────────────────────────────
 
 class WhoNames:
@@ -524,6 +530,54 @@ def review(item_id: str, action: str, words: str, where: str,
     return item
 
 
+# His acts on work nobody else can unstick, as the page, his voice and the
+# record name them (beside his review, in the item's header).
+RELEASE_HOLD, CLOSE, REASSIGN = "release_hold", "close", "reassign"
+HIS_ACTIONS = {RELEASE_HOLD: work_store.HOLD_RELEASED, CLOSE: work_store.CLOSED_BY_HIM,
+               REASSIGN: work_store.REASSIGNED}
+
+
+def act(item_id: str, action: str, where: str, piece: str = "",
+        to: str = "") -> work_store.WorkItem:
+    """His act on an item, from the page and the brain's acting
+    `review_work` alike: release a held piece's hold (`piece`; none for an
+    item with no pieces), close the item (to History, for good), or put a
+    piece on another agent (`to`, `agent:<session id>`, one the agent
+    directory knows). Recorded as his, with where. Its agents are told in
+    `answers_dir()/<project>/<item>-act-<revision>.md`."""
+    kind = HIS_ACTIONS.get(action)
+    if kind is None:
+        raise work_store.WorkRefused("An act is release_hold, close or reassign.")
+    piece = str(piece or "").strip()
+    detail: dict = {"where": where}
+    if piece:
+        detail["key"] = piece
+    name = ""
+    if action == REASSIGN:
+        person = work_store.parse_who(to)
+        if person.kind != work_store.AGENT or not person.ref:
+            raise work_store.WorkRefused("A piece is reassigned to an agent: agent:<session id>.")
+        name = agent_directory.names_by_session().get(person.ref) or ""
+        if not name:
+            raise work_store.WorkRefused("JARVIS does not know that agent: choose one from the "
+                                         "agents list.")
+        detail["who"] = {"kind": person.kind, "ref": person.ref}
+    what = f"piece {piece}" if piece else "the item"
+    summary = {RELEASE_HOLD: f"He released the hold on {what}.",
+               CLOSE: "He closed it: it is kept in History.",
+               REASSIGN: f"He put {what} on {name}."}[action]
+    item = work_store.record(work_store.WorkEvent(item_id, kind, summary, detail))
+    head, lines = {
+        RELEASE_HOLD: (f"Tim released the hold on {what} of {item.id}",
+                       ["Nothing holds it now: pick it up and report as you work on it."]),
+        CLOSE: (f"Tim closed {item.id}", ["It is in History: report nothing more to it."]),
+        REASSIGN: (f"Tim put {what} of {item.id} on {name}",
+                   ["Its new agent picks it up from here; report it under that agent."]),
+    }[action]
+    _write_for_asker(item, f"act-{item.revision}", head, lines, time.time(), where)
+    return item
+
+
 def _added_key(item_id: str) -> str:
     """The key of the piece he added last."""
     for e in reversed(work_store.latest(item_id, 10)):
@@ -696,4 +750,15 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, REVIEW_ACTIONS[req.action], None)
+        return {"item": shown(item)}
+
+    @app.post("/api/work/{item_id}/act")
+    async def act_on_item(item_id: str, req: ActRequest):
+        """His act on an item on the page: Release hold (a held piece),
+        Close item, Reassign piece."""
+        try:
+            item = await asyncio.to_thread(act, item_id, req.action, "page", req.piece, req.to)
+        except work_store.WorkRefused as e:
+            return refused(e)
+        recorded(item, HIS_ACTIONS[req.action], None)
         return {"item": shown(item)}

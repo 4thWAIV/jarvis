@@ -559,6 +559,25 @@ export async function reviewWork(id: string, action: ReviewAction, words = ""): 
   return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
 }
 
+export type ItemAct = "release_hold" | "close" | "reassign";
+
+/** His act on an item (release a held piece's hold, close it, put a piece
+ *  on another agent), the same call as the brain's review_work. `to` is
+ *  `agent:<session id>`. Resolves with the refusal's reason, or null. */
+export async function actOnWork(id: string, action: ItemAct, piece = "", to = ""): Promise<string | null> {
+  const res = await fetch(`/api/work/${encodeURIComponent(id)}/act`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, piece, to }),
+  }).catch(() => null);
+  if (res?.ok) {
+    workChanged.set(workChanged.get() + 1);
+    return null;
+  }
+  if (!res) return t("right.workflows.noAnswer");
+  const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
+}
+
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
 export const answerWorkDecision = (id: string, key: string, answer: string) =>
   postAnswer(`/api/work/${encodeURIComponent(id)}/decisions/${encodeURIComponent(key)}`,

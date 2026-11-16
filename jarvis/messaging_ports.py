@@ -142,6 +142,8 @@ _SEND_TRANSITIONS: dict[tuple[str, str], str] = {
     ("approved", "submit"): "submitting",
     ("approved", "cancel"): "cancelled",
     ("approved", "upload_failed"): "failed",   # its files never went, after every retry
+    ("approved", "held"): "failed",            # held for the owner (not_approved, a missing
+                                               # snapshot): never retried by itself
     ("submitting", "accepted"): "accepted",
     ("submitting", "answer_lost"): "accept_unknown",
     ("submitting", "refused"): "failed",

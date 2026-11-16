@@ -57,7 +57,7 @@ from uuid import UUID
 from fastapi import FastAPI
 
 from jarvis import attachment_locations, bundle_api, bundle_preflight, bundle_status, bundle_tasks
-from jarvis import data_paths
+from jarvis import attention_store, data_paths, message_approvals
 from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
@@ -148,7 +148,7 @@ class MessagingRuntime:
                                  snapshots=self.files, presentation=presenting,
                                  node_id=lambda: self.node, clock=clock,
                                  on_change=self.hint, transport_for=self._guarded,
-                                 openability=self.openability)
+                                 openability=self.openability, on_failed=self._send_failed)
         self.reviews = Reviews(self.approvals, captures, self.members)
         self.preflight = bundle_preflight.SenderPreflight(
             self.store, BundleInspection(bundle_preflight.DraftFiles(self.files, self.store),
@@ -208,6 +208,21 @@ class MessagingRuntime:
 
     def members(self):
         return self.local.members()
+
+    def _send_failed(self, pairing, send) -> None:
+        """A send that will not go by itself (refused, its files never went,
+        held for the owner) is a `human_send` attention item, by its message
+        id: the failure as a code, who it was for as other people's words.
+        The Queue shows it failed with its reason and Retry."""
+        attention = attention_store.current()
+        if attention is None:
+            return
+        draft = self.store.draft(*pairing.ns, send.message_id)
+        label = (message_approvals.recipient_label(self.members(), draft.recipient_github_id,
+                                                   pairing.owner_github_id)
+                 if draft is not None else "them")
+        attention.record("human_send", str(send.message_id), "failed",
+                         facts={"failure": send.failure or ""}, untrusted={"to": label})
 
     def files_context(self) -> Optional[messaging_files.FilesContext]:
         who = self.identity()

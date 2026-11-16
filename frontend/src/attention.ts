@@ -96,11 +96,25 @@ export function itemName(item: AttentionItem): string {
   return u.agent ?? u.sender ?? u.project ?? u.package ?? u.workflow ?? u.work ?? u.to ?? u.topic ?? "";
 }
 
+/** A language item's facts name languages by code (`chosen`, `using`):
+ *  each is named in the reader's language from the catalog
+ *  (`main.updates.language.<code>`); a code it has no words for stays as it
+ *  came. Every other fact is unchanged. */
+export function languagesNamed(facts: AttentionItem["facts"]): AttentionItem["facts"] {
+  const out: Record<string, unknown> = { ...facts };
+  for (const key of ["chosen", "using"]) {
+    const code = out[key];
+    if (typeof code === "string") out[key] = codeWords("main.updates.language", code) ?? code;
+  }
+  return out as AttentionItem["facts"];
+}
+
 /** One item in words: its kind and event's catalog entry, with the name it
  *  is about and its facts (JARVIS's own: a kit's version, the files that
  *  changed); the codes themselves for a pair the catalog has no words for. */
 export function itemWords(item: AttentionItem): string {
   const name = itemName(item) || t("main.updates.someone");
-  const words = codeWords("main.updates.event", `${item.kind}.${item.event}`, { ...item.facts, name });
+  const words = codeWords("main.updates.event", `${item.kind}.${item.event}`,
+                          { ...(item.kind === "language" ? languagesNamed(item.facts) : item.facts), name });
   return words ?? `${item.kind}: ${item.event}${itemName(item) ? ` (${itemName(item)})` : ""}`;
 }

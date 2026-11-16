@@ -242,7 +242,8 @@ def test_nothing_unapproved_is_sent_and_a_cancel_before_the_attempt_holds(tim, s
     tim.store.set_send(*tim.ns, forged)        # an outbox row with no approval record
     tim.tick()
     held = tim.store.send(*tim.ns, mid)
-    assert (held.state, held.failure) == ("approved", "not_approved") and serve.messages == {}
+    assert (held.state, held.failure) == ("failed", "not_approved") and serve.messages == {}, \
+        "held for the owner is failed, so the Queue shows the reason and Retry"
     tim.tick()
     assert serve.messages == {}, "held until the owner acts"
     draft = tim.approve(MATT, "Never mind.")
@@ -251,6 +252,44 @@ def test_nothing_unapproved_is_sent_and_a_cancel_before_the_attempt_holds(tim, s
         "state": ports.next_send_state("approved", "cancel")}))
     tim.tick()
     assert serve.messages == {}
+
+
+def test_every_send_moved_to_failed_is_told_once(tim, serve):
+    """A hold for the owner and a refusal each move the send to `failed` and
+    tell `on_failed` (the runtime's human_send attention item) once; a send
+    that stays failed is not told again."""
+    told = []
+    tim.delivery.on_failed = lambda pairing, send: told.append((send.message_id, send.failure))
+    mid = tim.ids.new_id()
+    tim.store.create_draft(*tim.ns, ports.Draft(
+        message_id=mid, thread_id=mid, recipient_github_id=MATT, draft_revision=1, text="x",
+        send=ports.LocalSend(message_id=mid, content_revision=1, state="draft")))
+    tim.store.set_send(*tim.ns, tim.store.send(*tim.ns, mid).model_copy(
+        update={"state": "approved"}))
+    tim.tick()
+    tim.tick()
+    refused = tim.approve(OUTSIDER, "Who are you?")
+    tim.tick()
+    assert told == [(mid, "not_approved"), (refused.message_id, "recipient_not_allowed")]
+
+
+def test_a_failed_send_is_a_human_send_update_naming_who_it_was_for(monkeypatch):
+    from jarvis import attention_store, messaging_runtime
+    recorded = []
+    monkeypatch.setattr(attention_store, "current", lambda: SimpleNamespace(
+        record=lambda *a, **k: recorded.append((a, k))))
+    mid = UUID(int=7)
+    me = SimpleNamespace(
+        store=SimpleNamespace(draft=lambda *a: SimpleNamespace(recipient_github_id=MATT)),
+        members=lambda: [wire.TeamMember(github_id=MATT, login="matt", name="Matt")])
+    pairing = SimpleNamespace(ns=(SERVER, TIM), owner_github_id=TIM)
+    send = ports.LocalSend(message_id=mid, content_revision=1, state="failed",
+                           failure="not_approved")
+    messaging_runtime.MessagingRuntime._send_failed(me, pairing, send)
+    (args, kwargs), = recorded
+    assert args == ("human_send", str(mid), "failed")
+    assert kwargs["facts"] == {"failure": "not_approved"}
+    assert kwargs["untrusted"] == {"to": "Matt"}
 
 
 def test_a_refusal_is_failed_and_the_owners_retry_resends_the_same_revision(tim, serve, clock):

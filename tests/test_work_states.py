@@ -413,7 +413,9 @@ def test_a_stalled_item_is_a_silent_update_resolved_once_it_moves(wired, item, m
             listed = work_store.listing()
             wired.server._attend_stalled(listed, wired.server._stalled(listed))
         news = record.get("work_stalled", item.id)
-        assert news.event == "stalled" and not news.audible
+        # Named by who was on it, when JARVIS can name them (its reporter here).
+        assert news.event in ("stalled", "stalled_on") and not news.audible
+        assert news.event == "stalled" or news.untrusted.get("agent")
         listed = work_store.listing()
         wired.server._attend_stalled(listed, wired.server._stalled(listed))
         assert record.get("work_stalled", item.id).state == attention_store.RESOLVED

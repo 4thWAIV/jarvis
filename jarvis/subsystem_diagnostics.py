@@ -32,6 +32,13 @@ heartbeats and outcomes kept here).
   - The server's start setup (start_settings.status): a changed setup on
     trial, and going back to the last one a page reached, degraded for
     start_settings.REVERT_NOTICE_SEC.
+  - Setup: the startup checks (preflight.run_checks) that did not pass,
+    each by its own name (the talk-to-jarvis skill, Accessibility, Screen
+    Recording, ...), never worse than degraded. Its view has Install skill.
+  - Messages between people's delivery loop (messaging_client.Delivery) is
+    a check on the team server's row, degraded after
+    MESSAGING_FAILURES_IN_A_ROW failed passes; the content child's crash
+    loop (knowledge_runtime.ContentScheduler) one on the knowledge row.
 
 The page judges its own connection. `gather` does the reads; the server's
 route returns it, and the server's watch (`_watch_subsystems`) hints the
@@ -106,6 +113,39 @@ WORK_READS_SLOW_SEC = 2.0
 WORK_WRITES_ALARM_SEC = 5.0
 WRITE, READ = "write", "read"
 FOLDERS_LOOP = "folder discovery"
+# The held Work view's loop (server._watch_work: built, then ticked) and the
+# agent keys' look (server._watch_agent_keys: pending keys proven, work-item
+# keys ended), each judged by its heartbeat.
+WORK_LOOP = "work view"
+AGENT_KEYS_LOOP = "agent keys"
+
+# Messages between people: this many delivery passes failed in a row is
+# degraded on the team server's row, and an attention item
+# (server._watch_subsystems).
+MESSAGING_FAILURES_IN_A_ROW = 3
+# The knowledge engine's content child: this many starts within its window
+# (knowledge_runtime.CONTENT_CRASH_WINDOW_SEC) is a crash loop, and an exit
+# that was not 0 within it is degraded too.
+CONTENT_STARTS_DEGRADED = 3
+
+# Each startup check's name code (preflight.py's check names); one with no
+# code is shown by its own name.
+SETUP_NAMES = {
+    "session_skill": "setupSessionSkill", "accessibility": "setupAccessibility",
+    "screen_recording": "setupScreenRecording", "claude_cli": "setupClaudeCli",
+    "claude_login": "setupClaudeLogin", "fish_api_key": "setupFishKey",
+    "anthropic_key_leftover": "setupAnthropicKey", "cross_session_inbound": "setupInbound",
+    "speech_input": "setupSpeechInput", "vector_search": "setupVectorSearch",
+}
+# A startup check's line by its name and code (preflight.Check.code); any
+# other says the check's own message (`setupCheck`).
+SETUP_LINES = {
+    ("session_skill", "missing"): "setupSkillMissing",
+    ("session_skill", "out_of_date"): "setupSkillOld",
+    ("session_skill", "no_home"): "setupSkillNoHome",
+    ("accessibility", "not_granted"): "setupAccessibilityNotGranted",
+    ("screen_recording", "not_granted"): "setupScreenNotGranted",
+}
 
 
 # ── the words: a code and its values, and the English said from them ─────
@@ -256,6 +296,24 @@ SAID: dict[str, str | dict[str, str]] = {
     "startNotFromFile": "Not started from the start file; nothing is put on trial",
     "attentionNotOpen": "Not open, so updates for you are not recorded: {error}",
     "attentionOpen": "Open; updates for you are recorded",
+    "setupNotRun": "The startup checks have not finished yet",
+    "setupOk": "Every startup check passed",
+    "setupCheck": "{message}",
+    "setupSkillMissing": "The talk-to-jarvis skill is missing, so agents cannot reach you; Install skill puts it in place",
+    "setupSkillOld": "The talk-to-jarvis skill is out of date, so agents may reach you the old way; Install skill brings it up to date",
+    "setupSkillNoHome": "No Claude Code or Codex home was found to hold the talk-to-jarvis skill",
+    "setupAccessibilityNotGranted": ("macOS has not granted Accessibility, so JARVIS cannot answer a permission prompt; "
+                                     "allow it in System Settings, Privacy & Security, Accessibility"),
+    "setupScreenNotGranted": ("macOS has not granted Screen Recording, so JARVIS cannot look at the screen; allow it in "
+                              "System Settings, Privacy & Security, Screen & System Audio Recording, then restart JARVIS"),
+    "messagingOk": "Messages between people are being delivered",
+    "messagingRetrying": {"one": "{count} delivery pass failed; trying again: {error}",
+                          "other": "{count} delivery passes failed in a row; trying again: {error}"},
+    "messagingFailing": "{count} delivery passes failed in a row: {error}",
+    "knowledgeContentOk": "Reading files",
+    "knowledgeContentOff": "Not running",
+    "knowledgeContentLooping": "The file reader started {count} times in {window}; it last ended with code {exit}",
+    "knowledgeContentExited": "The file reader ended with code {exit} {age} ago; it is started again",
 }
 
 # The English of every subsystem's and check's name, by code.
@@ -297,6 +355,22 @@ NAMES: dict[str, str] = {
     "folderList": "Folders",
     "discovery": "Discovery",
     "discoveryLoop": "Discovery loop",
+    "setup": "Setup",
+    "setupAll": "Startup checks",
+    "setupSessionSkill": "Talk-to-jarvis skill",
+    "setupAccessibility": "Accessibility",
+    "setupScreenRecording": "Screen Recording",
+    "setupClaudeCli": "Claude Code",
+    "setupClaudeLogin": "Claude Code login",
+    "setupFishKey": "Fish Audio key",
+    "setupAnthropicKey": "Leftover API key",
+    "setupInbound": "Messages into sessions",
+    "setupSpeechInput": "Speech input",
+    "setupVectorSearch": "Vector search",
+    "messaging": "Messages between people",
+    "knowledgeContent": "File reader",
+    "workView": "Work view",
+    "agentKeysLoop": "Agent keys",
 }
 
 
@@ -577,12 +651,22 @@ def queued_check(queued: list, watcher, now: float) -> Check:
     return one(DEGRADED, say("queuedHeld", agent=oldest.agent_name, age=age(waited)))
 
 
+def keys_check(b: Optional[Beat], now: float) -> Check:
+    """The agent keys' look: a key waiting for its proof, or a work-item key
+    that should end, waits on it. Not started yet (it starts once the session
+    watcher has looked) is idle, never unknown."""
+    if b is None:
+        return check("keys", "agentKeysLoop", IDLE, say("notStarted"))
+    return check("keys", "agentKeysLoop", *judge(b, now))
+
+
 def communications(watcher, messages: list, now: float, started_at: float,
-                   queued: list = ()) -> Subsystem:
+                   queued: list = (), keys: Optional[Beat] = None) -> Subsystem:
     checks = [
         watcher_check(watcher, now, started_at),
         outgoing_check(messages, now),
         queued_check(list(queued), watcher, now),
+        keys_check(keys, now),
     ]
     first = checks[0]
     return from_checks("communications", checks, (first.said, first.detail),
@@ -736,10 +820,12 @@ def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     return s
 
 
-def work(latencies: Latencies, now: float) -> Subsystem:
+def work(latencies: Latencies, now: float, view: Optional[Beat] = None) -> Subsystem:
     """The Work tracker: how long its reports' writes and its list's reads
-    took in the last WORK_LATENCY_WINDOW_SEC. Slow is degraded, never down:
-    a slow write still lands."""
+    took in the last WORK_LATENCY_WINDOW_SEC, and the held view's loop
+    (`view`, its heartbeat). Slow is degraded, never down: a slow write still
+    lands; a view that was never built, or stopped ticking, is judged as any
+    loop is (the Work tab would be empty or frozen)."""
     window = age(WORK_LATENCY_WINDOW_SEC)
     checks = []
     for kind, code, slow in ((WRITE, "workWrites", WORK_WRITES_SLOW_SEC),
@@ -753,6 +839,7 @@ def work(latencies: Latencies, now: float) -> Subsystem:
             line = (OK, say(code + "Ok", count=len(took), window=window,
                             seconds=f"{max(took):.1f} s"))
         checks.append(check(kind + "s", code, *line))
+    checks.append(check("view", "workView", *judge(view, now)))
     s = from_checks("work", checks, (checks[0].said, checks[0].detail))
     if s.state == OK and checks[0].state == IDLE:
         s.state = IDLE
@@ -848,6 +935,9 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
         else:
             line = (OK, say("knowledgeIngestOk", count=ingest.get("documents", 0), age=age(now - last)))
         checks.append(check("ingest", "knowledgeIngest", *line))
+    content = health.get("content")
+    if on and content is not None:
+        checks.append(content_check(content))
     vectors = engine.get("vectors") or {}
     if not on:
         checks.append(check("embedder", "knowledgeEmbedder", IDLE, say("knowledgeIngestOff")))
@@ -860,12 +950,50 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
             checks.append(check("embedder", "knowledgeEmbedder", IDLE, say("knowledgeNoEmbedder")))
     s = from_checks("knowledge", checks, shown[1])
     s.state = shown[0]          # the process decides; the others inform
-    if s.state == OK and any(c.state == DEGRADED for c in checks):
-        s.state = DEGRADED      # a failing ingest is worth seeing
+    failing = next((c for c in checks if c.state == DEGRADED), None)
+    if s.state == OK and failing is not None:
+        s.state = DEGRADED      # a failing ingest or file reader is worth seeing
+        s.said, s.summary = Said("badCheck", {"check": failing.id}), f"{failing.name}: {failing.detail}"
     return s
 
 
-def team_server(team: dict, now: float, minted: Optional[dict] = None) -> Subsystem:
+def content_check(content: dict) -> Check:
+    """The content child (knowledge_runtime.ContentScheduler.health): a
+    crash loop (CONTENT_STARTS_DEGRADED starts within its window) or an
+    exit that was not 0 within it is degraded, with its exit code."""
+    window = content.get("window_sec") or 600.0
+    starts = content.get("recent_starts") or 0
+    code = content.get("last_exit")
+    ago = content.get("last_exit_ago")
+    if starts >= CONTENT_STARTS_DEGRADED:
+        line = (DEGRADED, say("knowledgeContentLooping", count=starts, window=age(window),
+                              exit="none" if code is None else str(code)))
+    elif code not in (None, 0) and ago is not None and ago < window:
+        line = (DEGRADED, say("knowledgeContentExited", exit=str(code), age=age(ago)))
+    elif content.get("running"):
+        line = (OK, say("knowledgeContentOk"))
+    else:
+        line = (IDLE, say("knowledgeContentOff"))
+    return check("content", "knowledgeContent", *line)
+
+
+def messaging_check(delivery: dict) -> Check:
+    """Messages between people's delivery loop (messaging_client.Delivery:
+    its failed passes in a row and the last error's code). Degraded after
+    MESSAGING_FAILURES_IN_A_ROW, never worse: the team is optional."""
+    failures = delivery.get("failures") or 0
+    error = str(delivery.get("last_error") or "")
+    if failures >= MESSAGING_FAILURES_IN_A_ROW:
+        line = (DEGRADED, say("messagingFailing", count=failures, error=error))
+    elif failures:
+        line = (OK, say("messagingRetrying", count=failures, error=error))
+    else:
+        line = (OK, say("messagingOk"))
+    return check("messaging", "messaging", *line)
+
+
+def team_server(team: dict, now: float, minted: Optional[dict] = None,
+                messaging: Optional[dict] = None) -> Subsystem:
     """The team server connection, from team_client's snapshot. Optional,
     so at worst degraded: a team server that is gone never turns the
     Diagnostics tab red. A node ID made although one had been kept
@@ -910,6 +1038,14 @@ def team_server(team: dict, now: float, minted: Optional[dict] = None) -> Subsys
         when = now - minted["at"]
         checks.append(check("node_id", "nodeId", DEGRADED if when < NODE_ID_NOTICE_SEC else IDLE,
                             say("nodeIdMinted", age=age(when))))
+    if messaging is not None:
+        delivering = messaging_check(messaging)
+        checks.append(delivering)
+        if delivering.state == DEGRADED and shown[0] in (OK, IDLE, UNKNOWN):
+            # Signed in, but nothing is getting through: the row says so.
+            return subsystem("team_server", DEGRADED,
+                             (Said("badCheck", {"check": delivering.id}),
+                              f"{delivering.name}: {delivering.detail}"), checks)
     return subsystem("team_server", shown[0], shown[1], checks)
 
 
@@ -960,6 +1096,31 @@ def start_setup(start: Optional[dict], now: float) -> Subsystem:
     return s
 
 
+def setup(checks: Optional[list]) -> Subsystem:
+    """The startup checks (preflight.run_checks, kept by the server): each
+    that did not pass, by its own name, saying what failed in JARVIS's own
+    words where it has a code (preflight.Check.code), else its message.
+    Never worse than degraded: JARVIS runs, short of what failed. None is
+    not run yet."""
+    if checks is None:
+        return subsystem("setup", UNKNOWN, say("setupNotRun"),
+                         [check("checks", "setupAll", UNKNOWN, say("setupNotRun"))])
+    failing = []
+    for c in checks:
+        if getattr(c, "ok", False):
+            continue
+        name = c.name
+        code = SETUP_LINES.get((name, getattr(c, "code", None)))
+        line = say(code) if code else say("setupCheck", message=c.message)
+        if name in SETUP_NAMES:
+            failing.append(check(name, SETUP_NAMES[name], DEGRADED, line))
+        else:
+            failing.append(Check(name, name, DEGRADED, line[1], None, line[0]))
+    if not failing:
+        return subsystem("setup", OK, say("setupOk"), [check("checks", "setupAll", OK, say("setupOk"))])
+    return from_checks("setup", failing, say("setupOk"))
+
+
 # ── all of them ──────────────────────────────────────────────────────────
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
@@ -968,6 +1129,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
            local_voice: Optional[dict] = None,
            start: Optional[dict] = None,
            attention_open: bool = False, attention_problem: Optional[str] = None,
+           preflight: Optional[list] = None, messaging: Optional[dict] = None,
            now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
@@ -975,18 +1137,20 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
     messages = run_store.list_messages(limit=MESSAGES_READ)
     beats_now = dict(beats)
     return [
-        communications(watcher, messages, now, started_at, run_store.queued_messages()),
+        communications(watcher, messages, now, started_at, run_store.queued_messages(),
+                       beats_now.get(AGENT_KEYS_LOOP)),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now, local_voice),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
-        work(work_routes, now),
+        work(work_routes, now, beats_now.get(WORK_LOOP)),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
         attention(attention_open, attention_problem),
-        team_server(team or {}, now, data_paths.node_id_minted()),
+        team_server(team or {}, now, data_paths.node_id_minted(), messaging),
         start_setup(start, now),
+        setup(preflight),
     ]
 
 

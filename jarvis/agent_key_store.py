@@ -566,13 +566,17 @@ def add_work_key(public_key: str, work_id: str, issued_by: str,
 
 def renew_work_key(fingerprint: str, by: str, now: Optional[float] = None
                    ) -> Optional[AgentKey]:
-    """Another WORK_KEY_LIFE_SEC for a live work-item key, by its issuer
-    alone. None when it is not one, not live, or `by` did not issue it."""
+    """Another WORK_KEY_LIFE_SEC for a live work-item key, by its issuer or
+    by Tim (`by` ON_THE_PAGE or BY_VOICE: his Renew on the item's Overview,
+    the brain's acting `renew_work_key`). None when it is not one, not live,
+    or `by` is neither."""
     now = time.time() if now is None else now
+    his = by in (ON_THE_PAGE, BY_VOICE)
 
     def run(w: agent_record.Writer) -> Optional[AgentKey]:
         path, key = _doc_of(w, fingerprint)
-        if key is None or key["state"] != ONBOARDED or key.get("issued_by") != by \
+        if key is None or key["state"] != ONBOARDED \
+                or (key.get("issued_by") != by and not his) \
                 or not str(key.get("principal", "")).startswith(WORK_KEY):
             return None
         key["expires_at"] = float(now + WORK_KEY_LIFE_SEC)
