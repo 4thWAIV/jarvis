@@ -1215,6 +1215,35 @@ EXEMPT = {
         "each piece to the agent that ran it, in its own terminal, never to the brain"),
     "work_report.main": (
         "the same command line: what it prints goes to the agent that ran it"),
+    # The status briefing command (status_briefing.py) runs in the agent's
+    # own process: what it composes from the Work record goes into the
+    # handoff and evidence files it writes, read by make_package's fresh
+    # author as evidence, or to that agent's terminal; nothing reaches the
+    # brain or a header JARVIS speaks from.
+    "status_briefing._held_text": (
+        "a held piece's title and holds, written into the status briefing's handoff file "
+        "for make_package's fresh author to read as evidence, never to the brain"),
+    "status_briefing.needs_tim": (
+        "the item's needs, held and stalled pieces as facts in the handoff file the agent "
+        "hands make_package's fresh author as evidence, never to the brain"),
+    "status_briefing.moving": (
+        "pieces reported working, with their notes, as facts in the handoff file for the "
+        "fresh author to read as evidence, never a header the brain reads"),
+    "status_briefing.done_since": (
+        "the log's finished pieces and their summaries as facts in the handoff file for "
+        "the fresh author to read as evidence, never a header the brain reads"),
+    "status_briefing.compose_item": (
+        "one item's briefing, assembled from the facts above into the handoff and evidence "
+        "files the agent writes, never to the brain"),
+    "status_briefing.handoff": (
+        "the make_package handoff the command writes to a file in the agent's own folder; "
+        "the fresh author treats every word of it as evidence, never as JARVIS's words"),
+    "status_briefing.gaps": (
+        "--check's lines naming pieces with no note or evidence, printed to the agent that "
+        "ran the command, in its own terminal, never to the brain"),
+    "status_briefing.check": (
+        "the same --check command line: what it prints goes to the agent that ran it, in "
+        "its own terminal, never to the brain"),
     "workflow_report._answered": (
         "the reporter's command line: it prints JARVIS's refusal to the session "
         "that sent the report, in that session's own terminal, never to the brain"),

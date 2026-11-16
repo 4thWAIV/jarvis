@@ -10,6 +10,17 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
+## Status briefings lead with what needs you, built from the Work record
+
+An agent preparing a status presentation on your Work items now builds it
+from the items' own records, not from what it remembers:
+`python -m jarvis.status_briefing --work <id> --out <folder>`. For each item
+the presentation starts with what needs you (decisions, packages waiting,
+held and stalled pieces, who is on each and since when), then what is
+moving, then what finished since a given time, and every fact carries its
+evidence: the commit, pull request or file the agent reported. An item that
+needs nothing of you says so in one line. `--check` shows first which
+pieces have no note or no evidence on record.
 ## Work that is stuck has an owner and a way out, on the page and by voice
 
 A piece of work held on something nobody will answer no longer needs its
