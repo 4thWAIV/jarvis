@@ -75,6 +75,8 @@ def test_the_questions_are_read_and_checked():
     assert [s.waits for s in story.slides] == [None, "tea", "milk", "cups", None]
     assert story.slides[2].asks_when == ("tea", ("black",))
     assert story.outline()["asks"] == [2, 3, 4]
+    # No slide names a part of the page: each question is about the whole page.
+    assert story.outline()["focus"] == {"tea": [], "milk": [], "cups": []}
     assert story.open_questions({}) == [2, 4]
     assert story.open_questions({"tea": {"answer": "black"}}) == [3, 4]
 

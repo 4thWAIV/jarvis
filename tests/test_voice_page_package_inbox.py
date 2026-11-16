@@ -261,7 +261,7 @@ async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
         # A package for no Work item is a message in the Inbox; Open is his click.
         row = page.locator(f".inbox-general .message-package[data-inbox-id='{inbox_id}']")
         await row.get_by_role("button", name="Open").click()
-        vote = page.locator("#package-view > .package-vote")
+        vote = page.locator("#package-view > .package-vote-row .package-vote")
         await async_api.expect(vote).to_be_visible()
         assert await page.frame_locator("#package-view iframe").locator(".package-vote").count() == 0
         vote_box = await vote.bounding_box()

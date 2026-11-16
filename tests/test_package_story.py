@@ -61,12 +61,12 @@ def test_the_example_story_is_checked_and_each_beat_first_shows_its_slide(deck):
     story = deck.story()
     assert story.outline() == {"title": "A pot of tea", "language": "en", "slides": [
         "Three things a good pot of tea needs", "Four steps", "Each tea has its own time"],
-        "asks": []}
+        "asks": [], "focus": {}}
     cues = story.cues(deck.id, 3)
     words, cue = cues[1]
     assert words == "Green tea wants water well off the boil."
     assert cue == {"package": deck.id, "beat": "3.2", "slide": 3,
-                   "targets": ["#detail-green .temp"],
+                   "say": "Green tea wants water well off the boil.", "targets": ["#detail-green .temp"],
                    "actions": [{"show": "#s3"}, {"click": ".tea[data-detail='green']"}]}
     assert [c["beat"] for _, c in story.cues(deck.id, 1)] == ["1.1", "1.2", "1.3", "1.4"]
 
@@ -318,3 +318,15 @@ def test_the_helper_is_served_from_its_one_copy_and_named_in_the_outline(wired, 
     listed = wired.client.get("/api/packages").json()["packages"]
     assert listed[0]["story"]["slides"][1] == "Four steps"
     assert b'src="/api/packages/story.js"' in (deck.folder / "index.html").read_bytes()
+
+
+def test_a_waiting_slide_names_the_part_its_question_is_about():
+    """The focus layer lights what a question is about: the waiting slide's
+    beats' targets, once each, else the slide's own element, else nothing."""
+    story = package_story.parse(json.dumps({"title": "t", "language": "en",
+        "answers": "results/decisions.json", "slides": [
+            {"title": "a", "waits": "one", "target": "#s1",
+             "beats": [{"say": "x", "targets": ["#a", "#b"]}, {"say": "y", "targets": ["#a"]}]},
+            {"title": "b", "waits": "two", "target": "#s2", "beats": [{"say": "z"}]},
+            {"title": "c", "waits": "three", "beats": [{"say": "w"}]}]}).encode())
+    assert story.outline()["focus"] == {"one": ["#a", "#b"], "two": ["#s2"], "three": []}

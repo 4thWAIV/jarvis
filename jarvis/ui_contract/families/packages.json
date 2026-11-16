@@ -3,10 +3,10 @@
   "owner": "integrator",
   "views": [],
   "commands": [
-    {"id": "package.open", "label": "Open a page work package in the centre",
+    {"id": "package.open", "label": "Open a page work package in the centre; it takes over the page as it opens",
      "view": "main.package", "args": {"packageId": {"type": "key", "entity": "package"}},
      "required": ["packageId"], "actors": ["human", "brain"],
-     "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}, {"effect": "layout.restored"}]},
+     "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}, {"effect": "layout.restored"}, {"effect": "layout.taken-over"}]},
     {"id": "package.close", "label": "Close the work package page",
      "view": "main.package", "args": {}, "required": [], "actors": ["human", "brain"],
      "effects": [{"effect": "centre.detail-closed"}, {"effect": "layout.restored"}]},
@@ -49,7 +49,7 @@
      "effects": [{"effect": "list.paged"}]}
   ],
   "kinds": [
-    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["chapters", "previous", "next", "more", "inspect", "document", "return", "header", "frame", "done", "takeover", "close", "story", "tell", "fromSlide", "resume", "stop", "vote", "approve", "reject", "words", "send", "source", "check", "readable", "asks", "explanation"],
+    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["chapters", "previous", "next", "more", "inspect", "document", "return", "header", "frame", "done", "takeover", "close", "story", "tell", "fromSlide", "resume", "stop", "vote", "approve", "reject", "words", "send", "source", "check", "readable", "asks", "explanation", "focus", "focusClose", "pause", "questionBack", "questionNext"],
      "presentations": [{"view": "main.package",
                         "reveal": {"command": "package.open", "args": {"packageId": "$key"}}}]},
     {"kind": "bundleMember", "entity": "member", "label": "Received file", "parts": ["header", "show", "close", "pages", "body", "more"],

@@ -18,7 +18,8 @@
  * page to show it with a `package_page` frame on the voice socket
  * (jarvis.ts). The page's own request opens it here at once as well.
  *
- * Showing it is the centre's `package` detail (uiNavigation.ts): the
+ * Showing it is the centre's `package` detail (uiNavigation.ts), taking
+ * over the page as it opens (`takeOverShown`): the
  * registered `package.open` and `package.close` commands are the only
  * way it opens or closes, run by Open page, by Close, by the frame (as the
  * brain's: the server sends it for the brain's tool, and a page that asked
@@ -39,7 +40,7 @@ import { registerRevealer } from "./uiNavigationReveal";
 import { liveRead, type LiveStore } from "./liveRead";
 import { t, type Said } from "./locale";
 import { createStore } from "./store";
-import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
+import { bind, detailSlot, registerClose, runBinding, takeOverShown } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
 
 /** What a page asks in the view's head (package_inbox.page_vote): the
@@ -50,6 +51,9 @@ import { dispatch, registerCommand } from "./uiRegistry";
  *  by `answer_name` and never asked again. */
 export interface PageVote {
   question: string | null;
+  /** The vote's own question and why it is his, heading its card. */
+  words?: string;
+  reason?: string;
   answer: "approve" | "reject" | "later" | "none" | string | null;
   /** His answer by its name, as recorded ("" while unanswered). */
   answer_name?: string;
@@ -61,6 +65,8 @@ export interface HeaderQuestion {
   id: string;
   question: string;
   context: string;
+  /** Why it is his to answer (the story's `reason`). */
+  reason?: string;
   options: { id: string; name: string; says: string }[];
   recommended: string;
   /** Asked only once another question has one of its answers (asks_when). */
@@ -106,6 +112,10 @@ export interface StoryOutline {
   slides: string[];
   /** The slides that ask a question and wait for his answer. */
   asks?: number[];
+  /** For each question a slide waits on, the part of the page it is about
+   *  (that slide's targets; empty: the whole page). PackageFocus.tsx lights
+   *  it while the question is his. */
+  focus?: Record<string, string[]>;
 }
 
 /** A beat of a story, as its audio frames carry it (package_story.py). */
@@ -113,6 +123,8 @@ export interface StoryCue {
   package: string;
   beat: string;
   slide: number;
+  /** The beat's words, as JARVIS speaks them (shown beside its targets). */
+  say?: string;
   targets: string[];
   actions: Record<string, string>[];
   /** The beat's last chunk: the cue ends when it has played. */
@@ -233,7 +245,9 @@ function pagePackage(id: string): PackageInfo | undefined {
 
 registerCommand("package.open", {
   availability: ({ packageId }) => pagePackage(packageId) ? { available: true } : { available: false, reason: "no-entity" },
-  execute: ({ packageId }) => ({ status: "completed", effects: packageSlot.show(pagePackage(packageId)!) }),
+  // Shown, it takes over the page: the document uses the whole display.
+  execute: ({ packageId }) => ({ status: "completed",
+                                 effects: [...packageSlot.show(pagePackage(packageId)!), ...takeOverShown()] }),
 });
 
 registerClose("package.close", packageSlot, (shown) => {

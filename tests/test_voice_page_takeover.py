@@ -5,7 +5,9 @@ at: a page package or a workflow shown in the centre takes over the page by
 same handler), the centre widens over the right panel, which folds to a
 rail of its six tab icons, the takeover bar holds the item's name, the
 conversation's state, the microphone and Restore layout, and the normal
-layout comes back with Restore, another view or the item closing.
+layout comes back with Restore, another view or the item closing. A page
+package takes over as it opens (its document uses the whole display), so
+each package test restores the layout first to see the normal one.
 
 Also the microphone fix that holds in the normal layout too: the
 microphone corner never covers a package's frame.
@@ -90,9 +92,16 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
             assert (refused["status"], refused["reason"]) == ("unavailable", "no-entity"), refused
 
             voice.ws.send(json.dumps({"type": "package_page", "package": packages_api.describe(package)}))
+            await page.frame_locator("#package-view iframe").locator("h1").wait_for()
+            # It opens taken over, its icon border the only bar over its document.
+            await async_api.expect(page.locator("#takeover-bar")).to_be_visible()
+            await async_api.expect(page.locator("#package-view .package-border")).to_have_count(1)
+            restored = await voice.navigate("layout.restore", {})
+            assert restored["status"] == "completed", restored
             await async_api.expect(page.locator(".centre-tabs [aria-label='mic-check-page']")) \
                 .to_have_attribute("aria-selected", "true")
-            await page.frame_locator("#package-view iframe").locator("h1").wait_for()
+            await async_api.expect(page.locator("#package-view .package-border")) \
+                .to_have_attribute("data-faded", "false")
             # Listening, so the corner holds the live meter.
             # (Generous waits: the recogniser's start is slow on a busy machine.)
             await start_listening(page, timeout=20000)
@@ -287,7 +296,10 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             await page.frame_locator("#package-view iframe").locator("#title").wait_for()
             inner = next(f for f in page.frames if f.url.endswith("/files/index.html"))
             told = "() => window.__layouts.length ? window.__layouts[window.__layouts.length - 1] : null"
-            await inner.wait_for_function(f"({told})() !== null")
+            # It opens taken over and its frame is told so; then the normal layout.
+            await inner.wait_for_function(f"({told})() !== null && ({told})().mode === 'takeover'")
+            assert (await voice.navigate("layout.restore", {}))["status"] == "completed"
+            await inner.wait_for_function(f"({told})().mode === 'normal'")
             frame = await settled(page, RECT, "#package-view iframe")
             await inner.wait_for_function(f"(w) => Math.abs(({told})().width - w) <= 1", arg=frame["width"],
                                           timeout=15000)
@@ -324,8 +336,12 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             await page.wait_for_timeout(300)
             assert await page.locator("#takeover-bar").count() == 0
 
-            # A package marked "wide" is offered from the start.
+            # A package marked "wide" is offered from the start (once restored:
+            # it opens taken over like every package).
             voice.ws.send(json.dumps({"type": "package_page", "package": packages_api.describe(wide)}))
+            await async_api.expect(page.locator(f"#package-view[data-package='{wide.id}']")).to_be_visible()
+            await async_api.expect(page.locator("#takeover-bar")).to_be_visible()
+            assert (await voice.navigate("layout.restore", {}))["status"] == "completed"
             await async_api.expect(page.locator(f"#package-view[data-package='{wide.id}'] .takeover-enter")) \
                 .to_have_class(re.compile(r"\btakeover-enter\b.*\blit\b"))
             await _shot(page, "wide-offered")

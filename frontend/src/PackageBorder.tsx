@@ -1,4 +1,5 @@
-/** Compact frame for existing host actions. Selection never starts speech or writes an answer. */
+/** Compact frame for existing host actions. Selection never starts speech or writes an answer.
+ *  While the package has taken over, the border fades back without the pointer (`fade`, PackageView.tsx). */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useT, type Said } from "./locale";
 import { mountPackageControls, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
@@ -6,6 +7,7 @@ import { PackageIcon } from "./PackageIcons";
 import { TakeoverButton } from "./TakeoverBar";
 import { bind, bindingProps } from "./uiNavigation";
 import { byHand } from "./uiRegistry";
+import type { Fading } from "./PackageView";
 
 type Part = "chapters" | "previous" | "next" | "more" | "inspect" | "document" | "return" | "header" | "story" | "tell" | "stop" | "resume" | "fromSlide" | "takeover" | "close";
 interface Props {
@@ -16,8 +18,9 @@ interface Props {
   part(name: Part): (el: Element | null) => void;
   presentation: boolean;
   command(type: "presentation.inspect" | "presentation.document" | "presentation.select", value?: number | boolean): void;
+  fade?: Fading;
 }
-export function PackageBorder({ info, offered, done, onSaid, part, presentation, command }: Props) {
+export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade }: Props) {
   const t = useT();
   const state = useSyncExternalStore(storyState.subscribe, storyState.get);
   const running = storyRunning(state, info.id);
@@ -69,7 +72,8 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
   const transportName = t(running ? "main.package.story.stop" : "main.package.story.tell");
   const title = info.communication?.title ?? info.story?.title ?? info.name;
   return <>
-    <section className="package-head package-border" ref={el => { header.current = el; part("header")(el); }}>
+    <section className="package-head package-border" ref={el => { header.current = el; part("header")(el); }}
+      data-faded={fade?.faded ? "true" : "false"} {...fade?.props}>
       {info.story && <div className="package-story" ref={part("story")} aria-label={t("main.package.story.label")}>
         <button className="package-icon" type="button" title={t("main.package.chapters")} aria-label={t("main.package.chapters")} data-package-menu="chapters" aria-expanded={menu === "chapters"} ref={part("chapters")} {...bindingProps(bind("package.menu", {show: "chapters"}))}><PackageIcon name="chapters"/></button>
         {width >= 420 && <button className="package-icon" type="button" title={t("main.package.previous")} aria-label={t("main.package.previous")} disabled={slide === 1} ref={part("previous")} {...bindingProps(bind("package.slide", {slide: slide - 1}))}><PackageIcon name="previous"/></button>}

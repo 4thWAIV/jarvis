@@ -148,14 +148,14 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             await _state(page, "Waiting for your answer on slide 2 of 5.")
             trace.append({"waiting": 2, "audio_frames": len(voice.audio)})
 
-            # Answered in the head: it goes on, passes over the follow-up his
-            # answer did not open, and waits at the vote.
-            ask = page.locator('.package-asks [data-question="kettle"]')
+            # Answered in the card the waiting story opened: it goes on,
+            # passes over the follow-up his answer did not open, and waits at
+            # the vote, whose card opens in turn.
+            ask = page.locator('#package-view .package-focus-card [data-question="kettle"]')
             await ask.get_by_role("button", name="Electric (recommended)").click()
-            await ask.locator(".package-vote-recorded").wait_for()
-            await page.locator('.package-asks [data-question="stove-kind"]').wait_for(
-                state="detached")
             await _state(page, "Waiting for your answer on slide 5 of 5.")
+            await page.locator("#package-view .package-focus-card .package-vote").wait_for()
+            assert await page.locator('[data-question="stove-kind"]').count() == 0
             told = sorted({m["cue"]["slide"] for m in voice.audio})
             assert told == [1, 2, 4, 5], f"the follow-up is passed over: {told}"
             trace.append({"answered": {"kettle": "electric"}, "slides_told": told})

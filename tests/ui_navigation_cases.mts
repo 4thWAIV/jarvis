@@ -656,23 +656,27 @@ await parity("takeover: no sheet without a takeover", [["layout.sheet", { shown:
 });
 
 {
-  // A page package takes over by its id; another package opening restores.
+  // A page package takes over as it opens, by its id (its document uses
+  // the whole display); another package opening takes over in its place,
+  // and Restore layout gives the normal layout back.
   await reset();
   const pkg = (id: string) => ({ id, name: id, version: "1.0.0", purpose: "", runs: "page" as const,
                                   entry: "index.html", source: "0f1e2d3c", sources: ["0f1e2d3c"], story: null });
   packages.showPackage(pkg("deck-a"));
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual((await dispatch("layout.takeover", {}, { actor: "brain" })).effects, ["layout.taken-over"]);
   assert.deepEqual(nav.layout.get(), TAKEN("deck-a", "package"));
+  assert.deepEqual((await dispatch("layout.takeover", {}, { actor: "brain" })).effects, []);
   packages.showPackage(pkg("deck-a"));       // the same package again: nothing moves
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(nav.layout.get(), TAKEN("deck-a", "package"));
   packages.showPackage(pkg("deck-b"));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(packages.openPackage.get()?.id, "deck-b");
+  assert.deepEqual(nav.layout.get(), TAKEN("deck-b", "package"));
+  assert.deepEqual((await dispatch("layout.restore", {}, { actor: "human" })).effects, ["layout.restored"]);
   assert.deepEqual(nav.layout.get(), { mode: "normal" });
   await dispatch("package.close", {}, { actor: "human" });
-  passed.push("takeover: a package, and another package restores it");
+  passed.push("takeover: a package takes over as it opens, and another takes its place");
 }
 
 {

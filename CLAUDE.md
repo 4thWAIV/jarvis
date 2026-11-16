@@ -1133,17 +1133,56 @@ acting `run_package_agent` and recorded in the run's `package_id` (a run
 written before it reads None; one active run per package, and a
 retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
-he agrees. The document first: in `PackageView.tsx` the head and one row
-of tools (`.package-tools`: the story's controls, an architecture
-package's source, checker evidence and explanation links) take what they
-need, and the package's own page takes the rest of the view's height;
-the questions and the explanation sit in a side column beside it
-(`.package-side`, beside it at every width; the head and tools keep to one line each), scrolling in
-their own space. Nothing new goes above the page: it joins the tools row
-or the side column, and `tests/test_voice_page_package_layout.py` holds
-the page to 60 percent of the view's height (and 55 percent of its width
-beside the column) with everything open, at the checker's sizes and a
-laptop's. A page package's
+he agrees. The presentation first: in `PackageView.tsx` the icon border
+(`PackageBorder.tsx`: the story's controls, chapters, More, Done, Take
+over, Close) is the only bar, with under it only the vote row
+(`.package-vote-row`: Questions and the standard vote's Approve and
+Reject) and, for an architecture package, one row of links
+(`.package-tools`: its source, checker evidence and explanation); the
+package's own page takes the rest of the view, its whole width. There is
+no side column: nothing goes beside or above the page, and with nothing
+open nothing covers it; `tests/test_voice_page_package_layout.py` holds
+the frame to the view's width below the border, and every question
+reachable through its card, at the checker's sizes and a laptop's. The
+presentation uses the whole display: a page package takes over
+the page as it opens (`package.open` runs `uiNavigation.takeOverShown`,
+effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
+as before; taken over, the left column folds to the orb alone in the
+gutter, `data-takeover="package"` on the root moving `--panel-edge` out to
+the ray lane, and the takeover bar holds Team server and the running
+brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, the
+border (`PackageView.tsx` `useFadingBar`, the border's `data-faded`) fades
+back to 35 percent after `BAR_FADES_AFTER_MS` without the pointer, every
+control still in place and taking his click, and returns when the pointer
+reaches it or keyboard focus enters it; reduced motion and
+`data-motion="steady"` keep it shown. One focus layer
+(`PackageFocus.tsx`) serves a question, the explanation and a narrated
+beat: given a rect in the frame's coordinates, a dim level (`DIM`) and
+content, it keeps the part lit and ringed, dims the rest, and presents a
+card beside it joined by a line (centred over a light dim, 25 percent,
+when there is no part). Where a part is comes only from the frame's helper
+(`story.focus` {key, rect} through the bridge; the page asks for a
+question's part with `focus.show` {key, targets}), never from the frame's
+DOM. Every question is asked in a card: one opens when the story waits on
+it, or when he presses Questions in the vote row (the first he has not
+answered); its part is the waiting slide's targets (`Story.outline`'s
+`focus`: its beats' targets, else its own element), dimmed to 55 percent
+around it; its card (`QuestionItem` over one `usePackageQuestions`, so
+every answer goes through the inbox's one answer route) has the question,
+why him, the evidence, the options with the recommended one marked, his
+words and what is recorded, and "Question N of M" with Back and Next
+through the sequence (his approval of a design first, then the story's
+other questions that apply, then the standard vote, whose card is
+`VoteControls`; Next after the last closes). An answer leaves the card on
+its question with what is recorded. An architecture package's Read the
+explanation opens it as a wider card centred over the whole view,
+scrolling within it. A told beat (its cue carries `say`) lights its
+targets, dims the rest to 35 percent and shows JARVIS's words with Pause
+(the reading skipped: the slide not heard in full, the story pauses there)
+and Stop; paused, with Continue (told again from that slide). Escape (or
+the card's ×) closes the card open, and keyboard focus goes back where it
+was. `tests/test_voice_page_focus.py` holds each mode. A
+page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
 (`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
@@ -2648,7 +2687,7 @@ default; the confirmations use it too.
 A workflow (or subagent) or a page package shown in the centre can take
 over the page. It is route state, `uiNavigation.ts` `layout`: normal, or
 `{mode: "takeover", view, key, flyout, sheet}`, read-only outside the
-module, never stored (a reload starts normal). It holds only while
+module, never stored (a reload starts normal; a page package shown again takes over again as it opens). It holds only while
 `mainView` is that view and its slot holds that key (`detailSlot`'s third
 argument names a takeover slot's item): every command that changes either
 restores it in its own handler (`settleLayout`) and returns

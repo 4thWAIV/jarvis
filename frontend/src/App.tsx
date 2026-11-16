@@ -27,8 +27,17 @@ export function App() {
   useFirstRunSetup();
   // The page's arrangement, for the stylesheet: every centre view's right
   // edge moves to the rail while something has taken over (style.css).
-  const arranged = useSyncExternalStore(layout.subscribe, layout.get).mode;
-  useLayoutEffect(() => { document.documentElement.dataset.layout = arranged; }, [arranged]);
+  // A page package taken over also folds the left column to the orb alone
+  // in the gutter (data-takeover="package"): its document uses the display.
+  const now = useSyncExternalStore(layout.subscribe, layout.get);
+  const arranged = now.mode;
+  const view = now.mode === "takeover" ? now.view : "";
+  useLayoutEffect(() => {
+    const root = document.documentElement.dataset;
+    root.layout = arranged;
+    if (view) root.takeover = view;
+    else delete root.takeover;
+  }, [arranged, view]);
   return (
     <>
       {/* The upper left: the orb, what he is doing, the team server's

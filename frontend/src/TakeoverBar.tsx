@@ -16,8 +16,14 @@
  * item's head, tabs and frame stay uncovered. His
  * spoken yes approves it as it always does; the layout stays.
  *
- * Registered for pointing at as `takeoverBar` (its name, its state and
- * Restore layout).
+ * While a page package has taken over, the left column folds to the orb
+ * (style.css), so the bar also holds what the column offers: Team server
+ * (`network.open`) and the running brain's usage (`usage.open`), each
+ * opening its view in the centre, which restores the layout.
+ *
+ * Registered for pointing at as `takeoverBar` (its name, its state,
+ * Restore layout, and while a package has taken over, Team server and
+ * Brains).
  */
 
 import { captures, reading } from "./capture";
@@ -27,6 +33,7 @@ import { CENTRE_SOCKET, readHistoryAgain, useControlView } from "./ConversationV
 import { ControlSummary } from "./conversation/ConversationControl";
 import { useT } from "./locale";
 import { MicHost } from "./MicControl";
+import { activeBrain, brains } from "./brains";
 import { bind, bindingProps, layout } from "./uiNavigation";
 import { useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useUiTarget } from "./uiRegistry";
@@ -43,6 +50,7 @@ export function TakeoverBar({ name }: { name: string }) {
       <ControlSummary view={view} readAgain={readHistoryAgain} partRef={ui.part("state")} />
       <ReadbackChip partRef={ui.part("readback")} />
       <CentreNotices inBar />
+      <LeftColumnInBar part={ui.part} />
       <div className="takeover-voice">
         <MicHost place="bar" which="health" />
         <MicHost place="bar" which="stop" />
@@ -52,6 +60,27 @@ export function TakeoverBar({ name }: { name: string }) {
               ref={ui.part("restore")} {...bindingProps(bind("layout.restore", {}))}>
         {t("main.takeover.restore")}
       </button>
+    </div>
+  );
+}
+
+/** What the left column offers, while a page package has taken over and
+ *  the column is folded to the orb: the team server and the running
+ *  brain's usage, each opened in the centre. */
+function LeftColumnInBar({ part }: { part: (name: "teamServer" | "brains") => (el: Element | null) => void }) {
+  const t = useT();
+  const arranged = useSyncExternalStore(layout.subscribe, layout.get);
+  const live = useSyncExternalStore(brains.subscribe, brains.get);
+  if (arranged.mode !== "takeover" || arranged.view !== "package") return null;
+  const brain = activeBrain(live.value);
+  return (
+    <div className="takeover-left">
+      <button type="button" className="folder-button" ref={part("teamServer")}
+              {...bindingProps(bind("network.open", { kind: "server" }))}>{t("main.takeover.teamServer")}</button>
+      {brain && (
+        <button type="button" className="folder-button" ref={part("brains")}
+                {...bindingProps(bind("usage.open", { provider: brain }))}>{t("main.takeover.brains")}</button>
+      )}
     </div>
   );
 }

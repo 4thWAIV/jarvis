@@ -2422,28 +2422,84 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
 .package-story { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-/* The document first: the head and one row of tools take what they need,
-   and the package's own page takes the rest of the view's height. The
-   questions and the explanation sit in a side column beside it, scrolling
-   within its height, never above it (tests/test_voice_page_package_layout.py
-   holds the frame to its share at every size). */
+/* The presentation first: the border and, when there is one, the vote row
+   take what they need, and the package's own page takes the rest of the
+   view, its whole width. Questions and the explanation open as focus
+   cards over it (PackageFocus.tsx), never beside it
+   (tests/test_voice_page_package_layout.py holds the frame to the view's
+   width at every size). */
 .package-tools { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 16px;
                  flex: none; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
                  scrollbar-width: thin; }
 .package-tools > .package-story { flex: none; flex-wrap: nowrap; }
 .package-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .package-body > .package-frame { flex: 1 1 auto; min-width: 0; height: 100%; }
-/* Beside the page at every width: under it, the page would lose a third of
-   its height; beside it, the page keeps all of it. */
-.package-side { flex: 0 0 clamp(200px, 32%, 420px); min-height: 0; overflow: auto;
-                display: flex; flex-direction: column; gap: 8px;
-                border: 1px solid var(--ui-edge); border-radius: 8px; }
 /* The head keeps to one line: the title and purpose shortened, their full
    words on hover (PackageView.tsx), so a narrow view does not lose the page
    to a wrapped head. */
 #package-view .package-head { flex: none; }
 #package-view .package-head h2,
 #package-view .package-head-words p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Reading (PackageView.tsx): while a package has taken over the page, its
+   border fades back after a few seconds without the pointer, dimmed but
+   never gone (every control still where it is and taking his click), and
+   comes back when the pointer reaches it or keyboard focus enters it; with
+   reduced motion or Steady it stays. */
+#package-view .package-border { transition: opacity 0.4s ease; }
+#package-view .package-border[data-faded="true"] { opacity: 0.35; }
+@media (prefers-reduced-motion: reduce) {
+  #package-view .package-border { transition: none; }
+  #package-view .package-border[data-faded="true"] { opacity: 1; }
+}
+:root[data-motion="steady"] #package-view .package-border { transition: none; }
+:root[data-motion="steady"] #package-view .package-border[data-faded="true"] { opacity: 1; }
+/* Focus (PackageFocus.tsx): the part a question or a beat is about stays
+   lit and ringed, its shadow dimming the rest of the view; the card sits
+   beside it, joined by a line. Nothing here takes a click but the card. */
+.package-focus { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none;
+                 border-radius: 8px; }
+.package-focus-dim { position: absolute; inset: 0; }
+.package-focus-lit { position: absolute; border-radius: 6px; outline: 3px solid #f5a623; outline-offset: 3px;
+                     transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease; }
+.package-focus-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.package-focus-line line { stroke: #f5a623; stroke-width: 2; stroke-dasharray: 6 4; }
+.package-focus-line circle { fill: #f5a623; }
+.package-focus-card { position: absolute; pointer-events: auto; box-sizing: border-box;
+                      width: min(380px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto;
+                      padding: 14px 16px 12px; border: 1px solid #f5a623; border-radius: 10px;
+                      background: #0b1220; color: rgba(255, 255, 255, 0.9);
+                      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); }
+.package-focus-card[data-centred="true"] { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.package-focus-card:focus { outline: none; }
+.package-focus-card:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.package-focus-card .package-ask-question { font-size: 15px; margin: 0 28px 8px 0; }
+.package-focus-card .package-ask-why, .package-focus-card .package-ask-context { margin: 0 0 8px; }
+.package-focus-card [data-recommended="true"] { border-color: rgba(94, 234, 212, 0.8); }
+.package-focus-leave { position: absolute; top: 6px; right: 8px; }
+.package-narration-head { margin: 0 28px 6px 0; color: rgba(255, 255, 255, 0.6); font-size: 12px; }
+.package-narration-words { margin: 0 0 10px; font-size: 15px; line-height: 1.4; }
+.package-focus-position { margin: 0 28px 6px 0; color: #f5a623; font-size: 12px; }
+.package-focus-steps { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.package-focus-card .package-vote { flex-wrap: wrap; }
+.package-focus-card .package-vote .package-ask-question,
+.package-focus-card .package-vote .package-ask-why { flex: 1 0 100%; margin: 0; }
+.package-focus-card .package-vote-words { background: rgba(255, 255, 255, 0.06); color: inherit;
+                                          border: 1px solid var(--ui-edge); border-radius: 5px;
+                                          padding: 4px 8px; font: inherit; }
+/* The explanation: a wider card centred over the whole view, scrolling
+   within it. */
+.package-focus[data-kind="explanation"] .package-focus-card { width: min(760px, calc(100% - 32px)); }
+.package-focus-card .package-explanation { border-top: 0; padding: 0 28px 0 0; line-height: 1.45; }
+.package-focus-card .package-explanation h1,
+.package-focus-card .package-explanation h2,
+.package-focus-card .package-explanation h3 { margin: 14px 0 6px; }
+.package-focus-card .package-explanation h1:first-child,
+.package-focus-card .package-explanation h2:first-child,
+.package-focus-card .package-explanation h3:first-child { margin-top: 0; }
+.package-focus-card .package-explanation p { margin: 0 0 10px; }
+.package-questions-open { flex: none; }
+@media (prefers-reduced-motion: reduce) { .package-focus-lit { transition: none; } }
+:root[data-motion="steady"] .package-focus-lit { transition: none; }
 .package-story select { max-width: 320px; font: inherit; }
 .package-story-now { color: rgba(255, 255, 255, 0.7); }
 
@@ -4224,6 +4280,20 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   --centre-right: calc(var(--ray-lane) + var(--rail-width) + var(--caption-gap));
   --centre-header-height: 44px;
 }
+/* A page package taken over has the whole display but the rail: the left
+   column folds to the orb alone, small, in the gutter at the page's left
+   edge (it is where every ray starts, so it stays), and every centre view's
+   left edge moves out to it. The team server and the brains are in the
+   takeover bar (TakeoverBar.tsx), and Restore layout or closing brings the
+   column back. */
+:root[data-takeover="package"] { --panel-edge: var(--ray-lane); }
+:root[data-takeover="package"] #left-column {
+  left: 4px; width: calc(var(--ray-lane) - 8px); height: auto;
+}
+:root[data-takeover="package"] #orb-control { height: calc(var(--ray-lane) - 8px); }
+:root[data-takeover="package"] #left-column > :not(#orb-control),
+:root[data-takeover="package"] #brain-logo { display: none; }
+.takeover-left { display: flex; gap: 6px; flex: none; }
 #takeover-bar {
   position: fixed;
   top: var(--centre-header-top);
@@ -4287,6 +4357,9 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .control-summary .control-actions button.primary { color: var(--ui-accent); border-color: rgba(var(--ui-accent-rgb), .45); }
 .control-summary .control-actions button:disabled { color: var(--ui-muted); cursor: default; }
+/* A narrow bar clips the conversation's state rather than drawing it under
+   what follows (Team server, the microphone). */
+#takeover-bar .control-summary { overflow: hidden; }
 #centre-notices.compact.in-bar { position: static; flex: none; z-index: auto; }
 #centre-notices.in-bar:empty { display: none; }
 .takeover-voice { flex: none; display: flex; align-items: center; gap: 8px; }
@@ -4399,8 +4472,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
                            min-width: 4em; flex: 0 1 auto; }
 .package-canonical a { color: var(--ui-accent); text-decoration: underline; }
 .package-canonical .link-button { color: var(--ui-accent); text-decoration: underline; }
-/* The questions a story declares, answered in the head (PackageView.tsx). */
-.package-asks { padding: 8px 12px; display: grid; gap: 8px; flex: none; }
+/* The questions a story declares, answered in their focus card (PackageView.tsx). */
 .package-ask-question { margin: 0 0 4px; font-weight: 600; }
 .package-ask-context { margin: 0 0 4px; color: rgba(255, 255, 255, 0.7); font-size: 0.85rem; }
 .package-ask-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -4410,7 +4482,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-approval-head { margin: 0 0 2px; font-size: 0.8rem; text-transform: uppercase;
                          letter-spacing: 0.04em; color: var(--ui-accent); }
 .package-approval-stale { color: #f5a623; }
-/* The author's explanation, read in place above the page. */
+/* The author's explanation, read in its card (PackageFocus.tsx). */
 .package-explanation {
   flex: none;
   padding: 8px 12px;
@@ -4529,7 +4601,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-border-overlay .folder-button { margin:4px; }
 .package-chapters { display:flex; flex-direction:column; gap:8px; margin-top:16px; }
 .package-chapters button { padding:10px; text-align:left; background:transparent; color:inherit; border:1px solid rgba(255,255,255,.2); border-radius:5px; }
-#package-view > .package-vote, #package-view > .package-canonical { flex:none; padding:8px; }
+#package-view > .package-vote-row, #package-view > .package-canonical { flex:none; padding:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 @media (pointer:coarse) {
   #package-view .package-border { height:48px; min-height:48px; }
   #package-view .package-icon { width:44px; height:44px; min-width:44px; flex-basis:44px; }

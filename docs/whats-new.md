@@ -2,6 +2,31 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A package's presentation uses the whole display, and each question opens beside its part
+
+A package now opens taking over the page: everything but the slim rail of
+tab icons on the right goes to its presentation, the left column folding to
+the orb alone at the page's edge (Team server and Brains move into the bar
+along the top, and Restore layout brings the column back). There is no
+side column any more: the presentation takes the whole width below its
+icon border, and with nothing open nothing covers it. The border dims
+after a few seconds (still there, every button still works) and brightens
+when you move the pointer to it or tab into it.
+
+Questions open on demand, one card at a time. Questions, in the row under
+the border, opens the first one you have not answered; when the story
+waits on a question, its card opens by itself. The part of the
+presentation the question is about stays lit and everything else dims,
+and the card beside it, joined to it by a line, carries the question, why
+it is yours, the evidence, the options (the recommended one marked), a
+field for your words, and Approve and Reject for the package itself. A
+question about no one part gets its card in the middle of the view. The
+card says "Question 2 of 3", with Back and Next between them; Next after
+the last, or Escape, closes it and gives the keyboard back where it was.
+An architecture package's explanation opens the same way, as a card in the
+middle of the view that scrolls on its own. While JARVIS tells the story,
+each part he is talking about is lit and his words are shown beside it,
+with Pause and Stop.
 ## A package's author check is found wherever it is
 
 JARVIS confirms a package's fresh author checked it by reading that
@@ -119,7 +144,6 @@ its health now says which requests keep it busy (each kind of request's
 count and time over the last five minutes), and `kill -USR1` on the engine
 writes what every one of its threads is doing to
 `knowledge-engine-stacks.log` beside its log.
-
 ## Decks use the whole slide
 
 A deck's words grow with the space it has, and a slide with pictures gives

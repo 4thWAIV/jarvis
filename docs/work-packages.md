@@ -199,11 +199,14 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "story.cue", beat, targets, actions}` | a beat's words start playing (`beat` is `"<slide>.<beat>"`, both from 1) |
 | `{jarvis: "package", type: "story.clear"}` | its words have ended, or the voice stopped |
 | `{jarvis: "package", type: "story.state", state, slide, question}` | the story is `telling`, `waiting` (for `question`), `paused`, `finished` or `stopped` |
+| `{jarvis: "package", type: "focus.show", key, targets}` | a question is his (the story waits on it, or he opened its card from Questions): the part it is about, the waiting slide's targets, is brought into view and reported, never ringed in the frame |
+| `{jarvis: "package", type: "focus.clear"}` | that question is no longer in focus |
 
 | from the page | what JARVIS does |
 |---|---|
 | `{jarvis: "package", type: "story.ready"}` | posts the beat playing now again (the helper says this once loaded) |
 | `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
+| `{jarvis: "package", type: "story.focus", key, rect}` | where the part in focus is, in the frame's own coordinates (`{left, top, width, height}`, the box around everything its targets match; `null` when none is visible): for each beat (key `beat:<beat>`) and for a `focus.show` (its key), again whenever it moves. The page lights it and dims the rest, its card beside it; the page never reads the frame itself |
 
 ### The room a page has (page)
 

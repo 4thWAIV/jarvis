@@ -26,7 +26,9 @@
  *     tabs). It holds only while the centre shows that view and its slot
  *     holds that item: every command that changes either restores the
  *     normal layout in its own handler (`layout.restored`). A reload starts
- *     normal, as the rest of the route state does.
+ *     normal, as the rest of the route state does. A page package takes
+ *     over as it opens (`takeOverShown`, from `package.open`): its document
+ *     uses the whole display until he restores the layout.
  *
  * Showing a view never moves keyboard focus, and nothing here reports
  * human activity: that comes from trusted input alone (humanActivity.ts).
@@ -297,18 +299,23 @@ registerCommand("main.tab.select", {
 
 // ── the layout's commands ───────────────────────────────────────────────
 
+/** What the centre shows takes over the page, when it can: the body of
+ *  `layout.takeover`, and of an open whose item takes over as it opens (a
+ *  page package, packages.ts `package.open`). Nothing when it cannot or
+ *  already has. */
+export function takeOverShown(): Effects {
+  const shown = shownTakeover();
+  if (!shown) return [];
+  const now = arrangement.get();
+  if (now.mode === "takeover" && now.view === shown.view && now.key === shown.key) return [];
+  arrangement.set({ mode: "takeover", ...shown, flyout: false, sheet: false });
+  return ["layout.taken-over"];
+}
+
 registerCommand("layout.takeover", {
   // Only the workflow or page package the centre shows can take over.
   availability: () => shownTakeover() ? { available: true } : { available: false, reason: "no-entity" },
-  execute() {
-    const shown = shownTakeover()!;
-    const now = arrangement.get();
-    if (now.mode === "takeover" && now.view === shown.view && now.key === shown.key) {
-      return { status: "completed", effects: [] };
-    }
-    arrangement.set({ mode: "takeover", ...shown, flyout: false, sheet: false });
-    return { status: "completed", effects: ["layout.taken-over"] };
-  },
+  execute: () => ({ status: "completed", effects: takeOverShown() }),
 });
 
 registerCommand("layout.restore", {
