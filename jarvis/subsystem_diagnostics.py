@@ -113,6 +113,11 @@ WORK_READS_SLOW_SEC = 2.0
 WORK_WRITES_ALARM_SEC = 5.0
 WRITE, READ = "write", "read"
 FOLDERS_LOOP = "folder discovery"
+# The held Work view's loop (server._watch_work: built, then ticked) and the
+# agent keys' look (server._watch_agent_keys: pending keys proven, work-item
+# keys ended), each judged by its heartbeat.
+WORK_LOOP = "work view"
+AGENT_KEYS_LOOP = "agent keys"
 
 # Messages between people: this many delivery passes failed in a row is
 # degraded on the team server's row, and an attention item
@@ -364,6 +369,8 @@ NAMES: dict[str, str] = {
     "setupVectorSearch": "Vector search",
     "messaging": "Messages between people",
     "knowledgeContent": "File reader",
+    "workView": "Work view",
+    "agentKeysLoop": "Agent keys",
 }
 
 
@@ -644,12 +651,22 @@ def queued_check(queued: list, watcher, now: float) -> Check:
     return one(DEGRADED, say("queuedHeld", agent=oldest.agent_name, age=age(waited)))
 
 
+def keys_check(b: Optional[Beat], now: float) -> Check:
+    """The agent keys' look: a key waiting for its proof, or a work-item key
+    that should end, waits on it. Not started yet (it starts once the session
+    watcher has looked) is idle, never unknown."""
+    if b is None:
+        return check("keys", "agentKeysLoop", IDLE, say("notStarted"))
+    return check("keys", "agentKeysLoop", *judge(b, now))
+
+
 def communications(watcher, messages: list, now: float, started_at: float,
-                   queued: list = ()) -> Subsystem:
+                   queued: list = (), keys: Optional[Beat] = None) -> Subsystem:
     checks = [
         watcher_check(watcher, now, started_at),
         outgoing_check(messages, now),
         queued_check(list(queued), watcher, now),
+        keys_check(keys, now),
     ]
     first = checks[0]
     return from_checks("communications", checks, (first.said, first.detail),
@@ -803,10 +820,12 @@ def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     return s
 
 
-def work(latencies: Latencies, now: float) -> Subsystem:
+def work(latencies: Latencies, now: float, view: Optional[Beat] = None) -> Subsystem:
     """The Work tracker: how long its reports' writes and its list's reads
-    took in the last WORK_LATENCY_WINDOW_SEC. Slow is degraded, never down:
-    a slow write still lands."""
+    took in the last WORK_LATENCY_WINDOW_SEC, and the held view's loop
+    (`view`, its heartbeat). Slow is degraded, never down: a slow write still
+    lands; a view that was never built, or stopped ticking, is judged as any
+    loop is (the Work tab would be empty or frozen)."""
     window = age(WORK_LATENCY_WINDOW_SEC)
     checks = []
     for kind, code, slow in ((WRITE, "workWrites", WORK_WRITES_SLOW_SEC),
@@ -820,6 +839,7 @@ def work(latencies: Latencies, now: float) -> Subsystem:
             line = (OK, say(code + "Ok", count=len(took), window=window,
                             seconds=f"{max(took):.1f} s"))
         checks.append(check(kind + "s", code, *line))
+    checks.append(check("view", "workView", *judge(view, now)))
     s = from_checks("work", checks, (checks[0].said, checks[0].detail))
     if s.state == OK and checks[0].state == IDLE:
         s.state = IDLE
@@ -1117,13 +1137,14 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
     messages = run_store.list_messages(limit=MESSAGES_READ)
     beats_now = dict(beats)
     return [
-        communications(watcher, messages, now, started_at, run_store.queued_messages()),
+        communications(watcher, messages, now, started_at, run_store.queued_messages(),
+                       beats_now.get(AGENT_KEYS_LOOP)),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now, local_voice),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
-        work(work_routes, now),
+        work(work_routes, now, beats_now.get(WORK_LOOP)),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         knowledge(knowledge_health, now),
         attention(attention_open, attention_problem),

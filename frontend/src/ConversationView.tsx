@@ -3,7 +3,7 @@ import { conversation, turnKey, useRecordOpen, useSpoken, type Turn } from "./ca
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
-import { conversationChanged, getConversation, restoreCapture,
+import { changeQueued, conversationChanged, getConversation, restoreCapture,
          statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
 import { SaidText, useT, type Said, type Translate } from "./locale";
@@ -238,8 +238,10 @@ function useOpener(recordId: string, opens: boolean) {
  *  message from an agent, or a notice. Drawn as text, and registered where
  *  it is shown (`place`) with its parts. `spoken`: the live turn a reply's
  *  record was, for its reading aloud. */
-export function RecordItem({ item, answer, restorable, spoken, place }: {
-  item: ConversationItem; answer?: ConversationItem; restorable?: boolean; spoken?: Turn; place: RecordPlace }) {
+export function RecordItem({ item, answer, restorable, spoken, place, queuedActs }: {
+  item: ConversationItem; answer?: ConversationItem; restorable?: boolean; spoken?: Turn; place: RecordPlace;
+  /** A queued message offers his Cancel and Send now (the agent's thread). */
+  queuedActs?: boolean }) {
   const recordId = `r${item.id}`;
   const reading = useSpoken(spoken);
   const { open, toggle } = useOpener(recordId, item.kind === "to_agent" && !!answer);
@@ -261,6 +263,17 @@ export function RecordItem({ item, answer, restorable, spoken, place }: {
         </div>
         <p className="record-text" ref={text}>{item.text}</p>
         {open && answer && <p className="record-answer" ref={ui.part("answer")}>{answer.text}</p>}
+        {queuedActs && status === "queued" && item.message && (
+          <div className="record-queued-acts">
+            <button data-ui-action="domain" type="button" className="record-send-now" ref={ui.part("sendNow")}
+                    onClick={async () => setRefused(await changeQueued(item.message!.id, "send_now"))}>
+              {t("main.thread.queuedSendNow")}</button>
+            <button data-ui-action="domain" type="button" className="record-cancel" ref={ui.part("cancel")}
+                    onClick={async () => setRefused(await changeQueued(item.message!.id, "cancel"))}>
+              {t("main.thread.queuedCancel")}</button>
+          </div>
+        )}
+        {refused && <SaidText said={refused} className="read-failure" />}
       </div>
     );
   }

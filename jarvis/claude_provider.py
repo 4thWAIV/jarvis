@@ -235,6 +235,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__sign_off_package",
     "mcp__jarvis__close_inbox_package",
     "mcp__jarvis__retry_run",
+    "mcp__jarvis__change_queued_message",
     # Self-update (self_update.py): the Updates section's check, and its
     # Update and restart as an ACTING_TOOL.
     "mcp__jarvis__update_status",

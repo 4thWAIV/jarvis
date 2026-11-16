@@ -288,10 +288,14 @@ class Delivery:
                  rand: ports.RandomSource = random.Random(), faults: wire.Faults = wire.NO_FAULTS,
                  on_change: Callable[[], None] = lambda: None,
                  transport_for: Callable[[TeamCalls, Pairing], Any] = TeamTransport,
-                 interval: float = SYNC_INTERVAL_SEC, openability=None):
+                 interval: float = SYNC_INTERVAL_SEC, openability=None,
+                 on_failed: Optional[Callable[[Pairing, ports.LocalSend], None]] = None):
         """`openability` is bundle_status.OpenabilityStatus: the reports an
-        owed openability receipt sends, and where it hears they went."""
+        owed openability receipt sends, and where it hears they went.
+        `on_failed` is told of each send this loop moves to `failed` (the
+        runtime records it as a `human_send` attention item)."""
         self.openability = openability
+        self.on_failed = on_failed
         self.store, self.connection, self.guard = store, connection, guard
         self.snapshots, self.presentation = snapshots, presentation
         self.node_id, self.clock, self.rand, self.faults = node_id, clock, rand, faults
@@ -442,13 +446,33 @@ class Delivery:
                 changed = await self.submit(t, pairing, send) or changed
         return changed
 
+    def _transition(self, pairing: Pairing, before: ports.LocalSend,
+                    after: ports.LocalSend) -> bool:
+        """The store's transition, and a send it moved to `failed` told to
+        `on_failed` once (never again while it stays failed)."""
+        if not self.store.transition_send(*pairing.ns, before, after):
+            return False
+        if after.state == "failed" and before.state != "failed" and self.on_failed is not None:
+            try:
+                self.on_failed(pairing, after)
+            except Exception:
+                log.warning("messaging: %s failing was not recorded", after.message_id,
+                            exc_info=True)
+        return True
+
     def _hold(self, pairing: Pairing, send: ports.LocalSend, code: str,
               retry_at: Optional[datetime], **update) -> bool:
-        """Keep the send where it is, saying why, until `retry_at` (or the
-        owner acts). `update` is anything else the hold changes."""
+        """Keep the send where it is, saying why, until `retry_at`. With no
+        `retry_at` it waits for the owner: an approved send moves to
+        `failed`, which the Queue shows with its reason and Retry (left
+        `approved` it would never be tried again, `_due`, and nothing would
+        say so). `update` is anything else the hold changes."""
         log.info("messaging: %s held (%s) until %s", send.message_id, code,
                  retry_at.isoformat() if retry_at else "the owner acts")
-        return self.store.transition_send(*pairing.ns, send, send.model_copy(update={
+        state = update.get("state", send.state)
+        if retry_at is None and state == "approved":
+            update["state"] = ports.next_send_state(state, "held")
+        return self._transition(pairing, send, send.model_copy(update={
             **update, "failure": code, "next_attempt_at": retry_at}))
 
     def _upload_failed(self, pairing: Pairing, send: ports.LocalSend,
@@ -520,7 +544,7 @@ class Delivery:
             after = going.model_copy(update={
                 "state": ports.next_send_state(going.state, "refused"), "failure": e.code,
                 "next_attempt_at": None})
-        self.store.transition_send(*pairing.ns, going, after)
+        self._transition(pairing, going, after)
         log.info("messaging: %s not accepted (%s)", going.message_id, e.code)
 
     async def _sync(self, t, pairing: Pairing) -> bool:

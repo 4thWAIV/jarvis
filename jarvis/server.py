@@ -4618,7 +4618,7 @@ async def _watch_agent_keys() -> None:
     async def look() -> None:
         await asyncio.to_thread(_look_after_agent_keys)
 
-    await _every(AGENT_KEYS_POLL_SEC, "agent keys", look)
+    await _every(AGENT_KEYS_POLL_SEC, subsystem_diagnostics.AGENT_KEYS_LOOP, look)
 
 
 class AgentKeySubmission(BaseModel):
@@ -5951,6 +5951,61 @@ def tool_list_messages(args: dict) -> str:
         lines.append(f"Message {m.id} to {to}, written {_say_age(now - m.staged_at)}: "
                      f"{_message_state(m, now)}. It said: {body}")
     return "\n".join(lines)
+
+
+QUEUED_ACTIONS = ("cancel", "send_now")
+
+
+def _change_queued_message(message_id: int, action: str, where: str) -> tuple[bool, str]:
+    """His Cancel or Send now on a message to a session waiting in the
+    queue: the agent's thread's buttons (POST /api/agent-messages/{id}/...)
+    and the brain's acting `change_queued_message` alike, through the
+    session watcher's one lock (`SessionWatcher.change_queued`). Send now
+    still sends only while the session is between turns, else says why.
+    (ok, what happened or why not). Blocking: run it off the event loop."""
+    if action not in QUEUED_ACTIONS:
+        return False, "the action is cancel or send_now"
+    if session_watcher is None:
+        return False, "the session watcher is not running, so the queue cannot be changed now"
+    ok, said = session_watcher.change_queued(message_id, action)
+    if ok:
+        log.info("message %s: %s by him (%s)", message_id, action, where)
+        if action == "cancel":
+            _attention_resolved("agent_message", message_id)
+    _hint_conversation()
+    return ok, said
+
+
+class QueuedAction(BaseModel):
+    action: str
+
+
+@app.post("/api/agent-messages/{message_id}/queued")
+async def api_change_queued_message(message_id: int, body: QueuedAction):
+    """Cancel or Send now on a queued message, from the agent's thread."""
+    ok, said = await asyncio.to_thread(_change_queued_message, message_id, body.action, "page")
+    if not ok:
+        return JSONResponse(status_code=409, content={"error": said})
+    return {"ok": True, "said": said}
+
+
+async def tool_change_queued_message(args: dict) -> str:
+    """The agent's thread's Cancel or Send now on a queued message, by its
+    number (list_messages), through the same `_change_queued_message`. An
+    ACTING tool: only on his own turn."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Which message, sir? Give its number from list_messages."
+    action = str(args.get("action") or "").strip()
+    ok, said = await asyncio.to_thread(_change_queued_message, number, action, "voice")
+    return (f"Done, sir: {said}." if ok else f"Nothing changed, sir: {said}.")
+
+
+TOOL_HANDLERS["change_queued_message"] = tool_change_queued_message
+ACTING_TOOLS.add("change_queued_message")
+TAINT_EXEMPT_TOOLS["change_queued_message"] = \
+    "it cancels or sends a queued message on his word and says a fixed outcome, it does not read"
 
 
 def tool_read_message_reply(args: dict) -> str:
@@ -11873,6 +11928,7 @@ async def _watch_workflow_silence() -> None:
         listed = await asyncio.to_thread(work_store.listing)
         _attend_unfollowed(listed)
         _attend_stalled(listed, await asyncio.to_thread(_stalled, listed))
+        await asyncio.to_thread(_attend_unlinked, listed)
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
@@ -13615,15 +13671,61 @@ def _stalled(items) -> set:
     return {i.id for i in items if work_api.is_stalled(i, work_api.needs_of(i, waiting))}
 
 
+def _work_holder(item, piece=None) -> str:
+    """Who holds an item (or one of its pieces) up, by its one name: the
+    agent on the piece, else whoever last reported it; "" when JARVIS
+    cannot name one. Reads the agent directory: off the loop."""
+    names = work_api.WhoNames()
+    pieces = [piece] if piece is not None else [
+        p for p in item.pieces if p.state != work_store.DONE] or list(item.pieces)
+    for p in pieces:
+        if p.who.kind != work_store.TIM:
+            name = names(p.who)
+            if name:
+                return name
+        shown = reporters.shown(p.reporter)
+        if shown:
+            return shown
+    return ""
+
+
+# A hold with no link to an answer, open over a day: a silent attention item
+# naming who holds it, resolved once it is released or linked.
+_UNLINKED_KIND = "work_unlinked"
+_work_said_unlinked: set[str] = set()
+
+
+def _attend_unlinked(items) -> None:
+    """An item with a hold that names nothing, open over a day
+    (work_store's `unlinked` blockers): a silent attention item naming the
+    piece and who holds it, once; resolved once none is left."""
+    for item in items:
+        held = [b for b in item.blockers if b.unlinked]
+        if held and item.id not in _work_said_unlinked:
+            _work_said_unlinked.add(item.id)
+            piece = next((p for p in item.pieces if p.key == held[0].key), None)
+            _attend(_UNLINKED_KIND, item.id, "unlinked", facts={"piece": held[0].key},
+                    untrusted={"agent": _work_holder(item, piece) or "its agent",
+                               "work": item.title}, audible=False)
+        elif not held and item.id in _work_said_unlinked:
+            _work_said_unlinked.discard(item.id)
+            _attention_resolved(_UNLINKED_KIND, item.id)
+
+
 def _attend_stalled(items, stalled_ids: set) -> None:
     """An item that needs nothing of him and that nobody is moving: a
-    silent attention item, once; resolved once it moves again."""
+    silent attention item naming who is on it, once; resolved once it
+    moves again."""
     for item in items:
         stalled = item.id in stalled_ids
         if stalled and item.id not in _work_said_stalled:
             _work_said_stalled.add(item.id)
-            _attend(_STALLED_KIND, item.id, "stalled", untrusted={"work": item.title},
-                    audible=False)
+            holder = _work_holder(item)
+            # Named when JARVIS can name who was on it: "stalled_on", with
+            # the agent as other people's words; else "stalled", the item.
+            _attend(_STALLED_KIND, item.id, "stalled_on" if holder else "stalled",
+                    untrusted={"agent": holder, "work": item.title} if holder
+                    else {"work": item.title}, audible=False)
         elif not stalled and item.id in _work_said_stalled:
             _work_said_stalled.discard(item.id)
             _attention_resolved(_STALLED_KIND, item.id)
@@ -13649,7 +13751,13 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
     says is no longer so (the decision answered with none left open, the
     item no longer blocked or done)."""
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
-    if kind == work_store.CLOSED:
+    if kind in (work_store.HOLD_RELEASED, work_store.REASSIGNED):
+        _attend_unlinked([item])
+    if kind in (work_store.CLOSED, work_store.CLOSED_BY_HIM):
+        _attention_resolved(_UNLINKED_KIND, item.id)
+        _attention_resolved(_STALLED_KIND, item.id)
+        _work_said_stalled.discard(item.id)
+        _work_said_unlinked.discard(item.id)
         # Closed for good: nothing it said is news any longer, and its
         # work-item keys end with it.
         _attention_resolved("work", item.id)
@@ -13716,13 +13824,16 @@ async def _watch_work() -> None:
     owners, clocks and sources up to date (work_view.WorkView.tick), off the
     loop; the items writes hand it are worked out on its own thread
     (work_view.WorkView.start), so no write waits on it. Never raises out
-    but for cancellation."""
-    await asyncio.to_thread(work_held.load)
-    work_held.start()
-
+    but for cancellation. Building it is part of the look, so a load that
+    fails is logged, shown on the Work tracker's Diagnostics row (its
+    heartbeat) and tried again on the next look, never a task that died
+    quietly with the Work tab empty."""
     async def look() -> None:
+        if not work_held.built:
+            await asyncio.to_thread(work_held.load)
+            work_held.start()
         await asyncio.to_thread(work_held.tick)
-    await _every(WORK_TICK_SEC, "work view", look)
+    await _every(WORK_TICK_SEC, subsystem_diagnostics.WORK_LOOP, look)
 
 
 work_api.mount(app, _work_recorded, work_held)
@@ -13984,12 +14095,51 @@ def _review_said(action: str) -> str:
     return "Added as a new piece, sir; its agents are told."
 
 
+def _act_said(action: str) -> str:
+    """What JARVIS says once his act on an item is recorded: fixed words for
+    each act (work_api has already refused any other)."""
+    if action == work_api.RELEASE_HOLD:
+        return "Released, sir: nothing holds it now and its agent is told."
+    if action == work_api.CLOSE:
+        return "Closed, sir: it is in History now."
+    return "Reassigned, sir; both agents can see it on the item."
+
+
+def _agent_or_explain(reference: str) -> tuple[Optional[str], Optional[str]]:
+    """(`agent:<session id>` of the one listed agent he named, None) or
+    (None, what to say): the agent directory's own lookup."""
+    if not reference:
+        return None, "Which agent should it go to, sir?"
+    found = agent_directory.find(reference, last_mentioned_session)
+    if not found:
+        return None, "No agent on the list goes by that name, sir; list_agents names them."
+    if len(found) > 1:
+        return None, (f"That could be any of {_say_number(len(found))} agents, sir; "
+                      "list_agents names them.")
+    return f"agent:{found[0].session_id}", None
+
+
 async def tool_review_work(args: dict) -> str:
-    """His review of a work item: approve, not done yet, or add work."""
+    """His review of a work item (approve, not done yet, add work), or his
+    act on it (release a piece's hold, close it, reassign a piece): the
+    item header's buttons, through the same work_api calls."""
     item, problem = _work_or_explain(str(args.get("item") or "").strip())
     if problem:
         return problem
     action = str(args.get("action") or "")
+    if action in work_api.HIS_ACTIONS:
+        to = ""
+        if action == work_api.REASSIGN:
+            to, problem = _agent_or_explain(str(args.get("to") or "").strip())
+            if problem:
+                return problem
+        try:
+            item = await asyncio.to_thread(work_api.act, item.id, action, "voice",
+                                           str(args.get("piece") or ""), to)
+        except work_store.WorkRefused as e:
+            return f"Nothing was recorded, sir: {e}"
+        _work_recorded(item, work_api.HIS_ACTIONS[action])
+        return _act_said(action)
     try:
         item = await asyncio.to_thread(work_api.review, item.id, action,
                                        str(args.get("words") or ""), "voice")

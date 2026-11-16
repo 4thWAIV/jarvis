@@ -24,7 +24,7 @@
      "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}},
                        {"view": "main.corner"}, {"view": "main.takeover"}]},
     {"kind": "conversationRecord", "entity": "record", "label": "Conversation record",
-     "parts": ["record", "text", "answer", "agent", "expand", "restore"],
+     "parts": ["record", "text", "answer", "agent", "expand", "restore", "sendNow", "cancel"],
      "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
     {"kind": "capture", "entity": "capture", "label": "Capture", "parts": ["box", "body", "recipient", "actions"],
      "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}, {"view": "main.main", "reveal": {"command": "main.tab.select", "args": {"tab": "main"}}},
@@ -34,7 +34,7 @@
     {"kind": "agentThread", "entity": "session", "label": "Agent thread", "parts": ["header", "state", "close", "earlier", "key", "revoke"],
      "presentations": [{"view": "main.thread", "reveal": {"command": "thread.open", "args": {"sessionId": "$key"}}}]},
     {"kind": "threadRecord", "entity": null, "keyOf": ["session", "record"], "label": "Thread record",
-     "parts": ["record", "text", "answer", "agent", "expand", "restore"],
+     "parts": ["record", "text", "answer", "agent", "expand", "restore", "sendNow", "cancel"],
      "presentations": [{"view": "main.thread"}]}
   ]
 }

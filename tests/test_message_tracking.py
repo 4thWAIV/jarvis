@@ -881,6 +881,48 @@ def test_a_queued_message_whose_session_ended_fails_and_says_why(store):
     assert events == [("send_failed", mid)] and provider.sent == []
 
 
+def test_his_send_now_goes_ahead_of_an_open_message_only_between_turns(store):
+    """A message queued behind one never answered can be sent now, but only
+    while its session is between turns: one message per turn still holds."""
+    provider = _QueueProvider()
+    w, events = _queue_watcher(store, provider)
+    first, second = _queued(store, "use Postgres"), _queued(store, "and add an index")
+    w.poll_once()
+    assert store.get_message(second).status == "queued"
+    provider.state = "working"
+    w.poll_once()
+    ok, why = w.change_queued(second, "send_now")
+    assert not ok and "middle of a turn" in why and "stays queued" in why
+    assert store.get_message(second).status == "queued"
+    provider.state = "needs_you"
+    w.poll_once()
+    ok, why = w.change_queued(second, "send_now")
+    assert not ok and "prompt" in why
+    provider.state = "idle"
+    w.poll_once()
+    assert store.get_message(second).status == "queued", "still behind the open one"
+    ok, why = w.change_queued(second, "send_now")
+    assert ok and store.get_message(second).status == "sent"
+    assert provider.sent[-1] == SIG + "and add an index"
+    assert ("sent", second) in events
+    ok, why = w.change_queued(second, "send_now")
+    assert not ok and "not queued" in why
+
+
+def test_his_cancel_takes_a_queued_message_off_the_queue_for_good(store):
+    provider = _QueueProvider(state="working")
+    w, events = _queue_watcher(store, provider)
+    mid = _queued(store, "use Postgres")
+    w.poll_once()
+    ok, why = w.change_queued(mid, "cancel")
+    assert ok and "never sent" in why
+    provider.state = "idle"
+    w.poll_once()
+    assert store.get_message(mid).status == "cancelled" and provider.sent == []
+    assert not w.change_queued(mid, "cancel")[0]
+    assert not w.change_queued(999, "cancel")[0]
+
+
 @pytest.mark.asyncio
 async def test_a_message_to_a_session_with_one_open_is_queued_not_sent(server, monkeypatch):
     sends = []

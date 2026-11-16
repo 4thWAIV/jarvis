@@ -295,6 +295,8 @@ export const rightEn = {
   "right.subsystem.name.setupVectorSearch": "Vector search",
   "right.subsystem.name.messaging": "Messages between people",
   "right.subsystem.name.knowledgeContent": "File reader",
+  "right.subsystem.name.workView": "Work view",
+  "right.subsystem.name.agentKeysLoop": "Agent keys",
   "right.subsystem.name.page": "This page",
   "right.subsystem.name.read": "Reading JARVIS",
   "right.subsystem.name.socket": "Live updates",

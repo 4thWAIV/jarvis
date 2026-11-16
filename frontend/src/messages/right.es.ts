@@ -282,6 +282,8 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.name.setupVectorSearch": "Búsqueda vectorial",
   "right.subsystem.name.messaging": "Mensajes entre personas",
   "right.subsystem.name.knowledgeContent": "Lector de archivos",
+  "right.subsystem.name.workView": "Vista de trabajo",
+  "right.subsystem.name.agentKeysLoop": "Llaves de agentes",
   "right.subsystem.name.page": "Esta página",
   "right.subsystem.name.read": "Lectura de JARVIS",
   "right.subsystem.name.socket": "Actualizaciones en vivo",

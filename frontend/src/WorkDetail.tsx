@@ -42,7 +42,7 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { inboxMessages, threadOf } from "./messagesToHim";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, SaidText, useT, type Said } from "./locale";
-import { renewWorkKey, revokeAgentKey } from "./agents";
+import { listAgents, renewWorkKey, revokeAgentKey, type AgentRow } from "./agents";
 import { openInbox } from "./packageInbox";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
@@ -50,7 +50,7 @@ import { useUiTarget } from "./uiRegistry";
 import { TakeoverButton } from "./TakeoverBar";
 import { WorkMessages } from "./WorkMessages";
 import { blockerWords, followUpWords, liveWords, needWords, packageReviewWords,
-         rowState, rowStateWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+         rowState, rowStateWords, reviewWork, actOnWork, type ItemAct, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workItemFrame, workTab, type WorkBlocker, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useArrivalFlash, useShownSince,
@@ -121,6 +121,7 @@ export function WorkDetail({ id }: { id: string }) {
       </div>
       {item && <NeedsYou item={item} target={ui.part("needs")} />}
       {item && !item.closed_at && <Review item={item} target={ui.part("review")} />}
+      {item && !item.closed_at && <HisActs item={item} target={ui.part("acts")} />}
       {live.error && <p className="read-failure">{t("main.work.unreadable", { error: live.error })}</p>}
       {item && deciding > 0 && (
         <button type="button" className="work-decision-banner" ref={ui.part("banner")}
@@ -218,6 +219,87 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
         <button type="button" className="settings-btn" data-ui-action="domain"
                 onClick={() => { setAsking(null); setWords(""); setProblem(null); }}>{t("main.common.cancel")}</button>
       </form>}
+      {problem && <span className="file-state">{problem}</span>}
+    </div>
+  );
+}
+
+/** His acts on work nobody else can unstick, beside his review: Release
+ *  hold (a held piece, or the item with no pieces), Reassign piece (to an
+ *  agent on the list) and Close item (asked once). The same work_api call
+ *  as the brain's review_work; recorded as his, on the page. */
+function HisActs({ item, target }: { item: WorkItem; target: (el: Element | null) => void }) {
+  const t = useT();
+  const [asking, setAsking] = useState<"release" | "reassign" | "close" | null>(null);
+  const [piece, setPiece] = useState("");
+  const [to, setTo] = useState("");
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const held = item.pieces.filter((p) => p.state === "waiting_on_tim" || p.state === "blocked");
+  const itemHeld = item.pieces.length === 0 && (item.state === "waiting_on_tim" || item.state === "blocked");
+  const open = item.pieces.filter((p) => p.state !== "done");
+  const reset = () => { setAsking(null); setPiece(""); setTo(""); setProblem(null); };
+  const run = (action: ItemAct, key = "", agent = "") => {
+    setBusy(true);
+    void actOnWork(item.id, action, key, agent).then((why) => {
+      setBusy(false);
+      setProblem(why);
+      if (!why) reset();
+    });
+  };
+  const choose = (mode: "release" | "reassign") => {
+    setProblem(null);
+    setAsking(mode);
+    const first = mode === "release" ? held[0] : open[0];
+    setPiece(first?.key ?? "");
+    if (mode === "reassign") {
+      listAgents().then((rows) => { setAgents(rows); setTo(rows[0] ? `agent:${rows[0].session_id}` : ""); },
+                        (e: Error) => setProblem(e.message));
+    }
+  };
+  return (
+    <div className="work-acts" ref={target}>
+      {asking === null && <>
+        {itemHeld && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                             onClick={() => run("release_hold")}>{t("main.work.act.release")}</button>}
+        {held.length > 0 && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                                    onClick={() => choose("release")}>{t("main.work.act.release")}</button>}
+        {open.length > 0 && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                                    onClick={() => choose("reassign")}>{t("main.work.act.reassign")}</button>}
+        <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                onClick={() => { setProblem(null); setAsking("close"); }}>{t("main.work.act.close")}</button>
+      </>}
+      {asking === "close" && <>
+        <span>{t("main.work.act.closeAsk")}</span>
+        <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                onClick={() => run("close")}>{t("main.work.act.closeYes")}</button>
+        <button type="button" className="settings-btn" data-ui-action="domain" onClick={reset}>
+          {t("main.common.cancel")}</button>
+      </>}
+      {(asking === "release" || asking === "reassign") && (
+        <form data-ui-action="domain" onSubmit={(e) => {
+          e.preventDefault();
+          if (asking === "release") run("release_hold", piece);
+          else run("reassign", piece, to);
+        }}>
+          <select data-ui-action="input" value={piece} aria-label={t("main.work.act.piece")}
+                  onChange={(e) => setPiece(e.target.value)}>
+            {(asking === "release" ? held : open).map((p) => <option key={p.key} value={p.key}>{p.title}</option>)}
+          </select>
+          {asking === "reassign" && (
+            <select data-ui-action="input" value={to} aria-label={t("main.work.act.to")}
+                    onChange={(e) => setTo(e.target.value)}>
+              {agents.map((a) => <option key={a.session_id} value={`agent:${a.session_id}`}>{a.name}</option>)}
+            </select>
+          )}
+          <button type="submit" className="settings-btn" data-ui-action="domain"
+                  disabled={busy || !piece || (asking === "reassign" && !to)}>
+            {asking === "release" ? t("main.work.act.release") : t("main.work.act.reassign")}</button>
+          <button type="button" className="settings-btn" data-ui-action="domain" onClick={reset}>
+            {t("main.common.cancel")}</button>
+        </form>
+      )}
       {problem && <span className="file-state">{problem}</span>}
     </div>
   );

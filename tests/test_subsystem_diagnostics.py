@@ -261,8 +261,8 @@ def test_the_server_s_loops_beat(monkeypatch):
 def test_communications_working_are_ok():
     s = comms(messages=[message("answered")])
     assert s.state == sd.OK and s.summary.startswith("Watching 1 session")
-    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued"], \
-        "agents' messages to him come by one signed route: no loop to judge (round 3)"
+    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued", "keys"], \
+        "agents' messages to him come by one signed route; the agent keys' look is judged"
     assert s.messages[0]["outcome"] == "reached"
 
 
@@ -512,30 +512,100 @@ def test_communications_down_and_back_are_one_update(server, monkeypatch):
 
 # ── the Work tracker ─────────────────────────────────────────────────────
 
+def VIEW():
+    return live_beat(sd.WORK_LOOP, every=1.0)
+
+
 def test_the_work_tracker_s_states():
     lat = sd.Latencies()
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert (s.state, s.summary) == (sd.IDLE, "No report in the last 5 min")
     lat.note(sd.WRITE, 0.4, now=NOW - 10)
     lat.note(sd.WRITE, 1.2, now=NOW - 5)
     lat.note(sd.READ, 0.01, now=NOW - 5)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert (s.state, s.summary) == (sd.OK, "2 reports in the last 5 min, the slowest 1.2 s")
-    assert [c.state for c in s.checks] == [sd.OK, sd.OK]
+    assert [c.state for c in s.checks] == [sd.OK, sd.OK, sd.OK]
     lat.note(sd.WRITE, 2.5, now=NOW - 1)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert s.state == sd.DEGRADED
     assert s.summary == "Reports: The slowest report in the last 5 min took 2.5 s"
     # Past the window it is forgotten.
-    assert sd.work(lat, NOW + sd.WORK_LATENCY_WINDOW_SEC + 5).state == sd.IDLE
+    assert sd.work(lat, NOW + sd.WORK_LATENCY_WINDOW_SEC + 5,
+                   live_beat(sd.WORK_LOOP, every=1.0, ok_ago=-sd.WORK_LATENCY_WINDOW_SEC)).state == sd.IDLE
 
 
 def test_a_slow_read_of_the_list_is_degraded_too():
     lat = sd.Latencies()
     lat.note(sd.WRITE, 0.1, now=NOW - 1)
     lat.note(sd.READ, 3.0, now=NOW - 1)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert s.state == sd.DEGRADED and s.checks[1].state == sd.DEGRADED
+
+
+def test_the_work_view_s_loop_is_judged_on_the_work_tracker_row():
+    """A view never built, or one that stopped ticking, shows on the row: the
+    Work tab would be empty or frozen, so it is a loop judged as any other."""
+    lat = sd.Latencies()
+    lat.note(sd.WRITE, 0.1, now=NOW - 1)
+    s = sd.work(lat, NOW, None)
+    assert s.checks[-1].id == "view" and s.checks[-1].state == sd.UNKNOWN
+    failing = live_beat(sd.WORK_LOOP, every=1.0, ok_ago=None, started_ago=5)
+    failing.failed("records unreadable")
+    s = sd.work(lat, NOW, failing)
+    assert s.state == sd.DEGRADED
+    assert s.summary == "Work view: The last look failed: records unreadable"
+    silent = live_beat(sd.WORK_LOOP, every=1.0, ok_ago=None, started_ago=120)
+    assert sd.work(lat, NOW, silent).state == sd.DOWN
+
+
+def test_the_agent_keys_loop_is_judged_on_the_communications_row():
+    w = watcher()
+    assert sd.communications(w, [], NOW, NOW - 600, [], None).checks[-1].state == sd.IDLE
+    silent = live_beat(sd.AGENT_KEYS_LOOP, every=5.0, ok_ago=200)
+    s = sd.communications(w, [], NOW, NOW - 600, [], silent)
+    assert s.state == sd.DOWN and s.checks[-1].id == "keys"
+    assert s.summary.startswith("Agent keys: Has not finished a look for")
+    fine = live_beat(sd.AGENT_KEYS_LOOP, every=5.0)
+    assert sd.communications(w, [], NOW, NOW - 600, [], fine).checks[-1].state == sd.OK
+
+
+def test_a_work_view_that_fails_to_build_is_tried_again_and_shown(monkeypatch):
+    """The view's build is part of the loop's look: a load that raises is a
+    failed heartbeat and is tried again, never a task that died quietly."""
+    from jarvis import server
+    tries, ticks = [], []
+
+    class View:
+        built = False
+
+        def load(self):
+            tries.append(1)
+            if len(tries) == 1:
+                raise RuntimeError("records unreadable")
+            View.built = True
+
+        def start(self):
+            pass
+
+        def tick(self):
+            ticks.append(1)
+
+    monkeypatch.setattr(server, "work_held", View())
+    monkeypatch.setattr(server, "WORK_TICK_SEC", 0.01)
+    seen = []
+
+    async def run():
+        task = asyncio.create_task(server._watch_work())
+        await until_async(lambda: sd.WORK_LOOP in sd.beats and sd.beats[sd.WORK_LOOP].failures)
+        seen.append(sd.beats[sd.WORK_LOOP].error)
+        await until_async(lambda: ticks)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    assert seen == ["records unreadable"]
+    assert len(tries) == 2 and sd.beats[sd.WORK_LOOP].failures == 0
 
 
 def test_the_work_routes_are_timed_live(wired):
