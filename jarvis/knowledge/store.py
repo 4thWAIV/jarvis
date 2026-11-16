@@ -396,15 +396,20 @@ class Store:
 
     def versions(self, family: int, key: bytes) -> list[Version]:
         """Every version of `key` the store holds, newest first."""
+        return list(self.iter_versions(family, key))
+
+    def iter_versions(self, family: int, key: bytes) -> Iterator[Version]:
+        """Every version of `key`, newest first, each decoded only when the
+        caller takes it (`Segment.iter_versions`): a read of an item's
+        newest few versions, or of the one at a version or time, stops
+        there instead of decoding a history of thousands."""
         mems, segs = self._sources(family)
-        out: list[Version] = []
+        sources: list[Iterator[Version]] = []
         for mem in mems:
             with self._lock:
-                out.extend(mem.versions_of(family, key))
-        for _, seg in segs:
-            out.extend(seg.versions(key))
-        out.sort(key=lambda v: -v.lsn)
-        return out
+                sources.append(iter(mem.versions_of(family, key)))
+        sources += [seg.iter_versions(key) for _, seg in segs]
+        return heapq.merge(*sources, key=lambda v: -v.lsn)
 
     def get(self, family: int, key: bytes, at: Optional[int] = None) -> Optional[Version]:
         """The newest version at or below `at`, or None; a tombstone comes
@@ -452,14 +457,18 @@ class Store:
 
     def scan(self, family: int, start: bytes = b"", end: Optional[bytes] = None,
              at: Optional[int] = None, *, tombstones: bool = False) -> Iterator[Version]:
-        """The newest version of every key in [start, end) at `at`."""
+        """The newest version of every key in [start, end) at `at`. Each
+        segment gives only its newest version of each key at `at`
+        (`Segment.scan_newest`), so a scan over items with long histories
+        never decodes them: listing 24 usage documents read every one of
+        their versions, 4.7 s of CPU a time."""
         mems, segs = self._sources(family)
         sources: list[Iterator[Version]] = []
         for mem in mems:
             with self._lock:
                 sources.append(iter(list(mem.scan(family, start, end))))
         for _, seg in segs:
-            sources.append(seg.scan(start, end))
+            sources.append(seg.scan_newest(start, end, at))
         for v in newest_only(merge(sources), at):
             if v.value is not None or tombstones:
                 yield v

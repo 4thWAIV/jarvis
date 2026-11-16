@@ -18199,17 +18199,10 @@ def _stacks_on_signal() -> None:
     """`kill -USR1 <pid>` writes every thread's Python stack to
     `server-stacks.log` in the data folder, so a server that stops answering
     can be diagnosed without root (py-spy needs it on macOS)."""
-    import faulthandler
-    import signal
-    if not hasattr(signal, "SIGUSR1"):      # Windows has no SIGUSR1
-        return
+    from jarvis.knowledge import oscompat
     path = data_paths.data_dir() / "server-stacks.log"
-    try:
-        stream = open(path, "a", buffering=1)
-    except OSError:
+    if not oscompat.stacks_on_signal(path) and not oscompat.WINDOWS:
         log.warning("server stacks: %s cannot be opened", path)
-        return
-    faulthandler.register(signal.SIGUSR1, file=stream, all_threads=True)
 
 
 def _apply_start_settings(args) -> bool:

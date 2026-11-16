@@ -723,3 +723,99 @@ def test_a_large_transcript_is_read_a_window_at_a_time(svc, claude_root, tmp_pat
     assert len(first["lines"]) == TEXT_MAX_LINES and first["next_cursor"]
     second = svc.preview(f["id"], path="s.jsonl", cursor=first["next_cursor"])
     assert second["lines"][0].endswith("message 200")
+
+
+# ── no write when only a time moved ──────────────────────────────────────
+# Every version of a record is kept, so a pass that rewrote each document
+# for a new time alone grew every history without end. A time that alone
+# moved is held in memory (still read) and written at most every
+# STAMP_EVERY_SEC.
+
+def _versions(path: str) -> int:
+    return len(records.history(path))
+
+
+def test_a_check_that_moves_only_its_time_is_held_not_written(svc, store, tmp_path):
+    import time as _time
+    f = _register(svc, _tree(tmp_path / "steady", {"a": "a"}))["folder"]
+    loc = store.get(f["id"]).location.id
+    path = folder_store.folder_path(f["id"])
+    t = _time.time() + folder_store.STAMP_EVERY_SEC
+    store.record_availability(loc, "available", None, now=t)
+    written = _versions(path)
+    for n in range(1, 4):
+        assert store.record_availability(loc, "available", None, now=t + 60 * n) is False
+    assert _versions(path) == written, "nothing but the time moved: nothing written"
+    shown = store.get(f["id"]).location
+    assert shown.last_checked_at == t + 180 and shown.last_seen_at == t + 180, "read from memory"
+    assert store.list()[0].location.last_checked_at == t + 180
+    # Once the written check is STAMP_EVERY_SEC old, the time is written.
+    later = t + folder_store.STAMP_EVERY_SEC
+    store.record_availability(loc, "available", None, now=later)
+    assert _versions(path) == written + 1
+    assert records.get(path).data["locations"][0]["last_checked_at"] == later
+
+
+def test_a_check_that_moves_availability_is_written_at_once(svc, store, tmp_path):
+    import time as _time
+    f = _register(svc, _tree(tmp_path / "moving", {"a": "a"}))["folder"]
+    loc = store.get(f["id"]).location.id
+    path = folder_store.folder_path(f["id"])
+    t = _time.time() + folder_store.STAMP_EVERY_SEC
+    store.record_availability(loc, "available", None, now=t)
+    store.record_availability(loc, "available", None, now=t + 60)      # held
+    written = _versions(path)
+    assert store.record_availability(loc, "missing", None, now=t + 120) is True
+    assert _versions(path) == written + 1
+    stored = records.get(path).data["locations"][0]
+    assert stored["availability"] == "missing" and stored["last_seen_at"] == t + 60, \
+        "the held time goes with the real change"
+
+
+def _seen(cwd: str, live: bool = False, session: str = "s1") -> folder_store.Observation:
+    return folder_store.Observation(provider="claude", profile_root="/root", native_session_id=session,
+                                    observed_cwd=cwd, cwd_key=cwd, evidence="transcript", live=live)
+
+
+def _discovery_versions() -> int:
+    return sum(_versions(r.path) for under in (folder_store.CANDIDATES, folder_store.SESSIONS)
+               for r in records.all_of(under))
+
+
+def test_a_discovery_pass_that_sees_the_same_sessions_writes_nothing(store, tmp_path):
+    t = 1_800_000_000.0
+    cwd = str(tmp_path / "w")
+    store.observe(NODE, [_seen(cwd, live=True)], now=t)
+    written = _discovery_versions()
+    for n in range(1, 4):
+        store.observe(NODE, [_seen(cwd, live=True)], now=t + 60 * n)
+    assert _discovery_versions() == written
+    cand = store.candidates()[0]
+    assert cand.last_observed_at == t + 180, "the held time is read"
+    session = store._observations(NODE)[0]
+    assert session["observed_at"] == t + 180 and session["last_live_at"] == t + 180
+    # Something a reader uses (a second session) is written at once.
+    store.observe(NODE, [_seen(cwd, live=True), _seen(cwd, session="s2")], now=t + 240)
+    assert _discovery_versions() > written
+    written = _discovery_versions()
+    # And the times alone, once the written ones are STAMP_EVERY_SEC old.
+    store.observe(NODE, [_seen(cwd, live=True), _seen(cwd, session="s2")],
+                  now=t + folder_store.STAMP_EVERY_SEC)
+    assert _discovery_versions() > written
+
+
+def test_a_source_pass_that_moves_only_its_times_is_held(store):
+    t = 1_800_000_000.0
+    store.record_progress("live", listed=2, read=2, pending=0, complete=True, error=None, now=t)
+    written = _versions(folder_store.DISCOVERY)
+    for n in range(1, 4):
+        store.record_progress("live", listed=2, read=2, pending=0, complete=True, error=None,
+                              now=t + 60 * n)
+    assert _versions(folder_store.DISCOVERY) == written
+    shown = store.progress()[0]
+    assert shown.last_run_at == t + 180 and shown.last_ok_at == t + 180
+    store.record_progress("live", listed=3, read=3, pending=0, complete=True, error=None, now=t + 240)
+    assert _versions(folder_store.DISCOVERY) == written + 1
+    store.record_progress("live", listed=3, read=3, pending=0, complete=True, error=None,
+                          now=t + 240 + folder_store.STAMP_EVERY_SEC)
+    assert _versions(folder_store.DISCOVERY) == written + 2

@@ -56,7 +56,7 @@ class BadRequest(ValueError):
 
 
 Handler = Callable[[Engine, Request], Answer]
-ROUTES: list[tuple[str, re.Pattern, Handler]] = []
+ROUTES: list[tuple[str, re.Pattern, Handler, str]] = []   # method, pattern, handler, template
 
 
 def route(method: str, template: str) -> Callable[[Handler], Handler]:
@@ -67,16 +67,18 @@ def route(method: str, template: str) -> Callable[[Handler], Handler]:
     compiled = re.compile(f"^{pattern}$")
 
     def register(fn: Handler) -> Handler:
-        ROUTES.append((method, compiled, fn))
+        ROUTES.append((method, compiled, fn, template))
         return fn
     return register
 
 
 def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answer:
+    """Run the route `target` names; each request's time is kept by route
+    in the engine's health (`Engine.route_times`)."""
     parts = urlsplit(target)
     path = parts.path
     known_path = False
-    for m, pattern, fn in ROUTES:
+    for m, pattern, fn, template in ROUTES:
         found = pattern.match(path)
         if not found:
             continue
@@ -85,10 +87,13 @@ def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answ
             continue
         params = {k: unquote(v) for k, v in found.groupdict().items()}
         query = {k: v[-1] for k, v in parse_qs(parts.query).items()}
+        began = time.monotonic()
         try:
             return fn(engine, Request(params, query, body))
         except BadRequest as e:
             return Answer(400, {"error": "bad_request", "detail": str(e)})
+        finally:
+            engine.route_times.record(f"{method} {template}", time.monotonic() - began)
     if known_path:
         return Answer(405, {"error": "method_not_allowed"})
     return Answer(404, {"error": "not_found"})
@@ -565,6 +570,9 @@ def run(*, watch_stdin: bool = True) -> int:
 
     signal.signal(signal.SIGTERM, lambda *_: stop())
     signal.signal(signal.SIGINT, lambda *_: stop())
+    # `kill -USR1 <pid>` appends every thread's stack beside the engine's log.
+    from jarvis.knowledge import oscompat
+    oscompat.stacks_on_signal(data_paths.knowledge_stacks_path())
     if watch_stdin:
         _watch_stdin(stop)
     _maintenance(engine, stopping)

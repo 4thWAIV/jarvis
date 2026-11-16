@@ -881,6 +881,12 @@ def knowledge_engine_log_path() -> Path:
     return data_dir() / "knowledge-engine.log"
 
 
+def knowledge_stacks_path() -> Path:
+    """Where `kill -USR1 <engine pid>` appends every thread's Python stack
+    (knowledge/serve.py), beside the engine's log."""
+    return data_dir() / "knowledge-engine-stacks.log"
+
+
 def knowledge_token_path() -> Path:
     """The knowledge engine's bearer token, separate from the tool token so
     leaking one opens nothing of the other. Only the server holds it."""

@@ -193,7 +193,8 @@ class Question:
     answer: Optional[dict]              # {"answer", "choice", "note", "at", "recommended",
     #                                     and for his approval "subject"}
     # His approval of an architecture design (APPROVAL_ID) only: the answer
-    # was given to a revision or kit no longer current, so it counts for
+    # was given to a revision no longer current, or under a kit whose
+    # language files differ from the kit in force's, so it counts for
     # nothing (`current_subject`).
     stale: bool = False
 
@@ -218,7 +219,7 @@ class Question:
         if not subject:
             return ""
         said = f", given to revision {subject.get('revision')} of {subject.get('document_id')}"
-        return said + (" (stale: a newer revision or kit has been checked since)"
+        return said + (" (stale: a newer revision has been checked since, or the kit's language changed)"
                        if self.stale else "")
 
     def counts(self) -> bool:
@@ -528,7 +529,8 @@ def _story_questions(package: Package) -> list[Question]:
 
 def current_subject(subject) -> bool:
     """Whether a checked canonical revision is still the one in force: the
-    newest checked revision of its document, under the kit in force. False
+    newest checked revision of its document, checked by a kit with the
+    language files of the kit in force (language_projection). False
     when it cannot be told (fail closed: a stale approval satisfies
     nothing)."""
     from jarvis import language_projection
