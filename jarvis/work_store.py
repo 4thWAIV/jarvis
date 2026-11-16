@@ -154,8 +154,14 @@ REVIEW_KINDS = (APPROVED, REVIEW_RETURNED, WORK_ADDED)
 # Recorded by the server, so the item always says what his act did.
 REVIEW_NOTED = "review_noted"
 NO_VERDICT, NOT_APPLIED = "no_verdict", "not_applied"
+# His acts on work that nobody else can unstick (the page's item header and
+# the brain's acting `review_work`): HOLD_RELEASED lets a held piece (or an
+# item with no pieces) go on whatever holds it, CLOSED_BY_HIM moves the item
+# to History for good, REASSIGNED puts a piece on another agent.
+HOLD_RELEASED, CLOSED_BY_HIM, REASSIGNED = "hold_released", "closed_by_him", "reassigned"
+HIS_ACTS = (HOLD_RELEASED, CLOSED_BY_HIM, REASSIGNED)
 # Everything only he does: never a reporter's to send.
-HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS + (REVIEW_NOTED,)
+HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS + (REVIEW_NOTED,) + HIS_ACTS
 # JARVIS's own: the item's Error, raised and cleared (see ERROR). Never a
 # reporter's, never his.
 ERROR_RAISED, ERROR_CLEARED = "error_raised", "error_cleared"
@@ -944,6 +950,8 @@ def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: 
     if kind == CLOSED:
         doc["closed_at"] = now
         return {}
+    if kind in HIS_ACTS:
+        return _his_act(doc, kind, detail, now)
     if kind == ERROR_RAISED:
         doc.update(error=summary, error_at=now)
         return {"held": _one_line(detail.get("held"), SUMMARY_MAX)}
@@ -1080,6 +1088,59 @@ def _review(doc: dict, item_id: str, kind: str, words: str, detail: dict, now: f
         doc["state"] = WORKING
     doc["approved_at"] = None
     return {**kept, "key": key, "who": {"kind": person.kind, "ref": person.ref}, "state": READY}
+
+
+def _his_act(doc: dict, kind: str, detail: dict, now: float) -> dict:
+    """His act on work nobody else can unstick, recorded as his with where
+    he gave it (the page or his voice): release a held piece's hold (or an
+    item's with no pieces), whatever holds it, to the state it moves to
+    then (ready by default); close the item for good (to History); or put
+    a piece on another agent (`who`, checked by work_api against the agent
+    directory), ready for it to pick up."""
+    where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
+    kept: dict = {"by": "tim", "where": where}
+    if kind == CLOSED_BY_HIM:
+        doc["closed_at"] = now
+        return kept
+    key = _slug(detail["key"], "The piece's key") if detail.get("key") else None
+    if key is None and (doc["pieces"] or kind == REASSIGNED):
+        raise WorkRefused("Name the piece (its key).")
+    holder = _piece(doc, key) if key is not None else doc
+    if holder is None:
+        raise WorkRefused(f"This item has no piece {key}.")
+    what = f"Piece {key}" if key is not None else "The item"
+    if key is not None:
+        kept["key"] = key
+    if kind == HOLD_RELEASED:
+        if holder["state"] not in HELD:
+            raise WorkRefused(f"{what} is not held: there is nothing to release.")
+        state = holder["then_state"] or READY
+        kept.update(released=list(holder["until"] or []), placed_by=holder.get("held_by", ""),
+                    state=state, was=holder["state"])
+        holder.update(state=state, until=[], then_state="", waiting_since=None, held_by="")
+        if key is not None:
+            holder.update(note="Tim released its hold.", note_at=now)
+        return kept
+    # REASSIGNED: the piece on another agent, ready for it (a held piece
+    # stays held: what holds it is not the agent's).
+    on = detail.get("who")
+    if not isinstance(on, dict):
+        raise WorkRefused("Say which agent to put it on.")
+    person = who(on.get("kind"), on.get("ref"))
+    if person.kind != AGENT:
+        raise WorkRefused("A piece is reassigned to an agent.")
+    if holder["state"] == DONE:
+        raise WorkRefused(f"{what} is done: there is nothing to reassign.")
+    if (holder["who_kind"], holder["who_ref"]) == (person.kind, person.ref):
+        raise WorkRefused(f"{what} is already on that agent.")
+    kept.update(who={"kind": person.kind, "ref": person.ref},
+                was={"kind": holder["who_kind"], "ref": holder["who_ref"]})
+    holder.update(who_kind=person.kind, who_ref=person.ref, worker="",
+                  note="Tim reassigned it.", note_at=now)
+    if holder["state"] not in HELD and holder["state"] != PLANNED:
+        holder["state"] = READY
+    kept["state"] = holder["state"]
+    return kept
 
 
 def _withdraw(doc: dict, item_id: str, reason: str, detail: dict, now: float) -> dict:

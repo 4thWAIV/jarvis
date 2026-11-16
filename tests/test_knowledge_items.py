@@ -336,3 +336,30 @@ def test_a_full_field_dictionary_never_refuses_a_write(opened, monkeypatch):
     uds.put(TIM, "/f/a.x", data={f"field{n}": n for n in range(10)})
     assert engine.docs.fields_full
     assert [i.path for i in uds.list(TIM, "/", where=[["field9", "=", 9]]).items] == ["/f/a.x"]
+
+
+def test_reading_an_item_now_never_walks_its_history(opened, monkeypatch):
+    """A record rewritten thousands of times has a history as long: the
+    item now is its newest version alone, read without it, and a history
+    read with a limit stops at the limit."""
+    engine, uds = opened
+    for n in range(40):
+        uds.put(TIM, "/usage/claude/day.usage", data={"n": n})
+        if n % 9 == 0:
+            engine.store.flush()
+    walked = []
+    real = engine.store.iter_versions
+
+    def counted(family, key):
+        for v in real(family, key):
+            walked.append(v.lsn)
+            yield v
+    monkeypatch.setattr(engine.store, "iter_versions", counted)
+    assert uds.get(TIM, "/usage/claude/day.usage").data == {"n": 39}
+    assert [i.data for i in uds.list(TIM, "/usage/claude").items] == [{"n": 39}]
+    assert walked == []
+    assert [v.version for v in uds.history(TIM, "/usage/claude/day.usage", limit=3)] == [40, 39, 38]
+    assert len(walked) == 4                         # the limit and one more, to know there are more
+    walked.clear()
+    assert uds.get(TIM, "/usage/claude/day.usage", version=38).data == {"n": 37}
+    assert len(walked) == 3

@@ -2157,7 +2157,6 @@ class SessionWatcher:
         settled. Never raises."""
         import logging
         import time as _time
-        from jarvis.session_provider import for_session
         log = logging.getLogger(__name__)
         if self.messages is None:
             return []
@@ -2184,27 +2183,90 @@ class SessionWatcher:
                     fields = {"status": "failed",
                               "failure": "its session was not free within a day"}
                 elif session.between_turns:
-                    provider = next((p for p in self.providers if p.name == m.provider), None) \
-                        or for_session(session, self.providers)
-                    outcome = provider.send(session, m.text) if provider is not None else "failed"
-                    fields = ({"status": "sent", "sent_at": now} if outcome == "sent"
-                              else {"status": "failed", "failure": outcome})
+                    fields = self._send_one(m, session, now)
                 if fields is None:
                     continue
-                try:
-                    self.messages.update_message(m.id, **fields)   # the store BEFORE the event
-                except Exception:
-                    log.warning("message %s could not be recorded", m.id, exc_info=True)
-                    continue
-                m = replace(m, **fields)
-                settled.append(m)
-                if session is None:
-                    session = SessionState(session_id=m.session_id, cwd="", project=m.project,
-                                           state=GONE, voice_name=m.agent_name,
-                                           provider=m.provider)
-                self._publish("sent" if fields["status"] == "sent" else "send_failed",
-                              session, now, message=m)
+                m = self._settle_queued(m, session, fields, now)
+                if m is not None:
+                    settled.append(m)
         return settled
+
+    def _send_one(self, m, session: SessionState, now: float) -> dict:
+        """Send one queued message to its session, which is between turns:
+        the fields its record takes."""
+        from jarvis.session_provider import for_session
+        provider = next((p for p in self.providers if p.name == m.provider), None) \
+            or for_session(session, self.providers)
+        outcome = provider.send(session, m.text) if provider is not None else "failed"
+        return ({"status": "sent", "sent_at": now} if outcome == "sent"
+                else {"status": "failed", "failure": outcome})
+
+    def _settle_queued(self, m, session: SessionState | None, fields: dict, now: float):
+        """Record what became of a queued message (the store first, then a
+        `sent` or `send_failed` event). The message as recorded, or None
+        when it could not be. Never raises."""
+        import logging
+        log = logging.getLogger(__name__)
+        try:
+            self.messages.update_message(m.id, **fields)   # the store BEFORE the event
+        except Exception:
+            log.warning("message %s could not be recorded", m.id, exc_info=True)
+            return None
+        m = replace(m, **fields)
+        if session is None:
+            session = SessionState(session_id=m.session_id, cwd="", project=m.project,
+                                   state=GONE, voice_name=m.agent_name, provider=m.provider)
+        self._publish("sent" if fields["status"] == "sent" else "send_failed",
+                      session, now, message=m)
+        return m
+
+    def change_queued(self, message_id: int, action: str, snap: Snapshot | None = None,
+                      now: float | None = None) -> tuple[bool, str]:
+        """His Cancel or Send now on one queued message (the agent's thread,
+        or the brain's acting `change_queued_message`), under the same lock
+        as `send_queued`, so the two never both act on it. Cancel records it
+        `cancelled`; Send now sends it ahead of whatever it waits behind
+        (an earlier message not yet answered, or queued), but only while its
+        session is between turns: one message per turn still holds, so a
+        session mid-turn or stopped at a prompt is refused with why.
+        (ok, what happened or why not), in words. Never raises."""
+        import time as _time
+        if self.messages is None:
+            return False, "messages to sessions are not being followed"
+        snap = snap if snap is not None else self.snapshot
+        now = now if now is not None else _time.time()
+        with self._send_lock:
+            try:
+                m = self.messages.get_message(message_id)
+            except Exception:
+                return False, f"message {message_id} could not be read"
+            if m is None:
+                return False, f"there is no message {message_id}"
+            if str(m.status) != "queued":
+                return False, f"message {message_id} is not queued (it is {m.status})"
+            if action == "cancel":
+                try:
+                    self.messages.update_message(m.id, status="cancelled")
+                except Exception:
+                    return False, f"message {message_id} could not be recorded as cancelled"
+                return True, f"message {message_id} is cancelled; it was never sent"
+            if action != "send_now":
+                return False, "the action is cancel or send_now"
+            session = snap.by_id(m.session_id)
+            if session is None or session.state == GONE:
+                return False, (f"its session is not running, so message {message_id} "
+                               f"cannot go now")
+            if not session.between_turns:
+                why = ("is stopped at a prompt waiting for you" if session.state == NEEDS_YOU
+                       else "is in the middle of a turn")
+                return False, (f"its session {why}; message {message_id} stays queued and "
+                               f"goes once it is between turns, one message per turn")
+            fields = self._send_one(m, session, now)
+            if self._settle_queued(m, session, fields, now) is None:
+                return False, f"message {message_id} could not be recorded"
+            if fields["status"] == "sent":
+                return True, f"message {message_id} is sent"
+            return False, f"message {message_id} did not go: {fields.get('failure')}"
 
     def _track_messages(self, snap: Snapshot, now: float) -> set[str]:
         """Follow every open message in its session's transcript, record what

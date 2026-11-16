@@ -59,6 +59,14 @@ class ReviewRequired(KitError):
 LANGUAGE_FILES = ("metalang.yaml", "arch.yaml", "propose.yaml")
 
 
+def language_digests(installed: "Kit") -> dict[str, str | None]:
+    """The language an installed kit carries: each of LANGUAGE_FILES by its
+    SHA-256 (None for one it lacks). Two kits with the same are the same
+    language, whatever else their releases change: the one test for an
+    activation that needs no review and for an approval that stays good."""
+    return {name: installed.record["files"].get(name) for name in LANGUAGE_FILES}
+
+
 def sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -286,9 +294,8 @@ def activate(kit: Kit, *, compatibility_reviewed: bool = False) -> dict:
     if kit.release.digest in held and not compatibility_reviewed:
         raise KitError("This candidate is held after rollback; review it before explicit activation.")
     if previous and previous != kit.release.digest and not compatibility_reviewed:
-        prior = active(previous)
-        changed = [name for name in LANGUAGE_FILES
-                   if prior.record["files"][name] != kit.record["files"][name]]
+        before, after = language_digests(active(previous)), language_digests(kit)
+        changed = [name for name in LANGUAGE_FILES if before[name] != after[name]]
         if changed:
             raise ReviewRequired(changed)
     return _select(kit.release.digest, previous if previous != kit.release.digest else old.get("previous"),

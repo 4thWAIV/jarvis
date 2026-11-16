@@ -453,3 +453,154 @@ def test_every_report_records_its_key_s_reporter_on_pieces_and_events(wired):
     assert (piece["reporter"], piece["reporter_name"]) == ("agent:sess-plan-0001", "Planning")
     by_kind = {e["kind"]: e["reporter_name"] for e in found["events"]}
     assert by_kind == {"created": "Planning", "piece": "Planning", "update": "Diagnostics"}
+
+
+# --- his acts: release a hold, close the item, reassign a piece ------------------
+
+def _held_item(server, folder):
+    """An item with a piece blocked on words and one ready, on Planning."""
+    from jarvis import work_store as ws
+    server.run_store.sync_agents({"sess-plan-0001": ("Planning", "idle"),
+                                  "sess-diag-0002": ("Diagnostics", "idle")})
+    item = ws.create("Rebrand", "folder", folder)
+    planning = {"kind": "agent", "ref": "sess-plan-0001"}
+    ws.record(ws.WorkEvent(item.id, "piece", "Stuck on the licence.",
+                           {"key": "design", "who": planning, "state": "blocked",
+                            "until": "the font licence"}, reporter="agent:sess-plan-0001"))
+    ws.record(ws.WorkEvent(item.id, "piece", "Logo next.",
+                           {"key": "logo", "who": planning, "state": "ready"},
+                           reporter="agent:sess-plan-0001"))
+    return item.id
+
+
+def test_his_release_hold_frees_a_held_piece_and_is_recorded_as_his(wired):
+    """A hold only its reporter could end before: his Release hold on the
+    page lets it go on (to ready), recorded as his with where."""
+    server, _, _, folder = wired
+    from jarvis import work_store as ws
+    wid = _held_item(server, folder)
+    client = TestClient(server.app)
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                    json={"action": "release_hold", "piece": "logo"})
+    assert r.status_code == 409 and "not held" in r.json()["error"]
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                    json={"action": "release_hold", "piece": "design"})
+    assert r.status_code == 200, r.text
+    design = next(p for p in ws.get(wid).pieces if p.key == "design")
+    assert (design.state, design.until) == ("ready", [])
+    e = ws.latest(wid, 1)[0]
+    assert e.kind == ws.HOLD_RELEASED and e.reporter == ""
+    assert e.detail["by"] == "tim" and e.detail["where"] == "page"
+    assert e.detail["released"] == ["the font licence"]
+
+
+def test_a_reporter_cannot_send_his_acts(wired):
+    server, _, _, folder = wired
+    client = TestClient(server.app)
+    key = _key()
+    wid = _start(client, key, folder)
+    for kind in ("hold_released", "closed_by_him", "reassigned"):
+        r = client.post(f"/api/work/{wid}/events", auth=key,
+                        json={"kind": kind, "summary": "Mine now.", "detail": {}})
+        assert r.status_code == 409, kind
+
+
+def test_his_reassign_puts_a_piece_on_a_listed_agent_only(wired):
+    server, _, _, folder = wired
+    from jarvis import work_store as ws
+    wid = _held_item(server, folder)
+    client = TestClient(server.app)
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                    json={"action": "reassign", "piece": "logo", "to": "agent:nobody"})
+    assert r.status_code == 409 and "does not know that agent" in r.json()["error"]
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                    json={"action": "reassign", "piece": "logo", "to": "agent:sess-diag-0002"})
+    assert r.status_code == 200, r.text
+    logo = next(p for p in r.json()["item"]["pieces"] if p["key"] == "logo")
+    assert logo["who"]["ref"] == "sess-diag-0002" and logo["state"] == "ready"
+    e = ws.latest(wid, 1)[0]
+    assert e.kind == ws.REASSIGNED and e.detail["was"]["ref"] == "sess-plan-0001"
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                    json={"action": "reassign", "piece": "logo", "to": "agent:sess-diag-0002"})
+    assert r.status_code == 409 and "already" in r.json()["error"]
+
+
+def test_his_close_moves_the_item_to_history_and_resolves_its_news(wired, monkeypatch):
+    server, _, store, folder = wired
+    from jarvis import work_store as ws
+    wid = _held_item(server, folder)
+    revoked = []
+    monkeypatch.setattr(server.agent_key_store, "revoke_where",
+                        lambda *a, **k: revoked.append(k.get("work_ids")))
+    client = TestClient(server.app)
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN, json={"action": "close"})
+    assert r.status_code == 200, r.text
+    item = ws.get(wid)
+    assert item.closed_at is not None and item.history
+    assert ws.latest(wid, 1)[0].detail == {"by": "tim", "where": "page"}
+    assert revoked == [[wid]], "its work-item keys end with it"
+    r = client.post(f"/api/work/{wid}/act", headers=ORIGIN, json={"action": "close"})
+    assert r.status_code == 409 and "closed" in r.json()["error"]
+
+
+def test_review_work_takes_his_acts_by_voice_through_the_same_call(wired, monkeypatch):
+    import asyncio
+    server, _, _, folder = wired
+    from jarvis import agent_directory, work_store as ws
+    wid = _held_item(server, folder)
+    said = asyncio.run(server.tool_review_work(
+        {"item": wid, "action": "release_hold", "piece": "design"}))
+    assert said.startswith("Released, sir")
+    assert ws.latest(wid, 1)[0].detail["where"] == "voice"
+    found = type("A", (), {"session_id": "sess-diag-0002"})()
+    monkeypatch.setattr(agent_directory, "find",
+                        lambda ref, last=None: [found] if ref == "diagnostics" else [])
+    said = asyncio.run(server.tool_review_work(
+        {"item": wid, "action": "reassign", "piece": "logo", "to": "nobody known"}))
+    assert "No agent" in said
+    said = asyncio.run(server.tool_review_work(
+        {"item": wid, "action": "reassign", "piece": "logo", "to": "diagnostics"}))
+    assert said.startswith("Reassigned, sir")
+    said = asyncio.run(server.tool_review_work({"item": wid, "action": "close"}))
+    assert said.startswith("Closed, sir") and ws.get(wid).history
+
+
+def test_an_unlinked_hold_over_a_day_is_a_silent_update_naming_who_holds_it(wired):
+    """A hold that names nothing (from before holds were kept), open over a
+    day: a silent update naming the piece's agent, resolved once he
+    releases it."""
+    server, _, store, folder = wired
+    from jarvis import records, work_store as ws
+    wid = _held_item(server, folder)
+
+    def unname(unit):
+        rec = unit.get(ws.path_of(wid))
+        doc = dict(rec.data)
+        for p in doc["pieces"]:
+            if p["key"] == "design":
+                p.update(until=[], waiting_since=1.0)
+        unit.put(rec.path, doc, change="test", summary="hold from before")
+    records.atomic(unname)
+    item = ws.get(wid)
+    assert any(b.unlinked for b in item.blockers)
+    server._work_said_unlinked.discard(wid)
+    server._attend_unlinked([item])
+    (pending,) = [i for i in store.items(("pending",)) if i.kind == "work_unlinked"]
+    assert pending.audible is False and pending.untrusted["agent"] == "Planning"
+    assert pending.facts == {"piece": "design"}
+    server._attend_unlinked([item])
+    assert len([i for i in store.items(("pending",)) if i.kind == "work_unlinked"]) == 1
+    client = TestClient(server.app)
+    assert client.post(f"/api/work/{wid}/act", headers=ORIGIN,
+                       json={"action": "release_hold", "piece": "design"}).status_code == 200
+    assert not [i for i in store.items(("pending",)) if i.kind == "work_unlinked"]
+
+
+def test_a_stalled_item_names_who_was_on_it(wired):
+    server, _, store, folder = wired
+    from jarvis import work_store as ws
+    wid = _held_item(server, folder)
+    server._work_said_stalled.discard(wid)
+    server._attend_stalled([ws.get(wid)], {wid})
+    (pending,) = [i for i in store.items(("pending",)) if i.kind == "work_stalled"]
+    assert pending.event == "stalled_on" and pending.untrusted["agent"] == "Planning"

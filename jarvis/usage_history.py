@@ -7,9 +7,13 @@ in JARVIS's records: one `usage` document a brain a day (UTC),
 word, the five-hour window's history has no value, so its readings are
 never written.
 
-  readings  every reading as it came: when, provider, account hash, window,
-            utilization (a percentage, None when the reading did not
-            measure it), resets-at and status. Kept for RAW_KEEP_SEC.
+  readings  the readings as they came: when, provider, account hash,
+            window, utilization (a percentage, None when the reading did
+            not measure it), resets-at and status. A reading is kept when
+            it says something the last one kept did not (`_says_more`), or
+            once USAGE_READING_EVERY_SEC has passed since it: every version
+            of the day's document is kept, so a reading a minute would grow
+            its history with the square of the day. Kept for RAW_KEEP_SEC.
   hourly    after that, one entry per (window, account, hour): how many
             readings and how many measured, the lowest, the highest and the
             last percentage, and the last reset time. Kept for good.
@@ -62,6 +66,10 @@ WEEK_SEC = 7 * 24 * HOUR_SEC
 # Codex wobbles its reset time by a few seconds).
 SAME_RESET_SEC = 60.0
 RESOLUTIONS = ("auto", "raw", "hour")
+# A reading that says the same as the last one kept (same percentage, reset,
+# status and account) is kept at most this often, so a quiet week's line
+# still has a point every ten minutes and its day grows by at most 144.
+USAGE_READING_EVERY_SEC = 10 * 60
 
 ROOT = "/usage"
 TYPE = "usage"
@@ -72,6 +80,9 @@ HOUR_COLUMNS = ("hour", "provider", "account", "window", "samples", "measured", 
 _backfilled: set[str] = set()
 _backfilling = threading.Lock()
 _last_compact: dict[str, float] = {}
+# The last reading kept, by engine and day document, so a reading that says
+# nothing new is passed over without reading the day's document.
+_last_kept: dict[tuple[str, str], dict] = {}
 
 
 def day_of(at: Any) -> str:
@@ -132,7 +143,7 @@ def _backfill() -> None:
         if key in _backfilled:
             return
         if next(records.scan(ROOT, limit=1), None) is None:
-            _write(_stored_readings())
+            _write(_stored_readings(), thin=False)
         _backfilled.add(key)
 
 
@@ -167,18 +178,61 @@ def _reading(at, provider, account, window, utilization, resets_at, status) -> d
             "utilization": utilization, "resets_at": resets_at, "status": status}
 
 
-def _write(readings: list[dict]) -> None:
-    """Add readings to their days' documents, each day in one write."""
+def _says_more(reading: dict, last: Optional[dict]) -> bool:
+    """Whether `reading` is worth keeping after `last` (the last reading of
+    its window kept that day): it is the first, it says something else, it
+    comes USAGE_READING_EVERY_SEC or more after it, or before it."""
+    if last is None:
+        return True
+    a, b = reading.get("resets_at"), last.get("resets_at")
+    same_reset = a == b or (a is not None and b is not None and abs(a - b) <= SAME_RESET_SEC)
+    same = (reading.get("utilization") == last.get("utilization") and same_reset
+            and reading.get("status") == last.get("status")
+            and reading.get("account") == last.get("account"))
+    gap = reading["at"] - last["at"]
+    return not same or gap >= USAGE_READING_EVERY_SEC or gap < 0
+
+
+def _thinned(new: list[dict], last: Optional[dict]) -> list[dict]:
+    kept = []
+    for r in new:
+        if _says_more(r, last):
+            kept.append(r)
+            last = r
+    return kept
+
+
+def _write(readings: list[dict], *, thin: bool = True) -> int:
+    """Add readings to their days' documents, each day in one write; with
+    `thin`, only those that say more than the last one kept
+    (`_says_more`). Returns how many went in."""
     by_day: dict[str, list[dict]] = {}
     for r in readings:
         by_day.setdefault(path_of(r["provider"], day_of(r["at"])), []).append(r)
+    engine = records.engine_key()
+    added = 0
     for path, new in by_day.items():
-        def add(data: Optional[dict], new=new) -> dict:
+        key = (engine, path)
+        if thin and key in _last_kept and not _thinned(new, _last_kept[key]):
+            continue
+        went: list[dict] = []
+
+        def add(data: Optional[dict], new=new, went=went) -> Optional[dict]:
             data = data or _day_doc(new[0]["provider"], day_of(new[0]["at"]), [], [])
-            data["readings"] = list(data.get("readings") or []) + new
+            have = list(data.get("readings") or [])
+            last = next((r for r in reversed(have) if r.get("window") == WINDOW), None)
+            keep = _thinned(new, last) if thin else new
+            went[:] = keep
+            if not keep:
+                return None
+            data["readings"] = have + keep
             return data
         records.update(path, add, change="reading",
                        summary=f"{len(new)} usage reading{'s' if len(new) != 1 else ''}")
+        if went:
+            _last_kept[key] = went[-1]
+            added += len(went)
+    return added
 
 
 def _stored_services() -> list[str]:
@@ -199,9 +253,10 @@ def append(service: str, windows: dict[str, dict], *, account: Optional[str] = N
            now: Optional[float] = None) -> int:
     """Append one observation's seven-day window (usage_store's normalised
     shape: utilization as a percentage or None, resets_at, status,
-    observed_at); any other window it names is not kept. Returns how many
-    readings went in. Never raises: losing a history reading must not lose
-    the reading."""
+    observed_at); any other window it names is not kept, nor a reading that
+    says nothing the last one kept did not within USAGE_READING_EVERY_SEC
+    (`_says_more`). Returns how many readings went in. Never raises: losing
+    a history reading must not lose the reading."""
     rows = [_reading(float(w.get("observed_at") or now or time.time()), service, account, key,
                      w.get("utilization"), w.get("resets_at"), str(w.get("status") or ""))
             for key, w in windows.items() if key == WINDOW and isinstance(w, dict)]
@@ -209,7 +264,7 @@ def append(service: str, windows: dict[str, dict], *, account: Optional[str] = N
         return 0
     try:
         _backfill()
-        _write(rows)
+        went = _write(rows)
         at = time.time() if now is None else float(now)
         key = records.engine_key()
         if at - _last_compact.get(key, 0.0) >= COMPACT_EVERY_SEC:
@@ -218,7 +273,7 @@ def append(service: str, windows: dict[str, dict], *, account: Optional[str] = N
     except Exception as e:
         log.warning(f"usage_history: could not keep the reading ({type(e).__name__}: {e})")
         return 0
-    return len(rows)
+    return went
 
 
 def _hour(at: float) -> float:

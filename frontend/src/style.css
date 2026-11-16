@@ -1562,9 +1562,9 @@ html, body {
 .work-piece-doing { font-family: var(--ui-mono, monospace); overflow-wrap: anywhere; }
 .work-needs { border-left: 3px solid #fbbf24; padding: 4px 8px; margin: 4px 0; flex: none; }
 .work-needs ol { margin: 4px 0 0; padding-left: 18px; }
-.work-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; flex: none; }
-.work-review form { display: flex; gap: 6px; flex: 1; min-width: 0; }
-.work-review input { flex: 1; min-width: 0; }
+.work-review, .work-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; flex: none; }
+.work-review form, .work-acts form { display: flex; gap: 6px; flex: 1; min-width: 0; }
+.work-review input, .work-acts select { flex: 1; min-width: 0; }
 .work-approved { color: #34d399; }
 .work-package-review { color: #fbbf24; }
 .work-package-review[data-outcome="approved"] { color: #34d399; }

@@ -91,6 +91,15 @@ export async function revokeAgentKey(fingerprint: string): Promise<void> {
   if (!res.ok) throw new Error(`POST revoke: ${res.status}`);
 }
 
+/** His Renew on a Work item's key: another 30 days
+ *  (`POST /api/agent-keys/work-keys/<fingerprint>/renew`, the same
+ *  `_renew_work_key` as the brain's acting `renew_work_key`). */
+export async function renewWorkKey(fingerprint: string): Promise<void> {
+  const res = await fetch(`/api/agent-keys/work-keys/${encodeURIComponent(fingerprint)}/renew`,
+                          { method: "POST" });
+  if (!res.ok) throw new Error(`POST renew: ${res.status}`);
+}
+
 export async function listAgents(): Promise<AgentRow[]> {
   const res = await fetch("/api/agents");
   if (!res.ok) throw new Error(`GET /api/agents: ${res.status}`);

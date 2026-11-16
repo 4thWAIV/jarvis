@@ -222,7 +222,9 @@ def test_communications_judge_the_watcher_and_the_messages_it_sends_only():
     from jarvis import subsystem_diagnostics as sd
     now = 1000.0
     sub = sd.communications(None, [], now, now - 600)
-    assert [c.id for c in sub.checks] == ["watcher", "outgoing", "queued"]
+    # No loop judges agents' messages to him (one signed route); the agent
+    # keys' look is judged here because a key never proven cannot reach him.
+    assert [c.id for c in sub.checks] == ["watcher", "outgoing", "queued", "keys"]
 
 
 # -- an agent's box counts its new messages ----------------------------------------------------
