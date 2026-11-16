@@ -107,3 +107,20 @@ def end(pid: int, forcefully: bool) -> None:
             raise ProcessLookupError(str(e)) from e
         return
     os.kill(pid, signal.SIGKILL if forcefully else signal.SIGTERM)
+
+
+def stacks_on_signal(path) -> bool:
+    """`kill -USR1 <pid>` appends every thread's Python stack to `path`, so
+    a process that stops answering can be diagnosed without root (py-spy
+    needs it on macOS). The server and the knowledge engine each register
+    one. False on Windows, which has no SIGUSR1, or when `path` cannot be
+    opened."""
+    import faulthandler
+    if not hasattr(signal, "SIGUSR1"):
+        return False
+    try:
+        stream = open(path, "a", buffering=1)
+    except OSError:
+        return False
+    faulthandler.register(signal.SIGUSR1, file=stream, all_threads=True)
+    return True

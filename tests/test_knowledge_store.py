@@ -516,3 +516,89 @@ def test_an_uncompressed_long_history_streams_too(tmp_path):
     assert seg.newest(b"hou") == versions[-1]
     assert seg.newest(b"hot", at=1) is None
     seg.close()
+
+
+# --- scans and histories without decoding long histories ----------------------
+
+def _newest_by_scan_of_every_version(store: Store, start=b"", end=None, at=None):
+    """What `Store.scan` must give, read the old way: every version of every
+    key in every source, newest kept."""
+    mems, segs = store._sources(DOCS)
+    sources = [iter(list(m.scan(DOCS, start, end))) for m in mems] + [s.scan(start, end) for _, s in segs]
+    return [v for v in st.newest_only(st.merge(sources), at) if v.value is not None]
+
+
+def _long_history(store: Store) -> list[int]:
+    """`hot` rewritten until its history is an oversized block, beside small
+    keys before and after it; flushed in two generations."""
+    lsns = []
+    for i in range(160):
+        if i % 40 == 39:
+            lsns.append(store.commit([delete("hot")]))
+        else:
+            lsns.append(store.commit([put("hot", (f"{i:05d}" * 2000).encode()), put("hos", f"s{i}"),
+                                      put("hou", f"u{i}")]))
+        if i == 100:
+            store.flush()
+    lsns.append(store.commit([put("hot", b"last" * 2500)]))
+    store.flush()
+    return lsns
+
+
+def test_a_scan_gives_each_keys_newest_version_without_decoding_a_long_history(store):
+    lsns = _long_history(store)
+    oversized = [(seg, i) for _, seg in store.segments[DOCS] for i in range(len(seg.first_keys))
+                 if seg._raw_size(i) > sg.STREAM_OVER_BYTES]
+    assert oversized
+    for start, end in [(b"", None), (b"hot", b"hou"), (b"hos", b"hot"), (b"hou", None), (b"hp", None)]:
+        for at in [None, *lsns[::13], 0]:
+            for seg, _ in oversized:
+                store.pool.drop_file(seg.file_id)
+            assert list(store.scan(DOCS, start, end, at)) == \
+                _newest_by_scan_of_every_version(store, start, end, at)
+    for seg, _ in oversized:
+        store.pool.drop_file(seg.file_id)
+    assert [v.key for v in store.scan(DOCS)] == [b"hos", b"hot", b"hou"]
+    for seg, i in oversized:
+        assert store.pool.get((seg.file_id, i)) is None      # never decoded whole
+
+
+def test_a_long_historys_heads_outlive_a_scans_churn(store):
+    """The heads of an oversized block stand for a walk of all of it: they go
+    to the protected part of the pool, so other reads do not push them out."""
+    _long_history(store)
+    seg, index = next((seg, i) for _, seg in store.segments[DOCS] for i in range(len(seg.first_keys))
+                      if seg._raw_size(i) > sg.STREAM_OVER_BYTES)
+    store.pool.drop_file(seg.file_id)
+    list(store.scan(DOCS))
+    for n in range(store.pool.budget // (64 << 10) + 8):   # a probation's worth of other blocks, twice over
+        store.pool.put(("churn", n), [], 64 << 10)
+    assert store.pool.get((seg.file_id, index, "heads")) is not None
+
+
+def test_versions_come_lazily_newest_first_and_match_every_version(store):
+    lsns = _long_history(store)
+    store.commit([put("hot", "unflushed")])
+    every = store.versions(DOCS, b"hot")
+    assert [v.lsn for v in every] == sorted((v.lsn for v in every), reverse=True)
+    assert len(every) == len(lsns) + 1                        # every write of hot, its deletes included
+    lazy = store.iter_versions(DOCS, b"hot")
+    assert [next(lazy) for _ in range(3)] == every[:3]
+    assert list(store.iter_versions(DOCS, b"absent")) == []
+
+
+def test_a_block_of_small_records_streams_alike(tmp_path):
+    """Streaming a block of many small records (refilled a piece at a time,
+    never one zlib call a record) gives what decoding it gives."""
+    versions = [sg.Version(f"k{i:05d}".encode(), 10_000 - i, f"value {i}".encode() * 3) for i in range(5000)]
+    versions.append(sg.Version(b"z", 1, b"z" * 300_000))
+    path = tmp_path / "s.docs"
+    sg.write_segment(path, DOCS, 1, versions)
+    seg = sg.Segment(path, sg.BlockPool())
+    big = len(seg.first_keys) - 1
+    assert seg._raw_size(big) > sg.STREAM_OVER_BYTES
+    heads = seg._heads(big)
+    expected = {v.key: v for v in seg.block(big)}
+    assert {k: h[0] for k, h in heads.items()} == expected
+    assert list(seg.iter_versions(b"z")) == [versions[-1]]
+    seg.close()
