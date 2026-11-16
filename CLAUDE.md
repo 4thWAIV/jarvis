@@ -248,8 +248,15 @@ that open item, with `agent_rights.WORK_KEY_RIGHTS` scoped `work:<id>`
 /api/work`). It reports for its issuer, lives while the item is open and
 not in History (`agent_auth`), is revoked when the item closes and on the
 look after it leaves, and ends after `WORK_KEY_LIFE_SEC` (30 days) unless
-its issuer renews it (`agent_key renew`). The item's Overview lists its
-keys with Revoke (`work_api.work_keys_json`). The design and its progress
+its issuer renews it (`agent_key renew`) or Tim does: the item's Overview
+lists its keys with Renew and Revoke (`work_api.work_keys_json`), his Renew
+the same renew route from the page and the brain's acting
+`renew_work_key`, all through `server._renew_work_key`
+(`agent_key_store.renew_work_key`, which takes the issuer or `page` /
+`voice`). Within `server.WORK_KEY_WARN_SEC` (3 days) of its end a live key
+is a silent `work_key` attention item (`expiring`, the date and its item),
+recorded once per expiry and resolved once it is renewed, revoked or ended
+(`_attend_work_key_ending`, `_work_key_settled`). The design and its progress
 are `docs/planning/agent-keys/design.md`.
 
 ## Clearing the conversation
@@ -628,7 +635,10 @@ Workflows view, which keeps phases and progress: a reporter's
 --workflow <id> --work <item>`, whose answers come back as the workflow's
 decisions on sign-off), and a `blocker_raised` stays its state and is also a
 message from its reporter about its item (`server._workflow_message`, an
-agent key's report only). A new phase, a finish and going quiet are each an
+agent key's report only); one from any other reporter (the tool token, an
+access key during the cut-over) proves no sender, so it is the workflow's
+attention item (`blocker_raised`, `_attend_unproven_blocker`), resolved by
+its `blocker_cleared`. A new phase, a finish and going quiet are each an
 attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; a decision asked before round 3 is
 still answered on the Workflows view or by voice: the page's answer and
@@ -986,7 +996,8 @@ words; `MessagingRuntime._send_failed`). `messaging_runtime.py` builds the one s
 accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
 each step a version; a `thread` document per thread, its work state,
 waiting command and review checklist; the sync position a `settings`
-document), file snapshots (`messaging_files.py`), guard,
+document, written only where a delivery pass stops and only when it moved
+(`store_page_changes(keep_position=)`), so a rescan writes nothing), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
 announcer (`arrival_announcer.py`: each arrival an attention item, its
@@ -1669,14 +1680,29 @@ The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
 output, the tool channel, the workflow monitor, the Work tracker, the folder
 catalog, the knowledge engine, the attention record ("Updates"), the team
-server connection and the server's start setup
+server connection, the server's start setup
 (`start_setup`: a trial and the last going back, never worse than degraded)
+and Setup (`subsystem_diagnostics.setup`: every startup check,
+`preflight.run_checks`, that did not pass, kept by `server._run_preflight`
+as `_preflight_checks`, each by its own name and in JARVIS's words where
+the check has a `code`, never worse than degraded; its view has Install
+skill while the talk-to-jarvis skill is missing or old, `POST
+/api/setup/session-skill`, and the brain's acting `install_session_skill`,
+both `server._install_session_skill`, `session_skill.install`)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
 (`orb.graphicsTrouble`) and the page runs on; that row says so. The team server row reads
 `team_client`'s status and is never worse than `degraded`, since JARVIS works
-without a team server; the left column shows it too (`TeamServerTile.tsx`). Each is `ok`, `degraded`,
+without a team server; the left column shows it too (`TeamServerTile.tsx`).
+While messages between people's loops run, it has a `messaging` check from
+the delivery loop (`server._messaging_delivery`: `Delivery.failures` and
+`last_error`), degraded after `MESSAGING_FAILURES_IN_A_ROW` (3) failed
+passes. The knowledge row has a `content` check from the content child
+(`ContentScheduler.health`: `recent_starts` within
+`CONTENT_CRASH_WINDOW_SEC`, `last_exit`, `last_exit_ago`), degraded at
+`CONTENT_STARTS_DEGRADED` (3) starts in the window or an exit that was not
+0 within it, the row's summary saying which. Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
 from records that already exist (the message documents, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
@@ -1691,7 +1717,9 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back. The agent keys' look (`AGENT_KEYS_LOOP`, its heartbeat) is a
+they are back, and a silent `messaging` item (`failing`, the count and the
+error's code) once delivery has failed `MESSAGING_FAILURES_IN_A_ROW` passes
+in a row, resolved once one goes through. The agent keys' look (`AGENT_KEYS_LOOP`, its heartbeat) is a
 check of the communications row (idle until it starts), and the held Work
 view's loop (`WORK_LOOP`: `_watch_work` builds the view inside its retried
 look, so a load that raises is a failed heartbeat tried again, never a task
@@ -1779,7 +1807,13 @@ progress (`/settings/folder-discovery.settings`, the transcripts read under
 `/folders/discovery-history/`). Projects refer to these IDs.
 `folder_store.py` is the only writer, one write per change, the revision
 moved inside it; it reads no
-transcript and checks no permission.
+transcript and checks no permission. A check, sighting or source pass
+that moves nothing but its time (`last_checked_at`, `last_seen_at`,
+`last_observed_at`, `observed_at`, `last_live_at`, `last_run_at`,
+`last_ok_at`) writes nothing: the time is held in memory (`_HELD`, by
+engine) and read from there by every reader, and written with the next
+real change or once the written one is `STAMP_EVERY_SEC` (15 minutes) old,
+since every version is kept.
 
 Which reader may read a folder is decided by where it is, never by its role
 or by the caller (`folder_policy.py`): a Claude Code `projects/<folder>` under
@@ -1914,7 +1948,14 @@ the memtables, then the segments by their highest LSN, stopping once none
 left can hold a newer one); a block over `segment.STREAM_OVER_BYTES` holds
 one key's long history and is never decoded whole: its first read walks it
 once, decompressing in pieces, and keeps only each key's newest and newest
-live version in the pool (`Segment._heads`).
+live version in the protected part of the pool (`Segment._heads`, kept
+there so a scan's churn never makes the walk again). Nothing that reads
+the newest versions reads a history: `items.get` of the item now is
+`Store.newest`, and `Store.scan` (every list and count by path) takes from
+each segment only its newest version of each key (`Segment.scan_newest`);
+a history, or the item at a version or time, reads versions newest first
+and only as far as it needs (`Store.iter_versions`, inside
+`store.reading()`).
 Transactions of several items take conditions (`expect_version`, `absent`)
 checked under the store's commit lock, which every write takes
 (`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and
@@ -2001,7 +2042,10 @@ ctypes on CoreServices, a GCD queue) from the last event handled (the
 engine's `content` watermark) writes path entries at once; dropped events
 scan their subtree; a stat-only backup scan runs at start, after wake and
 every six hours; reading waits while the pace holds and happens only when
-a file's bytes changed. The brain's memory, journal, project notes,
+a file's bytes changed. It is started again `CONTENT_RESTART_SEC` after it
+ends; its starts within `CONTENT_CRASH_WINDOW_SEC` and its last exit are on
+its health, which Diagnostics' knowledge row judges (see "Subsystem
+diagnostics"). The brain's memory, journal, project notes,
 topics and `knowledge.md` are items too, under `/jarvis/brain`
 (`brain_notes.py`, the root's `only`), each content `ref` its note
 reference; the context pack's tier 0 reads a note's item while it is the
@@ -2085,6 +2129,12 @@ CPU kept it from moving at all). The engine's health is worked out on a
 thread of its own every second (`serve._keep_health`) and `/v1/health`
 answers with it, so a busy engine is never restarted for a slow ping; it is
 worked out on the request only when that is older than `HEALTH_STALE_SEC`.
+The health carries each route's last five minutes (`routes`: requests,
+seconds in all and the slowest, by method and route, recorded by
+`serve.dispatch` into `engine.RouteTimes`), and `kill -USR1 <engine pid>`
+appends every thread's Python stack to `knowledge-engine-stacks.log` beside
+the engine's log (`oscompat.stacks_on_signal`, the server's too), so a busy
+engine is diagnosed live without root.
 Ingest is a child of its
 own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it makes no documents (no chunks:
@@ -2217,13 +2267,33 @@ brain's acting `activate_language_kit` (the held digest) calls the same
 `language_kit_updates.approve_held`, which activates only exactly the
 candidate held. `GET /api/language-kits/status` and `language_document`'s
 capabilities read the status.
+A candidate the updater activates by itself (its language files the
+active kit's) is said, never unseen: `updates.json` keeps it as
+`activated` (`from` and `to`, each version and digest, and `at`; `status`
+drops it once that kit is no longer the one in force), and
+`language_kit_updates.attend` records it as one silent item of the same
+kind, event `activated` (`ACTIVATED`, facts `from`, `version`, `digest`),
+source the new kit's digest, kept until a later activation replaces it or
+he marks it seen; his own Activate of a held candidate clears it. His
+approval of an architecture design (`approve-architecture`, see "Work
+packages" and docs/making-a-package.md) is bound to the language, not the
+release: `language_projection.current_subject` holds it in force while
+the kit its revision was checked under has the kit in force's language
+files (`language_kit.language_digests`, the three files' SHA-256s, the
+same test `activate` asks a review by), so a release that changes none of
+them leaves an approval and an open question as they were; one that
+changes any makes it stale, and that kit is held for his review anyway.
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
 not picked up, answered or not sent; an agent's message;
-a session needing him; a session finishing; a run or package run ending;
+a session needing him; a session finishing; a run or package run ending
+(any run JARVIS started; one started from the dashboard, origin `api`, only
+when it failed or timed out);
 a person's message arriving; a workflow's news; communications down; not
-signed in; a person's message that did not go; the brain down, needing its
+signed in; a person's message that did not go; messages between people
+failing to get through; a chosen language whose model is missing; a
+work-item key near its end; the brain down, needing its
 sign-in or at its usage limit; a shell command's or keypress's outcome after
 its exact read-back) is first an item in
 `attention_store.py` (documents in the engine, `records.py`): one
@@ -2515,7 +2585,13 @@ second while it runs. At startup, before the brain is spawned (its launch
 prompt carries the language rule), `language_setting.load` puts the saved
 language in force and gives speech input its model, or English for that run
 when the saved one's model is missing (preflight checks the same model,
-`startup_model`). `GET`/`POST /api/settings/language` are the routes; the
+`startup_model`); then, once the attention record is open, one silent
+`language` item (`model_missing`, the codes of the language chosen and the
+one used, which the page names in the reader's language through
+`main.updates.language.<code>`, attention.ts `languagesNamed`;
+`server._attend_language_at_start`), resolved when a language is next put
+in force (`server._language_published`, the hook `language_setting.change`
+publishes through). `GET`/`POST /api/settings/language` are the routes; the
 brain's `speech_models` read starts with the language.
 
 The Honorific setting (Settings, You: Sir, Ma'am, Señor, None;
@@ -2636,8 +2712,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 ## Key Files
 - `server.py` — Main server, WebSocket handler, HTTP API, action system;
   `kill -USR1 <pid>` appends every thread's Python stack to
-  `server-stacks.log` in the data folder (`_stacks_on_signal`), for a
-  server that stops answering
+  `server-stacks.log` in the data folder (`_stacks_on_signal`, through
+  `knowledge.oscompat.stacks_on_signal` as the engine's), for a server
+  that stops answering
 - `brain.py` — The voice brain: one long-lived `claude -p` process on the
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
@@ -2810,8 +2887,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
-- `usage_history.py` — The long-term record of the week: every seven-day
-  reading `usage_store.record` takes, one `usage` document a brain a day
+- `usage_history.py` — The long-term record of the week: the seven-day
+  readings `usage_store.record` takes, each kept only when it says
+  something the last one kept did not (percentage, reset, status, account:
+  `_says_more`) or `USAGE_READING_EVERY_SEC` (10 minutes) after it, so a
+  day's document grows by at most 144 readings when nothing moves (every
+  version is kept), one `usage` document a brain a day
   (`/usage/<brain>/<date>.usage`; the five-hour window is never kept, Tim's
   word): its `readings` keep each one for `RAW_KEEP_SEC` (14 days) with its
   provider, account hash (`brain_accounts.history_ref`, None while unknown),

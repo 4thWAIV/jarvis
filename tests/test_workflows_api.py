@@ -100,6 +100,28 @@ def test_the_steps_worth_an_update_are_recorded_once(wired):
         "its blocker is his message"
 
 
+def test_a_blocker_from_a_reporter_that_is_no_agent_key_is_still_his_update(wired):
+    """A blocker reported on the tool token (or an access key during the
+    cut-over) proves no sender, so it cannot be his message: it is the
+    workflow's attention item instead, resolved once it is cleared."""
+    from jarvis import data_paths
+    server, _, store = wired
+    client = TestClient(server.app)
+    wid = _start(client, _key())
+    token = {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
+    r = client.post(f"/api/workflows/{wid}/events", headers=token,
+                    json={"kind": "blocker_raised", "summary": "Tests are red.",
+                          "detail": {"key": "red"}})
+    assert r.status_code == 200, r.text
+    item = store.get("workflow", wid)
+    assert item.event == "blocker_raised" and item.untrusted == {"workflow": "Speech migration"}
+    assert [i.kind for i in store.items() if i.kind != "workflow"] == [], "no proven sender"
+    r = client.post(f"/api/workflows/{wid}/events", headers=token,
+                    json={"kind": "blocker_cleared", "summary": "Green.", "detail": {"key": "red"}})
+    assert r.status_code == 200, r.text
+    assert store.get("workflow", wid).state == "resolved"
+
+
 def test_the_brain_reads_the_record_and_another_session_s_words_stay_walled(wired):
     server, _, _ = wired
     from jarvis import workflow_store as ws

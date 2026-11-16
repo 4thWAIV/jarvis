@@ -456,9 +456,11 @@ class Items:
         return view
 
     # -- one item's versions --------------------------------------------------
-    def _versions(self, path: str) -> list:
-        """Every version of the item's document, newest first."""
-        return self.store.versions(DOCS, path.encode())
+    def _versions(self, path: str) -> Iterator:
+        """Every version of the item's document, newest first, decoded only
+        as they are taken (`Store.iter_versions`); read inside
+        `store.reading()`, so no segment it walks is closed meanwhile."""
+        return self.store.iter_versions(DOCS, path.encode())
 
     def _feed(self, lsn: int) -> Optional[dict]:
         v = self.store.get(FEED, feed_key(lsn))
@@ -486,8 +488,9 @@ class Items:
             return doc, int(doc.get("_version") or 0)
         number = self._tombstone_entry(path, top.lsn).get("version")
         if number is None:
-            number = max((int(decode_doc(v.value)[1].get("_version") or 0)
-                          for v in self._versions(path) if v.value is not None), default=0) + 1
+            with self.store.reading():
+                number = max((int(decode_doc(v.value)[1].get("_version") or 0)
+                              for v in self._versions(path) if v.value is not None), default=0) + 1
         return None, int(number)
 
     # -- writing ----------------------------------------------------------------
@@ -769,8 +772,12 @@ class Items:
             return None
         with self.store.reading() as now:
             found = None
-            for v in self._versions(path):
-                if v.lsn > now:
+            # The item now is its newest version alone, read without its
+            # history (a record rewritten thousands of times has one).
+            versions = [self.store.newest(DOCS, path.encode(), now)] \
+                if version is None and at is None else self._versions(path)
+            for v in versions:
+                if v is None or v.lsn > now:
                     continue
                 if version is None and at is None:
                     found = v
@@ -831,22 +838,23 @@ class Items:
         if not access.data:
             return {"path": path, "versions": [], "before": None}
         out = []
-        for v in self._versions(path):
-            if v.value is None:
-                entry = self._tombstone_entry(path, v.lsn)
-            else:
-                doc = decode_doc(v.value)[1]
-                entry = {"version": doc.get("_version"), "lsn": v.lsn, "at": doc.get("_at"),
-                         "by": doc.get("_by"), "agent": doc.get("_agent"), "model": doc.get("_model"),
-                         "change": doc.get("_change"), "summary": doc.get("_summary"), "op": "put"}
-                if fields is not None:
-                    shown = {f: doc[f] for f in fields if f in doc}
-                    entry["data"] = without_hidden(shown, access) if access.hidden else shown
-            if before is not None and (entry.get("version") or 0) >= before:
-                continue
-            out.append(entry)
-            if len(out) > limit:
-                break
+        with self.store.reading():
+            for v in self._versions(path):
+                if v.value is None:
+                    entry = self._tombstone_entry(path, v.lsn)
+                else:
+                    doc = decode_doc(v.value)[1]
+                    entry = {"version": doc.get("_version"), "lsn": v.lsn, "at": doc.get("_at"),
+                             "by": doc.get("_by"), "agent": doc.get("_agent"), "model": doc.get("_model"),
+                             "change": doc.get("_change"), "summary": doc.get("_summary"), "op": "put"}
+                    if fields is not None:
+                        shown = {f: doc[f] for f in fields if f in doc}
+                        entry["data"] = without_hidden(shown, access) if access.hidden else shown
+                if before is not None and (entry.get("version") or 0) >= before:
+                    continue
+                out.append(entry)
+                if len(out) > limit:
+                    break
         more = len(out) > limit
         out = out[:limit]
         return {"path": path, "versions": out,

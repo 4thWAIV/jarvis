@@ -551,7 +551,7 @@ class Delivery:
         node = self.node_id()
         continuation = await asyncio.to_thread(self.store.sync_position, *pairing.ns, node)
         changed, restarted = False, False
-        for _ in range(SYNC_PAGES_PER_PASS):
+        for n in range(SYNC_PAGES_PER_PASS):
             try:
                 page = await t.sync(node, continuation, wire.SYNC_PAGE_DEFAULT)
             except ports.TransportError as e:
@@ -560,8 +560,12 @@ class Delivery:
                 restarted, continuation = True, None
                 await asyncio.to_thread(self.store.restart_sync, *pairing.ns, node)
                 continue
+            # The position is written only where this pass stops: pages in
+            # between carry it in hand, so a rescan writes nothing.
+            stops = page.scan_complete or n == SYNC_PAGES_PER_PASS - 1
             new, page_changed = await asyncio.to_thread(self.store.store_page_changes,
-                                                        *pairing.ns, node, page)
+                                                        *pairing.ns, node, page,
+                                                        keep_position=stops)
             changed = changed or page_changed
             for message_id in new:
                 local = await asyncio.to_thread(self.store.message, *pairing.ns, message_id)

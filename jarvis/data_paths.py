@@ -189,7 +189,9 @@ def connections_seed_path() -> Path:
 # crash: it silently marks that release's users "edited", and they receive no
 # further improvement.
 KNOWN_TEMPLATE_HASHES = frozenset({
+    "22c6b09f7abe48a6010644ec7b2ddbfee127c6a4247353e033ec0905618bbebc",  # install the session skill and renew a work-item key by his word
     "57929e4608b93257d8855a81625403e665045a2ae9bb9a3bddbf8f58bea8bfc8",  # his acts on stuck work and queued messages
+    "318683acf48e1c52a0b3c19e5d597be158d99ce052028da76e3ae241913ac102",  # both of the above together
     "80cbfefd04b81228fdb12d089059d9716314da89be1f032ae8809e522d6b20f9",  # a held kit and a failed brain, merged
     "900d1bf94e05e22d6303197fb5264454b996410091b5d4a9a0aafbb9fbb50fef",  # a failed brain is started again
     "43d66995d736d6959a45d4a66cd9805cda71a1f16d8eb2b04077a8f64f79dada",  # a held language kit is activated by his word
@@ -879,6 +881,12 @@ def knowledge_engine_log_path() -> Path:
     starts, so a server that cannot reach it can say why
     (knowledge_client.engine_log_tail)."""
     return data_dir() / "knowledge-engine.log"
+
+
+def knowledge_stacks_path() -> Path:
+    """Where `kill -USR1 <engine pid>` appends every thread's Python stack
+    (knowledge/serve.py), beside the engine's log."""
+    return data_dir() / "knowledge-engine-stacks.log"
 
 
 def knowledge_token_path() -> Path:

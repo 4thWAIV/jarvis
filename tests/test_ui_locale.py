@@ -40,7 +40,7 @@ def test_the_catalogs_and_the_store_hold_under_node():
                           str(ROOT / "tests" / "ui_locale_cases.mts")],
                          capture_output=True, text=True, cwd=ROOT, timeout=60)
     assert out.returncode == 0, out.stderr[-4000:]
-    assert len(json.loads(out.stdout)["passed"]) == 7, out.stdout
+    assert len(json.loads(out.stdout)["passed"]) == 8, out.stdout
 
 
 def test_the_language_is_kept_only_by_the_server():

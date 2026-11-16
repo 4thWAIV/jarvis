@@ -7,9 +7,10 @@ brain's digest decide that).
 
 Two things are load-bearing.
 
-**Origin.** Only runs JARVIS himself started (origin "voice") are recorded.
-The user runs plenty of other things — from the dashboard, from work mode,
-from a terminal — and those are not his to talk about.
+**Origin.** Runs JARVIS himself started (origin "voice") are recorded
+however they end. A run started from the dashboard (origin "api") is
+recorded only when it failed or ran out of time: an ending that needs him.
+Runs from elsewhere (work mode, a terminal) are not his to talk about.
 
 **Which thread the executor calls back on.** The session watcher shipped the
 opposite arrangement once: its callback fired on a poller thread, where
@@ -107,6 +108,29 @@ async def test_a_run_jarvis_did_not_start_is_not_recorded(heard, origin):
     server._on_run_event(_finished(origin=origin))
     await _drain(server)
     assert speech.calls == [] and recorded(attention) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "timed_out"])
+async def test_a_dashboard_run_that_failed_is_recorded(heard, status):
+    """A run he started from the dashboard that failed or ran out of time
+    needs him: it is an attention item even though JARVIS did not start it.
+    Succeeded and cancelled stay his own business."""
+    server, speech, attention = heard
+    server._on_run_event(_finished(origin="api", status=status))
+    await _drain(server)
+    assert recorded(attention) == [("run", "r-1", status)] and speech.calls == []
+    assert attention.items()[0].untrusted == {"project": "chitauri"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "timed_out"])
+async def test_a_failed_run_from_elsewhere_is_still_not_recorded(heard, status):
+    server, speech, attention = heard
+    server._on_run_event(_finished(origin="self", status=status))
+    server._on_run_event(_finished(origin="api", status="cancelled"))
+    await _drain(server)
+    assert recorded(attention) == []
 
 
 @pytest.mark.asyncio
