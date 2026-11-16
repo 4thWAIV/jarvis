@@ -6252,30 +6252,58 @@ def _message_meant(args: dict) -> tuple:
 async def tool_read_aloud(args: dict) -> str:
     """Read one message to him, because he asked (his Read on it, or his
     words): the one he names (by id, or by its time, sender and Work item),
-    the next new one, or the one he is on ("read it"). Gives the brain the
-    message, walled, to read him in its own reply and sum up; nothing is
-    spoken here. It is read, and its update seen, only once that reply has
-    been heard in full (`_message_read_to_him`)."""
+    the next new one, or the one he is on ("read it"). His Read button's
+    turn and a spoken request alike come here. Gives the brain the whole
+    message, walled, to tell him in its own reply who it is from and what
+    it is about and sum it up (never recited); nothing is spoken here. A message longer than one page comes a page at a time
+    (`page`; `_paged`, exact, so the pages join back into its JSON), each
+    page its own block under the tool cap: while pages remain the brain is
+    told to ask for the next by the message's id and say nothing yet, and
+    only the last page tells it to sum it up for him. A later page pins the message by
+    its id and never moves the one he is on. It is read, and its update
+    seen, only from the last page's call, once that reply has been heard in
+    full (`_message_read_to_him`), so a reading cut off part way leaves it
+    unread."""
+    page = _page_arg(args)
+    if page > 1:
+        pinned = args.get("message") if args.get("message") not in (None, "") else _message_on
+        if pinned is None:
+            return "Name the message by its id (message) to read a later page of it."
+        args = {"message": pinned}
     item, why = await asyncio.to_thread(_message_meant, args)
     if item is None:
         return why
-    _on_message(item.id)
-    if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
-        await asyncio.to_thread(_read_session_message, int(item.source_id))
-    _message_read_to_him(item)
-    message = await asyncio.to_thread(_message_shown, item)
-    carries = (" It carries a package: open_inbox_package with this message opens it, on "
-               "a later turn once he asks." if item.carries else "")
-    return (f"Message {item.id}, at {messages_api.local_time(item.at)} (his local time, "
-            f"{messages_api.when_said(item.at)}; name it by its id, or by that time as at), "
-            f"{item.state or 'from before messages had a state'}.{carries} Read him its words "
-            f"now in your reply, as they are written, saying first who it is from; then sum "
-            f"it up in one sentence. It is marked read once he has heard your reply in full. "
-            f"Call no other tool after this one in this turn: only what you write after your "
-            f"last tool is spoken, so a later tool call drops the reading. "
-            f"Who it is from, its Work item and its words, all the sender's:\n"
-            + _wrap_untrusted(_MESSAGES_WRAP_NAME,
-                              json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
+    if page == 1:
+        _on_message(item.id)
+    shown = json.dumps(await asyncio.to_thread(_message_shown, item), ensure_ascii=False,
+                       separators=(",", ":"))
+    head, chunk = _paged(shown, page, f"Message {item.id}'s JSON",
+                         f"read_aloud (message {item.id})", exact=True)
+    if chunk is None:
+        return head
+    last = page * REPLY_PAGE_CHARS >= len(shown)
+    said = ""
+    if page == 1:
+        said = (f"Message {item.id}, at {messages_api.local_time(item.at)} (his local time, "
+                f"{messages_api.when_said(item.at)}; name it by id or that time (at)), "
+                f"{item.state or 'from before states'}. ")
+    if not (last and page == 1):
+        said += head + " "
+    if not last:
+        said += "Say nothing to him yet."
+    else:
+        if item.source_kind == conversation_log.Source.SESSION_MESSAGE:
+            await asyncio.to_thread(_read_session_message, int(item.source_id))
+        _message_read_to_him(item)
+        if item.carries:
+            said += "It carries a package; open_inbox_package opens it later, if asked. "
+        every = "Having read every page, tell" if page > 1 else "Tell"
+        said += (f"{every} him who it is from and what it is about, then sum up all of it "
+                 "(what it says, asks of him, any package); never recite it. Read once he "
+                 "hears your whole reply. No tool after this: only what follows your last "
+                 "tool is spoken.")
+    return (said + " Sender's:\n"
+            + _wrap_untrusted(_MESSAGES_WRAP_NAME, chunk))
 
 
 def _message_shown(item) -> dict:

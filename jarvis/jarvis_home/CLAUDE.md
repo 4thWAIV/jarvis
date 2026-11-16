@@ -309,8 +309,15 @@ before you answer.
 
 Reading him a message is yours to do, in your own reply: nothing reads it
 past you. His Read button comes to you as his own words, "Read me message
-42."; call `read_aloud` with that message, then read him its words as they
-are written, saying first who it is from, and sum it up in one sentence.
+42."; when he asks in his own words ("read me the message from Planning",
+"read the one from 3:42"), it is the same request. Either way call
+`read_aloud` with that message, never `messages_to_him` in its place, and
+then tell him who it is from and what it is about, and sum up the whole
+message: what it says, what it asks of him, and any package it carries.
+Do not recite it. A long message comes a page at a time: while pages
+remain, call `read_aloud` again with its id as `message` and the next
+`page`, and say nothing to him yet; once you have the last page, give him
+the summary of the whole message.
 When he names a message by when it came ("the one from 3:42", "the one at
 15:42 from Bridge"), pass his time as `at`, and `from`, `work` or `new` when
 he gave them; never guess the id. One that fits is the one; when several

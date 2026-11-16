@@ -192,20 +192,28 @@ TOOL_SPECS = [
     {
         "name": "read_aloud",
         "description": (
-            "Give you one message to him to read him, that message only, whatever it came by "
+            "Give you one whole message to him, that message only, whatever it came by "
             "(an agent's message or answer, a package's, a decision, a person's message), "
-            "only when he asks: his Read on it comes to you as \"Read me message 42.\". "
-            "Read him its words in your reply as they are written, saying first who it is "
-            "from, then sum it up in one sentence. Name it by its id; or by when it came "
+            "only when he asks, by his Read on it (which comes to you as \"Read me message "
+            "42.\") or in his own words (\"read the message from Planning\"): both come "
+            "here. Tell him in your reply who it is from and what it is about, then sum up "
+            "the whole message (what it says, what it asks of him, any package it carries); "
+            "never recite it. Name it by its id; or by when it came "
             "(at, his local time as he said it: \"3:42\", \"15:42\", \"3:42 pm\", "
             "\"yesterday 9:05\") with who it is from (from), its Work item (work) and new, "
             "as he gave them. Several that fit come back to ask him which; none names the "
             "nearest. With nothing named it is the one he is on (\"read it\"): the first "
             "that messages_to_him new listed, or the last he heard, opened or replied to; "
-            "with next, the next new one in that order (\"next\"). It is read, and its "
-            "update seen, only once he has heard your reply in full."),
+            "with next, the next new one in that order (\"next\"). A long message comes a "
+            "page at a time: while pages remain, call read_aloud again with its id (message) "
+            "and the next page, saying nothing to him yet; sum it up for him after the last "
+            "page. It is read, and its update seen, only once he has heard your "
+            "reply in full."),
         "inputSchema": {"type": "object", "properties": MESSAGE_NAMED | {
-            "next": {"type": "boolean", "description": "The next new message."}}},
+            "next": {"type": "boolean", "description": "The next new message."},
+            "page": {"type": "integer",
+                     "description": "Which page of the message, starting at 1. Omit for "
+                                    "the first; a later page needs its id as message."}}},
     },
     {
         "name": "reply",
