@@ -260,11 +260,11 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
             package = work_packages.find(record["package"])
             told = package.story()
             vote = package_inbox.page_vote(package)
-        assert [s.waits for s in told.slides].count("understood") == 1
-        assert told.slides[-1].waits == "understood", "the standard vote, once, last"
-        assert vote["question"] == "understood"
-        assert [s.waits for s in told.slides][-2:] == ["approve-architecture", "understood"], \
-            "the factory asks his approval, once, just before the vote"
+        waits = [s.waits for s in told.slides]
+        assert waits.count("approve-architecture") == 1 and waits[-1] == "approve-architecture", \
+            "the factory asks his approval, once, last: it is his vote"
+        assert not set(waits) & {"understood", "approve-package"}, "no second vote, no Got it"
+        assert vote["question"] is None
         for asked in [q for q in vote["asks"] if q["applies"] and q.get("kind") != "approval"][:1]:
             ok, said = jarvis.tool("answer_package_decision", package=record["inbox"],
                                    decision=asked["id"], option=asked["options"][0]["id"],
@@ -285,8 +285,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         approval = next(q for q in shown["asks"] if q.get("kind") == "approval")
         assert (approval["answer"], approval["stale"], approval["answered_revision"]) == \
             ("approve", False, checked["revision"]), approval
-        assert shown["question"] == "understood" and shown["answer"] is None, \
-            "approval is shown apart from Got it, which stays unanswered"
+        assert shown["question"] is None, "his approval is the one vote it asks"
         approval_shown = {"approval": approval, "vote": {k: shown[k] for k in
                                                          ("question", "answer", "note")}}
         ok, said = jarvis.tool("sign_off_package", package=record["inbox"])
@@ -305,7 +304,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         # the vote unanswered: signed off early, nothing is taken as his.
         recorded = json.loads((folder / "results" / "decisions.json").read_text())
         assert {k: recorded[k]["answer"] for k in answered} == answered
-        assert "understood" not in recorded
+        assert not {"understood", "approve-package"} & set(recorded)
         assert recorded["approve-architecture"]["subject"] == {
             k: checked[k] for k in ("document_id", "revision", "source_revision", "kit_digest")}, \
             "his approval names the exact checked revision it was given to"
@@ -318,7 +317,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
                         if line.startswith(f"Capture {entry.capture_id} "))
             for key, option in answered.items():
                 assert f"{key}: {option}" in mine, mine
-            assert "understood: not answered" in mine
+            assert "understood" not in mine and "approve-package" not in mine
             assert "approved by him" not in mine and "staged to send" not in mine, mine
         else:
             # The sending session is not running here: nothing is sent.

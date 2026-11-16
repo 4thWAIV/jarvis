@@ -49,7 +49,7 @@
      "effects": [{"effect": "list.paged"}]}
   ],
   "kinds": [
-    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["chapters", "previous", "next", "more", "inspect", "document", "return", "header", "frame", "done", "takeover", "close", "story", "tell", "fromSlide", "resume", "stop", "vote", "gotIt", "questions", "words", "send", "source", "check", "readable", "asks", "explanation"],
+    {"kind": "packageView", "entity": "package", "label": "Work package page", "parts": ["chapters", "previous", "next", "more", "inspect", "document", "return", "header", "frame", "done", "takeover", "close", "story", "tell", "fromSlide", "resume", "stop", "vote", "approve", "reject", "words", "send", "source", "check", "readable", "asks", "explanation"],
      "presentations": [{"view": "main.package",
                         "reveal": {"command": "package.open", "args": {"packageId": "$key"}}}]},
     {"kind": "bundleMember", "entity": "member", "label": "Received file", "parts": ["header", "show", "close", "pages", "body", "more"],

@@ -249,6 +249,10 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
                 if child not in ids or child == ident:
                     problems.append(f"{owhere}: it opens {child!r}, which is not another "
                                     f"decision.")
+        needs = d.get("needs_words", [])
+        if not isinstance(needs, list) or any(n not in oids for n in needs):
+            problems.append(f"{where}: its needs_words must list some of its options' ids, "
+                            f"the answers that need his words.")
         if d.get("recommended") not in oids:
             problems.append(f"{where}: its recommendation {d.get('recommended')!r} is not one "
                             f"of its options.")
@@ -360,7 +364,8 @@ KEYS = {
              "decisions", "understanding"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision", "lead_in"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
-                 "picture", "compare", "say", "text_only", "why_you", "evidence"),
+                 "picture", "compare", "say", "text_only", "why_you", "evidence",
+                 "needs_words"),
     "option": ("id", "name", "says", "picture", "opens", "recommended"),
 }
 
@@ -607,7 +612,7 @@ def opening_problems(deck: dict) -> list[str]:
     from jarvis import package_inbox
     slides = [s for s in deck.get("slides") or [] if isinstance(s, dict)]
     asks = [d for d in deck.get("decisions") or []
-            if isinstance(d, dict) and d.get("id") != package_inbox.UNDERSTOOD_ID]
+            if isinstance(d, dict) and d.get("id") not in package_inbox.VOTE_IDS]
     fix = ("Start with an opening slide: its title says what the package is for, a `lead` "
            "block states the conclusion, and its `say` tells both and why they matter to him.")
     first = slides[0] if slides else None
@@ -651,7 +656,7 @@ def lead_in_problems(deck: dict) -> list[str]:
     from jarvis import package_inbox
     problems: list[str] = []
     for n, d in enumerate(deck.get("decisions") or [], 1):
-        if not isinstance(d, dict) or d.get("id") == package_inbox.UNDERSTOOD_ID:
+        if not isinstance(d, dict) or d.get("id") in package_inbox.VOTE_IDS:
             continue
         where = f"Decision {d.get('id') or n}"
         why, evidence = _text(d.get("why_you")).strip(), d.get("evidence")

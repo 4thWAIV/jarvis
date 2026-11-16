@@ -115,10 +115,15 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
             try:
                 if bound_story:
                     authored = package_story.authored(written)
-                composed = package_story.compose(authored, package_story.parse(told).language, approval)
+                language = package_story.parse(told).language
+                composed = package_story.compose(authored, language, approval)
+                # A package delivered before Got it was retired carries the
+                # composition of then: still its own, asked as the standard
+                # vote now (package_story.current).
+                before = package_story.compose(authored, language, approval, legacy=True)
             except ValueError:
                 raise docs.DocumentError(refused) from None
-            if told != composed:
+            if told not in (composed, before):
                 raise docs.DocumentError(refused)
             expected[story] = MEMBER
             factory_bytes.append(told)

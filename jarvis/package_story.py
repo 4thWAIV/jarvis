@@ -29,9 +29,12 @@ An architecture package's author may write a story beside its
 UNDERSTANDING.md. `authored` reads it strictly (no duplicate keys, no field
 the format does not have, nothing the factory owns: its answers file or the
 standard vote), and `compose` is the one composition of it, or of none,
-with the standard vote as its one last slide: the factory writes it and the
+with his vote as its one last slide (the standard vote, or his approval of
+the design where the handoff asks for it): the factory writes it and the
 receiver's gate (language_projection.gate) compares the package's story with
-it byte for byte.
+it byte for byte. A story composed before Got it was retired is still
+recognised there (`compose`'s `legacy`) and asked as the standard vote
+(`current`).
 
 Only the shape is checked here. A selector is a string the frame's helper
 gives to querySelectorAll inside its own sandboxed page; one that matches
@@ -73,15 +76,19 @@ MAX_QUESTIONS = 20
 MAX_OPTIONS = 6
 QUESTION_FIELDS = ("id", "question", "options", "recommended", "reason", "context")
 OPTION_FIELDS = ("id", "name", "says")
-# Ids no story may declare: the standard vote and his approval of an
-# architecture design, which the factory alone adds (package_inbox
-# UNDERSTOOD_ID, APPROVAL_ID), and his review of a Work item
+# Ids no story may declare: the standard vote (his approval of the package,
+# and the retired Got it it replaced) and his approval of an architecture
+# design, which the factory alone adds (package_inbox VOTE_ID,
+# LEGACY_VOTE_ID, APPROVAL_ID), and his review of a Work item
 # (work_api.REVIEW_QUESTION), which an ordinary question must never become.
 # His approval of an architecture design: package_inbox owns its words and
 # answers; named here so the receiver (work_packages) can hold it to
 # architecture packages without reading the inbox.
 APPROVAL_QUESTION = "approve-architecture"
-RESERVED_QUESTIONS = ("understood", "approve-item", APPROVAL_QUESTION)
+# The standard vote, and the retired one (Got it), which no story is ever
+# told with again: `current` reads it as the standard vote.
+VOTE_QUESTION, LEGACY_VOTE_QUESTION = "approve-package", "understood"
+RESERVED_QUESTIONS = (VOTE_QUESTION, LEGACY_VOTE_QUESTION, "approve-item", APPROVAL_QUESTION)
 # What an author's story (beside an architecture package's UNDERSTANDING.md)
 # may hold, at each level, and its size.
 AUTHORED_MAX_BYTES = 128 * 1024
@@ -375,7 +382,7 @@ def authored(raw: bytes) -> dict:
     AUTHORED_MAX_BYTES of UTF-8 JSON with no key twice, only the format's own
     fields, every slide's question declared (answered in the view's head:
     the canonical page asks nothing itself), and nothing the factory owns:
-    no `answers` file and no standard vote (`understood`), which `compose`
+    no `answers` file and no standard vote (`approve-package`), which `compose`
     adds once. Its slides and questions are checked as any story's once
     composed. The story as a dict, or StoryError saying what to change."""
     if len(raw) > AUTHORED_MAX_BYTES:
@@ -412,38 +419,75 @@ def authored(raw: bytes) -> dict:
         if waits in RESERVED_QUESTIONS or on in RESERVED_QUESTIONS:
             raise StoryError(f"Slide {n} uses a reserved question "
                              f"({', '.join(RESERVED_QUESTIONS)}): the factory adds the "
-                             f"standard vote once, last.")
+                             f"standard vote (or his approval) once, last.")
         if waits is not None and waits not in declared:
             raise StoryError(f"Slide {n} waits for a question the story does not declare in "
                              f"its questions.")
     return body
 
 
-def compose(story: Optional[dict], language: str, approval: bool = False) -> bytes:
-    """THE composition of a page's story with the standard vote as its one
-    last slide, in `language`, encoded: an author's story (`authored`) or
-    none. With `approval` (an architecture package whose handoff asks for
-    his approval) the factory's approval slide (package_inbox.APPROVAL_ID)
-    comes once, just before the vote. Checked as any story is, count and
+def compose(story: Optional[dict], language: str, approval: bool = False,
+            legacy: bool = False) -> bytes:
+    """THE composition of a page's story with his vote last, in `language`,
+    encoded: an author's story (`authored`) or none. With `approval` (an
+    architecture package whose handoff asks for his approval) the factory's
+    approval slide (package_inbox.APPROVAL_ID) is its last slide, and that
+    is his vote: Approve or Request changes already, so no second approval
+    (`approve-package`) follows it. Without, the standard vote's slide
+    (package_inbox.vote_slide) is last. Checked as any story is, count and
     size, after composition; the factory writes these bytes and the gate
     compares them. With no story and no approval it is exactly the standard
-    vote alone, as every such package before had."""
+    vote alone.
+
+    `legacy` is the composition packages carried before Got it was retired
+    (the retired vote last, after the approval slide when there was one):
+    never written, only what the gate recognises in a package delivered
+    before, which is then asked as the standard vote (`current`)."""
     from jarvis import package_inbox
     if story is not None:
         if story.get("language", language) != language:
             raise StoryError(f"The story is not in {language}, the language it is told in.")
         story = {**story, "language": language}
-    told = package_inbox.with_understood_slide(story, language)
-    if approval:
-        told["slides"].insert(len(told["slides"]) - 1, package_inbox.approval_slide(language))
+    if legacy:
+        told = package_inbox.with_vote_slide(story, language)
+        told["slides"][-1] = package_inbox.legacy_vote_slide(language)
+        if approval:
+            told["slides"].insert(len(told["slides"]) - 1, package_inbox.approval_slide(language))
+        last = package_inbox.LEGACY_VOTE_ID
+    elif approval:
+        told = package_inbox.with_vote_slide(story, language)
+        told["slides"][-1] = package_inbox.approval_slide(language)
+        last = package_inbox.APPROVAL_ID
+    else:
+        told = package_inbox.with_vote_slide(story, language)
+        last = package_inbox.VOTE_ID
     encoded = encode(told)
     parsed = parse(encoded)
     waits = [s.waits for s in parsed.slides]
-    if waits.count(package_inbox.UNDERSTOOD_ID) != 1 or waits[-1] != package_inbox.UNDERSTOOD_ID:
-        raise StoryError("The composed story must end with the one standard vote.")
+    if waits.count(last) != 1 or waits[-1] != last:
+        raise StoryError("The composed story must end with his one vote.")
     if waits.count(package_inbox.APPROVAL_ID) != (1 if approval else 0):
-        raise StoryError("Only the factory asks his approval, once, before the vote.")
+        raise StoryError("Only the factory asks his approval, once.")
+    if not legacy and package_inbox.LEGACY_VOTE_ID in waits:
+        raise StoryError("Got it is retired: no story asks it.")
     return encoded
+
+
+def current(story: Story) -> Story:
+    """A story as it is told and asked now: a slide waiting on the retired
+    vote (Got it, `understood`, in a package delivered before it was
+    retired) is the standard vote's slide in the story's language, waiting
+    on `approve-package`, so nothing asks Got it again; its other slides
+    and questions (his approval of an architecture design among them) are
+    asked as before. A story with no such slide is returned as it is."""
+    if not any(s.waits == LEGACY_VOTE_QUESTION for s in story.slides):
+        return story
+    from jarvis import package_inbox
+    shown = package_inbox.vote_slide(story.language)
+    slides = tuple(s if s.waits != LEGACY_VOTE_QUESTION else Slide(
+        shown["title"], s.target, tuple(Beat(b["say"], (), ()) for b in shown["beats"]),
+        VOTE_QUESTION, s.asks_when) for s in story.slides)
+    return Story(story.title, story.language, slides, story.answers, story.questions)
 
 
 def target(declaration: str, member: Optional[str] = None, part: Optional[str] = None) -> str:

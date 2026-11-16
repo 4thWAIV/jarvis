@@ -3,16 +3,18 @@ checked canonical revision to him (the signature amendment contract, JARVIS
 items 1-4 and 6, the language as it is).
 
 The factory alone asks it (`approve-architecture`), only in an architecture
-package whose handoff asks for it, before the standard vote. Got it is
-acknowledgement and never approval. His answer is recorded through the
+package whose handoff asks for it, as its last question: it is his vote, so
+no second approval (the standard `approve-package`) follows it. Got it is
+retired; an architecture package delivered before, still carrying it, asks
+Approve or Reject in its place. His answer is recorded through the
 existing answer route with the {document_id, revision, source_revision,
 kit_digest} it was given to; request changes needs his words. A newer checked
 revision of the document, or a kit with other language files, makes it
 stale: shown so, counted as unanswered, and ending nothing; a kit release
 with the same language files leaves it standing. A wait on
 package:<id>:approve-architecture
-ends only on approve of the revision in force, never on Got it, request
-changes or a sign-off.
+ends only on approve of the revision in force, never on request changes or
+a sign-off.
 
 Needs the pinned kit asset (JARVIS_LANGUAGE_KIT_ASSET; the language-kit
 workflow)."""
@@ -94,16 +96,18 @@ def still_waiting(wid: str) -> bool:
     return workflow_store.snapshot(wid).open_waits == ["design"]
 
 
-# -- the factory asks it, once, before the vote --------------------------------------------
+# -- the factory asks it, once, last: it is his vote --------------------------------------
 
 @pytest.mark.parametrize("story", [STORY, None], ids=["with a story", "without one"])
-def test_the_factory_asks_his_approval_once_before_the_vote(draft, tmp_path, story):  # noqa: F811
+def test_the_factory_asks_his_approval_once_last_and_no_second_vote(draft, tmp_path, story):  # noqa: F811
     folder, _ = approval_folder(draft, tmp_path, story=story)
     canonical = json.loads((folder / "canonical.json").read_text())
     assert canonical["understanding"]["approval"] is True
     told = package_story.parse((folder / "story.json").read_bytes())
-    assert [s.waits for s in told.slides][-2:] == [package_inbox.APPROVAL_ID,
-                                                   package_inbox.UNDERSTOOD_ID]
+    waits = [s.waits for s in told.slides]
+    assert waits[-1] == package_inbox.APPROVAL_ID and waits.count(package_inbox.APPROVAL_ID) == 1
+    assert not set(waits) & set(package_inbox.VOTE_IDS), \
+        "already Approve or Request changes: no redundant approve-package, and never Got it"
     manifest = json.loads((folder / "package.json").read_text())
     language_projection.folder_gate(folder, manifest["communication"])
 
@@ -113,6 +117,7 @@ def test_without_approval_asked_there_is_no_approval_question(draft, tmp_path): 
     assert "approval" not in json.loads((folder / "canonical.json").read_text())["understanding"]
     told = package_story.parse((folder / "story.json").read_bytes())
     assert package_inbox.APPROVAL_ID not in [s.waits for s in told.slides]
+    assert told.slides[-1].waits == package_inbox.VOTE_ID, "the standard vote, last"
 
 
 @pytest.mark.parametrize("tamper", ["binding-dropped", "binding-added", "slide-removed",
@@ -154,18 +159,19 @@ def test_no_other_package_may_ask_it(wired, shown, marks, tmp_path):  # noqa: F8
 # -- his answers ----------------------------------------------------------------------------
 
 @pytest.mark.parametrize("how", ["page", "voice"])
-def test_got_it_is_acknowledgement_never_approval(wired, shown, marks, tmp_path, draft, how):  # noqa: F811
+def test_his_approval_is_the_one_vote_and_got_it_is_refused(wired, shown, marks, tmp_path, draft, how):  # noqa: F811
     inbox_id, _ = sent(wired, draft, tmp_path)
     wid = waiting_on(inbox_id)
-    ok, said = answer(wired, how, inbox_id, "understood", "got-it")
-    assert ok, said
-    q = approval(inbox_id)
-    assert q.answer is None and not q.counts() and not q.ends_waits()
-    assert still_waiting(wid), "Got it ends no wait on his approval"
+    for decision, option in (("understood", "got-it"), ("approve-package", "approve")):
+        ok, said = answer(wired, how, inbox_id, decision, option)
+        assert not ok, said
+    assert [q.id for q in package_inbox.questions(package_of(inbox_id))] == [
+        package_inbox.APPROVAL_ID]
+    assert still_waiting(wid)
     vote = package_inbox.page_vote(package_of(inbox_id))
-    assert vote["answer"] == "got-it"
+    assert vote["question"] is None, "no standard vote beside it"
     [asked] = vote["asks"]
-    assert asked["kind"] == "approval" and asked["answer"] is None, "shown apart from the vote"
+    assert asked["kind"] == "approval" and asked["answer"] is None
 
 
 @pytest.mark.parametrize("how", ["page", "voice"])
@@ -197,12 +203,12 @@ def test_approve_of_the_revision_in_force_ends_the_wait_and_goes_back_with_it(
     assert not workflow_store.snapshot(wid).open_waits, "approve of the current revision ends it"
     record = json.loads(work_packages.read_result(package_of(inbox_id), "decisions.json"))
     assert record["approve-architecture"]["subject"]["revision"] == revision["revision"]
-    assert "understood" not in record, "approval is not the vote"
+    assert not set(record) & set(package_inbox.VOTE_IDS), "approval is the only vote"
     _call(wired, "sign_off_package", package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert (f"approve-architecture: approve, given to revision {revision['revision']} of "
             f"{revision['document_id']}") in capture["text"]
-    assert "understood: not answered" in capture["text"]
+    assert "understood" not in capture["text"] and "approve-package" not in capture["text"]
 
 
 def test_a_sign_off_without_approval_ends_no_wait_on_it(wired, shown, marks, tmp_path, draft):  # noqa: F811
@@ -212,8 +218,6 @@ def test_a_sign_off_without_approval_ends_no_wait_on_it(wired, shown, marks, tmp
     workflow_store.record(workflow_store.WorkflowEvent(
         wid, "wait_started", None, "Waiting on the package.",
         {"key": "deck", "until": f"package:{inbox_id}"}))
-    ok, said = answer(wired, "page", inbox_id, "understood", "got-it")
-    assert ok, said
     r = wired.client.post(f"/api/packages/{package_of(inbox_id).id}/signoff", headers=BROWSER)
     assert r.status_code == 200, r.text
     assert not workflow_store.snapshot(wid).open_waits, "a wait on the package ends on sign-off"
@@ -282,3 +286,69 @@ def test_a_kit_release_with_the_same_language_files_leaves_his_approval_standing
     assert not q.stale and q.counts() and q.ends_waits()
     assert q.answer["subject"]["kit_digest"] == revision["kit_digest"] != "f" * 64
     assert package_inbox.counts(package_inbox.questions(package_of(inbox_id)))[0] >= 1
+
+
+# -- a package delivered before Got it was retired -------------------------------------------
+
+def old_sent(w, draft, tmp_path, monkeypatch) -> tuple[str, dict]:  # noqa: F811
+    """An architecture package built and delivered before Got it was retired:
+    its story the composition of then, his approval and then the old vote
+    (`understood`) last, as a real open package still is. The command of
+    then built it; today's refuses it."""
+    folder, revision = approval_folder(draft, tmp_path, name="store-before")
+    authored = json.loads((folder / language_projection.AUTHORED_STORY).read_bytes())
+    (folder / make_package.STORY_FILE).write_bytes(
+        package_story.compose(package_story.authored(json.dumps(authored).encode()), "en", True,
+                              legacy=True))
+    manifest = json.loads((folder / "package.json").read_text())
+    language_projection.folder_gate(folder, manifest["communication"])
+    with pytest.raises(make_package.dp.Refused, match="Got it, which is retired"):
+        make_package.make_folder(folder, tmp_path / "refused")
+    monkeypatch.setattr(make_package, "refuse_vote_ids", lambda *a, **k: None)
+    made = make_package.make_folder(folder, tmp_path / "built" / folder.parent.name)
+    r = w.client.post(INBOX, content=made.archive.read_bytes(), params={"session": "sess-1"},
+                      headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}",
+                               "Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text
+    return r.json()["inbox"]["id"], revision
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_an_open_package_from_before_keeps_working_with_approve_or_reject(
+        wired, shown, marks, tmp_path, draft, chitauri, monkeypatch, how):  # noqa: F811
+    """It holds his unanswered approval and the old vote, 0 of 2 answered:
+    the approval is answered as before, the old vote is asked and answered
+    as Approve or Reject (recorded as approve-package, never Got it), and
+    Done sends both back."""
+    inbox_id, revision = old_sent(wired, draft, tmp_path, monkeypatch)
+    told = package_of(inbox_id).story()
+    assert [s.waits for s in told.slides][-2:] == [package_inbox.APPROVAL_ID,
+                                                   package_inbox.VOTE_ID]
+    assert told.slides[-1].beats[0].say == package_inbox.vote_slide("en")["beats"][0]["say"]
+    entry = package_inbox.get(inbox_id)
+    assert (entry.decisions_answered, entry.decisions_total) == (0, 2)
+    vote = package_inbox.page_vote(package_of(inbox_id))
+    assert vote["question"] == "approve-package" and vote["answer"] is None
+    for decision, option in (("understood", "got-it"), ("understood", "questions"),
+                             ("approve-package", "got-it")):
+        ok, said = answer(wired, how, inbox_id, decision, option, "words")
+        assert not ok, said
+    ok, said = answer(wired, how, inbox_id, package_inbox.APPROVAL_ID, "approve")
+    assert ok, said
+    ok, said = answer(wired, how, inbox_id, "approve-package", "reject")
+    assert not ok and "needs your words" in said
+    ok, said = answer(wired, how, inbox_id, "approve-package", "reject", "Name the stores.")
+    assert ok, said
+    entry = package_inbox.get(inbox_id)
+    assert (entry.decisions_answered, entry.decisions_total) == (2, 2)
+    record = json.loads(work_packages.read_result(package_of(inbox_id), "decisions.json"))
+    assert record["approve-package"]["answer"] == "reject" and "understood" not in record
+    assert package_of(inbox_id).story().open_questions(record) == []
+    r = wired.client.post(f"/api/packages/{package_of(inbox_id).id}/signoff", headers=BROWSER)
+    assert r.status_code == 200, r.text
+    assert package_inbox.get(inbox_id).state == package_inbox.CLOSED
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    assert (f"approve-architecture: approve, given to revision {revision['revision']}"
+            in capture["text"])
+    assert "- approve-package: reject (his words: Name the stores.)" in capture["text"]
+    assert "got-it" not in capture["text"] and "understood" not in capture["text"]

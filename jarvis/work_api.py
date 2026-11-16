@@ -419,8 +419,13 @@ def event_json(event: work_store.WorkEvent) -> dict:
 def answer_decision(item_id: str, key: str, answer: str, where: str) -> work_store.WorkItem:
     """Record his answer to an open decision, as the item's own
     decision_made, so its reporter reads it (`work_report.py answer`).
-    The page's route and the brain's tool both call this."""
+    The page's route and the brain's tool both call this. A package's
+    vote asked on the item (`approve-package-<inbox id>`) answered Reject
+    with no words saying what to change is refused, as in the package."""
     words = " ".join(str(answer or "").split())
+    if key.startswith(package_inbox.VOTE_ID + "-") and package_inbox.bare_reject(words):
+        raise work_store.WorkRefused(package_inbox.needs_words(
+            package_inbox.VOTE_ID, package_inbox.VOTE_REJECT, ""))
     item = work_store.record(work_store.WorkEvent(
         item_id, work_store.DECISION_MADE, f"He answered {key}: {words}",
         {"key": key, "answer": words, "where": where}))

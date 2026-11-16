@@ -17,7 +17,7 @@
  *
  * Done in its head signs it off (DoneButton), for every package. A page
  * that carries the standard vote (not a deck, which asks on its own slide)
- * has Got it and I have questions beside it (VoteControls), outside the
+ * has Approve and Reject beside it (VoteControls), outside the
  * frame: the inbox's answer route, his click, the same answer as his voice
  * and the Work tab give.
  *
@@ -121,11 +121,13 @@ function DoneButton({ id, onSaid, target }: {
   );
 }
 
-type VotePart = "vote" | "gotIt" | "questions" | "words" | "send";
+type VotePart = "vote" | "approve" | "reject" | "words" | "send";
 
-/** The standard vote in the head: Got it records at once; I have questions
- *  opens a field for his words, recorded with Send. Each goes through the
- *  inbox's answer route (answerInbox), which takes only his click. */
+/** The standard vote in the head: Approve records at once; Reject opens a
+ *  field for his words saying what to change, recorded with Send (never
+ *  without them). Each goes through the inbox's answer route (answerInbox),
+ *  which takes only his click. An answer given before Got it was retired
+ *  is only read back. */
 function VoteControls({ id, vote, onSaid, part }: {
   id: string; vote: PageVote; onSaid: (s: Said | null) => void;
   part: (name: VotePart) => (el: Element | null) => void }) {
@@ -134,9 +136,12 @@ function VoteControls({ id, vote, onSaid, part }: {
   const [asking, setAsking] = useState(false);
   const [words, setWords] = useState(vote.note);
   const [busy, setBusy] = useState(false);
-  const record = async (option: "got-it" | "questions", note = "") => {
+  // The standard vote; any other id is an answer given before Got it was
+  // retired, read back and never asked again.
+  const current = vote.question === "approve-package";
+  const record = async (option: "approve" | "reject", note = "") => {
     setBusy(true);
-    const problem = await answerInbox(id, vote.question ?? "understood", option, note);
+    const problem = await answerInbox(id, vote.question ?? "approve-package", option, note);
     setBusy(false);
     if (problem) {
       onSaid({ original: problem });
@@ -149,13 +154,18 @@ function VoteControls({ id, vote, onSaid, part }: {
   return (
     <div className="package-vote" role="group" aria-label={t("main.package.vote.label")} ref={part("vote")}
          data-answer={answer ?? undefined}>
-      <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
-              aria-pressed={answer === "got-it"} ref={part("gotIt")} onClick={() => void record("got-it")}>
-        {t("main.package.vote.gotIt")}</button>
-      <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
-              aria-pressed={answer === "questions"} aria-expanded={asking} ref={part("questions")}
-              onClick={() => setAsking(!asking)}>
-        {t("main.package.vote.questions")}</button>
+      {current && (
+        <>
+          <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                  aria-pressed={answer === "approve"} ref={part("approve")}
+                  onClick={() => void record("approve")}>
+            {t("main.package.vote.approve")}</button>
+          <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                  aria-pressed={answer === "reject"} aria-expanded={asking} ref={part("reject")}
+                  onClick={() => setAsking(!asking)}>
+            {t("main.package.vote.reject")}</button>
+        </>
+      )}
       {asking && (
         <>
           <input type="text" className="package-vote-words" data-ui-action="input" value={words}
@@ -163,13 +173,15 @@ function VoteControls({ id, vote, onSaid, part }: {
                  ref={part("words")} maxLength={500} onChange={(e) => setWords(e.target.value)} />
           <button type="button" className="settings-btn primary" data-ui-action="domain"
                   disabled={busy || !words.trim()} ref={part("send")}
-                  onClick={() => void record("questions", words.trim())}>
+                  onClick={() => void record("reject", words.trim())}>
             {t("main.package.vote.send")}</button>
         </>
       )}
       {!asking && answer && (
         <span className="package-vote-recorded" role="status">
-          {answer === "got-it" ? t("main.package.vote.gotItRecorded") : t("main.package.vote.questionsRecorded")}
+          {answer === "approve" ? t("main.package.vote.approveRecorded")
+            : answer === "reject" ? t("main.package.vote.rejectRecorded")
+            : t("main.package.vote.recordedBefore", { answer: vote.answer_name ?? answer })}
         </span>
       )}
     </div>

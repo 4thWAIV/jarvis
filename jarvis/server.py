@@ -9811,21 +9811,21 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         _inbox_attend(arrival.entry)
         _inbox_wait(arrival.entry)
         if arrival.entry.work_id and package.manifest.runs == work_packages.AGENT:
-            _ask_understood_on_work(arrival.entry, package, proven)
+            _ask_vote_on_work(arrival.entry, package, proven)
     _hint_inbox([arrival.entry, *arrival.superseded])
     log.info("package inbox: %s arrived as %s%s", package.id, arrival.entry.id,
              "" if arrival.fresh else " (already open)")
     return arrival, package, ""
 
 
-def _ask_understood_on_work(entry, package, proven) -> None:
+def _ask_vote_on_work(entry, package, proven) -> None:
     """An agent package sent for a Work item cannot carry his vote itself,
     so its vote is asked on the item as it arrives: the standard question
-    (package_inbox.understood: Got it / I have questions, in the language in
-    force) as the item's decision `understood-<inbox id>`, asked by the
-    agent that sent it, on its Decisions tab. Never raises."""
+    (package_inbox.vote: Approve, or Reject with his words, in the language
+    in force) as the item's decision `approve-package-<inbox id>`, asked by
+    the agent that sent it, on its Messages tab. Never raises."""
     try:
-        vote = package_inbox.understood(spoken_words.active_language())
+        vote = package_inbox.vote(spoken_words.active_language())
         asker = agent_key_store.agent_principal(proven.session_id) if proven else "jarvis"
         detail = {"key": package_inbox.vote_key(entry.id),
                   "options": [o["name"] for o in vote["options"]],
@@ -10506,6 +10506,9 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
     if question is None:
         return None, (f"That is not one of its decisions; they are "
                       f"{', '.join(q.id for q in asked)}. Nothing was recorded.")
+    if question.id == package_inbox.LEGACY_VOTE_ID:
+        return None, ("Got it is retired: that answer is on record as it was and is never "
+                      "given again. Nothing was recorded.")
     if not question.applies:
         return None, (f"{question.id} is not asked yet: it follows another decision's answer. "
                       f"Nothing was recorded.")
@@ -10514,7 +10517,20 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, (f"{question.id} takes one of {', '.join(o['id'] for o in question.options)}"
                       f", recommended, later or none. Nothing was recorded.")
     note = " ".join(str(words or "").split())[:500]
-    if not package_inbox.is_decision_package(package):
+    wanting = package_inbox.needs_words(question.id, chosen, note,
+                                        spoken_words.active_language())
+    if wanting:
+        return None, f"{wanting} Nothing was recorded."
+    if question.id == package_inbox.VOTE_ID and \
+            await asyncio.to_thread(package_inbox.legacy_deck, package):
+        # An old deck asks the retired vote in its own decide.py: his
+        # approval is written into its record by JARVIS.
+        try:
+            await asyncio.to_thread(package_inbox.record_deck_vote, package, question,
+                                    chosen, note)
+        except work_packages.PackageError as e:
+            return None, f"{e} Nothing was recorded."
+    elif not package_inbox.is_decision_package(package):
         # A page's standard vote: written into its story's answers file.
         try:
             await asyncio.to_thread(package_inbox.record_story_answer, package, question,
@@ -10569,9 +10585,10 @@ def _sign_off_text(entry, package) -> str:
     if asked:
         lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
         lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
-        if entry.work_id and _has_questions(asked):
-            lines.append(f"His questions are on work item {entry.work_id} as decision "
-                         f"{_questions_key(entry)}.")
+        rejected = _rejected(asked)
+        if entry.work_id and rejected:
+            lines.append(f"His words are on work item {entry.work_id} as decision "
+                         f"{_rejected_key(entry, rejected)}.")
         lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
                      f" (and {package_inbox.SUMMARY} beside it).")
     else:
@@ -10580,30 +10597,41 @@ def _sign_off_text(entry, package) -> str:
     return "\n".join(lines)[:CAPTURE_MAX_CHARS]
 
 
-def _has_questions(asked) -> Optional[object]:
-    """The standard vote answered "I have questions", or None."""
-    return next((q for q in asked if q.id == package_inbox.UNDERSTOOD_ID and q.applies
-                 and q.answer and q.answer["answer"] == package_inbox.HAS_QUESTIONS), None)
+# The standard vote's answer that carries his words back: Reject, or on a
+# package answered before Got it was retired, I have questions.
+_WORDS_BACK = ((package_inbox.VOTE_ID, package_inbox.VOTE_REJECT),
+               (package_inbox.LEGACY_VOTE_ID, package_inbox.LEGACY_HAS_QUESTIONS))
 
 
-def _questions_key(entry) -> str:
-    """The Work decision his questions on this package become."""
-    return package_inbox.vote_key(entry.id)
+def _rejected(asked) -> Optional[object]:
+    """The standard vote answered Reject (or, before Got it was retired, I
+    have questions), or None."""
+    return next((q for q in asked if q.applies and q.answer
+                 and (q.id, q.answer["answer"]) in _WORDS_BACK), None)
+
+
+def _rejected_key(entry, question) -> str:
+    """The Work decision his words on this package become:
+    `approve-package-<inbox id>` (`understood-<inbox id>` for an answer
+    given before Got it was retired)."""
+    return package_inbox.vote_key(entry.id, question.id)
 
 
 def _inbox_questions_on_work(entry, package, where: str) -> None:
-    """He answered the standard vote "I have questions" on a package sent
-    for a Work item: they become that item's decision, asked and answered at
-    once in his words, so its agents read them (`work_report.py answer`). A
-    key already used is left as it is. On the loop."""
-    question = _has_questions(package_inbox.questions(package))
+    """He answered the standard vote Reject, with his words saying what to
+    change, on a package sent for a Work item: his words become that item's
+    decision, asked and answered at once, so its agents read them
+    (`work_report.py answer`). A key already used is left as it is. On the
+    loop."""
+    question = _rejected(package_inbox.questions(package))
     if not entry.work_id or question is None:
         return
-    key = _questions_key(entry)
+    key = _rejected_key(entry, question)
+    said = ("Tim rejected the package {} and said what to change." if question.id ==
+            package_inbox.VOTE_ID else "Tim has questions about the package {}.")
     try:
         work_store.record(work_store.WorkEvent(
-            entry.work_id, work_store.DECISION_NEEDED,
-            f"Tim has questions about the package {package.id}.",
+            entry.work_id, work_store.DECISION_NEEDED, said.format(package.id),
             {"key": key, "options": [o["name"] for o in question.options],
              "package": entry.package_id}))
         done = work_api.answer_decision(entry.work_id, key,

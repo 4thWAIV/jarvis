@@ -10,8 +10,9 @@ docs/making-a-package.md is the whole of how to use it. In short:
 - CONTENT.json is a deck, drawn by the shared deck
   (examples/packages/decision-deck/). With `decisions` it is a decision
   package; with only `slides` it is a presentation (an update), which ends
-  with the standard vote (package_inbox.understood: Got it / I have
-  questions, in the deck's language or the one in force). Everything that can be worked out is (decision_package.expand).
+  with the standard vote (package_inbox.vote: Approve / Reject with his
+  words, in the deck's language or the one in force). Got it is retired: a
+  source that declares it (`understood`), or the vote itself, is refused. Everything that can be worked out is (decision_package.expand).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
   worked out from the files there. A page whose story asks nothing (or that
@@ -125,11 +126,12 @@ def deck_of(content: Path) -> dict:
 def prepare_deck(raw: dict, source_dir: Path) -> dict:
     """Shared briefing, decision and understanding policy for every deck language."""
     from jarvis import package_inbox
+    refuse_vote_ids(raw.get("decisions") if isinstance(raw, dict) else None)
     deck = dp.expand(raw)
     if isinstance(deck, dict) and not deck.get("decisions") and deck.get("slides"):
         # Every package carries his vote: one that asks nothing ends with
         # the standard one, drawn after its slides, in its language.
-        deck["decisions"] = [package_inbox.understood(raw.get("language") or built_language())]
+        deck["decisions"] = [package_inbox.vote(raw.get("language") or built_language())]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     # A briefing (dp.briefing_problems): its purpose and conclusion as the
@@ -147,6 +149,27 @@ def prepare_deck(raw: dict, source_dir: Path) -> dict:
     return deck
 
 
+def refuse_vote_ids(asked, what: str = "decision") -> None:
+    """Refused when a source declares the vote itself: Got it is retired
+    (`understood`, which no package ever asks again), and the standard vote
+    (`approve-package`) is the command's to add, in a deck. `asked` is a
+    list of decisions or slides; their `id`, or a slide's `waits` (a story
+    the factory composed ends with the standard vote, so a slide may wait
+    on it)."""
+    from jarvis import package_inbox
+    for item in asked or []:
+        if not isinstance(item, dict):
+            continue
+        ident = item.get("id") if what == "decision" else item.get("waits")
+        if ident == package_inbox.LEGACY_VOTE_ID:
+            raise dp.Refused([f"A {what} asks {package_inbox.LEGACY_VOTE_ID!r}, Got it, which is retired: no package "
+                              f"asks it again. Leave it out; the command ends a package that "
+                              f"asks nothing with the standard vote, Approve or Reject."])
+        if ident == package_inbox.VOTE_ID and what == "decision":
+            raise dp.Refused([f"A {what} asks {package_inbox.VOTE_ID!r}, the standard vote, which the command "
+                              f"adds itself. Leave it out."])
+
+
 def built_language() -> str:
     """The language in force as it is built: JARVIS's saved choice
     (language_setting.saved), for a deck or a new story that names none."""
@@ -158,7 +181,7 @@ def deck_kind(deck: dict) -> str:
     """A presentation asks only the standard vote; a decision package more."""
     from jarvis import package_inbox
     asked = [d.get("id") for d in deck.get("decisions") or [] if isinstance(d, dict)]
-    return "presentation" if asked in ([], [package_inbox.UNDERSTOOD_ID]) else "decision package"
+    return "presentation" if asked in ([], [package_inbox.VOTE_ID]) else "decision package"
 
 
 def make_deck(content: Path, out: Path) -> Made:
@@ -283,6 +306,8 @@ def _with_vote(built: Path, manifest: dict) -> None:
     try:
         given = json.loads(path.read_text(encoding="utf-8")) if named else None
         parsed = package_story.parse(path.read_bytes()) if named else None
+        refuse_vote_ids((given or {}).get("slides") if isinstance(given, dict) else None,
+                        "slide")
         if parsed is not None and package_inbox.asks_a_question(None, parsed):
             return
     except (OSError, ValueError, package_story.StoryError) as e:
@@ -290,7 +315,7 @@ def _with_vote(built: Path, manifest: dict) -> None:
     # The vote in the story's language (English when it names none, as it is
     # told), or for a new story the language in force.
     language = parsed.language if parsed is not None else built_language()
-    told = package_inbox.with_understood_slide(given, language)
+    told = package_inbox.with_vote_slide(given, language)
     try:
         package_story.parse(json.dumps(told).encode("utf-8"))
     except package_story.StoryError as e:
@@ -638,7 +663,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             else:
                 deck = deck_of(source)
                 kind = deck_kind(deck)
-                asks = ("ending with the standard vote (Got it / I have questions)"
+                asks = ("ending with the standard vote (Approve / Reject)"
                         if kind == "presentation"
                         else f"{len(deck.get('decisions') or [])} decision(s)")
                 print(f"The content is right: a {kind}, {asks}, "

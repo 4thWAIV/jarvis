@@ -517,7 +517,7 @@ blocker). A decision is only a package: `work_report.py decision` and
 `withdraw` print `message.ASK_WITH_A_PACKAGE` and exit 2, and the Work and
 workflow event routes refuse `decision_needed` (and `decision_withdrawn`)
 from any reporter in the same words; JARVIS's own (a package's
-`understood-` vote) are recorded in-process. By voice, "What's new?" is
+`approve-package-` vote) are recorded in-process. By voice, "What's new?" is
 `messages_to_him` with `new` (`messages_api.whats_new`: each Work item with
 new messages in the Inbox's order, its new ones oldest first, then the
 general ones newest first), which puts him on the first; the message he is
@@ -706,7 +706,7 @@ that is not a decision, with how many more. No reporter asks or withdraws
 a decision any more (round 3: a decision is a package sent with `--work`,
 a message on the item; the route refuses `decision_needed` and
 `decision_withdrawn`, `message.ASK_WITH_A_PACKAGE`): the decision record
-stays the answers' store, for JARVIS's own (`understood-<inbox id>`), the
+stays the answers' store, for JARVIS's own (`approve-package-<inbox id>`), the
 ones asked before, which he still answers, and a package's answers. A
 decision asked before may name a page package (`detail.package`); its
 card's "Open the package" posts to `/api/packages/<id>/page`, the same
@@ -1273,31 +1273,55 @@ unpacked by `work_packages.unpack` exactly as a local zip (a decision
 package only signed as checked, `_receive_package_zip`), and
 `package_inbox.arrive` records it. Every
 package carries his vote: `make_package` gives a deck or page that asks
-nothing the standard one, `package_inbox.understood` (`understood`:
-`got-it` Got it, `questions` I have questions with his words; Entendido and
-Tengo preguntas in Spanish, `_VOTE_WORDS`), at its end, in the deck's or
+nothing the standard one, his approval of the package, `package_inbox.vote`
+(`approve-package`: `approve` Approve, `reject` Reject, which needs his
+words saying what to change, `needs_words`, held to it by the answer route,
+`record_story_answer`, the shared deck's deck.js and decide.py, and a Work
+item's answer, `package_inbox.bare_reject`; Aprobar and Rechazar in
+Spanish, `_VOTE_WORDS`), at its end, in the deck's or
 story's language, else the language in force as it is built
 (`make_package.built_language`, `language_setting.saved`; a page's own
 story is in its own language, English when it names none): a deck as one
-more decision, a page as its story's last slide (`with_understood_slide`,
-`understood_slide`) waiting on its answers file. A page that carries it has
-Got it and I have questions (a field for his words, then Send) in the
+more decision, a page as its story's last slide (`with_vote_slide`,
+`vote_slide`) waiting on its answers file. A package that already asks
+his approval (a review package's `approve-item`, a merge package's
+`merge-pr`, an architecture package's `approve-architecture`, which
+`package_story.compose` puts last in place of the vote) gets no second
+one. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
+records `understood` (`got-it`, `questions`) for any package.
+`make_package.refuse_vote_ids` refuses a deck decision or story slide that
+asks it (and a deck that declares `approve-package` itself), the answer
+route and `record_story_answer` refuse it, and `package_story.authored`
+reserves both ids. A package delivered before, still carrying it, is read
+as carrying the approval: its story through `package_story.current`
+(`Package.story()`), its deck through `package_inbox.current_deck`
+(`questions`, and its deck-data.js as served to its own page,
+`deck_data_shown`), its answer written by JARVIS under `approve-package`
+(`record_deck_vote`, since its own decide.py knows only the old id); the
+architecture gate still recognises a story composed then
+(`package_story.compose`'s `legacy`). An answer given to Got it before
+stays on record and is read back (`_legacy_question`, `page_vote`'s
+`answer_name`; `story_teller.read_answers` lets it stand for the slide),
+never asked again. A page that carries it has
+Approve and Reject (a field for his words, then Send) in the
 package view's head beside Done, outside the frame (`PackageView.tsx`
 `VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
 post to the inbox's answer route, which takes only his click
 (`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
 package shown so a reload shows his answer. A deck asks on its own slide.
-A page's `understood` is read from that file (`package_inbox.questions`,
+A page's vote is read from that file (`package_inbox.questions`,
 `_story_questions`) and his answer written there
 (`record_story_answer`, from `_answer_inbox_decision` when there is no
 decide.py), so the Work tab, voice and the sign-off capture treat it as a
-deck's. At sign-off an I have questions on a package sent with `--work`
-is also that item's decision `understood-<inbox id>`, asked and answered at
-once in his words (`server._inbox_questions_on_work`), and the capture
-names it. An agent package sent with `--work` carries its work-item key
+deck's. At sign-off a Reject on a package sent with `--work` is also that
+item's decision `approve-package-<inbox id>`, asked and answered at once in
+his words (`server._inbox_questions_on_work`, `_rejected`; an I have
+questions given before Got it was retired, `understood-<inbox id>`), and
+the capture names it. An agent package sent with `--work` carries its work-item key
 (see "Agent keys"), and its vote is asked on the item as it arrives: the
-standard question as the item's decision `understood-<inbox id>`, asked by
-its sending agent (`server._ask_understood_on_work`), on its Messages tab.
+standard question as the item's decision `approve-package-<inbox id>`,
+asked by its sending agent (`server._ask_vote_on_work`), on its Messages tab;
+Reject there needs his words too.
 A conversation package cannot carry a vote, so one that names a work item
 is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
 the route, which checks the signature first and then refuses any other
@@ -1313,7 +1337,8 @@ are the same row; an open package of the same name from the same sender
 (its session, else its project) is closed `superseded` in the same
 transaction, which carries every wait on it to the newer one
 (`wait_links.carry`, `superseded_by`), gives the newer one its Work item
-when it names none, and closes its item's vote `understood-<inbox id>`
+when it names none, and closes its item's vote `approve-package-<inbox id>`
+(or one asked before Got it was retired, `understood-<inbox id>`)
 (`work_store.close_with_package`, `where` superseded). A decision package's questions are read from `deck-data.js`
 as JSON after `window.DECK = ` (never executed) and its answers from its
 own `results/decisions.json` (`package_inbox.questions`; a follow-up

@@ -10,6 +10,20 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
+## Every package asks Approve or Reject; Got it is gone
+
+A package that asks you nothing of its own now ends with Approve or Reject
+instead of Got it. Approve records at once. Reject opens a field for what
+to change, and goes only with your words, which go back to the agent that
+sent it; on a package sent for a Work item they are also on that item, as
+your answer. In Spanish they are Aprobar and Rechazar. A package that
+already asks for your approval (a review of a Work item, a merge, an
+architecture design) asks it once, with no second vote.
+
+Got it can no longer be offered, chosen or recorded. A package that arrived
+before this and still waits on Got it asks Approve or Reject in its place,
+and every other question in it works as before; an answer you already gave
+to Got it stays on record as you gave it.
 ## Status briefings lead with what needs you, built from the Work record
 
 An agent preparing a status presentation on your Work items now builds it

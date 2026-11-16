@@ -2,7 +2,7 @@
 states, answers) now that no reporter asks one (one channel, round 3: a
 decision reaches him only as a package, and the route refuses
 `decision_needed` and `decision_withdrawn`). It is recorded in process, as
-JARVIS records its own (a package's `understood-` vote), with its asker as
+JARVIS records its own (a package's `approve-package-` vote), with its asker as
 the route would have recorded it, and the item is shown as the route shows
 it."""
 from __future__ import annotations
