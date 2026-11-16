@@ -107,9 +107,9 @@ def test_items_on_record_before_the_migration_are_kept_and_are_no_message(tmp_pa
 
 # -- the route ----------------------------------------------------------------------------
 
-def _post(client, agent, body, work=""):
-    path = MESSAGES + (f"?work={work}" if work else "")
-    return agent.post(client, path, body)
+def _post(client, agent, body, work="", general=False):
+    from jarvis import message
+    return agent.post(client, MESSAGES + message.query(work, general), body)
 
 
 def _piece(client, agent, wid, key="build"):
@@ -176,6 +176,12 @@ def test_no_work_item_is_refused_while_the_agent_has_a_piece_on_one(wired):
     r = _post(client, agent, {"says": "A general note."})
     assert r.status_code == 409
     assert wid in r.json()["error"] and "Keys" in r.json()["error"], "names the item"
+    assert "--general" in r.json()["error"], "says how to send one about no item"
+    r = _post(client, agent, {"says": "A general note."}, general=True)
+    assert r.status_code == 200, "said to be about no item, it goes to the Inbox"
+    assert r.json()["message"]["about"] is None
+    assert _post(client, agent, {"says": "x"}, wid, general=True).status_code == 400, \
+        "one item or none, never both"
     other = Agent(home, DIAG).onboarded()
     assert _post(client, other, {"says": "Mine has no piece."}).status_code == 200
     assert _post(client, agent, {"says": "x"}, "work-none").status_code == 404
@@ -409,5 +415,7 @@ def test_the_command_signs_and_sends(wired, monkeypatch, capsys):
     assert message.main(["--work", wid, "--as", PLAN, "The design is ready."]) == 0
     sent = int(capsys.readouterr().out.strip())
     assert cl.get(sent).about == wid
+    assert message.main(["--general", "--as", PLAN, "A note about no item."]) == 0
+    assert cl.get(int(capsys.readouterr().out.strip())).about is None
     assert message.main(["--work", wid, "--as", PLAN, "Shall I go on?"]) == 1
     assert "inside a package" in capsys.readouterr().err
