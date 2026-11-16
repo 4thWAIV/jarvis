@@ -201,7 +201,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
       focus = (
         <PackageFocus frame={frame.current} rect={rect ?? null} kind="decision" takeFocus
                       dim={rect ? DIM.decision : DIM.whole} cardRef={ui.part("focus")}
-                      label={q?.question ?? t("main.package.vote.label")}>
+                      label={q?.question ?? (info.vote?.words || t("main.package.vote.label"))}>
           <LeaveFocus onLeave={leave} target={ui.part("focusClose")} />
           <p className="package-focus-position">
             {t("main.package.questions.position", { n: at + 1, m: sequence.length })}</p>
@@ -434,7 +434,10 @@ function VoteControls({ id, vote, now, onAnswer, onSaid, part, lead = false }: {
   return (
     <div className="package-vote" role="group" aria-label={t("main.package.vote.label")} ref={part("vote")}
          data-answer={answer ?? undefined}>
-      {lead && <h3 className="package-ask-question">{t("main.package.vote.label")}</h3>}
+      {lead && <h3 className="package-ask-question">{vote.words || t("main.package.vote.label")}</h3>}
+      {lead && vote.reason && (
+        <p className="package-ask-why"><strong>{t("main.package.focus.why")}</strong> {vote.reason}</p>
+      )}
       {current && (
         <>
           <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}

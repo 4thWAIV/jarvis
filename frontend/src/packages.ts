@@ -51,6 +51,9 @@ import { dispatch, registerCommand } from "./uiRegistry";
  *  by `answer_name` and never asked again. */
 export interface PageVote {
   question: string | null;
+  /** The vote's own question and why it is his, heading its card. */
+  words?: string;
+  reason?: string;
   answer: "approve" | "reject" | "later" | "none" | string | null;
   /** His answer by its name, as recorded ("" while unanswered). */
   answer_name?: string;

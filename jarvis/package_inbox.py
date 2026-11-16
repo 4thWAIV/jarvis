@@ -773,8 +773,11 @@ def page_vote(package: Package) -> Optional[dict]:
                          if q.answer else None)
         return shown
     # An answer given before to the retired vote is read back by its name
-    # (`answer_name`), never asked again.
+    # (`answer_name`), never asked again. The vote's own words and why it is
+    # his (`words`, `reason`) head its card in the package view.
     return {"question": standard.id if standard else None,
+            "words": standard.question if standard else "",
+            "reason": standard.reason if standard else "",
             "answer": standard.answer["answer"] if standard and standard.answer else None,
             "answer_name": standard.answered_words() if standard and standard.answer else "",
             "note": standard.answer["note"] if standard and standard.answer else "",

@@ -2480,11 +2480,22 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .package-focus-position { margin: 0 28px 6px 0; color: #f5a623; font-size: 12px; }
 .package-focus-steps { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .package-focus-card .package-vote { flex-wrap: wrap; }
-.package-focus-card .package-vote .package-ask-question { flex: 1 0 100%; }
+.package-focus-card .package-vote .package-ask-question,
+.package-focus-card .package-vote .package-ask-why { flex: 1 0 100%; margin: 0; }
+.package-focus-card .package-vote-words { background: rgba(255, 255, 255, 0.06); color: inherit;
+                                          border: 1px solid var(--ui-edge); border-radius: 5px;
+                                          padding: 4px 8px; font: inherit; }
 /* The explanation: a wider card centred over the whole view, scrolling
    within it. */
 .package-focus[data-kind="explanation"] .package-focus-card { width: min(760px, calc(100% - 32px)); }
-.package-focus-card .package-explanation { border-top: 0; padding: 0 28px 0 0; }
+.package-focus-card .package-explanation { border-top: 0; padding: 0 28px 0 0; line-height: 1.45; }
+.package-focus-card .package-explanation h1,
+.package-focus-card .package-explanation h2,
+.package-focus-card .package-explanation h3 { margin: 14px 0 6px; }
+.package-focus-card .package-explanation h1:first-child,
+.package-focus-card .package-explanation h2:first-child,
+.package-focus-card .package-explanation h3:first-child { margin-top: 0; }
+.package-focus-card .package-explanation p { margin: 0 0 10px; }
 .package-questions-open { flex: none; }
 @media (prefers-reduced-motion: reduce) { .package-focus-lit { transition: none; } }
 :root[data-motion="steady"] .package-focus-lit { transition: none; }
@@ -4345,6 +4356,9 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .control-summary .control-actions button.primary { color: var(--ui-accent); border-color: rgba(var(--ui-accent-rgb), .45); }
 .control-summary .control-actions button:disabled { color: var(--ui-muted); cursor: default; }
+/* A narrow bar clips the conversation's state rather than drawing it under
+   what follows (Team server, the microphone). */
+#takeover-bar .control-summary { overflow: hidden; }
 #centre-notices.compact.in-bar { position: static; flex: none; z-index: auto; }
 #centre-notices.in-bar:empty { display: none; }
 .takeover-voice { flex: none; display: flex; align-items: center; gap: 8px; }
