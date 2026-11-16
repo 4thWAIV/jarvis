@@ -956,7 +956,8 @@ must be reviewed again. `messaging_runtime.py` builds the one store
 accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
 each step a version; a `thread` document per thread, its work state,
 waiting command and review checklist; the sync position a `settings`
-document), file snapshots (`messaging_files.py`), guard,
+document, written only where a delivery pass stops and only when it moved
+(`store_page_changes(keep_position=)`), so a rescan writes nothing), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
 announcer (`arrival_announcer.py`: each arrival an attention item, its
@@ -1745,7 +1746,13 @@ progress (`/settings/folder-discovery.settings`, the transcripts read under
 `/folders/discovery-history/`). Projects refer to these IDs.
 `folder_store.py` is the only writer, one write per change, the revision
 moved inside it; it reads no
-transcript and checks no permission.
+transcript and checks no permission. A check, sighting or source pass
+that moves nothing but its time (`last_checked_at`, `last_seen_at`,
+`last_observed_at`, `observed_at`, `last_live_at`, `last_run_at`,
+`last_ok_at`) writes nothing: the time is held in memory (`_HELD`, by
+engine) and read from there by every reader, and written with the next
+real change or once the written one is `STAMP_EVERY_SEC` (15 minutes) old,
+since every version is kept.
 
 Which reader may read a folder is decided by where it is, never by its role
 or by the caller (`folder_policy.py`): a Claude Code `projects/<folder>` under
@@ -2790,8 +2797,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
-- `usage_history.py` — The long-term record of the week: every seven-day
-  reading `usage_store.record` takes, one `usage` document a brain a day
+- `usage_history.py` — The long-term record of the week: the seven-day
+  readings `usage_store.record` takes, each kept only when it says
+  something the last one kept did not (percentage, reset, status, account:
+  `_says_more`) or `USAGE_READING_EVERY_SEC` (10 minutes) after it, so a
+  day's document grows by at most 144 readings when nothing moves (every
+  version is kept), one `usage` document a brain a day
   (`/usage/<brain>/<date>.usage`; the five-hour window is never kept, Tim's
   word): its `readings` keep each one for `RAW_KEEP_SEC` (14 days) with its
   provider, account hash (`brain_accounts.history_ref`, None while unknown),

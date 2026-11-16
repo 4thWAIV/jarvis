@@ -10,6 +10,17 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
+## JARVIS no longer rewrites records when nothing changed
+
+Every record keeps every version, and a few writers rewrote whole records
+when only a time had moved, so their history grew without end (one day's
+usage record reached hundreds of megabytes). Now each writes only when
+something you can see changed: a weekly usage reading is kept when its
+figures change, or once every ten minutes otherwise, so the burn-down
+still has a point every ten minutes; the messaging sync position is
+written only when it moves; and the folder catalog's "last checked",
+"seen" and discovery times are kept in memory, still shown as they are,
+and written at most every fifteen minutes.
 ## The knowledge engine stops timing out on records with long histories
 
 The earlier fix read a record's newest version without its history, but

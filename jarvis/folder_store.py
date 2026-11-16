@@ -33,7 +33,12 @@ documents, redesigned").
                                 given (new ones count on from them)
 
 Every change is one write of the documents it touches (`records.atomic`),
-with the revision moved inside it. This module reads no transcript and
+with the revision moved inside it. A pass that moves nothing but a time (a
+location checked, a candidate or session seen again, a source's pass run)
+writes nothing: every version is kept, so such writes would grow each
+history without end. The time is held in memory (`_HELD`) and read from
+there, and written with the next real change or once its written value is
+`STAMP_EVERY_SEC` old. This module reads no transcript and
 checks no permission: discovery hands it what it observed
 (folder_discovery.py), the service decides what may be registered and read
 (folder_service.py, folder_policy.py). It publishes nothing; the caller
@@ -78,6 +83,13 @@ DISCOVERY_AREA = "folder-discovery"
 BATCH = 900                     # documents a write carries (the engine takes 1000)
 _LIVE = [["lifecycle", "exists", True]]       # a folder document (Content items have none)
 _LOCK = threading.RLock()
+STAMP_EVERY_SEC = 15 * 60
+"""A time that alone moved is written at most this often (held in memory
+meanwhile, so readers still see it as it is)."""
+LOCATION_STAMPS = ("last_checked_at", "last_seen_at")
+CANDIDATE_STAMPS = ("last_observed_at",)
+SESSION_STAMPS = ("observed_at", "last_live_at")
+PROGRESS_STAMPS = ("last_run_at", "last_ok_at")
 
 
 def _no_suffix(value: str) -> str:
@@ -231,6 +243,64 @@ class Progress:
     last_error: Optional[str]
 
 
+# ── times held in memory ────────────────────────────────────────────────
+
+class _Held:
+    """Times newer than the ones written, by engine and document part, so
+    what was held for one engine is never read from another's."""
+
+    def __init__(self):
+        self._by: dict[tuple[str, str], dict[str, float]] = {}
+        self._lock = threading.Lock()
+
+    def hold(self, key: str, stamps: dict) -> None:
+        with self._lock:
+            cur = self._by.setdefault((records.engine_key(), key), {})
+            for name, value in stamps.items():
+                if value is not None and (cur.get(name) is None or value > cur[name]):
+                    cur[name] = value
+
+    def fresher(self, key: str, data: dict) -> dict:
+        """`data` with each held time newer than its own put in (in place)."""
+        with self._lock:
+            held = dict(self._by.get((records.engine_key(), key)) or {})
+        for name, value in held.items():
+            if data.get(name) is None or value > data[name]:
+                data[name] = value
+        return data
+
+
+_HELD = _Held()
+
+
+def _only_times_moved(before: dict, after: dict, stamps: tuple[str, ...]) -> bool:
+    """Whether `after` differs from `before` in nothing but the times
+    `stamps` (a time appearing where there was none is a change)."""
+    def rest(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k not in stamps}
+    return rest(before) == rest(after) and all(
+        before.get(k) is not None or after.get(k) is None for k in stamps)
+
+
+def _due(before: dict, stamps: tuple[str, ...], now: float) -> bool:
+    """Whether the first of `stamps`, as written, is old enough to write."""
+    return now - float(before.get(stamps[0]) or 0.0) >= STAMP_EVERY_SEC
+
+
+def _location_key(folder_id: str, location_id: str) -> str:
+    return f"{folder_path(folder_id)}#{location_id}"
+
+
+def _progress_key(source: str) -> str:
+    return f"{DISCOVERY}#{source}"
+
+
+def _fresh_folder(doc: dict) -> dict:
+    for loc in doc.get("locations") or []:
+        _HELD.fresher(_location_key(doc.get("id", ""), loc.get("id", "")), loc)
+    return doc
+
+
 # ── documents to records ────────────────────────────────────────────────
 
 def _current(doc: dict) -> Optional[dict]:
@@ -314,13 +384,14 @@ class FolderStore:
         return [r.data for r in found if "locations" in r.data]
 
     def _all(self) -> list[Folder]:
-        return [f for f in (_folder(d) for d in self._docs()) if f is not None]
+        return [f for f in (_folder(_fresh_folder(d)) for d in self._docs()) if f is not None]
 
     def get(self, folder_id: str) -> Optional[Folder]:
         if not folder_id:
             return None
         rec = records.get(folder_path(folder_id))
-        return _folder(rec.data) if rec is not None and rec.data.get("id") == folder_id else None
+        return (_folder(_fresh_folder(rec.data)) if rec is not None and rec.data.get("id") == folder_id
+                else None)
 
     def list(self, *, lifecycle: Optional[str] = Lifecycle.ACTIVE, query: str = "",
              role: Optional[str] = None, availability: Optional[str] = None,
@@ -604,9 +675,11 @@ class FolderStore:
 
     def record_availability(self, location_id: str, availability: str,
                             error_code: Optional[str], now: Optional[float] = None) -> bool:
-        """A check of one location: always its time, its time seen when it
-        was there, and an event when its availability moved. True if it
-        moved. Not a metadata change: the folder's revision stays."""
+        """A check of one location: its time, its time seen when it was
+        there, and an event when its availability moved. True if it moved.
+        Not a metadata change: the folder's revision stays. A check that
+        moves nothing but the times is held in memory (`_HELD`) and written
+        only once the written check is `STAMP_EVERY_SEC` old."""
         now = float(time.time() if now is None else now)
 
         def run(unit: records.Unit) -> bool:
@@ -614,11 +687,18 @@ class FolderStore:
                 loc = next((l for l in doc["locations"] if l["id"] == location_id), None)
                 if loc is None:
                     continue
+                stored = dict(loc)
+                key = _location_key(doc["id"], location_id)
+                _HELD.fresher(key, loc)
                 doc["events"] = []
                 before = loc["availability"]
                 loc.update(availability=availability, error_code=error_code, last_checked_at=now)
                 if availability == Availability.AVAILABLE:
                     loc["last_seen_at"] = now
+                if _only_times_moved(stored, loc, LOCATION_STAMPS) and \
+                        not _due(stored, LOCATION_STAMPS, now):
+                    _HELD.hold(key, {k: loc.get(k) for k in LOCATION_STAMPS})
+                    return False
                 moved = before != availability
                 if moved:
                     self._event(unit, self._catalog(unit), doc, location_id, "availability",
@@ -744,20 +824,25 @@ class FolderStore:
                 cands[cid]["providers"], cands[cid]["sessions"] = _counted(rows, cid)
 
         writes: list[tuple[str, dict, str]] = []
+
+        def keep(path: str, doc: dict, before: Optional[dict], stamps: tuple[str, ...]) -> None:
+            """Write `doc` when it changed, but for times alone (held in
+            memory until the written ones are STAMP_EVERY_SEC old)."""
+            doc.setdefault("events", [])
+            if before is not None:
+                doc["events"] = []
+                if before == doc:
+                    return
+                if _only_times_moved(before, doc, stamps) and not _due(before, stamps, now):
+                    _HELD.hold(path, {k: doc.get(k) for k in stamps})
+                    return
+            if _changed(before, doc):
+                writes.append((path, doc, "observed"))
+
         for cid, c in cands.items():
-            c.setdefault("events", [])
-            before = loaded_c.get(cid)
-            if before is not None:
-                c["events"] = []
-            if _changed(before, c):
-                writes.append((candidate_path(cid), c, "observed"))
+            keep(candidate_path(cid), c, loaded_c.get(cid), CANDIDATE_STAMPS)
         for oid, o in obs.items():
-            o.setdefault("events", [])
-            before = loaded_o.get(oid)
-            if before is not None:
-                o["events"] = []
-            if _changed(before, o):
-                writes.append((session_path(oid), o, "observed"))
+            keep(session_path(oid), o, loaded_o.get(oid), SESSION_STAMPS)
         if last_obs != catalog["last_observation_id"]:
             catalog["last_observation_id"] = last_obs
             catalog["events"] = []
@@ -779,7 +864,7 @@ class FolderStore:
         q = _nocase(query)
         out = []
         for r in records.scan(CANDIDATES, types=["proposal"]):
-            c = r.data
+            c = _HELD.fresher(r.path, r.data)
             if state and c["state"] != state:
                 continue
             if q and q not in _nocase(c["path_key"]):
@@ -795,7 +880,8 @@ class FolderStore:
 
     def candidate(self, candidate_id: str) -> Optional[Candidate]:
         rec = records.get(candidate_path(candidate_id)) if candidate_id else None
-        return _candidate(rec.data) if rec is not None and rec.data.get("id") == candidate_id else None
+        return (_candidate(_HELD.fresher(rec.path, rec.data))
+                if rec is not None and rec.data.get("id") == candidate_id else None)
 
     def set_candidate_state(self, candidate_id: str, ignored: bool) -> Candidate:
         """Ignore a discovered candidate (it stays ignored until its evidence
@@ -821,8 +907,8 @@ class FolderStore:
             return records.atomic(run, by=records.TIM)
 
     def _observations(self, node_id: str) -> list[dict]:
-        return [r.data for r in records.scan(SESSIONS, types=["proposal"],
-                                             where=[["node_id", "=", node_id]])
+        return [_HELD.fresher(r.path, r.data)
+                for r in records.scan(SESSIONS, types=["proposal"], where=[["node_id", "=", node_id]])
                 if r.data.get("node_id") == node_id]
 
     def related_sessions(self, node_id: str, canonical_path: str, now: Optional[float] = None,
@@ -903,21 +989,29 @@ class FolderStore:
                         complete: bool, error: Optional[str], cursor: Optional[str] = None,
                         now: Optional[float] = None) -> None:
         """One source's pass: how much it listed and read, how much is left,
-        and where it got to (`cursor`, kept when a pass gives none)."""
+        and where it got to (`cursor`, kept when a pass gives none). A pass
+        that moves nothing but its times is held in memory and written once
+        the written pass is `STAMP_EVERY_SEC` old."""
         now = float(time.time() if now is None else now)
+        key = _progress_key(source)
 
-        def change(data: Optional[dict]) -> dict:
+        def change(data: Optional[dict]) -> Optional[dict]:
             data = dict(data or {"sources": []})
             data["area"] = DISCOVERY_AREA
             sources = {s["source"]: s for s in data.get("sources") or []}
-            old = sources.get(source) or {}
-            sources[source] = {"source": source,
+            stored = sources.get(source)
+            old = _HELD.fresher(key, dict(stored or {}))
+            entry = sources[source] = {"source": source,
                                "cursor": cursor if cursor is not None else old.get("cursor"),
                                "listed": int(listed), "read": int(read), "pending": int(pending),
                                "complete": int(bool(complete)), "last_run_at": now,
                                "last_ok_at": now if not error else old.get("last_ok_at"),
                                "last_error": error,
                                **({"rowid": old["rowid"]} if "rowid" in old else {})}
+            if stored is not None and _only_times_moved(stored, entry, PROGRESS_STAMPS) and \
+                    not _due(stored, PROGRESS_STAMPS, now):
+                _HELD.hold(key, {k: entry.get(k) for k in PROGRESS_STAMPS})
+                return None
             data["sources"] = sorted(sources.values(), key=lambda s: s["source"])
             data["events"] = []
             return data
@@ -928,10 +1022,11 @@ class FolderStore:
     def progress(self) -> list[Progress]:
         rec = records.get(DISCOVERY)
         sources = (rec.data.get("sources") or []) if rec is not None else []
+        fresh = [_HELD.fresher(_progress_key(s["source"]), dict(s)) for s in sources]
         return [Progress(s["source"], s.get("cursor"), s["listed"], s["read"], s["pending"],
                          bool(s["complete"]), s.get("last_run_at"), s.get("last_ok_at"),
                          s.get("last_error"))
-                for s in sorted(sources, key=lambda s: s["source"])]
+                for s in sorted(fresh, key=lambda s: s["source"])]
 
 
 # ── the move: these documents and the tables they replaced ───────────────
