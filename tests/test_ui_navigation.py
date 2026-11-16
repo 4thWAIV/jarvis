@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "frontend" / "src"
 
 EXPECTED = {
+    "package border: shared callable navigation, range checks and unmounted refusal",
     "right tab", "agents tab clears its mark", "closed detail tab refused", "workflow open shows it",
     "unlisted workflow read first, then replaces", "gone workflow refused, nothing opened",
     "reopening a shown-away detail shows it again", "close goes back to Conversation",

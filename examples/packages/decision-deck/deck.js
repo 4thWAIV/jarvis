@@ -312,6 +312,10 @@
   }
 
   function contentSlide(s, n) {
+    if (window.JarvisPresentation) {
+      var composed = window.JarvisPresentation.render(s.id);
+      if (composed) return composed;
+    }
     var section = el("section", "slide content");
     section.id = s.id || "s" + n;
     head(section, s.kicker, s.title);
@@ -402,7 +406,8 @@
     var words = vote.appendChild(el("input", "words"));
     words.type = "text";
     words.maxLength = 500;
-    words.placeholder = "Your words (optional)";
+    words.placeholder = (d.needs_words || []).length ? "Your words (needed for " +
+      d.needs_words.map(function (id) { return optionOf(d, id).name; }).join(", ") + ")" : "Your words (optional)";
     words.setAttribute("aria-label", "Your words on " + d.id);
     words.addEventListener("change", function () {
       if (!record[d.id]) return;            // kept until he chooses
@@ -412,11 +417,23 @@
     var recorded = section.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
     views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
+    if (window.JarvisPresentation) window.JarvisPresentation.decorateDecision(section, d);
     return section;
+  }
+
+  // An option the decision's needs_words lists (the standard vote's Reject)
+  // is recorded only with his words.
+  function needsWords(d, answer) {
+    return (d.needs_words || []).indexOf(answer) >= 0;
   }
 
   function choose(d, answer) {
     var words = views[d.id].words.value.trim();
+    if (needsWords(d, answer) && !words) {
+      views[d.id].words.focus();
+      say(optionOf(d, answer).name + " needs your words: say what to change.");
+      return;
+    }
     change(function () { record[d.id] = entry(d, answer, words); });
   }
 
@@ -449,6 +466,13 @@
       pick.appendChild(el("option", "", "None of these")).value = "none";
       pick.addEventListener("change", function () {
         var answer = pick.value, note = record[d.id] ? record[d.id].note : "";
+        if (needsWords(d, answer) && !note) {
+          pick.value = record[d.id] ? record[d.id].answer : "";
+          show(slideOf(d.id));
+          views[d.id].words.focus();
+          say(optionOf(d, answer).name + " needs your words: say what to change.");
+          return;
+        }
         change(function () { record[d.id] = entry(d, answer, note); });
       });
       var state = li.appendChild(el("span", "state"));
@@ -573,6 +597,8 @@
   document.getElementById("prev").addEventListener("click", function () { show(current - 1); });
   document.getElementById("next").addEventListener("click", function () { show(current + 1); });
   document.addEventListener("keydown", function (e) {
+    // A modal inspection makes the deck inert, including global shortcuts.
+    if (stage.inert) return;
     var t = e.target && e.target.tagName;
     if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;
     if (e.key === "ArrowRight" || e.key === "PageDown") { show(current + 1); e.preventDefault(); }
@@ -584,6 +610,10 @@
   // ── fitting the frame ─────────────────────────────────────────────────
   var stage = document.getElementById("stage");
   function fit() {
+    if (window.JarvisPresentation) {
+      window.JarvisPresentation.fit(stage);
+      return;
+    }
     // Never larger than MAX_SCALE: body text stays at most about 22 px.
     var s = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
     stage.style.transform = "scale(" + s + ")";

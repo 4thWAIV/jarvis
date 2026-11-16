@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "passed": [
+    "809x589: open_package_page opened it by its title",
+    "809x589: the package frame is 809x589",
+    "Normal pointer: approved 16px routing strip, unchanged 36px border, and menu starts below that border.",
+    "420px frame: reversed source objects follow readingOrder in Details; modal navigation keys keep the slide fixed; Escape restores focus and leaves answers unchanged.",
+    "Repeated brain ui_navigate package.inspect requests keep one inspector; Escape and Return close it, reopening remains isolated, focus returns, and background navigation resumes only after close.",
+    "200% text: document view stays readable; all text-range rings follow reflow and clear.",
+    "Close withdraws narration through the real HTTP route and leaves the unanswered decision unchanged.",
+    "809x589: open_package_page opened it by its title",
+    "809x589: the package frame is 809x589",
+    "Coarse pointer: approved 16px routing strip, unchanged 48px border, and menu starts below that border.",
+    "Coarse pointer: 48px border and 44px icon targets.",
+    "Done signs off the unanswered street decision without manufacturing an answer."
+  ],
+  "failures": [],
+  "server_log": "/var/folders/s5/lkpmbqsn17gcvx02hzxcdvr80000gn/T/presentation-frame-u5i892l8/jarvis.log",
+  "source_sha256": "c349ae3e33c6eed5d5786ce7cf73db76308c249bde71151cd03228b3d44e2969",
+  "renderer_hashes": {
+    "presentation.js": {
+      "source": "46e3ec60270ade0c3a9e3be7e7b77d64d65187fc873a82eeca4696e203ff4187",
+      "compiled": "46e3ec60270ade0c3a9e3be7e7b77d64d65187fc873a82eeca4696e203ff4187"
+    },
+    "presentation.css": {
+      "source": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0",
+      "compiled": "e5a29bac69d483a959b50a4612d2152a1fc4c4e204734a79e8fbede4d2ca69a0"
+    }
+  },
+  "story_helper_sha256": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090"
+}

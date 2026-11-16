@@ -174,7 +174,7 @@ async def test_the_helper_rings_exactly_the_one_intended_member_row(
             await frame.locator("[data-declaration]").first.wait_for(timeout=15000)
             assert await frame.locator("[data-member]").count() > 0, \
                 f"kit {digest} is the release that marks members, yet draws no data-member"
-            await page.locator("#package-view .package-story button").first.click()
+            await page.locator("#package-view [data-story-action=tell]").click()
             await _state(page, "Waiting for your answer on slide 2 of 2.")
             await asyncio.sleep(1.0)              # the helper's settle before it reports
             seen = await _inner(page).evaluate("""(targets) => targets.map((t) => {

@@ -231,7 +231,8 @@ async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_
 async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
         page_playwright, page_url, jarvis_app, monkeypatch):
     """A hand-made page as make_package sends it, its story ending with the
-    standard vote: Got it and I have questions sit in the view's head,
+    standard vote: Approve and Reject sit above the package frame (Reject only
+    with his words), never Got it,
     outside the frame, and each lands in the story's answers file through
     the inbox's answer route, as his voice's answer does."""
     server, client, _data, _item = jarvis_app
@@ -260,24 +261,32 @@ async def test_a_page_s_standard_vote_is_answered_in_the_view_s_head(
         # A package for no Work item is a message in the Inbox; Open is his click.
         row = page.locator(f".inbox-general .message-package[data-inbox-id='{inbox_id}']")
         await row.get_by_role("button", name="Open").click()
-        vote = page.locator("#package-view .package-head .package-vote")
+        vote = page.locator("#package-view > .package-vote-row .package-vote")
         await async_api.expect(vote).to_be_visible()
-        assert await page.locator("#package-view iframe .package-vote").count() == 0
+        assert await page.frame_locator("#package-view iframe").locator(".package-vote").count() == 0
+        vote_box = await vote.bounding_box()
+        frame_box = await page.locator("#package-view iframe").bounding_box()
+        assert vote_box["y"] + vote_box["height"] <= frame_box["y"], (vote_box, frame_box)
         await _shot(page, "vote-1-in-the-head")
 
         def recorded():
             return package_inbox.questions(package)[0].answer
 
-        await vote.get_by_role("button", name="Got it").click()
-        await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text("Recorded: Got it.")
-        assert recorded()["answer"] == "got-it"
+        assert await vote.get_by_role("button", name="Got it").count() == 0
+        assert await vote.get_by_role("button", name="I have questions").count() == 0
+        await vote.get_by_role("button", name="Approve").click()
+        await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text(
+            "Recorded: Approved.")
+        assert recorded()["answer"] == "approve"
 
-        await vote.get_by_role("button", name="I have questions").click()
+        await vote.get_by_role("button", name="Reject").click()
+        send = vote.get_by_role("button", name="Send")
+        await async_api.expect(send).to_be_disabled()
         await vote.locator(".package-vote-words").fill("Why two keys?")
         await _shot(page, "vote-2-his-words")
-        await vote.get_by_role("button", name="Send").click()
+        await send.click()
         await async_api.expect(vote.locator(".package-vote-recorded")).to_have_text(
-            "Recorded: your questions go back to the sender.")
-        assert (recorded()["answer"], recorded()["note"]) == ("questions", "Why two keys?")
+            "Recorded: Rejected. What to change goes back to the sender.")
+        assert (recorded()["answer"], recorded()["note"]) == ("reject", "Why two keys?")
         assert package_inbox.get(inbox_id).decisions_answered == 1
         await browser.close()

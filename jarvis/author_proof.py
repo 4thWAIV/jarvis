@@ -97,7 +97,14 @@ def source_files(source: Path) -> dict[str, Path]:
     if source.is_symlink():
         raise ValueError(f"{source} is a link.")
     if source.is_file():
-        return {source.name: source}
+        files = {source.name: source}
+        if source.suffix.lower() in {".yaml", ".yml"}:
+            from jarvis.presentation_source import read_source
+            parsed = read_source(source)
+            files.update({asset.path: source.parent / asset.path for asset in parsed.document.assets})
+            files.update({"reference-evidence/" + ref.id + ".bin": source.parent / ref.locator
+                          for ref in parsed.document.references if ref.kind == "file"})
+        return files
     if not source.is_dir():
         raise ValueError(f"There is no source at {source}.")
     found: dict[str, Path] = {}

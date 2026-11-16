@@ -123,31 +123,53 @@
     return n > 1 || (n === 0 && shared(selector));
   }
 
-  // The box around every visible element a selector matches, or null.
-  function box(selector) {
-    var r = null;
-    if (ambiguous(selector)) return null;
+  // Inline content can wrap onto several lines. Keep each live rectangle;
+  // a union is still useful for visibility and pointer placement.
+  function boxes(selector) {
+    if (ambiguous(selector)) return [];
+    var out = [];
     matches(selector).forEach(function (el) {
-      var b = el.getBoundingClientRect();
-      if (b.width <= 0 || b.height <= 0) return;
-      r = r ? { left: Math.min(r.left, b.left), top: Math.min(r.top, b.top),
-                right: Math.max(r.right, b.right), bottom: Math.max(r.bottom, b.bottom) }
-            : { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+      if (getComputedStyle(el).visibility !== "visible") return;
+      var rects;
+      if (window.JarvisPresentation && el.dataset.member) {
+        rects = window.JarvisPresentation.rectangles(el.dataset.member);
+      } else if (el.matches("span, strong, em") && el.dataset.member) {
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        rects = [].slice.call(range.getClientRects());
+      } else rects = [el.getBoundingClientRect()];
+      rects.forEach(function (r) { if (r.width > 0 && r.height > 0) out.push(r); });
     });
-    return r;
+    return out;
+  }
+
+  function box(selector) {
+    return boxes(selector).reduce(function (r, b) {
+      return r ? {left:Math.min(r.left,b.left), top:Math.min(r.top,b.top),
+                  right:Math.max(r.right,b.right), bottom:Math.max(r.bottom,b.bottom)} : b;
+    }, null);
   }
 
   function place() {
     var first = null;
     rings.forEach(function (ring) {
-      var r = box(ring.selector);
-      ring.el.style.display = r ? "block" : "none";
-      if (!r) return;
-      ring.el.style.left = (r.left - PAD) + "px";
-      ring.el.style.top = (r.top - PAD) + "px";
-      ring.el.style.width = (r.right - r.left + 2 * PAD) + "px";
-      ring.el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
-      if (!first) first = r;
+      var rects = boxes(ring.selector);
+      while (ring.parts.length < rects.length) {
+        var extra = ring.el.cloneNode(false);
+        layer.appendChild(extra);
+        ring.parts.push(extra);
+      }
+      while (ring.parts.length > Math.max(1, rects.length)) ring.parts.pop().remove();
+      ring.parts.forEach(function (el, index) {
+        var r = rects[index];
+        el.style.display = r ? "block" : "none";
+        if (!r) return;
+        el.style.left = (r.left - PAD) + "px";
+        el.style.top = (r.top - PAD) + "px";
+        el.style.width = (r.right - r.left + 2 * PAD) + "px";
+        el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
+        if (!first) first = r;
+      });
     });
     if (!pointer) return;
     pointer.style.display = first ? "block" : "none";
@@ -198,7 +220,7 @@
   function clear() {
     if (beat) report("beat:" + beat.id, null);
     beat = null;
-    rings.forEach(function (ring) { ring.el.remove(); });
+    rings.forEach(function (ring) { ring.parts.forEach(function (part) { part.remove(); }); });
     rings = [];
     if (pointer) { pointer.remove(); pointer = null; }
     if (frame && !asked) { cancelAnimationFrame(frame); frame = 0; }
@@ -256,7 +278,7 @@
       el.dataset.beat = id;
       el.dataset.target = selector;
       root.appendChild(el);
-      rings.push({ selector: selector, el: el });
+      rings.push({ selector: selector, el: el, parts: [el] });
     });
     if (targets.length) {
       pointer = document.createElement("div");

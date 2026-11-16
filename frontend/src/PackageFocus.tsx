@@ -11,13 +11,15 @@
  * With no part (the question is about the whole document, or none of its
  * targets is visible), the whole view is dimmed and the card is centred.
  *
- * A decision (a question the story waits on, or one he chose in the side
- * column) dims to 55 percent around its part; a narrated beat dims to 35
- * percent around the beat's targets, with JARVIS's words for it. The dim
- * and the light take no clicks: the document stays his to scroll, and the
- * light follows its part as it moves (the helper reports again). The card
- * is a labelled region; a decision's card takes keyboard focus as it
- * opens and gives it back as it closes; Escape leaves (PackageView.tsx).
+ * A decision (a question the story waits on, or one he opened from the
+ * vote row) dims to 55 percent around its part; a narrated beat dims to 35
+ * percent around the beat's targets, with JARVIS's words for it; the
+ * architecture explanation is a wider card centred over the whole view,
+ * dimmed to 25 percent, scrolling within it. The dim and the light take no
+ * clicks: the document stays his to scroll, and the light follows its part
+ * as it moves (the helper reports again). The card is a labelled region; a
+ * decision's card and the explanation's take keyboard focus as they open
+ * and give it back as they close; Escape closes (PackageView.tsx).
  */
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -84,7 +86,7 @@ export function PackageFocus({ frame, rect, dim, kind, label, takeFocus, cardRef
   /** The part, in the frame's coordinates; null: the whole document. */
   rect: FrameRect | null;
   dim: number;
-  kind: "decision" | "narration";
+  kind: "decision" | "narration" | "explanation";
   /** The card's name for screen readers. */
   label: string;
   /** Move keyboard focus into the card as it opens (and back as it closes). */

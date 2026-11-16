@@ -19,6 +19,7 @@ With TAKEOVER_SHOTS set to a folder, each state is saved there as a PNG.
 """
 
 import json
+import re
 import os
 from pathlib import Path
 
@@ -92,14 +93,15 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
 
             voice.ws.send(json.dumps({"type": "package_page", "package": packages_api.describe(package)}))
             await page.frame_locator("#package-view iframe").locator("h1").wait_for()
-            # It opens taken over, its head the bar over its document.
+            # It opens taken over, its icon border the only bar over its document.
             await async_api.expect(page.locator("#takeover-bar")).to_be_visible()
-            await async_api.expect(page.locator("#package-view .package-bar")).to_have_count(1)
+            await async_api.expect(page.locator("#package-view .package-border")).to_have_count(1)
             restored = await voice.navigate("layout.restore", {})
             assert restored["status"] == "completed", restored
             await async_api.expect(page.locator(".centre-tabs [aria-label='mic-check-page']")) \
                 .to_have_attribute("aria-selected", "true")
-            await async_api.expect(page.locator("#package-view .package-bar")).to_have_count(0)
+            await async_api.expect(page.locator("#package-view .package-border")) \
+                .to_have_attribute("data-faded", "false")
             # Listening, so the corner holds the live meter.
             # (Generous waits: the recogniser's start is slow on a busy machine.)
             await start_listening(page, timeout=20000)
@@ -309,8 +311,10 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             enter = page.locator("#package-view .takeover-enter")
             assert "lit" not in (await enter.get_attribute("class"))
             await inner.evaluate("window.ask()")
-            await async_api.expect(enter).to_have_class("folder-button takeover-enter lit")
-            await async_api.expect(page.locator("#package-view .package-wide")).to_be_visible()
+            await async_api.expect(enter).to_have_class(re.compile(r"\btakeover-enter\b.*\blit\b"))
+            await page.locator('[data-package-menu="more"]').click()
+            await async_api.expect(page.locator(".package-border-overlay [role=status]")).to_be_visible()
+            await page.get_by_role("button", name="Return", exact=True).click()
             assert await page.evaluate("document.documentElement.dataset.layout") == "normal"
 
             await enter.click()
@@ -339,7 +343,7 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             await async_api.expect(page.locator("#takeover-bar")).to_be_visible()
             assert (await voice.navigate("layout.restore", {}))["status"] == "completed"
             await async_api.expect(page.locator(f"#package-view[data-package='{wide.id}'] .takeover-enter")) \
-                .to_have_class("folder-button takeover-enter lit")
+                .to_have_class(re.compile(r"\btakeover-enter\b.*\blit\b"))
             await _shot(page, "wide-offered")
         finally:
             await browser.close()

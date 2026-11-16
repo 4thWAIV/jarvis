@@ -115,10 +115,15 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
             try:
                 if bound_story:
                     authored = package_story.authored(written)
-                composed = package_story.compose(authored, package_story.parse(told).language, approval)
+                language = package_story.parse(told).language
+                composed = package_story.compose(authored, language, approval)
+                # A package delivered before Got it was retired carries the
+                # composition of then: still its own, asked as the standard
+                # vote now (package_story.current).
+                before = package_story.compose(authored, language, approval, legacy=True)
             except ValueError:
                 raise docs.DocumentError(refused) from None
-            if told != composed:
+            if told not in (composed, before):
                 raise docs.DocumentError(refused)
             expected[story] = MEMBER
             factory_bytes.append(told)
@@ -216,22 +221,28 @@ def understanding_of(canonical: dict) -> dict | None:
 def current_subject(subject) -> bool:
     """Whether {document_id, revision, source_revision, kit_digest} is still
     the revision in force: the newest revision of its document whose check
-    passed, under the kit in force now. False when that cannot be read (an
-    approval of it then satisfies nothing)."""
-    if not isinstance(subject, dict) or not isinstance(subject.get("document_id"), str):
+    passed, checked by a kit whose language files (kit.language_digests)
+    are the kit in force's. A kit release that changes nothing in the
+    language leaves it in force; a change to any language file does not
+    (and that kit waits for his review before it is in force). False when
+    that cannot be read, its kit no longer installed included (an approval
+    of it then satisfies nothing)."""
+    if not isinstance(subject, dict) or not isinstance(subject.get("document_id"), str) \
+            or not isinstance(subject.get("kit_digest"), str):
         return False
     try:
         checked = [row for row in docs.revisions(subject["document_id"])
                    if json.loads(row.get("check_json") or "{}").get("ok") is True]
-        active = kit.active().release.digest
+        same_language = (kit.language_digests(kit.active(subject["kit_digest"]))
+                         == kit.language_digests(kit.active()))
     except Exception:
         return False
-    if not checked:
+    if not checked or not same_language:
         return False
     latest = checked[-1]
     return (latest.get("revision") == subject.get("revision")
             and latest.get("source_sha256") == subject.get("source_revision")
-            and latest.get("kit_digest") == subject.get("kit_digest") == active)
+            and latest.get("kit_digest") == subject.get("kit_digest"))
 
 
 def purpose_of(text) -> str:

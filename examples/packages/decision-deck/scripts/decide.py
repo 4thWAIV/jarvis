@@ -13,6 +13,9 @@ here shows on screen.
                                          option's id, its letter (a, b, ...),
                                          recommended, later or none; the
                                          words are his own, kept as the note
+                                         (an option the decision's
+                                         needs_words lists takes none
+                                         without them)
     decide.py all-recommended            the recommended option for every
                                          decision with no answer yet
 """
@@ -225,8 +228,13 @@ def main(argv: list) -> int:
         ids = ", ".join(o["id"] for o in d.get("options", []))
         print(f"{d['id']} takes one of {ids}, recommended, later or none. Nothing was recorded.")
         return 1
+    note = " ".join(argv[2:]).strip()
+    if answer in (d.get("needs_words") or []) and not note:
+        print(f"{d['id']}: {option_of(d, answer)['name']} needs his words: say what to change. "
+              f"Nothing was recorded.")
+        return 1
     record = load()
-    record[d["id"]] = entry(d, answer, " ".join(argv[2:]).strip())
+    record[d["id"]] = entry(d, answer, note)
     save(record)
     print(f"Recorded: {d['id']}: {sentence(answer_text(d, record[d['id']], record))}")
     return 0

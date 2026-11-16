@@ -1,0 +1,23 @@
+
+> jarvis-frontend@0.1.0 build
+> tsc && vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 219 modules transformed.
+rendering chunks...
+computing gzip size...
+../jarvis/web/index.html                          0.78 kB │ gzip:   0.44 kB
+../jarvis/web/assets/pcm-worklet-C8G-p5-V.js      2.74 kB
+../jarvis/web/dashboard.html                     10.69 kB │ gzip:   2.06 kB
+../jarvis/web/assets/dashboard-XKK61wLK.css      34.93 kB │ gzip:   6.99 kB
+../jarvis/web/assets/main-DGk8kBTX.css          141.59 kB │ gzip:  26.52 kB
+../jarvis/web/assets/ws-BAVVJnTa.js              14.69 kB │ gzip:   5.61 kB
+../jarvis/web/assets/dashboard-CyzJYrgt.js       56.24 kB │ gzip:  18.10 kB
+../jarvis/web/assets/main-xOiD_5Lk.js         1,566.33 kB │ gzip: 427.14 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.25s

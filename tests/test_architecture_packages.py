@@ -264,20 +264,20 @@ def test_the_author_s_story_is_composed_once_and_its_question_is_asked_in_the_he
         story.read_bytes()).hexdigest()
     told = package.story()
     assert [s.waits for s in told.slides] == [None, "ownership-clear",
-                                              package_inbox.UNDERSTOOD_ID], "one vote, last"
+                                              package_inbox.VOTE_ID], "one vote, last"
     with zipfile.ZipFile(record["zip"]) as z:
         names = [n for n in z.namelist() if "/.jarvis/author/" in n or n.startswith(".jarvis/author/")]
         assert sorted(n.split(".jarvis/author/")[1] for n in names) == [
             "package/UNDERSTANDING.md", "package/story.json"]
     vote = package_inbox.page_vote(package)
-    assert vote["question"] == "understood"
+    assert vote["question"] == "approve-package"
     assert [q["id"] for q in vote["asks"]] == ["ownership-clear"]
     said = _call(factory, "answer_package_decision", package=record["inbox"],
                  decision="ownership-clear", option="unclear", words="Say who writes them.")["text"]
     assert said.startswith("Recorded."), said
     answers = json.loads(work_packages.read_result(package, "decisions.json"))
     assert answers["ownership-clear"]["answer"] == "unclear"
-    assert "understood" not in answers, "the vote stays his to give"
+    assert "approve-package" not in answers, "the vote stays his to give"
 
 
 def test_an_author_story_with_extra_files_or_the_vote_is_refused_at_its_own_check(

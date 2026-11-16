@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import (attention_store, data_paths, make_package, package_signature,
+from jarvis import (attention_store, data_paths, make_package, package_signature, work_api,
                     package_inbox, run_store, work_packages, workflow_store, work_store)
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_work_packages import make_zip, marks, write_zip  # noqa: F401
@@ -238,7 +238,10 @@ TOLD = {"title": "Notes", "slides": [{"title": "One", "beats": [{"say": "One."}]
 ASKS = {**TOLD, "answers": "results/decisions.json",
         "slides": [TOLD["slides"][0], {**TOLD["slides"][1], "waits": "go-ahead"}]}
 # A hand-made page as make_package sends it: its story ends with the vote.
-VOTES = package_inbox.with_understood_slide(TOLD, "en")
+VOTES = package_inbox.with_vote_slide(TOLD, "en")
+# The same page as make_package sent it before Got it was retired.
+OLD_VOTES = {**TOLD, "answers": "results/decisions.json",
+             "slides": [*TOLD["slides"], package_inbox.legacy_vote_slide("en")]}
 
 
 @pytest.fixture
@@ -273,8 +276,13 @@ def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
     assert r.status_code == 200, r.text
     inbox_id = r.json()["inbox"]["id"]
     [decision] = work_store.get(work_item.id).decisions
-    assert decision.key == f"understood-{inbox_id}" and decision.options == [
-        "Got it", "I have questions"]
+    assert decision.key == f"approve-package-{inbox_id}" and decision.options == [
+        "Approve", "Reject"]
+    with pytest.raises(work_store.WorkRefused, match="Reject needs your words"):
+        work_api.answer_decision(work_item.id, decision.key, "Reject", "page")
+    item = work_api.answer_decision(work_item.id, decision.key, "Reject: count the titles too",
+                                    "page")
+    assert not item.decisions, "Reject with his words answers it"
     conversation = make_zip({"SKILL.md": "Say it."},
                             {"name": "say", "version": "1.0.0", "purpose": "Say.",
                              "runs": "conversation", "skill": "SKILL.md",
@@ -317,15 +325,30 @@ def presentation_zip(tmp_path) -> bytes:
     return made.archive.read_bytes()
 
 
-def answer_by(w, how: str, inbox_id: str, option: str, words: str = "") -> None:
+def answer_by(w, how: str, inbox_id: str, option: str, words: str = "",
+              decision: str = "approve-package") -> None:
     if how == "page":
         r = w.client.post(f"{INBOX}/{inbox_id}/answer", headers=BROWSER,
-                          json={"decision": "understood", "option": option, "words": words})
+                          json={"decision": decision, "option": option, "words": words})
         assert r.status_code == 200, r.text
     else:
-        said = _call(w, "answer_package_decision", package=inbox_id, decision="understood",
+        said = _call(w, "answer_package_decision", package=inbox_id, decision=decision,
                      option=option, words=words)["text"]
         assert said.startswith("Recorded."), said
+
+
+def refused_by(w, how: str, inbox_id: str, decision: str, option: str,
+               words: str = "") -> str:
+    """The answer route's refusal, page or voice: what it says."""
+    if how == "page":
+        r = w.client.post(f"{INBOX}/{inbox_id}/answer", headers=BROWSER,
+                          json={"decision": decision, "option": option, "words": words})
+        assert r.status_code >= 400, r.text
+        return r.text
+    said = _call(w, "answer_package_decision", package=inbox_id, decision=decision,
+                 option=option, words=words)["text"]
+    assert not said.startswith("Recorded."), said
+    return said
 
 
 SENT = {"page": lambda tmp: story_zip(VOTES), "deck": presentation_zip}
@@ -333,45 +356,65 @@ SENT = {"page": lambda tmp: story_zip(VOTES), "deck": presentation_zip}
 
 @pytest.mark.parametrize("kind", ["page", "deck"])
 @pytest.mark.parametrize("how", ["page", "voice"])
-def test_his_questions_go_back_to_the_sender_and_onto_the_work_item(
+def test_his_reject_goes_back_to_the_sender_and_onto_the_work_item(
         wired, shown, marks, record, tmp_path, work_item, chitauri, kind, how):
     got = send(wired, SENT[kind](tmp_path), session="sess-1", work=work_item.id)
     assert got.status_code == 200, got.text
     inbox_id = got.json()["inbox"]["id"]
     [q] = package_inbox.questions(work_packages.find(package_inbox.get(inbox_id).package_id))
-    assert (q.id, [o["name"] for o in q.options]) == ("understood", ["Got it", "I have questions"])
+    assert (q.id, [o["name"] for o in q.options]) == ("approve-package", ["Approve", "Reject"])
     assert package_inbox.get(inbox_id).waiting == 1, "counted in his updates as one waiting"
-    answer_by(wired, how, inbox_id, "questions", "Why two keys?")
+    assert "Reject needs your words" in refused_by(wired, how, inbox_id, "approve-package",
+                                                   "reject")
+    answer_by(wired, how, inbox_id, "reject", "Why two keys?")
     entry = package_inbox.get(inbox_id)
     assert (entry.decisions_answered, entry.decisions_total) == (1, 1)
     said = _call(wired, "sign_off_package", package=inbox_id)["text"]
     assert said.startswith("Signed off. Capture"), said
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
-    key = f"understood-{inbox_id}"
-    assert "- understood: questions (his words: Why two keys?)" in capture["text"]
-    assert f"His questions are on work item {work_item.id} as decision {key}." in capture["text"]
+    key = f"approve-package-{inbox_id}"
+    assert "- approve-package: reject (his words: Why two keys?)" in capture["text"]
+    assert f"His words are on work item {work_item.id} as decision {key}." in capture["text"]
     assert not capture.get("approved"), "it goes only on his yes"
     [made] = [a for a in work_store.get(work_item.id).answered if a.key == key]
     assert made.answer == "Why two keys?" and made.where in ("page", "voice")
     assert not work_store.get(work_item.id).decisions, "asked and answered at once: none open"
 
 
-def test_got_it_goes_back_and_makes_no_work_decision(
+def test_approve_goes_back_and_makes_no_work_decision(
         wired, shown, marks, record, tmp_path, work_item, chitauri):
     inbox_id = send(wired, story_zip(VOTES), session="sess-1",
                     work=work_item.id).json()["inbox"]["id"]
-    answer_by(wired, "voice", inbox_id, "got-it")
+    answer_by(wired, "voice", inbox_id, "approve")
     _call(wired, "sign_off_package", package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
-    assert "- understood: got-it" in capture["text"] and "His questions" not in capture["text"]
+    assert "- approve-package: approve" in capture["text"] and "His words" not in capture["text"]
     assert not [a for a in work_store.get(work_item.id).answered
-                if a.key.startswith("understood")]
+                if a.key.startswith("approve-package")]
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_got_it_is_never_offered_or_accepted(wired, shown, marks, tmp_path, how):
+    """Got it is retired: no route offers it or records it, on a new
+    package or an old one."""
+    for name, story in (("new-page", VOTES), ("old-page", OLD_VOTES)):
+        inbox_id = send(wired, story_zip(story, name)).json()["inbox"]["id"]
+        for decision, option in (("understood", "got-it"), ("understood", "questions"),
+                                 ("approve-package", "got-it"),
+                                 ("approve-package", "questions")):
+            refused_by(wired, how, inbox_id, decision, option, "words")
+        package = work_packages.find(package_inbox.get(inbox_id).package_id)
+        [q] = package_inbox.questions(package)
+        assert (q.id, q.answer) == ("approve-package", None)
+        assert [o["id"] for o in q.options] == ["approve", "reject"]
+        record = package_inbox._record(package)
+        assert "understood" not in record and "approve-package" not in record
 
 
 def test_the_page_s_answer_is_his_click_alone(wired, shown, marks, tmp_path):
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
     r = wired.client.post(f"{INBOX}/{inbox_id}/answer", headers=token(),
-                          json={"decision": "understood", "option": "got-it"})
+                          json={"decision": "approve-package", "option": "approve"})
     assert r.status_code == 403, "a tool-token caller cannot answer for him"
     package = work_packages.find(package_inbox.get(inbox_id).package_id)
     assert package_inbox.questions(package)[0].answer is None
@@ -380,7 +423,7 @@ def test_the_page_s_answer_is_his_click_alone(wired, shown, marks, tmp_path):
 @pytest.mark.parametrize("how", ["page", "voice"])
 def test_the_head_s_buttons_and_his_voice_record_the_same_answer(
         wired, shown, marks, tmp_path, monkeypatch, how):
-    """Parity: the view head's Got it / I have questions (the inbox's answer
+    """Parity: the view head's Approve / Reject (the inbox's answer
     route) and the brain's answer_package_decision reach the one writer,
     package_inbox.record_story_answer, with the same arguments."""
     calls = []
@@ -389,20 +432,22 @@ def test_the_head_s_buttons_and_his_voice_record_the_same_answer(
                         lambda package, q, option, note: (calls.append((q.id, option, note)),
                                                           real(package, q, option, note)))
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
-    answer_by(wired, how, inbox_id, "questions", "Why two keys?")
-    assert calls == [("understood", "questions", "Why two keys?")]
+    answer_by(wired, how, inbox_id, "reject", "Why two keys?")
+    assert calls == [("approve-package", "reject", "Why two keys?")]
     package = work_packages.find(package_inbox.get(inbox_id).package_id)
     assert package_inbox.page_vote(package) == {
-        "question": "understood", "answer": "questions", "note": "Why two keys?", "asks": []}
+        "question": "approve-package", "answer": "reject", "answer_name": "Reject (Why two keys?)",
+        "note": "Why two keys?", "asks": []}
 
 
 def test_the_view_shows_the_vote_and_a_reload_shows_his_answer(wired, shown, marks, tmp_path):
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
     assert wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER).status_code == 200
     frame = shown[-1]["package"]
-    assert frame["vote"] == {"question": "understood", "answer": None, "note": "", "asks": []}
-    answer_by(wired, "page", inbox_id, "got-it")
-    assert wired.server._package_shown["vote"]["answer"] == "got-it", \
+    assert frame["vote"] == {"question": "approve-package", "answer": None, "answer_name": "",
+                             "note": "", "asks": []}
+    answer_by(wired, "page", inbox_id, "approve")
+    assert wired.server._package_shown["vote"]["answer"] == "approve", \
         "a page that connects now shows his answer"
 
 
@@ -413,22 +458,101 @@ def test_a_deck_has_no_head_vote_its_slide_asks(wired, shown, marks, tmp_path):
 
 
 def test_a_spanish_story_s_vote_is_in_spanish(wired, shown, marks, tmp_path):
-    told = package_inbox.with_understood_slide({**TOLD, "language": "es"}, "es")
-    assert told["slides"][-1]["title"] == "¿Entendido?"
+    told = package_inbox.with_vote_slide({**TOLD, "language": "es"}, "es")
+    assert told["slides"][-1]["title"] == "¿Lo aprueba?"
     inbox_id = send(wired, story_zip(told)).json()["inbox"]["id"]
     [q] = package_inbox.questions(work_packages.find(package_inbox.get(inbox_id).package_id))
-    assert [o["name"] for o in q.options] == ["Entendido", "Tengo preguntas"]
-    assert [o["id"] for o in q.options] == ["got-it", "questions"], "the ids never change"
+    assert [o["name"] for o in q.options] == ["Aprobar", "Rechazar"]
+    assert [o["id"] for o in q.options] == ["approve", "reject"], "the ids never change"
 
 
 def test_a_page_s_vote_is_written_where_its_story_waits(wired, shown, marks, tmp_path):
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
-    answer_by(wired, "page", inbox_id, "questions", "One thing")
+    answer_by(wired, "page", inbox_id, "reject", "One thing")
     package = work_packages.find(package_inbox.get(inbox_id).package_id)
     record = json.loads((package.folder / "results" / "decisions.json").read_text())
-    assert record["understood"]["answer"] == "questions"
-    assert record["understood"]["note"] == "One thing"
+    assert record["approve-package"]["answer"] == "reject"
+    assert record["approve-package"]["note"] == "One thing"
     assert package.story().open_questions(record) == [], "the story waiting on it goes on"
+
+
+# -- packages delivered before Got it was retired ------------------------------------------
+
+def old_vote_decision() -> dict:
+    """The deck decision make_package added before Got it was retired."""
+    return {"id": "understood", "short": "Got it?",
+            "question": "Is it clear, or do you have questions?",
+            "options": [{"id": "got-it", "name": "Got it", "says": "It is clear: nothing to ask."},
+                        {"id": "questions", "name": "I have questions",
+                         "says": "Say what you want to ask: your words go back to the sender."}],
+            "recommended": "got-it",
+            "reason": "Choose Got it once you have read it; your questions go back to the sender.",
+            "text_only": "Whether he understood it is a reply, not a choice between looks."}
+
+
+def old_presentation_zip(tmp_path, monkeypatch) -> bytes:
+    """A presentation as make_package built it before Got it was retired:
+    its deck-data.js and decide.py ask `understood`."""
+    with monkeypatch.context() as m:
+        m.setattr(package_inbox, "vote", lambda language: old_vote_decision())
+        return presentation_zip(tmp_path)
+
+
+@pytest.mark.parametrize("how", ["page", "voice"])
+def test_an_open_old_deck_asks_approve_or_reject_and_records_it_as_approval(
+        wired, shown, marks, record, tmp_path, work_item, chitauri, monkeypatch, how):
+    data = old_presentation_zip(tmp_path, monkeypatch)
+    inbox_id = send(wired, data, session="sess-1", work=work_item.id).json()["inbox"]["id"]
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    assert package_inbox.legacy_deck(package), "its own files still ask Got it"
+    [q] = package_inbox.questions(package)
+    assert (q.id, [o["id"] for o in q.options]) == ("approve-package", ["approve", "reject"])
+    # Its own page is served the approval in place of Got it.
+    served = wired.client.get(f"/api/packages/{package.id}/files/deck-data.js").text
+    assert '"approve-package"' in served and '"got-it"' not in served
+    assert '"understood"' in (package.folder / "deck-data.js").read_text(), \
+        "the package's own file is never changed"
+    for decision, option in (("understood", "got-it"), ("approve-package", "got-it")):
+        refused_by(wired, how, inbox_id, decision, option, "words")
+    assert "needs your words" in refused_by(wired, how, inbox_id, "approve-package", "reject")
+    answer_by(wired, how, inbox_id, "reject", "Say who owns the keys.")
+    record_now = package_inbox._record(package)
+    assert record_now["approve-package"]["answer"] == "reject" and "understood" not in record_now
+    assert "approve-package" in (package.folder / "results" / "decisions.js").read_text()
+    entry = package_inbox.get(inbox_id)
+    assert (entry.decisions_answered, entry.decisions_total) == (1, 1)
+    _call(wired, "sign_off_package", package=inbox_id)
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    assert "- approve-package: reject (his words: Say who owns the keys.)" in capture["text"]
+    key = f"approve-package-{inbox_id}"
+    [made] = [a for a in work_store.get(work_item.id).answered if a.key == key]
+    assert made.answer == "Say who owns the keys."
+
+
+def test_an_old_answer_to_got_it_stays_readable_and_is_never_asked_again(
+        wired, shown, marks, tmp_path, chitauri):
+    """History: an answer given to the retired vote before is read back as
+    it was, the story does not ask again, and it cannot be changed."""
+    inbox_id = send(wired, story_zip(OLD_VOTES), session="sess-1").json()["inbox"]["id"]
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    work_packages.save_result(package, "decisions.json", json.dumps({"understood": {
+        "answer": "questions", "choice": "I have questions", "note": "Why two keys?",
+        "at": "2026-11-01T10:00:00+0000", "recommended": False}}).encode())
+    [q] = package_inbox.questions(package)
+    assert (q.id, q.answer["answer"], q.answered_words()) == (
+        "understood", "questions", "I have questions (Why two keys?)")
+    vote = package_inbox.page_vote(package)
+    assert (vote["question"], vote["answer"], vote["answer_name"]) == (
+        "understood", "questions", "I have questions (Why two keys?)")
+    from jarvis import story_teller
+    told = package.story()
+    assert told.open_questions(story_teller.read_answers(package, told)) == [], \
+        "the slide is not asked again"
+    refused_by(wired, "page", inbox_id, "understood", "got-it")
+    refused_by(wired, "page", inbox_id, "approve-package", "approve")
+    _call(wired, "sign_off_package", package=inbox_id)
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    assert "- understood: questions (his words: Why two keys?)" in capture["text"]
 
 
 # -- open --------------------------------------------------------------------------------

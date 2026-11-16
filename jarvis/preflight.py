@@ -73,6 +73,11 @@ class Check:
     status: str  # "ok" | "warn" | "fail"
     message: str
     remedy: Optional[str] = None
+    # What failed, as a fixed word Diagnostics' Setup row words in the
+    # page's language (subsystem_diagnostics.setup): `missing`,
+    # `out_of_date`, `no_home` (the session skill), `not_granted` (a macOS
+    # permission). None says it in `message` alone.
+    code: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -390,6 +395,7 @@ async def _check_accessibility(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
         return Check(
             name="accessibility",
             status=STATUS_FAIL,
+            code="not_granted",
             message="osascript is not granted Accessibility (assistive access); answer_dialog's keystroke will fail.",
             remedy=(
                 "macOS attributes this to the app that launched JARVIS, not to "
@@ -441,6 +447,7 @@ def _check_screen_recording_sync() -> Check:
     return Check(
         name="screen_recording",
         status=STATUS_FAIL,
+        code="not_granted",
         message="JARVIS has not been granted Screen Recording; look_at_screen will refuse.",
         remedy=(
             "macOS attributes this to the app that launched JARVIS, not to "
@@ -655,6 +662,7 @@ def _check_session_skill_sync() -> Check:
         return Check(
             name="session_skill",
             status=STATUS_WARN,
+            code="no_home",
             message="No Claude Code or Codex home found to hold the talk-to-jarvis skill.",
         )
     behind = sorted(str(p) for p, state in found.items()
@@ -669,9 +677,10 @@ def _check_session_skill_sync() -> Check:
     return Check(
         name="session_skill",
         status=STATUS_WARN,
+        code="missing" if missing else "out_of_date",
         message=(f"The talk-to-jarvis skill is {'missing' if missing else 'out of date'} "
                  f"at {', '.join(behind)}; sessions cannot reach JARVIS."),
-        remedy="Run: python -m jarvis.session_skill install",
+        remedy="Install skill on Diagnostics, Setup (or ask JARVIS to install it)",
     )
 
 

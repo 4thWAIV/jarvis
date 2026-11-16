@@ -2217,6 +2217,85 @@ export const UI_CONTRACT = {
       "family": "packages"
     },
     {
+      "id": "package.menu",
+      "label": "Show Chapters or More, or return to the package page",
+      "view": "main.package",
+      "args": {
+        "show": {
+          "type": "enum",
+          "values": [
+            "chapters",
+            "more",
+            "closed"
+          ]
+        }
+      },
+      "required": [
+        "show"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "packages"
+    },
+    {
+      "id": "package.slide",
+      "label": "Select a slide without speaking or answering",
+      "view": "main.package",
+      "args": {
+        "slide": {
+          "type": "integer",
+          "min": 1
+        },
+        "closeMenu": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "slide"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "packages"
+    },
+    {
+      "id": "package.inspect",
+      "label": "Inspect the presentation objects and their sources",
+      "view": "main.package",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "packages"
+    },
+    {
+      "id": "package.document",
+      "label": "Show the presentation as a linear document",
+      "view": "main.package",
+      "args": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "packages"
+    },
+    {
       "id": "bundle.member.open",
       "label": "Open a file a teammate sent, or one file inside it, in the centre",
       "view": "main.file",
@@ -3997,6 +4076,7 @@ export const UI_CONTRACT = {
         "blocking",
         "reports",
         "review",
+        "acts",
         "needs",
         "tab.messages",
         "tab.overview",
@@ -4043,6 +4123,7 @@ export const UI_CONTRACT = {
             "blocking",
             "reports",
             "review",
+            "acts",
             "needs",
             "tab.messages",
             "tab.overview",
@@ -4504,7 +4585,9 @@ export const UI_CONTRACT = {
         "answer",
         "agent",
         "expand",
-        "restore"
+        "restore",
+        "sendNow",
+        "cancel"
       ],
       "presentations": [
         {
@@ -4620,7 +4703,9 @@ export const UI_CONTRACT = {
         "answer",
         "agent",
         "expand",
-        "restore"
+        "restore",
+        "sendNow",
+        "cancel"
       ],
       "presentations": [
         {
@@ -4634,6 +4719,13 @@ export const UI_CONTRACT = {
       "entity": "package",
       "label": "Work package page",
       "parts": [
+        "chapters",
+        "previous",
+        "next",
+        "more",
+        "inspect",
+        "document",
+        "return",
         "header",
         "frame",
         "done",
@@ -4645,8 +4737,8 @@ export const UI_CONTRACT = {
         "resume",
         "stop",
         "vote",
-        "gotIt",
-        "questions",
+        "approve",
+        "reject",
         "words",
         "send",
         "source",
@@ -4654,10 +4746,11 @@ export const UI_CONTRACT = {
         "readable",
         "asks",
         "explanation",
-        "bar",
         "focus",
         "focusClose",
-        "pause"
+        "pause",
+        "questionBack",
+        "questionNext"
       ],
       "presentations": [
         {
@@ -5151,7 +5244,11 @@ export interface CommandArgs {
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
   "package.close": { };
+  "package.document": { enabled: boolean; };
+  "package.inspect": { };
+  "package.menu": { show: "chapters" | "more" | "closed"; };
   "package.open": { packageId: string; };
+  "package.slide": { slide: number; closeMenu?: boolean; };
   "project.accomplishment.answer": { accomplishmentId: string; answer: "confirm" | "withdraw"; };
   "project.candidate.answer": { candidateId: string; answer: "accept" | "ignore"; };
   "project.close": { };

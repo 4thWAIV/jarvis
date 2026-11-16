@@ -2,6 +2,31 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A package's presentation uses the whole display, and each question opens beside its part
+
+A package now opens taking over the page: everything but the slim rail of
+tab icons on the right goes to its presentation, the left column folding to
+the orb alone at the page's edge (Team server and Brains move into the bar
+along the top, and Restore layout brings the column back). There is no
+side column any more: the presentation takes the whole width below its
+icon border, and with nothing open nothing covers it. The border dims
+after a few seconds (still there, every button still works) and brightens
+when you move the pointer to it or tab into it.
+
+Questions open on demand, one card at a time. Questions, in the row under
+the border, opens the first one you have not answered; when the story
+waits on a question, its card opens by itself. The part of the
+presentation the question is about stays lit and everything else dims,
+and the card beside it, joined to it by a line, carries the question, why
+it is yours, the evidence, the options (the recommended one marked), a
+field for your words, and Approve and Reject for the package itself. A
+question about no one part gets its card in the middle of the view. The
+card says "Question 2 of 3", with Back and Next between them; Next after
+the last, or Escape, closes it and gives the keyboard back where it was.
+An architecture package's explanation opens the same way, as a card in the
+middle of the view that scrolls on its own. While JARVIS tells the story,
+each part he is talking about is lit and his words are shown beside it,
+with Pause and Stop.
 ## A package's author check is found wherever it is
 
 JARVIS confirms a package's fresh author checked it by reading that
@@ -10,25 +35,115 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
-## A package's document uses the whole display, and what needs you is put beside it
+## Every package asks Approve or Reject; Got it is gone
 
-A package now opens taking over the page: everything but the slim rail of
-tab icons on the right goes to its document, the left column folding to
-the orb alone at the page's edge (Team server and Brains move into the bar
-along the top, and Restore layout brings the column back). Its title and
-tools become one
-thin bar along the top of the document, which dims after a few seconds
-(still there, every button still works) and brightens when you move the
-pointer to it or tab into it. When a
-question is yours, because the story is waiting on it or you chose Show in
-the document beside it, the part of the document it is about stays lit and
-everything else dims; the question, why it is yours, the evidence and the
-options (the recommended one marked) appear beside that part, joined to it
-by a line, and you answer there exactly as in the side column. While
-JARVIS tells the story, each part he is talking about is lit and his words
-are shown beside it, with Pause and Stop. Escape leaves the focus; the side
-column still lists every question.
+A package that asks you nothing of its own now ends with Approve or Reject
+instead of Got it. Approve records at once. Reject opens a field for what
+to change, and goes only with your words, which go back to the agent that
+sent it; on a package sent for a Work item they are also on that item, as
+your answer. In Spanish they are Aprobar and Rechazar. A package that
+already asks for your approval (a review of a Work item, a merge, an
+architecture design) asks it once, with no second vote.
 
+Got it can no longer be offered, chosen or recorded. A package that arrived
+before this and still waits on Got it asks Approve or Reject in its place,
+and every other question in it works as before; an answer you already gave
+to Got it stays on record as you gave it.
+## Status briefings lead with what needs you, built from the Work record
+
+An agent preparing a status presentation on your Work items now builds it
+from the items' own records, not from what it remembers:
+`python -m jarvis.status_briefing --work <id> --out <folder>`. For each item
+the presentation starts with what needs you (decisions, packages waiting,
+held and stalled pieces, who is on each and since when), then what is
+moving, then what finished since a given time, and every fact carries its
+evidence: the commit, pull request or file the agent reported. An item that
+needs nothing of you says so in one line. `--check` shows first which
+pieces have no note or no evidence on record.
+## Work that is stuck has an owner and a way out, on the page and by voice
+
+A piece of work held on something nobody will answer no longer needs its
+agent or a terminal. A Work item's header has Release hold (a held piece goes
+on), Reassign piece (to another agent on your list) and Close item (it moves
+to History), beside Approve, Not done yet and Add work; JARVIS does the same
+when you ask by voice, and each is recorded as yours. A hold with no link to
+an answer that has lasted over a day, and a stalled item, now show in Updates
+waiting naming who holds it.
+
+A message waiting in the queue behind an earlier one has Send now and Cancel
+on the agent's thread (and by voice). Send now still waits while the session
+is in the middle of a turn, and says so.
+
+A message to a person that could not go after you approved it now shows as
+failed in the Inbox, with the reason and Retry, and in Updates waiting,
+instead of sitting as approved forever.
+
+Diagnostics now watches the Work view and the agent keys' loop: a Work view
+that could not be built shows on the Work tracker row and is tried again.
+## More things that block work now tell you and can be fixed from the dashboard
+
+Diagnostics has a new Setup row listing every startup check that did not
+pass: the talk-to-jarvis skill your agents need to reach you, Accessibility,
+Screen Recording and the rest, each in plain words. When the skill is
+missing or out of date, Setup has Install skill, and JARVIS installs it
+when you ask by voice; no terminal command is needed.
+
+When messages between people keep failing to get through, the Team server
+row says so (it never turns red for it) and an update appears in Updates
+waiting, gone once a delivery succeeds. When the knowledge engine's file
+reader keeps crashing and restarting, the Knowledge engine row is degraded
+and says how often and with what exit code.
+
+A run you started from the dashboard that fails or runs out of time is now
+an update too, as runs JARVIS starts always were. If you chose Spanish but
+its speech model is missing, so JARVIS started in English, an update says
+so until the language changes. A work-item key a few days from its 30-day
+end is an update naming its Work item, and the item's Overview has Renew
+beside Revoke (JARVIS renews it by voice too). A workflow blocker reported
+by something other than an agent's own key is an update on the workflow,
+cleared once the blocker is.
+## A new language kit no longer voids your architecture approval, and says when it arrives
+
+The architecture language kit is published again on every change its
+publisher makes, and most releases change nothing in the language itself.
+Your approval of an architecture design used to count for nothing as soon
+as any new kit came into force, so the package had to be made and asked
+again with nobody telling you why. Now your approval, and a question still
+waiting for it, stand while the new kit's language files (`metalang.yaml`,
+`arch.yaml`, `propose.yaml`) are the same as those the design was checked
+under. A kit that changes any of them still makes the approval stale, and
+that kit waits for your review in Settings, Updates as before.
+
+When JARVIS brings in a new kit by itself, it now tells you: one update in
+Updates waiting (shown, never spoken) naming the kit now in force and the
+one it replaced, so a kit never changes unseen.
+## JARVIS no longer rewrites records when nothing changed
+
+Every record keeps every version, and a few writers rewrote whole records
+when only a time had moved, so their history grew without end (one day's
+usage record reached hundreds of megabytes). Now each writes only when
+something you can see changed: a weekly usage reading is kept when its
+figures change, or once every ten minutes otherwise, so the burn-down
+still has a point every ten minutes; the messaging sync position is
+written only when it moves; and the folder catalog's "last checked",
+"seen" and discovery times are kept in memory, still shown as they are,
+and written at most every fifteen minutes.
+## The knowledge engine stops timing out on records with long histories
+
+The earlier fix read a record's newest version without its history, but
+only on some paths: reading one record through the engine's item route,
+and every list of records, still unpacked every version each record has
+ever had. Listing the brains' usage for the day took nearly five seconds of
+the engine's time, reading those 24 records eight, and the server asks for
+such lists many times a minute, so the engine sat at full CPU and the
+page's and the brain's reads timed out. Every read of the newest records
+now leaves the history alone: on a copy of the live records the same set of
+lists and reads costs the engine 2.4 seconds instead of 14, and the usage
+records are read in 0.07 seconds instead of 8. When the engine is busy,
+its health now says which requests keep it busy (each kind of request's
+count and time over the last five minutes), and `kill -USR1` on the engine
+writes what every one of its threads is doing to
+`knowledge-engine-stacks.log` beside its log.
 ## Decks use the whole slide
 
 A deck's words grow with the space it has, and a slide with pictures gives

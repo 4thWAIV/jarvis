@@ -385,5 +385,11 @@ def test_the_content_child_is_handed_its_engine_and_told_the_pace(monkeypatch):
     ea.record(ea.EngineAddress("http", "127.0.0.1", 4101, 778, "c"))
     s("free")
     assert len(procs) == 3 and s.engine_pid == 778
+    # Diagnostics reads its starts within the window and its last exit.
+    health = s.health()
+    assert (health["recent_starts"], health["last_exit"]) == (3, 1)
+    assert health["last_exit_ago"] == kr.CONTENT_RESTART_SEC
+    clock[0] += kr.CONTENT_CRASH_WINDOW_SEC
+    assert s.health()["recent_starts"] == 0, "starts long ago are no crash loop"
     s.stop()
     assert s.proc is None and not kr.content_pid_path().exists()

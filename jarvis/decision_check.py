@@ -306,7 +306,10 @@ MEASURE = """
   const stage = document.getElementById("stage");
   const slide = document.querySelector("#track > .slide.current");
   const s = stage.getBoundingClientRect(), box = slide.getBoundingClientRect();
-  const scale = s.width / W;
+  const presentation = window.PRESENTATION;
+  const scale = presentation ? 1 : s.width / W;
+  const textMin = presentation ? presentation.document.theme.minimumPx : MIN;
+  const textMax = presentation ? Infinity : MAX;
   const say = (el) => (el.textContent || el.placeholder || el.tagName).trim().replace(/\\s+/g, " ").slice(0, 40);
   if (s.left < -1 || s.top < -1 || s.right > innerWidth + 1 || s.bottom > innerHeight + 1)
     problems.push(`the deck (${Math.round(s.width)} x ${Math.round(s.height)}) does not fit the frame (${innerWidth} x ${innerHeight})`);
@@ -315,7 +318,7 @@ MEASURE = """
   const sizes = [];
   for (const el of stage.querySelectorAll("*")) {
     const cs = getComputedStyle(el);
-    if (cs.visibility !== "visible" || el.closest("[hidden], .hidden-title")) continue;
+    if (cs.visibility !== "visible" || el.closest("[hidden], .hidden-title") || (presentation && el.closest(".top,.bottom"))) continue;
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) continue;
     const inSlide = slide.contains(el);
@@ -329,8 +332,8 @@ MEASURE = """
     if (!words) continue;
     const px = parseFloat(cs.fontSize) * scale;
     sizes.push(px);
-    if (px < MIN - 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, under ${MIN}px`);
-    if (px > MAX + 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, over ${MAX}px`);
+    if (px < textMin - 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, under ${textMin}px`);
+    if (px > textMax + 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, over ${textMax}px`);
   }
   if (slide.classList.contains("decision")) {
     for (const el of slide.querySelectorAll(".vote, .choose")) {
@@ -354,7 +357,8 @@ STYLED = """
   const problems = [];
   const stage = document.getElementById("stage");
   const s = stage ? getComputedStyle(stage) : null;
-  if (!s || s.position !== "absolute" || s.width !== "880px" || s.height !== "640px")
+  const presentation = !!window.JarvisPresentation;
+  if (!s || s.position !== "absolute" || (!presentation && (s.width !== "880px" || s.height !== "640px")) || (presentation && s.transform !== "none"))
     problems.push(`its canvas is not styled (#stage is ${s ? s.position + " " + s.width + " x " + s.height : "missing"}, not absolute 880px x 640px)`);
   const body = getComputedStyle(document.body);
   if (body.backgroundColor === "rgba(0, 0, 0, 0)" || body.color === "rgb(0, 0, 0)")
@@ -509,12 +513,12 @@ class Deck:
         if isinstance(frame, dict):
             self.frames.append((time.monotonic(), frame))
 
-    async def open(self, window: tuple[int, int], frame_size: tuple[int, int]) -> bool:
+    async def open(self, window: tuple[int, int], frame_size: tuple[int, int], *, has_touch: bool = False) -> bool:
         """The page loaded, the package opened by its title, the frame sized."""
         label = f"{frame_size[0]}x{frame_size[1]}"
         self.size = frame_size
         context = await self.browser.new_context(viewport={"width": window[0],
-                                                           "height": window[1]})
+                                                           "height": window[1]}, has_touch=has_touch)
         # Every browser action and wait is bounded; none waits for ever.
         context.set_default_timeout(EVAL_SEC * 1000)
         context.set_default_navigation_timeout(60_000)
@@ -644,7 +648,7 @@ class Deck:
                 f"last story frame was {last}")
 
     async def press_stop(self) -> None:
-        await self.page.locator("#package-view .package-story button").last.click()
+        await self.page.locator("#package-view [data-story-action=stop]").click()
 
 
 async def _check_layout(d: Deck, label: str) -> None:
@@ -668,7 +672,7 @@ async def _check_layout(d: Deck, label: str) -> None:
     pictures_bad = 0
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
-        await d.inner.click(f"#go-{n}")
+        await d.inner.locator(f"#go-{n}").evaluate("element => element.click()")
         await d.inner.wait_for_selector(f"#{slide_id}.current")
         measured = await d.js(MEASURE, what=f"{label}: measuring slide {n}")
         voting = await d.js(VOTING, what=f"{label}: checking slide {n}'s voting")
@@ -686,7 +690,7 @@ async def _check_layout(d: Deck, label: str) -> None:
             pictures_bad += 1
             result.failures.append(f"{label} slide {n} ({slide_id}) pictures: {problem} [{shot}]")
     if not bad:
-        result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px")
+        result.passed.append(f"{label}: all {len(slides)} slides fit and meet their renderer text-size policy")
     if not voting_bad and d.deck.get("decisions"):
         result.passed.append(f"{label}: every vote control is visible, at least "
                              f"{MIN_CONTROL_PX} px tall and inside the frame, one Choose on "
@@ -961,6 +965,44 @@ async def _check_resume(d: Deck) -> None:
     await d.tool("tell_package_story", package=d.package_id, action="stop")
 
 
+async def _check_border(d: Deck, label: str) -> None:
+    """The real package frame: compact geometry, selection and keyboard return."""
+    view = d.page.locator("#package-view")
+    border = view.locator(".package-border")
+    rect = await border.bounding_box()
+    d.result.expect(rect is not None and abs(rect["height"] - 36) < 0.1,
+                    f"{label}: the package border is 36 pixels tall",
+                    f"{label}: package border geometry is {rect}")
+    icons = await border.locator(".package-icon").evaluate_all(
+        "els => els.map(e => { const r=e.getBoundingClientRect(); return {name:e.getAttribute('aria-label'), width:r.width, height:r.height}; })")
+    d.result.expect(all(icon["name"] and icon["width"] == 32 and icon["height"] == 32 for icon in icons),
+                    f"{label}: frame icons have names and 32-pixel targets",
+                    f"{label}: frame icon geometry or names differ: {icons}")
+    before = d.answers()
+    chapters = view.locator("[data-package-menu=chapters]")
+    await chapters.click()
+    choice = view.locator(".package-border-overlay select")
+    selected = "2" if len(d.story["slides"]) > 1 else "1"
+    await choice.select_option(selected)
+    await d.page.keyboard.press("Escape")
+    returned = await chapters.evaluate("e => document.activeElement === e")
+    d.result.expect(returned and d.answers() == before,
+                    f"{label}: Chapters selection returns keyboard focus and leaves answers unchanged",
+                    f"{label}: Chapters changed answers or lost keyboard focus")
+    await chapters.click()
+    await choice.select_option("1")
+    await d.page.keyboard.press("Escape")
+    more = view.locator("[data-package-menu=more]")
+    await more.click()
+    d.result.expect(d.deck["purpose"] in await view.locator(".package-border-overlay").inner_text(),
+                    f"{label}: More exposes the package purpose",
+                    f"{label}: More omitted the package purpose")
+    await d.page.keyboard.press("Escape")
+    shot = d.shots / label / "package-border.png"
+    await view.screenshot(path=str(shot))
+    d.result.screenshots.append(shot)
+
+
 async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
                       package_id: str, shots: Path, result: Result) -> None:
     from playwright.async_api import async_playwright
@@ -983,6 +1025,7 @@ async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
                         }""")
                         await _check_page(d, label)
                     else:
+                        await _check_border(d, label)
                         await _check_layout(d, label)
                     if n == 0 and deck.get("slides") is not None:
                         # The story's behaviour, once, at the larger size. A

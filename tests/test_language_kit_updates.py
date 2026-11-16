@@ -253,7 +253,56 @@ def test_an_automatic_activation_clears_a_stale_hold(adopted, monkeypatch):
     assert state["held"] is None and state["error"] is None
     assert state["compatibility_review_required"] is False
     updates.attend(store)
+    states = {i.source_id: i.state for i in _kit_items(store)}
+    assert states.pop(newer.release.digest) == attention_store.PENDING, "the activation is said"
+    assert list(states.values()) == [attention_store.RESOLVED]
+
+
+def test_an_automatic_activation_is_one_silent_update_from_which_version_to_which(adopted, monkeypatch):
+    newer = _fake_kit("0.3.0-pre-release", style=b"b {}\n")   # the same language files
+    state = _check_with(newer, monkeypatch)
+    assert state["active"]["digest"] == newer.release.digest
+    shift = state["activated"]
+    assert shift["from"] == {"version": adopted.release.version, "digest": adopted.release.digest}
+    assert shift["to"] == {"version": newer.release.version, "digest": newer.release.digest}
+    store = AttentionStore()
+    updates.attend(store)
+    [item] = _kit_items(store)
+    assert (item.source_id, item.event, item.state, item.audible) == (
+        newer.release.digest, updates.ACTIVATED, attention_store.PENDING, False)
+    assert item.facts == {"from": adopted.release.version, "version": newer.release.version,
+                          "digest": newer.release.digest}
+    # A 304, or the same release again, changes nothing: still one item.
+    _check_304()
+    _check_with(newer, monkeypatch)
+    updates.attend(store)
+    [same] = _kit_items(store)
+    assert (same.id, same.revision, same.state) == (item.id, item.revision, attention_store.PENDING)
+    # Rolled back: the activation is no longer so, and its item resolves.
+    kit.rollback()
+    assert updates.status()["activated"] is None
+    updates.attend(store)
     assert [i.state for i in _kit_items(store)] == [attention_store.RESOLVED]
+
+
+def test_a_language_change_is_held_and_no_activation_is_said(adopted, monkeypatch):
+    candidate = _fake_kit(CANDIDATE, arch=b"arch: 2\n")
+    state = _check_with(candidate, monkeypatch)
+    assert state["activated"] is None and state["held"]["changed"] == ["arch.yaml"]
+
+
+def test_his_activation_of_the_held_candidate_is_no_update_for_him(adopted, monkeypatch):
+    newer = _fake_kit("0.3.0-pre-release", style=b"b {}\n")
+    _check_with(newer, monkeypatch)
+    candidate = _fake_kit(CANDIDATE, arch=b"arch: 2\n")
+    _check_with(candidate, monkeypatch)
+    store = AttentionStore()
+    monkeypatch.setattr(updates.runtime, "attention", lambda: store)
+    updates.attend(store)
+    assert sorted(i.event for i in _kit_items(store)) == [updates.ACTIVATED, updates.REVIEW]
+    updates.approve_held(candidate.release.digest)
+    assert updates.status()["activated"] is None
+    assert {i.state for i in _kit_items(store)} == {attention_store.RESOLVED}
 
 
 def test_a_candidate_activated_elsewhere_is_no_longer_held(adopted, monkeypatch):

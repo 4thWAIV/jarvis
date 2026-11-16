@@ -92,7 +92,8 @@ def test_preflight_reports_and_never_installs(homes):
     check = preflight._check_session_skill_sync()
 
     assert check.status == preflight.STATUS_WARN
-    assert "missing" in check.message and check.remedy == "Run: python -m jarvis.session_skill install"
+    assert "missing" in check.message and check.code == "missing"
+    assert "Install skill" in check.remedy, "fixed on the dashboard, never in a terminal"
     assert not (claude / "skills").exists()
 
     session_skill.install()

@@ -1,0 +1,12 @@
+{
+  "frontend/src/PackageBorder.tsx": "1a66c5fede497917e48ca0a5f9a963ac54c8e5fce81ee690357813a90252089d",
+  "frontend/src/PackageView.tsx": "77d840dc25bb8f4907f5add1e847c6905d332b6ef1871cfae8ba527a9d71076f",
+  "frontend/src/packages.ts": "cf1db41d3ef50274ce540a260be1aa102ac29a2e6a234d65ca2541c6a444b3cc",
+  "frontend/src/uiContract.ts": "319e9d18449eea5c182e5d2727e7ec6072716ed99de39f0987c5a18ae821f4fe",
+  "jarvis/presentation_source.py": "36d13a2aee63c468d0badc7989d2df90117bbe0cc224aab2a5da0a28ac666d72",
+  "jarvis/ui_contract/families/packages.json": "6e457dd94a04a324f1d81b875be5b831de7b97c8d3e96d04f1301a25e6da1d27",
+  "jarvis/presentation.py": "c2abc7e0f871210214f8f8a1d1e7365594247a810014df429f71793e682d18e4",
+  "jarvis/presentation_assets/presentation.js": "382afb349be8a545252f1bdfba3bd4740b74e6547e2ab57334784034c2ce33b9",
+  "jarvis/package_story.js": "0c9c288e4c6244e7a1ad7ee17538b86ba80add9eca4cfa4634154286201ee090",
+  "examples/packages/decision-deck/deck.js": "11280b96ec72a8cdc521b2b554c3a9ffc6ba48782471a644e01432db00ebfd05"
+}

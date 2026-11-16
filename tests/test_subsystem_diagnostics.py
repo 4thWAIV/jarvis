@@ -261,8 +261,8 @@ def test_the_server_s_loops_beat(monkeypatch):
 def test_communications_working_are_ok():
     s = comms(messages=[message("answered")])
     assert s.state == sd.OK and s.summary.startswith("Watching 1 session")
-    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued"], \
-        "agents' messages to him come by one signed route: no loop to judge (round 3)"
+    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued", "keys"], \
+        "agents' messages to him come by one signed route; the agent keys' look is judged"
     assert s.messages[0]["outcome"] == "reached"
 
 
@@ -426,7 +426,8 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows", "work", "folders", "knowledge", "attention", "team_server", "server"]
+                   "workflows", "work", "folders", "knowledge", "attention", "team_server", "server",
+                   "setup"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail", "name_said", "said"} for c in s["checks"])
@@ -511,30 +512,100 @@ def test_communications_down_and_back_are_one_update(server, monkeypatch):
 
 # ── the Work tracker ─────────────────────────────────────────────────────
 
+def VIEW():
+    return live_beat(sd.WORK_LOOP, every=1.0)
+
+
 def test_the_work_tracker_s_states():
     lat = sd.Latencies()
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert (s.state, s.summary) == (sd.IDLE, "No report in the last 5 min")
     lat.note(sd.WRITE, 0.4, now=NOW - 10)
     lat.note(sd.WRITE, 1.2, now=NOW - 5)
     lat.note(sd.READ, 0.01, now=NOW - 5)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert (s.state, s.summary) == (sd.OK, "2 reports in the last 5 min, the slowest 1.2 s")
-    assert [c.state for c in s.checks] == [sd.OK, sd.OK]
+    assert [c.state for c in s.checks] == [sd.OK, sd.OK, sd.OK]
     lat.note(sd.WRITE, 2.5, now=NOW - 1)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert s.state == sd.DEGRADED
     assert s.summary == "Reports: The slowest report in the last 5 min took 2.5 s"
     # Past the window it is forgotten.
-    assert sd.work(lat, NOW + sd.WORK_LATENCY_WINDOW_SEC + 5).state == sd.IDLE
+    assert sd.work(lat, NOW + sd.WORK_LATENCY_WINDOW_SEC + 5,
+                   live_beat(sd.WORK_LOOP, every=1.0, ok_ago=-sd.WORK_LATENCY_WINDOW_SEC)).state == sd.IDLE
 
 
 def test_a_slow_read_of_the_list_is_degraded_too():
     lat = sd.Latencies()
     lat.note(sd.WRITE, 0.1, now=NOW - 1)
     lat.note(sd.READ, 3.0, now=NOW - 1)
-    s = sd.work(lat, NOW)
+    s = sd.work(lat, NOW, VIEW())
     assert s.state == sd.DEGRADED and s.checks[1].state == sd.DEGRADED
+
+
+def test_the_work_view_s_loop_is_judged_on_the_work_tracker_row():
+    """A view never built, or one that stopped ticking, shows on the row: the
+    Work tab would be empty or frozen, so it is a loop judged as any other."""
+    lat = sd.Latencies()
+    lat.note(sd.WRITE, 0.1, now=NOW - 1)
+    s = sd.work(lat, NOW, None)
+    assert s.checks[-1].id == "view" and s.checks[-1].state == sd.UNKNOWN
+    failing = live_beat(sd.WORK_LOOP, every=1.0, ok_ago=None, started_ago=5)
+    failing.failed("records unreadable")
+    s = sd.work(lat, NOW, failing)
+    assert s.state == sd.DEGRADED
+    assert s.summary == "Work view: The last look failed: records unreadable"
+    silent = live_beat(sd.WORK_LOOP, every=1.0, ok_ago=None, started_ago=120)
+    assert sd.work(lat, NOW, silent).state == sd.DOWN
+
+
+def test_the_agent_keys_loop_is_judged_on_the_communications_row():
+    w = watcher()
+    assert sd.communications(w, [], NOW, NOW - 600, [], None).checks[-1].state == sd.IDLE
+    silent = live_beat(sd.AGENT_KEYS_LOOP, every=5.0, ok_ago=200)
+    s = sd.communications(w, [], NOW, NOW - 600, [], silent)
+    assert s.state == sd.DOWN and s.checks[-1].id == "keys"
+    assert s.summary.startswith("Agent keys: Has not finished a look for")
+    fine = live_beat(sd.AGENT_KEYS_LOOP, every=5.0)
+    assert sd.communications(w, [], NOW, NOW - 600, [], fine).checks[-1].state == sd.OK
+
+
+def test_a_work_view_that_fails_to_build_is_tried_again_and_shown(monkeypatch):
+    """The view's build is part of the loop's look: a load that raises is a
+    failed heartbeat and is tried again, never a task that died quietly."""
+    from jarvis import server
+    tries, ticks = [], []
+
+    class View:
+        built = False
+
+        def load(self):
+            tries.append(1)
+            if len(tries) == 1:
+                raise RuntimeError("records unreadable")
+            View.built = True
+
+        def start(self):
+            pass
+
+        def tick(self):
+            ticks.append(1)
+
+    monkeypatch.setattr(server, "work_held", View())
+    monkeypatch.setattr(server, "WORK_TICK_SEC", 0.01)
+    seen = []
+
+    async def run():
+        task = asyncio.create_task(server._watch_work())
+        await until_async(lambda: sd.WORK_LOOP in sd.beats and sd.beats[sd.WORK_LOOP].failures)
+        seen.append(sd.beats[sd.WORK_LOOP].error)
+        await until_async(lambda: ticks)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    assert seen == ["records unreadable"]
+    assert len(tries) == 2 and sd.beats[sd.WORK_LOOP].failures == 0
 
 
 def test_the_work_routes_are_timed_live(wired):
@@ -695,3 +766,137 @@ def test_an_attention_record_that_does_not_open_is_down_on_the_route_with_why(se
     assert row["state"] == "down" and "the attention documents cannot be read" in row["summary"]
     assert row["said"]["code"] == "attentionNotOpen"
     server._attend("run", "r1", "finished")          # dropped, and never raises
+
+
+# ── Setup: the startup checks ────────────────────────────────────────────
+
+def _pf(name, status="ok", code=None, message="words"):
+    from jarvis import preflight
+    return preflight.Check(name=name, status=status, message=message, code=code)
+
+
+def test_setup_before_the_checks_have_run_is_unknown():
+    s = sd.setup(None)
+    assert (s.id, s.state, s.said.code) == ("setup", sd.UNKNOWN, "setupNotRun")
+
+
+def test_setup_lists_each_failing_check_by_its_own_name_never_worse_than_degraded():
+    s = sd.setup([_pf("claude_cli"), _pf("session_skill", "warn", "missing"),
+                  _pf("accessibility", "fail", "not_granted"),
+                  _pf("screen_recording", "fail", "not_granted"),
+                  _pf("speech_input", "warn", None, "The model is missing."),
+                  _pf("some_new_check", "warn", None, "Something else.")])
+    assert s.state == sd.DEGRADED
+    checks = {c.id: c for c in s.checks}
+    assert list(checks) == ["session_skill", "accessibility", "screen_recording",
+                            "speech_input", "some_new_check"], "only the failing ones"
+    assert checks["session_skill"].said.code == "setupSkillMissing"
+    assert checks["session_skill"].name_said.code == "setupSessionSkill"
+    assert checks["accessibility"].said.code == "setupAccessibilityNotGranted"
+    assert checks["screen_recording"].said.code == "setupScreenNotGranted"
+    # No code of its own: the check's own message, said through setupCheck.
+    assert checks["speech_input"].said == sd.Said("setupCheck", {"message": "The model is missing."})
+    # A check with no name code is shown by its own name.
+    assert checks["some_new_check"].name_said is None and checks["some_new_check"].name == "some_new_check"
+    assert s.said.code == "badCheck" and s.summary.startswith("Talk-to-jarvis skill: ")
+
+
+def test_setup_with_every_check_passing_is_ok():
+    s = sd.setup([_pf("claude_cli"), _pf("session_skill")])
+    assert (s.state, s.said.code) == (sd.OK, "setupOk")
+    assert sd.setup([_pf("session_skill", "warn", "out_of_date")]).checks[0].said.code == "setupSkillOld"
+
+
+def test_the_route_s_setup_row_follows_the_kept_checks(server, monkeypatch):
+    hints = []
+    monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
+
+    async def checks(provider_checks=()):
+        return [_pf("session_skill", "warn", "missing")]
+    monkeypatch.setattr(server.preflight, "run_checks", checks)
+    rows = {s["id"]: s for s in TestClient(server.app).get(
+        "/api/diagnostics/subsystems", headers=ORIGIN).json()["subsystems"]}
+    assert rows["setup"]["state"] == "unknown"
+    asyncio.run(server._run_preflight())
+    assert {"type": "subsystems"} in hints
+    rows = {s["id"]: s for s in TestClient(server.app).get(
+        "/api/diagnostics/subsystems", headers=ORIGIN).json()["subsystems"]}
+    assert rows["setup"]["state"] == "degraded"
+    assert [c["said"]["code"] for c in rows["setup"]["checks"]] == ["setupSkillMissing"]
+
+
+def test_install_skill_on_the_page_and_by_voice_share_one_install(wired, monkeypatch, tmp_path):
+    """Setup's Install skill (`POST /api/setup/session-skill`) and the
+    brain's acting `install_session_skill` call the same
+    `_install_session_skill` (session_skill.install), and the row moves."""
+    import inspect
+    from jarvis import preflight, session_skill
+    server = wired.server
+    assert "_install_session_skill" in inspect.getsource(server.tool_install_session_skill)
+    assert "_install_session_skill" in inspect.getsource(server.api_install_session_skill)
+    assert "session_skill.install()" in inspect.getsource(server._install_session_skill)
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    monkeypatch.setattr(session_skill.session_watch, "config_roots", lambda: [claude])
+    monkeypatch.setattr(session_skill.codex_sessions, "codex_home", lambda: tmp_path / "no-codex")
+    server._preflight_checks = [preflight._check_session_skill_sync()]
+    assert sd.setup(server._preflight_checks).state == sd.DEGRADED
+    from tests.test_brain_page_parity import _call
+    assert _call(wired, "install_session_skill")["text"].startswith("Installed, sir")
+    assert (claude / "skills").is_dir()
+    assert sd.setup(server._preflight_checks).state == sd.OK, "the row moves at once"
+    assert {"type": "subsystems"} in wired.hints
+    page = {"Origin": "http://localhost:5173"}
+    body = wired.client.post("/api/setup/session-skill", headers=page).json()
+    assert body["outcome"] == "installed" and body["current"] is True
+    assert wired.client.post("/api/setup/session-skill").status_code == 403, "the page's origin only"
+
+
+# ── messages between people's delivery ───────────────────────────────────
+
+def test_delivery_failing_is_a_check_on_the_team_row_never_worse_than_degraded():
+    team = {"state": "connected", "team": {"name": "T"}}
+    s = sd.team_server(team, NOW, None, {"failures": 0, "last_error": None})
+    assert s.state == sd.OK and {c.id: c.said.code for c in s.checks}["messaging"] == "messagingOk"
+    s = sd.team_server(team, NOW, None, {"failures": 1, "last_error": "unavailable"})
+    assert s.state == sd.OK and s.checks[-1].said.code == "messagingRetrying"
+    s = sd.team_server(team, NOW, None, {"failures": sd.MESSAGING_FAILURES_IN_A_ROW,
+                                         "last_error": "unavailable"})
+    assert s.state == sd.DEGRADED and s.said.code == "badCheck"
+    assert s.summary == "Messages between people: 3 delivery passes failed in a row: unavailable"
+    assert all(c.id != "messaging" for c in sd.team_server(team, NOW).checks), \
+        "no loops running: no check"
+
+
+def test_delivery_failing_in_a_row_is_one_silent_update(server, monkeypatch):
+    from jarvis.attention_store import AttentionStore
+    store = AttentionStore()
+    looks = iter([0, sd.MESSAGING_FAILURES_IN_A_ROW, sd.MESSAGING_FAILURES_IN_A_ROW + 1, 0])
+    current = {}
+
+    def subsystems():
+        n = next(looks, None)
+        if n is None:
+            raise RuntimeError("no more looks")
+        current["failures"] = n
+        return [_subsystem("communications", sd.OK)]
+
+    monkeypatch.setattr(server, "_subsystems", subsystems)
+    monkeypatch.setattr(server, "_messaging_delivery",
+                        lambda: {"failures": current.get("failures", 0), "last_error": "unavailable"})
+    monkeypatch.setattr(server, "attention_record", store)
+    monkeypatch.setattr(server, "speech", None)
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda h: None)
+    monkeypatch.setattr(server, "SUBSYSTEMS_POLL_SEC", 0.001)
+
+    async def run():
+        task = asyncio.create_task(server._watch_subsystems())
+        await until_async(lambda: "subsystems" in sd.beats and sd.beats["subsystems"].failures)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    item = store.get("messaging", "delivery")
+    assert (item.event, item.facts) == ("failing", {"failures": 3, "error": "unavailable"})
+    assert not item.audible and item.state == "resolved", "resolved once a pass went through"
+    assert [h["event"] for h in store.history(item.id)] == ["failing"], "recorded once"

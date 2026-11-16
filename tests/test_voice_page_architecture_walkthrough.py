@@ -21,6 +21,8 @@ from jarvis import (data_paths, decision_check, language_documents, language_pro
                     make_package, package_inbox, work_packages)
 from tests.test_brain_page_parity import wired  # noqa: F401  (a fixture)
 from tests.test_language_documents import draft, installed_kit  # noqa: F401  (fixtures)
+from tests.package_cards import CARD, open_question
+from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_language_documents import canonical_server  # noqa: F401
 
@@ -119,20 +121,28 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             assert await frame.get_attribute("sandbox") == "allow-scripts", "the sandbox is kept"
             box = await frame.bounding_box()
             head = page.locator(".package-head")
-            assert PURPOSE in await head.inner_text(), "the handoff's purpose is in the head"
-            assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, once"
+            await head.get_by_role("button", name="More", exact=True).click()
+            assert PURPOSE in await page.locator(".package-border-overlay").inner_text(), "the handoff purpose is in Details"
+            await page.keyboard.press("Escape")
+            assert await page.get_by_role("button", name="Approve").count() == 1, "the vote, once"
+            assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
 
-            # The first question by click, with his words; the follow-up is
-            # asked only once his answer opens it.
-            asks = page.locator(".package-asks")
-            clear = asks.locator('[data-question="ownership-clear"]')
+            # The first question by click in its card, with his words; the
+            # follow-up is asked only once his answer opens it.
+            card = await open_question(page, "ownership-clear")
+            clear = card.locator('[data-question="ownership-clear"]')
             if n == 0:
-                assert await asks.locator('[data-question="which-part"]').count() == 0
+                position = card.locator(".package-focus-position")
+                await async_api.expect(position).to_have_text("Question 1 of 2")
                 await clear.get_by_role("textbox").fill("Who writes a revision?")
                 await clear.get_by_role("button", name="Unclear").click()
                 await clear.locator(".package-vote-recorded").wait_for()
-                follow = asks.locator('[data-question="which-part"]')
+                await async_api.expect(position).to_have_text("Question 1 of 3")
+                await card.get_by_role("button", name="Next", exact=True).click()
+                follow = card.locator('[data-question="which-part"]')
                 await follow.wait_for()
+                await page.keyboard.press("Escape")
+                await card.wait_for(state="detached")
                 trace.append({"size": window, "clicked": "ownership-clear=unclear",
                               "follow_up_shown": True})
                 # The follow-up by voice, as the brain answers it.
@@ -143,9 +153,12 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 await page.reload()
                 await view.wait_for()
             for key, option in (("ownership-clear", "unclear"), ("which-part", "ownership")):
-                pressed = asks.locator(f'[data-question="{key}"] [data-option="{option}"]')
+                card = await open_question(page, key)
+                pressed = card.locator(f'[data-question="{key}"] [data-option="{option}"]')
                 await pressed.wait_for()
                 assert await pressed.get_attribute("aria-pressed") == "true", key
+            await page.keyboard.press("Escape")
+            await page.locator(CARD).wait_for(state="detached")
 
             # The explanation, read in place.
             await page.get_by_role("button", name="Read the explanation").click()
@@ -168,8 +181,8 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             assert await page.evaluate(
                 "document.documentElement.scrollWidth <= document.documentElement.clientWidth")
             await page.screenshot(path=str(out / f"walkthrough-{window[0]}x{window[1]}.png"))
-            # With the questions and the explanation open, the package's own
-            # page is still in view: they scroll within the rest.
+            # With the explanation's card open over it, the package's own page
+            # keeps its place: the card scrolls within itself.
             reading, whole = await frame.bounding_box(), await view.bounding_box()
             assert reading["height"] >= 0.6 * whole["height"], (window, reading, whole)
             trace.append({"size": window, "frame": box, "explanation": "rendered",
@@ -197,7 +210,8 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 assert asked["ownership-clear"]["answer"] == "unclear"
                 assert asked["ownership-clear"]["note"] == "Who writes a revision?"
                 assert asked["which-part"]["answer"] == "ownership"
-                assert asked["understood"] is None, "signed off early: the vote stays unanswered"
+                assert asked["approve-package"] is None, \
+                    "signed off early: the vote stays unanswered"
                 trace.append({"signed_off": first, "answers": {
                     k: (v or {}).get("answer") for k, v in asked.items()}})
             await context.close()
@@ -208,9 +222,9 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
 @pytest.mark.asyncio(loop_scope="session")
 async def test_his_approval_of_the_design_in_the_actual_view(
         page_playwright, canonical_server, draft, tmp_path):  # noqa: F811
-    """In this test JARVIS only: the factory's approval question shown apart
-    from Got it; Got it leaves it unanswered; Request changes needs his
-    words; Approve is recorded for the revision shown; a newer checked
+    """In this test JARVIS only: the factory's approval question is the one
+    vote it asks (no second approval, never Got it); Request changes needs
+    his words; Approve is recorded for the revision shown; a newer checked
     revision of the document shows his approval stale."""
     from tests import dashboard_page
     server, _published, _checked, base, tmp = canonical_server
@@ -233,16 +247,12 @@ async def test_his_approval_of_the_design_in_the_actual_view(
             await asyncio.sleep(.05)
         opened = await http.post(f"/api/packages/inbox/{inbox_id}/open", headers={"Origin": base})
         assert opened.status_code == 200 and not opened.json()["problem"], opened.text
-        approval = page.locator('.package-asks [data-kind="approval"]')
+        approval = (await open_question(page, "approve-architecture")).locator('[data-kind="approval"]')
         await approval.wait_for()
         assert subject["revision"][:12] in (await approval.locator(".package-approval-head").inner_text()).lower()
-        assert await page.get_by_role("button", name="Got it").count() == 1, "the vote, apart"
-
-        # Got it is acknowledgement: his approval stays unanswered.
-        await page.get_by_role("button", name="Got it").click()
-        await page.locator(".package-vote-recorded", has_text="Got it").wait_for()
-        assert package_inbox.page_vote(package)["asks"][0]["answer"] is None
-        trace.append({"clicked": "got-it", "approval": None})
+        assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
+        assert await page.locator(".package-head .package-vote").count() == 0, \
+            "his approval is already Approve or not: no second vote"
 
         # Request changes needs his words.
         changes = approval.get_by_role("button", name="Request changes")
@@ -259,7 +269,7 @@ async def test_his_approval_of_the_design_in_the_actual_view(
         record = json.loads(work_packages.read_result(package, "decisions.json"))
         assert record["approve-architecture"]["answer"] == "approve"
         assert record["approve-architecture"]["subject"] == subject
-        assert record["understood"]["answer"] == "got-it", "two answers, kept apart"
+        assert not {"understood", "approve-package"} & set(record), "the one vote"
         await page.screenshot(path=str(out / "approved.png"))
         trace.append({"clicked": "approve", "recorded": record["approve-architecture"]})
 
@@ -270,7 +280,8 @@ async def test_his_approval_of_the_design_in_the_actual_view(
             document_id=subject["document_id"], parent_revision=subject["revision"])
         assert newer["check"]["ok"]
         await page.reload()
-        stale = page.locator('.package-asks [data-kind="approval"][data-stale="true"]')
+        stale = (await open_question(page, "approve-architecture")).locator(
+            '[data-kind="approval"][data-stale="true"]')
         await stale.wait_for()
         assert "counts for nothing" in await stale.locator(".package-approval-stale").inner_text()
         await page.screenshot(path=str(out / "stale.png"))

@@ -36,6 +36,7 @@
  * to the frame, so a deck shows which question JARVIS is waiting on.
  */
 
+import { registerRevealer } from "./uiNavigationReveal";
 import { liveRead, type LiveStore } from "./liveRead";
 import { t, type Said } from "./locale";
 import { createStore } from "./store";
@@ -43,12 +44,16 @@ import { bind, detailSlot, registerClose, runBinding, takeOverShown } from "./ui
 import { dispatch, registerCommand } from "./uiRegistry";
 
 /** What a page asks in the view's head (package_inbox.page_vote): the
- *  standard vote's answer (Got it, or I have questions with his words;
- *  `question` is null when it carries none), and the questions its story
- *  declares, each with whether it applies yet and his answer. */
+ *  standard vote's answer (Approve, or Reject with his words saying what to
+ *  change; `question` is null when it carries none), and the questions its
+ *  story declares, each with whether it applies yet and his answer. An
+ *  answer given before Got it was retired comes as any other id, read back
+ *  by `answer_name` and never asked again. */
 export interface PageVote {
   question: string | null;
-  answer: "got-it" | "questions" | "later" | "none" | null;
+  answer: "approve" | "reject" | "later" | "none" | string | null;
+  /** His answer by its name, as recorded ("" while unanswered). */
+  answer_name?: string;
   note: string;
   asks?: HeaderQuestion[];
 }
@@ -153,6 +158,52 @@ const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id, 
 /** The page package shown in the centre area, or none. Read-only: the
  *  controls run `package.open` and `package.close`. */
 export const openPackage = packageSlot.value;
+
+/** Mounted border actions are the same handlers for clicks and brain navigation.
+ * Nothing here starts narration or records an answer. Unmounting removes the
+ * adapter so a request cannot act on an old package. */
+export interface PackageControls {
+  packageId: string;
+  slides: number;
+  presentation: boolean;
+  menu(show: "chapters" | "more" | "closed"): void;
+  select(slide: number, closeMenu: boolean): void;
+  inspect(): void;
+  document(enabled: boolean): void;
+}
+let controls: PackageControls | null = null;
+export function mountPackageControls(value: PackageControls): () => void {
+  controls = value;
+  return () => { if (controls === value) controls = null; };
+}
+const currentControls = () => controls?.packageId === openPackage.get()?.id ? controls : null;
+const availableControls = () => ({ available: !!currentControls(), reason: "not-mounted" as const });
+registerCommand("package.menu", {
+  availability: ({ show }) => show === "chapters" && !currentControls()?.slides
+    ? { available: false, reason: "no-entity" } : availableControls(),
+  execute: ({ show }) => { currentControls()!.menu(show); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.slide", {
+  availability: ({ slide }) => currentControls() && slide <= currentControls()!.slides
+    ? { available: true } : { available: false, reason: "no-entity" },
+  execute: ({ slide, closeMenu = false }) => { currentControls()!.select(slide, closeMenu); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.inspect", {
+  availability: () => currentControls()?.presentation ? { available: true } : { available: false, reason: "no-entity" },
+  execute: () => { currentControls()!.inspect(); return { status: "completed", effects: [] }; },
+});
+registerCommand("package.document", {
+  availability: () => currentControls()?.presentation ? { available: true } : { available: false, reason: "no-entity" },
+  execute: ({ enabled }) => { currentControls()!.document(enabled); return { status: "completed", effects: [] }; },
+});
+
+registerRevealer("main.package", "packageView", async (ref, { navigate }) => {
+  if (ref.key !== openPackage.get()?.id) return "no-entity";
+  const menu = ref.part === "fromSlide" ? "chapters"
+    : ["resume", "inspect", "document", "takeover", "return"].includes(ref.part ?? "") ? "more" : null;
+  if (!menu) return "no-entity";
+  return await navigate("package.menu", { show: menu }) ? true : "no-entity";
+});
 
 /** Packages the server has described in a `package_page` frame, by id,
  *  for one that is not in the list read yet. */

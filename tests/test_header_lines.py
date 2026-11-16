@@ -350,6 +350,22 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._agent_or_explain": (
+        "it reads only an agent's session id from the agent directory to build the "
+        "`agent:<session id>` its caller records; what it says is fixed words and a count, never "
+        "an agent's name or any session's words"),
+    "server._work_holder": (
+        "it names who holds a Work item up for an attention item's untrusted block only (the "
+        "`agent` of `untrusted`, walled wherever it is shown or given to the brain); it is never "
+        "put in a header or said as JARVIS's own words"),
+    "session_watch.change_queued": (
+        "it reads a queued message's own status and its session's state word and between-turns "
+        "flag to decide Cancel or Send now; what it returns is fixed words and the message's "
+        "number, never the message's text or the agent's name"),
+    "work_store._his_act": (
+        "it reads a piece's who and state fields to record his act (release, close, reassign) on "
+        "the item's document; it prints nothing, and its refusals are fixed words with the "
+        "piece's key, which the record already checked as a slug"),
     "background.line": (
         "it prints one of JARVIS's own two processes for the person at the terminal: its name, pid, "
         "state word from process_inspect and the server's own recorded address; no session's or "
@@ -453,6 +469,10 @@ EXEMPT = {
         "it reads the checked revision over the signed route as JSON for the agent's own "
         "make_package process; a refusal names JARVIS's cause on the agent's terminal, and "
         "nothing reaches the brain or the voice; driven by test_architecture_packages.py"),
+    "make_package.refuse_vote_ids": (
+        "it compares a deck decision's id or a story slide's waits with the vote's two fixed ids "
+        "and refuses with JARVIS's own words naming only those constants, on the agent's own "
+        "terminal; nothing it reads is printed, and nothing reaches the brain or the voice"),
     "make_package.make_architecture": (
         "the document title becomes the package's title for the agent's terminal and the "
         "message's words, which JARVIS records as the agent's (walled wherever it is read); "
@@ -1150,6 +1170,18 @@ EXEMPT = {
     "decision_check._check_resume": (
         "it records, in the command's printout, the deck's own decision ids and the "
         "isolated JARVIS's resume answer and story frames"),
+    'make_package.make_presentation': (
+        'it builds the archive filename from schema-validated presentation id and version, and returns the authored title as package metadata; compiler refusals go to the author command, never a trusted session header'),
+    'presentation._deck': (
+        'it projects the authored presentation into shared deck data, including chart labels and values; that content stays package content, never a trusted session or run header'),
+    'presentation._targets': (
+        'it builds accessible names and provenance entries for authored slide objects, including chart labels and units; these are JSON package data and DOM text, never trusted brain headers'),
+    'presentation_check.check_layout': (
+        'it checks an isolated generated page and records source member ids and browser geometry in measurements.json; no session record is read and no result becomes a trusted brain header'),
+    'presentation_source._semantics': (
+        'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
+    'presentation_source.identities': (
+        'it walks authored YAML mappings to index source ids and raises a duplicate-id compiler diagnostic with the source location; no session record or live brain header is involved'),
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
@@ -1187,6 +1219,35 @@ EXEMPT = {
         "each piece to the agent that ran it, in its own terminal, never to the brain"),
     "work_report.main": (
         "the same command line: what it prints goes to the agent that ran it"),
+    # The status briefing command (status_briefing.py) runs in the agent's
+    # own process: what it composes from the Work record goes into the
+    # handoff and evidence files it writes, read by make_package's fresh
+    # author as evidence, or to that agent's terminal; nothing reaches the
+    # brain or a header JARVIS speaks from.
+    "status_briefing._held_text": (
+        "a held piece's title and holds, written into the status briefing's handoff file "
+        "for make_package's fresh author to read as evidence, never to the brain"),
+    "status_briefing.needs_tim": (
+        "the item's needs, held and stalled pieces as facts in the handoff file the agent "
+        "hands make_package's fresh author as evidence, never to the brain"),
+    "status_briefing.moving": (
+        "pieces reported working, with their notes, as facts in the handoff file for the "
+        "fresh author to read as evidence, never a header the brain reads"),
+    "status_briefing.done_since": (
+        "the log's finished pieces and their summaries as facts in the handoff file for "
+        "the fresh author to read as evidence, never a header the brain reads"),
+    "status_briefing.compose_item": (
+        "one item's briefing, assembled from the facts above into the handoff and evidence "
+        "files the agent writes, never to the brain"),
+    "status_briefing.handoff": (
+        "the make_package handoff the command writes to a file in the agent's own folder; "
+        "the fresh author treats every word of it as evidence, never as JARVIS's words"),
+    "status_briefing.gaps": (
+        "--check's lines naming pieces with no note or evidence, printed to the agent that "
+        "ran the command, in its own terminal, never to the brain"),
+    "status_briefing.check": (
+        "the same --check command line: what it prints goes to the agent that ran it, in "
+        "its own terminal, never to the brain"),
     "workflow_report._answered": (
         "the reporter's command line: it prints JARVIS's refusal to the session "
         "that sent the report, in that session's own terminal, never to the brain"),

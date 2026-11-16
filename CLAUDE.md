@@ -248,8 +248,15 @@ that open item, with `agent_rights.WORK_KEY_RIGHTS` scoped `work:<id>`
 /api/work`). It reports for its issuer, lives while the item is open and
 not in History (`agent_auth`), is revoked when the item closes and on the
 look after it leaves, and ends after `WORK_KEY_LIFE_SEC` (30 days) unless
-its issuer renews it (`agent_key renew`). The item's Overview lists its
-keys with Revoke (`work_api.work_keys_json`). The design and its progress
+its issuer renews it (`agent_key renew`) or Tim does: the item's Overview
+lists its keys with Renew and Revoke (`work_api.work_keys_json`), his Renew
+the same renew route from the page and the brain's acting
+`renew_work_key`, all through `server._renew_work_key`
+(`agent_key_store.renew_work_key`, which takes the issuer or `page` /
+`voice`). Within `server.WORK_KEY_WARN_SEC` (3 days) of its end a live key
+is a silent `work_key` attention item (`expiring`, the date and its item),
+recorded once per expiry and resolved once it is renewed, revoked or ended
+(`_attend_work_key_ending`, `_work_key_settled`). The design and its progress
 are `docs/planning/agent-keys/design.md`.
 
 ## Clearing the conversation
@@ -343,7 +350,14 @@ instead of sent (`server._message_must_wait`), and the session watcher sends
 each session's oldest queued message once it is between turns and has
 answered the one before (`SessionWatcher.send_queued`). Sent mid-turn, Claude
 Code would fold it into the turn under way and its one answer would become
-the reply to both. Queued messages survive a restart. `sent` only means the provider took it (bytes on the inbox socket,
+the reply to both. Queued messages survive a restart. A queued message has
+his Cancel and Send now on the agent's thread (`AgentThread.tsx`, through
+`RecordItem`'s `queuedActs`; `POST /api/agent-messages/{id}/queued`) and the
+brain's acting `change_queued_message`, both `server._change_queued_message`
+over `SessionWatcher.change_queued` (the same lock as `send_queued`): Cancel
+records it `cancelled`; Send now sends it ahead of what it waits behind (an
+earlier message still open or queued), but only while its session is between
+turns, else it stays queued and the refusal says why. `sent` only means the provider took it (bytes on the inbox socket,
 or `codex queue` exiting 0). The session watcher (`SessionWatcher`, given the
 store as `messages`) follows every open message on every poll through its
 session's provider: `track(session, message) -> Tracking` finds it in the
@@ -503,7 +517,7 @@ blocker). A decision is only a package: `work_report.py decision` and
 `withdraw` print `message.ASK_WITH_A_PACKAGE` and exit 2, and the Work and
 workflow event routes refuse `decision_needed` (and `decision_withdrawn`)
 from any reporter in the same words; JARVIS's own (a package's
-`understood-` vote) are recorded in-process. By voice, "What's new?" is
+`approve-package-` vote) are recorded in-process. By voice, "What's new?" is
 `messages_to_him` with `new` (`messages_api.whats_new`: each Work item with
 new messages in the Inbox's order, its new ones oldest first, then the
 general ones newest first), which puts him on the first; the message he is
@@ -621,7 +635,10 @@ Workflows view, which keeps phases and progress: a reporter's
 --workflow <id> --work <item>`, whose answers come back as the workflow's
 decisions on sign-off), and a `blocker_raised` stays its state and is also a
 message from its reporter about its item (`server._workflow_message`, an
-agent key's report only). A new phase, a finish and going quiet are each an
+agent key's report only); one from any other reporter (the tool token, an
+access key during the cut-over) proves no sender, so it is the workflow's
+attention item (`blocker_raised`, `_attend_unproven_blocker`), resolved by
+its `blocker_cleared`. A new phase, a finish and going quiet are each an
 attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; a decision asked before round 3 is
 still answered on the Workflows view or by voice: the page's answer and
@@ -689,7 +706,7 @@ that is not a decision, with how many more. No reporter asks or withdraws
 a decision any more (round 3: a decision is a package sent with `--work`,
 a message on the item; the route refuses `decision_needed` and
 `decision_withdrawn`, `message.ASK_WITH_A_PACKAGE`): the decision record
-stays the answers' store, for JARVIS's own (`understood-<inbox id>`), the
+stays the answers' store, for JARVIS's own (`approve-package-<inbox id>`), the
 ones asked before, which he still answers, and a package's answers. A
 decision asked before may name a page package (`detail.package`); its
 card's "Open the package" posts to `/api/packages/<id>/page`, the same
@@ -821,7 +838,24 @@ link to an answer". Every answer of his is written for its asker to
 (`work_api.write_answer`; the project is the source folder's last name;
 outbound only, nothing watches it), and `work_report.py answers --since
 <time>` (`GET /api/work/answers`, in the `work` key category) lists every
-answer to the calling key's own decisions. The Workflows view stays below the list, under its
+answer to the calling key's own decisions. A status briefing is built from
+these records, never from an agent's memory: `python -m jarvis.status_briefing
+--work <id> [--work <id> ...] --out <folder> [--since <time>]`
+(`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
+`need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
+`work_status` reads them) writes `handoff.json` (a make_package handoff, the
+composition as its `briefing`, asking one decision, `approve-status`:
+approve, or reject with his words on what is missing or wrong, with its
+lead-in) and `status-evidence.json`, and nothing
+else: per item, what needs him first (his acts, every held piece and what
+holds it, stalled pieces, the item stalled or answered with no follow-up,
+each with who and since when; or one line that nothing needs him), then
+pieces reported working with their latest note, then what finished since
+`--since` (24 hours by default) from the log, every fact with its piece's
+evidence; items needing him first. The session then sends it with
+`make_package --handoff`. `--check` writes nothing and lists pieces with no
+note, and pieces past planned or ready with no evidence (exit 1 when any).
+The Workflows view stays below the list, under its
 own heading. The record is `work_store.py`: one document per item,
 `/work/<id>.work` (records), its pieces and decisions inline and its events
 the document's versions (`records.history(path, fields=["events"])`;
@@ -881,8 +915,25 @@ centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
 the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
-their evidence. The page changes nothing but his answers and his review,
-so the only other acting tool is `review_work`.
+their evidence. The page changes nothing but his answers, his review and
+his acts, so the only other acting tool is `review_work`. His acts on work
+nobody else can unstick are `work_api.act` (`work_store.HIS_ACTS`, in
+`HIS_KINDS`, recorded as his with `where` page or voice, never a
+reporter's): `release_hold` (`hold_released`: a held piece, or an item with
+no pieces, goes to its `--then`, ready by default, whatever holds it),
+`close` (`closed_by_him`: to History for good, its work-item keys revoked
+and its news resolved, as a reporter's close) and `reassign` (`reassigned`:
+a piece not done onto another agent the agent directory knows, ready for it,
+a held piece staying held). The page's are Release hold, Reassign piece and
+Close item (asked once) beside the review in the item's header
+(`WorkDetail.tsx` `HisActs`, `POST /api/work/{id}/act`); the brain's are
+`review_work`'s `release_hold`, `close` and `reassign` (with `piece` and
+`to`, an agent's name resolved by `agent_directory.find`). Each is written
+for the item's agents to `answers_dir()/<project>/<item>-act-<revision>.md`.
+A hold that names nothing open over a day is a silent `work_unlinked`
+attention item naming the piece and who holds it (`server._attend_unlinked`,
+from the quiet watch), resolved once none is left; a stalled item's
+`work_stalled` item names who was on it (`stalled_on`) when JARVIS can.
 Each Work row and piece, and each phase and task of a workflow's detail,
 shows its live activity from the record (`nodeActivity.tsx`): working (a
 working or verifying piece or item, a running workflow item, whose
@@ -951,12 +1002,19 @@ hand-over is the owner's approval (`MessageApprovals.approve`). Nothing
 reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on
 record as `submitting`; an edit after review makes a new revision that
-must be reviewed again. `messaging_runtime.py` builds the one store
+must be reviewed again. A send the delivery loop holds for the owner (no
+retry time: `not_approved`, `snapshot_missing`, a refusal, files that never
+went) is `failed`, never left `approved` (which `_due` never tries again):
+the Queue shows its reason and Retry, and every move to `failed`
+(`Delivery._transition`, `on_failed`) records the `human_send` attention
+item (`failed`, the failure as a fact, who it was for as other people's
+words; `MessagingRuntime._send_failed`). `messaging_runtime.py` builds the one store
 (`messaging_store.py`: one `message` document per message from draft to
 accepted and read, `/people/<github id>/messages/<id>@<server>.message`,
 each step a version; a `thread` document per thread, its work state,
 waiting command and review checklist; the sync position a `settings`
-document), file snapshots (`messaging_files.py`), guard,
+document, written only where a delivery pass stops and only when it moved
+(`store_page_changes(keep_position=)`), so a rescan writes nothing), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
 announcer (`arrival_announcer.py`: each arrival an attention item, its
@@ -1075,49 +1133,55 @@ acting `run_package_agent` and recorded in the run's `package_id` (a run
 written before it reads None; one active run per package, and a
 retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
-he agrees. The document first: in `PackageView.tsx` the head and one row
-of tools (`.package-tools`: the story's controls, an architecture
-package's source, checker evidence and explanation links) take what they
-need, and the package's own page takes the rest of the view's height;
-the questions and the explanation sit in a side column beside it
-(`.package-side`, beside it at every width; the head and tools keep to one line each), scrolling in
-their own space. Nothing new goes above the page: it joins the tools row
-or the side column, and `tests/test_voice_page_package_layout.py` holds
-the page to 60 percent of the view's height (and 55 percent of its width
-beside the column) with everything open, at the checker's sizes and a
-laptop's. The document uses the whole display: a page package takes over
+he agrees. The presentation first: in `PackageView.tsx` the icon border
+(`PackageBorder.tsx`: the story's controls, chapters, More, Done, Take
+over, Close) is the only bar, with under it only the vote row
+(`.package-vote-row`: Questions and the standard vote's Approve and
+Reject) and, for an architecture package, one row of links
+(`.package-tools`: its source, checker evidence and explanation); the
+package's own page takes the rest of the view, its whole width. There is
+no side column: nothing goes beside or above the page, and with nothing
+open nothing covers it; `tests/test_voice_page_package_layout.py` holds
+the frame to the view's width below the border, and every question
+reachable through its card, at the checker's sizes and a laptop's. The
+presentation uses the whole display: a page package takes over
 the page as it opens (`package.open` runs `uiNavigation.takeOverShown`,
 effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
 as before; taken over, the left column folds to the orb alone in the
 gutter, `data-takeover="package"` on the root moving `--panel-edge` out to
 the ray lane, and the takeover bar holds Team server and the running
-brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, its head and tools are one thin bar along the top of its
-document (`.package-bar`, `PackageView.tsx` `useFadingBar`), in a row of its
-own, never over the document (a deck's own controls along its top, and the
-package check's clicks, must work at a first click with nothing to reveal
-first), that fades back to 35 percent after `BAR_FADES_AFTER_MS` without
-the pointer, every control still in place and taking his click, and returns
-when the pointer reaches it or keyboard focus enters it; reduced motion and
+brain's usage, `TakeoverBar.tsx` `LeftColumnInBar`), and while it has, the
+border (`PackageView.tsx` `useFadingBar`, the border's `data-faded`) fades
+back to 35 percent after `BAR_FADES_AFTER_MS` without the pointer, every
+control still in place and taking his click, and returns when the pointer
+reaches it or keyboard focus enters it; reduced motion and
 `data-motion="steady"` keep it shown. One focus layer
-(`PackageFocus.tsx`) serves a decision and a narrated beat: given a rect
-in the frame's coordinates, a dim level (`DIM`) and content, it keeps the
-part lit and ringed, dims the rest, and presents a card beside it joined by
-a line (centred over a light dim when there is no part). Where a part is
-comes only from the frame's helper (`story.focus` {key, rect} through the
-bridge; the page asks for a question's part with `focus.show` {key,
-targets}), never from the frame's DOM. A question is in focus when the
-story waits on it or he chose Show in the document beside it in the side
-column; its part is the waiting slide's targets (`Story.outline`'s
-`focus`: its beats' targets, else its own element); its card (the
-question, why him, the evidence, the options with the recommended one
-marked, his words) is the side column's own `QuestionItem` over one
-`usePackageQuestions`, so both answer through the inbox's one answer route;
-the standard vote's card is `VoteControls`. A told beat (its cue now
-carries `say`) lights its targets, dims the rest to 35 percent and shows
-JARVIS's words with Pause (the reading skipped: the slide not heard in full,
-the story pauses there) and Stop; paused, with Continue (told again from
-that slide). Escape (or the card's ×) leaves focus; the side column stays
-for every question. `tests/test_voice_page_focus.py` holds each mode. A
+(`PackageFocus.tsx`) serves a question, the explanation and a narrated
+beat: given a rect in the frame's coordinates, a dim level (`DIM`) and
+content, it keeps the part lit and ringed, dims the rest, and presents a
+card beside it joined by a line (centred over a light dim, 25 percent,
+when there is no part). Where a part is comes only from the frame's helper
+(`story.focus` {key, rect} through the bridge; the page asks for a
+question's part with `focus.show` {key, targets}), never from the frame's
+DOM. Every question is asked in a card: one opens when the story waits on
+it, or when he presses Questions in the vote row (the first he has not
+answered); its part is the waiting slide's targets (`Story.outline`'s
+`focus`: its beats' targets, else its own element), dimmed to 55 percent
+around it; its card (`QuestionItem` over one `usePackageQuestions`, so
+every answer goes through the inbox's one answer route) has the question,
+why him, the evidence, the options with the recommended one marked, his
+words and what is recorded, and "Question N of M" with Back and Next
+through the sequence (his approval of a design first, then the story's
+other questions that apply, then the standard vote, whose card is
+`VoteControls`; Next after the last closes). An answer leaves the card on
+its question with what is recorded. An architecture package's Read the
+explanation opens it as a wider card centred over the whole view,
+scrolling within it. A told beat (its cue carries `say`) lights its
+targets, dims the rest to 35 percent and shows JARVIS's words with Pause
+(the reading skipped: the slide not heard in full, the story pauses there)
+and Stop; paused, with Continue (told again from that slide). Escape (or
+the card's ×) closes the card open, and keyboard focus goes back where it
+was. `tests/test_voice_page_focus.py` holds each mode. A
 page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
@@ -1248,31 +1312,55 @@ unpacked by `work_packages.unpack` exactly as a local zip (a decision
 package only signed as checked, `_receive_package_zip`), and
 `package_inbox.arrive` records it. Every
 package carries his vote: `make_package` gives a deck or page that asks
-nothing the standard one, `package_inbox.understood` (`understood`:
-`got-it` Got it, `questions` I have questions with his words; Entendido and
-Tengo preguntas in Spanish, `_VOTE_WORDS`), at its end, in the deck's or
+nothing the standard one, his approval of the package, `package_inbox.vote`
+(`approve-package`: `approve` Approve, `reject` Reject, which needs his
+words saying what to change, `needs_words`, held to it by the answer route,
+`record_story_answer`, the shared deck's deck.js and decide.py, and a Work
+item's answer, `package_inbox.bare_reject`; Aprobar and Rechazar in
+Spanish, `_VOTE_WORDS`), at its end, in the deck's or
 story's language, else the language in force as it is built
 (`make_package.built_language`, `language_setting.saved`; a page's own
 story is in its own language, English when it names none): a deck as one
-more decision, a page as its story's last slide (`with_understood_slide`,
-`understood_slide`) waiting on its answers file. A page that carries it has
-Got it and I have questions (a field for his words, then Send) in the
+more decision, a page as its story's last slide (`with_vote_slide`,
+`vote_slide`) waiting on its answers file. A package that already asks
+his approval (a review package's `approve-item`, a merge package's
+`merge-pr`, an architecture package's `approve-architecture`, which
+`package_story.compose` puts last in place of the vote) gets no second
+one. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
+records `understood` (`got-it`, `questions`) for any package.
+`make_package.refuse_vote_ids` refuses a deck decision or story slide that
+asks it (and a deck that declares `approve-package` itself), the answer
+route and `record_story_answer` refuse it, and `package_story.authored`
+reserves both ids. A package delivered before, still carrying it, is read
+as carrying the approval: its story through `package_story.current`
+(`Package.story()`), its deck through `package_inbox.current_deck`
+(`questions`, and its deck-data.js as served to its own page,
+`deck_data_shown`), its answer written by JARVIS under `approve-package`
+(`record_deck_vote`, since its own decide.py knows only the old id); the
+architecture gate still recognises a story composed then
+(`package_story.compose`'s `legacy`). An answer given to Got it before
+stays on record and is read back (`_legacy_question`, `page_vote`'s
+`answer_name`; `story_teller.read_answers` lets it stand for the slide),
+never asked again. A page that carries it has
+Approve and Reject (a field for his words, then Send) in the
 package view's head beside Done, outside the frame (`PackageView.tsx`
 `VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
 post to the inbox's answer route, which takes only his click
 (`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
 package shown so a reload shows his answer. A deck asks on its own slide.
-A page's `understood` is read from that file (`package_inbox.questions`,
+A page's vote is read from that file (`package_inbox.questions`,
 `_story_questions`) and his answer written there
 (`record_story_answer`, from `_answer_inbox_decision` when there is no
 decide.py), so the Work tab, voice and the sign-off capture treat it as a
-deck's. At sign-off an I have questions on a package sent with `--work`
-is also that item's decision `understood-<inbox id>`, asked and answered at
-once in his words (`server._inbox_questions_on_work`), and the capture
-names it. An agent package sent with `--work` carries its work-item key
+deck's. At sign-off a Reject on a package sent with `--work` is also that
+item's decision `approve-package-<inbox id>`, asked and answered at once in
+his words (`server._inbox_questions_on_work`, `_rejected`; an I have
+questions given before Got it was retired, `understood-<inbox id>`), and
+the capture names it. An agent package sent with `--work` carries its work-item key
 (see "Agent keys"), and its vote is asked on the item as it arrives: the
-standard question as the item's decision `understood-<inbox id>`, asked by
-its sending agent (`server._ask_understood_on_work`), on its Messages tab.
+standard question as the item's decision `approve-package-<inbox id>`,
+asked by its sending agent (`server._ask_vote_on_work`), on its Messages tab;
+Reject there needs his words too.
 A conversation package cannot carry a vote, so one that names a work item
 is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
 the route, which checks the signature first and then refuses any other
@@ -1288,7 +1376,8 @@ are the same row; an open package of the same name from the same sender
 (its session, else its project) is closed `superseded` in the same
 transaction, which carries every wait on it to the newer one
 (`wait_links.carry`, `superseded_by`), gives the newer one its Work item
-when it names none, and closes its item's vote `understood-<inbox id>`
+when it names none, and closes its item's vote `approve-package-<inbox id>`
+(or one asked before Got it was retired, `understood-<inbox id>`)
 (`work_store.close_with_package`, `where` superseded). A decision package's questions are read from `deck-data.js`
 as JSON after `window.DECK = ` (never executed) and its answers from its
 own `results/decisions.json` (`package_inbox.questions`; a follow-up
@@ -1672,14 +1761,29 @@ The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
 output, the tool channel, the workflow monitor, the Work tracker, the folder
 catalog, the knowledge engine, the attention record ("Updates"), the team
-server connection and the server's start setup
+server connection, the server's start setup
 (`start_setup`: a trial and the last going back, never worse than degraded)
+and Setup (`subsystem_diagnostics.setup`: every startup check,
+`preflight.run_checks`, that did not pass, kept by `server._run_preflight`
+as `_preflight_checks`, each by its own name and in JARVIS's words where
+the check has a `code`, never worse than degraded; its view has Install
+skill while the talk-to-jarvis skill is missing or old, `POST
+/api/setup/session-skill`, and the brain's acting `install_session_skill`,
+both `server._install_session_skill`, `session_skill.install`)
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
 (`orb.graphicsTrouble`) and the page runs on; that row says so. The team server row reads
 `team_client`'s status and is never worse than `degraded`, since JARVIS works
-without a team server; the left column shows it too (`TeamServerTile.tsx`). Each is `ok`, `degraded`,
+without a team server; the left column shows it too (`TeamServerTile.tsx`).
+While messages between people's loops run, it has a `messaging` check from
+the delivery loop (`server._messaging_delivery`: `Delivery.failures` and
+`last_error`), degraded after `MESSAGING_FAILURES_IN_A_ROW` (3) failed
+passes. The knowledge row has a `content` check from the content child
+(`ContentScheduler.health`: `recent_starts` within
+`CONTENT_CRASH_WINDOW_SEC`, `last_exit`, `last_exit_ago`), degraded at
+`CONTENT_STARTS_DEGRADED` (3) starts in the window or an exit that was not
+0 within it, the row's summary saying which. Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
 from records that already exist (the message documents, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
@@ -1694,7 +1798,13 @@ reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and records an
 attention item once communications with the agents are down, resolved once
-they are back. The attention row (`subsystem_diagnostics.attention`,
+they are back, and a silent `messaging` item (`failing`, the count and the
+error's code) once delivery has failed `MESSAGING_FAILURES_IN_A_ROW` passes
+in a row, resolved once one goes through. The agent keys' look (`AGENT_KEYS_LOOP`, its heartbeat) is a
+check of the communications row (idle until it starts), and the held Work
+view's loop (`WORK_LOOP`: `_watch_work` builds the view inside its retried
+look, so a load that raises is a failed heartbeat tried again, never a task
+that died quietly) is a check of the Work tracker row. The attention row (`subsystem_diagnostics.attention`,
 "Updates") is down while the attention record is not open, with the reason
 `server._start_attention` met (`_attention_problem`), since `_attend` drops
 every update meanwhile. The brain's row offers Start brain while it is down
@@ -1778,7 +1888,13 @@ progress (`/settings/folder-discovery.settings`, the transcripts read under
 `/folders/discovery-history/`). Projects refer to these IDs.
 `folder_store.py` is the only writer, one write per change, the revision
 moved inside it; it reads no
-transcript and checks no permission.
+transcript and checks no permission. A check, sighting or source pass
+that moves nothing but its time (`last_checked_at`, `last_seen_at`,
+`last_observed_at`, `observed_at`, `last_live_at`, `last_run_at`,
+`last_ok_at`) writes nothing: the time is held in memory (`_HELD`, by
+engine) and read from there by every reader, and written with the next
+real change or once the written one is `STAMP_EVERY_SEC` (15 minutes) old,
+since every version is kept.
 
 Which reader may read a folder is decided by where it is, never by its role
 or by the caller (`folder_policy.py`): a Claude Code `projects/<folder>` under
@@ -1913,7 +2029,14 @@ the memtables, then the segments by their highest LSN, stopping once none
 left can hold a newer one); a block over `segment.STREAM_OVER_BYTES` holds
 one key's long history and is never decoded whole: its first read walks it
 once, decompressing in pieces, and keeps only each key's newest and newest
-live version in the pool (`Segment._heads`).
+live version in the protected part of the pool (`Segment._heads`, kept
+there so a scan's churn never makes the walk again). Nothing that reads
+the newest versions reads a history: `items.get` of the item now is
+`Store.newest`, and `Store.scan` (every list and count by path) takes from
+each segment only its newest version of each key (`Segment.scan_newest`);
+a history, or the item at a version or time, reads versions newest first
+and only as far as it needs (`Store.iter_versions`, inside
+`store.reading()`).
 Transactions of several items take conditions (`expect_version`, `absent`)
 checked under the store's commit lock, which every write takes
 (`Store.commit(prepare=...)`); a failed one is 409 and writes nothing, and
@@ -2000,7 +2123,10 @@ ctypes on CoreServices, a GCD queue) from the last event handled (the
 engine's `content` watermark) writes path entries at once; dropped events
 scan their subtree; a stat-only backup scan runs at start, after wake and
 every six hours; reading waits while the pace holds and happens only when
-a file's bytes changed. The brain's memory, journal, project notes,
+a file's bytes changed. It is started again `CONTENT_RESTART_SEC` after it
+ends; its starts within `CONTENT_CRASH_WINDOW_SEC` and its last exit are on
+its health, which Diagnostics' knowledge row judges (see "Subsystem
+diagnostics"). The brain's memory, journal, project notes,
 topics and `knowledge.md` are items too, under `/jarvis/brain`
 (`brain_notes.py`, the root's `only`), each content `ref` its note
 reference; the context pack's tier 0 reads a note's item while it is the
@@ -2084,6 +2210,12 @@ CPU kept it from moving at all). The engine's health is worked out on a
 thread of its own every second (`serve._keep_health`) and `/v1/health`
 answers with it, so a busy engine is never restarted for a slow ping; it is
 worked out on the request only when that is older than `HEALTH_STALE_SEC`.
+The health carries each route's last five minutes (`routes`: requests,
+seconds in all and the slowest, by method and route, recorded by
+`serve.dispatch` into `engine.RouteTimes`), and `kill -USR1 <engine pid>`
+appends every thread's Python stack to `knowledge-engine-stacks.log` beside
+the engine's log (`oscompat.stacks_on_signal`, the server's too), so a busy
+engine is diagnosed live without root.
 Ingest is a child of its
 own, at background priority, `python -m jarvis.knowledge_ingest`, one pass at a time,
 stopped and continued with the pace; it makes no documents (no chunks:
@@ -2216,13 +2348,33 @@ brain's acting `activate_language_kit` (the held digest) calls the same
 `language_kit_updates.approve_held`, which activates only exactly the
 candidate held. `GET /api/language-kits/status` and `language_document`'s
 capabilities read the status.
+A candidate the updater activates by itself (its language files the
+active kit's) is said, never unseen: `updates.json` keeps it as
+`activated` (`from` and `to`, each version and digest, and `at`; `status`
+drops it once that kit is no longer the one in force), and
+`language_kit_updates.attend` records it as one silent item of the same
+kind, event `activated` (`ACTIVATED`, facts `from`, `version`, `digest`),
+source the new kit's digest, kept until a later activation replaces it or
+he marks it seen; his own Activate of a held candidate clears it. His
+approval of an architecture design (`approve-architecture`, see "Work
+packages" and docs/making-a-package.md) is bound to the language, not the
+release: `language_projection.current_subject` holds it in force while
+the kit its revision was checked under has the kit in force's language
+files (`language_kit.language_digests`, the three files' SHA-256s, the
+same test `activate` asks a review by), so a release that changes none of
+them leaves an approval and an open question as they were; one that
+changes any makes it stale, and that kit is held for his review anyway.
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
 not picked up, answered or not sent; an agent's message;
-a session needing him; a session finishing; a run or package run ending;
+a session needing him; a session finishing; a run or package run ending
+(any run JARVIS started; one started from the dashboard, origin `api`, only
+when it failed or timed out);
 a person's message arriving; a workflow's news; communications down; not
-signed in; a person's message that did not go; the brain down, needing its
+signed in; a person's message that did not go; messages between people
+failing to get through; a chosen language whose model is missing; a
+work-item key near its end; the brain down, needing its
 sign-in or at its usage limit; a shell command's or keypress's outcome after
 its exact read-back) is first an item in
 `attention_store.py` (documents in the engine, `records.py`): one
@@ -2514,7 +2666,13 @@ second while it runs. At startup, before the brain is spawned (its launch
 prompt carries the language rule), `language_setting.load` puts the saved
 language in force and gives speech input its model, or English for that run
 when the saved one's model is missing (preflight checks the same model,
-`startup_model`). `GET`/`POST /api/settings/language` are the routes; the
+`startup_model`); then, once the attention record is open, one silent
+`language` item (`model_missing`, the codes of the language chosen and the
+one used, which the page names in the reader's language through
+`main.updates.language.<code>`, attention.ts `languagesNamed`;
+`server._attend_language_at_start`), resolved when a language is next put
+in force (`server._language_published`, the hook `language_setting.change`
+publishes through). `GET`/`POST /api/settings/language` are the routes; the
 brain's `speech_models` read starts with the language.
 
 The Honorific setting (Settings, You: Sir, Ma'am, Señor, None;
@@ -2635,8 +2793,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 ## Key Files
 - `server.py` — Main server, WebSocket handler, HTTP API, action system;
   `kill -USR1 <pid>` appends every thread's Python stack to
-  `server-stacks.log` in the data folder (`_stacks_on_signal`), for a
-  server that stops answering
+  `server-stacks.log` in the data folder (`_stacks_on_signal`, through
+  `knowledge.oscompat.stacks_on_signal` as the engine's), for a server
+  that stops answering
 - `brain.py` — The voice brain: one long-lived `claude -p` process on the
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
@@ -2809,8 +2968,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
-- `usage_history.py` — The long-term record of the week: every seven-day
-  reading `usage_store.record` takes, one `usage` document a brain a day
+- `usage_history.py` — The long-term record of the week: the seven-day
+  readings `usage_store.record` takes, each kept only when it says
+  something the last one kept did not (percentage, reset, status, account:
+  `_says_more`) or `USAGE_READING_EVERY_SEC` (10 minutes) after it, so a
+  day's document grows by at most 144 readings when nothing moves (every
+  version is kept), one `usage` document a brain a day
   (`/usage/<brain>/<date>.usage`; the five-hour window is never kept, Tim's
   word): its `readings` keep each one for `RAW_KEEP_SEC` (14 days) with its
   provider, account hash (`brain_accounts.history_ref`, None while unknown),

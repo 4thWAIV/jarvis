@@ -1,0 +1,15 @@
+{
+  "main": "71e8aae26aec5a9f73aa326f5e764b3959bcd671",
+  "included_selector_fix": "646b1452978095e53006580e35e711ff9beafd8d",
+  "pr144_included": false,
+  "tests": {
+    "typescript": "passed",
+    "anchored_header_navigation_contract_coverage": "415 passed, 4 skipped; one Vite assets-directory setup race",
+    "header_retry": "1 passed",
+    "compiler_and_inventory": "83 passed",
+    "pages": "15 passed",
+    "current_frame": "passed"
+  },
+  "merge_approval": "pending",
+  "review": "Planning owns independent review and hosted CI"
+}

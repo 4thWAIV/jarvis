@@ -702,6 +702,40 @@ await parity("takeover: no sheet without a takeover", [["layout.sheet", { shown:
   passed.push("takeover key: toggles, never while typing");
 }
 
+{
+  await reset();
+  const info = { id: "control-deck", name: "control-deck", version: "1.0.0", purpose: "",
+    runs: "page" as const, entry: "index.html", source: "local", sources: ["local"] };
+  packages.showPackage(info);
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal((await dispatch("package.menu", {show: "more"}, {actor: "brain"})).status, "unavailable");
+  const called: unknown[] = [];
+  const off = packages.mountPackageControls({ packageId: info.id, slides: 3, presentation: true,
+    menu: show => called.push(["menu", show]), select: (slide, close) => called.push(["slide", slide, close]),
+    inspect: () => called.push(["inspect"]), document: enabled => called.push(["document", enabled]) });
+  for (const actor of ["human", "brain"] as const) {
+    called.length = 0;
+    assert.equal((await dispatch("package.menu", {show: "chapters"}, {actor})).status, "completed");
+    assert.equal((await dispatch("package.slide", {slide: 2, closeMenu: true}, {actor})).status, "completed");
+    assert.equal((await dispatch("package.inspect", {}, {actor})).status, "completed");
+    assert.equal((await dispatch("package.document", {enabled: true}, {actor})).status, "completed");
+    assert.deepEqual(called, [["menu", "chapters"], ["slide", 2, true], ["inspect"], ["document", true]]);
+    assert.equal((await dispatch("package.slide", {slide: 4}, {actor})).status, "unavailable");
+    assert.equal((await dispatch("package.slide", {slide: 0}, {actor})).status, "invalid");
+    assert.equal(called.length, 4);
+  }
+  off();
+  assert.equal((await dispatch("package.inspect", {}, {actor: "brain"})).status, "unavailable");
+  const ordinary = packages.mountPackageControls({ packageId: info.id, slides: 0, presentation: false,
+    menu: () => {}, select: () => {}, inspect: () => {}, document: () => {} });
+  assert.equal((await dispatch("package.menu", {show: "chapters"}, {actor: "brain"})).status, "unavailable");
+  assert.equal((await dispatch("package.document", {enabled: true}, {actor: "brain"})).status, "unavailable");
+  await dispatch("package.close", {}, {actor: "human"});
+  assert.equal((await dispatch("package.menu", {show: "more"}, {actor: "brain"})).status, "unavailable");
+  ordinary();
+  passed.push("package border: shared callable navigation, range checks and unmounted refusal");
+}
+
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so
 // node cannot load them; nor can it load a component (.tsx), so a command
 // whose handler a component registers is left to the page tests too.

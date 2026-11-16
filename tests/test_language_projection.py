@@ -18,7 +18,7 @@ def test_factory_package_keeps_exact_source_check_and_render(draft, monkeypatch,
     assert package.manifest.brief == "UNDERSTANDING.md"
     assert set(package.manifest.understanding) == {"source.yaml", "check.json", "canonical.json", "index.html", make_package.STORY_FILE}
     assert package.manifest.story == make_package.STORY_FILE
-    assert work_packages.page_file(package, make_package.STORY_FILE) == package_story.encode(package_inbox.with_understood_slide(None, language))
+    assert work_packages.page_file(package, make_package.STORY_FILE) == package_story.encode(package_inbox.with_vote_slide(None, language))
     assert work_packages.page_file(package, "UNDERSTANDING.md").decode() == draft["readable_markdown"]
     assert work_packages.page_file(package, "index.html") == Path(checked["references"]["view"]).read_bytes()
     assert work_packages.page_file(package, "source.yaml").decode() == draft["source"]
@@ -215,7 +215,7 @@ def test_an_authored_story_and_the_handoff_purpose_are_bound_and_told_with_one_v
     assert manifest["purpose"] == PURPOSE, "the package states the handoff's purpose"
     assert (folder / language_projection.AUTHORED_STORY).read_bytes() == raw
     told = package_story.parse((folder / make_package.STORY_FILE).read_bytes())
-    assert [s.waits for s in told.slides] == [None, "clear-enough", package_inbox.UNDERSTOOD_ID]
+    assert [s.waits for s in told.slides] == [None, "clear-enough", package_inbox.VOTE_ID]
 
 
 def test_without_a_story_the_package_is_the_standard_vote_alone_with_its_purpose(draft, tmp_path):

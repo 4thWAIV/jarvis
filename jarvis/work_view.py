@@ -240,6 +240,12 @@ class WorkView:
         else:
             self.drain()
 
+    @property
+    def built(self) -> bool:
+        """Whether the view has been built for the database in use now (the
+        server's loop builds it until it is)."""
+        return self._loaded()
+
     def _loaded(self) -> bool:
         """Whether the view holds the database in use now."""
         return self._db is not None and self._db == str(data_paths.db_path())
