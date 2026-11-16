@@ -294,6 +294,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "2c9ccefba59069d51e83d3971bb0882d935aba4757919c4d77f69b3c9a254d0d",  # agent keys, merged with main after PR 92
     "f6d1e190f9b8a76b7358754a0b4fda8e520f9bffbb3a0ef129e84dfdc68bbae1",  # opening is not seeing, merged with main after PR 87
     "dc64d47bec3216e801f53a788a7f6f25e1c689ef112635b5406c2f9439ad4e14",  # one channel: what's new, read it, open it, reply
+    "3edb29114cb8ed233cf062310a2e1b01a9f9d36eb531674faf48404901a89cd0",  # a whole message, paged, summed up
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

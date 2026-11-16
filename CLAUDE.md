@@ -424,11 +424,22 @@ voice socket's too: clear and rotation answers, the read-backs waiting for
 his answer, which a Read closes and never approves, and `_handle_utterance`);
 409 with no voice, and a brain that is down shows the failed reply. The brain
 answers with `read_aloud`, which speaks nothing: it gives the brain that
-message only, walled (from, its Work item, its words, the package it carries;
-a session's message is marked read), to read him in its reply and sum up;
-the message is read, and its update seen, only once that reply is heard in
-full (`_message_read_to_him`, `_turn_reads`, `_seen_once_heard`; the reply
-waited for up to `READ_ALOUD_TIMEOUT`). Reply (`POST
+whole message only, walled (from, its Work item, its words, the package it
+carries; a session's message is marked read), to tell him in its reply who
+it is from and what it is about and sum it all up (what it says, what it
+asks of him, any package), never recited. His Read and a spoken request
+("read me the message from Planning") are the same request and reach the
+same tool and function.
+A message too long for one tool result comes a page at a time (`page`; its
+JSON split by `_paged(..., exact=True)`, each page walled on its own under
+`TOOL_RESULT_CAP`, so the pages join back exactly): while pages remain the
+brain is told to call it again with the message's id and the next page and
+say nothing yet, and only the last page tells it to sum it up; a later page is
+pinned by that id and never moves the message he is on. The message is
+read, and its update seen, only from the last page's call, once that reply
+is heard in full (`_message_read_to_him`, `_turn_reads`, `_seen_once_heard`;
+the reply waited for up to `READ_ALOUD_TIMEOUT`), so a reading cut off part
+way leaves it unread. Reply (`POST
 .../reply`, the brain's `reply`) goes to the proven sender
 (`_reply_capture`): a capture to the agent (a subagent's through its
 parent, "To Planning, for Feynman."), to a package's proven sending
