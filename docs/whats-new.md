@@ -25,6 +25,33 @@ that kit waits for your review in Settings, Updates as before.
 When JARVIS brings in a new kit by itself, it now tells you: one update in
 Updates waiting (shown, never spoken) naming the kit now in force and the
 one it replaced, so a kit never changes unseen.
+## JARVIS no longer rewrites records when nothing changed
+
+Every record keeps every version, and a few writers rewrote whole records
+when only a time had moved, so their history grew without end (one day's
+usage record reached hundreds of megabytes). Now each writes only when
+something you can see changed: a weekly usage reading is kept when its
+figures change, or once every ten minutes otherwise, so the burn-down
+still has a point every ten minutes; the messaging sync position is
+written only when it moves; and the folder catalog's "last checked",
+"seen" and discovery times are kept in memory, still shown as they are,
+and written at most every fifteen minutes.
+## The knowledge engine stops timing out on records with long histories
+
+The earlier fix read a record's newest version without its history, but
+only on some paths: reading one record through the engine's item route,
+and every list of records, still unpacked every version each record has
+ever had. Listing the brains' usage for the day took nearly five seconds of
+the engine's time, reading those 24 records eight, and the server asks for
+such lists many times a minute, so the engine sat at full CPU and the
+page's and the brain's reads timed out. Every read of the newest records
+now leaves the history alone: on a copy of the live records the same set of
+lists and reads costs the engine 2.4 seconds instead of 14, and the usage
+records are read in 0.07 seconds instead of 8. When the engine is busy,
+its health now says which requests keep it busy (each kind of request's
+count and time over the last five minutes), and `kill -USR1` on the engine
+writes what every one of its threads is doing to
+`knowledge-engine-stacks.log` beside its log.
 
 ## Decks use the whole slide
 

@@ -440,3 +440,44 @@ def test_an_engine_started_through_a_launcher_is_the_one_started():
     found = engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b", parent=100)
     assert found.started_by == {100, 200}
     assert engine_address.EngineAddress("http", "127.0.0.1", 1, 200, "b").started_by == {200}
+
+
+# --- seeing a busy engine live ------------------------------------------------
+
+def test_each_routes_time_is_kept_for_the_window_in_the_health(engine):
+    from jarvis.knowledge.engine import RouteTimes
+    now = [1000.0]
+    times = RouteTimes(window=300, bucket=60, clock=lambda: now[0])
+    times.record("POST /v1/items/list", 0.5)
+    times.record("POST /v1/items/list", 1.5)
+    times.record("POST /v1/items/get", 0.1)
+    assert times.snapshot() == {"window_s": 300, "routes": {
+        "POST /v1/items/list": {"count": 2, "seconds": 2.0, "max_s": 1.5},
+        "POST /v1/items/get": {"count": 1, "seconds": 0.1, "max_s": 0.1}}}
+    now[0] += 200
+    times.record("POST /v1/items/get", 0.3)
+    assert times.snapshot()["routes"]["POST /v1/items/get"] == {"count": 2, "seconds": 0.4, "max_s": 0.3}
+    now[0] += 400                                   # the first minutes have left the window
+    times.record("POST /v1/items/count", 0.2)
+    assert times.snapshot()["routes"] == {"POST /v1/items/count": {"count": 1, "seconds": 0.2, "max_s": 0.2}}
+    dispatch(engine, "POST", "/v1/items/list", {"caller": {"person": "tim"}, "under": "/"})
+    dispatch(engine, "POST", "/v1/items/list", {"caller": {"person": "tim"}, "under": "not a path"})
+    routes = dispatch(engine, "GET", "/v1/health").payload["routes"]["routes"]
+    assert routes["POST /v1/items/list"]["count"] == 2     # a refused request is timed too
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no SIGUSR1")
+def test_usr1_writes_every_threads_stack_beside_the_engine_log(tmp_path):
+    import faulthandler
+    import signal
+    from jarvis.knowledge import oscompat
+    path = tmp_path / "knowledge-engine-stacks.log"
+    assert oscompat.stacks_on_signal(path)
+    try:
+        os.kill(os.getpid(), signal.SIGUSR1)
+        time.sleep(0.1)
+        text = path.read_text()
+    finally:
+        faulthandler.unregister(signal.SIGUSR1)
+    assert "most recent call first" in text and "test_usr1_writes_every_threads_stack" in text
+    assert data_paths.knowledge_stacks_path().parent == data_paths.knowledge_engine_log_path().parent

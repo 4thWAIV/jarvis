@@ -211,6 +211,67 @@ def test_a_failing_history_never_loses_the_reading(store, monkeypatch):
     assert usage_store.latest()["windows"]["seven_day"]["utilization"] == 40.0
 
 
+# ── a reading that says nothing new is not kept ──────────────────────────
+# Every version of a day's document is kept, so appending a reading a
+# minute grew its history with the square of the day (one day's reached
+# 647 MB). A reading is kept when it says something the last one kept did
+# not, or once USAGE_READING_EVERY_SEC has passed since it.
+
+def _day_versions(usage_history, at=T):
+    from jarvis import records
+    return len(records.history(usage_history.path_of("anthropic", usage_history.day_of(at))))
+
+
+def test_a_reading_that_says_the_same_is_not_written_again(store, tmp_path):
+    usage_store, usage_history = store
+    usage_store.record(_event(seven=0.5), now=T)
+    written = _day_versions(usage_history)
+    for n in range(1, 9):
+        usage_store.record(_event(seven=0.5), now=T + 60 * n)
+    assert _day_versions(usage_history) == written, "nothing new: no write at all"
+    assert [r[0] for r in _rows(tmp_path)] == [T]
+    # The latest reading stays current: usage_store keeps it on its own.
+    assert usage_store.latest()["windows"]["seven_day"]["observed_at"] == T + 480
+
+
+def test_a_reading_that_changes_is_kept_at_once(store, tmp_path):
+    usage_store, _ = store
+    usage_store.record(_event(seven=0.5), now=T)
+    usage_store.record(_event(seven=0.5), now=T + 60)
+    usage_store.record(_event(seven=0.51), now=T + 120)                        # the percentage
+    usage_store.record(_event(seven=0.51, status="rejected"), now=T + 180)      # the status
+    usage_store.record(_event(seven=0.51, status="rejected", resets=T + 2 * WEEK), now=T + 240)
+    assert [(r[0], r[4], r[6]) for r in _rows(tmp_path)] == [
+        (T, 50.0, "allowed"), (T + 120, 51.0, "allowed"), (T + 180, 51.0, "rejected"),
+        (T + 240, 51.0, "rejected")]
+
+
+def test_a_reset_that_wobbles_is_the_same_reading(store, tmp_path):
+    usage_store, usage_history = store
+    usage_store.record(_event(seven=0.5), now=T)
+    usage_store.record(_event(seven=0.5, resets=T + WEEK + 5), now=T + 60)     # Codex's wobble
+    assert len(_rows(tmp_path)) == 1
+
+
+def test_an_unchanged_reading_is_kept_once_every_ten_minutes(store, tmp_path):
+    usage_store, usage_history = store
+    every = usage_history.USAGE_READING_EVERY_SEC
+    for n in range(0, 31):                     # half an hour, a reading a minute
+        usage_store.record(_event(seven=0.5), now=T + 60 * n)
+    assert [r[0] for r in _rows(tmp_path)] == [T, T + every, T + 2 * every, T + 3 * every]
+    # The burn-down still draws the quiet stretch as one line of points.
+    got = usage_history.read("anthropic", T, T + 1800, "raw", now=T + 1800)
+    assert [p["used"] for p in got["weeks"][0]["points"]] == [50.0] * 4
+
+
+def test_the_last_reading_kept_is_found_after_a_restart(store, tmp_path):
+    usage_store, usage_history = store
+    usage_store.record(_event(seven=0.5), now=T)
+    usage_history._last_kept.clear()           # a JARVIS started again
+    usage_store.record(_event(seven=0.5), now=T + 60)
+    assert len(_rows(tmp_path)) == 1
+
+
 # ── the route and the brain's tool give the same answer ──────────────────
 
 @pytest.fixture
