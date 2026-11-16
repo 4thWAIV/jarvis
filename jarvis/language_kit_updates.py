@@ -11,6 +11,14 @@ resolved once the candidate is active or no longer held. Settings, Updates
 shows it with Activate, his click (`POST /api/language-kits/activate`), and
 the brain's acting `activate_language_kit` calls the same `approve_held`.
 Every activation clears the stale refusal from updates.json.
+
+A candidate the updater activates by itself (its language files the same
+as the kit in force's) is never unseen: updates.json keeps it as
+`activated` (from which version and digest to which, and when), and while
+it is the kit in force it is one silent attention item of the same kind,
+event `activated`, source the new kit's digest, kept until a later
+activation replaces it or he marks it seen. His own activation of a held
+candidate is his act and clears it.
 """
 from __future__ import annotations
 
@@ -37,6 +45,9 @@ log = logging.getLogger(__name__)
 # other reason (held after a rollback, a kit file that changed).
 KIND = "language_kit"
 REVIEW, REFUSED = "review", "refused"
+# The event of the item an automatic activation is: which version replaced
+# which, the language unchanged.
+ACTIVATED = "activated"
 
 
 class Attention(Protocol):
@@ -79,6 +90,11 @@ def status() -> dict:
         state["compatibility_review_required"] = False
     else:
         state["compatibility_review_required"] = True
+    shift = state.get("activated")
+    if not isinstance(shift, dict) or (shift.get("to") or {}).get("digest") != active_digest:
+        # No automatic activation, or the kit it brought is no longer the
+        # one in force (rolled back, or activated over since).
+        state["activated"] = None
     return state
 
 
@@ -130,6 +146,7 @@ def activate_reviewed(digest: str) -> dict:
     state = status()
     if state.get("held") is None:
         _settled(state)
+    state["activated"] = None   # his act, not one he has to be told of
     kit._atomic_json(kit.root() / "updates.json", state)
     runtime.attend()
     return selected
@@ -159,14 +176,30 @@ def facts(hold: dict) -> dict:
     return out
 
 
+def activation_facts(shift: dict) -> dict:
+    """An automatic activation's attention facts: from which version to
+    which (the publisher's tags, validated as release tags)."""
+    return {"from": str((shift.get("from") or {}).get("version") or ""),
+            "version": str(shift["to"]["version"]), "digest": str(shift["to"]["digest"])}
+
+
 def attend(attention: Attention) -> None:
     """The held candidate as one silent attention item (one per digest),
-    and every other kit item resolved: active now or no longer held."""
-    hold = held()
+    the automatic activation of the kit in force as another, and every
+    other kit item resolved: active now or no longer held, or an
+    activation replaced."""
+    state = status()
+    hold, shift = state["held"], state["activated"]
+    keep = set()
     if hold is not None:
         attention.record(KIND, hold["digest"], hold["reason"], facts=facts(hold), audible=False)
+        keep.add(hold["digest"])
+    if shift is not None:
+        attention.record(KIND, shift["to"]["digest"], ACTIVATED,
+                         facts=activation_facts(shift), audible=False)
+        keep.add(shift["to"]["digest"])
     for source in attention.open_sources(KIND):
-        if hold is None or source != hold["digest"]:
+        if source not in keep:
             attention.resolve(KIND, source)
 
 
@@ -251,9 +284,17 @@ class Updater:
                     raise kit.KitError("The kit download size differs from release metadata.")
                 candidate = kit.stage(path, pinned)
             state["candidate"] = {"version": tag, "digest": digest, "commit": commit}
+            before = state.get("active")
             try:
                 kit.activate(candidate)
                 _settled(state)
+                if before and before.get("digest") != candidate.release.digest:
+                    # Activated by itself: said, as one silent update.
+                    state["activated"] = {
+                        "from": {"version": before.get("version"), "digest": before.get("digest")},
+                        "to": {"version": candidate.release.version,
+                               "digest": candidate.release.digest},
+                        "at": time.time()}
             except kit.KitError as error:
                 # The staged version is retained for an explicit compatibility
                 # review; existing documents and the active kit remain pinned.

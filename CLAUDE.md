@@ -2203,6 +2203,22 @@ brain's acting `activate_language_kit` (the held digest) calls the same
 `language_kit_updates.approve_held`, which activates only exactly the
 candidate held. `GET /api/language-kits/status` and `language_document`'s
 capabilities read the status.
+A candidate the updater activates by itself (its language files the
+active kit's) is said, never unseen: `updates.json` keeps it as
+`activated` (`from` and `to`, each version and digest, and `at`; `status`
+drops it once that kit is no longer the one in force), and
+`language_kit_updates.attend` records it as one silent item of the same
+kind, event `activated` (`ACTIVATED`, facts `from`, `version`, `digest`),
+source the new kit's digest, kept until a later activation replaces it or
+he marks it seen; his own Activate of a held candidate clears it. His
+approval of an architecture design (`approve-architecture`, see "Work
+packages" and docs/making-a-package.md) is bound to the language, not the
+release: `language_projection.current_subject` holds it in force while
+the kit its revision was checked under has the kit in force's language
+files (`language_kit.language_digests`, the three files' SHA-256s, the
+same test `activate` asks a review by), so a release that changes none of
+them leaves an approval and an open question as they were; one that
+changes any makes it stale, and that kit is held for his review anyway.
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message

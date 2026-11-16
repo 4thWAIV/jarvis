@@ -10,6 +10,21 @@ screenshot review came after its check had its package held although the
 check was there. It now reads the whole transcript a line at a time and
 finds the check wherever it is; a 30 MB transcript takes about a tenth of a
 second.
+## A new language kit no longer voids your architecture approval, and says when it arrives
+
+The architecture language kit is published again on every change its
+publisher makes, and most releases change nothing in the language itself.
+Your approval of an architecture design used to count for nothing as soon
+as any new kit came into force, so the package had to be made and asked
+again with nobody telling you why. Now your approval, and a question still
+waiting for it, stand while the new kit's language files (`metalang.yaml`,
+`arch.yaml`, `propose.yaml`) are the same as those the design was checked
+under. A kit that changes any of them still makes the approval stale, and
+that kit waits for your review in Settings, Updates as before.
+
+When JARVIS brings in a new kit by itself, it now tells you: one update in
+Updates waiting (shown, never spoken) naming the kit now in force and the
+one it replaced, so a kit never changes unseen.
 ## JARVIS no longer rewrites records when nothing changed
 
 Every record keeps every version, and a few writers rewrote whole records
