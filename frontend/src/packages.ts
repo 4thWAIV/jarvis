@@ -116,6 +116,10 @@ export interface StoryOutline {
    *  (that slide's targets; empty: the whole page). PackageFocus.tsx lights
    *  it while the question is his. */
   focus?: Record<string, string[]>;
+  /** What each slide's beats click, in order (a deck's #go-N): the border
+   *  opens a slide with its first, and counts itself on the slide whose
+   *  openers include the one the page says it shows (`slide.shown`). */
+  openers?: string[][];
 }
 
 /** A beat of a story, as its audio frames carry it (package_story.py). */

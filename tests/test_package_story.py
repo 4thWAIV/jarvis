@@ -61,7 +61,8 @@ def test_the_example_story_is_checked_and_each_beat_first_shows_its_slide(deck):
     story = deck.story()
     assert story.outline() == {"title": "A pot of tea", "language": "en", "slides": [
         "Three things a good pot of tea needs", "Four steps", "Each tea has its own time"],
-        "asks": [], "focus": {}}
+        "asks": [], "focus": {},
+        "openers": [[], [], [".tea[data-detail='green']", "#detail-green .close"]]}
     cues = story.cues(deck.id, 3)
     words, cue = cues[1]
     assert words == "Green tea wants water well off the boil."

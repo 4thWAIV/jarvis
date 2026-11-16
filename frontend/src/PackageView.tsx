@@ -14,7 +14,10 @@
  *
  * The presentation first: the icon border (PackageBorder.tsx: the story's
  * controls, chapters, More, Done, Take over and Close) is the only bar, and
- * the package's own page takes the whole width of the view below it. With
+ * the package's own page takes the whole width of the view below it. For a
+ * deck it is the one navigation too: its count follows the slide the deck
+ * says it shows (`slide.shown`), and its Previous, Next and Chapters open a
+ * slide in the deck (`slide.open`), which draws no bar of its own here. With
  * nothing open, nothing covers it. A package takes over the page as it
  * opens (packages.ts), and while it has, the border fades back (dimmed,
  * every control still where it is and still taking his click) after a few
@@ -87,7 +90,12 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const offered = info.layout === "wide" || asked;
   // The author's explanation, opened as a card over the whole view.
   const [reading, setReading] = useState(false);
-  useEffect(() => { setReading(false); setPresentation(false); }, [info.id]);
+  // The story slide the deck says it shows, counted each time it says so;
+  // null until a page reports one (only such a page is moved by the border).
+  const [shown, setShown] = useState<{ slide: number; seq: number } | null>(null);
+  const outline = useRef(info.story);
+  outline.current = info.story;
+  useEffect(() => { setReading(false); setPresentation(false); setShown(null); }, [info.id]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   // Where the frame says each focused part is, by key ("beat:<beat>", or
@@ -102,6 +110,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
       onPresentationReady: () => setPresentation(true),
       onPresentationReturnFocus: () => document.querySelector<HTMLButtonElement>("#package-view [data-package-menu=more]")?.focus(),
       onFocus: (key, rect) => setWhere((now) => ({ ...now, [key]: rect })),
+      onSlideShown: (opener) => {
+        const slide = (outline.current?.openers ?? []).findIndex((list) => list.includes(opener)) + 1;
+        if (slide) setShown((was) => ({ slide, seq: (was?.seq ?? 0) + 1 }));
+      },
     });
     bridge.current = connected;
     return () => { bridge.current = null; connected.close(); };
@@ -248,8 +260,12 @@ export function PackageView({ info }: { info: PackageInfo }) {
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
-        fade={fading}
-        command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, slide: value, enabled: value}, "*")}
+        fade={fading} shown={shown}
+        openSlide={shown && ((slide) => {
+          const opener = info.story?.openers?.[slide - 1]?.[0];
+          if (opener) bridge.current?.openSlide(opener);
+        })}
+        command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, enabled: value}, "*")}
         done={<DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />} />
       {(asking || (info.vote?.question && !voteInCard)) &&
         <div className="package-vote-row">

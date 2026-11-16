@@ -124,9 +124,13 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
         pytest.skip("no Playwright Chromium")
     assert code == 0, said
 
-    for size in ("809x589", "662x489"):
-        for check in ("the package frame is", "the deck's own styles are in force", "slides fit",
-                      "every vote control is visible", "every picture, on every slide"):
+    # The two centre sizes and two of the whole width: the deck fills each,
+    # and the border is its navigation at each.
+    for size in ("809x589", "662x489", "1600x900", "1280x713"):
+        for check in ("the package frame is", "the deck's own styles are in force",
+                      "slides fill the frame, fit", "every vote control is visible",
+                      "every picture, on every slide", "the border's count followed the deck",
+                      "a slide chosen in the border's Chapters opens in the deck"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
@@ -178,9 +182,11 @@ def test_the_command_checks_a_presentation_and_its_one_vote(
         pytest.skip("no Playwright Chromium")
     assert code == 0, said
     lines = said.splitlines()
-    for size in ("809x589", "662x489"):
+    for size in ("809x589", "662x489", "1600x900", "1280x713"):
         for check in ("opened it by its title", "the package frame is",
-                      "the deck's own styles are in force", "slides fit"):
+                      "the deck's own styles are in force", "slides fill the frame, fit",
+                      "the border's count followed the deck",
+                      "a slide chosen in the border's Chapters opens in the deck"):
             assert any(f"ok: {size}: " in line and check in line for line in lines), \
                 (size, check, said)
         assert any(f"ok: {size}: " in line and "every vote control is visible" in line
@@ -230,8 +236,8 @@ def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
     assert not result.ok
     assert any("809x589: the deck is not styled: deck.css " in f
                for f in result.failures), result.failures
-    assert any("its canvas is not styled" in f for f in result.failures), result.failures
-    assert not any("slides fit" in line or "styles are in force" in line
+    assert any("it is not laid out to the frame" in f for f in result.failures), result.failures
+    assert not any("slides fill the frame" in line or "styles are in force" in line
                    for line in result.passed), result.passed
     assert (tmp_path / "check" / "809x589" / "unstyled.png").is_file()
 

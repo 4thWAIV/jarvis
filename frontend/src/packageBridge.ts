@@ -41,6 +41,14 @@
  * until `focus.clear`. The page never reads the frame's DOM: the frame has
  * no origin, so where a part is comes only from the frame itself.
  *
+ * And where it is (a deck, examples/packages/decision-deck): the frame says
+ * `slide.shown` {opener} whenever it shows a slide, however it got there (a
+ * key, the story, a question JARVIS waits on), naming the control that opens
+ * it ("#go-3"); the border counts itself on the story slide whose openers
+ * include it. A frame that has said so is one the border moves: JARVIS
+ * posts `slide.open` {opener} (the story helper clicks it) for Previous,
+ * Next and Chapters, so the border is the deck's one navigation.
+ *
  * And the room it has (takeover mode, uiNavigation.ts `layout`): JARVIS
  * posts `layout` {mode, width, height} once the frame has loaded and
  * whenever the layout or the frame's size changes (the frame's own page
@@ -74,6 +82,8 @@ export interface BridgeEvents {
   onFocus?(key: string, rect: FrameRect | null): void;
   onPresentationReady?(): void;
   onPresentationReturnFocus?(): void;
+  /** The frame shows the slide `opener` opens. */
+  onSlideShown?(opener: string): void;
 }
 
 /** A box in the frame's own coordinates, as its helper reports it. */
@@ -86,6 +96,8 @@ export interface Bridge {
   /** Ask the frame to bring the part `targets` name into view and report
    *  it under `key`; null asks it to stop. */
   focus(key: string | null, targets?: string[]): void;
+  /** Ask the frame to open the slide `opener` opens. */
+  openSlide(opener: string): void;
 }
 
 const asRect = (value: unknown): FrameRect | null => {
@@ -201,6 +213,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     else if (message.type === "listen") listen(Boolean(message.on));
     else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); }
     else if (message.type === "layout.request") events.onLayoutRequest();
+    else if (message.type === "slide.shown" && typeof message.opener === "string") events.onSlideShown?.(message.opener);
     else if (message.type === "story.focus" && typeof message.key === "string") {
       events.onFocus?.(message.key, asRect(message.rect));
     }
@@ -231,6 +244,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   };
   return {
     close,
+    openSlide(opener) { post({ type: "slide.open", opener }); },
     focus(key, targets = []) {
       if (key === null) {
         if (asked) post({ type: "focus.clear" });

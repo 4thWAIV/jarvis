@@ -28,7 +28,6 @@ def test_viewbox_image_and_delivery_gate(tmp_path, width, height):
         page = browser.new_page(viewport={'width': width, 'height': height})
         page.goto((tmp_path / 'index.html').as_uri())
         page.wait_for_function('document.querySelector("img").complete')
-        page.locator("#stage").evaluate("el => el.style.transform = `scale(${Math.min(innerWidth / 880, innerHeight / 640)})`")
         assert not page.evaluate(PICTURES)
         rect = page.locator('img').bounding_box()
         assert rect['width'] > 200 and rect['height'] > 100

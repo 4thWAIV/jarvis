@@ -37,12 +37,14 @@ SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
 LANGUAGES = ("en", "es")
 
-# The most characters each piece of a slide may have. The deck draws on a
-# fixed canvas, so words past these do not fit it at a readable size; the
-# check in a real frame (decision_check.py) is the final word on fitting.
+# The most characters each piece of a slide may have. The deck lays a slide
+# out to the frame in units that keep its proportions from the smallest
+# frame to the largest, so words past these do not fit at a readable size
+# in the smallest; the check in a real frame (decision_check.py) is the
+# final word on fitting.
 CAPS = {
     "title": 80,          # the deck's title and a content slide's title
-    "short": 16,          # a slide's name on the jump strip
+    "short": 16,          # a slide's name in the border's Chapters
     "question": 120,
     "reason": 160,
     "context": 200,

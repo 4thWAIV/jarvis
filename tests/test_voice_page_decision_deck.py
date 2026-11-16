@@ -8,6 +8,11 @@ app, with the page's Origin, so a Choose goes the whole way: the deck's
 postMessage, packageBridge.ts, saveResult, POST /api/packages/<id>/results,
 work_packages.save_result. An answer recorded by voice (scripts/decide.py,
 as run_package_command runs it) then shows in the frame.
+
+The border above the frame is the deck's one navigation: the deck draws no
+strip, Previous, Next or status of its own there, a slide chosen in the
+border opens in the deck, and a slide the deck moves to by itself (a key)
+is the one the border counts.
 """
 
 import asyncio
@@ -91,12 +96,29 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             iframe = page.locator("#package-view iframe")
             await async_api.expect(iframe).to_have_attribute("sandbox", "allow-scripts")
             frame = page.frame_locator("#package-view iframe")
+            position = page.locator("#package-view .package-position")
 
-            # The first decision's slide, from the jump strip: its voting
-            # area is inside the frame's visible box.
-            await frame.locator("#go-3").click()
+            # No navigation of the deck's own in JARVIS's frame.
+            await async_api.expect(frame.locator("#s1")).to_have_class(re.compile(r"\bcurrent\b"))
+            for bar in ("#strip", "#tally", "#prev", "#next", "#count", "#status"):
+                await async_api.expect(frame.locator(bar)).to_be_hidden()
+            await async_api.expect(position).to_have_text("1 / 6")
+
+            # The first decision's slide, chosen in the border's Chapters:
+            # it opens in the deck, and its voting area is inside the
+            # frame's visible box.
+            await page.locator("#package-view [data-package-menu=chapters]").click()
+            await page.locator(".package-chapters button", has_text="3. Kettle").click()
             slide = frame.locator("#d-kettle-kind")
             await async_api.expect(slide).to_have_class(re.compile(r"\bcurrent\b"))
+            await async_api.expect(position).to_have_text("3 / 6")
+            # The border's Next moves the deck on, and Previous back.
+            await page.locator("#package-view .package-story [aria-label='Next slide']").click()
+            await async_api.expect(frame.locator("#d-tea-kinds")).to_have_class(re.compile(r"\bcurrent\b"))
+            await async_api.expect(position).to_have_text("4 / 6")
+            await page.locator("#package-view .package-story [aria-label='Previous slide']").click()
+            await async_api.expect(slide).to_have_class(re.compile(r"\bcurrent\b"))
+            await async_api.expect(position).to_have_text("3 / 6")
             choose = frame.locator("#opt-kettle-kind-tap .choose")
             box, view = await choose.bounding_box(), await iframe.bounding_box()
             assert view["y"] <= box["y"] and box["y"] + box["height"] <= view["y"] + view["height"]
@@ -107,7 +129,8 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             await choose.click()
             await async_api.expect(frame.locator("#d-kettle-kind .recorded")).to_have_text(
                 "Recorded: A hot water tap. Your words: “Cheaper to fit later”")
-            await async_api.expect(frame.locator("#status")).to_have_text("Saved.")
+            # What was saved is said by the view under the frame.
+            await async_api.expect(page.locator("#package-view .package-status")).to_contain_text("Saved")
             record = json.loads((package.folder / "results" / "decisions.json").read_text())
             assert record["kettle-kind"]["answer"] == "tap"
             assert record["kettle-kind"]["note"] == "Cheaper to fit later"
@@ -121,16 +144,20 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
                                   shell=True, cwd=package.folder, env=env,
                                   capture_output=True, text=True)
             assert said.stdout.startswith("Recorded: tea-kinds: A small selection"), said.stderr
-            await frame.locator("#go-6").click()
+            # The deck's own End key: the border follows it to the last slide.
+            await slide.locator(".question").click()
+            await page.keyboard.press("End")
+            await async_api.expect(frame.locator("#answers")).to_have_class(re.compile(r"\bcurrent\b"))
+            await async_api.expect(position).to_have_text("6 / 6")
             await async_api.expect(frame.locator("#answer-tea-kinds .pick")).to_have_value(
                 "selection", timeout=15000)
-            await async_api.expect(frame.locator("#tally")).to_have_text("2 of 3 answered")
+            await async_api.expect(frame.locator("#answers .tally-here")).to_have_text(" · 2 of 3 answered")
 
             # Approve all recommended asks once, then fills the one left.
             await frame.locator("#approve-all").click()
             await async_api.expect(frame.locator(".confirm")).to_be_visible()
             await frame.locator(".confirm .yes").click()
-            await async_api.expect(frame.locator("#tally")).to_have_text("3 of 3 answered")
+            await async_api.expect(frame.locator("#answers .tally-here")).to_have_text(" · 3 of 3 answered")
             # The tally moves before the save is back: wait for the record.
             wanted = {"kettle-kind": "tap", "tea-kinds": "selection", "selection-size": "three"}
             def answers():
@@ -140,6 +167,6 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
                     return {}
                 return {k: v["answer"] for k, v in record.items()}
             assert await until_async(lambda: answers() == wanted), answers()
-            await async_api.expect(frame.locator("#status")).to_have_text("Saved.")
+            await async_api.expect(page.locator("#package-view .package-status")).to_contain_text("Saved")
         finally:
             await browser.close()

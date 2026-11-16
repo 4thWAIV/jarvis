@@ -20,6 +20,23 @@ about none of it: it says so with `--general`, and it lands in your Inbox
 instead of on a Work item. Leaving out both the Work item and `--general` is
 still refused, so an agent that forgot to name its item is still told to.
 
+## A deck fills its frame, and the border is its one navigation
+
+A decision deck or presentation now lays its slides out to the whole
+frame, edge to edge at any size, instead of drawing a fixed slide scaled
+into the middle of it: on a wide display its pictures and options take the
+extra room. Words stay between 13 and 25 px, so they are never tiny in a
+small frame or huge in a large one.
+
+The deck no longer draws its own slide numbers along the top or Previous,
+Next and a status line along the bottom. The border above it is the one
+way to move: its Previous, Next and Chapters change the deck's slide, and
+its count always says the slide you are on, however you got there (the
+arrow keys, the story, a question JARVIS is waiting on). How many
+questions are answered is on each question's slide and on the answers
+slide, a save shows under the frame, and an answer that needs your words
+says so on its own slide. A deck opened outside JARVIS keeps its own bars.
+
 ## A package's presentation uses the whole display, and each question opens beside its part
 
 A package now opens taking over the page: everything but the slim rail of

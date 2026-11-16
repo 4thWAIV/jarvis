@@ -1,6 +1,18 @@
-/* The shared decision deck. Everything is drawn on one 880 × 640 canvas
-   (#stage) that deck.js scales to fit the frame: 809 × 589 in a 1440 × 900
-   window and 662 × 489 in a 1280 × 800 one, where 18 px here is 13.5 px. */
+/* The shared decision deck. The deck fills its frame at any size and shape:
+   the slides take the frame's whole width and height, and every length
+   below is in deck units (--u), one 880th of the frame's width or one
+   640th of its height, whichever is smaller, so a slide that fits one frame
+   fits every frame, and a wider or taller one gives its pictures and words
+   the extra room rather than a margin. The words have a ceiling (--cap), so
+   a large frame shows them large but never past 25 px a word: at the
+   checker's frames (809 x 589 and 662 x 489) body text is 16.5 and 13.5 px,
+   at 1600 x 900 it is 21 px.
+
+   In JARVIS's package frame the border above it is the deck's one
+   navigation (slides, previous, next, the count) and the view says what
+   was saved, so the deck draws no bar of its own (html.hosted, set by
+   deck.js). Opened anywhere else it keeps its own: the slide strip with
+   the tally, and Previous, n of N, Next and what was saved. */
 :root {
   --ground: #0b1017;
   --surface: #121a24;
@@ -14,56 +26,50 @@
   --chosen-ink: #03140d;
   --later: #fbbf24;
   --quiet: #64748b;
-  /* Text grows with the frame: the floor is what the checks read at the
-     checker's sizes, and a larger frame shows larger words. */
-  --body: clamp(18px, 1.55vw, 26px);
-  --top: 46px;
-  --bottom: 46px;
-  /* JARVIS's microphone corner sits over the frame's lower right; the
-     bottom bar keeps that part empty. */
-  --mic-clear: 300px;
+  /* One deck unit. */
+  --u: min(calc(100vw / 880), calc(100vh / 640));
+  --body: clamp(13px, calc(18 * var(--u)), 21px);
+  --top: calc(46 * var(--u));
+  --bottom: calc(46 * var(--u));
 }
+/* JARVIS's border is the navigation: no bars in the deck. */
+html.hosted { --top: 0px; --bottom: 0px; }
+html.hosted .top, html.hosted .bottom { display: none; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ground); }
 body { color: var(--text); font: var(--body)/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 
-#stage {
-  position: absolute;
-  width: 880px;
-  height: 640px;
-  transform-origin: 0 0;
-  background: var(--ground);
-}
+#stage { position: absolute; inset: 0; background: var(--ground); }
 .hidden-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
 
 button, select, input { font: inherit; color: inherit; }
 button {
   background: var(--raised);
   border: 1px solid var(--edge);
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: calc(6 * var(--u));
+  padding: calc(4 * var(--u)) calc(12 * var(--u));
   cursor: pointer;
+  white-space: nowrap;
 }
-button { white-space: nowrap; }
 .bottom > button { flex: none; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: default; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* ── top: the jump strip and the tally ── */
+/* ── top, outside JARVIS only: the jump strip and the tally ── */
 .top {
   position: absolute; left: 0; right: 0; top: 0; height: var(--top);
-  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  display: flex; align-items: center; gap: calc(12 * var(--u)); padding: 0 calc(16 * var(--u));
   border-bottom: 1px solid var(--edge);
 }
 /* Every slide keeps a readable number: a long deck's strip scrolls
    sideways, kept on the current slide. */
-.strip { position: relative; display: flex; gap: 3px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 3px 2px; }
+.strip { position: relative; display: flex; gap: calc(3 * var(--u)); flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 3px 2px; }
 .strip::-webkit-scrollbar { display: none; }
 .strip .jump {
-  flex: none; width: 34px; height: 30px; padding: 0;
-  border-radius: 4px; color: var(--muted);
+  flex: none; width: calc(34 * var(--u)); height: calc(30 * var(--u)); padding: 0;
+  border-radius: calc(4 * var(--u)); color: var(--muted);
 }
 .strip .jump.decision { border-color: var(--later); border-style: dashed; color: var(--text); }
 .strip .jump.answered { background: var(--chosen); border: 1px solid var(--chosen); color: var(--chosen-ink); }
@@ -72,85 +78,87 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .strip .jump[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tally { color: var(--muted); white-space: nowrap; }
 
-/* ── bottom: previous, n of N, next, and what was saved ── */
+/* ── bottom, outside JARVIS only: previous, n of N, next, what was saved ── */
 .bottom {
   position: absolute; left: 0; right: 0; bottom: 0; height: var(--bottom);
-  display: flex; align-items: center; gap: 10px; padding: 0 var(--mic-clear) 0 16px;
+  display: flex; align-items: center; gap: calc(10 * var(--u)); padding: 0 calc(16 * var(--u));
   border-top: 1px solid var(--edge);
 }
 .count { color: var(--muted); white-space: nowrap; }
 .status { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
-/* ── slides ── */
+/* ── slides: each takes the whole frame between the bars, if any ── */
 .track { position: absolute; left: 0; right: 0; top: var(--top); bottom: var(--bottom); }
 .slide {
-  position: absolute; inset: 0; padding: 10px 28px 8px;
+  position: absolute; inset: 0; padding: calc(14 * var(--u)) calc(28 * var(--u)) calc(12 * var(--u));
   visibility: hidden;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: calc(8 * var(--u));
   overflow: hidden;
 }
 .slide.current { visibility: visible; }
 .slide > * { flex: none; margin: 0; }
 .slide.content { overflow-y: auto; }
 .kicker { color: var(--muted); }
-h2 { font-size: clamp(26px, 2.6vw, 42px); line-height: 1.2; font-weight: 650; }
+h2 { font-size: clamp(13px, calc(26 * var(--u)), 25px); line-height: 1.2; font-weight: 650; }
 code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); }
 
-.body { display: flex; flex-direction: column; gap: 10px; }
+.body { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
 .body > * { margin: 0; }
-.lead { font-size: clamp(21px, 2vw, 32px); }
+.lead { font-size: clamp(13px, calc(21 * var(--u)), 23px); }
 .note { color: var(--muted); }
-.points { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
-.facts { list-style: none; padding: 0; display: flex; gap: 14px; }
-.facts li { flex: 1; background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; }
-.facts b { display: block; font-size: clamp(26px, 2.6vw, 42px); color: var(--accent); }
+.points { padding-left: calc(22 * var(--u)); display: flex; flex-direction: column; gap: calc(6 * var(--u)); }
+.facts { list-style: none; padding: 0; display: flex; gap: calc(14 * var(--u)); }
+.facts li { flex: 1; background: var(--surface); border: 1px solid var(--edge); border-radius: calc(8 * var(--u)); padding: calc(10 * var(--u)) calc(12 * var(--u)); }
+.facts b { display: block; font-size: clamp(13px, calc(26 * var(--u)), 25px); color: var(--accent); }
 .table { border-collapse: collapse; width: 100%; }
-.table th, .table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+.table th, .table td { text-align: left; padding: calc(4 * var(--u)) calc(8 * var(--u)); border-bottom: 1px solid var(--edge); vertical-align: top; }
 .table thead th { color: var(--muted); font-weight: 600; }
-.pictures { display: flex; gap: 14px; align-items: flex-start; }
+.pictures { display: flex; gap: calc(14 * var(--u)); align-items: flex-start; }
 .picture { margin: 0; min-width: 0; }
-.picture img { display: block; max-width: 100%; max-height: 300px; object-fit: contain; border-radius: 6px; }
-.picture figcaption { color: var(--muted); margin-top: 4px; }
+.picture img { display: block; max-width: 100%; max-height: calc(300 * var(--u)); object-fit: contain; border-radius: calc(6 * var(--u)); }
+.picture figcaption { color: var(--muted); margin-top: calc(4 * var(--u)); }
 /* A content slide with pictures: the words take what they need and the
    pictures fill every pixel left, as a decision's do (.decision.fill). */
 .slide.content.fill .body { flex: 1 1 0; min-height: 0; }
-.slide.content.fill .body > .pictures { flex: 1 1 0; min-height: 140px; align-items: stretch; }
+.slide.content.fill .body > .pictures { flex: 1 1 0; min-height: calc(140 * var(--u)); align-items: stretch; }
 .slide.content.fill .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .slide.content.fill .picture img { flex: 1 1 0; min-height: 0; width: 100%; height: 100%;
                                    max-height: none; object-fit: contain; }
 
 /* ── a decision ──
    One question a slide. Every option is a card with its picture as large as
-   the slide allows and one Choose bar across its foot, at least 44 px here
-   (33 px at the smaller centre size). Recommended is a blue tag, never the
-   chosen green, so nothing looks answered before it is. Once answered, the
-   chosen card is ringed in green under "Your choice" and the others fade. */
+   the slide allows and one Choose bar across its foot, 44 deck units tall
+   (33 px in the smaller checker frame). Recommended is a blue tag, never
+   the chosen green, so nothing looks answered before it is. Once answered,
+   the chosen card is ringed in green under "Your choice" and the others
+   fade. */
 .recommends { color: var(--text); }
 .recommends b { color: var(--accent); }
-.decide.with-context { display: grid; grid-template-columns: 290px 1fr; gap: 16px; align-items: start; }
-.context { display: flex; flex-direction: column; gap: 8px; }
-.context .picture img { max-height: 220px; }
+.decide.with-context { display: grid; grid-template-columns: calc(290 * var(--u)) 1fr; gap: calc(16 * var(--u)); align-items: start; }
+.context { display: flex; flex-direction: column; gap: calc(8 * var(--u)); }
+.context .picture img { max-height: calc(220 * var(--u)); }
 .why { color: var(--muted); margin: 0; }
-.options { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: 12px; }
+.options { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: calc(12 * var(--u)); }
 .option {
   position: relative;
-  display: flex; flex-direction: column; gap: 6px;
-  background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; padding: 10px 12px 12px;
+  display: flex; flex-direction: column; gap: calc(6 * var(--u));
+  background: var(--surface); border: 2px solid var(--edge); border-radius: calc(10 * var(--u));
+  padding: calc(10 * var(--u)) calc(12 * var(--u)) calc(12 * var(--u));
   transition: opacity .2s ease, border-color .2s ease;
 }
-.option h3 { font-size: 19px; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.option h3 { font-size: clamp(13px, calc(19 * var(--u)), 22px); margin: 0; display: flex; flex-wrap: wrap; gap: calc(8 * var(--u)); align-items: baseline; }
 .option .letter { color: var(--muted); font-weight: 600; }
-.option .picture img { max-height: 120px; }
+.option .picture img { max-height: calc(120 * var(--u)); }
 .says, .opens { margin: 0; }
 .opens { color: var(--muted); }
 .badge {
-  font-size: 18px; font-weight: 650; color: var(--accent-ink);
-  background: var(--accent); border-radius: 999px; padding: 1px 9px;
+  font-size: var(--body); font-weight: 650; color: var(--accent-ink);
+  background: var(--accent); border-radius: 999px; padding: 1px calc(9 * var(--u));
 }
-.option-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; }
+.option-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: calc(6 * var(--u)); }
 .choose {
-  margin-top: auto; width: 100%; min-height: 44px; font-size: 19px; font-weight: 650;
-  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); border-radius: 8px;
+  margin-top: auto; width: 100%; min-height: calc(44 * var(--u)); font-size: clamp(13px, calc(19 * var(--u)), 22px); font-weight: 650;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); border-radius: calc(8 * var(--u));
 }
 .choose:hover:not(:disabled) { filter: brightness(1.1); }
 .yours { display: none; }
@@ -159,25 +167,25 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .options.answered .option:not(.chosen) .choose { background: var(--raised); border-color: var(--edge); color: var(--text); }
 .option.chosen { border-color: var(--chosen); box-shadow: 0 0 0 3px var(--chosen); background: var(--raised); }
 .option.chosen .yours {
-  display: block; position: absolute; top: -13px; left: 12px; z-index: 1;
-  font-size: 18px; font-weight: 700; color: var(--chosen-ink); background: var(--chosen);
-  border-radius: 999px; padding: 1px 10px;
+  display: block; position: absolute; top: calc(-13 * var(--u)); left: calc(12 * var(--u)); z-index: 1;
+  font-size: var(--body); font-weight: 700; color: var(--chosen-ink); background: var(--chosen);
+  border-radius: 999px; padding: 1px calc(10 * var(--u));
 }
 .choose[aria-pressed="true"] { background: var(--chosen); border-color: var(--chosen); color: var(--chosen-ink); }
 
 /* A decision with pictures: the body takes every pixel the words and the
    vote row leave, and the pictures size to it (a compare picture above the
    options, each option's picture filling its share of the width). */
-.slide.decision.fill .decide { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-.slide.decision.fill .main { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.slide.decision.fill .decide { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: calc(290 * var(--u)) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.slide.decision.fill .main { min-height: 0; display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
 .slide.decision.fill .context { min-height: 0; }
 .slide.decision.fill .context .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-.decide .compare { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; }
-.options.has-pictures { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-top: 6px; }
+.decide .compare { flex: 1 1 0; min-height: calc(80 * var(--u)); display: flex; flex-direction: column; }
+.options.has-pictures { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-top: calc(6 * var(--u)); }
 .options.has-pictures .option { min-height: 0; }
 .options.has-pictures .option-text { flex: none; }
-.options.has-pictures .option .picture { flex: 1 1 0; min-height: 50px; display: flex; flex-direction: column; }
+.options.has-pictures .option .picture { flex: 1 1 0; min-height: calc(50 * var(--u)); display: flex; flex-direction: column; }
 .slide.decision.fill .picture img,
 .slide.decision.fill .option .picture img,
 .slide.decision.fill .context .picture img {
@@ -194,39 +202,42 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .options.has-pictures.side .option .picture, .options.has-pictures.rows .option .picture { flex: 1 1 0; min-width: 0; min-height: 0; }
 .options.has-pictures.side .option-text { flex: 0 0 46%; display: flex; flex-direction: column; }
 .options.has-pictures.rows { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); }
-.options.has-pictures.rows .option-text { flex: 0 0 250px; display: flex; flex-direction: column; }
+.options.has-pictures.rows .option-text { flex: 0 0 calc(250 * var(--u)); display: flex; flex-direction: column; }
 
-.vote { display: flex; gap: 8px; align-items: center; }
-.vote button, .vote .words { min-height: 44px; }
+.vote { display: flex; gap: calc(8 * var(--u)); align-items: center; }
+.vote button, .vote .words { min-height: calc(44 * var(--u)); }
 .vote [aria-pressed="true"] { border-color: var(--later); background: var(--raised); box-shadow: inset 0 0 0 3px var(--later); }
 .words {
   flex: 1 1 auto; min-width: 0; background: var(--surface); border: 1px solid var(--edge);
-  border-radius: 6px; padding: 4px 10px;
+  border-radius: calc(6 * var(--u)); padding: calc(4 * var(--u)) calc(10 * var(--u));
 }
+/* What is recorded for this question, and anything that stopped an answer
+   or its save (a Reject without his words, a save JARVIS refused). */
 .recorded { color: var(--muted); }
 .recorded.done { color: var(--chosen); font-weight: 650; }
+.recorded.problem { color: var(--later); font-weight: 650; }
 .slide.not-asked .question { color: var(--muted); }
 /* JARVIS has asked this question and is waiting: said on the slide itself. */
 .waiting { display: none; }
 .slide.asking .waiting {
-  display: block; position: absolute; top: 6px; right: 28px; z-index: 2;
-  color: var(--accent-ink); background: var(--later); border-radius: 6px;
-  padding: 1px 10px; font-weight: 650; animation: asking 1.6s ease-in-out infinite;
+  display: block; position: absolute; top: calc(6 * var(--u)); right: calc(28 * var(--u)); z-index: 2;
+  color: var(--accent-ink); background: var(--later); border-radius: calc(6 * var(--u));
+  padding: 1px calc(10 * var(--u)); font-weight: 650; animation: asking 1.6s ease-in-out infinite;
 }
 @keyframes asking { 50% { filter: brightness(1.15); } }
 @media (prefers-reduced-motion: reduce) { .slide.asking .waiting { animation: none; } }
 
 /* ── your answers ── */
-.answer-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 0 1 auto; min-height: 0; }
-.answer-list li { display: grid; grid-template-columns: 230px 1fr 130px; gap: 10px; align-items: center; }
-.answer-list li.child .go { margin-left: 22px; }
+.answer-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: calc(4 * var(--u)); overflow-y: auto; flex: 0 1 auto; min-height: 0; }
+.answer-list li { display: grid; grid-template-columns: calc(230 * var(--u)) 1fr calc(130 * var(--u)); gap: calc(10 * var(--u)); align-items: center; }
+.answer-list li.child .go { margin-left: calc(22 * var(--u)); }
 .answer-list .go { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .answer-list li.done .go { border-color: var(--chosen); }
 .answer-list li.not-asked { opacity: 0.6; }
-.pick { background: var(--surface); border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; min-width: 0; }
+.pick { background: var(--surface); border: 1px solid var(--edge); border-radius: calc(6 * var(--u)); padding: 3px calc(6 * var(--u)); min-width: 0; }
 .answer-list .state { color: var(--later); }
-.approve-row { display: flex; gap: 10px; align-items: center; }
+.approve-row { display: flex; gap: calc(10 * var(--u)); align-items: center; }
 .approve { border-color: var(--chosen); }
-.confirm { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.confirm { display: flex; gap: calc(10 * var(--u)); align-items: center; flex-wrap: wrap; }
 .confirm[hidden] { display: none; }
 .confirm .yes { background: var(--chosen); border-color: var(--chosen); color: var(--chosen-ink); }

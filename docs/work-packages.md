@@ -201,12 +201,14 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "story.state", state, slide, question}` | the story is `telling`, `waiting` (for `question`), `paused`, `finished` or `stopped` |
 | `{jarvis: "package", type: "focus.show", key, targets}` | a question is his (the story waits on it, or he opened its card from Questions): the part it is about, the waiting slide's targets, is brought into view and reported, never ringed in the frame |
 | `{jarvis: "package", type: "focus.clear"}` | that question is no longer in focus |
+| `{jarvis: "package", type: "slide.open", opener}` | he chose a slide in the border (Previous, Next, Chapters) while no story is told: the helper clicks `opener`, that story slide's first click (the story outline's `openers`); sent only to a page that has said `slide.shown` |
 
 | from the page | what JARVIS does |
 |---|---|
 | `{jarvis: "package", type: "story.ready"}` | posts the beat playing now again (the helper says this once loaded) |
 | `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
 | `{jarvis: "package", type: "story.focus", key, rect}` | where the part in focus is, in the frame's own coordinates (`{left, top, width, height}`, the box around everything its targets match; `null` when none is visible): for each beat (key `beat:<beat>`) and for a `focus.show` (its key), again whenever it moves. The page lights it and dims the rest, its card beside it; the page never reads the frame itself |
+| `{jarvis: "package", type: "slide.shown", opener}` | the page shows the slide `opener` opens (a deck's `#go-N`), however it got there: the border counts itself on the story slide whose openers hold it, and from then on moves the page with `slide.open` |
 
 ### The room a page has (page)
 
@@ -304,22 +306,40 @@ check has passed, so a decision package reaches him no other way.
 
 ### What the receiver gets
 
-The deck draws on a fixed 880 × 640 canvas scaled to fit the frame, so a
+The deck lays every slide out to the frame it is in, its whole width and
+height at any size and shape: no fixed canvas is scaled into part of it.
+Its lengths are in deck units, one 880th of the frame's width or one 640th
+of its height, whichever is smaller, so a slide that fits one frame fits
+every frame, and a wider frame gives its pictures and words the extra room
+rather than a margin. Every word is 13 to 25 px (body text 13.5 px in a
+662 × 489 frame, 16.5 px in 809 × 589, 21 px at 1600 × 900). So a
 decision slide shows its question, the recommendation and its reason, each
 option with its Choose button, Decide later, None of these, a words box and
-the recorded answer without scrolling, at both centre frame sizes (809 ×
-589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one). On a decision
-slide with pictures, the pictures take all the room the words and the vote
-row leave: the deck tries each option's picture above its words, beside
-them and, for two options, one option a row, and keeps whichever shows the
-smallest picture largest with nothing cut off. The canvas is never scaled
-past body text of about 22 px, however large the frame. Previous and Next, the arrow keys, a
-jump strip that marks answered decisions, and "n of N" move between
-slides; the current slide is kept in memory only. The last slide, "Your
-answers", lists every decision with its recorded answer, changed in place,
-and Approve all recommended, which asks once and then records the
-recommended option for every decision with no answer yet. Nothing is ever
-pre-selected.
+the recorded answer without scrolling, at the centre frame sizes (809 ×
+589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one) and at the
+whole width the package view gives it. On a decision slide with pictures,
+the pictures take all the room the words and the vote row leave: the deck
+tries each option's picture above its words, beside them and, for two
+options, one option a row, and keeps whichever shows the smallest picture
+largest with nothing cut off, again whenever the frame changes size.
+
+In JARVIS the border above the frame is the deck's one navigation: its
+Chapters, Previous and Next open a slide in the deck (`slide.open`, which
+the story helper carries out by clicking the slide's opener, `#go-N`), and
+its count follows every slide the deck shows, however it got there (the
+arrow keys, Home and End, the story, a question JARVIS waits on): the deck
+says `slide.shown` {opener} and the border counts itself on the story
+slide whose openers hold it. The deck draws no strip, Previous, Next or
+status of its own there. How many are answered is on each decision's slide
+and the answers slide; a save is said in the view's status line under the
+frame; an answer that cannot be recorded yet (Reject without his words)
+says why on its own slide. Opened anywhere else, the deck keeps its own
+bars: a jump strip that marks answered decisions with the tally, and
+Previous, "n of N", Next and what was saved. The current slide is kept in
+memory only. The last slide, "Your answers", lists every decision with its
+recorded answer, changed in place, and Approve all recommended, which asks
+once and then records the recommended option for every decision with no
+answer yet. Nothing is ever pre-selected.
 
 The answers go to `results/decisions.json`, `results/decisions.md` and
 `results/decisions.js` (the same record as a script, which is how the frame
