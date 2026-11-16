@@ -8,7 +8,7 @@ or done. Every channel's messages are recorded so (the server's
 `_record_inbound`); this module is how an agent sends one, and how the page
 and the brain read and mark them.
 
-  POST /api/messages?work=<item id>[&project=&workflow=&source=]
+  POST /api/messages?work=<item id>|general=1[&project=&workflow=&source=]
         {"says": "...", "package": "<the zip, base64>"?}: a message from the
         signing agent (its own key, or a work-item key for its own item
         only, agent_rights `work`). `work` is in the query so the right's
@@ -132,10 +132,14 @@ def sender_session(principal: str) -> str:
     return ""
 
 
-def check_about(session_id: str, work: str) -> None:
+def check_about(session_id: str, work: str, general: bool = False) -> None:
     """Refused unless the message's Work item is right for its sender: an
     item it names must be open; naming none is refused while the agent has a
-    piece on an open item, naming each."""
+    piece on an open item, naming each, unless the sender says it is about no
+    Work item (`general`, `--general`), which goes to his Inbox."""
+    if work and general:
+        raise Refused("A message is about one Work item (--work) or about none "
+                      "(--general), not both. Nothing was sent.", 400)
     if work:
         item = work_store.get(work)
         if item is None:
@@ -143,10 +147,13 @@ def check_about(session_id: str, work: str) -> None:
         if item.closed_at is not None or item.history:
             raise Refused(f"Work item {work} is closed; nothing was sent.")
         return
+    if general:
+        return
     mine = work_store.open_items_of(session_id)
     if mine:
         named = "; ".join(f"{i} ({t})" for i, t in mine)
-        raise Refused(f"Name the Work item it is about with --work: you have a piece on "
+        raise Refused(f"Name the Work item it is about with --work, or send it with "
+                      f"--general when it is about none: you have a piece on "
                       f"{named}. Nothing was sent.")
 
 
@@ -633,6 +640,10 @@ def _named(spec: MessageSpec) -> str:
 
 # --- the routes --------------------------------------------------------------
 
+# The query value that says a message is about no Work item (`?general=1`).
+GENERAL_YES = ("1", "true", "yes")
+
+
 @dataclass(frozen=True)
 class Links:
     """What a carried package is for, as make_package gives it, and the key
@@ -667,7 +678,7 @@ def _before(before) -> Optional[int]:
 def mount(app: FastAPI, calls: Calls) -> None:
 
     async def send(request: Request, work: str = "", project: str = "", workflow: str = "",
-                   source: str = ""):
+                   source: str = "", general: str = ""):
         principal = web_auth.principal(request.scope) or ""
         held_key = "" if principal else (request.scope.get(web_auth.SIGNED_KEY) or "")
         session = await asyncio.to_thread(sender_session, principal) if principal else \
@@ -688,7 +699,8 @@ def mount(app: FastAPI, calls: Calls) -> None:
                 raise Refused("Carrying a package needs the packages right, which this "
                               "key does not hold. Nothing was sent.", 403)
             if principal:
-                await asyncio.to_thread(check_about, session, work.strip())
+                await asyncio.to_thread(check_about, session, work.strip(),
+                                        general.strip().lower() in GENERAL_YES)
             item, arrival, package = await calls.send(
                 principal, session, work.strip(), says, package,
                 reporters.of_scope(request.scope),

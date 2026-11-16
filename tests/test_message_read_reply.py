@@ -160,7 +160,8 @@ def test_the_brain_is_given_that_message_to_read_and_it_is_read_once_heard(serve
     out = _read_on_his_turn(server, monkeypatch, m.id)
     head, _, block = out.partition("\n")
     assert head.startswith(f"Message {m.id}, at {server.messages_api.local_time(m.at)} (his local "
-                           f"time, today ") and "sum it up" in head
+                           f"time, today ") and "sum up all of it" in head
+    assert "never recite it" in head and "as they are written" not in head
     assert "Agent Guard" not in head and "All good" not in head, "the sender's words are walled"
     assert block.startswith("<session-output") and 'untrusted="true"' in block
     assert "Agent Guard" in block and "Status\\n\\nAll good." in block
@@ -375,3 +376,148 @@ def test_an_update_that_is_no_message_names_none(server, monkeypatch, attention)
     attention.record("workflow", "wf-1", "phase_started", untrusted={"workflow": "Build"})
     [entry] = TestClient(server.app).get("/api/attention").json()["items"]
     assert entry["message"] is None, "a new phase is no message"
+
+
+# --- a long message comes to the brain a page at a time, whole ------------------------
+
+_CLOSE = "\n</session-output>"
+
+
+def _every_page(server, monkeypatch, item_id) -> list:
+    """The brain's read_aloud on a turn he drove, page after page as each
+    result asks, with the reads each new tool call drops (`_reads_unsaid`,
+    as the turn's `on_tool` does); the results, and the reads left once the
+    last page is in."""
+    reads = []
+    monkeypatch.setattr(server, "_turn_reads", reads)
+    monkeypatch.setattr(server, "brain_instance", SimpleNamespace(current_origin="user"))
+    results, args = [], {"message": item_id}
+    while True:
+        server._reads_unsaid(reads)
+        out = asyncio.run(server.tool_read_aloud(args))
+        results.append(out)
+        if "Say nothing to him yet." not in out:
+            return results, reads
+        assert reads == [], "a page before the last marks nothing to be read"
+        args = {"message": item_id, "page": len(results) + 1}
+
+
+def _joined(results) -> str:
+    """The pages' walled bodies joined back together."""
+    bodies = []
+    for out in results:
+        block = out.partition("\n")[2]
+        assert block.startswith('<session-output name="messages" untrusted="true">\n')
+        assert block.endswith(_CLOSE), "every page's wrapper closes"
+        bodies.append(block.partition("\n")[2][:-len(_CLOSE)])
+    return "".join(bodies)
+
+
+def _held_to_the_cap(server, results) -> None:
+    for out in results:
+        assert len(out) <= server.TOOL_RESULT_CAP, len(out)
+        assert server._cap_tool_result(out) == out, "the cap cuts nothing"
+
+
+def test_a_long_agent_message_reaches_the_brain_whole_a_page_at_a_time(server, monkeypatch,
+                                                                     attention):
+    import json
+    monkeypatch.setattr(server, "attention_record", attention)
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda m: None)
+    server.run_store.sync_agents({GUARD: ("Agent Guard", "idle")})
+    words = " ".join(f"word{i:04d}" for i in range(400))[:2000]
+    m = server._record_message(f"agent:{GUARD}", GUARD, "Agent Guard", "", words)
+    assert len(server.conversation_log.get(m.id).text) == 2000
+    results, reads = _every_page(server, monkeypatch, m.id)
+    shown = json.dumps(server._message_shown(server.conversation_log.get(m.id)),
+                       ensure_ascii=False, separators=(",", ":"))
+    assert len(results) == 3 and _joined(results) == shown, "the pages join back exactly"
+    _held_to_the_cap(server, results)
+    for n, out in enumerate(results[:-1], start=1):
+        head = out.partition("\n")[0]
+        assert f"Call read_aloud (message {m.id}) again with page {n + 1}" in head
+        assert "sum up" not in head, "only the last page asks for the summary"
+    last = results[-1].partition("\n")[0]
+    assert last.startswith(f"Message {m.id}'s JSON, page 3 of 3")
+    assert "Having read every page, tell him who it is from and what it is about, then sum " \
+           "up all of it (what it says, asks of him, any package); never recite it." in last
+    assert not any("as they are written" in out or "as written" in out for out in results)
+    assert results[0].startswith(f"Message {m.id}, at ")
+    assert server.conversation_log.get(m.id).state == "new"
+    server._seen_once_heard(reads, SimpleNamespace(chunks=["Agent Guard writes: ..."]), True)
+    assert server.conversation_log.get(m.id).state == "read", "read once the last is heard"
+
+
+def test_a_long_person_s_message_reaches_the_brain_whole(server, monkeypatch, attention):
+    import json
+    cl = server.conversation_log
+    monkeypatch.setattr(server, "attention_record", attention)
+    mid = "00000000-0000-0000-0000-000000000043"
+    text = ("Ana's long note.\n" + 'Señor, "quoted" line.\n' * 2000)[:19999] + "!"
+    item = _inbound(server, cl.Counterpart.PERSON, "42", "Ana", text, "team_server",
+                    cl.Source.PERSON_MESSAGE, mid)
+    attention.record("arrival", mid, "arrived", untrusted={"sender": "Ana"})
+    assert len(cl.get(item.id).text) == 20000
+    results, reads = _every_page(server, monkeypatch, item.id)
+    shown = json.dumps(server._message_shown(cl.get(item.id)), ensure_ascii=False,
+                       separators=(",", ":"))
+    assert len(results) == -(-len(shown) // server.REPLY_PAGE_CHARS) > 20
+    _held_to_the_cap(server, results)
+    assert _joined(results) == shown, "the pages join back exactly"
+    assert sum("sum up all of it" in out for out in results) == 1
+    assert "sum up all of it" in results[-1] and "Say nothing to him yet." in results[-2]
+    assert attention.get("arrival", mid).state == "pending"
+    server._seen_once_heard(reads, SimpleNamespace(chunks=["Ana writes: ..."]), True)
+    assert attention.get("arrival", mid).state == "seen"
+    assert cl.get(item.id).state == "read"
+
+
+def test_a_reading_stopped_part_way_leaves_the_message_unread(server, monkeypatch, attention):
+    m = _taken(server, monkeypatch, attention)
+    long = server._record_message(f"agent:{GUARD}", GUARD, "Agent Guard", "", "x " * 1000)
+    reads = []
+    monkeypatch.setattr(server, "_turn_reads", reads)
+    monkeypatch.setattr(server, "brain_instance", SimpleNamespace(current_origin="user"))
+    out = asyncio.run(server.tool_read_aloud({"message": long.id}))
+    assert "Say nothing to him yet." in out and reads == []
+    server._seen_once_heard(reads, SimpleNamespace(chunks=["..."]), True)
+    assert server.conversation_log.get(long.id).state == "new"
+    assert server.conversation_log.get(m.id).state == "new"
+
+
+def test_a_later_page_pins_its_message_and_never_moves_the_one_he_is_on(server, monkeypatch,
+                                                                      attention):
+    first = _taken(server, monkeypatch, attention)
+    long = server._record_message(f"agent:{GUARD}", GUARD, "Agent Guard", "", "y " * 1000)
+    asyncio.run(server.tool_read_aloud({"message": long.id}))
+    assert server._message_on == long.id
+    server._on_message(first.id)
+    out = asyncio.run(server.tool_read_aloud({"message": long.id, "page": 2}))
+    assert f"Message {long.id}'s JSON, page 2 of" in out
+    assert server._message_on == first.id, "a page call moves nothing"
+    out = asyncio.run(server.tool_read_aloud({"message": long.id, "page": 2, "next": True,
+                                              "at": "15:42"}))
+    assert f"Message {long.id}'s JSON, page 2 of" in out, "pinned by its id alone"
+    server._on_message(long.id)
+    out = asyncio.run(server.tool_read_aloud({"page": 2}))
+    assert f"Message {long.id}'s JSON, page 2 of" in out, "no id: the one he is on"
+    out = asyncio.run(server.tool_read_aloud({"message": long.id, "page": 9}))
+    assert "there is no page 9" in out and server._message_on == long.id
+
+
+def test_the_fullest_page_with_the_longest_header_stays_under_the_cap(server, monkeypatch):
+    """The longest header (a large id, a date, no state, a package) over a
+    page filled to the brim still fits under the cap with its wall closed."""
+    item = SimpleNamespace(id=9999999, at=0.0, state=None, carries=True,
+                           source_kind="person_message", source_id="x")
+    monkeypatch.setattr(server, "_message_meant", lambda args: (item, ""))
+    monkeypatch.setattr(server, "_message_read_to_him", lambda item: None)
+    for size in (server.REPLY_PAGE_CHARS, 2 * server.REPLY_PAGE_CHARS,
+                 25 * server.REPLY_PAGE_CHARS):
+        def shown(item, size=size):
+            return {"from": "A", "says": "z" * (size - len('{"from":"A","says":""}'))}
+        monkeypatch.setattr(server, "_message_shown", shown)
+        pages = -(-size // server.REPLY_PAGE_CHARS)
+        for page in (1, pages):
+            out = asyncio.run(server.tool_read_aloud({"message": 9999999, "page": page}))
+            assert len(out) <= server.TOOL_RESULT_CAP and out.endswith(_CLOSE), (size, page)

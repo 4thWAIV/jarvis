@@ -21,6 +21,15 @@ from tests.test_message_read_reply import GUARD, _taken, server  # noqa: F401  (
 from tests.test_session_steer import Harness, _Client
 
 
+def _asked_for(text: str) -> dict:
+    """read_aloud's arguments for what he asked, as the brain's guidance
+    names them: his Read's message by its id, or the sender he named."""
+    number = re.search(r"message (\d+)\.", text)
+    if number:
+        return {"message": int(number.group(1))}
+    return {"from": re.search(r"from (.+?)\.$", text).group(1)}
+
+
 class _ReadsIt:
     """A brain whose turn does what his Read asks: read_aloud on the message
     the request names, then a reply that reads it to him."""
@@ -38,8 +47,7 @@ class _ReadsIt:
     async def turn(self, text, origin="user", on_delta=None, on_tool=None):
         self.asked.append(text)
         on_tool()
-        number = int(re.search(r"message (\d+)\.", text).group(1))
-        self.given = await self.server.tool_read_aloud({"message": number})
+        self.given = await self.server.tool_read_aloud(_asked_for(text))
         on_delta("Agent Guard writes: Status. All good. In short, all is well.")
         from jarvis import brain
         return brain.TurnResult(origin=origin, text="Agent Guard writes: Status. All good. "
@@ -63,10 +71,11 @@ class _ReadsThenActs(_ReadsIt):
                                 "Opened it, sir.", stop_reason="result")
 
 
-async def _his_read(server, monkeypatch, message_id, *, skip=False, brain_kind=None):
-    """His Read on a message, its brain turn run to the end and its reply
-    played to the page (or skipped); the brain, and every timeout the reply
-    was waited on with."""
+async def _his_read(server, monkeypatch, message_id, *, skip=False, brain_kind=None,
+                    spoken=None):
+    """His Read on a message (or, with `spoken`, those words of his), its
+    brain turn run to the end and its reply played to the page (or
+    skipped); the brain, and every timeout the reply was waited on with."""
     h = Harness()
     brain = (brain_kind or _ReadsIt)(server)
     waited = []
@@ -97,8 +106,11 @@ async def _his_read(server, monkeypatch, message_id, *, skip=False, brain_kind=N
     await h.sched.start()
     client.start()
     try:
-        answer = await server.api_read_message(message_id)
-        assert answer == {"id": message_id, "asking": True}
+        if spoken is None:
+            answer = await server.api_read_message(message_id)
+            assert answer == {"id": message_id, "asking": True}
+        else:
+            await server._take_his_turn(spoken, None)
         await asyncio.wait_for(asyncio.gather(*turns), timeout=15)
     finally:
         await client.stop()
@@ -142,7 +154,7 @@ async def test_a_reading_dropped_by_a_later_tool_leaves_the_message_new(server, 
                                                                      attention):
     m = _taken(server, monkeypatch, attention)
     brain, _, h = await _his_read(server, monkeypatch, m.id, brain_kind=_ReadsThenActs)
-    assert "Call no other tool after this one" in brain.given
+    assert "No tool after this: only what follows your last tool is spoken." in brain.given
     assert [t for _, _, t in h.audio()] == ["Opened it, sir."], "the reading was binned"
     assert server.conversation_log.get(m.id).state == "new"
     (entry,) = attention.items(("pending", "seen", "resolved"))
@@ -354,3 +366,51 @@ async def test_a_story_that_fails_tells_the_brain_where_it_ended(h, deck, monkey
     assert t.states()[-1] == ("stopped", 2)
     assert t.notes == [("slide 1 of its story", f"package {deck.id}",
                         "the story could not go on and ended at slide 2 of 3")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ask", ["button", "voice"])
+async def test_his_read_and_his_spoken_request_reach_the_same_reading(server, monkeypatch,
+                                                                     attention, ask):
+    """His Read button's turn and "read me the last message from <agent>"
+    in his own words are one action: both are his turn through
+    `_take_his_turn`, both reach read_aloud, and both give the brain the
+    same whole message to sum up, read once heard in full."""
+    calls, took = [], []
+    real, real_take = server.tool_read_aloud, server._take_his_turn
+
+    async def counted(args):
+        calls.append(dict(args))
+        return await real(args)
+
+    async def taking(text, heard, *a, **k):
+        took.append(text)
+        return await real_take(text, heard, *a, **k)
+    monkeypatch.setattr(server, "tool_read_aloud", counted)
+    monkeypatch.setattr(server, "_take_his_turn", taking)
+    m = _taken(server, monkeypatch, attention)
+    spoken = "Read me the last message from Agent Guard." if ask == "voice" else None
+    brain, _, _ = await _his_read(server, monkeypatch, m.id, spoken=spoken)
+    assert took == [spoken or f"Read me message {m.id}."], "his turn, the one way in"
+    assert calls == [{"from": "Agent Guard"} if spoken else {"message": m.id}]
+    shown = server.json.dumps(server._message_shown(server.conversation_log.get(m.id)),
+                              ensure_ascii=False, separators=(",", ":"))
+    assert shown in brain.given, "the same whole message, whichever way he asked"
+    assert "sum up all of it" in brain.given and "as they are written" not in brain.given
+    assert server.conversation_log.get(m.id).state == "read", "read once heard in full"
+
+
+def test_the_brain_is_told_his_button_and_his_words_are_one_reading():
+    """The brain's guidance and read_aloud's description send his Read and
+    his spoken request to read_aloud alike, for a summary, never a recital
+    and never messages_to_him in its place."""
+    from pathlib import Path
+    from jarvis import jarvis_mcp
+    home = (Path(jarvis_mcp.__file__).parent / "jarvis_home" / "CLAUDE.md").read_text()
+    assert "as they are written" not in home
+    assert "never `messages_to_him` in its place" in home
+    assert "Do not recite it." in home
+    [spec] = [t for t in jarvis_mcp.TOOL_SPECS if t["name"] == "read_aloud"]
+    assert "as they are written" not in spec["description"]
+    assert "both come here" in spec["description"] and "never recite it" in spec["description"]
+    assert "page" in spec["inputSchema"]["properties"]

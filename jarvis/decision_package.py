@@ -797,17 +797,18 @@ def says_of(title: str, kind: str = "package") -> str:
 
 def deliver(archive: Path, base: str, says: str, project: str = "", workflow: str = "",
             work: str = "", source: str = "",
-            signer: tuple[Path, str] | None = None) -> Delivered:
+            signer: tuple[Path, str] | None = None, general: bool = False) -> Delivered:
     """Send the zip to the JARVIS at `base` as a message carrying it (POST
     /api/messages, signed by the agent's key, `signer`): checked, unpacked
     and recorded in his package inbox there, never shown, and the message
-    on the Work item `work` (else his Inbox) saying `says`. His answers go
+    on the Work item `work` (else his Inbox; `general` says it is about no
+    Work item) saying `says`. His answers go
     to the session the signature proves; `workflow` links it to the
     workflow it is for, `source` is what make_package was given (a
     subagent that ran it on that is named beside its parent)."""
     query = urllib.parse.urlencode({k: v for k, v in (
-        ("work", work), ("project", project), ("workflow", workflow), ("source", source))
-        if v})
+        ("work", work), ("general", "1" if general else ""), ("project", project),
+        ("workflow", workflow), ("source", source)) if v})
     url = base.rstrip("/") + MESSAGE_ROUTE + (f"?{query}" if query else "")
     body = {"says": says, "package": base64.b64encode(archive.read_bytes()).decode("ascii")}
     answer = post(url, "", body, signer=signer)

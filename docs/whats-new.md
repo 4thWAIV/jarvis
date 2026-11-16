@@ -1,6 +1,24 @@
 # The new JARVIS workspace
 
-Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## JARVIS sums up a whole message, however long
+
+Asking JARVIS to read you a message used to give him only the first nine
+hundred or so characters of it, so a long message from an agent or a
+person was cut short. He now takes a long message a page at a time and,
+once he has every page, tells you who it is from and what it is about and
+sums up the whole of it: what it says, what it asks of you and any package
+it carries. The Read button and asking him in your own words do exactly
+the same. A message counts as read only when you have heard his summary to
+its end.
+
+## An agent can send you a package about no Work item
+
+An agent that has work open can still send you a package or message that is
+about none of it: it says so with `--general`, and it lands in your Inbox
+instead of on a Work item. Leaving out both the Work item and `--general` is
+still refused, so an agent that forgot to name its item is still told to.
 
 ## A deck fills its frame, and the border is its one navigation
 

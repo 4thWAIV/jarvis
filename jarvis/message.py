@@ -1,6 +1,6 @@
 """Send Tim a message, about the Work item it belongs to.
 
-    python -m jarvis.message --work <item id> "<what it says>" [--package <zip>] [--as <session id>]
+    python -m jarvis.message (--work <item id> | --general) "<what it says>" [--package <zip>] [--as <session id>]
 
 Every message to Tim is one thing (docs/planning/one-channel/
 messages-by-work-item.md): it is from you (your agent's own onboarded key
@@ -57,6 +57,14 @@ def body(says: str, package: Path | None) -> dict:
     return out
 
 
+def query(work: str, general: bool) -> str:
+    """The route's query: the Work item a message is about, or that it is
+    about none."""
+    if work:
+        return f"?work={urllib.parse.quote(work)}" + ("&general=1" if general else "")
+    return "?general=1" if general else ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jarvis.message",
                                      description="Send Tim a message about a Work item.")
@@ -64,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", default="",
                         help="the Work item it is about (required while you have a piece "
                              "on an open item)")
+    parser.add_argument("--general", action="store_true",
+                        help="it is about no Work item: it goes to his Inbox even while "
+                             "you have a piece on an open item")
     parser.add_argument("--package", type=Path, default=None,
                         help="a package zip it carries (made with python -m jarvis.make_package)")
     parser.add_argument("--as", dest="as_session", default="",
@@ -73,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.package is not None and not args.package.is_file():
         print(f"There is no zip at {args.package}.", file=sys.stderr)
         return 1
-    path = ROUTE + (f"?work={urllib.parse.quote(args.work)}" if args.work else "")
+    path = ROUTE + query(args.work, args.general)
     with signed_client(args.cert, args.as_session, "work") as client:
         try:
             sent = report(client, path, body(args.says, args.package))
