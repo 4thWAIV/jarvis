@@ -193,11 +193,23 @@ class Story:
         slides that ask, and for each question a slide waits on the part of
         the page it is about (`focus`): that slide's beats' targets, else
         its own element, else none (the page's focus layer, PackageFocus.tsx,
-        lights it while the question is his)."""
+        lights it while the question is his), and each slide's `openers`:
+        what its beats click, in order, once each. The page's border opens
+        a slide with its first opener and, when the page says it shows one
+        (a deck's `slide.shown`), counts itself on the slide that clicks it,
+        so the border and the page never disagree on where they are."""
         return {"title": self.title, "language": self.language,
                 "slides": [s.title for s in self.slides],
                 "asks": [n for n, s in enumerate(self.slides, 1) if s.waits],
-                "focus": {s.waits: _about(s) for s in self.slides if s.waits}}
+                "focus": {s.waits: _about(s) for s in self.slides if s.waits},
+                "openers": [_openers(s) for s in self.slides]}
+
+
+def _openers(slide: Slide) -> list[str]:
+    """What a slide's beats click, in order and once each: the controls
+    that bring its part of the page up (a deck's #go-N)."""
+    return list(dict.fromkeys(sel for beat in slide.beats for kind, sel in beat.actions
+                              if kind == "click"))
 
 
 def _about(slide: Slide) -> list[str]:

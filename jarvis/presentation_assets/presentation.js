@@ -115,11 +115,6 @@
     const m=event.data;
     if(event.source!==parent||!m||m.jarvis!=="package")return;
     if(m.type==="presentation.probe")parent.postMessage({jarvis:"package",type:"presentation.ready",version:"presentation/1"},"*");
-    if(m.type==="presentation.select"&&Number.isInteger(m.slide)){
-      const selected=model.story.slides[m.slide-1];
-      const action=selected?.beats?.[0]?.actions?.find(a=>a.click);
-      if(action)document.querySelector(action.click)?.click();
-    }
     if(m.type==="presentation.inspect")inspect();
     if(m.type==="presentation.document"){
       window.__presentationLinear=m.enabled===true;

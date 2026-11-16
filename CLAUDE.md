@@ -1143,8 +1143,22 @@ package's own page takes the rest of the view, its whole width. There is
 no side column: nothing goes beside or above the page, and with nothing
 open nothing covers it; `tests/test_voice_page_package_layout.py` holds
 the frame to the view's width below the border, and every question
-reachable through its card, at the checker's sizes and a laptop's. The
-presentation uses the whole display: a page package takes over
+reachable through its card, at the checker's sizes and a laptop's. For a
+deck the border is its one navigation: the shared deck
+(`examples/packages/decision-deck/`) lays every slide out to the frame's
+own width and height (`deck.css`'s deck unit `--u`, one 880th of the
+width or 640th of the height, the smaller; every word 13 to 25 px), never
+a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
+draws no strip, Previous, Next or status of its own; it says each slide
+it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
+border counts itself on the story slide whose `openers` (the story
+outline's, `package_story._openers`: what its beats click) hold it; the
+border's Previous, Next and Chapters, while no story is told, post
+`slide.open` {opener} for the story helper to click, only to a page that
+has reported a slide. The tally is on each question's slide and the
+answers slide; a save is said in the view's status line; a refused answer
+(Reject without his words) on its own slide. Opened outside JARVIS the
+deck keeps its own bars. The presentation uses the whole display: a page package takes over
 the page as it opens (`package.open` runs `uiNavigation.takeOverShown`,
 effect `layout.taken-over`; Restore layout and the rest of "Takeover mode"
 as before; taken over, the left column folds to the orb alone in the

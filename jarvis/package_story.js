@@ -15,6 +15,11 @@
 //                 (story.focus) until focus.clear; never ringed here, the
 //                 page draws its light and ring around it
 //                 {jarvis: "package", type: "focus.clear"}
+//                 {jarvis: "package", type: "slide.open", opener} the page
+//                 border's Previous, Next or Chapters: the slide's opener
+//                 (the story outline's `openers`, a deck's #go-N) clicked,
+//                 nothing ringed; sent only to a page that reports the
+//                 slide it shows (a deck's `slide.shown`)
 //   to JARVIS     {jarvis: "package", type: "story.ready"} once loaded, so a
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
@@ -314,6 +319,7 @@
     else if (m.type === "story.clear") clear();
     else if (m.type === "focus.show") focusOn(m);
     else if (m.type === "focus.clear") unfocus();
+    else if (m.type === "slide.open" && typeof m.opener === "string") act({ click: m.opener }, []);
   });
   window.addEventListener("resize", place);
   window.addEventListener("keydown", function (event) {

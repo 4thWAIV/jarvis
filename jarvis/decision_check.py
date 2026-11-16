@@ -12,12 +12,20 @@ The package is unpacked there through the same route delivery uses (a
 message carrying it, signed by the agent's key, seeded there), found
 by its title's words with `list_packages` and opened by name with
 `open_package_page`, both through that JARVIS's /internal/tool. Then, in the
-real sandboxed package frame at each centre size (809 x 589 and 662 x 489):
+real sandboxed package frame at each size (the two smaller centre sizes,
+809 x 589 and 662 x 489, and two full-width ones, 1600 x 900 and
+1280 x 713):
 
-- the deck's own styles are in force: deck.css loaded, the 880 x 640
-  canvas styled, the page not the browser's default and one slide shown;
-- every slide fits: the deck inside the frame, nothing outside its slide,
-  nothing scrolled or cut off, and every word from 13 to 25 px;
+- the deck's own styles are in force: deck.css loaded, the deck laid out
+  to the whole frame (no canvas scaled into it), no bar of its own drawn
+  in JARVIS's frame, the page not the browser's default and one slide
+  shown;
+- the border is the deck's one navigation: a slide chosen in its Chapters
+  opens in the deck, and every slide the deck shows is the one its count
+  names;
+- every slide fits and fills the frame: each slide spans the frame,
+  nothing outside its slide, nothing scrolled or cut off, and every word
+  from 13 to 25 px;
 - every decision slide has its vote row in view;
 - `tell_package_story` tells the story through JARVIS's real speech path
   (a silent stand-in voice), and it brings every decision slide up and
@@ -53,10 +61,13 @@ from jarvis import env_names
 from jarvis import agent_key_store, data_paths, package_signature, package_story
 
 FRONTEND = data_paths.SOURCE_ROOT / "frontend"
-# The two centre frame sizes, in a 1440 x 900 and a 1280 x 800 window: the
-# browser's inner size to start from, and the package frame (_fit_frame
-# then makes it exactly that).
-SIZES = (((1440, 813), (809, 589)), ((1280, 713), (662, 489)))
+# The frame sizes the deck is checked at: the browser's inner size to start
+# from, and the package frame (_fit_frame then makes it exactly that). The
+# two smaller are the centre sizes in a 1440 x 900 and a 1280 x 800 window,
+# the two larger the whole width the package view gives a deck. The story
+# is checked once, at the first.
+SIZES = (((1440, 813), (809, 589)), ((1280, 713), (662, 489)),
+         ((1700, 1100), (1600, 900)), ((1380, 913), (1280, 713)))
 TEXT_MIN_PX, TEXT_MAX_PX = 13.0, 25.0
 PORTS = range(19000, 29000)
 STAND_IN_KEY = "stand-in-for-the-check"
@@ -302,17 +313,18 @@ RECORD = """
 # What is wrong with the slide showing now: [] when it fits.
 MEASURE = """
 () => {
-  const W = 880, problems = [];
+  const problems = [];
   const stage = document.getElementById("stage");
   const slide = document.querySelector("#track > .slide.current");
   const s = stage.getBoundingClientRect(), box = slide.getBoundingClientRect();
   const presentation = window.PRESENTATION;
-  const scale = presentation ? 1 : s.width / W;
   const textMin = presentation ? presentation.document.theme.minimumPx : MIN;
   const textMax = presentation ? Infinity : MAX;
   const say = (el) => (el.textContent || el.placeholder || el.tagName).trim().replace(/\\s+/g, " ").slice(0, 40);
   if (s.left < -1 || s.top < -1 || s.right > innerWidth + 1 || s.bottom > innerHeight + 1)
     problems.push(`the deck (${Math.round(s.width)} x ${Math.round(s.height)}) does not fit the frame (${innerWidth} x ${innerHeight})`);
+  if (box.left > 1 || box.top > 1 || box.right < innerWidth - 1 || box.bottom < innerHeight - 1)
+    problems.push(`the slide (${Math.round(box.width)} x ${Math.round(box.height)}) does not fill the frame (${innerWidth} x ${innerHeight})`);
   if (slide.scrollHeight > slide.clientHeight + 1 || slide.scrollWidth > slide.clientWidth + 1)
     problems.push(`its content is ${slide.scrollHeight - slide.clientHeight}px taller than the slide`);
   const sizes = [];
@@ -330,7 +342,7 @@ MEASURE = """
     const words = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())
       || (el.tagName === "INPUT" && (el.value || el.placeholder));
     if (!words) continue;
-    const px = parseFloat(cs.fontSize) * scale;
+    const px = parseFloat(cs.fontSize);
     sizes.push(px);
     if (px < textMin - 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, under ${textMin}px`);
     if (px > textMax + 0.05) problems.push(`"${say(el)}" is ${px.toFixed(1)}px, over ${textMax}px`);
@@ -351,15 +363,24 @@ MEASURE = """
 # in force (a file the frame was refused is named beside it, Deck.refused).
 # Without it the deck is the browser's default black text at default sizes
 # on a bare page, every slide stacked, which the text sizes alone do not
-# catch: the canvas is still scaled by deck.js.
+# catch. In force, the deck is laid out to the whole frame, never a canvas
+# scaled into part of it, and draws no bar of its own: JARVIS's border is
+# its navigation.
 STYLED = """
 () => {
   const problems = [];
   const stage = document.getElementById("stage");
   const s = stage ? getComputedStyle(stage) : null;
-  const presentation = !!window.JarvisPresentation;
-  if (!s || s.position !== "absolute" || (!presentation && (s.width !== "880px" || s.height !== "640px")) || (presentation && s.transform !== "none"))
-    problems.push(`its canvas is not styled (#stage is ${s ? s.position + " " + s.width + " x " + s.height : "missing"}, not absolute 880px x 640px)`);
+  const r = stage ? stage.getBoundingClientRect() : null;
+  if (!s || s.position !== "absolute" || s.transform !== "none" || Math.abs(r.left) > 1 || Math.abs(r.top) > 1
+      || Math.abs(r.width - innerWidth) > 1 || Math.abs(r.height - innerHeight) > 1)
+    problems.push(`it is not laid out to the frame (#stage is ${s ? s.position + " " + Math.round(r.width) + " x " +
+      Math.round(r.height) + (s.transform !== "none" ? " " + s.transform : "") : "missing"}, not absolute ${innerWidth} x ${innerHeight} unscaled)`);
+  for (const bar of document.querySelectorAll(".top, .bottom, #strip, #prev, #next, #count, #status")) {
+    const b = bar.getBoundingClientRect(), cs = getComputedStyle(bar);
+    if (cs.display !== "none" && cs.visibility === "visible" && b.width > 1 && b.height > 1)
+      problems.push(`it draws its own ${bar.id || bar.className} in JARVIS's frame, where the border is its navigation`);
+  }
   const body = getComputedStyle(document.body);
   if (body.backgroundColor === "rgba(0, 0, 0, 0)" || body.color === "rgb(0, 0, 0)")
     problems.push(`its page is the browser's default (background ${body.backgroundColor}, text ${body.color})`);
@@ -620,6 +641,22 @@ class Deck:
         except (OSError, ValueError):
             return {}
 
+    async def slide_opened_by(self, opener: str) -> str:
+        """The deck slide a story opener (a #go-N) opens, by its id."""
+        n = int(opener.removeprefix("#go-")) if opener.startswith("#go-") else 0
+        return await self.js(
+            "(n) => (document.querySelectorAll('#track > .slide')[n - 1] || {}).id || ''", n,
+            what="finding the slide an opener opens")
+
+    async def border_says(self) -> str:
+        """The slide the border counts itself on, as it shows it ("3 / 6")."""
+        return (await self.page.locator("#package-view .package-position").inner_text()).strip()
+
+    def story_slide_of(self, n: int) -> int:
+        """The story slide (from 1) whose openers open deck slide `n`, else 0."""
+        openers = self.parsed.outline()["openers"] if self.parsed else []
+        return next((k for k, o in enumerate(openers, 1) if f"#go-{n}" in o), 0)
+
     async def current_slide(self) -> str:
         return await self.js(
             "() => (document.querySelector('#track > .slide.current') || {}).id || ''",
@@ -670,10 +707,23 @@ async def _check_layout(d: Deck, label: str) -> None:
     bad = 0
     voting_bad = 0
     pictures_bad = 0
+    unfollowed = []
+    total = len(d.parsed.slides) if d.parsed else 0
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
+        # Opened in the deck itself (a key, the story): the border follows.
         await d.inner.locator(f"#go-{n}").evaluate("element => element.click()")
         await d.inner.wait_for_selector(f"#{slide_id}.current")
+        story_slide = d.story_slide_of(n)
+        if story_slide:
+            want = f"{story_slide} / {total}"
+            try:
+                await d.page.wait_for_function(
+                    "(want) => document.querySelector('#package-view .package-position')"
+                    "?.textContent.trim() === want", arg=want, timeout=5000)
+            except Exception:
+                unfollowed.append(f"slide {n} ({slide_id}): the border says "
+                                  f"{await d.border_says()!r}, not {want!r}")
         measured = await d.js(MEASURE, what=f"{label}: measuring slide {n}")
         voting = await d.js(VOTING, what=f"{label}: checking slide {n}'s voting")
         pictures = await d.js(PICTURES, what=f"{label}: measuring slide {n}'s pictures")
@@ -689,8 +739,11 @@ async def _check_layout(d: Deck, label: str) -> None:
         for problem in pictures:
             pictures_bad += 1
             result.failures.append(f"{label} slide {n} ({slide_id}) pictures: {problem} [{shot}]")
+    result.expect(not unfollowed, f"{label}: the border's count followed the deck to every slide",
+                  f"{label}: the border did not follow the deck: {'; '.join(unfollowed)}")
     if not bad:
-        result.passed.append(f"{label}: all {len(slides)} slides fit and meet their renderer text-size policy")
+        result.passed.append(f"{label}: all {len(slides)} slides fill the frame, fit and meet "
+                             f"their renderer text-size policy")
     if not voting_bad and d.deck.get("decisions"):
         result.passed.append(f"{label}: every vote control is visible, at least "
                              f"{MIN_CONTROL_PX} px tall and inside the frame, one Choose on "
@@ -748,12 +801,13 @@ async def _answer(d: Deck, question: str, option: str, by_click: bool) -> tuple[
         selector = (f"#d-{question} .later" if option == "later"
                     else f"#opt-{question}-{option} .choose")
         await d.inner.click(selector)
-        try:
-            await d.inner.wait_for_function(
-                "() => document.getElementById('status').textContent === 'Saved.'",
-                timeout=15000)
-        except Exception as e:                      # the save never came back
-            return False, f"the page's click on {selector} did not save: {e}"
+        # Saved means in the record on disk, through JARVIS's bridge.
+        deadline = time.monotonic() + 15
+        while (d.answers().get(question) or {}).get("answer") != option:
+            if time.monotonic() > deadline:     # the save never came back
+                return False, (f"the page's click on {selector} did not save: the record "
+                               f"holds {d.answers().get(question)}")
+            await asyncio.sleep(0.1)
         return True, f"a click on {option} on the page"
     ok, said = await d.tool("run_package_command", package=d.package_id,
                             command=f'"$JARVIS_PYTHON" scripts/decide.py {question} {option}')
@@ -989,6 +1043,18 @@ async def _check_border(d: Deck, label: str) -> None:
     d.result.expect(returned and d.answers() == before,
                     f"{label}: Chapters selection returns keyboard focus and leaves answers unchanged",
                     f"{label}: Chapters changed answers or lost keyboard focus")
+    # The border is the deck's navigation: the chosen slide opens in the deck.
+    opener = (d.parsed.outline()["openers"][int(selected) - 1] or [""])[0] if d.parsed else ""
+    if opener.startswith("#go-"):
+        want = await d.slide_opened_by(opener)
+        try:
+            await d.inner.wait_for_selector(f"#{want}.current", timeout=5000)
+            opened = True
+        except Exception:
+            opened = False
+        d.result.expect(opened, f"{label}: a slide chosen in the border's Chapters opens in the deck",
+                        f"{label}: Chapters slide {selected} did not open {want} in the deck; it "
+                        f"shows {await d.current_slide()}")
     await chapters.click()
     await choice.select_option("1")
     await d.page.keyboard.press("Escape")

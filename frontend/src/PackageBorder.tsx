@@ -1,4 +1,7 @@
 /** Compact frame for existing host actions. Selection never starts speech or writes an answer.
+ *  For a page that reports its slides (a deck), the border is its one navigation: the count follows
+ *  the slide the page shows (`shown`) and selecting a slide opens it there (`openSlide`) while no story
+ *  is told; any other story page only takes the slide to tell from.
  *  While the package has taken over, the border fades back without the pointer (`fade`, PackageView.tsx). */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useT, type Said } from "./locale";
@@ -17,10 +20,14 @@ interface Props {
   onSaid(said: Said | null): void;
   part(name: Part): (el: Element | null) => void;
   presentation: boolean;
-  command(type: "presentation.inspect" | "presentation.document" | "presentation.select", value?: number | boolean): void;
+  command(type: "presentation.inspect" | "presentation.document", value?: boolean): void;
   fade?: Fading;
+  /** The story slide the page says it shows, and how many times it has said so. */
+  shown?: { slide: number; seq: number } | null;
+  /** Open story slide `slide` in the page; missing: the page does not report its slides. */
+  openSlide?: ((slide: number) => void) | null;
 }
-export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade }: Props) {
+export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide }: Props) {
   const t = useT();
   const state = useSyncExternalStore(storyState.subscribe, storyState.get);
   const running = storyRunning(state, info.id);
@@ -40,6 +47,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
   const dialog = useRef<HTMLElement | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   useEffect(() => { setSlide(1); setMenu(null); setLinear(false); }, [info.id]);
+  useEffect(() => { if (shown) setSlide(shown.slide); }, [shown?.seq]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!header.current) return;
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
@@ -55,7 +63,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
     return () => { if (frame) frame.inert = false; if (header.current) header.current.inert = false; opener.current?.focus(); };
   }, [menu]);
   const open = (which: "chapters" | "more") => { opener.current = document.activeElement as HTMLElement; setMenu(which); };
-  const select = (value: number) => { setSlide(value); if (presentation && !running) command("presentation.select", value); };
+  const select = (value: number) => { setSlide(value); if (!running) openSlide?.(value); };
   const act = async (action: "tell" | "resume" | "stop") => {
     setBusy(true);
     try { onSaid(await tellStory(info.id, action, action === "tell" ? slide : undefined)); }

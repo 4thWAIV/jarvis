@@ -11,15 +11,22 @@
 //
 // Every word shown is set with textContent. The current slide is kept in
 // memory only.
+//
+// In JARVIS's package frame the border above the frame is the one
+// navigation: the deck draws no strip or Previous and Next of its own
+// (html.hosted, deck.css), opens a slide when JARVIS asks (the story
+// helper clicks its #go-N opener), and tells JARVIS every slide it shows,
+// `slide.shown` {opener: "#go-N"}, however it got there (a key, the story,
+// a question JARVIS is waiting on), so the border always says where it is.
+// Opened anywhere else it keeps its own strip, Previous, Next and status.
 (function () {
   "use strict";
 
   var DECK = window.DECK || { title: "", slides: [], decisions: [] };
-  var W = 880, H = 640;                        // the fixed canvas, scaled to fit
-  var MAX_SCALE = 22 / 18;                     // 18 px body text, at most 22 px on screen
   var RECORDED = "results/decisions.js";
   var FOLLOW_MS = 3000;
   var inFrame = window.parent !== window;
+  if (inFrame) document.documentElement.classList.add("hosted");
 
   // ── small helpers ─────────────────────────────────────────────────────
   function el(tag, cls, text) {
@@ -332,6 +339,7 @@
     var kicker = "Decision " + (index + 1) + " of " + DECISIONS.length + " · " + d.id;
     if (PARENT[d.id]) kicker += " · asked when " + opensText(d);
     head(section, kicker, d.question, "question");
+    section.querySelector(".kicker").appendChild(el("span", "tally-here"));
     // Shown while JARVIS's story is waiting for this answer (story.state).
     section.appendChild(el("p", "waiting", "Waiting for your answer: choose one, or say it"));
     var rec = optionOf(d, d.recommended);
@@ -427,11 +435,21 @@
     return (d.needs_words || []).indexOf(answer) >= 0;
   }
 
+  // An answer that cannot be recorded yet says why on its own slide (and,
+  // outside JARVIS, in the status line too).
+  function refuse(d, words) {
+    var v = views[d.id];
+    v.recorded.textContent = words;
+    v.recorded.classList.add("problem");
+    v.recorded.classList.remove("done");
+    say(words);
+  }
+
   function choose(d, answer) {
     var words = views[d.id].words.value.trim();
     if (needsWords(d, answer) && !words) {
       views[d.id].words.focus();
-      say(optionOf(d, answer).name + " needs your words: say what to change.");
+      refuse(d, optionOf(d, answer).name + " needs your words: say what to change.");
       return;
     }
     change(function () { record[d.id] = entry(d, answer, words); });
@@ -444,6 +462,7 @@
     var section = el("section", "slide answers");
     section.id = "answers";
     head(section, "Your answers", "What is recorded");
+    section.querySelector(".kicker").appendChild(el("span", "tally-here"));
     var list = section.appendChild(el("ol", "answer-list"));
     list.id = "answer-list";
     DECISIONS.forEach(function (d) {
@@ -470,7 +489,7 @@
           pick.value = record[d.id] ? record[d.id].answer : "";
           show(slideOf(d.id));
           views[d.id].words.focus();
-          say(optionOf(d, answer).name + " needs your words: say what to change.");
+          refuse(d, optionOf(d, answer).name + " needs your words: say what to change.");
           return;
         }
         change(function () { record[d.id] = entry(d, answer, note); });
@@ -563,6 +582,7 @@
       if (document.activeElement !== v.words) v.words.value = e ? e.note : v.words.value;
       v.recorded.textContent = (e ? "Recorded: " : "") + answerText(d, e) + (e && e.note ? " Your words: “" + e.note + "”" : "");
       v.recorded.classList.toggle("done", !!e && e.answer !== "later");
+      v.recorded.classList.remove("problem");
       v.section.classList.toggle("not-asked", !open && !e);
       row.pick.value = e ? e.answer : "";
       row.state.textContent = e || open ? "" : "Not asked yet";
@@ -575,7 +595,11 @@
     });
     var left = withRecommended(record).added.length;
     approve.disabled = left === 0;
-    document.getElementById("tally").textContent = answered + " of " + DECISIONS.length + " answered";
+    // How many are answered: on the strip outside JARVIS, and on every
+    // question's own slide and the answers slide, where JARVIS shows it.
+    var tally = answered + " of " + DECISIONS.length + " answered";
+    document.getElementById("tally").textContent = tally;
+    [].forEach.call(document.querySelectorAll(".tally-here"), function (t) { t.textContent = " · " + tally; });
   }
 
   // ── moving between slides ─────────────────────────────────────────────
@@ -593,6 +617,7 @@
     count.textContent = (current + 1) + " of " + slides.length;
     document.getElementById("prev").disabled = current === 0;
     document.getElementById("next").disabled = current === slides.length - 1;
+    if (inFrame) window.parent.postMessage({ jarvis: "package", type: "slide.shown", opener: "#" + slides[current].jump.id }, "*");
   }
   document.getElementById("prev").addEventListener("click", function () { show(current - 1); });
   document.getElementById("next").addEventListener("click", function () { show(current + 1); });
@@ -608,22 +633,21 @@
   });
 
   // ── fitting the frame ─────────────────────────────────────────────────
+  // The stage is the whole frame and deck.css lays every slide out to it;
+  // a new size or shape only arranges the pictured decisions again.
   var stage = document.getElementById("stage");
+  var refit = 0;
   function fit() {
-    if (window.JarvisPresentation) {
-      window.JarvisPresentation.fit(stage);
-      return;
-    }
-    // Never larger than MAX_SCALE: body text stays at most about 22 px.
-    var s = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
-    stage.style.transform = "scale(" + s + ")";
-    stage.style.left = Math.max(0, (window.innerWidth - W * s) / 2) + "px";
-    stage.style.top = Math.max(0, (window.innerHeight - H * s) / 2) + "px";
+    if (window.JarvisPresentation) window.JarvisPresentation.fit(stage);
   }
-  window.addEventListener("resize", fit);
+  window.addEventListener("resize", function () {
+    fit();
+    cancelAnimationFrame(refit);
+    refit = requestAnimationFrame(shrinkPictures);
+  });
 
   // A decision slide's voting area is always in sight: its pictures give up
-  // height until the slide fits the canvas.
+  // height until the slide fits the frame.
   function shown(img) {
     var r = img.getBoundingClientRect();
     if (!img.naturalWidth || !r.width || !r.height) return 0;
