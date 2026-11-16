@@ -3,7 +3,7 @@
 This page is the only description of how to make a package and send it to Tim. Every kind goes through one command, and nothing else: never build, zip, attach or deliver a package by hand.
 
 ```bash
-python -m jarvis.make_package --handoff handoff.json --engine <claude|codex> --session <your session id> [--workflow <id>] [--work <id>]
+python -m jarvis.make_package --handoff handoff.json --engine <claude|codex> --session <your session id> [--workflow <id>] [--work <id> | --general]
 ```
 
 It signs the package with your session's own key (`--session`; `python -m jarvis.agent_key init` makes it and `submit` sends it, and Tim accepts it by switching your agent on), so JARVIS knows it is yours: nothing is delivered without a key, and a package signed by a key Tim has not accepted is held until he does. A subagent signs with its parent's key; it is named as the sender, beside its parent, only when its own transcript shows it running the command. Give `--work <id>` with an agent package and it carries a key limited to that one Work item (`.jarvis/work-key`), so whoever works in the unpacked package reports on that item with `work_report.py`; it ends when the item closes or after 30 days.

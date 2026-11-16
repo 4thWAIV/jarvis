@@ -2,6 +2,13 @@
 
 Updated 2026-11-14. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## An agent can send you a package about no Work item
+
+An agent that has work open can still send you a package or message that is
+about none of it: it says so with `--general`, and it lands in your Inbox
+instead of on a Work item. Leaving out both the Work item and `--general` is
+still refused, so an agent that forgot to name its item is still told to.
+
 ## A package's presentation uses the whole display, and each question opens beside its part
 
 A package now opens taking over the page: everything but the slim rail of

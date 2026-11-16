@@ -459,7 +459,9 @@ message). A request that asks something (a decision field, `decision`,
 `question`, `options`, `recommendation`, or a sentence ending in "?") without
 a package is refused (`messages_api.asks`); one with no `work` from an agent
 with a piece not done on an open item is refused naming the item(s)
-(`work_store.open_items_of`); a page or the tool token is refused (403). A
+(`work_store.open_items_of`) unless it says it is about none (`general=1`,
+`--general` on `jarvis.message` and `make_package`, his Inbox; never with
+`work`); a page or the tool token is refused (403). A
 message with no package is an attention item (`message`, `arrived`). The
 reads are `GET /api/messages/work` (each item with messages: new, total,
 first new), `/work/{id}` (its conversation, oldest first, his replies in it)

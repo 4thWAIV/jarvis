@@ -604,6 +604,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--work", default="",
                         help="the work item it is for: it is a message in that item's "
                              "Messages tab (required while you have a piece on an open item)")
+    parser.add_argument("--general", action="store_true",
+                        help="it is for no work item: it goes to his Inbox even while you "
+                             "have a piece on an open item")
     parser.add_argument("--says", default="",
                         help="what the message carrying it says, one or two short sentences "
                              "(default: its kind and title)")
@@ -621,6 +624,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     args = parser.parse_args(argv)
     if bool(args.document) != bool(args.revision):
         parser.error("--document and --revision go together")
+    if args.work and args.general:
+        parser.error("a package is for one work item (--work) or for none (--general), not both")
 
     if args.example:
         print(json.dumps(dp.EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
@@ -778,7 +783,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         delivered = dp.deliver(made.archive, args.deliver_to,
                                args.says.strip() or dp.says_of(made.title, made.kind),
                                project=args.project, workflow=args.workflow, work=args.work,
-                               source=str(args.handoff or args.source), signer=signer)
+                               source=str(args.handoff or args.source), signer=signer,
+                               general=args.general)
     except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
         print(f"Not delivered: {e}")
         return 1
