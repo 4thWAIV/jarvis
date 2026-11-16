@@ -2469,6 +2469,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
                       padding: 14px 16px 12px; border: 1px solid #f5a623; border-radius: 10px;
                       background: #0b1220; color: rgba(255, 255, 255, 0.9);
                       box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); }
+.package-focus-card[data-centred="true"] { left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .package-focus-card:focus { outline: none; }
 .package-focus-card:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .package-focus-card .package-ask-question { font-size: 15px; margin: 0 28px 8px 0; }

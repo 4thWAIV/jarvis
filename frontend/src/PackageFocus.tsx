@@ -52,9 +52,10 @@ function inLayer(frame: HTMLIFrameElement, layer: HTMLElement, rect: FrameRect):
  *  line from the part's edge to the card's. */
 function besides(lit: Box | null, card: { width: number; height: number }, w: number, h: number) {
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
-  if (!lit) {
-    return { left: Math.max(MARGIN, (w - card.width) / 2), top: Math.max(MARGIN, (h - card.height) / 2), line: null };
-  }
+  // No part: centred by the stylesheet (`data-centred`), so a card whose
+  // content grows after it is placed (the explanation, read once it opens)
+  // stays centred and inside the view without being measured again.
+  if (!lit) return { left: 0, top: 0, line: null, centred: true };
   const midY = lit.top + lit.height / 2, midX = lit.left + lit.width / 2;
   const right = lit.left + lit.width + GAP, left = lit.left - GAP - card.width;
   const below = lit.top + lit.height + GAP, above = lit.top - GAP - card.height;
@@ -75,10 +76,10 @@ function besides(lit: Box | null, card: { width: number; height: number }, w: nu
     // No room beside it: over the corner farthest from the part's middle.
     x = midX > w / 2 ? MARGIN : w - card.width - MARGIN;
     y = midY > h / 2 ? MARGIN : h - card.height - MARGIN;
-    return { left: Math.max(MARGIN, x), top: Math.max(MARGIN, y), line: null };
+    return { left: Math.max(MARGIN, x), top: Math.max(MARGIN, y), line: null, centred: false };
   }
   const [x2, y2] = to(x, y);
-  return { left: x, top: y, line: { x1: from[0], y1: from[1], x2, y2 } };
+  return { left: x, top: y, line: { x1: from[0], y1: from[1], x2, y2 }, centred: false };
 }
 
 export function PackageFocus({ frame, rect, dim, kind, label, takeFocus, cardRef, children }: {
@@ -146,7 +147,8 @@ export function PackageFocus({ frame, rect, dim, kind, label, takeFocus, cardRef
       )}
       <section className="package-focus-card" role="region" aria-label={label} tabIndex={-1}
                aria-live={kind === "narration" ? "polite" : undefined}
-               style={place ? { left: place.left, top: place.top } : { visibility: "hidden" }}
+               data-centred={place?.centred ? "true" : undefined}
+               style={!place ? { visibility: "hidden" } : place.centred ? undefined : { left: place.left, top: place.top }}
                ref={(el) => { card.current = el; cardRef?.(el); }}>
         {children}
       </section>

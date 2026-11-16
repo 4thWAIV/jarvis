@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.package_cards import CARD, QUESTIONS
+from tests.package_cards import CARD, QUESTIONS, open_question
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import FAKE_TRANSCRIPTION
 from tests.test_voice_page_story import STORY_BROWSER_ARGS, _Voice, _synthesize
@@ -369,6 +369,13 @@ async def test_a_question_opened_from_questions_is_presented_beside_its_part(
             await async_api.expect(card.locator("h3")).to_have_text("Is the document clear?")
             await card.get_by_role("button", name="Next", exact=True).click()
             await async_api.expect(page.locator(".package-focus")).to_have_count(0)
+            # An answered question before the first open one is still reached:
+            # Questions opens at the open one, Back walks to it.
+            reached = await open_question(page, "route")
+            await async_api.expect(reached.locator(".package-focus-position")).to_have_text("Question 1 of 2")
+            await async_api.expect(reached.get_by_role("button", name="Route A (recommended)")) \
+                .to_have_attribute("aria-pressed", "true")
+            await page.keyboard.press("Escape")
         finally:
             await voice.speech.stop()
         await browser.close()
