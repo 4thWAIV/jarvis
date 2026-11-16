@@ -20,6 +20,8 @@ from jarvis.knowledge import lanes, oscompat
 log = logging.getLogger("jarvis.knowledge.engine")
 
 CARDS_REFRESH_SEC = 600.0
+ROUTE_TIMES_WINDOW_SEC = 300.0     # the engine's health shows each route's last five minutes
+ROUTE_TIMES_BUCKET_SEC = 60.0
 SNAPSHOT_EVERY_SEC = 24 * 3600.0   # a snapshot a day: the engine holds records and their history
 
 
@@ -45,6 +47,57 @@ def lock_is_free(directory: Path) -> bool:
         os.close(fd)
 
 
+class RouteTimes:
+    """Each route's requests over the last `window` seconds: how many, their
+    seconds in all and the slowest, kept in buckets of `bucket` seconds and
+    shown in the engine's health (`routes`), so what keeps a busy engine
+    busy is seen on a live engine without raising its logging."""
+
+    def __init__(self, window: float = ROUTE_TIMES_WINDOW_SEC, bucket: float = ROUTE_TIMES_BUCKET_SEC,
+                 clock=time.monotonic) -> None:
+        self.window = window
+        self.bucket = bucket
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._buckets: list[tuple[float, dict[str, list]]] = []   # (start, route -> [count, seconds, max])
+
+    def _trim(self, now: float) -> None:
+        while self._buckets and self._buckets[0][0] <= now - self.window - self.bucket:
+            self._buckets.pop(0)
+
+    def record(self, route: str, seconds: float) -> None:
+        now = self._clock()
+        start = now - now % self.bucket
+        with self._lock:
+            if not self._buckets or self._buckets[-1][0] != start:
+                self._buckets.append((start, {}))
+                self._trim(now)
+            entry = self._buckets[-1][1].setdefault(route, [0, 0.0, 0.0])
+            entry[0] += 1
+            entry[1] += seconds
+            entry[2] = max(entry[2], seconds)
+
+    def snapshot(self) -> dict:
+        """The routes of the window (its whole buckets and the one under
+        way), the busiest first by seconds."""
+        now = self._clock()
+        out: dict[str, list] = {}
+        with self._lock:
+            self._trim(now)
+            for start, routes in self._buckets:
+                if start <= now - self.window - self.bucket:
+                    continue
+                for route, (count, seconds, slowest) in routes.items():
+                    have = out.setdefault(route, [0, 0.0, 0.0])
+                    have[0] += count
+                    have[1] += seconds
+                    have[2] = max(have[2], slowest)
+        ranked = sorted(out.items(), key=lambda kv: -kv[1][1])
+        return {"window_s": self.window,
+                "routes": {r: {"count": c, "seconds": round(t, 3), "max_s": round(m, 3)}
+                           for r, (c, t, m) in ranked}}
+
+
 class Engine:
     def __init__(self, directory: Path, lock_fd: int) -> None:
         self.directory = directory
@@ -67,6 +120,7 @@ class Engine:
         self.rights = None    # AccessRights at paths (rights.py)
         # (monotonic time, health) kept by serve's health thread, if it runs.
         self.held_health: Optional[tuple[float, dict]] = None
+        self.route_times = RouteTimes()   # recorded by serve.dispatch
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -132,7 +186,8 @@ class Engine:
                 "vectors": self.vectors.health() if self.vectors else {},
                 "cards": self.cards.health() if self.cards else {},
                 "advisor": self.advisor.health() if self.advisor else {},
-                "items": self.items.health() if self.items else {}}
+                "items": self.items.health() if self.items else {},
+                "routes": self.route_times.snapshot()}
 
     def indexing_enabled(self) -> bool:
         from jarvis import knowledge_settings

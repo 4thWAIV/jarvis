@@ -92,6 +92,7 @@ class _RecordStream:
     passes over them, decompressed and dropped, without keeping them."""
 
     SKIP_STEP = 1 << 20
+    TAKE_STEP = 64 << 10
     # Input is fed in pieces: a bounded decompress keeps what it did not
     # use as a copy (`unconsumed_tail`), so the whole input at once would
     # be copied again on every call.
@@ -131,7 +132,10 @@ class _RecordStream:
         return b""
 
     def take(self, n: int) -> Optional[bytes]:
-        """The next `n` bytes, or None at the end of the block."""
+        """The next `n` bytes, or None at the end of the block. The buffer
+        is refilled `TAKE_STEP` at a time: asking zlib for exactly the 15
+        bytes of each record's head made one call per record, which walked
+        a block of small records several times slower than decoding it."""
         have = len(self._buf) - self._pos
         if have >= n:
             out = self._buf[self._pos:self._pos + n]
@@ -139,13 +143,13 @@ class _RecordStream:
             return out
         parts = [self._buf[self._pos:]]
         while have < n:
-            more = self._more(n - have)
+            more = self._more(max(n - have, self.TAKE_STEP))
             if not more:
                 return None
             parts.append(more)
             have += len(more)
-        self._buf, self._pos = b"", 0
-        return b"".join(parts)
+        self._buf, self._pos = b"".join(parts), n
+        return self._buf[:n]
 
     def skip(self, n: int) -> None:
         have = len(self._buf) - self._pos
@@ -379,6 +383,7 @@ class Segment:
         self.ends = self.offsets[1:] + [foff]
         self.bloom = bytes(footer[pos:])
         self.bytes = size
+        self._raw_sizes: dict[int, int] = {}
 
     def close(self) -> None:
         self.pool.drop_file(self.file_id)
@@ -413,14 +418,8 @@ class Segment:
 
     def versions(self, key: bytes) -> list[Version]:
         """Every version of `key` here, newest first."""
-        if not self.first_keys or not self.might_have(key):
-            return []
-        index = max(0, bisect.bisect_right(self.first_keys, key) - 1)
         # The writer never splits one key's versions across blocks.
-        versions, keys = self._block(index)
-        lo = bisect.bisect_left(keys, key)
-        hi = bisect.bisect_right(keys, key, lo)
-        return versions[lo:hi]
+        return list(self.iter_versions(key))
 
     def newest(self, key: bytes, at: Optional[int] = None, live: bool = False) -> Optional[Version]:
         """The newest version of `key` here at or below `at` (with `live`,
@@ -436,9 +435,7 @@ class Segment:
         if not self.first_keys or not self.might_have(key):
             return None
         index = max(0, bisect.bisect_right(self.first_keys, key) - 1)
-        cached = self.pool.get((self.file_id, index))
-        if cached is None and self._raw_size(index) <= STREAM_OVER_BYTES:
-            cached = self._block(index)
+        cached = self._decoded(index)
         if cached is not None:
             versions, keys = cached
             lo = bisect.bisect_left(keys, key)
@@ -453,7 +450,89 @@ class Segment:
         return _first_in_records(self._records(index), key, at, live)
 
     def _raw_size(self, index: int) -> int:
-        return BLOCK_HEAD.unpack(pread(self.fd, BLOCK_HEAD.size, self.offsets[index]))[2]
+        size = self._raw_sizes.get(index)
+        if size is None:
+            size = self._raw_sizes[index] = BLOCK_HEAD.unpack(
+                pread(self.fd, BLOCK_HEAD.size, self.offsets[index]))[2]
+        return size
+
+    def _decoded(self, index: int) -> Optional[tuple[list[Version], list[bytes]]]:
+        """The block decoded (from the pool, or read and kept there), or
+        None for a block over `STREAM_OVER_BYTES` not already held, which
+        is streamed instead."""
+        cached = self.pool.get((self.file_id, index))
+        if cached is None and self._raw_size(index) <= STREAM_OVER_BYTES:
+            cached = self._block(index)
+        return cached
+
+    def iter_versions(self, key: bytes) -> Iterator[Version]:
+        """Every version of `key` here, newest first, decoded one at a time
+        as the caller takes them: a reader that wants the newest few of a
+        long history stops early, and an oversized block is streamed, never
+        decoded whole."""
+        if not self.first_keys or not self.might_have(key):
+            return
+        index = max(0, bisect.bisect_right(self.first_keys, key) - 1)
+        cached = self._decoded(index)
+        if cached is not None:
+            versions, keys = cached
+            lo = bisect.bisect_left(keys, key)
+            yield from versions[lo:bisect.bisect_right(keys, key, lo)]
+            return
+        stream = self._records(index)
+        while True:
+            head = stream.take(REC.size)
+            if head is None:
+                return
+            klen, lsn, flags, vlen = REC.unpack(head)
+            found = stream.take(klen)
+            if found is None or found > key:
+                return
+            if found < key:
+                stream.skip(vlen)
+                continue
+            yield Version(found, lsn, None if flags & TOMBSTONE else stream.take(vlen))
+
+    def scan_newest(self, start: bytes = b"", end: Optional[bytes] = None,
+                    at: Optional[int] = None) -> Iterator[Version]:
+        """Per key with start <= key < end, in key order, its newest version
+        here at or below `at` (a tombstone included): what a read of the
+        newest versions needs from this segment, and no more. An item's
+        long history is never decoded: an ordinary block is searched as the
+        pool holds it, an oversized one through its heads (`_heads`), and
+        walked only for a key whose newest version is above `at`."""
+        if not self.first_keys or (at is not None and self.lsn_min > at):
+            return
+        index = max(0, bisect.bisect_right(self.first_keys, start) - 1)
+        for i in range(index, len(self.first_keys)):
+            if end is not None and self.first_keys[i] >= end:
+                return
+            cached = self._decoded(i)
+            if cached is not None:
+                versions, keys = cached
+                pos = bisect.bisect_left(keys, start) if i == index else 0
+                last = None
+                for v in versions[pos:] if pos else versions:
+                    if v.key == last:
+                        continue
+                    if end is not None and v.key >= end:
+                        return
+                    if at is not None and v.lsn > at:
+                        continue
+                    last = v.key
+                    yield v
+                continue
+            for k, (newest, _live) in self._heads(i).items():
+                if k < start:
+                    continue
+                if end is not None and k >= end:
+                    return
+                if at is None or newest.lsn <= at:
+                    yield newest
+                else:
+                    found = _first_in_records(self._records(i), k, at, False)
+                    if found is not None:
+                        yield found
 
     def _records(self, index: int) -> "_RecordStream":
         off, end = self.offsets[index], self.ends[index]
@@ -492,7 +571,10 @@ class Segment:
                 stream.skip(vlen)
         size = sum(len(k) + len(v.value or b"") + (len(lv.value or b"") if lv is not None and lv is not v else 0)
                    for k, (v, lv) in heads.items())
-        self.pool.put(ident, heads, size)
+        # Straight to the protected part of the pool: these few versions
+        # stand for a walk of the whole block, which a scan's churn through
+        # probation would otherwise make again on every read.
+        self.pool.put(ident, heads, size, pinned=True)
         return heads
 
     def scan(self, start: bytes = b"", end: Optional[bytes] = None) -> Iterator[Version]:
