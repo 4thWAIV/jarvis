@@ -136,9 +136,10 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         # Each decision is led in by its own slide (why it is his, its evidence).
         assert shots == ["01-s1.png", "02-lead-where.png", "03-d-where.png",
-                         "04-lead-when.png", "05-d-when.png", "06-answers.png", "package-border.png"]
+                         "04-lead-when.png", "05-d-when.png", "06-d-approve-package.png",
+                         "07-answers.png", "package-border.png"]
     for check in ("first time: the story waits at where", "first time: the story waits at when",
-                  "first time: every question answered, in order (where, when)",
+                  "first time: every question answered, in order (where, when, approve-package)",
                   "stop by the page during narration: stopped within 1s",
                   "stop by the page while waiting: stopped within 1s",
                   "stop by the brain's tool during narration: stopped within 1s",

@@ -311,6 +311,12 @@ def _with_vote(built: Path, manifest: dict) -> None:
                         "slide")
     except (OSError, ValueError, package_story.StoryError) as e:
         raise dp.Refused([f"Its story cannot be read: {e}"])
+    # A story the factory already composed ends with his one vote: the
+    # standard one, or an architecture design's approval in its place
+    # (package_story.compose). Nothing is added to it.
+    if parsed is not None and parsed.slides and parsed.slides[-1].waits in (
+            package_inbox.VOTE_ID, package_inbox.APPROVAL_ID):
+        return
     # The vote in the story's language (English when it names none, as it is
     # told), or for a new story the language in force.
     language = parsed.language if parsed is not None else built_language()
