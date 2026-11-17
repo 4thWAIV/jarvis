@@ -1289,7 +1289,14 @@ scrolling column in its reading order, in the narrow unit, pictures,
 vectors and charts at `narrow.heights`, a table's rows as cards) every word
 fits its width and every picture its place at every width from
 `narrow.min_width` (`layout_spec.narrow_widths`; JARVIS's narrow column in
-place of an author's crops), that every picture is real and readable from its
+place of an author's crops), that every chart drawn from data fits (a
+deck's `datasets` are records frozen in its source; a table's or chart's
+`data` a view of one, where, sort and limit, worked out once by
+`presentation_data.py`, which expands a data table into rows and resolves
+a chart, bar, line or scatter, into ticks, labels and points as shares of
+the plot that presentation.js only places; `presentation_proof.chart_parts`
+measures its labels against the spec's `chart`; every bar, point and named
+cell a target), that every picture is real and readable from its
 bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn
 size and label floor at the smallest frame; `--fill-assets` writes each
 asset's size and hash), that the story points only at what is drawn and

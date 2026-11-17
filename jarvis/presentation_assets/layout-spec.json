@@ -1,5 +1,5 @@
 {
-  "about": "JARVIS's one layout spec for every deck it draws. A frame narrower or shorter than narrow.below draws every content slide as one column in its reading order (narrow: its own unit, one 440th of the frame's width, proven at widths from narrow.min_width up), pictures, vectors and charts at narrow.heights, everything else as tall as its words. components are JARVIS's own parts an author fills with words (callout, figures, steps). Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
+  "about": "JARVIS's one layout spec for every deck it draws. A frame narrower or shorter than narrow.below draws every content slide as one column in its reading order (narrow: its own unit, one 440th of the frame's width, proven at widths from narrow.min_width up), pictures, vectors and charts at narrow.heights, everything else as tall as its words. components are JARVIS's own parts an author fills with words (callout, figures, steps); chart is how JARVIS draws a chart from a dataset (lengths in em of its text style), proven like text. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
   "frame": {"min": [662, 489], "max": [1600, 900]},
   "unit": {"width": 880, "height": 640},
   "text": {"min_px": 13, "max_px": 25, "width_margin": 0.02},
@@ -14,6 +14,8 @@
     "figures": {"gap": 14, "pad": [12, 10]},
     "steps": {"gap": 10, "marker": 1.9, "marker_gap": 0.6}
   },
+  "chart": {"style": "cell", "axis_gap": 0.5, "legend_gap": 1, "swatch": 0.8, "swatch_gap": 0.4,
+            "x_lines_max": 2, "plot_min_px": 80, "mark_min_px": 6, "band": 0.8, "dot": 0.6},
   "narrow": {"below": [662, 489], "min_width": 360, "unit": 440, "margin": 16, "gap": 12,
              "heights": {"image": 260, "vector": 260, "chart": 320}, "widths": 8},
   "control": {"min_px": 32},
@@ -41,12 +43,12 @@
   },
   "accepts": {
     "words": ["text", "callout", "figures", "steps"],
-    "body": ["text", "table", "bar", "vector", "image", "callout", "figures", "steps"],
-    "picture": ["image", "vector", "bar"],
-    "first": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
-    "second": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
-    "third": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
-    "fourth": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
+    "body": ["text", "table", "bar", "vector", "image", "chart", "callout", "figures", "steps"],
+    "picture": ["image", "vector", "bar", "chart"],
+    "first": ["image", "vector", "bar", "chart", "text", "callout", "figures", "steps"],
+    "second": ["image", "vector", "bar", "chart", "text", "callout", "figures", "steps"],
+    "third": ["image", "vector", "bar", "chart", "text", "callout", "figures", "steps"],
+    "fourth": ["image", "vector", "bar", "chart", "text", "callout", "figures", "steps"],
     "table": ["table"]
   }
 }

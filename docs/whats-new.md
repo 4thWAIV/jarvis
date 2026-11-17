@@ -2,6 +2,15 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Charts and tables in decks are drawn from the data
+
+An agent now gives a deck its figures once, as records, and JARVIS draws
+the bar, line and scatter charts and the tables from them, filtered and
+sorted as the agent asks, so a chart and a table of the same rows always
+agree. While JARVIS tells the story it can point at the one bar, point or
+table cell it is talking about. A chart with more rows than its place can
+show legibly is refused before it is sent.
+
 ## Decks read in a narrow window, and carry JARVIS's own parts
 
 A deck shown in a narrow or short package view now becomes one column you

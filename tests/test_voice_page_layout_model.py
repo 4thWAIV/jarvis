@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 from jarvis import layout_spec, make_package as mp, picture_proof, presentation_proof
-from jarvis.presentation_schema import ContentSlide
+from jarvis.presentation_schema import ChartObject, ContentSlide
 from jarvis.presentation_source import read_source
 
 pytestmark = pytest.mark.page
@@ -94,6 +94,16 @@ def hard_deck(folder: Path) -> Path:
             "changes": "Si el modelo se aparta del navegador, esta prueba falla en CI."},
         "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
                         "revision": "1", "description": "Datos inventados para la prueba."}],
+        "datasets": [{"id": "manzanas", "source": {"reference": "evidence"},
+                      "columns": [{"id": "manzana", "label": "Manzana", "type": "text"},
+                                  {"id": "coste", "label": "Coste", "type": "number", "units": "k€"},
+                                  {"id": "escorrentia", "label": "Escorrentía", "type": "number", "units": "%"},
+                                  {"id": "arboles", "label": "Árboles", "type": "number"}],
+                      "rows": [{"id": f"m{n}", "values": {"manzana": name, "coste": cost,
+                                                          "escorrentia": runoff, "arboles": trees}}
+                               for n, (name, cost, runoff, trees) in enumerate([
+                                   ("Norte", 12000.5, 40, 18), ("Sur", 8, 85, 2), ("Este", 15.5, 35, 24),
+                                   ("Oeste", 10.25, 60, 9)], 1)]}],
         "slides": [
             _slide("palabras", "Palabras largas y viñetas", "title-and-body",
                    _text("palabras-texto", "body",
@@ -134,6 +144,24 @@ def hard_deck(folder: Path) -> Path:
                    {"id": "comp-pasos", "type": "steps", "slot": "third", "source": {"reference": "evidence"},
                     "items": [{"id": "paso-medir", "title": "Medir", "says": "Un mes antes."},
                               {"id": "paso-plantar", "title": "Plantar la manzana interdisciplinaria"}]}),
+            _slide("datos", "Costes y escorrentía por manzana", "two-pictures",
+                   {"id": "datos-barras", "type": "chart", "slot": "first", "kind": "bar",
+                    "source": {"reference": "evidence"}, "alt": "Coste y escorrentía",
+                    "data": {"dataset": "manzanas"}, "x": "manzana", "y": ["coste", "escorrentia"]},
+                   {"id": "datos-puntos", "type": "chart", "slot": "second", "kind": "scatter",
+                    "source": {"reference": "evidence"}, "alt": "Escorrentía según árboles",
+                    "data": {"dataset": "manzanas"}, "x": "arboles", "y": ["escorrentia"]},
+                   _text("datos-texto", "words", "Cifras inventadas para la prueba.")),
+            {"id": "datos-tabla", "type": "content", "title": "Las manzanas no pavimentadas",
+             "layout": "table", "notes": "",
+             "objects": [{"id": "tabla-manzanas", "type": "table", "slot": "table", "rowHeads": True,
+                          "source": {"reference": "evidence"}, "alt": "Manzanas",
+                          "data": {"dataset": "manzanas", "where": [{"column": "arboles", "at_least": 5}],
+                                   "sort": {"column": "coste", "order": "descending"}},
+                          "columns": ["manzana", "coste", "escorrentia"]}],
+             "readingOrder": ["tabla-manzanas"],
+             "narration": [{"id": "datos-tabla-cue", "say": "Una tabla de datos.",
+                            "focus": ["tabla-manzanas-m3-coste"]}]},
             _slide("imagen", "Una imagen y palabras", "picture-and-words",
                    _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
                    _image("imagen-dibujo", "picture", "ancho")),
@@ -187,6 +215,36 @@ def modelled(obj, slot_box, frame, margin: bool = True) -> float | None:
     return measured
 
 
+CHART = """id => {
+  const chart = document.getElementById(id).querySelector(".presentation-chart");
+  return {plot: chart.querySelector(".presentation-chart-plot").getBoundingClientRect().height,
+          axis: chart.querySelector(".presentation-chart-y").getBoundingClientRect().width};
+}"""
+
+
+def chart_off(page, obj, slot_box, frame) -> list[str]:
+    """A chart's plot height and y-label column width, drawn against the
+    model's (presentation_proof.chart_parts, without its width margin)."""
+    spec = layout_spec.spec()
+    spec["text"]["width_margin"] = 0
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(layout_spec, "spec", lambda: spec)
+        if layout_spec.is_narrow(frame):
+            u, width = layout_spec.narrow_unit(frame[0]), layout_spec.narrow_slot_width(frame[0])
+            height = layout_spec.narrow_height("chart", frame[0])
+        else:
+            u = layout_spec.unit(frame)
+            width, height = layout_spec.frame_box(slot_box, frame)
+        parts = presentation_proof.chart_parts(obj, width, u)
+    assert not isinstance(parts, str), parts
+    plot = height - parts["legend"] - parts["x"] - parts["around"]
+    drawn = page.evaluate(CHART, "presentation-main-" + obj.id)
+    if abs(drawn["plot"] - plot) > MODEL_PX or abs(drawn["axis"] - parts["axis"]) > MODEL_PX:
+        return [f"{frame[0]}x{frame[1]} {obj.id}: drawn plot {drawn['plot']:.2f} px and axis "
+                f"{drawn['axis']:.2f} px, model {plot:.2f} and {parts['axis']:.2f} px"]
+    return []
+
+
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
     folder = tmp_path_factory.mktemp("hard")
@@ -220,6 +278,10 @@ def test_the_browser_draws_every_slot_the_height_the_model_computed(built):
                         continue
                     boxes = layout_spec.boxes(slide.layout, {o.slot for o in slide.objects})
                     for obj in slide.objects:
+                        if isinstance(obj, ChartObject):
+                            checked += 1
+                            off += chart_off(page, obj, boxes[obj.slot], frame)
+                            continue
                         exact = modelled(obj, boxes[obj.slot], frame, margin=False)
                         if exact is None:
                             continue

@@ -196,7 +196,7 @@ def generated_css() -> str:
                 for slot, box in boxes(layout, filled).items():
                     lines.append(_box(f'.presentation-slot[data-layout="{layout}"][data-columns="{count}"]'
                                       f'[data-slot="{slot}"]', box))
-    lines += _components_css() + _narrow_css()
+    lines += _components_css() + _chart_css() + _narrow_css()
     lines.append(GENERATED_END)
     return "\n".join(lines) + "\n"
 
@@ -215,6 +215,32 @@ def _components_css() -> list[str]:
         f".presentation-step {{ display: grid; grid-template-columns: {steps['marker']:g}em minmax(0, 1fr); "
         f"column-gap: {steps['marker_gap']:g}em; align-items: start; }}",
         f".presentation-step-marker {{ width: {steps['marker']:g}em; height: {steps['marker']:g}em; }}",
+    ]
+
+
+def _chart_css() -> list[str]:
+    """A chart: legend over the plot, y labels at its left, x labels under
+    it; marks placed by presentation.js as shares of the plot, so the only
+    lengths are these and the words (presentation_proof.chart_height)."""
+    c = spec()["chart"]
+    style = c["style"]
+    half = f"calc(var(--deck-{style}) * var(--deck-{style}-line) / 2)"
+    return [
+        f".presentation-chart {{ display: grid; grid-template-columns: auto minmax(0, 1fr); "
+        f"grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; font-size: var(--deck-{style}); "
+        f"line-height: var(--deck-{style}-line); }}",
+        f".presentation-chart-legend {{ grid-column: 1 / 3; display: flex; flex-wrap: wrap; "
+        f"column-gap: {c['legend_gap']:g}em; }}",
+        f".presentation-chart-swatch {{ display: inline-block; width: {c['swatch']:g}em; height: {c['swatch']:g}em; "
+        f"margin-right: {c['swatch_gap']:g}em; }}",
+        f".presentation-chart-y {{ grid-row: 2; grid-column: 1; position: relative; padding-right: {c['axis_gap']:g}em; }}",
+        f".presentation-chart-y > .presentation-chart-ticks {{ position: absolute; inset: {half} {c['axis_gap']:g}em {half} 0; }}",
+        f".presentation-chart-plot {{ grid-row: 2; grid-column: 2; position: relative; margin: {half} 0; }}",
+        f".presentation-chart-x {{ grid-row: 3; grid-column: 2; position: relative; }}",
+        f".presentation-chart-x.categories {{ display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        f"text-align: center; }}",
+        f".presentation-chart-x.ticks {{ height: calc(var(--deck-{style}) * var(--deck-{style}-line)); }}",
+        f".presentation-chart-dot {{ width: {c['dot']:g}em; height: {c['dot']:g}em; }}",
     ]
 
 

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import (decision_package as dp, layout_spec, package_story, package_understanding,
-                    presentation_proof)
-from jarvis.presentation_schema import (COMPONENTS, BarObject, ContentSlide, FiguresObject,
+                    presentation_data, presentation_proof)
+from jarvis.presentation_schema import (COMPONENTS, BarObject, ChartObject, ContentSlide, FiguresObject,
                                         ImageObject, SourceRef, StepsObject, TableObject, TextObject,
                                         VectorObject, words)
 from jarvis.presentation_source import (OPENING_ID, DeckCompileError, DeckDiagnostic, Source,
@@ -76,6 +76,14 @@ def _targets(source: Source) -> list[dict]:
                 elif isinstance(obj, TableObject):
                     for row in obj.rows:
                         add(row.id,"row"," | ".join(row.cells),obj.source)
+                    for row, ids in zip(obj.rows, presentation_data.cell_ids(obj)):
+                        for n, cell in enumerate(ids):
+                            head = f"{obj.head[n]}: " if obj.head else ""
+                            add(cell,"cell",head + row.cells[n],obj.source)
+                elif isinstance(obj, ChartObject):
+                    for series in obj._drawn["series"]:
+                        for point in series["points"]:
+                            add(point["id"],"point",f"{series['label']}, {point['name']}",obj.source)
     return entries
 
 
@@ -179,7 +187,9 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                     snapshot.parent.mkdir(exist_ok=True)
                     snapshot.write_bytes(evidence)
                     frozen[reference.id] = {"path": relative, "sha256": hashlib.sha256(evidence).hexdigest()}
-            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
+            charts={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
+                    if isinstance(obj,ChartObject)}
+            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
             (folder/"presentation-data.js").write_text("window.PRESENTATION = "+json.dumps(model,ensure_ascii=False)+";\n",encoding="utf-8")
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

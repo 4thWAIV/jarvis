@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import font_metrics, layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, CalloutObject, ContentSlide, FiguresObject,
+from jarvis.presentation_schema import (BarObject, CalloutObject, ChartObject, ContentSlide, FiguresObject,
                                         ImageObject, StepsObject, TableObject, TextObject,
                                         VectorObject, words)
 
@@ -222,6 +222,60 @@ def steps_height(obj: StepsObject, width: float, u: float) -> float | str:
     return total
 
 
+def chart_parts(obj: ChartObject, width: float, u: float) -> dict | str:
+    """A chart's parts in `width` px: its y labels' column width (`axis`),
+    the heights of its legend, its x labels and the half line above and
+    below the plot (`around`); or why it cannot be drawn there: a label
+    wider than its place, x labels over their lines, bars too thin to see."""
+    c = layout_spec.spec()["chart"]
+    px, line, face = _style(c["style"], u)
+    margin = 1 + layout_spec.spec()["text"]["width_margin"]
+    drawn = obj._drawn
+    axis = max(font_metrics.width(t["label"], px, face) for t in drawn["y_ticks"]) * margin \
+        + c["axis_gap"] * px
+    plot = width - axis
+    if plot <= c["mark_min_px"]:
+        return "its y labels take its whole width"
+    rows, used = 0, None
+    for series in drawn["series"]:
+        item = (c["swatch"] + c["swatch_gap"]) * px + font_metrics.width(series["label"], px, face) * margin
+        if item > width:
+            return f"the legend's {series['label']!r} is wider than its place"
+        if used is None or used + c["legend_gap"] * px + item > width:
+            rows, used = rows + 1, item
+        else:
+            used += c["legend_gap"] * px + item
+    if "categories" in drawn:
+        band = plot / len(drawn["categories"])
+        tallest = 1
+        for label in drawn["categories"]:
+            count = lines([(label, face)], px, band)
+            if isinstance(count, str):
+                return f"under its {'bar' if obj.kind == 'bar' else 'point'}, {count}"
+            if count > c["x_lines_max"]:
+                return (f"the label {label!r} needs {count} lines under its place; at most "
+                        f"{c['x_lines_max']}: show fewer rows or shorter labels")
+            tallest = max(tallest, count)
+        mark = band * c["band"] / len(drawn["series"]) if obj.kind == "bar" else band
+        if mark < max(c["mark_min_px"], 0 if obj.kind == "bar" else c["dot"] * px):
+            return f"each {'bar' if obj.kind == 'bar' else 'point'} has {mark:.0f} px: show fewer rows"
+    else:
+        tallest = 1
+        room = plot / len(drawn["x_ticks"])
+        for tick in drawn["x_ticks"]:
+            if font_metrics.width(tick["label"], px, face) * margin > room:
+                return f"the x label {tick['label']!r} is wider than its place"
+    return {"axis": axis, "legend": rows * line, "x": tallest * line, "around": line}
+
+
+def chart_height(obj: ChartObject, width: float, u: float) -> float | str:
+    """The height a chart needs: its parts and the least plot (layout_spec "chart")."""
+    parts = chart_parts(obj, width, u)
+    if isinstance(parts, str):
+        return parts
+    return parts["legend"] + parts["x"] + parts["around"] + layout_spec.spec()["chart"]["plot_min_px"]
+
+
 def object_height(obj, width: float, u: float, narrow: bool = False) -> float | str | None:
     """The height an object's words take in `width` px at deck unit `u`, or
     why they cannot; None for what is drawn at its slot's size (a picture,
@@ -238,6 +292,8 @@ def object_height(obj, width: float, u: float, narrow: bool = False) -> float | 
         return figures_height(obj, width, u, narrow)
     if isinstance(obj, StepsObject):
         return steps_height(obj, width, u)
+    if isinstance(obj, ChartObject):
+        return chart_height(obj, width, u)
     return None
 
 
@@ -328,6 +384,10 @@ def _prove_narrow(failures: list[Failure], slide: ContentSlide, pictures) -> Non
                                                            f"{width:.0f} px wide: {problem}."))
                 continue
             needed = object_height(obj, room, u, narrow=True)
+            if isinstance(obj, ChartObject) and not isinstance(needed, str) \
+                    and needed > layout_spec.narrow_height("chart", width) + 0.5:
+                needed = (f"it needs {needed:.0f} px of height and has "
+                          f"{layout_spec.narrow_height('chart', width):.0f} px: show fewer rows or series")
             if isinstance(needed, str):
                 failures.append(Failure(obj.id, frame, f"The {obj.slot} slot in a narrow frame "
                                                        f"{width:.0f} px wide: {needed}."))

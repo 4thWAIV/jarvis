@@ -170,3 +170,60 @@ COMPONENTS_SLIDE = {
     "narration": [{"id": "plan-cue", "say": "It costs twelve thousand a year, measured over a month first.",
                    "focus": ["cost-figure", "plan-measure"]}],
 }
+
+
+# A dataset and the slides drawn from it: a bar chart of two series, a line,
+# a scatter and a table, each a view (filtered, sorted, limited) of the same
+# records. For sources naming "sample-evidence", as the street example does.
+DATASET = {
+    "id": "blocks", "source": _EVIDENCE,
+    "columns": [{"id": "block", "label": "Block", "type": "text"},
+                {"id": "kind", "label": "Kind", "type": "text"},
+                {"id": "cost", "label": "Cost", "type": "number", "units": "k€"},
+                {"id": "runoff", "label": "Runoff", "type": "number", "units": "%"},
+                {"id": "trees", "label": "Trees", "type": "number"}],
+    "rows": [{"id": f"b{n}", "values": {"block": block, "kind": kind, "cost": cost, "runoff": runoff,
+                                         "trees": trees}}
+             for n, (block, kind, cost, runoff, trees) in enumerate([
+                 ("North", "planted", 12, 40, 18), ("South", "paved", 8, 85, 2),
+                 ("East", "planted", 15.5, 35, 24), ("West", "mixed", 10.25, 60, 9),
+                 ("Centre", "paved", 9, 90, 0)], 1)],
+}
+
+
+def _chart(ident: str, slot: str, kind: str, x: str, y: list[str], **view) -> dict:
+    return {"id": ident, "type": "chart", "slot": slot, "source": _EVIDENCE, "kind": kind,
+            "data": {"dataset": "blocks", **view}, "x": x, "y": y, "alt": f"A {kind} chart of the blocks"}
+
+
+def _content(ident: str, title: str, layout: str, objects: list[dict], focus: list[str]) -> dict:
+    return {"id": ident, "type": "content", "title": title, "layout": layout, "notes": "",
+            "objects": objects, "readingOrder": [o["id"] for o in objects],
+            "narration": [{"id": f"{ident}-cue", "say": title, "focus": focus}]}
+
+
+DATA_SLIDES = [
+    _content("costs", "What each block costs and keeps", "title-and-body",
+             [_chart("cost-chart", "body", "bar", "block", ["cost", "runoff"])],
+             ["cost-chart-b1-cost"]),
+    _content("trend", "Runoff against trees", "two-pictures",
+             [_chart("runoff-line", "first", "line", "block", ["runoff"], sort={"column": "trees"}),
+              _chart("tree-scatter", "second", "scatter", "trees", ["runoff"])],
+             ["tree-scatter-b3-runoff"]),
+    _content("planted", "The planted and mixed blocks", "table",
+             [{"id": "block-table", "type": "table", "slot": "table", "source": _EVIDENCE,
+               "alt": "The blocks that are not paved", "rowHeads": True,
+               "data": {"dataset": "blocks", "where": [{"column": "kind", "one_of": ["planted", "mixed"]}],
+                        "sort": {"column": "cost", "order": "descending"}, "limit": 2},
+               "columns": ["block", "cost", "runoff"]}],
+             ["block-table-b3-cost"]),
+]
+
+
+def with_data(data: dict) -> None:
+    """The street example (or any source naming sample-evidence) with the
+    dataset and its slides after its first content slide."""
+    import json     # a copy that shares nothing, so YAML writes no anchors
+    data["datasets"] = [json.loads(json.dumps(DATASET))]
+    data["slides"][2:2] = json.loads(json.dumps(DATA_SLIDES))
+
