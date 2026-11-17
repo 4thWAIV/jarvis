@@ -271,7 +271,7 @@ def record(source, failures: list[Failure], tightest: dict) -> dict:
     return {"version": VERSION, "source_sha256": source.digest,
             "spec_sha256": hashlib.sha256(layout_spec.PATH.read_bytes()).hexdigest(),
             "frames": [list(f) for f in layout_spec.frames()], "templates": template_hashes(),
-            "tightest": tightest, "proven": not failures}
+            "tightest": tightest, "language": source.language, "proven": not failures}
 
 
 def write(folder: Path, proof: dict) -> None:
@@ -287,8 +287,9 @@ def reprove(folder: Path) -> list[str]:
     from jarvis import decision_package
     from jarvis.presentation_source import DeckCompileError, read_source
     try:
-        source = read_source(folder / "source.yaml", built=True)
         recorded = json.loads((folder / PROOF_FILE).read_text(encoding="utf-8"))
+        source = read_source(folder / "source.yaml", built=True,
+                             language=recorded.get("language"))
         story = json.loads((folder / "story.json").read_text(encoding="utf-8"))
         targets = json.loads((folder / "target-index.json").read_text(encoding="utf-8"))
         deck = decision_package.read(folder / "deck-data.js")

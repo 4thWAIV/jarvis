@@ -549,9 +549,13 @@ def authored_package_source(monkeypatch):
     provider adapters. This fixture is opt-in, never a global author bypass:
     the source is left as a fresh author leaves it, its receipt beside it
     and its own transcript showing its last check (tests/author_fixtures).
+    The cold reader answers everything (package_reader); what the factory
+    asks the author again is in the list this returns.
     """
-    from jarvis import package_author
-    from tests.author_fixtures import authored
+    from jarvis import package_author, package_reader
+    from tests.author_fixtures import authored, cold_reader
+
+    asked: list[str] = []
 
     def prepare(handoff, engine, out, **kw):
         try:
@@ -562,7 +566,9 @@ def authored_package_source(monkeypatch):
             import asyncio
 
             async def turn(prompt):
-                pytest.fail("the author was asked again: " + prompt[:200])
+                asked.append(prompt)
             asyncio.run(kw["finish"](kw["source"], turn))
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)
+    monkeypatch.setattr(package_reader, "read", cold_reader())
+    return asked

@@ -74,6 +74,10 @@ def only_engine(request, tmp_path, monkeypatch):
     default_setting("claude_path")
     default_setting("codex_path")
     monkeypatch.setenv('AUTHOR_TEST_CONTENT', presentation_yaml(tmp_path))
+    # The cold reader is its own session (package_reader; tests/test_package_reader).
+    from jarvis import package_reader
+    from tests.author_fixtures import cold_reader
+    monkeypatch.setattr(package_reader, 'read', cold_reader())
     monkeypatch.setenv('FAKE_CODEX_LOG', str(tmp_path / 'codex.log'))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'caller-codex-home'))
     from jarvis import session_watch

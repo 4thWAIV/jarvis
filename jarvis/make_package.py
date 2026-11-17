@@ -100,6 +100,14 @@ PRESENTATION_EXAMPLE = {
     "decisions": [],
 }
 EXAMPLE = {**PRESENTATION_EXAMPLE, "id": "team-lunch-choice", "title": "Team lunch",
+           "situation": {"subject": "Friday's team lunch, which the team has eaten at a restaurant "
+                                    "until now.",
+                         "happened": "The restaurant now needs a booking by Wednesday, and nobody "
+                                     "has booked.",
+                         "approved_before": "You approved a monthly team lunch in March; where it "
+                                            "is held was never decided.",
+                         "changes": "Your answer sets where the team eats on Friday, and who "
+                                    "books or orders."},
            "slides": [*PRESENTATION_EXAMPLE["slides"], {"id": "where", "type": "decision", "decision": "where-to-eat"}],
            "decisions": [{"id": "where-to-eat", "question": "Where do we eat on Friday?",
                           "why_you": "It is your team's day and your budget.",
@@ -666,7 +674,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="what the message carrying it says, one or two short sentences "
                              "(default: its kind and title)")
     parser.add_argument("--out", type=Path, default=None,
-                        help="where the package, its zip and the screenshots go "
+                        help="where the package, its zip, the author's source and the cold reader's answers go "
                              "(default: a new temporary folder)")
     parser.add_argument("--document", default="",
                         help="a canonical architecture document (python -m "
@@ -758,10 +766,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         made = author = None
 
         async def finish(authored_source, turn):
-            """Build the author's unchanged source once: a deck is laid out
-            and proven by JARVIS (presentation_proof) as it compiles, with no
-            browser and no screenshot review; anything refused is said."""
+            """Build the author's source: a deck is laid out and proven by
+            JARVIS (presentation_proof) as it compiles, with no browser and
+            no screenshot review, then read cold (package_reader): what the
+            reader cannot answer from the slides before the first decision
+            goes back to the author once, and the deck is built again.
+            Anything refused is said."""
             import asyncio
+            from jarvis import package_reader
             nonlocal made, author, built
             if envelope is None:
                 check_vote(authored_source, args.work)
@@ -773,9 +785,18 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 handed = package_author.read_handoff(args.handoff)
                 made = make_architecture(envelope, authored_source, out, handed["purpose"],
                                          handed.get("approval") is True)
+            elif is_presentation(authored_source):
+                async def rebuild() -> dict:
+                    nonlocal made
+                    shutil.rmtree(out / "compiled", ignore_errors=True)
+                    made = await asyncio.to_thread(make_presentation, authored_source, out)
+                    return made.deck
+                await rebuild()
+                read = await package_reader.check(made.deck, args.engine, out / "reader",
+                                                  turn, rebuild)
+                print(f"A cold reader followed it ({read['attempts']} read(s)).")
             else:
-                made = (await asyncio.to_thread(make_presentation, authored_source, out)
-                        if is_presentation(authored_source) else make_folder(authored_source, out))
+                made = make_folder(authored_source, out)
             author = with_author(made, authored_source, args.session)
             print(f"Built a {made.kind}: {made.archive}")
             if signer is None:

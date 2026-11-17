@@ -197,6 +197,16 @@ class Decision(Model):
     needs_words: list[Id] = []        # answers that need his words
 
 
+class Situation(Model):
+    """Where things stand, which JARVIS draws as the first slide of a deck
+    that asks something (presentation_source.draw_opening): every field in
+    words someone coming from other work follows."""
+    subject: Text           # what this is about: the thing itself, named and explained
+    happened: Text          # what led here: what changed or failed, and why
+    approved_before: Text   # what he already approved that this touches, or that nothing was
+    changes: Text           # what changes for him if he says yes
+
+
 class Presentation(Model):
     version: Literal["presentation/1"]
     id: Id
@@ -206,6 +216,7 @@ class Presentation(Model):
     language: Literal["en", "es"] | None = None     # else the language in force as it is built
     requires: Annotated[list[Literal["presentation-core/1"]], Field(min_length=1, max_length=1)]
     assets: list[Asset]
+    situation: Situation | None = None     # required when it asks a decision
     references: Annotated[list[Reference], Field(min_length=1)]
     slides: Annotated[list[Annotated[Union[ContentSlide, DecisionSlide], Field(discriminator="type")]], Field(min_length=1)]
     decisions: list[Decision]

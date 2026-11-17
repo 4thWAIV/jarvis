@@ -109,3 +109,21 @@ def sign_authored(raw: Path, target: Path, agent, session: str, statements=(),
     package_signature.sign(target, target, agent.private, agent.public, session,
                            tuple(statements), work_key, author=claim)
     return claim
+
+
+def cold_reader(*misses: list[str]):
+    """A stand-in for package_reader.read: each read answers every question
+    but those its turn's list in `misses` names (as `missing`). The decks
+    it was given are on `.decks`."""
+    from jarvis import package_reader
+    reads = list(misses)
+    decks: list[dict] = []
+
+    async def read(deck, requester, out, attempt, timeout=0):
+        decks.append(deck)
+        missing = reads.pop(0) if reads else []
+        return [{"question": q, "answered": q not in missing, "answer": "",
+                 "missing": "it never says" if q in missing else ""}
+                for q in package_reader.QUESTIONS]
+    read.decks = decks
+    return read

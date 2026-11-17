@@ -85,8 +85,11 @@ def _assignment(document: Document | None) -> str:
                 "decision-memo order (what it is about and where it stands, what was already "
                 "decided, what happened and why, the options and what changes, then the "
                 "decision, technical detail last), gives its \"purpose\" and one-sentence "
-                "\"conclusion\" (the bottom line, never a bare request), opens with a slide "
-                "that shows both, and gives each decision its \"why_you\" and \"evidence\" "
+                "\"conclusion\" (the bottom line, never a bare request) and, when it asks "
+                "anything, its \"situation\" (subject, happened, approved_before, changes), "
+                "which JARVIS draws as its first slide (without one, its own first slide "
+                "is an opening that shows both), and gives each decision its "
+                "\"why_you\" and \"evidence\" "
                 "(docs/making-a-package.md). A handoff's suggested shape is input; where it "
                 "disagrees with that order, follow the order. Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
@@ -115,11 +118,75 @@ def _assignment(document: Document | None) -> str:
             + document.revision + ". ")
 
 
+class FreshSession:
+    """One new provider session in its own folder, with the coding profile
+    (authoring) and no resume or fallback: the fresh author, and the cold
+    reader that checks what it wrote (package_reader). `identity` is the
+    session the provider reports; every turn must keep it."""
+
+    def __init__(self, folder: Path, choice: engine_choice.Choice, transcript: Path):
+        self.folder, self.choice, self.transcript = folder, choice, transcript
+        self.identity: str | None = None
+        self.model: str | None = None
+        provider = brain_provider.provider(ENGINES[choice.engine])
+        settings_service.load()     # this command's own process: his saved program paths
+        config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
+                             authoring=True, warmup_timeout=60, turn_timeout=60,
+                             claude_path=settings_service.value("claude_path") or None,
+                             codex_path=settings_service.value("codex_path") or None)
+        self.done = asyncio.get_running_loop().create_future()
+        self.child = provider.session(config, self._event, self._exited)
+
+    def _event(self, _session, value):
+        if isinstance(value, brain_provider.SessionInfo):
+            self.identity = value.conversation_id
+            self.model = value.model
+        elif isinstance(value, brain_provider.TextDelta):
+            with self.transcript.open("a", encoding="utf-8") as stream:
+                stream.write(value.text)
+        elif isinstance(value, brain_provider.TurnEnded) and not self.done.done():
+            if value.error:
+                self.done.set_exception(OSError(value.error))
+            else:
+                self.done.set_result(None)
+
+    async def _exited(self, _session, code):
+        if not self.done.done():
+            self.done.set_exception(OSError(f"The {self.role} engine exited before finishing "
+                                            f"(exit {code})."))
+
+    role = "author"
+
+    async def start(self, instructions: str, prompt: str, timeout: float) -> None:
+        async with asyncio.timeout(timeout):
+            await self.child.open(instructions)
+            await self.child.send(prompt)
+            await self.done
+
+    async def turn(self, message: str, timeout: float) -> None:
+        """Another turn of the same session; refused if the session changed."""
+        identity = self.identity
+        self.done = asyncio.get_running_loop().create_future()
+        async with asyncio.timeout(timeout):
+            await self.child.send(message)
+            await self.done
+        if self.identity != identity:
+            raise OSError(f"The {self.role} session changed between its turns.")
+
+    async def close(self) -> None:
+        if not self.done.done():
+            self.done.cancel()
+        elif not self.done.cancelled():
+            self.done.exception()  # retrieve an early-exit error even when open itself raised
+        await self.child.close(5)
+
+
 async def author(handoff: Path, engine: str, out: Path, *, source: Path | None = None,
                  timeout: float = 1800, session: str = "", work: str = "",
                  workflow: str = "", document: Document | None = None, finish=None) -> Path:
     """One new session, no resume or fallback; return only its own package
-    source (for a `document`, its package/ explanation)."""
+    source (for a `document`, its package/ explanation). `finish(source,
+    turn)` builds it; `turn` is another turn of the same author."""
     evidence = read_handoff(handoff)
     if engine not in ENGINES:
         raise Refused(["Choose the caller's own engine with --engine claude or --engine codex."])
@@ -133,39 +200,13 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     # A rerun must not accidentally deliver stale output from a failed author.
     folder.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
-    provider = brain_provider.provider(ENGINES[choice.engine])
-    settings_service.load()     # this command's own process: his saved program paths
-    config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
-                         authoring=True, warmup_timeout=60, turn_timeout=60,
-                         claude_path=settings_service.value("claude_path") or None,
-                         codex_path=settings_service.value("codex_path") or None)
-    done = asyncio.get_running_loop().create_future()
     receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
                "origin_session": session, "work": work,
                "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
                "source_folder": str(folder), "status": "started"}
     if document is not None:
         receipt["document"] = {"document_id": document.document_id, "revision": document.revision}
-    transcript = folder / "author-response.txt"
-
-    def event(_session, value):
-        if isinstance(value, brain_provider.SessionInfo):
-            receipt["author_session"] = value.conversation_id
-            receipt["model"] = value.model
-        elif isinstance(value, brain_provider.TextDelta):
-            with transcript.open("a", encoding="utf-8") as stream:
-                stream.write(value.text)
-        elif isinstance(value, brain_provider.TurnEnded) and not done.done():
-            if value.error:
-                done.set_exception(OSError(value.error))
-            else:
-                done.set_result(None)
-
-    async def exited(_session, code):
-        if not done.done():
-            done.set_exception(OSError(f"Author engine exited before finishing (exit {code})."))
-
-    child = provider.session(config, event, exited)
+    child = None
     prompt = (author_proof.PROMPT_HEAD + " You are the fresh author; do not launch another "
               "author. Read " + str(SKILL)
               + " and the production guide " + str(GUIDE) + ". Independently research the "
@@ -177,28 +218,22 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               "The supplied skill, guide and command are sufficient even if no user skill copy "
               "has been installed. Do not deliver, invoke creation without "
               "--check-only, modify application code or send messages. The originating command "
-              "owns rendering checks and delivery. If evidence prevents a truthful package, "
+              "owns building, proving and delivery. If evidence prevents a truthful package, "
               "write author-blocked.md explaining the precise gap and do not create source. "
               "Do not ask for an invented product decision.\n\nHandoff:\n"
               + json.dumps(evidence, ensure_ascii=False, indent=2))
     if source:
         prompt += "\nExisting package source is evidence to investigate, not an answer to preserve: " + str(source)
+
     async def turn(message):
-        nonlocal done
-        identity = receipt.get("author_session")
-        done = asyncio.get_running_loop().create_future()
-        async with asyncio.timeout(timeout):
-            await child.send(message)
-            await done
-        if receipt.get("author_session") != identity:
-            raise OSError("The author session changed between its turns.")
+        await child.turn(message, timeout)
 
     try:
-        async with asyncio.timeout(timeout):
-            await child.open("You are an independent human-package-author producing source for the existing package factory.")
-            await child.send(prompt)
-            await done
-        if not receipt.get("author_session") or receipt["author_session"] == session:
+        child = FreshSession(folder, choice, folder / "author-response.txt")
+        await child.start("You are an independent human-package-author producing source for "
+                          "the existing package factory.", prompt, timeout)
+        receipt["author_session"], receipt["model"] = child.identity, child.model
+        if not child.identity or child.identity == session:
             raise OSError("Author did not report a distinct fresh session identity.")
         if (folder / "author-blocked.md").exists():
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
@@ -226,11 +261,9 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         receipt.update(status="failed", error=str(error) or "Author timed out.")
         raise Refused(["Fresh author did not finish: " + receipt["error"]]) from None
     finally:
-        if not done.done():
-            done.cancel()
-        elif not done.cancelled():
-            done.exception()  # retrieve an early-exit error even when open itself raised
-        await child.close(5)
+        if child is not None:
+            receipt.setdefault("author_session", child.identity)
+            await child.close()
         receipt["finished_at"] = time.time()
         (folder / "author-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 

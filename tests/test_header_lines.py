@@ -1186,19 +1186,20 @@ EXEMPT = {
         'it compares the generated story\'s selectors with the compiler\'s target index and returns failures naming slide titles; package content, never a trusted brain header'),
     'presentation_source._semantics': (
         'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
+    'presentation_source.draw_opening': (
+        'it draws the author\'s own situation fields and conclusion as the deck\'s first slide, '
+        'with JARVIS\'s fixed labels; package content, never a trusted session or brain header'),
+    'package_reader.before_the_ask': (
+        'it turns the built deck\'s own slide titles, words and narration into the text the '
+        'cold reader session is given; package content, never a trusted session or brain header'),
+    'package_reader.read': (
+        'it records the cold reader\'s own session id and the questions it missed in the '
+        'factory\'s receipt file; nothing reaches the live brain'),
     'presentation_source.identities': (
         'it walks authored YAML mappings to index source ids and raises a duplicate-id compiler diagnostic with the source location; no session record or live brain header is involved'),
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
-    "make_package.finish": (
-        "the factory's private author continuation compares fixed review states and sends "
-        "build diagnostics back to that same author; it prints only to its CLI, never a "
-        "trusted header in the live brain; refusal paths are tested in test_make_package.py"),
-    "package_author.review": (
-        "the private author review reads fixed acceptance states and records archive member "
-        "names in a JSON request file; these do not enter live-brain headers; malformed and "
-        "missing inspection receipts are driven by test_package_visual_review.py"),
     "make_package.deck_kind": (
         "it reads the deck's decision ids only to compare them with the vote's own id, and "
         "returns one of two fixed words, presentation or decision package"),

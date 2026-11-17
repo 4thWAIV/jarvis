@@ -12,7 +12,8 @@ from jarvis import (decision_package as dp, layout_spec, package_story, package_
                     presentation_proof)
 from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, SourceRef, TableObject,
                                         TextObject, VectorObject)
-from jarvis.presentation_source import DeckCompileError, DeckDiagnostic, Source, read_source
+from jarvis.presentation_source import (OPENING_ID, DeckCompileError, DeckDiagnostic, Source,
+                                        read_source)
 
 ASSETS = Path(__file__).with_name("presentation_assets")
 
@@ -96,6 +97,7 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.append({"p":obj.alt})
         slides.append({"id":"presentation-slide-" + slide.id,"title":slide.title,"blocks":blocks,
                        **({"short":slide.short} if slide.short else {}),
+                       **({"opening":True} if slide.id == OPENING_ID else {}),
                        "beats":[{"say":cue.say,"targets":[selectors[t] for t in cue.focus]} for cue in slide.narration]})
     decisions=[]
     for decision in doc.decisions:
@@ -133,8 +135,8 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
 def compile_deck(source: Path, output: Path) -> CompiledDeck:
     """Compile presentation/1 to existing package input, proven
     (presentation_proof) without a browser, or raise DeckCompileError."""
-    from jarvis.make_package import prepare_deck
-    parsed=read_source(source)
+    from jarvis.make_package import built_language, prepare_deck
+    parsed=read_source(source, language=built_language())
     output=output.resolve()
     output.mkdir(parents=True,exist_ok=True)
     destination=output/parsed.document.id

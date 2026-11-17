@@ -40,8 +40,7 @@ LANGUAGES = ("en", "es")
 # The most characters each piece of a slide may have. The deck lays a slide
 # out to the frame in units that keep its proportions from the smallest
 # frame to the largest, so words past these do not fit at a readable size
-# in the smallest; the check in a real frame (decision_check.py) is the
-# final word on fitting.
+# in the smallest; presentation_proof computes the fit itself.
 CAPS = {
     "title": 80,          # the deck's title and a content slide's title
     "short": 16,          # a slide's name in the border's Chapters
@@ -87,6 +86,18 @@ LEAD_IN_WORDS = {
            "evidence": "What it rests on:"},
     "es": {"title": "Antes de decidir: {short}", "why": "Por qué le toca a usted:",
            "evidence": "En qué se apoya:"},
+}
+
+# The words of the opening JARVIS draws from a deck's `situation`
+# (presentation_source.draw_opening), in the deck's language: each field's
+# label, and the opening's name in the border's Chapters.
+SITUATION_WORDS = {
+    "en": {"happened": "What happened:", "approved_before": "What you approved before:",
+           "changes": "What changes for you:", "conclusion": "Bottom line:",
+           "short": "Where it stands"},
+    "es": {"happened": "Qué pasó:", "approved_before": "Lo que usted ya aprobó:",
+           "changes": "Qué cambia para usted:", "conclusion": "En resumen:",
+           "short": "Dónde estamos"},
 }
 
 class Refused(Exception):
@@ -354,10 +365,11 @@ def too_many_words(deck: dict) -> list[str]:
             continue
         count = sum(deck_builder.block_words(b) for b in s.get("blocks") or []
                     if isinstance(b, dict))
-        if count > deck_builder.SLIDE_WORDS:
-            out.append(f"{_slide_where(n, s)}: it has {count} words; at most "
-                       f"{deck_builder.SLIDE_WORDS}. "
-                       + ("Shorten them." if s.get("lead_in") else "Split it into two slides."))
+        limit = deck_builder.words_allowed(s)
+        if count > limit:
+            out.append(f"{_slide_where(n, s)}: it has {count} words; at most {limit}. "
+                       + ("Shorten its situation's fields." if s.get("opening") else
+                          "Shorten them." if s.get("lead_in") else "Split it into two slides."))
     for n, d in enumerate(deck.get("decisions") or [], 1):
         if not isinstance(d, dict):
             continue
@@ -389,7 +401,8 @@ def validate(content: Path) -> dict:
 KEYS = {
     "deck": ("name", "version", "purpose", "conclusion", "title", "language", "slides",
              "decisions", "understanding"),
-    "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision", "lead_in"),
+    "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision", "lead_in",
+              "opening"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
                  "picture", "compare", "say", "text_only", "why_you", "evidence",
                  "needs_words"),

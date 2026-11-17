@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.presentation_source import DeckCompileError, read_source
+from jarvis.presentation_source import OPENING_ID, DeckCompileError, read_source
 
 EXAMPLE = Path(__file__).parents[1] / "examples/presentations/street"
 
@@ -116,6 +116,7 @@ def test_maximum_story_uses_the_existing_story_limit(source, tmp_path):
     data = yaml.safe_load(source.read_text())
     opening = data["slides"][0]
     data["decisions"] = []
+    data.pop("situation")
     data["slides"] = [opening]
     # The factory adds the standard question and answer summary.
     for n in range(package_story.MAX_SLIDES - 3):
@@ -222,6 +223,12 @@ def presentation_page(source, tmp_path):
             page.goto((compiled.package_source / 'index.html').as_uri())
             page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
             page.evaluate('async()=>{await document.fonts.ready;}')
+            if page.evaluate("window.PRESENTATION.document.slides[0].id") == OPENING_ID:
+                # JARVIS's own opening (drawn from the situation) comes first;
+                # these tests look at the author's first slide.
+                page.locator('#go-2').evaluate('e=>e.click()')
+                page.wait_for_function("document.querySelector('.slide.current') !== "
+                                       "document.querySelector('#track > .slide')")
             return page, compiled
         yield load
 
@@ -418,3 +425,79 @@ def test_the_proof_is_recorded_and_templates_must_be_jarvis_own(source, tmp_path
 def test_the_generated_css_and_width_table_match_the_spec():
     from jarvis import layout_spec
     assert layout_spec.stale() == []
+
+
+# -- the opening JARVIS draws: where things stand, before anything is asked ------------
+
+def test_a_deck_that_asks_something_without_its_situation_is_refused(source):
+    change(source, lambda d: d.pop("situation"))
+    with pytest.raises(DeckCompileError, match="opens with where things stand") as refused:
+        read_source(source)
+    for field in ("subject", "happened", "approved_before", "changes"):
+        assert field in str(refused.value)
+
+
+@pytest.mark.parametrize("field", ["subject", "happened", "approved_before", "changes"])
+def test_each_situation_field_is_required_and_has_words(source, field):
+    change(source, lambda d: d["situation"].pop(field))
+    with pytest.raises(DeckCompileError, match=f"\\[situation\\].*{field}: Field required"):
+        read_source(source)
+    change(source, lambda d: d["situation"].update({field: " "}))
+    with pytest.raises(DeckCompileError, match=f"situation.{field}"):
+        read_source(source)
+
+
+def test_a_presentation_may_go_without_one(source):
+    def no_decisions(d):
+        d.pop("situation")
+        d["decisions"] = []
+        d["slides"] = [s for s in d["slides"] if s["type"] == "content"]
+    change(source, no_decisions)
+    assert read_source(source).document.slides[0].id != OPENING_ID
+
+
+@pytest.mark.parametrize("language, words", [
+    ("en", ["What happened:", "What you approved before:", "What changes for you:",
+            "Bottom line:"]),
+    ("es", ["Qué pasó:", "Lo que usted ya aprobó:", "Qué cambia para usted:", "En resumen:"])])
+def test_the_opening_is_drawn_first_from_the_situation_and_told(source, tmp_path, language,
+                                                                words):
+    from jarvis import package_story
+    from jarvis.presentation import compile_deck
+    change(source, lambda d: d.update(language=language))
+    data = yaml.safe_load(source.read_text())
+    made = compile_deck(source, tmp_path / "out")
+    model = json.loads((made.package_source / "presentation-data.js").read_text()
+                       .split("=", 1)[1].strip().rstrip(";"))
+    first = model["document"]["slides"][0]
+    assert (first["id"], first["layout"], first["title"]) == (OPENING_ID, "opening", data["title"])
+    [shown] = first["objects"]
+    paragraphs = ["".join(r["text"] for r in p["runs"]) for p in shown["paragraphs"]]
+    situation = data["situation"]
+    assert paragraphs == [situation["subject"],
+                          f"{words[0]} {situation['happened']}",
+                          f"{words[1]} {situation['approved_before']}",
+                          f"{words[2]} {situation['changes']}",
+                          f"{words[3]} {data['conclusion']}"]
+    assert model["document"]["slides"][1]["id"] == data["slides"][0]["id"], \
+        "the author's own slides follow it"
+    story = package_story.parse((made.package_source / "story.json").read_bytes())
+    assert data["purpose"] in story.slides[0].beats[0].say, "it is told with the purpose"
+    assert story.slides[0].waits is None, "nothing is asked on it"
+    proof = json.loads((made.package_source / ".jarvis/layout-proof.json").read_text())
+    assert proof["proven"] and proof["language"] == language
+
+
+def test_an_author_may_not_take_the_opening_s_id(source):
+    change(source, lambda d: d["slides"][0].update(id=OPENING_ID))
+    with pytest.raises(DeckCompileError, match="names the opening JARVIS draws"):
+        read_source(source)
+
+
+def test_a_situation_too_long_for_the_opening_is_refused_by_the_proof(source, tmp_path):
+    from jarvis.presentation import compile_deck
+    change(source, lambda d: d["situation"].update(
+        happened=" ".join(["The street flooded again after the storm drains backed up."] * 9)))
+    with pytest.raises(DeckCompileError) as refused:
+        compile_deck(source, tmp_path / "out")
+    assert "situation" in str(refused.value)

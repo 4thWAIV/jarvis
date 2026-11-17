@@ -4,6 +4,14 @@ title: A cooler city block
 purpose: Explain how a planted street can reduce stormwater runoff.
 conclusion: Give rain a planted route from the roof to the street.
 language: en
+situation:
+  subject: A trial on one city block that sends rain from the roofs through planted beds instead of
+    straight onto the paved street.
+  happened: The paved street floods in heavy rain because almost all of it runs off; the numbers in
+    this example are invented to show the idea.
+  approved_before: Nothing yet; this is the first time the trial is put to you.
+  changes: If you approve, one block is planted for a season and its runoff is measured against a
+    paved block.
 requires:
 - presentation-core/1
 assets:
