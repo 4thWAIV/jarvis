@@ -20,6 +20,12 @@
 //                 (the story outline's `openers`, a deck's #go-N) clicked,
 //                 nothing ringed; sent only to a page that reports the
 //                 slide it shows (a deck's `slide.shown`)
+//                 {jarvis: "package", type: "element.light", declarations}
+//                 an architecture view set's elements lit by id
+//                 ([data-declaration="<id>"], each matching exactly one),
+//                 with a quieter ring than a beat's, until the next
+//                 element.light; JARVIS posts it again as each view loads,
+//                 so one element is lit in every view that shows it
 //   to JARVIS     {jarvis: "package", type: "story.ready"} once loaded, so a
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
@@ -35,6 +41,9 @@
 //                 focus JARVIS asked for (its own key) until focus.clear;
 //                 posted again whenever it moves (a scroll, a resize), so
 //                 the page's focus layer (PackageFocus.tsx) follows it
+//                 {jarvis: "package", type: "element.selected", declaration}
+//                 he clicked inside the element with that id
+//                 ([data-declaration]); nothing here stops the click
 //                 {jarvis: "package", type: "layout.restore"} on Option+Shift+T
 //                 pressed inside the frame: keys pressed here never reach
 //                 JARVIS's page, so the restore key is passed on. Restore
@@ -66,6 +75,8 @@
     ".jarvis-story-pointer b{position:absolute;right:-12px;top:12px;width:0;height:0;" +
     "border-top:10px solid transparent;border-bottom:10px solid transparent;" +
     "border-left:14px solid #f5a623}" +
+    ".jarvis-story-lit{position:fixed;box-sizing:border-box;border:2px dashed #f5a623;" +
+    "border-radius:10px;background:rgba(245,166,35,.08)}" +
     "@keyframes jarvis-story-pulse{0%,100%{box-shadow:0 0 0 4px rgba(245,166,35,.25)," +
     "0 0 22px rgba(245,166,35,.55)}50%{box-shadow:0 0 0 9px rgba(245,166,35,.12)," +
     "0 0 30px rgba(245,166,35,.75)}}" +
@@ -79,6 +90,7 @@
   var pointer = null;
   var frame = 0;
   var asked = null;      // {key, targets} while JARVIS asks for a focus
+  var lit = [];          // [{selector, el, parts}]: a view set's elements lit by id
   var reported = {};     // key -> the rect last told, as text
 
   function tell(message) {
@@ -155,26 +167,36 @@
     }, null);
   }
 
+  // One ring on its selector's boxes, a part for each (inline content can
+  // wrap onto several lines): the first box it is drawn on, or null.
+  function draw(ring) {
+    var rects = boxes(ring.selector);
+    var first = null;
+    while (ring.parts.length < rects.length) {
+      var extra = ring.el.cloneNode(false);
+      layer.appendChild(extra);
+      ring.parts.push(extra);
+    }
+    while (ring.parts.length > Math.max(1, rects.length)) ring.parts.pop().remove();
+    ring.parts.forEach(function (el, index) {
+      var r = rects[index];
+      el.style.display = r ? "block" : "none";
+      if (!r) return;
+      el.style.left = (r.left - PAD) + "px";
+      el.style.top = (r.top - PAD) + "px";
+      el.style.width = (r.right - r.left + 2 * PAD) + "px";
+      el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
+      if (!first) first = r;
+    });
+    return first;
+  }
+
   function place() {
     var first = null;
+    lit.forEach(draw);
     rings.forEach(function (ring) {
-      var rects = boxes(ring.selector);
-      while (ring.parts.length < rects.length) {
-        var extra = ring.el.cloneNode(false);
-        layer.appendChild(extra);
-        ring.parts.push(extra);
-      }
-      while (ring.parts.length > Math.max(1, rects.length)) ring.parts.pop().remove();
-      ring.parts.forEach(function (el, index) {
-        var r = rects[index];
-        el.style.display = r ? "block" : "none";
-        if (!r) return;
-        el.style.left = (r.left - PAD) + "px";
-        el.style.top = (r.top - PAD) + "px";
-        el.style.width = (r.right - r.left + 2 * PAD) + "px";
-        el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
-        if (!first) first = r;
-      });
+      var drawn = draw(ring);
+      if (!first) first = drawn;
     });
     if (!pointer) return;
     pointer.style.display = first ? "block" : "none";
@@ -219,7 +241,7 @@
     place();
     if (beat) report("beat:" + beat.id, beat.targets);
     if (asked) report(asked.key, asked.targets);
-    frame = beat || asked ? requestAnimationFrame(follow) : 0;
+    frame = beat || asked || lit.length ? requestAnimationFrame(follow) : 0;
   }
 
   function clear() {
@@ -228,7 +250,25 @@
     rings.forEach(function (ring) { ring.parts.forEach(function (part) { part.remove(); }); });
     rings = [];
     if (pointer) { pointer.remove(); pointer = null; }
-    if (frame && !asked) { cancelAnimationFrame(frame); frame = 0; }
+    if (frame && !asked && !lit.length) { cancelAnimationFrame(frame); frame = 0; }
+  }
+
+  // A view set's elements, lit by id wherever this page shows them.
+  function light(message) {
+    lit.forEach(function (ring) { ring.parts.forEach(function (part) { part.remove(); }); });
+    lit = [];
+    var ids = (Array.isArray(message.declarations) ? message.declarations : []).map(String);
+    var root = ids.length ? ensureLayer() : null;
+    ids.forEach(function (id) {
+      var el = document.createElement("div");
+      el.className = "jarvis-story-lit";
+      el.dataset.declaration = id;
+      root.appendChild(el);
+      lit.push({ selector: '[data-declaration="' + id.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"]',
+                 el: el, parts: [el] });
+    });
+    place();
+    if (lit.length && !frame) frame = requestAnimationFrame(follow);
   }
 
   // JARVIS asks to focus the part a question is about: brought into view
@@ -251,7 +291,7 @@
   function unfocus() {
     if (asked) delete reported[asked.key];
     asked = null;
-    if (frame && !beat) { cancelAnimationFrame(frame); frame = 0; }
+    if (frame && !beat && !lit.length) { cancelAnimationFrame(frame); frame = 0; }
   }
 
   function act(action, missing) {
@@ -320,7 +360,12 @@
     else if (m.type === "focus.show") focusOn(m);
     else if (m.type === "focus.clear") unfocus();
     else if (m.type === "slide.open" && typeof m.opener === "string") act({ click: m.opener }, []);
+    else if (m.type === "element.light") light(m);
   });
+  document.addEventListener("click", function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("[data-declaration]") : null;
+    if (el) tell({ type: "element.selected", declaration: String(el.dataset.declaration || "") });
+  }, true);
   window.addEventListener("resize", place);
   window.addEventListener("keydown", function (event) {
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "KeyT") {

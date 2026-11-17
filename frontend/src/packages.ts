@@ -81,6 +81,10 @@ export interface HeaderQuestion {
   note_required?: string[];
   stale?: boolean;
   answered_revision?: string | null;
+  /** A view set: every view's revision his approval is of, and those of
+   *  the set his answer was given to. */
+  revisions?: (string | null)[];
+  answered_revisions?: (string | null)[] | null;
 }
 
 export interface PackageInfo {
@@ -108,6 +112,21 @@ export interface PackageInfo {
   /** The room its page is made for: "wide" offers to take over the page.
    *  Missing from an older JARVIS's frame: the centre. */
   layout?: "centre" | "wide";
+  /** An architecture view set's views in order (language_projection.views_shown):
+   *  the frame shows one at a time, and the chapters move between them. */
+  views?: PackageViewInfo[] | null;
+}
+
+/** One view of an architecture view set: one checked document. */
+export interface PackageViewInfo {
+  /** Its document id, which a story slide names as its `view`. */
+  id: string;
+  title: string;
+  language: string;
+  /** Its page in the package ("views/<id>/index.html"; the first's "index.html"). */
+  entry: string;
+  /** The element ids it declares: the same id is the same element in every view. */
+  declarations: string[];
 }
 
 export interface DeckPage {
@@ -116,6 +135,8 @@ export interface DeckPage {
   title: string;
   /** The decision the slide asks, or null. */
   asks: string | null;
+  /** The view of a view set the slide is told over, or null. */
+  view?: string | null;
 }
 
 /** What the border moves through: a deck's own slides, else its story's
@@ -125,7 +146,34 @@ export function navigation(info: PackageInfo): DeckPage[] {
   const story = info.story;
   if (!story) return [];
   return story.slides.map((title, i) => ({ opener: story.openers?.[i]?.[0] ?? "", title,
-                                           asks: story.asks?.includes(i + 1) ? title : null }));
+                                           asks: story.asks?.includes(i + 1) ? title : null,
+                                           view: story.views?.[i] ?? null }));
+}
+
+/** The view a view set shows: `chosen` while it is one of its views, else
+ *  the first; null for any other package. */
+export function viewShown(info: PackageInfo, chosen: string | null): PackageViewInfo | null {
+  const views = info.views;
+  if (!views?.length) return null;
+  return views.find((v) => v.id === chosen) ?? views[0];
+}
+
+/** Where a view's files are in the package ("" for the first). */
+export function viewFolder(view: PackageViewInfo | null): string {
+  return view ? view.entry.slice(0, view.entry.length - "index.html".length) : "";
+}
+
+/** The element ids a beat points at precisely: each `[data-declaration="..."]`
+ *  in its targets, as the story helper's selectors quote it. */
+export function declarationsIn(targets: string[]): string[] {
+  const found: string[] = [];
+  for (const selector of targets) {
+    for (const m of selector.matchAll(/\[data-declaration="((?:[^"\\]|\\.)*)"\]/g)) {
+      const id = m[1].replace(/\\(.)/g, "$1");
+      if (!found.includes(id)) found.push(id);
+    }
+  }
+  return found;
 }
 
 /** The story slide that tells navigation slide `page` (1-based): the one
@@ -151,6 +199,10 @@ export interface StoryOutline {
    *  opens a slide with its first, and counts itself on the slide whose
    *  openers include the one the page says it shows (`slide.shown`). */
   openers?: string[][];
+  /** A view set's story: the view each slide is told over (a document id). */
+  views?: (string | null)[];
+  /** The one concrete input a view set's story walks through every view. */
+  scenario?: string;
 }
 
 /** A beat of a story, as its audio frames carry it (package_story.py). */
@@ -164,6 +216,8 @@ export interface StoryCue {
   actions: Record<string, string>[];
   /** The beat's last chunk: the cue ends when it has played. */
   last?: boolean;
+  /** The view of a view set it is told over: the frame shows it first. */
+  view?: string;
 }
 
 /** What the server last said of a story (story_teller.py): telling,

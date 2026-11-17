@@ -49,6 +49,13 @@
  * posts `slide.open` {opener} (the story helper clicks it) for Previous,
  * Next and Chapters, so the border is the deck's one navigation.
  *
+ * And an architecture view set (several checked views of one system, one
+ * shown at a time): JARVIS posts `element.light` {declarations} to light
+ * the elements with those ids wherever the page shows them, again each time
+ * a view loads (`story.ready`), so the same element is lit in every view
+ * that shows it; the frame says `element.selected` {declaration} when he
+ * clicks inside one of its elements, which the view lights in every view.
+ *
  * And the room it has (takeover mode, uiNavigation.ts `layout`): JARVIS
  * posts `layout` {mode, width, height} once the frame has loaded and
  * whenever the layout or the frame's size changes (the frame's own page
@@ -84,6 +91,8 @@ export interface BridgeEvents {
   onPresentationReturnFocus?(): void;
   /** The frame shows the slide `opener` opens. */
   onSlideShown?(opener: string): void;
+  /** He clicked inside the element with this id in the frame. */
+  onSelected?(declaration: string): void;
 }
 
 /** A box in the frame's own coordinates, as its helper reports it. */
@@ -98,6 +107,9 @@ export interface Bridge {
   focus(key: string | null, targets?: string[]): void;
   /** Ask the frame to open the slide `opener` opens. */
   openSlide(opener: string): void;
+  /** Light the elements with these ids wherever the frame's page shows them
+   *  (again whenever a page loads); [] lights none. */
+  light(declarations: string[]): void;
 }
 
 const asRect = (value: unknown): FrameRect | null => {
@@ -125,8 +137,10 @@ function asBlob(data: unknown): Blob | null {
 /** Hear `frame`'s requests for package `packageId`. */
 export function connectBridge(frame: HTMLIFrameElement, packageId: string,
                               events: BridgeEvents): Bridge {
-  // The focus asked for, posted again once the frame (re)loads its helper.
+  // The focus asked for, and the elements lit, posted again once the frame
+  // (re)loads its helper.
   let asked: { key: string; targets: string[] } | null = null;
+  let lit: string[] = [];
   let stopListening: (() => void) | null = null;
   const post = (message: Record<string, unknown>, transfer: Transferable[] = []) =>
     frame.contentWindow?.postMessage({ jarvis: BRIDGE, ...message }, "*", transfer);
@@ -211,7 +225,10 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     if (message.type === "presentation.ready" && message.version === "presentation/1") events.onPresentationReady?.();
     else if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
-    else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); }
+    else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); showLit(); }
+    else if (message.type === "element.selected" && typeof message.declaration === "string") {
+      events.onSelected?.(message.declaration);
+    }
     else if (message.type === "layout.request") events.onLayoutRequest();
     else if (message.type === "slide.shown" && typeof message.opener === "string") events.onSlideShown?.(message.opener);
     else if (message.type === "story.focus" && typeof message.key === "string") {
@@ -231,6 +248,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   const askFocus = () => {
     if (asked) post({ type: "focus.show", key: asked.key, targets: asked.targets });
   };
+  const showLit = () => post({ type: "element.light", declarations: lit });
 
   window.addEventListener("message", onMessage);
   const close = () => {
@@ -245,6 +263,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   return {
     close,
     openSlide(opener) { post({ type: "slide.open", opener }); },
+    light(declarations) { lit = [...declarations]; showLit(); },
     focus(key, targets = []) {
       if (key === null) {
         if (asked) post({ type: "focus.clear" });
