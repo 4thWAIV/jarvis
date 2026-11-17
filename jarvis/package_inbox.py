@@ -347,8 +347,8 @@ def title_of(package: Package) -> str:
 
 
 # ── every package carries his vote ───────────────────────────────────────
-# Tim's rule: packages carry votes for him. make_package gives a deck or page
-# that asks nothing the standard vote, his approval of the package
+# Tim's rule: packages carry votes for him. make_package gives every deck
+# and page the standard vote, last, his approval of the package
 # (`approve-package`: Approve, or Reject with his words saying what to
 # change), at its end: a deck as one more decision (`vote`), a hand-made
 # page as its story's last slide (`vote_slide`), waiting on its answers
@@ -743,20 +743,19 @@ def with_vote_slide(story: Optional[dict], language: str) -> dict:
 
 
 def page_vote(package: Package) -> Optional[dict]:
-    """What a page package (not a deck, which asks on its own slide) asks
-    in the package view's head: the standard vote, with his answer and
-    words (`question` is None when it carries none), and in `asks` every
-    question its story declares and the factory's approval of an
-    architecture design, in order, with its options, whether it applies yet
-    and his answer; None for a package that asks nothing there. His
-    approval is `kind` "approval", never the vote: with the revision it puts
-    to him, the options that need his words, and whether his answer is
-    stale."""
-    if is_decision_package(package):
-        return None
-    asked = _story_questions(package)
+    """What a package asks in the package view's head: the standard vote
+    on the package itself, with his answer and words (`question` is None
+    when it carries none), for a deck and a page alike; and, for a page, in
+    `asks` every question its story declares and the factory's approval of
+    an architecture design, in order, with its options, whether it applies
+    yet and his answer (a deck asks its own questions on its slides). None
+    for a package that asks nothing there. His approval is `kind`
+    "approval", never the vote: with the revision it puts to him, the
+    options that need his words, and whether his answer is stale."""
+    deck_package = is_decision_package(package)
+    asked = questions(package) if deck_package else _story_questions(package)
     standard = next((q for q in asked if q.id in VOTE_IDS), None)
-    declared = [q for q in asked if q.id not in VOTE_IDS]
+    declared = [] if deck_package else [q for q in asked if q.id not in VOTE_IDS]
     if standard is None and not declared:
         return None
     subject = subject_of(package) or {}
@@ -795,7 +794,7 @@ def no_vote(work_id: str, runs: str) -> str:
                 f"Nothing was delivered.")
     return (f"It names work item {work_id} but asks Tim nothing, and every package must carry "
             f"his vote. Make it with python -m jarvis.make_package, which adds the standard "
-            f"vote (Approve / Reject) to a deck or page that asks nothing. Nothing "
+            f"vote (Approve / Reject) to every deck and page. Nothing "
             f"was delivered.")
 
 

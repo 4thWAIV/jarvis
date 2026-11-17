@@ -454,7 +454,23 @@ def test_the_view_shows_the_vote_and_a_reload_shows_his_answer(wired, shown, mar
         "a page that connects now shows his answer"
 
 
-def test_a_deck_has_no_head_vote_its_slide_asks(wired, shown, marks, tmp_path):
+def test_a_deck_s_vote_is_in_the_head_too_and_its_own_questions_stay_on_its_slides(
+        wired, shown, marks, tmp_path):
+    """Every package's vote is top level (Tim, 2026-11-16): a deck that
+    carries it shows Approve and Reject in the view's head, and his click
+    there is recorded as the deck's own answer."""
+    inbox_id = send(wired, presentation_zip(tmp_path)).json()["inbox"]["id"]
+    wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
+    assert shown[-1]["package"]["vote"] == {
+        "question": "approve-package", "words": VOTE_WORDS, "reason": VOTE_REASON,
+        "answer": None, "answer_name": "", "note": "", "asks": []}
+    answer_by(wired, "page", inbox_id, "reject", "Too thin.")
+    package = work_packages.find(package_inbox.get(inbox_id).package_id)
+    [vote] = [q for q in package_inbox.questions(package) if q.id == "approve-package"]
+    assert (vote.answer["answer"], vote.answer["note"]) == ("reject", "Too thin.")
+
+
+def test_a_deck_carrying_no_vote_has_no_head_vote(wired, shown, marks, tmp_path):
     inbox_id = send(wired, deck_zip(tmp_path)).json()["inbox"]["id"]
     wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
     assert shown[-1]["package"]["vote"] is None

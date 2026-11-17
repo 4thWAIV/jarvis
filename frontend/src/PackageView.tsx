@@ -25,8 +25,8 @@
  * or keyboard focus enters it; with reduced motion or Steady it stays.
  *
  * Done in the border signs it off (DoneButton), for every package. The
- * vote row under the border holds the standard vote (not a deck, which
- * asks on its own slide), Approve and Reject (VoteControls): the inbox's
+ * vote row under the border holds the standard vote on the package itself
+ * (a deck's too, beside its own slide), Approve and Reject (VoteControls): the inbox's
  * answer route, his click, the same answer as his voice and the Work tab
  * give; and, when the story declares questions, Questions, which opens the
  * first one he has not answered.

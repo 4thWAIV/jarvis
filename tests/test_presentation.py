@@ -96,7 +96,7 @@ def test_compiler_reuses_decisions_and_preserves_target_source(source, tmp_path)
     assert roof["source_sha256"] == made.source_sha256
     assert roof["reference"] == "sample-evidence"
     story = package_story.parse((folder / "story.json").read_bytes())
-    assert [slide.waits for slide in story.slides if slide.waits] == ["choose-street-trial"]
+    assert [slide.waits for slide in story.slides if slide.waits] == ["choose-street-trial", "approve-package"]
     assert any("#" + roof["dom_id"] in beat.targets for slide in story.slides for beat in slide.beats)
     manifest = json.loads((folder / "package.json").read_text())
     assert manifest["understanding"]["source.yaml"] == manifest["brief"]
