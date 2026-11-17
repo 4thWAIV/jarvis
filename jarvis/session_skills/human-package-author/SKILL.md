@@ -30,7 +30,7 @@ Before choosing slides, write in evidence.md, from the records rather than the h
 - **What happened since:** the events that brought this to the reader now, including any failure, its observed effect and its supported cause.
 - **What each answer changes:** what changes in the reader's work, product or schedule under each option.
 
-Assume the reader is coming from other work. They made the earlier decisions but don't hold their details, and the names this work uses for its parts (a stage, a contract, a wall, a check, a slug) mean nothing to them until the package says what each one is. An audience note such as "he approved this an hour ago" is a reason to say briefly what he approved, not to leave it out.
+Assume the reader is coming from other work. They made the earlier decisions but don't hold their details, and the names this work uses for its parts (a stage, a contract, a wall, a check, a slug) mean nothing to them until the package says what each one is. An audience note such as "he approved this an hour ago" is a reason to say briefly what he approved, not to leave it out. List in evidence.md every name the package uses that the reader may not hold (this work's parts and stages, products, companies, people, sessions), each with the plain words that explain it and the slide that first explains it; the opening names the subject itself in those words.
 
 ## Order it as a decision memo
 
@@ -43,11 +43,11 @@ Order the package the way a decision memo is ordered: the situation, what went w
 5. **The decision.** Say what each answer sets going.
 6. **Detail last.** Identifiers, file and function names, internal mechanisms, ledgers and logs go on slides placed after the decision (place it with `{"decision": "<id>"}` before them) or in the evidence. Any slide before the decision that cannot avoid a code name says in plain words what it is, on that slide.
 
-Explain a problem through its observed effect, supported cause and proposed remedy when those facts exist. Each slide makes one point, and its title states that point. Where a handoff prescribes a slide order or forbids explanation (`shape`), follow it only where it agrees with this order. Where it puts the request first, or leaves out what the thing is or what happened, follow this order, and record in evidence.md what you changed and why.
+Explain a problem through its observed effect, supported cause and proposed remedy when those facts exist. Each slide makes one point, and its title states that point. The opening's title, lead and narration each add something: never say the conclusion and the purpose twice over. Keep the options visual: picture what the reader would see under each choice, as before. Where a handoff prescribes a slide order or forbids explanation (`shape`), follow it only where it agrees with this order. Where it puts the request first, or leaves out what the thing is or what happened, follow this order, and record in evidence.md what you changed and why.
 
 ## Write for an expert who was not there
 
-Write plainly: short sentences, everyday words and the standard name for each thing. Plain does not mean simplified. Keep the full substance, and do not explain general ideas an expert in the field knows. Do explain this work's own names and history, because those are what the reader was not there for. Leave out praise, reassurance and grading ("critical", "simple", "minor"), sentences that tell the reader what matters or what to think, and any point already made on another slide.
+Write plainly: short sentences, everyday words and the standard name for each thing. Plain does not mean simplified. Keep the full substance, and do not explain general ideas an expert in the field knows. Do explain this work's own names and history, because those are what the reader was not there for. Leave out how the package was made (your brief, your research, who reported what to you) unless the reader needs it to judge a claim. Leave out praise, reassurance and grading ("critical", "simple", "minor"), sentences that tell the reader what matters or what to think, and any point already made on another slide.
 
 ## Build a visual explanation
 
