@@ -743,8 +743,10 @@ function UpdatesSection() {
       {current && (
         <p className="update-current" ref={currentUi.whole}>
           {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={current} />)}
-          {" "}<code className="update-commit">{current.sha.slice(0, 12)}</code>
         </p>
+      )}
+      {current && status?.running && (
+        <p className="update-commit">{t("left.updates.commit", { commit: current.sha })}</p>
       )}
       {status?.restart_needed && <p className="settings-hint">{t("left.updates.restartToRun",
         { version: status.current ? versionName(t, status.current) : "" })}</p>}

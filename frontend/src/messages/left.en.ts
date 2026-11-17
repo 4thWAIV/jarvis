@@ -395,6 +395,7 @@ export const leftEn = {
   "left.updates.upToDate": "Up to date.",
   "left.updates.newer": { one: "{count} newer version on main. Choose one to install.", other: "{count} newer versions on main. Choose one to install." },
   "left.updates.running": "Running {version}",
+  "left.updates.commit": "Commit {commit}",
   "left.updates.restartToRun": "The checkout has moved to {version} since JARVIS started: restart it to run that.",
   "left.updates.prName": "PR {pr}",
   "left.updates.latest": "LATEST",

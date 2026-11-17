@@ -3922,6 +3922,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
    choose from, and the confirmation before installing (Settings.tsx). */
 .update-current { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
 .update-current b { font-weight: 600; }
+.update-commit { margin: 0; font-size: 11px; font-family: ui-monospace, monospace; color: rgba(255, 255, 255, 0.6); overflow-wrap: anywhere; }
 .update-current code, .update-version code {
   color: rgba(0, 212, 255, 0.7);
   font-family: ui-monospace, Menlo, monospace;

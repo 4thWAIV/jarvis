@@ -515,6 +515,8 @@ async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(
         section = page.locator("#settings-updates")
         await async_api.expect(section.locator(".update-current")).to_have_text(
             "Running PR 39: Find the running server from the workflow reporter aaaaaaa")
+        # An older server that notes no running commit: the line alone.
+        await async_api.expect(section.locator(".update-commit")).to_have_count(0)
         await async_api.expect(section).to_contain_text(
             "3 newer versions on main. Choose one to install.")
         rows = section.locator(".update-version")
