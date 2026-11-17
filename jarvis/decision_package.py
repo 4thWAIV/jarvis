@@ -499,9 +499,9 @@ def expand(deck: dict) -> dict:
 
 
 # -- 1c. the briefing ------------------------------------------------------------------
-# Every deck an agent sends is a conclusion-first briefing (deck/0.1's
+# Every deck an agent sends is a briefing in decision-memo order (deck/0.1's
 # document `purpose` and `conclusion`): it opens with what it is for and its
-# answer or ask, and every decision is preceded by its lead-in. The fields
+# bottom line, and every decision is preceded by its lead-in. The fields
 # are checked here, and so is what the slides show of them: metadata alone
 # says nothing about what he sees.
 

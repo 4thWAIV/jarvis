@@ -66,6 +66,21 @@ async def test_missing_inspections_cannot_accept(rendered, missing):
 
 
 @pytest.mark.asyncio
+async def test_screenshots_handed_back_in_the_request_s_shape_count_by_their_paths(rendered):
+    """An author that returns the request's own mapping of path to digest
+    inspected those paths; a missing one is still refused."""
+    def as_mapping(response, request):
+        response["screenshots"] = dict(request["screenshots"])
+    receipt = await inspect(rendered, as_mapping)
+    assert receipt["review"]["status"] == "accepted"
+
+    def one_short(response, request):
+        response["screenshots"] = {}
+    with pytest.raises(dp.Refused, match="did not inspect every rendered screenshot"):
+        await inspect(rendered, one_short)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("changed", ["source", "archive", "screenshot"])
 async def test_edits_after_rendering_invalidate_acceptance(rendered, changed):
     source, archive, result, _ = rendered

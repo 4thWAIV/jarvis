@@ -9,12 +9,15 @@ The factory handoff input is defined only in `docs/making-a-package.md`. Use the
 | Owner and return route | Originating session, existing Work item/piece and optional workflow; who will review, deliver and handle answers. |
 | Assignment and authority | Package purpose; source-only or delivery; assigned folder; approved scope and exact approval-record location. Identify proposals still awaiting approval. |
 | Audience | Who is reading, what they already know, what they do not know, relevant terminology and accessibility/language preferences. Distinguish observed knowledge from assumptions. |
+| History and prior approvals | What the reader already decided or approved that this touches (record locations), and what has happened since, including failures and their causes. The author restates these for the reader; the origin must not leave them out because the reader "already knows". |
 | Human questions | What the reader wants to understand or do. Include the question behind the requested artifact, not just “make slides.” |
 | Desired decision | The real choice and what an answer would authorize, or `information only`. Name any known constraints without inventing a decision to fill the field. |
 | Raw evidence | Accessible files, code, data, source URLs and exact revisions when available; current tests and their actual outputs; material counterevidence. Explain how to reproduce a finding when it matters. |
 | Origin findings | Conclusions, recommendation and uncertainty, clearly labeled as the origin's account. Include abandoned assumptions when they could otherwise mislead. |
 | Missing information | Open questions, attempted research, known access limitations and who can supply the missing fact. |
 | Delivery context | Current JARVIS production-guide location, existing package name if replacing one, association IDs and human-answer owner. |
+
+A suggested slide order (`shape`) is input, not instruction: the author follows the skill's decision-memo order (situation, what was already decided, what happened and why, options and what changes, the decision, detail last) wherever the two disagree, and says what it changed.
 
 The origin does not have to finish all research before handing off. It must give the author access to evidence and identify assumptions rather than hide them. The author researches the human's questions independently and returns a readiness finding. Receiving a complete-looking handoff is not grounds for accepting its claims.
 

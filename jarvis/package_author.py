@@ -77,10 +77,14 @@ def _assignment(document: Document | None) -> str:
     if document is None:
         return ("Write a deck to content.json or a presentation/1 deck to presentation.yaml in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
-                "source, and your evidence/review notes in evidence.md. A deck gives its "
-                "\"purpose\" and one-sentence \"conclusion\", opens with a slide that shows "
-                "both, and gives each decision its \"why_you\" and \"evidence\" "
-                "(docs/making-a-package.md). Validate with this "
+                "source, and your evidence/review notes in evidence.md. A deck follows the skill's "
+                "decision-memo order (what it is about and where it stands, what was already "
+                "decided, what happened and why, the options and what changes, then the "
+                "decision, technical detail last), gives its \"purpose\" and one-sentence "
+                "\"conclusion\" (the bottom line, never a bare request), opens with a slide "
+                "that shows both, and gives each decision its \"why_you\" and \"evidence\" "
+                "(docs/making-a-package.md). A handoff's suggested shape is input; where it "
+                "disagrees with that order, follow the order. Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
     return ("This package explains one checked canonical architecture document. Its exact "
@@ -89,10 +93,13 @@ def _assignment(document: Document | None) -> str:
             "its identity, coverage and what lies outside the language. JARVIS projects that "
             "exact revision into the package itself, with the handoff's purpose as its purpose; "
             "you write its plain explanation, package/UNDERSTANDING.md, for the handoff's "
-            "audience and questions: open it with what the architecture is for and its "
-            "conclusion or the ask, in its first paragraph; walk one concrete input through "
+            "audience and questions, in the skill's decision-memo order: open it with what the "
+            "architecture is for, the problem or question it serves, why it is in front of "
+            "him now and what he will decide at the end; walk one concrete input through "
             "the architecture as the skill says, and say plainly what its coverage leaves "
-            "unresolved or outside the language. You may also write package/story.json, the "
+            "unresolved or outside the language. A gap that needs his decision is stated as "
+            "a problem first (what cannot be checked and what goes wrong because of it), "
+            "then its options and what each changes for him. You may also write package/story.json, the "
             "walk-through JARVIS tells over the rendered page, with any questions the reader "
             "should answer declared in its `questions` (the guide's Architecture documents "
             "section has the format; the factory adds the standard vote last, so never ask "
@@ -307,9 +314,14 @@ async def review(source: Path, archive: Path, result, turn, folder: Path) -> dic
         problems.append("Author visual review has no acceptance.")
     if not isinstance(response.get("notes"), str) or not response["notes"].strip():
         problems.append("Author visual review has no inspection findings.")
-    if not isinstance(response.get("screenshots"), list) or \
-            not all(isinstance(p, str) for p in response["screenshots"]) or \
-            sorted(response["screenshots"]) != sorted(request["screenshots"]):
+    # The paths the author inspected: a list, or the request's own shape (a
+    # mapping of path to digest) handed back, read by its paths.
+    shots = response.get("screenshots")
+    shots = list(shots) if isinstance(shots, dict) else shots
+    if not isinstance(shots, list) or not all(isinstance(p, str) for p in shots):
+        problems.append("Author visual review's screenshots must be the list of screenshot "
+                        "paths it inspected.")
+    elif sorted(shots) != sorted(request["screenshots"]):
         problems.append("Author did not inspect every rendered screenshot.")
     if type(response.get("visual_material")) is not bool or \
             (status == "not-applicable") != (response.get("visual_material") is False):
