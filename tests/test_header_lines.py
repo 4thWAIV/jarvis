@@ -1162,6 +1162,10 @@ EXEMPT = {
         'it writes the author\'s own asset ids, sizes and hashes back into the author\'s presentation.yaml and prints them to the author command; never a trusted session header'),
     'presentation_proof.prove_slides': (
         'it measures authored slide words against the bundled font and returns compiler failures naming source member ids; package content, never a trusted brain header'),
+    'presentation_proof._prove_narrow': (
+        'it measures authored slide words in JARVIS\'s narrow column and returns compiler failures naming source member ids; package content, never a trusted brain header'),
+    'presentation_schema.words': (
+        'it gathers the words an authored deck object shows, for its target name and the proof; package content, never a trusted session or brain header'),
     'presentation_proof.prove_targets': (
         'it compares the generated story\'s selectors with the compiler\'s target index and returns failures naming slide titles; package content, never a trusted brain header'),
     'presentation_source._semantics': (

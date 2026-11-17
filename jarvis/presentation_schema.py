@@ -144,7 +144,44 @@ class TableObject(ObjectBase):
     alt: Text
 
 
-VisibleObject = Annotated[Union[TextObject, ImageObject, VectorObject, BarObject, TableObject],
+# JARVIS's own components: the author gives the words, JARVIS draws them
+# (layout_spec "components") and proves they fit like any text. Each item
+# has its own id, so narration can light one.
+class CalloutObject(ObjectBase):
+    """One statement set apart: an optional `label` above what it `says`."""
+    type: Literal["callout"]
+    label: Text | None = None
+    says: Text
+
+
+class Figure(Model):
+    id: Id
+    value: Text       # the number as it is read, units and all ("12 000 €")
+    label: Text       # what it counts
+
+
+class FiguresObject(ObjectBase):
+    """One to four key numbers side by side (one under another in a narrow frame)."""
+    type: Literal["figures"]
+    items: Annotated[list[Figure], Field(min_length=1, max_length=4)]
+
+
+class Step(Model):
+    id: Id
+    title: Text
+    says: Text | None = None
+
+
+class StepsObject(ObjectBase):
+    """Numbered steps in order, each a title and what it says."""
+    type: Literal["steps"]
+    items: Annotated[list[Step], Field(min_length=1, max_length=8)]
+
+
+COMPONENTS = (CalloutObject, FiguresObject, StepsObject)
+
+VisibleObject = Annotated[Union[TextObject, ImageObject, VectorObject, BarObject, TableObject,
+                                CalloutObject, FiguresObject, StepsObject],
                           Field(discriminator="type")]
 
 
@@ -220,3 +257,22 @@ class Presentation(Model):
     references: Annotated[list[Reference], Field(min_length=1)]
     slides: Annotated[list[Annotated[Union[ContentSlide, DecisionSlide], Field(discriminator="type")]], Field(min_length=1)]
     decisions: list[Decision]
+
+
+def words(obj) -> list[str]:
+    """The words an object shows, in reading order: what its target is
+    named by, what the shared deck's own text of it says and what the proof
+    checks the font for."""
+    if isinstance(obj, TextObject):
+        return ["".join(run.text for run in p.runs) for p in obj.paragraphs]
+    if isinstance(obj, TableObject):
+        return [*(obj.head or []), *(cell for row in obj.rows for cell in row.cells)]
+    if isinstance(obj, BarObject):
+        return [f"{bar.label} {bar.value:g} {obj.units}" for bar in obj.bars]
+    if isinstance(obj, CalloutObject):
+        return [w for w in (obj.label, obj.says) if w]
+    if isinstance(obj, FiguresObject):
+        return [f"{item.value} {item.label}" for item in obj.items]
+    if isinstance(obj, StepsObject):
+        return [" ".join(w for w in (item.title, item.says) if w) for item in obj.items]
+    return [obj.alt]

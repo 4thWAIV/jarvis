@@ -31,8 +31,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import font_metrics, layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, TableObject,
-                                        TextObject)
+from jarvis.presentation_schema import (BarObject, CalloutObject, ContentSlide, FiguresObject,
+                                        ImageObject, StepsObject, TableObject, TextObject,
+                                        VectorObject, words)
 
 PROOF_FILE = ".jarvis/layout-proof.json"
 VERSION = "presentation-proof/1"
@@ -143,6 +144,103 @@ def bars_height(obj: BarObject, width: float, u: float) -> float | str:
     return total + line
 
 
+def table_cards_height(obj: TableObject, width: float, u: float) -> float | str:
+    """A table in a narrow frame: each row a card, each cell a line group
+    after its column's heading ("Cost: 12 000"), the row's own heading bold."""
+    px, line, face = _style("cell", u)
+    pad_x, pad_y = layout_spec.spec()["styles"]["cell"]["pad"]
+    inner = width - 2 * pad_x * u
+    total = 0.0
+    for row in obj.rows:
+        height = 2 * pad_y * u + 1
+        for m, text in enumerate(row.cells):
+            if m == 0 and obj.rowHeads:
+                runs = [(text, "bold")]
+            else:
+                runs = ([(obj.head[m] + ": ", "bold")] if obj.head else []) + [(text, face)]
+            count = lines(runs, px, inner)
+            if isinstance(count, str):
+                return count
+            height += count * line
+        total += height
+    return total
+
+
+def _component(name: str) -> dict:
+    return layout_spec.spec()["components"][name]
+
+
+def callout_height(obj: CalloutObject, width: float, u: float) -> float | str:
+    c = _component("callout")
+    px, line, face = _style("body", u)
+    inner = width - 2 * c["pad"][0] * u - c["border_px"]
+    total = 2 * c["pad"][1] * u
+    for text, weight in ((obj.label, "bold"), (obj.says, face)):
+        if text:
+            count = lines([(text, weight)], px, inner)
+            if isinstance(count, str):
+                return count
+            total += count * line
+    return total
+
+
+def figures_height(obj: FiguresObject, width: float, u: float, narrow: bool = False) -> float | str:
+    """Side by side in equal columns, as tall as the tallest; one under
+    another in a narrow frame."""
+    c = _component("figures")
+    columns = 1 if narrow else len(obj.items)
+    vpx, vline, vface = _style("figure", u)
+    px, line, face = _style("body", u)
+    inner = (width - c["gap"] * u * (columns - 1)) / columns - 2 * c["pad"][0] * u
+    heights = []
+    for item in obj.items:
+        value = lines([(item.value, vface)], vpx, inner)
+        label = lines([(item.label, face)], px, inner)
+        if isinstance(value, str) or isinstance(label, str):
+            return value if isinstance(value, str) else label
+        heights.append(2 * c["pad"][1] * u + value * vline + label * line)
+    if narrow:
+        return sum(heights) + c["gap"] * u * (len(heights) - 1)
+    return max(heights)
+
+
+def steps_height(obj: StepsObject, width: float, u: float) -> float | str:
+    c = _component("steps")
+    px, line, face = _style("body", u)
+    marker = c["marker"] * px
+    inner = width - marker - c["marker_gap"] * px
+    total = c["gap"] * u * (len(obj.items) - 1)
+    for item in obj.items:
+        count = 0
+        for text, weight in ((item.title, "bold"), (item.says, face)):
+            if text:
+                n = lines([(text, weight)], px, inner)
+                if isinstance(n, str):
+                    return n
+                count += n
+        total += max(marker, count * line)
+    return total
+
+
+def object_height(obj, width: float, u: float, narrow: bool = False) -> float | str | None:
+    """The height an object's words take in `width` px at deck unit `u`, or
+    why they cannot; None for what is drawn at its slot's size (a picture,
+    a vector)."""
+    if isinstance(obj, TextObject):
+        return text_height(obj, width, u)
+    if isinstance(obj, TableObject):
+        return table_cards_height(obj, width, u) if narrow else table_height(obj, width, u)
+    if isinstance(obj, BarObject):
+        return bars_height(obj, width, u)
+    if isinstance(obj, CalloutObject):
+        return callout_height(obj, width, u)
+    if isinstance(obj, FiguresObject):
+        return figures_height(obj, width, u, narrow)
+    if isinstance(obj, StepsObject):
+        return steps_height(obj, width, u)
+    return None
+
+
 # -- the proof ------------------------------------------------------------------------
 
 def _fits(failures, member, frame, needed, room, what):
@@ -172,12 +270,8 @@ def prove_slides(source, pictures: dict[str, picture_proof.Picture]) -> tuple[li
             continue
         _characters(failures, slide.id, slide.title)
         for obj in slide.objects:
-            if isinstance(obj, TextObject):
-                _characters(failures, obj.id, " ".join(r.text for p in obj.paragraphs for r in p.runs))
-            elif isinstance(obj, TableObject):
-                _characters(failures, obj.id, " ".join([*(obj.head or []), *(c for r in obj.rows for c in r.cells)]))
-            elif isinstance(obj, BarObject):
-                _characters(failures, obj.id, " ".join(f"{b.label} {b.value:g} {obj.units}" for b in obj.bars))
+            if not isinstance(obj, (ImageObject, VectorObject)):
+                _characters(failures, obj.id, " ".join(words(obj)))
         if failures:
             continue
         boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
@@ -191,22 +285,18 @@ def prove_slides(source, pictures: dict[str, picture_proof.Picture]) -> tuple[li
                   title[3] / height * frame[1], "Its title")
             for obj in slide.objects:
                 room_w, room_h = layout_spec.frame_box(boxes[obj.slot], frame)
-                if isinstance(obj, TextObject):
-                    needed = text_height(obj, room_w, u)
-                elif isinstance(obj, TableObject):
-                    needed = table_height(obj, room_w, u)
-                elif isinstance(obj, BarObject):
-                    needed = bars_height(obj, room_w, u)
-                elif isinstance(obj, ImageObject):
+                if isinstance(obj, ImageObject):
                     problem = picture_proof.drawn_problem(pictures[obj.asset], (room_w, room_h))
                     if problem:
                         failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
                     continue
-                else:
+                needed = object_height(obj, room_w, u)
+                if needed is None:
                     continue
                 _fits(failures, obj.id, frame, needed, room_h, f"The {obj.slot} slot")
                 if not isinstance(needed, str):
                     tightest[obj.id] = max(tightest.get(obj.id, 0.0), needed / room_h)
+        _prove_narrow(failures, slide, pictures)
         # One failure a member is enough to act on.
     seen, unique = set(), []
     for failure in failures:
@@ -214,6 +304,33 @@ def prove_slides(source, pictures: dict[str, picture_proof.Picture]) -> tuple[li
             seen.add(failure.member)
             unique.append(failure)
     return unique, {member: round(share, 3) for member, share in sorted(tightest.items())}
+
+
+def _prove_narrow(failures: list[Failure], slide: ContentSlide, pictures) -> None:
+    """The slide as one column in a narrow frame (layout_spec.narrow_*): it
+    scrolls, so nothing is short of height, but every word must fit its
+    width, and every picture its place, at every narrow width."""
+    for width in layout_spec.narrow_widths():
+        u = layout_spec.narrow_unit(width)
+        frame = (width, None)
+        px, _, face = _style("heading", u)
+        count = lines([(slide.title, face)], px, layout_spec.narrow_title_width(width))
+        if isinstance(count, str):
+            failures.append(Failure(slide.id, frame, f"Its title in a narrow frame {width:.0f} px "
+                                                     f"wide: {count}."))
+        room = layout_spec.narrow_slot_width(width)
+        for obj in slide.objects:
+            if isinstance(obj, ImageObject):
+                problem = picture_proof.drawn_problem(
+                    pictures[obj.asset], (room, layout_spec.narrow_height("image", width)))
+                if problem:
+                    failures.append(Failure(obj.id, frame, f"Picture {obj.id} in a narrow frame "
+                                                           f"{width:.0f} px wide: {problem}."))
+                continue
+            needed = object_height(obj, room, u, narrow=True)
+            if isinstance(needed, str):
+                failures.append(Failure(obj.id, frame, f"The {obj.slot} slot in a narrow frame "
+                                                       f"{width:.0f} px wide: {needed}."))
 
 
 def prove_targets(story: dict, targets: list[dict], deck: dict) -> list[Failure]:

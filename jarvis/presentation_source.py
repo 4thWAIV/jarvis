@@ -11,8 +11,8 @@ import yaml
 from pydantic import ValidationError
 
 from jarvis import layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, Cue, Ellipse, ImageObject,
-                                       Paragraph, Presentation, Rectangle, Run, ShapePath,
+from jarvis.presentation_schema import (BarObject, ContentSlide, Cue, Ellipse, FiguresObject,
+                                       ImageObject, Paragraph, StepsObject, Presentation, Rectangle, Run, ShapePath,
                                        SourceRef, TableObject, TextObject, VectorObject)
 
 
@@ -334,6 +334,8 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                     provenance(bar.source, bar.id)
                     if bar.value > obj.domain[1]:
                         source.fail("schema", "Bar value is outside its declared domain.", member=bar.id)
+            elif isinstance(obj, (FiguresObject, StepsObject)):
+                visible.update(item.id for item in obj.items)
             elif isinstance(obj, VectorObject):
                 for shape in obj.members:
                     visible.add(shape.id)

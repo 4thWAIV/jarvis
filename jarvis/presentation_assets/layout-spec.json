@@ -1,13 +1,21 @@
 {
-  "about": "JARVIS's one layout spec for every deck it draws. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
+  "about": "JARVIS's one layout spec for every deck it draws. A frame narrower or shorter than narrow.below draws every content slide as one column in its reading order (narrow: its own unit, one 440th of the frame's width, proven at widths from narrow.min_width up), pictures, vectors and charts at narrow.heights, everything else as tall as its words. components are JARVIS's own parts an author fills with words (callout, figures, steps). Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
   "frame": {"min": [662, 489], "max": [1600, 900]},
   "unit": {"width": 880, "height": 640},
   "text": {"min_px": 13, "max_px": 25, "width_margin": 0.02},
   "styles": {
     "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35, "face": "regular"},
     "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2, "face": "bold"},
-    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35, "face": "regular", "pad": [8, 4]}
+    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35, "face": "regular", "pad": [8, 4]},
+    "figure": {"units": 30, "min_px": 16, "max_px": 25, "line": 1.15, "face": "bold"}
   },
+  "components": {
+    "callout": {"pad": [14, 10], "border_px": 4},
+    "figures": {"gap": 14, "pad": [12, 10]},
+    "steps": {"gap": 10, "marker": 1.9, "marker_gap": 0.6}
+  },
+  "narrow": {"below": [662, 489], "min_width": 360, "unit": 440, "margin": 16, "gap": 12,
+             "heights": {"image": 260, "vector": 260, "chart": 320}, "widths": 8},
   "control": {"min_px": 32},
   "picture": {"min_px": 60, "stretch_max": 2},
   "slide": {"width": 824, "gap": 8},
@@ -32,13 +40,13 @@
     "table": {"slots": {"table": [28, 94, 824, 420], "words": [28, 530, 824, 98]}, "required": ["table"]}
   },
   "accepts": {
-    "words": ["text"],
-    "body": ["text", "table", "bar", "vector", "image"],
+    "words": ["text", "callout", "figures", "steps"],
+    "body": ["text", "table", "bar", "vector", "image", "callout", "figures", "steps"],
     "picture": ["image", "vector", "bar"],
-    "first": ["image", "vector", "bar", "text"],
-    "second": ["image", "vector", "bar", "text"],
-    "third": ["image", "vector", "bar", "text"],
-    "fourth": ["image", "vector", "bar", "text"],
+    "first": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
+    "second": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
+    "third": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
+    "fourth": ["image", "vector", "bar", "text", "callout", "figures", "steps"],
     "table": ["table"]
   }
 }

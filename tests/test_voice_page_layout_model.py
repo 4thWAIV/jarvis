@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 from jarvis import layout_spec, make_package as mp, picture_proof, presentation_proof
-from jarvis.presentation_schema import ContentSlide, TableObject, TextObject
+from jarvis.presentation_schema import ContentSlide
 from jarvis.presentation_source import read_source
 
 pytestmark = pytest.mark.page
@@ -31,7 +31,9 @@ MODEL_PX = 0.2
 
 # The frames drawn: the range's corners, its middle, and where the deck unit
 # switches from the frame's width to its height.
-FRAMES = [*layout_spec.corners(), (1024, 700), (880, 640), (1131, 823)]
+FRAMES = [*layout_spec.corners(), (1024, 700), (880, 640), (1131, 823),
+          # narrow frames, where every slide is one column (layout_spec narrow)
+          (360, 640), (480, 800), (661, 900), (1200, 420)]
 
 PICTURE = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
            '<rect width="{w}" height="{h}" fill="{fill}"/></svg>\n')
@@ -123,6 +125,15 @@ def hard_deck(folder: Path) -> Path:
                        ("third", "Tercera", "Una columna con más palabras que las demás juntas."),
                        ("fourth", "Cuarta", "Desproporcionado.")]],
                    _text("cuatro-texto", "words", "Cuatro columnas comparadas, una frase debajo.")),
+            _slide("componentes", "Componentes de JARVIS", "comparison",
+                   {"id": "comp-aviso", "type": "callout", "slot": "first", "source": {"reference": "evidence"},
+                    "label": "Conclusión", "says": "La ruta plantada cuesta menos que repavimentar " + long},
+                   {"id": "comp-cifras", "type": "figures", "slot": "second", "source": {"reference": "evidence"},
+                    "items": [{"id": "cifra-coste", "value": "12 000 €", "label": "al año"},
+                              {"id": "cifra-lluvia", "value": "40 %", "label": "menos agua"}]},
+                   {"id": "comp-pasos", "type": "steps", "slot": "third", "source": {"reference": "evidence"},
+                    "items": [{"id": "paso-medir", "title": "Medir", "says": "Un mes antes."},
+                              {"id": "paso-plantar", "title": "Plantar la manzana interdisciplinaria"}]}),
             _slide("imagen", "Una imagen y palabras", "picture-and-words",
                    _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
                    _image("imagen-dibujo", "picture", "ancho")),
@@ -157,19 +168,21 @@ DRAWN = """id => {
 }"""
 
 
-def modelled(obj, slot_box, frame, margin: bool = True) -> float:
-    """The proof's height for `obj`; without its width margin when `margin`
-    is False."""
+def modelled(obj, slot_box, frame, margin: bool = True) -> float | None:
+    """The proof's height for `obj` (None for a picture); without its width
+    margin when `margin` is False. A narrow frame measures the one column."""
     if not margin:
         spec = layout_spec.spec()
         spec["text"]["width_margin"] = 0
         with pytest.MonkeyPatch.context() as m:
             m.setattr(layout_spec, "spec", lambda: spec)
             return modelled(obj, slot_box, frame)
-    u = layout_spec.unit(frame)
-    width, _ = layout_spec.frame_box(slot_box, frame)
-    measured = (presentation_proof.table_height(obj, width, u) if isinstance(obj, TableObject)
-                else presentation_proof.text_height(obj, width, u))
+    narrow = layout_spec.is_narrow(frame)
+    if narrow:
+        u, width = layout_spec.narrow_unit(frame[0]), layout_spec.narrow_slot_width(frame[0])
+    else:
+        u, (width, _) = layout_spec.unit(frame), layout_spec.frame_box(slot_box, frame)
+    measured = presentation_proof.object_height(obj, width, u, narrow)
     assert not isinstance(measured, str), measured
     return measured
 
@@ -207,11 +220,11 @@ def test_the_browser_draws_every_slot_the_height_the_model_computed(built):
                         continue
                     boxes = layout_spec.boxes(slide.layout, {o.slot for o in slide.objects})
                     for obj in slide.objects:
-                        if not isinstance(obj, (TextObject, TableObject)):
+                        exact = modelled(obj, boxes[obj.slot], frame, margin=False)
+                        if exact is None:
                             continue
                         dom = "presentation-main-" + obj.id
                         drawn = page.evaluate(DRAWN, dom)
-                        exact = modelled(obj, boxes[obj.slot], frame, margin=False)
                         proof = modelled(obj, boxes[obj.slot], frame)
                         checked += 1
                         if abs(drawn - exact) > MODEL_PX or proof < drawn - MODEL_PX:

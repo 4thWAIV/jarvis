@@ -116,7 +116,43 @@ def frames(steps: int = 6) -> list[tuple[float, float]]:
     return sorted(out)
 
 
-# -- what is generated -----------------------------------------------------------------
+# -- narrow frames: one column in reading order ----------------------------------------
+
+def is_narrow(frame: tuple[float, float]) -> bool:
+    below = spec()["narrow"]["below"]
+    return frame[0] < below[0] or frame[1] < below[1]
+
+
+def narrow_widths() -> list[float]:
+    """The widths a narrow column is proven at: from its least up to the
+    widest frame (a short frame of any width draws it), and the widest frame
+    narrow by width alone."""
+    n = spec()["narrow"]
+    least, most = n["min_width"], spec()["frame"]["max"][0]
+    steps = n["widths"]
+    return sorted({least + (most - least) * i / steps for i in range(steps + 1)} | {n["below"][0] - 1})
+
+
+def narrow_unit(width: float) -> float:
+    return width / spec()["narrow"]["unit"]
+
+
+def narrow_title_width(width: float) -> float:
+    return width - 2 * spec()["narrow"]["margin"] * narrow_unit(width)
+
+
+def narrow_slot_width(width: float) -> float:
+    """A slot's inner width in a narrow column `width` px wide."""
+    return narrow_title_width(width) - 2 * spec()["slot_padding"] * narrow_unit(width)
+
+
+def narrow_height(kind: str, width: float) -> float:
+    """The inner height a picture, vector or chart is drawn at in a narrow column."""
+    u = narrow_unit(width)
+    return (spec()["narrow"]["heights"][kind] - 2 * spec()["slot_padding"]) * u
+
+
+# -- what is generated ------------------------------------------------------------------
 
 def _length(units: float) -> str:
     return f"calc({units:g} * var(--u))"
@@ -160,8 +196,55 @@ def generated_css() -> str:
                 for slot, box in boxes(layout, filled).items():
                     lines.append(_box(f'.presentation-slot[data-layout="{layout}"][data-columns="{count}"]'
                                       f'[data-slot="{slot}"]', box))
+    lines += _components_css() + _narrow_css()
     lines.append(GENERATED_END)
     return "\n".join(lines) + "\n"
+
+
+def _components_css() -> list[str]:
+    c = spec()["components"]
+    callout, figures, steps = c["callout"], c["figures"], c["steps"]
+    return [
+        f".presentation-callout {{ border-left: {callout['border_px']}px solid var(--accent); "
+        f"padding: {_length(callout['pad'][1])} {_length(callout['pad'][0])}; }}",
+        f".presentation-figures {{ display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        f"gap: {_length(figures['gap'])}; }}",
+        f".presentation-figure {{ padding: {_length(figures['pad'][1])} {_length(figures['pad'][0])}; }}",
+        f".presentation-figure-value {{ font-size: var(--deck-figure); line-height: var(--deck-figure-line); }}",
+        f".presentation-steps {{ display: flex; flex-direction: column; gap: {_length(steps['gap'])}; }}",
+        f".presentation-step {{ display: grid; grid-template-columns: {steps['marker']:g}em minmax(0, 1fr); "
+        f"column-gap: {steps['marker_gap']:g}em; align-items: start; }}",
+        f".presentation-step-marker {{ width: {steps['marker']:g}em; height: {steps['marker']:g}em; }}",
+    ]
+
+
+def _narrow_css() -> list[str]:
+    """A narrow frame: the slide one scrolling column in reading order, in
+    the narrow unit; presentation.js sets .presentation-narrow below
+    narrow.below (read from --narrow-width and --narrow-height)."""
+    s, n = spec(), spec()["narrow"]
+    at = ".presentation-narrow .presentation-slide"
+    sizes = " ".join(f"--deck-{name}: clamp({style['min_px']}px, {_length(style['units'])}, {style['max_px']}px);"
+                     for name, style in s["styles"].items())
+    # :is() takes its most specific argument's weight, so these beat every wide box.
+    each = (f"{at} .presentation-canvas > :is(.presentation-title, .presentation-slot, "
+            f".presentation-slot[data-layout][data-slot][data-columns])")
+    out = [f":root {{ --narrow-width: {n['below'][0]}; --narrow-height: {n['below'][1]}; }}",
+           f"{at} {{ --u: calc(100vw / {n['unit']}); {sizes} overflow-x: hidden; overflow-y: auto; "
+           f"scrollbar-width: none; }}",
+           f"{at} .presentation-canvas {{ position: relative; inset: auto; box-sizing: border-box; "
+           f"min-height: 100%; display: flex; flex-direction: column; gap: {_length(n['gap'])}; "
+           f"padding: {_length(n['margin'])}; }}",
+           f"{each} {{ position: relative; left: auto; top: auto; width: auto; height: auto; flex: none; }}",
+           f"{at} .presentation-figures {{ grid-template-columns: minmax(0, 1fr); }}",
+           f"{at} .table :is(thead) {{ display: none; }}",
+           f"{at} .table, {at} .table :is(tbody, tr, th, td) {{ display: block; padding: 0; border: 0; }}",
+           f"{at} .table tr {{ padding: {_length(s['styles']['cell']['pad'][1])} "
+           f"{_length(s['styles']['cell']['pad'][0])}; border-bottom: 1px solid var(--edge); }}",
+           f"{at} .table td[data-head]::before {{ content: attr(data-head) \": \"; font-weight: 700; }}"]
+    for kind, height in n["heights"].items():
+        out.append(f'{each}[data-kind="{kind}"] {{ height: {_length(height)}; }}')
+    return out
 
 
 @functools.lru_cache(maxsize=1)

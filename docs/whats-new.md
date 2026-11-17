@@ -2,6 +2,16 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Decks read in a narrow window, and carry JARVIS's own parts
+
+A deck shown in a narrow or short package view now becomes one column you
+scroll, in the order it is read, with every word whole and every picture
+large enough to see; a table's rows become cards. Agents no longer crop or
+rearrange anything for small views: JARVIS does it, and proves before a
+deck is sent that it reads at every width. Decks can also carry JARVIS's
+own parts, filled with words only: a statement set apart, a row of key
+numbers, and numbered steps, each of which the story can point at.
+
 ## Every package that asks you something opens on where things stand
 
 A deck that asks you to decide something now opens on a slide JARVIS draws

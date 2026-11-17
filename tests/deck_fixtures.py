@@ -144,3 +144,29 @@ def write_yaml(folder: Path, deck: dict, svg: str | None = None) -> Path:
     source = folder / "presentation.yaml"
     source.write_text(yaml.safe_dump(presentation_of(deck, folder), sort_keys=False, allow_unicode=True))
     return source
+
+
+# A content slide of JARVIS's three components, for presentation/1 sources
+# that name the reference "sample-evidence" (as the street example does).
+_EVIDENCE = {"reference": "sample-evidence"}
+COMPONENTS_SLIDE = {
+    "id": "plan", "type": "content", "title": "What the trial costs and how it runs",
+    "layout": "comparison", "notes": "",
+    "objects": [
+        {"id": "plan-callout", "type": "callout", "slot": "first", "source": _EVIDENCE,
+         "label": "Bottom line", "says": "One planted block for a year costs less than a repaving."},
+        {"id": "plan-figures", "type": "figures", "slot": "second", "source": _EVIDENCE,
+         "items": [{"id": "cost-figure", "value": "12 000 €", "label": "a year"},
+                   {"id": "rain-figure", "value": "40 %", "label": "less runoff"}]},
+        {"id": "plan-steps", "type": "steps", "slot": "third", "source": _EVIDENCE,
+         "items": [{"id": "plan-measure", "title": "Measure the runoff", "says": "For one month first."},
+                   {"id": "plan-plant", "title": "Plant the block"},
+                   {"id": "plan-compare", "title": "Compare", "says": "Against the paved block."}]},
+        {"id": "plan-words", "type": "text", "slot": "words", "source": _EVIDENCE,
+         "paragraphs": [{"id": "plan-words-p", "role": "paragraph", "runs": [
+             {"id": "plan-words-r", "text": "Every figure is from the street survey.", "emphasis": "normal"}]}]},
+    ],
+    "readingOrder": ["plan-callout", "plan-figures", "plan-steps", "plan-words"],
+    "narration": [{"id": "plan-cue", "say": "It costs twelve thousand a year, measured over a month first.",
+                   "focus": ["cost-figure", "plan-measure"]}],
+}

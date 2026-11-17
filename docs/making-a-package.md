@@ -103,7 +103,7 @@ Write only the substance. Every deck is a briefing in decision-memo order. The o
 | `assets` | Each picture: `id`, `path` beside the source, `sha256`, `mime`, `width`, `height` (all written by `--fill-assets`) and its `source` reference. |
 | `references` | The evidence: `id`, `kind` (`authored-example`, `file` or `url`), `locator`, `revision`, `description`. Every object and picture names one as its `source`. |
 | `slides` | In order. A content slide: `id`, `type: content`, `title` (JARVIS draws it at the top), `layout` (below), `objects` each with its `slot`, `readingOrder` (every object once), `narration` (cues: `id`, `say`, `focus` naming what is lit), `notes`, and optional `short` (its name in the border's Chapters). A decision's place: `{id, type: decision, decision: <id>}`. |
-| objects | `text` (`paragraphs`, each `role` paragraph, heading, bullet or numbered, of `runs` with `emphasis` normal, strong or italic), `image` (an `asset`, `alt`, `fit: contain`), `vector` (shapes in a `viewBox`), `bar` (labelled values on a domain from zero) and `table` (`head`, `rows` of `cells`, optional `rowHeads`, `alt`). |
+| objects | `text` (`paragraphs`, each `role` paragraph, heading, bullet or numbered, of `runs` with `emphasis` normal, strong or italic), `image` (an `asset`, `alt`, `fit: contain`), `vector` (shapes in a `viewBox`), `bar` (labelled values on a domain from zero) and `table` (`head`, `rows` of `cells`, optional `rowHeads`, `alt`). JARVIS's own components, which you fill with words only: `callout` (one statement set apart: optional `label`, what it `says`), `figures` (one to four key numbers, `items` each `id`, `value` as read, units and all, and `label`) and `steps` (one to eight numbered `items`, each `id`, `title` and optional `says`). Each item's `id` is a target narration can light. |
 | `decisions` | Each has its `question`, at least two `options`, the `recommended` option's id, the one-line `reason`, and its lead-in: `why_you` (one line, at most 160 characters) and `evidence` (one to three lines). Optional: `needs_words` (the option ids whose answer needs his words), `context` (a line of background), `picture` (an asset beside the options), `compare` (an asset comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
 | options | Each has an `id`, a `name`, what it `says` and a `picture` (an asset) of what he would see, required unless the decision is `text_only`; optional `opens`: the follow-up decisions asked only when this option is chosen. |
 
@@ -112,19 +112,22 @@ The layouts, each slot holding one object (a slot left out is left empty; the re
 | layout | slots |
 |---|---|
 | `opening` | `words` (text): the first slide |
-| `title-and-body` | `body` (text, table, bar, vector or image) |
-| `picture-and-words` | `words` (text) beside `picture` (image, vector or bar) |
-| `two-pictures` | `first` and `second` (image, vector, bar or text), optional `words` (text) under them |
-| `comparison` | two to four columns `first`, `second`, `third`, `fourth` filled in order, optional `words` (text) under them |
-| `table` | `table` (table), optional `words` (text) under it |
+| `title-and-body` | `body` (text, table, bar, vector, image or a component) |
+| `picture-and-words` | `words` (text or a component) beside `picture` (image, vector or bar) |
+| `two-pictures` | `first` and `second` (image, vector, bar, text or a component), optional `words` (text or a component) under them |
+| `comparison` | two to four columns `first`, `second`, `third`, `fourth` filled in order (image, vector, bar, text or a component), optional `words` (text or a component) under them |
+| `table` | `table` (table), optional `words` (text or a component) under it |
 
-A decision's slide, its lead-in and the answers slide are JARVIS's own. Run `python -m jarvis.make_package presentation.yaml --check-only` to check it: it starts no browser, so it runs the same on any engine. Unknown fields, duplicate keys and IDs, YAML aliases and tags, missing or cross-slide targets and an object in a slot that does not take it are refused with the line and column. Author IDs become the targets narration lights; you never write selectors or HTML. Narrow frames and text enlargement use Document view from More, with the same objects in reading order; Details shows each object's evidence. The border calls the existing Tell, Stop and Continue actions; Previous, Next and Chapters move through every slide the deck shows.
+In a narrow frame (narrower than 662 px or shorter than 489 px) JARVIS draws every content slide as one column in its `readingOrder`, which scrolls: the title, then each object as wide as the frame, pictures and vectors at a fixed height, a table's rows as cards ("Cost: 12 000"). You never write a narrow layout or crop a picture for it; the proof checks it for you.
+
+A decision's slide, its lead-in and the answers slide are JARVIS's own. Run `python -m jarvis.make_package presentation.yaml --check-only` to check it: it starts no browser, so it runs the same on any engine. Unknown fields, duplicate keys and IDs, YAML aliases and tags, missing or cross-slide targets and an object in a slot that does not take it are refused with the line and column. Author IDs become the targets narration lights; you never write selectors or HTML. Text enlargement uses Document view from More, with the same objects in reading order; Details shows each object's evidence. The border calls the existing Tell, Stop and Continue actions; Previous, Next and Chapters move through every slide the deck shows.
 
 ### What JARVIS proves
 
 JARVIS proves every deck without a browser (`jarvis/presentation_proof.py`), in `--check-only`, as the command builds it and again in Tim's JARVIS as it arrives:
 
-- **Words fit.** Every title and text, table and bar slot holds its words at every frame from 662 x 489 to 1600 x 900, measured with the bundled font's widths (Inter, SIL Open Font License), every word 13 to 25 px. A slot that cannot hold its words is refused with the frame and the height it needs: say less or split the slide. A character the font has not (an emoji, a symbol outside Latin text) is refused.
+- **Words fit.** Every title and text, table, bar and component slot holds its words at every frame from 662 x 489 to 1600 x 900, measured with the bundled font's widths (Inter, SIL Open Font License), every word 13 to 25 px. A slot that cannot hold its words is refused with the frame and the height it needs: say less or split the slide. A character the font has not (an emoji, a symbol outside Latin text) is refused.
+- **Narrow frames read too.** In the one column of a narrow frame, every word fits its width, and every picture its place, at every width from 360 px up: a word too long for a narrow column is refused with the width.
 - **Pictures are real and readable** (below).
 - **The story points only at what is drawn,** and every decision and option it names exists.
 - **The renderer is JARVIS's own,** byte for byte: no package carries a changed template.

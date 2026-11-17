@@ -52,10 +52,32 @@
     const table=node("table");table.className="table";table.setAttribute("aria-label",object.alt);
     if(object.head){const row=node("tr");object.head.forEach(cell=>row.append(node("th",cell)));table.append(node("thead"));table.firstChild.append(row);}
     const body=node("tbody");
-    object.rows.forEach(row=>{const line=identify(node("tr"),row.id);row.cells.forEach((cell,i)=>line.append(node(i===0&&object.rowHeads?"th":"td",cell)));body.append(line);});
+    // Each cell carries its column's heading: a narrow frame draws a row as a card, "Heading: cell".
+    object.rows.forEach(row=>{const line=identify(node("tr"),row.id);row.cells.forEach((cell,i)=>{const c=node(i===0&&object.rowHeads?"th":"td",cell);if(object.head&&c.tagName==="TD")c.dataset.head=object.head[i];line.append(c);});body.append(line);});
     table.append(body);parent.append(table);
   }
-  const renderers={text:textObject,vector:vectorObject,bar:barObject,table:tableObject,image:(object,parent)=>{
+  // JARVIS's own components (layout_spec "components"): words in, drawn as presentation_proof measures them.
+  const block=(tag,text,className)=>{const e=node(tag,text);if(className)e.className=className;return e;};
+  function callout(object,parent){
+    const box=block("div",undefined,"presentation-callout");
+    if(object.label)box.append(block("b",object.label));
+    box.append(block("span",object.says));parent.append(box);
+  }
+  function figures(object,parent){
+    const row=block("div",undefined,"presentation-figures");row.style.setProperty("--count",String(object.items.length));
+    object.items.forEach(item=>{const figure=identify(block("div",undefined,"presentation-figure"),item.id);
+      figure.append(block("b",item.value,"presentation-figure-value"),block("span",item.label));row.append(figure);});
+    parent.append(row);
+  }
+  function steps(object,parent){
+    const list=block("ol",undefined,"presentation-steps");
+    object.items.forEach((item,n)=>{const step=identify(block("li",undefined,"presentation-step"),item.id);
+      const marker=block("span",String(n+1),"presentation-step-marker");marker.setAttribute("aria-hidden","true");
+      const text=block("div",undefined,"presentation-step-text");text.append(block("b",item.title));
+      if(item.says)text.append(block("span",item.says));step.append(marker,text);list.append(step);});
+    parent.append(list);
+  }
+  const renderers={callout,figures,steps,text:textObject,vector:vectorObject,bar:barObject,table:tableObject,image:(object,parent)=>{
     const asset=assets.get(object.asset),image=node("img");image.src=asset.path;image.alt=object.alt;image.dataset.asset=asset.id;
     image.style.setProperty("--natural-width",String(asset.width));image.style.setProperty("--natural-height",String(asset.height));parent.append(image);
   }};
@@ -69,7 +91,7 @@
     const objects=byId(slide.objects),columns=slide.objects.filter(o=>["first","second","third","fourth"].includes(o.slot)).length;
     slide.readingOrder.forEach(id=>{
       const object=objects.get(id),slot=identify(node("div"),id);
-      slot.className="presentation-slot";slot.dataset.object=id;slot.dataset.layout=slide.layout;slot.dataset.slot=object.slot;
+      slot.className="presentation-slot";slot.dataset.object=id;slot.dataset.kind=object.type;slot.dataset.layout=slide.layout;slot.dataset.slot=object.slot;
       if(columns)slot.dataset.columns=String(columns);
       renderers[object.type](object,slot);canvas.append(slot);
     });
@@ -77,6 +99,10 @@
   }
   function fit(stage) {
     Object.assign(stage.style,{transform:"none",left:"0px",top:"0px",width:"100%",height:"100%"});
+    // Below the spec's narrow size every content slide is one column in reading order (layout_spec narrow).
+    const css=getComputedStyle(document.documentElement);
+    const narrow=window.innerWidth<Number(css.getPropertyValue("--narrow-width")) || window.innerHeight<Number(css.getPropertyValue("--narrow-height"));
+    document.documentElement.classList.toggle("presentation-narrow",narrow);
     document.documentElement.classList.toggle("presentation-linear",window.innerWidth<500 || window.__presentationLinear===true);
   }
   // One live geometry implementation for inspection and narrated focus.

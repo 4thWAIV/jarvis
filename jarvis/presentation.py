@@ -10,8 +10,9 @@ from pathlib import Path
 
 from jarvis import (decision_package as dp, layout_spec, package_story, package_understanding,
                     presentation_proof)
-from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, SourceRef, TableObject,
-                                        TextObject, VectorObject)
+from jarvis.presentation_schema import (COMPONENTS, BarObject, ContentSlide, FiguresObject,
+                                        ImageObject, SourceRef, StepsObject, TableObject, TextObject,
+                                        VectorObject, words)
 from jarvis.presentation_source import (OPENING_ID, DeckCompileError, DeckDiagnostic, Source,
                                         read_source)
 
@@ -58,6 +59,12 @@ def _targets(source: Source) -> list[dict]:
                     add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
                     for run in paragraph.runs:
                         add(run.id,"run",run.text,obj.source)
+            elif isinstance(obj, COMPONENTS):
+                add(obj.id,obj.type," ".join(words(obj)),obj.source)
+                if isinstance(obj, (FiguresObject, StepsObject)):
+                    kind = "figure" if isinstance(obj, FiguresObject) else "step"
+                    for item, said in zip(obj.items, words(obj)):
+                        add(item.id,kind,said,obj.source)
             else:
                 add(obj.id,obj.type,obj.alt,obj.source)
                 if isinstance(obj, VectorObject):
@@ -88,8 +95,8 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.extend({"p":"".join(run.text for run in p.runs)} for p in obj.paragraphs)
             elif isinstance(obj,ImageObject):
                 blocks.append({"picture":assets[obj.asset].path,"alt":obj.alt})
-            elif isinstance(obj,BarObject):
-                blocks.append({"p":" ".join(f"{b.label} {b.value:g} {obj.units}" for b in obj.bars)})
+            elif isinstance(obj,(BarObject,*COMPONENTS)):
+                blocks.extend({"p":said} for said in words(obj))
             elif isinstance(obj,TableObject):
                 blocks.append({"table":{**({"head":obj.head} if obj.head else {}),"rows":[r.cells for r in obj.rows],
                                         "rowHeads":obj.rowHeads}})
@@ -127,7 +134,8 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
     if failures:
         raise DeckCompileError(tuple(parsed.diagnostic(
             "layout", failure.message, member=failure.member if failure.member in parsed.nodes else None,
-            profile=f"{failure.frame[0]:.0f}x{failure.frame[1]:.0f}" if failure.frame else None)
+            profile=None if not failure.frame else f"narrow {failure.frame[0]:.0f}"
+            if failure.frame[1] is None else f"{failure.frame[0]:.0f}x{failure.frame[1]:.0f}")
             for failure in failures))
     presentation_proof.write(folder, presentation_proof.record(parsed, failures, tightest))
 

@@ -6,6 +6,8 @@
   --deck-heading-line: 1.2;
   --deck-cell: clamp(13px, calc(18 * var(--u)), 21px);
   --deck-cell-line: 1.35;
+  --deck-figure: clamp(16px, calc(30 * var(--u)), 25px);
+  --deck-figure-line: 1.15;
 }
 .presentation-canvas { position: absolute; inset: 0; }
 .presentation-slot { padding: calc(4 * var(--u)); }
@@ -30,6 +32,25 @@
 .presentation-slot[data-layout="comparison"][data-columns="4"][data-slot="fourth"] { left: 74.7727%; top: 14.6875%; width: 22.0455%; height: 62.5000%; }
 .presentation-slot[data-layout="table"][data-slot="table"] { left: 3.1818%; top: 14.6875%; width: 93.6364%; height: 65.6250%; }
 .presentation-slot[data-layout="table"][data-slot="words"] { left: 3.1818%; top: 82.8125%; width: 93.6364%; height: 15.3125%; }
+.presentation-callout { border-left: 4px solid var(--accent); padding: calc(10 * var(--u)) calc(14 * var(--u)); }
+.presentation-figures { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); gap: calc(14 * var(--u)); }
+.presentation-figure { padding: calc(10 * var(--u)) calc(12 * var(--u)); }
+.presentation-figure-value { font-size: var(--deck-figure); line-height: var(--deck-figure-line); }
+.presentation-steps { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.presentation-step { display: grid; grid-template-columns: 1.9em minmax(0, 1fr); column-gap: 0.6em; align-items: start; }
+.presentation-step-marker { width: 1.9em; height: 1.9em; }
+:root { --narrow-width: 662; --narrow-height: 489; }
+.presentation-narrow .presentation-slide { --u: calc(100vw / 440); --deck-body: clamp(13px, calc(18 * var(--u)), 21px); --deck-heading: clamp(13px, calc(26 * var(--u)), 25px); --deck-cell: clamp(13px, calc(18 * var(--u)), 21px); --deck-figure: clamp(16px, calc(30 * var(--u)), 25px); overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.presentation-narrow .presentation-slide .presentation-canvas { position: relative; inset: auto; box-sizing: border-box; min-height: 100%; display: flex; flex-direction: column; gap: calc(12 * var(--u)); padding: calc(16 * var(--u)); }
+.presentation-narrow .presentation-slide .presentation-canvas > :is(.presentation-title, .presentation-slot, .presentation-slot[data-layout][data-slot][data-columns]) { position: relative; left: auto; top: auto; width: auto; height: auto; flex: none; }
+.presentation-narrow .presentation-slide .presentation-figures { grid-template-columns: minmax(0, 1fr); }
+.presentation-narrow .presentation-slide .table :is(thead) { display: none; }
+.presentation-narrow .presentation-slide .table, .presentation-narrow .presentation-slide .table :is(tbody, tr, th, td) { display: block; padding: 0; border: 0; }
+.presentation-narrow .presentation-slide .table tr { padding: calc(4 * var(--u)) calc(8 * var(--u)); border-bottom: 1px solid var(--edge); }
+.presentation-narrow .presentation-slide .table td[data-head]::before { content: attr(data-head) ": "; font-weight: 700; }
+.presentation-narrow .presentation-slide .presentation-canvas > :is(.presentation-title, .presentation-slot, .presentation-slot[data-layout][data-slot][data-columns])[data-kind="image"] { height: calc(260 * var(--u)); }
+.presentation-narrow .presentation-slide .presentation-canvas > :is(.presentation-title, .presentation-slot, .presentation-slot[data-layout][data-slot][data-columns])[data-kind="vector"] { height: calc(260 * var(--u)); }
+.presentation-narrow .presentation-slide .presentation-canvas > :is(.presentation-title, .presentation-slot, .presentation-slot[data-layout][data-slot][data-columns])[data-kind="chart"] { height: calc(320 * var(--u)); }
 /* layout-spec: end */
 :root { --top:0px; --bottom:0px; --mic-clear:0px; }
 #stage { width:100%; height:100%; }
@@ -62,20 +83,27 @@ h2, h3, b, strong, th { font-weight:700; }
 .presentation-bar-fill { display:block; height:100%; background:var(--accent); min-width:0; }
 .presentation-bar-value { display:block; font-variant-numeric:tabular-nums; }
 .presentation-axis { display:flex; justify-content:space-between; font-size:inherit; }
+/* JARVIS's components (sizes generated from the layout spec above). */
+.presentation-callout, .presentation-figure { background:var(--surface); }
+.presentation-figure { border-radius:calc(8 * var(--u)); }
+:is(.presentation-callout, .presentation-figure, .presentation-step-text) > * { display:block; }
+.presentation-slot .presentation-steps { list-style:none; padding:0; margin:0; }
+.presentation-step-marker { display:flex; align-items:center; justify-content:center; border-radius:50%;
+  background:var(--accent); color:var(--accent-ink); font-weight:700; }
 .presentation-slot [data-member]:focus { outline:3px solid var(--accent); outline-offset:3px; }
 .presentation-inspector { position:fixed; inset:1em; z-index:100; background:var(--surface); border:1px solid var(--edge); padding:1em; overflow:auto; }
 .presentation-inspector[hidden] { display:none; }
 .presentation-inspector button { margin:.3em; white-space:normal; }
-.presentation-linear .presentation-slide { overflow:auto; }
-.presentation-linear .presentation-canvas { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; }
-.presentation-linear :is(.presentation-slot,.presentation-title) { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; min-height:2em; overflow:visible; }
-.presentation-linear .presentation-slot img { height:auto; max-height:55vh; }
-.presentation-linear .presentation-slot svg { height:auto; aspect-ratio:var(--vector-aspect); max-height:55vh; }
-.presentation-linear .presentation-slot + .presentation-slot { margin-top:1em; }
+.presentation-linear:not(.presentation-narrow) .presentation-slide { overflow:auto; }
+.presentation-linear:not(.presentation-narrow) .presentation-canvas { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; }
+.presentation-linear:not(.presentation-narrow) :is(.presentation-slot,.presentation-title) { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; min-height:2em; overflow:visible; }
+.presentation-linear:not(.presentation-narrow) .presentation-slot img { height:auto; max-height:55vh; }
+.presentation-linear:not(.presentation-narrow) .presentation-slot svg { height:auto; aspect-ratio:var(--vector-aspect); max-height:55vh; }
+.presentation-linear:not(.presentation-narrow) .presentation-slot + .presentation-slot { margin-top:1em; }
 .presentation-linear .slide:not(.presentation-slide) { overflow:auto; }
 .presentation-linear .options { display:flex; flex-direction:column; }
 .presentation-linear .option { flex:none; min-height:12em; }
-.presentation-linear .slide { overflow-wrap:anywhere; }
+.presentation-linear .slide:not(.presentation-slide) { overflow-wrap:anywhere; }
 .presentation-linear .slide.decision.fill .decide,
 .presentation-linear .options.has-pictures { flex:none; min-height:auto; }
 .presentation-linear .options.has-pictures .option { min-height:12em; flex-direction:column; }
@@ -83,6 +111,6 @@ h2, h3, b, strong, th { font-weight:700; }
 .presentation-linear .options.has-pictures .option .picture { flex:none; height:10em; }
 .presentation-linear .answer-list li { grid-template-columns:minmax(0,1fr); }
 .presentation-linear .vote { flex-wrap:wrap; }
-.presentation-linear .slide h2 { font-size:var(--heading); }
+.presentation-linear .slide:not(.presentation-slide) h2 { font-size:var(--heading); }
 .presentation-linear .slide :is(.kicker,.badge,.option h3,.choose,.vote button,.pick,.words,.note) { font-size:var(--body); }
 .presentation-linear .slide button { max-width:100%; white-space:normal; }

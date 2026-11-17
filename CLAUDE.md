@@ -1279,8 +1279,17 @@ differ) and one bundled font (Inter, SIL OFL, `font_metrics.py`'s width
 table, `layout_spec.font_css`, its one place, served once by JARVIS at
 `layout_spec.FONT_PATH` and linked by every deck rather than carried in it;
 a deck opened outside JARVIS falls back to the system font), and proves without a browser (`presentation_proof.py`) that
-every title, text, table and bar slot holds its words at every frame from
-662 x 489 to 1600 x 900, that every picture is real and readable from its
+every title, text, table, bar and component slot holds its words at every
+frame from 662 x 489 to 1600 x 900 (JARVIS's own components, `callout`,
+`figures` and `steps`, the author giving only their words, sized by the
+spec's `components`; `presentation_proof.object_height`, the one height of
+each kind), that in a narrow frame (below the spec's `narrow.below`, where
+presentation.js sets `presentation-narrow` and every content slide is one
+scrolling column in its reading order, in the narrow unit, pictures,
+vectors and charts at `narrow.heights`, a table's rows as cards) every word
+fits its width and every picture its place at every width from
+`narrow.min_width` (`layout_spec.narrow_widths`; JARVIS's narrow column in
+place of an author's crops), that every picture is real and readable from its
 bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn
 size and label floor at the smallest frame; `--fill-assets` writes each
 asset's size and hash), that the story points only at what is drawn and
