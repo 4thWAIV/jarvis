@@ -586,6 +586,30 @@ def _check(made: Made, out: Path, signer: tuple[Path, str], session: str):
 
 # -- the command -----------------------------------------------------------------------
 
+WITHDRAW_ROUTE = "/api/packages/inbox/{inbox_id}/withdraw"
+
+
+def withdraw(inbox_id: str, session: str, base: str = dp.LIVE) -> int:
+    """Take back a package this session sent, while it is open (Tim's rule,
+    sender-withdraws): signed with the session's own key, which JARVIS
+    checks is the key of the session that sent it."""
+    from jarvis import agent_keys
+    signer = agent_keys.signer_for(session) if session else None
+    if signer is None:
+        print("Not withdrawn: give --session <your session id>, the session that sent it, "
+              "once Tim has switched your agent on.")
+        return 1
+    url = base.rstrip("/") + WITHDRAW_ROUTE.format(inbox_id=urllib.parse.quote(inbox_id, safe=""))
+    try:
+        answer = dp.post(url, "", {}, signer=signer)
+    except OSError as e:
+        print(f"Not withdrawn: {e}")
+        return 1
+    print(f"Withdrawn: {answer['inbox']['id']} has left his Inbox; anything waiting on it "
+          f"has ended and nothing went back to you.")
+    return 0
+
+
 def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_package") -> int:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -626,8 +650,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                              "author")
     parser.add_argument("--revision", default="",
                         help="the exact checked revision of --document")
+    parser.add_argument("--withdraw", default="", metavar="INBOX_ID",
+                        help="take back a package this session sent that is still open (its "
+                             "inbox id, as delivery printed it): it leaves his Inbox, what "
+                             "waited on it ends, and nothing else is made or sent")
     parser.add_argument("--deliver-to", default=dp.LIVE, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.withdraw:
+        return withdraw(args.withdraw, args.session, args.deliver_to)
     if bool(args.document) != bool(args.revision):
         parser.error("--document and --revision go together")
     if args.work and args.general:

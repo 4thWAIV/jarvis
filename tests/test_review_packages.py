@@ -196,7 +196,7 @@ def test_an_approval_on_record_closes_the_item_at_start_once(wired, marks, tmp_p
         # Signed off before the link existed: nothing applied it then.
         m.setattr(wired.server, "_review_from_package", lambda *a, **k: None)
         package_id = package_inbox.get(inbox_id).package_id
-        r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+        r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
         assert r.status_code == 200, r.text
     assert work_store.get(item.id).state == "verifying"
     assert work_api.apply_package_reviews() == 1
@@ -210,7 +210,7 @@ def test_signing_off_applies_an_answer_given_without_a_count(wired, marks, tmp_p
     inbox_id = _sent(wired, tmp_path, item)
     _decide(inbox_id, "approve")
     package_id = package_inbox.get(inbox_id).package_id
-    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert work_store.get(item.id).state == "done" and len(_approvals(item)) == 1
 
 
@@ -219,7 +219,7 @@ def test_signing_off_unanswered_says_review_closed_without_a_verdict(wired, mark
     from jarvis import package_inbox, work_api
     inbox_id = _sent(wired, tmp_path, item)
     package_id = package_inbox.get(inbox_id).package_id
-    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert r.status_code == 200, r.text
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
     assert got["package_review"]["outcome"] == "no_verdict"
@@ -257,7 +257,7 @@ def test_signing_off_unanswered_after_he_reviewed_it_another_way_says_nothing(
     package_id = package_inbox.get(inbox_id).package_id
     with pytest.MonkeyPatch.context() as m:
         m.setattr(wired.server, "_review_from_package", lambda *a, **k: None)
-        wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+        wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert work_api.apply_package_reviews() == 0
     got = work_store.get(item.id)
     assert got.state == "done" and got.package_review is None
@@ -350,13 +350,13 @@ def test_answered_after_done_counts_for_the_item_it_was_sent_for(wired, marks, t
     from jarvis import package_inbox
     inbox_id = _sent(wired, tmp_path, item)
     package_id = package_inbox.get(inbox_id).package_id
-    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert work_store.get(item.id).package_review.outcome == "no_verdict"
     _decide(inbox_id, "not-done")                 # in the package, after Done
     wired.server._inbox_recount(wired.server.work_packages.find(package_id), "on the page")
     got = work_store.get(item.id)
     assert (got.state, got.review_note) == ("activity_unknown", work_store.NO_NOTE)
-    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert r.status_code == 200, r.text
     again = package_inbox.latest_for_package(package_id)
     assert again.id != inbox_id and again.work_id == item.id, "the new row keeps the link"
@@ -370,7 +370,7 @@ def test_the_start_pass_applies_a_not_done_given_after_done(wired, marks, tmp_pa
     from jarvis import package_inbox, work_api
     inbox_id = _sent(wired, tmp_path, item)
     package_id = package_inbox.get(inbox_id).package_id
-    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     _decide(inbox_id, "not-done")                 # recorded, and nothing applied it
     assert work_store.get(item.id).state == "verifying"
     assert work_api.apply_package_reviews() == 1

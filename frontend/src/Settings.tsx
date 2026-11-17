@@ -499,6 +499,10 @@ interface UpdateStatus {
   blockers: { code: string; text: string; detail: string[]; values?: { count?: number } }[];
   up_to_date: boolean;
   can_update: boolean;
+  /** The commit this JARVIS runs (noted as it started), whatever its source. */
+  running: UpdateVersion | null;
+  /** The checkout has moved since it started: a restart runs another commit. */
+  restart_needed: boolean;
 }
 
 interface UpdateOutcome {
@@ -700,7 +704,9 @@ function UpdatesSection() {
   };
 
   const ready = status !== null && status.source === "github" && !status.error;
-  const current = ready ? status.current : null;
+  // What runs is the commit noted as the server started; HEAD only before
+  // a server that notes it.
+  const current = status?.running ?? (ready ? status.current : null);
   const offered = ready && versions.length > 0;
   const currentUi = useSettingsItem("currentVersion",
     current ? t("left.updates.running", { version: versionName(t, current) }) : "", current !== null);
@@ -737,8 +743,11 @@ function UpdatesSection() {
       {current && (
         <p className="update-current" ref={currentUi.whole}>
           {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={current} />)}
+          {" "}<code className="update-commit">{current.sha.slice(0, 12)}</code>
         </p>
       )}
+      {status?.restart_needed && <p className="settings-hint">{t("left.updates.restartToRun",
+        { version: status.current ? versionName(t, status.current) : "" })}</p>}
       <p className="settings-hint">{checking && status ? t("left.updates.checkingAgain") : summary}</p>
       {offered && (
         <ul className="update-versions">

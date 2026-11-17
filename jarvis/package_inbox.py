@@ -9,8 +9,9 @@ asking JARVIS on a turn he drove).
 
 One document per arrival in JARVIS's records (`records`, the document
 engine), `/packages/<inbox id>.package`, and every change to it one version
-recording its event (no words of the package). The entries are the backlog
-the Queue's Packages section lists and the brain's `package_inbox` reads.
+recording its event (no words of the package). The open entries are the
+backlog the Inbox's Open packages list (InboxPackages.tsx) and the brain's
+`package_inbox` read.
 This module is the only writer: one write per change (`records.atomic`),
 the revision moved inside it, written before any hint.
 
@@ -20,14 +21,18 @@ States, in order:
 
 closed with why: `signed_off` (he is done with it: whatever he answered, or
 that he has reviewed it, goes back to its sender, `signed_off_at` its
-time), `dismissed` (he set it aside, nothing sent back) or `superseded` (a
+time), `dismissed` (he set it aside, nothing sent back), `withdrawn` (its
+sender took it back while it was open, `withdraw`) or `superseded` (a
 newer one of the same name came from the same sender while it was open).
 Whatever way it closes, nothing is left waiting on it in the same write
-(wait_links): signed off or set aside, every wait on it ends and its Work
-item's vote (`approve-package-<inbox id>`, or `understood-<inbox id>` from
-before Got it was retired) closes with it; replaced, every wait
-on it waits on the newer one instead (`superseded_by`, which also takes its
-Work item when it names none) and its vote closes.
+(wait_links): signed off, set aside or withdrawn, every wait on it ends (a
+wait on one of its questions left unanswered as "closed unanswered",
+`closing_answer`) and its Work item's vote (`approve-package-<inbox id>`,
+or `understood-<inbox id>` from before Got it was retired) closes with it;
+replaced, every wait on it waits on the newer one instead
+(`superseded_by`, which also takes its Work item when it names none) and
+its vote closes. Signing one off with questions unanswered is asked once
+first (`unanswered`, server._sign_off_package).
 A package unpacked here outside the inbox gets a row when he signs it off
 (`adopt`), so every package is signed off the same way.
 
@@ -60,8 +65,9 @@ ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
 STATES = (ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED)
 # Not closed: in the backlog.
 OPEN_STATES = STATES[:-1]
-SIGNED_OFF, DISMISSED, SUPERSEDED = "signed_off", "dismissed", "superseded"
-CLOSED_WHY = (SIGNED_OFF, DISMISSED, SUPERSEDED)
+SIGNED_OFF, DISMISSED, SUPERSEDED, WITHDRAWN = (
+    "signed_off", "dismissed", "superseded", "withdrawn")
+CLOSED_WHY = (SIGNED_OFF, DISMISSED, SUPERSEDED, WITHDRAWN)
 
 # How a change came about, as each event records it.
 BY_VOICE, ON_THE_PAGE, BY_THE_SENDER, BY_JARVIS = (
@@ -346,6 +352,16 @@ def questions(package: Package) -> list[Question]:
                      options[d["id"]], _text(d.get("recommended")), _text(d.get("reason")),
                      applies(d["id"]), answer_of(d["id"]))
             for d in raw]
+
+
+def unanswered(package: Optional[Package]) -> list[Question]:
+    """The questions that apply with no answer that stands (none given, or
+    his approval of a revision no longer current): what signing it off now
+    leaves unanswered, and the waits its close ends as closed unanswered.
+    [] for a package that asks nothing, or none here."""
+    if package is None:
+        return []
+    return [q for q in questions(package) if q.applies and not q.counts()]
 
 
 def counts(asked: list[Question]) -> tuple[int, int]:
@@ -1157,12 +1173,33 @@ def _actor(how: str) -> str:
     return "user" if how in (BY_VOICE, ON_THE_PAGE) else "jarvis"
 
 
+# How each close ends the waits on the package (wait_links' words for it).
+_CLOSED_HOW = {SIGNED_OFF: wait_links.SIGNED_OFF, DISMISSED: wait_links.DISMISSED,
+               WITHDRAWN: wait_links.WITHDRAWN}
+
+
+def closing_answer(entry: Entry, actor: str = "", unit=None) -> Optional["wait_links.Answer"]:
+    """What a closed entry's close is to the waits on it: signed off, set
+    aside or withdrawn, with when, whose act (`actor`, else the one its
+    `how` implies) and the questions it left unanswered (those waits end
+    "closed unanswered"); None while it is open, or replaced (its waits
+    are carried to the newer one)."""
+    how = _CLOSED_HOW.get(entry.closed_why or "")
+    if entry.is_open or how is None:
+        return None
+    at = (entry.signed_off_at or entry.closed_at) if entry.closed_why == SIGNED_OFF \
+        else entry.closed_at
+    left = {q.id for q in unanswered(work_packages.by_id(entry.package_id))}
+    return wait_links.answer(wait_links.PACKAGE, _refs(unit, entry.package_id), None, how, at,
+                             actor, left)
+
+
 def _ended(unit, entry: Entry, why: str, actor: str, now: float) -> "wait_links.Settled":
-    """It is closed, signed off or set aside (`why`): every wait on it ends
-    (wait_links.settle) and its Work item's vote closes, in the caller's
+    """It is closed, signed off, set aside or withdrawn (`why`): every wait
+    on it ends (wait_links.settle; one on a question left unanswered as
+    closed unanswered) and its Work item's vote closes, in the caller's
     unit (the close's own write)."""
-    moved = wait_links.settle(unit, wait_links.answer(
-        wait_links.PACKAGE, _refs(unit, entry.package_id), None, why, now, actor), now)
+    moved = wait_links.settle(unit, closing_answer(entry, actor, unit), now)
     if why != SIGNED_OFF:
         # Signed off, its vote is answered or closed by the sign-off itself
         # (server._inbox_sign_off_work), which knows his answer.
@@ -1348,6 +1385,29 @@ def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
         return entry, _ended(unit, entry, DISMISSED, _actor(how), now)
 
     entry, moved = records.atomic(write, by=_caller(how), full_sync=True)
+    wait_links.tell(moved)
+    return entry
+
+
+def withdraw(inbox_id: str, session: str, now: Optional[float] = None) -> Entry:
+    """Its sender takes it back while it is open (Tim's rule,
+    sender-withdraws): only the session proven to have sent it
+    (`from_session`) may. Closed `withdrawn`, whatever he answered so far
+    kept in its record and nothing sent back; every wait on it ends and its
+    Work item's vote closes, in the same write, as the sender's act."""
+    now = time.time() if now is None else now
+
+    def write(unit) -> tuple[Entry, "wait_links.Settled"]:
+        doc = _take(unit, inbox_id)
+        if not session or doc["from_session"] != session:
+            raise InboxRefused(f"{doc['id']} was not sent by your session: only the session "
+                               f"that sent a package may withdraw it.")
+        _still_open(doc, "already ")
+        entry = _change(unit, doc, "withdrawn", BY_THE_SENDER, now, state=CLOSED,
+                        closed_at=now, closed_why=WITHDRAWN)
+        return entry, _ended(unit, entry, WITHDRAWN, "asker", now)
+
+    entry, moved = records.atomic(write, by=_caller(BY_THE_SENDER, session), full_sync=True)
     wait_links.tell(moved)
     return entry
 

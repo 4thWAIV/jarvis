@@ -225,7 +225,7 @@ def test_signing_a_package_off_ends_every_wait_on_it(wired, shown, marks, tmp_pa
           option="recommended")
     assert _piece(item.id)["deck"].state == "waiting_on_tim", "a decision is not the package"
     package_id = package_inbox.get(inbox_id).package_id
-    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER, json={"confirm": True})
     assert r.status_code == 200, r.text
     assert _piece(item.id)["deck"].state == "ready"
     assert workflow_store.snapshot(wid).open_waits == [], "by its name too"
@@ -233,11 +233,51 @@ def test_signing_a_package_off_ends_every_wait_on_it(wired, shown, marks, tmp_pa
     assert ended.detail["how"] == "signed_off" and ended.detail["by"] == "user"
 
 
+def test_done_with_questions_unanswered_asks_once_then_ends_their_waits_unanswered(
+        wired, shown, marks, tmp_path, item):
+    inbox_id = opened_deck(wired, tmp_path, session="gone")
+    _report(wired, item.id, "piece", "Waiting on the tea kinds.", **{
+        "key": "kinds", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": f"package:{inbox_id}:tea-kinds"})
+    _call(wired, "answer_package_decision", package=inbox_id, decision="kettle-kind",
+          option="recommended")
+    package_id = package_inbox.get(inbox_id).package_id
+    url = f"/api/packages/{package_id}/signoff"
+    asked = wired.client.post(url, headers=BROWSER)
+    assert asked.status_code == 409
+    left = [q["id"] for q in asked.json()["unanswered"]]
+    assert "tea-kinds" in left and "kettle-kind" not in left
+    said = _call(wired, "sign_off_package", package=inbox_id)["text"]
+    assert said.startswith("Not signed off yet") and "tea-kinds" in said
+    assert package_inbox.get(inbox_id).is_open and _piece(item.id)["kinds"].until, "nothing done"
+    assert wired.client.post(url, headers=BROWSER, json={"confirm": True}).status_code == 200
+    kinds = _piece(item.id)["kinds"]
+    assert (kinds.state, kinds.until) == ("ready", [])
+    [moved] = [e for e in work_store.events(item.id) if e.detail.get("wait_ended")]
+    [ended] = moved.detail["wait_ended"]
+    assert (ended["how"], ended["by"]) == (wait_links.CLOSED_UNANSWERED, "user")
+    assert "closed with tea-kinds unanswered" in moved.summary
+
+
+def test_a_wait_on_a_question_of_a_package_closed_unanswered_is_swept(
+        wired, shown, marks, tmp_path):
+    inbox_id = opened_deck(wired, tmp_path, session="gone")
+    _call(wired, "sign_off_package", package=inbox_id, confirm=True)
+    wid = workflow_store.start("Tea service", "tea", [])
+    workflow_store.record(workflow_store.WorkflowEvent(
+        wid, "wait_started", None, "Waiting on the tea kinds.",
+        {"key": "kinds", "until": f"package:{inbox_id}:tea-kinds"}))
+    wait_links.sweep()
+    assert workflow_store.snapshot(wid).open_waits == []
+    [ended] = _wait_ended(wid)
+    assert ended.detail["how"] == wait_links.CLOSED_UNANSWERED
+
+
 def test_a_package_s_own_workflow_wait_ends_with_his_sign_off(wired, shown, marks, tmp_path):
     wid = workflow_store.start("Tea service", "tea", [])
     inbox_id = opened_deck(wired, tmp_path, workflow=wid)
     assert workflow_store.snapshot(wid).open[0].detail["link"] == f"package:{inbox_id}"
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     assert workflow_store.snapshot(wid).open_waits == []
     assert any(e.detail.get("by") == "user" for e in _wait_ended(wid))
 
@@ -294,6 +334,53 @@ def test_setting_a_package_aside_ends_every_wait_on_it_and_closes_its_vote(
     closing = [v for v in records.history(package_inbox.path_of(inbox_id))
                if v.change == "closed"]
     assert closing, "the close is on the package's record"
+
+
+def test_its_sender_withdraws_an_open_package_and_nothing_waits_on_it(
+        wired, shown, marks, item, monkeypatch):
+    from jarvis import session_message_sender
+    from tests.agent_key_fixtures import onboarded_auth
+    monkeypatch.setattr(wired.server, "_package_sender", lambda claimed, reporter: (
+        session_message_sender.Sender(claimed, "count", "test") if claimed else None))
+    inbox_id = _arrived(wired, _agent_zip(), work=item.id, project="s", session="sess-count")
+    assert package_inbox.get(inbox_id).from_session == "sess-count"
+    vote = package_inbox.vote_key(inbox_id)
+    _report(wired, item.id, "piece", "Waiting on the package.", **{
+        "key": "read", "who": {"kind": "tim"}, "state": "waiting_on_tim",
+        "until": f"package:{inbox_id}"})
+    url = f"/api/packages/inbox/{inbox_id}/withdraw"
+    assert wired.client.post(url, headers=BROWSER).status_code == 403, "never the page's"
+    other = wired.client.post(url, auth=onboarded_auth(("packages",), "sess-other"))
+    assert other.status_code == 409 and "only the session that sent" in other.json()["error"]
+    assert package_inbox.get(inbox_id).is_open
+    r = wired.client.post(url, auth=onboarded_auth(("packages",), "sess-count"))
+    assert r.status_code == 200, r.text
+    entry = package_inbox.get(inbox_id)
+    assert (entry.state, entry.closed_why) == (package_inbox.CLOSED, package_inbox.WITHDRAWN)
+    assert inbox_id not in [e.id for e in package_inbox.listing()], "it leaves his Inbox"
+    read = _piece(item.id)["read"]
+    assert (read.state, read.until) == ("ready", [])
+    [moved] = [e for e in work_store.events(item.id) if e.detail.get("wait_ended")]
+    [ended] = moved.detail["wait_ended"]
+    assert (ended["how"], ended["by"]) == (wait_links.WITHDRAWN, "asker")
+    still, closed = _decision(item.id, vote)
+    assert still is None and closed.where == work_store.WITHDRAWN
+    again = wired.client.post(url, auth=onboarded_auth(("packages",), "sess-count"))
+    assert again.status_code == 409 and "already closed" in again.json()["error"]
+
+
+def test_make_package_withdraw_signs_with_the_session_s_own_key(monkeypatch, capsys):
+    from jarvis import agent_keys, decision_package, make_package
+    posted = []
+    monkeypatch.setattr(agent_keys, "signer_for", lambda s: ("key", s) if s == "sess-1" else None)
+    monkeypatch.setattr(decision_package, "post", lambda url, token, body, signer=None: (
+        posted.append((url, body, signer)) or {"inbox": {"id": "pkg-1"}}))
+    assert make_package.main(["--withdraw", "pkg-1", "--session", "sess-1",
+                              "--deliver-to", "https://127.0.0.1:9"]) == 0
+    assert posted == [("https://127.0.0.1:9/api/packages/inbox/pkg-1/withdraw", {},
+                       ("key", "sess-1"))]
+    assert "Withdrawn" in capsys.readouterr().out
+    assert make_package.main(["--withdraw", "pkg-1"]) == 1, "only signed by its session"
 
 
 def test_a_newer_version_carries_the_waits_and_the_work_item(wired, shown, marks, item):

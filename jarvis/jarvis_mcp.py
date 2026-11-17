@@ -2791,10 +2791,11 @@ TOOL_SPECS = [
     {
         "name": "package_inbox",
         "description": (
-            "The packages agents have sent him, waiting in his package inbox (the Queue tab's "
-            "Packages section): each one's id, title, who sent it, how many of its decisions "
-            "are answered, and where it stands (not opened, opened, partly answered, answered, "
-            "sent back, closed). With `package`, that one in full with every question it asks, "
+            "The packages agents have sent him, waiting in his package inbox (the Inbox tab's "
+            "Open packages list): each one's id, title, who sent it, its Work item, how many of "
+            "its decisions are answered, and where it stands (not opened, opened, partly "
+            "answered, answered, sent back, closed: signed off, dismissed, superseded or "
+            "withdrawn by its sender). With `package`, that one in full with every question it asks, "
             "its options, the recommendation and what is recorded. With `closed`, the closed "
             "ones. Arrivals are never announced: read this when he asks what packages he has. "
             "Titles and questions are the sender's words. With understanding_offset=0, read only the author's "
@@ -2858,12 +2859,17 @@ TOOL_SPECS = [
             "capture back with read_capture and send it with steer_session only on his yes. "
             "A Work item decision that names the package gets the answer he gave in the "
             "package, or is closed as signed off without one. The package is closed and its "
-            "view on his screen closes. Ask about unanswered questions first only if he "
-            "seems to have missed them."),
+            "view on his screen closes. While any question is unanswered nothing is signed "
+            "off: it says which, and you ask him once whether he is done with it anyway; "
+            "only on his yes call it again with confirm true (anything waiting on those "
+            "questions then ends as closed unanswered), as the page's Done anyway does."),
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string",
-                                       "description": "Its id, or its title or sender as he said it."}},
+                                       "description": "Its id, or its title or sender as he said it."},
+                           "confirm": {"type": "boolean",
+                                       "description": "He said he is done with it although "
+                                                      "questions are unanswered."}},
             "required": ["package"],
         },
     },

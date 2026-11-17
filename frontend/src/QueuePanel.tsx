@@ -43,6 +43,7 @@ import {
 } from "./queue";
 import { Cue, DELIVERY_CUE, QueueIcon } from "./QueueIcons";
 import { InboxMessages } from "./InboxMessages";
+import { InboxPackages } from "./InboxPackages";
 import {
   active, cues, DELIVERY_WORDS, dismissed, jarvisLabel, latestFrom, messagesOf, personName, previewOf,
   sendWords, subjectOf, turnWords, unsentDrafts, waiting, type Directory, type ItemRecord,
@@ -136,8 +137,11 @@ export function QueuePanel() {
   useTick(30000);
   useLayoutEffect(() => { queueLaidOut.set(queueLaidOut.get() + 1); });
 
-  const fromAgents = <InboxMessages workPart={ui.part("workMessages")} generalPart={ui.part("general")}
-                                    togglePart={ui.part("hideMessages")} readPart={ui.part("read")} />;
+  const fromAgents = <>
+    <InboxMessages workPart={ui.part("workMessages")} generalPart={ui.part("general")}
+                   togglePart={ui.part("hideMessages")} readPart={ui.part("read")} />
+    <InboxPackages part={ui.part("packages")} />
+  </>;
   if (!state.offered) {
     return (
       <div className="right-view queue-view" ref={ui.whole}>

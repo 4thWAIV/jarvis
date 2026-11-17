@@ -3471,6 +3471,8 @@ async def lifespan(application: FastAPI):
     _announce_bind(web_auth.detect_bind())
     # Where this server is, for `python -m jarvis.update` (server_address.py).
     server_address.record()
+    # The commit this process runs: HEAD as it starts (/api/health, Updates).
+    await asyncio.to_thread(self_update.note_running)
     # Confirm or revert (start_settings): a changed start setup is a trial
     # once the server is listening, confirmed by a page reaching it, else
     # gone back from. Only from main(), the launcher that reads the start
@@ -3626,7 +3628,11 @@ projects_api.mount(app, lambda: projects, on_change=_hint_projects)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "online", "name": "JARVIS", "version": "0.1.0"}
+    """Up, and the commit this process runs (self_update.running_json: the
+    one noted as it started, the checkout's HEAD now, and whether a restart
+    would run another)."""
+    return {"status": "online", "name": "JARVIS", "version": "0.1.0",
+            "commit": await asyncio.to_thread(self_update.running_json)}
 
 
 @app.get("/api/brain")
@@ -10382,13 +10388,6 @@ def _apply_package_reviews() -> None:
 # them in the same transaction; these tell the pages, and say whether a
 # package link is answered (the package inbox is the server's).
 
-def _package_finished_at(entry) -> Optional[float]:
-    """When he signed a package off, else None."""
-    if entry.state == package_inbox.CLOSED and entry.closed_why == package_inbox.SIGNED_OFF:
-        return entry.signed_off_at or entry.closed_at
-    return None
-
-
 def _package_entries(ref: str) -> list:
     """The inbox rows a link's `ref` names: its open ones if it has any (a
     name an older version also had names the one he can open), else its
@@ -10398,20 +10397,17 @@ def _package_entries(ref: str) -> list:
 
 
 def _package_answer(ref: str, key: Optional[str]):
-    """The answer of his that ends a link to package `ref` (decision `key`,
-    or the whole package: signed off, or set aside), or None while there is
-    none. A package replaced by a newer version is no answer: its waits are
-    carried (`_package_replaced`)."""
+    """The answer that ends a link to package `ref` (decision `key`, or the
+    whole package): his answer to that decision, or the package's close
+    (signed off, set aside or withdrawn; a decision it left unanswered ends
+    as closed unanswered, package_inbox.closing_answer), or None while
+    there is none. A package replaced by a newer version is no answer: its
+    waits are carried (`_package_replaced`)."""
     entries = _package_entries(ref)
     if entries and not entries[0].is_open:
-        e = entries[0]
-        refs = package_inbox.refs(e.package_id)
-        at = _package_finished_at(e)
-        if at is not None and key not in wait_links.APPROVAL_ONLY:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.SIGNED_OFF, at)
-        if e.closed_why == package_inbox.DISMISSED:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.DISMISSED,
-                                     e.closed_at)
+        closed = package_inbox.closing_answer(entries[0])
+        if closed is not None:
+            return closed.at_link(wait_links.Link(wait_links.PACKAGE, ref, key))
     for e in entries:
         refs = package_inbox.refs(e.package_id)
         if key is None:
@@ -10613,6 +10609,10 @@ def _sign_off_text(entry, package) -> str:
     if asked:
         lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
         lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
+        left = [q.id for q in package_inbox.unanswered(package)]
+        if left:
+            lines.append(f"Unanswered when he signed it off: {', '.join(left)}. Anything "
+                         f"waiting on them has ended as closed unanswered.")
         rejected = _rejected(asked)
         if entry.work_id and rejected:
             lines.append(f"His words are on work item {entry.work_id} as decision "
@@ -10774,19 +10774,37 @@ async def _close_package_view(package_id: str) -> None:
         await _voice_emit({"type": "package_closed", "package": package_id})
 
 
-async def _sign_off_package(reference: str, how: str):
+def _unanswered_ask(entry, left) -> str:
+    """Why Done waits for his word: the questions it would leave
+    unanswered, by their slug ids (package_inbox.ID), and what to do."""
+    ids = ", ".join(q.id for q in left)
+    return (f"Not signed off yet: {entry.id} still has {_say_number(len(left))} question"
+            f"{'s' if len(left) != 1 else ''} unanswered ({ids}; package_inbox reads their "
+            f"words). Tell him which, and ask him "
+            f"once whether he is done with it anyway; on his yes sign it off again with "
+            f"confirm. Anything waiting on them then ends as closed unanswered.")
+
+
+async def _sign_off_package(reference: str, how: str, confirmed: bool = False):
     """He is done with a package: the page's Done (on the package's view and
     its Queue row) and the brain's acting `sign_off_package` alike, for
-    every kind of package. Whatever he answered goes back the one way: as
+    every kind of package. With questions still unanswered it asks him once
+    first (Tim's decision done-on-unanswered): nothing is done until he
+    confirms (`confirmed`), and then the waits on those questions end as
+    closed unanswered. Whatever he answered goes back the one way: as
     its workflow's decisions, and as a capture to the session that sent it
     (each answer, unanswered ones said so; for a package that asks nothing,
     that he has reviewed it), which is read back and goes only on his yes
     or Send. Its Work item learns it; it is closed, signed off with its
     time, its update line resolved, and its view closed. (the row, what to
-    do next) or (None, why not)."""
+    do next, []) or (None, why not, the questions left unanswered when that
+    is why)."""
     entry, package, problem = await asyncio.to_thread(_sign_off_entry, reference, how)
     if entry is None:
-        return None, problem
+        return None, problem, []
+    left = await asyncio.to_thread(package_inbox.unanswered, package)
+    if left and not confirmed:
+        return None, _unanswered_ask(entry, left), left
     text = await asyncio.to_thread(_sign_off_text, entry, package)
     # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
@@ -10802,19 +10820,19 @@ async def _sign_off_package(reference: str, how: str):
         entry = await asyncio.to_thread(package_inbox.signed_off, entry.id,
                                         capture["id"] if capture else None, how)
     except package_inbox.InboxRefused as e:
-        return None, f"{e} Nothing was signed off."
+        return None, f"{e} Nothing was signed off.", []
     _inbox_closed([entry])
     _hint_inbox([entry])
     await _close_package_view(package.id)
     if capture is not None:
         return entry, (f"Signed off. Capture {capture['id']} tells "
                        f"{_said_name({'voice_name': to}, 'its session')} so, with his answers. Read it back now "
-                       f"with read_capture; it goes only on his yes or Send.")
+                       f"with read_capture; it goes only on his yes or Send."), []
     who = ("the session that sent it is not running" if entry.from_session
            else "the session it named was not proven to have sent it" if entry.unproven_claim
            else "no sender is on record for it")
     return entry, (f"Signed off" + (", and its workflow has his answers" if entry.workflow_id
-                                    else "") + f". No message went back: {who}.")
+                                    else "") + f". No message went back: {who}."), []
 
 
 async def _close_inbox_package(reference: str, how: str):
@@ -10833,6 +10851,26 @@ async def _close_inbox_package(reference: str, how: str):
     return entry, ""
 
 
+async def _withdraw_inbox_package(inbox_id: str, principal: Optional[str]):
+    """Its sender takes back a package it sent that is still open (Tim's
+    rule, sender-withdraws): the signed route `make_package --withdraw`
+    posts to. Only the session proven to have sent it may (its principal,
+    `agent:<session id>`). It leaves his Inbox, its view closes on every
+    page, what waited on it ends and its vote closes; nothing goes back.
+    (the row, "") or (None, why not)."""
+    session = principal[len("agent:"):] if principal and principal.startswith("agent:") else ""
+    if not session:
+        return None, "Only the agent session that sent a package may withdraw it, signed with its own key."
+    try:
+        entry = await asyncio.to_thread(package_inbox.withdraw, inbox_id, session)
+    except package_inbox.InboxRefused as e:
+        return None, f"{e} Nothing was withdrawn."
+    _inbox_closed([entry])
+    _hint_inbox([entry])
+    await _close_package_view(entry.package_id)
+    return entry, ""
+
+
 def _follow_inbox_messages() -> None:
     """A message JARVIS sent has moved on: a signed-off package whose
     answers it carries is given its id. Never raises."""
@@ -10847,7 +10885,7 @@ def _follow_inbox_messages() -> None:
 
 package_inbox_api.mount(app, package_inbox_api.Calls(
     receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
-    sign_off=_sign_off_package, close=_close_inbox_package))
+    sign_off=_sign_off_package, close=_close_inbox_package, withdraw=_withdraw_inbox_package))
 
 
 # The states as the brain reads them.
@@ -11004,8 +11042,13 @@ async def tool_answer_package_decision(args: dict) -> str:
 
 
 async def tool_sign_off_package(args: dict) -> str:
-    """He is done with a package: sign it off, on his word."""
-    entry, said = await _sign_off_package(str(args.get("package") or ""), package_inbox.BY_VOICE)
+    """He is done with a package: sign it off, on his word. With questions
+    unanswered, only once he has said he is done with it anyway
+    (`confirm`): the first call says which, by id (package_inbox reads
+    their words)."""
+    entry, said, left = await _sign_off_package(str(args.get("package") or ""),
+                                                package_inbox.BY_VOICE,
+                                                args.get("confirm") is True)
     return said
 
 
@@ -18002,9 +18045,25 @@ async def tool_jarvis_settings(args: dict) -> str:
     """Settings: every setting, or one section's, as the page shows them."""
     area = _plain_name(str(args.get("area") or "").strip(), "") or None
     try:
-        return _settings_said(await asyncio.to_thread(settings_service.view, area))
+        said = _settings_said(await asyncio.to_thread(settings_service.view, area))
     except settings_service.Refused as e:
         return f"Nothing to read, sir: {e}."
+    if area in (None, "server"):
+        said += "\n" + _running_said(await asyncio.to_thread(self_update.running_json))
+    return said
+
+
+def _running_said(ran: dict) -> str:
+    """The commit this process runs, as Settings, Updates and /api/health
+    show it: by its name and sha only (fixed words and hex), never its
+    title, which is a teammate's words."""
+    if not ran.get("commit"):
+        return "Which commit this JARVIS runs is not known: it is not a git checkout."
+    said = f"This JARVIS runs commit {ran['commit'][:12]} ({ran['name']})."
+    if ran.get("restart_needed"):
+        said += (f" The checkout has moved to {ran['checkout'][:12]} since it started: a "
+                 f"restart runs that.")
+    return said
 
 
 async def tool_set_jarvis_setting(args: dict) -> str:

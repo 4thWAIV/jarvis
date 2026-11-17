@@ -3553,6 +3553,7 @@ export const UI_CONTRACT = {
         "workMessages",
         "general",
         "read",
+        "packages",
         "waiting",
         "active",
         "history",
@@ -3605,6 +3606,27 @@ export const UI_CONTRACT = {
         "reply",
         "open",
         "package"
+      ],
+      "presentations": [
+        {
+          "view": "right.queue",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "queue"
+            }
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "kind": "inboxPackage",
+      "entity": "package",
+      "label": "A package an agent sent him that is still open, in the Inbox: its title, sender, Work item, questions unanswered, where it stands, and Open",
+      "parts": [
+        "row",
+        "open"
       ],
       "presentations": [
         {
@@ -4750,7 +4772,10 @@ export const UI_CONTRACT = {
         "focusClose",
         "pause",
         "questionBack",
-        "questionNext"
+        "questionNext",
+        "doneAsk",
+        "doneAnyway",
+        "doneNotYet"
       ],
       "presentations": [
         {

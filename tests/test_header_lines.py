@@ -1185,6 +1185,18 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.withdraw": (
+        "the command line: it prints the inbox id JARVIS answered with (an id, "
+        "package_inbox.ID's shape) and fixed words to its own runner's terminal; "
+        "driven by test_wait_links.py"),
+    "package_inbox.withdraw": (
+        "its refusal names only the inbox id (JARVIS's own, never the sender's words) "
+        "and the closed_why word, and goes back as the HTTP error to the signed "
+        "request of the agent that tried; driven by test_wait_links.py"),
+    "package_inbox.write": (
+        "the inner unit of package_inbox.withdraw (and the inbox's other writers): "
+        "its refusal names only JARVIS's own inbox id and goes back to the "
+        "requester; driven by test_wait_links.py"),
     "make_package.finish": (
         "the factory's private author continuation compares fixed review states and sends "
         "build diagnostics back to that same author; it prints only to its CLI, never a "
