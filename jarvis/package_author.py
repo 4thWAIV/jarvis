@@ -314,9 +314,14 @@ async def review(source: Path, archive: Path, result, turn, folder: Path) -> dic
         problems.append("Author visual review has no acceptance.")
     if not isinstance(response.get("notes"), str) or not response["notes"].strip():
         problems.append("Author visual review has no inspection findings.")
-    if not isinstance(response.get("screenshots"), list) or \
-            not all(isinstance(p, str) for p in response["screenshots"]) or \
-            sorted(response["screenshots"]) != sorted(request["screenshots"]):
+    # The paths the author inspected: a list, or the request's own shape (a
+    # mapping of path to digest) handed back, read by its paths.
+    shots = response.get("screenshots")
+    shots = list(shots) if isinstance(shots, dict) else shots
+    if not isinstance(shots, list) or not all(isinstance(p, str) for p in shots):
+        problems.append("Author visual review's screenshots must be the list of screenshot "
+                        "paths it inspected.")
+    elif sorted(shots) != sorted(request["screenshots"]):
         problems.append("Author did not inspect every rendered screenshot.")
     if type(response.get("visual_material")) is not bool or \
             (status == "not-applicable") != (response.get("visual_material") is False):
