@@ -201,7 +201,14 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 back = await http.post(f"/api/packages/inbox/{first}/open", headers={"Origin": base})
                 assert back.status_code == 200
                 await page.locator(f'#package-view[data-package*="walkthrough-one"]').wait_for()
+                # The vote is unanswered: Done names it and asks once.
                 await page.locator(".package-done").click()
+                ask = page.locator("#package-view .package-done-ask")
+                await ask.wait_for()
+                assert "approve-package" in await ask.inner_text() or \
+                    await ask.locator("li").count() >= 1
+                assert package_inbox.get(first).is_open, "nothing done before Done anyway"
+                await ask.get_by_role("button", name="Done anyway").click()
                 await view.wait_for(state="detached")
                 entry = package_inbox.get(first)
                 assert entry.state == package_inbox.CLOSED
