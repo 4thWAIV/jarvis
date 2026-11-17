@@ -289,7 +289,7 @@ def test_a_package_already_here_is_not_affected(planning, marks, tmp_path):
 
 def test_the_isolated_check_jarvis_takes_the_seeded_signature_alone(planning, marks, tmp_path,
                                                                      monkeypatch):
-    """decision_check signs the deck it checks with no author claim: the
+    """The page tests' harness signs the deck it checks with no author claim: the
     isolated JARVIS is the check, as for the decision statement."""
     server, client, agent = planning
     monkeypatch.setenv("JARVIS_DECISION_CHECK_SERVER", "1")

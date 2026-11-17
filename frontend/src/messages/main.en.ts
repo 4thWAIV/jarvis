@@ -532,6 +532,8 @@ export const mainEn = {
   "main.package.done": "Done",
   "main.package.chapters": "Chapters",
   "main.package.asks": "question",
+  "main.package.layoutUnchecked": "Layout not checked",
+  "main.package.layoutUnchecked.why": "A hand-made page: JARVIS did not lay it out or prove that it fits.",
   "main.package.previous": "Previous slide",
   "main.package.next": "Next slide",
   "main.package.more": "More",

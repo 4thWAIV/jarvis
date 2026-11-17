@@ -61,6 +61,22 @@ def test_a_page_says_the_room_it_is_made_for_and_the_page_is_told(tmp_path, mark
     assert packages_api.describe(wide)["layout"] == "wide"
 
 
+def test_a_hand_made_page_says_its_layout_was_not_checked(tmp_path, marks):
+    """Only a deck JARVIS laid out carries the proof that it fits; a
+    hand-made page's border and list_packages say nobody checked its
+    layout."""
+    from jarvis import packages_api, presentation_proof, server
+    page = unpacked(tmp_path, PAGE, {"web/index.html": "x"})
+    proven = unpacked(tmp_path, {**PAGE, "name": "proven"},
+                      {"web/index.html": "x", presentation_proof.PROOF_FILE: "{}"}, name="p.zip")
+    assert packages_api.describe(page)["layout_checked"] is False
+    assert packages_api.describe(proven)["layout_checked"] is True
+    listed = server.tool_list_packages({})
+    [checked_line] = [line for line in listed.splitlines() if line.startswith(proven.id)]
+    [unchecked_line] = [line for line in listed.splitlines() if line.startswith(page.id)]
+    assert "layout not checked" in unchecked_line and "layout not checked" not in checked_line
+
+
 @pytest.mark.parametrize("manifest,files,said", [
     (AGENT, {}, "brief file 'BRIEF.md' is not in the zip"),
     ({**AGENT, "brief": ""}, {"BRIEF.md": "x"}, "has no brief"),
@@ -294,7 +310,8 @@ def test_the_page_s_files_are_framed_only_by_jarvis_and_sandboxed(wired, page):
     assert described == {"id": page.id, "name": "check", "version": "1.0.0",
                          "purpose": MANIFEST["purpose"], "runs": "page",
                          "entry": "web/index.html", "layout": "centre", "source": "ab12cd34",
-                         "sources": ["ab12cd34"], "story": None, "pages": None, "vote": None}
+                         "sources": ["ab12cd34"], "story": None, "pages": None, "vote": None,
+                         "layout_checked": False}
 
 
 def test_is_package_page_is_exactly_a_page_s_files():

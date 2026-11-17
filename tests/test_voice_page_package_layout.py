@@ -14,7 +14,7 @@ import json
 import httpx
 import pytest
 
-from jarvis import decision_check
+from tests import isolated_jarvis
 from tests.package_cards import CARD, QUESTIONS
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_brain_page_parity import wired  # noqa: F401  (a fixture)
@@ -32,7 +32,7 @@ EXPLANATION = "# The document store\n\n" + "\n\n".join(
     f"## Part {i}\n\nThe store keeps part {i} of every revision, and says so here at length "
     "so the explanation is longer than its card." for i in range(30))
 # Tim's own windows beside the checker's.
-WINDOWS = [w for w, _frame in decision_check.SIZES] + [(1440, 900), (1280, 720), (1024, 700)]
+WINDOWS = [w for w, _frame in isolated_jarvis.SIZES] + [(1440, 900), (1280, 720), (1024, 700)]
 # The page's share of the view's height (the border, the vote row and the
 # architecture links above it), and the most its sides may differ from the
 # view's own inner edges (the view's 16 px padding each side, and a pixel).
@@ -77,6 +77,10 @@ async def test_the_presentation_fills_the_width_and_every_question_is_reached_by
             view = page.locator("#package-view")
             await view.wait_for()
             await page.locator(QUESTIONS).wait_for()
+
+            # The kit's page is not one JARVIS laid out: its border says so.
+            await async_api.expect(page.locator("#package-view .package-unchecked")).to_have_text(
+                "Layout not checked")
 
             # Nothing open: no column, no dim, no card; the page has the
             # view's whole width below the border.

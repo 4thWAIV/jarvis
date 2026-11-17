@@ -1262,34 +1262,73 @@ story waits for an answer, pauses or ends (`StoryTeller._told`). The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
 (a page with a story). Every package an agent sends Tim is made with
-one command, `python -m jarvis.make_package <content.json | folder>`
+one command, `python -m jarvis.make_package <presentation.yaml | folder>`
 (`make_package.py`), and `docs/making-a-package.md` is the only place
-that says how: a deck's content (a decision package, or a presentation
-when it has no decisions; `decision_package.py` reads, expands and checks
-it, refusing an SVG picture whose root has no width and height in pixels
-(`svg_size_problem`), the shared deck's `new_deck.py` builds it; every deck is a briefing,
-`decision_package.briefing_problems`: its own `purpose` and one-sentence
-`conclusion` (deck/0.1's), a first slide of words that shows the
-conclusion and with its narration carries the purpose, and each decision's
-`why_you` and `evidence`, drawn as its lead-in slide before it; an
-architecture package's opening is its document's, its explanation opening
-with the purpose and conclusion) or a hand-made package's
-folder (only `purpose` given; read back through
-`work_packages.recognise`). A deck is checked end to end in an isolated
-JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
-sizes, every picture on every slide drawn at least `MIN_PICTURE_PX` each
-way at both sizes (`PICTURES`), and the story told to the end; for a decision package also voting,
-the story waiting at every question as a first-time user answers by click
-and by decide.py, Stop within 1 s from the page and the tool, and resume).
-The isolated JARVIS is seeded with the agent's public key
-(`decision_check.seed`, `JARVIS_DECISION_CHECK_SERVER`), so the deck signed
-by that key unpacks there. Only then is it signed for the live JARVIS, a
-decision package with the statement that it passed
-(`package_signature.DECISION_CHECKED`), and delivered unshown to his
-package inbox. Every unpack (`server._decision_problem`) refuses a decision
-package (`deck-data.js` and `scripts/decide.py`, the shared deck's,
-`decision_stamp.MARKS`) without that statement signed by an onboarded
-agent's key, so no other way delivers one.
+that says how: a deck (a decision package, or a presentation when it has
+no decisions) is one `presentation.yaml` (presentation/1,
+`presentation_schema.py`, read by `presentation_source.read_source`;
+`content.json` decks are refused, `JSON_DECK_RETIRED`): the author writes
+words, structure, pictures by path, narration and decisions and names one
+of JARVIS's layouts for each slide and a slot for each object, never a
+theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
+`presentation.compile_deck` lays it out onto the shared deck
+(`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
+named layouts from one spec (`presentation_assets/layout-spec.json`,
+`layout_spec.py`, which generates the deck's CSS; `--check` fails when they
+differ) and one bundled font (Inter, SIL OFL, `font_metrics.py`'s width
+table, embedded as `presentation-font.css` by `layout_spec.font_css`, its
+one place), and proves without a browser (`presentation_proof.py`) that
+every title, text, table and bar slot holds its words at every frame from
+662 x 489 to 1600 x 900, that every picture is real and readable from its
+bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn
+size and label floor at the smallest frame; `--fill-assets` writes each
+asset's size and hash), that the story points only at what is drawn and
+that the renderer files are JARVIS's own; the proof goes in the package
+(`.jarvis/layout-proof.json`, with the language it was built in). Every
+deck is a briefing (`decision_package.briefing_problems`: its `purpose`
+and one-sentence `conclusion`, an opening that shows them, and each
+decision's `why_you` and `evidence`, drawn as its lead-in slide before it).
+A deck that asks a decision gives its `situation` (`subject`, `happened`,
+`approved_before`, `changes`; refused when any is missing,
+`presentation_source.NEEDS_SITUATION`), from which JARVIS draws its first
+slide (`presentation_source.draw_opening`, `jarvis-opening`, the
+`opening` layout: the subject, what happened, what he approved before,
+what changes for him and the bottom line, in the deck's language,
+`decision_package.SITUATION_WORDS`, at most `new_deck.OPENING_WORDS`),
+told with the purpose. An architecture package's opening is its
+document's, its explanation opening with the purpose and conclusion; a
+hand-made package's folder (only `purpose` given; read back through
+`work_packages.recognise`) is for a working tool. No package goes through
+a browser on its way to Tim: make_package builds the author's source once
+(no screenshot review), then a cold reader (`package_reader.py`, a second
+fresh session on the package author's engine choice, its own prompt) is
+given only the words of the slides before the first decision
+(`before_the_ask`) and must answer the skill's six cold-read questions
+(`QUESTIONS`); what it cannot answer goes back to the author once
+(another turn of the same author, `package_author.FreshSession`), the deck
+is built and read again, and a second miss refuses the package with the
+reader's answers. Only then is it signed with the session's key and
+delivered unshown to his package inbox. Every unpack
+(`server._decision_problem`) refuses a deck (`deck-data.js` and
+`scripts/decide.py`, the shared deck's, `decision_stamp.MARKS`) not signed
+by an onboarded agent's key, and makes a carried proof again from the
+zip's own bytes (`presentation_proof.reprove`), opening none that does not
+prove; a deck from before, with no proof, is admitted on its signer's old
+statement that it passed the end-to-end check
+(`package_signature.DECISION_CHECKED`). What only a browser shows is held
+in CI on fixture decks, never in a package's path: the page tests' isolated
+JARVIS (`tests/isolated_jarvis.py`, `tests/isolated_jarvis_server.py`,
+seeded with the agent's key, `JARVIS_DECISION_CHECK_SERVER`) proves voting
+by click and by decide.py, the story waiting at every question, Stop within
+1 s from the page and the tool, resume, and the border's Chapters, Next,
+Previous and count over every slide (`test_voice_page_decision_package.py`),
+and `test_voice_page_layout_model.py` draws a hard fixture deck (long
+words, a table, two pictures, four columns, pictured options, Spanish)
+across the frame range and holds every slot's drawn height to the proof's
+model within 0.2 px. A page JARVIS did not lay out (a hand-made page, an
+architecture package's) says "Layout not checked" in its border
+(`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
+says the same).
 `python -m jarvis.decision_package` is the command's old name.
 An agent's package proves a fresh author wrote it (Tim's decision
 `receiver-check`, `author_proof.py`): make_package's fresh author
@@ -1313,7 +1352,8 @@ the isolated check JARVIS are not asked.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
-jarvis.make_package` checks and builds it, then sends it as a message
+jarvis.make_package` checks, builds and proves it (a deck laid out and
+proven by JARVIS and read by the cold reader, see "Work packages"), then sends it as a message
 carrying it, `POST /api/messages?work=&project=&workflow=&source=`
 (`decision_package.deliver`, signed with the sending session's key; see
 "One channel"), whose route hands the bytes to `_receive_inbox_package`;
@@ -2202,7 +2242,7 @@ through `knowledge_client.Supervisor` (loopback only, its own token,
 (60 s), off the event loop, for its health before serving the page. JARVIS's
 records live in it, so past that nothing that needs them starts
 (`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
-the engine's log; the decision check's failure carries the same tail), but
+the engine's log; the page tests' isolated JARVIS's failure carries the same tail), but
 the server stays up: `lifespan` puts the records gate in its failed state
 (`records_move.failed(..., records_move.ENGINE)`), so every gated route
 answers 503 with that reason and the page shows it ("JARVIS could not open
@@ -3114,8 +3154,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
 - `make_package.py` — The one command an agent makes and sends a package
-  with (see `docs/making-a-package.md`); `decision_package.py` reads,
-  expands, checks, builds and delivers a deck's content
+  with (see `docs/making-a-package.md`); `presentation.py` /
+  `presentation_source.py` / `presentation_proof.py` / `layout_spec.py` /
+  `picture_proof.py` compile, lay out and prove a deck without a browser;
+  `package_reader.py` is the cold reader; `decision_package.py` reads,
+  expands, checks, builds and delivers the shared deck's data
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see
   "The package inbox"); `frontend/src/packageInbox.ts` is the page's side
@@ -3295,8 +3338,9 @@ None of these is for a person to set; each is listed in `env_names.py`.
   `JARVIS_PORT`, `JARVIS_SCHEME` (published by `server.main`),
   `JARVIS_TOOL_URL`, `JARVIS_TOOL_TOKEN_FILE` (the brain's MCP child),
   `JARVIS_AGENT_SESSION`, `JARVIS_ACCESS_KEY`, `JARVIS_URL` (an agent's
-  commands), `JARVIS_DECISION_CHECK_SERVER`, `JARVIS_DATA_DIR` (the data
-  folder of an isolated instance: a test, the decision check),
+  commands), `JARVIS_DECISION_CHECK_SERVER` (the page tests' isolated
+  JARVIS), `JARVIS_DATA_DIR` (the data folder of an isolated instance: a
+  test),
   `JARVIS_PYTHON`, `JARVIS_SOURCE`, `PACKAGE_DIR` (a package's command),
   `MSYS_NO_PATHCONV`, `JARVIS_API_TARGET`, `JARVIS_VITE_PORT` (a parent
   pointing Vite at an isolated JARVIS), `PYTHONPATH` (the checkout's

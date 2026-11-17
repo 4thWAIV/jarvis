@@ -505,6 +505,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.package.done": "Listo",
   "main.package.chapters": "Capítulos",
   "main.package.asks": "pregunta",
+  "main.package.layoutUnchecked": "Diseño sin comprobar",
+  "main.package.layoutUnchecked.why": "Una página hecha a mano: JARVIS no la diseñó ni comprobó que quepa.",
   "main.package.previous": "Diapositiva anterior",
   "main.package.next": "Diapositiva siguiente",
   "main.package.more": "Más",

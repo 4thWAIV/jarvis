@@ -9322,7 +9322,9 @@ def tool_list_packages(args: dict) -> str:
         return ("No packages have been opened here, sir." if not words else
                 "No package here is called that; list_packages without a name lists them all.")
     lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
-             f"{', with a story' if p.manifest.story else ''}, {p.manifest.purpose}"
+             f"{', with a story' if p.manifest.story else ''}"
+             f"{', layout not checked' if p.manifest.runs == work_packages.PAGE and not p.layout_checked else ''}"
+             f", {p.manifest.purpose}"
              for p in packages]
     what = (f"{len(lines)} package{'s' if len(lines) != 1 else ''} "
             f"{'unpacked here' if not words else 'here have those words'}, newest first; "
@@ -9976,7 +9978,7 @@ def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
     (presentation_proof.reprove): it unpacks only when it proves. A deck
     from before (no proof) is admitted on its signer's statement that it
     passed the old end-to-end check (package_signature.DECISION_CHECKED).
-    An isolated check JARVIS (decision_check_server) takes the signature of
+    An isolated JARVIS of the page tests (tests/isolated_jarvis_server) takes the signature of
     the key it was seeded with alone."""
     try:
         if not decision_stamp.is_decision_package(zip_path):
@@ -10026,7 +10028,7 @@ def _admit_agent_package(zip_path: Path, signed, status: str,
     author. Not affected: an unsigned or held package (their own rules), a
     person's (`_open_received_package` never asks), JARVIS's own (it signs
     nothing), the same bytes already unpacked here, and the isolated
-    check JARVIS (decision_check_server), which is the check. Blocking."""
+    JARVIS of the page tests (tests/isolated_jarvis_server). Blocking."""
     if status != _GOOD_SIGNER or signed is None or \
             env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1" or \
             work_packages.already_here(zip_path):

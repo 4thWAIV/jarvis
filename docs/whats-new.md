@@ -1,6 +1,30 @@
 # The new JARVIS workspace
 
-Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Every package that asks you something opens on where things stand
+
+A deck that asks you to decide something now opens on a slide JARVIS draws
+itself: what it is about, what happened and why, what you already approved
+that it touches, what changes for you if you say yes, and the bottom line.
+An agent cannot send one without all four. Before it reaches you, a second
+fresh reader that was not there is given only the slides before the first
+question and must be able to say what it is about, what you approved
+before, what happened, what the options are and what changes under each,
+what is recommended and what you are asked. What it cannot answer goes back
+to the author once; a package a reader still cannot follow never reaches
+you.
+
+## JARVIS lays out every deck and proves it fits
+
+Decks are no longer laid out by the agent that wrote them or checked by
+photographing them in a browser. The agent writes the words, pictures and
+questions; JARVIS draws every slide in its own layouts and font and works
+out, before anything is sent, that every word and picture fits at every
+size the package view can be, from the smallest centre view to a whole
+screen. Your JARVIS works it out again when a deck arrives and opens none
+that does not fit. A page an agent made by hand, which JARVIS did not lay
+out, says "Layout not checked" in its bar.
 
 ## Every slide of a deck is in its navigation
 

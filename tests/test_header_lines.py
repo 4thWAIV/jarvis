@@ -1117,11 +1117,9 @@ EXEMPT = {
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
-    # The decision package command (decision_package.py) and its check in an
-    # isolated JARVIS (decision_check.py): the `id`, `title` and `state` they
-    # read are the deck author's own content file, the package's id that
-    # JARVIS assigned, and the story frames' fixed states, never a session's
-    # record or a run row; and everything they build is printed to the
+    # The decision package command (decision_package.py): the `id` and
+    # `title` it reads are the deck author's own content, never a session's
+    # record or a run row; and everything it builds is printed to the
     # terminal of the agent that ran the command, never given to the brain.
     "decision_package.problems_of": (
         "it lists what is wrong with the author's own content file, by its own "
@@ -1152,24 +1150,6 @@ EXEMPT = {
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
-    "decision_check._check": (
-        "it records pass and fail lines naming the package id and the deck's own "
-        "title for the command's printout; nothing reaches the brain"),
-    "decision_check.open": (
-        "it opens the package in the isolated JARVIS by the deck's own title and records "
-        "that tool's answer in the command's printout, never the live brain's"),
-    "decision_check._check_first_time": (
-        "it records, in the command's printout, the deck's own decision ids and the "
-        "story frames' fixed states from the isolated JARVIS"),
-    "decision_check._check_stop": (
-        "it records, in the command's printout, the story frames' fixed states and the "
-        "isolated JARVIS's own tool answers"),
-    "decision_check._stopped_within": (
-        "it records, in the command's printout, whether the story frame said stopped "
-        "and the isolated JARVIS's status answer"),
-    "decision_check._check_resume": (
-        "it records, in the command's printout, the deck's own decision ids and the "
-        "isolated JARVIS's resume answer and story frames"),
     'make_package.make_presentation': (
         'it builds the archive filename from schema-validated presentation id and version, and returns the authored title as package metadata; compiler refusals go to the author command, never a trusted session header'),
     'presentation._deck': (

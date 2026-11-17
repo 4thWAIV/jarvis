@@ -35,7 +35,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import decision_check, language_kit as lk, package_story
+from tests import isolated_jarvis
+from jarvis import language_kit as lk, package_story
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import FAKE_TRANSCRIPTION
 from tests.test_voice_page_story import (RECORD, STORY_BROWSER_ARGS, _inner,  # noqa: F401
@@ -101,7 +102,7 @@ def rendered_view(tmp_path: Path) -> tuple[bytes, str]:
     asset = os.getenv("JARVIS_LANGUAGE_KIT_ASSET")
     if not asset:
         pytest.skip("Supply the kit asset (JARVIS_LANGUAGE_KIT_ASSET) to render the fixture.")
-    with decision_check._data_dir(tmp_path / "kit-data"):
+    with isolated_jarvis._data_dir(tmp_path / "kit-data"):
         installed = lk.stage(Path(asset), lk.Release(lk.PINNED_VERSION, lk.PINNED_COMMIT,
                                                      lk.PINNED_DIGEST, ("gate", "release")))
         rendered = installed.run("render", FIXTURE.read_bytes().rstrip(b"\n") + b"\n" + SHARED)

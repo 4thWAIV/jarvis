@@ -13,7 +13,7 @@ data folder's node), never a record and never shown.
 
 `hold` puts a value in force for this process only, never saved, until the
 setting is next changed: the test suite's one way to set a setting, and the
-isolated decision-check JARVIS's (decision_check_server.py).
+isolated JARVIS the page tests run (tests/isolated_jarvis_server.py).
 """
 from __future__ import annotations
 

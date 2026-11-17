@@ -2,7 +2,7 @@ name: language-kit
 
 on:
   pull_request:
-    paths: ["jarvis/language*.py", "jarvis/package*.py", "jarvis/work_packages.py", "jarvis/make_package.py", "jarvis/decision_check.py", "jarvis/workflow_report.py", "tests/test_language*.py", "tests/test_architecture*.py", "tests/architecture_author.py", "tests/test_voice_page_language_documents.py", "tests/test_voice_page_architecture_walkthrough.py", "tests/test_voice_page_kit_selectors.py", "jarvis/package_story.js", "tests/fixtures/architecture/**", "tests/test_story_questions.py", "frontend/src/PackageView.tsx", "frontend/src/style.css", "tests/test_voice_page_package_layout.py", "frontend/src/dashboard/markdown.ts", ".github/workflows/language-kit.yml"]
+    paths: ["jarvis/language*.py", "jarvis/package*.py", "jarvis/work_packages.py", "jarvis/make_package.py", "tests/isolated_jarvis.py", "jarvis/workflow_report.py", "tests/test_language*.py", "tests/test_architecture*.py", "tests/architecture_author.py", "tests/test_voice_page_language_documents.py", "tests/test_voice_page_architecture_walkthrough.py", "tests/test_voice_page_kit_selectors.py", "jarvis/package_story.js", "tests/fixtures/architecture/**", "tests/test_story_questions.py", "frontend/src/PackageView.tsx", "frontend/src/style.css", "tests/test_voice_page_package_layout.py", "frontend/src/dashboard/markdown.ts", ".github/workflows/language-kit.yml"]
   workflow_dispatch:
 
 jobs:

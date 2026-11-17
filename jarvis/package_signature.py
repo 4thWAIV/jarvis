@@ -30,7 +30,8 @@ from jarvis import agent_keys, bundle_archive
 
 FILE = "agent-signature.json"
 VERSION = 1
-# What a deck that passed decision_check.py vouches for.
+# What a deck checked by the old end-to-end browser check vouched for; still
+# read for decks delivered before JARVIS proved every deck's layout itself.
 DECISION_CHECKED = "decision-check v1"
 
 

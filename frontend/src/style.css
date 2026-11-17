@@ -4590,6 +4590,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #package-view .package-icon:disabled { opacity:.4; }
 #package-view .package-frame-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; padding:0 5px; }
 .package-position { font-size:12px; white-space:nowrap; }
+.package-unchecked { font-size:12px; white-space:nowrap; color:#fbbf24; }
 #package-view .package-done { margin-left:5px; box-shadow:-4px 0 rgba(255,255,255,.15); color:var(--ui-accent); }
 #package-view .package-frame { border-radius:0 0 8px 8px; border-width:0; }
 #package-view .package-status { flex:none; padding:4px 8px; min-height:0; }

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import (data_paths, decision_check, decision_package as dp, make_package as mp,
+from jarvis import (data_paths, decision_package as dp, make_package as mp,
                     package_inbox)
 from tests import deck_fixtures
 from tests.deck_fixtures import write_yaml

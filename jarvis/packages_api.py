@@ -92,7 +92,10 @@ def describe(package: Package) -> dict:
             # page that is not a deck, whose border moves through its story.
             "pages": package_inbox.deck_pages(package) if story is not None else None,
             # The standard vote the package carries, shown in the view's head.
-            "vote": package_inbox.page_vote(package)}
+            "vote": package_inbox.page_vote(package),
+            # Whether JARVIS proved its layout fits (a deck), or it is a
+            # hand-made page whose layout nobody checked: said in the border.
+            "layout_checked": package.layout_checked}
 
 
 HELPER_FILE = data_paths.PACKAGE_DIR / "package_story.js"
