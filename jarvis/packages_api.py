@@ -75,13 +75,14 @@ def describe(package: Package) -> dict:
     None (no story, or one that can no longer be told); `pages` a deck's
     own slides (package_inbox.deck_pages); `layout` the room
     its page is made for; `vote` the standard vote the package carries,
-    with his answer (package_inbox.page_vote), or None."""
+    with his answer (package_inbox.page_vote), or None; `views` an
+    architecture view set's views, only for one."""
     m = package.manifest
     try:
         story = package.story()
     except PackageError:
         story = None
-    from jarvis import package_inbox
+    from jarvis import language_projection, package_inbox
     return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
             "runs": m.runs, "entry": m.entry, "layout": m.layout, "source": package.source,
             "sources": list(package.sources),
@@ -92,7 +93,10 @@ def describe(package: Package) -> dict:
             # page that is not a deck, whose border moves through its story.
             "pages": package_inbox.deck_pages(package) if story is not None else None,
             # The standard vote the package carries, shown in the view's head.
-            "vote": package_inbox.page_vote(package)}
+            "vote": package_inbox.page_vote(package),
+            # An architecture view set's views, which its chapters move
+            # between (language_projection.views_shown); absent otherwise.
+            **({"views": views} if (views := language_projection.views_shown(package)) else {})}
 
 
 HELPER_FILE = data_paths.PACKAGE_DIR / "package_story.js"

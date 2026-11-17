@@ -51,8 +51,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import (decision_stamp, package_story, record_cells, records, wait_links,
-                    work_packages)
+from jarvis import (decision_stamp, language_projection, package_story, record_cells, records,
+                    wait_links, work_packages)
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -219,7 +219,9 @@ class Question:
         subject = (self.answer or {}).get("subject")
         if not subject:
             return ""
-        said = f", given to revision {subject.get('revision')} of {subject.get('document_id')}"
+        said = ", given to " + " and ".join(
+            f"revision {view.get('revision')} of {view.get('document_id')}"
+            for view in subject_views(subject))
         return said + (" (stale: a newer revision has been checked since, or the kit's language changed)"
                        if self.stale else "")
 
@@ -575,6 +577,9 @@ _APPROVAL_WORDS = {
            "say": "¿Aprueba este diseño tal como está, o quiere cambios?"},
 }
 SUBJECT = ("document_id", "revision", "source_revision", "kit_digest")
+# A view set's further views, in a subject as in the package's
+# communication.
+SET = language_projection.SET
 
 
 def approval_slide(language: str) -> dict:
@@ -593,12 +598,28 @@ def _approval_question(language: str) -> tuple[str, list[dict], str]:
 
 def subject_of(package: Package) -> Optional[dict]:
     """The checked canonical revision an architecture package puts to him:
-    {document_id, revision, source_revision, kit_digest}; None for any
-    other package."""
+    {document_id, revision, source_revision, kit_digest}, and for a view
+    set its further views' the same way in `set` (the exact set: his
+    approval is of every view's revision at once); None for any other
+    package."""
     communication = package.manifest.communication or {}
     if communication.get("kind") != "architecture":
         return None
-    return {key: communication.get(key) for key in SUBJECT}
+    subject = {key: communication.get(key) for key in SUBJECT}
+    if communication.get(SET):
+        subject[SET] = [{key: (view or {}).get(key) for key in SUBJECT}
+                        for view in communication[SET]]
+    return subject
+
+
+def subject_views(subject) -> list[dict]:
+    """Every view's revision a subject names, its own first: one for a
+    single document, each view of a set in order."""
+    if not isinstance(subject, dict):
+        return []
+    further = subject.get(SET)
+    return [{key: subject.get(key) for key in SUBJECT},
+            *(further if isinstance(further, list) else [])]
 
 
 def asks_approval(package: Package) -> bool:
@@ -690,11 +711,13 @@ def _story_questions(package: Package) -> list[Question]:
 def current_subject(subject) -> bool:
     """Whether a checked canonical revision is still the one in force: the
     newest checked revision of its document, checked by a kit with the
-    language files of the kit in force (language_projection). False
-    when it cannot be told (fail closed: a stale approval satisfies
-    nothing)."""
-    from jarvis import language_projection
-    return language_projection.current_subject(subject)
+    language files of the kit in force (language_projection); for a view
+    set, every view's. False when it cannot be told (fail closed: a stale
+    approval satisfies nothing)."""
+    views = subject_views(subject)
+    if isinstance(subject, dict) and SET in subject and not isinstance(subject[SET], list):
+        return False
+    return bool(views) and all(language_projection.current_subject(view) for view in views)
 
 
 def _story_answer(entry, options: list[dict], recommended: str) -> Optional[dict]:
@@ -785,6 +808,12 @@ def page_vote(package: Package) -> Optional[dict]:
                          note_required=[REQUEST_CHANGES], stale=q.stale,
                          answered_revision=(q.answer.get("subject") or {}).get("revision")
                          if q.answer else None)
+            if subject.get(SET):
+                # A view set: his approval is of every view's revision.
+                shown.update(revisions=[v.get("revision") for v in subject_views(subject)],
+                             answered_revisions=[v.get("revision") for v in
+                                                 subject_views(q.answer.get("subject"))]
+                             if q.answer else None)
         return shown
     # An answer given before to the retired vote is read back by its name
     # (`answer_name`), never asked again. The vote's own words and why it is

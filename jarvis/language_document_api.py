@@ -86,8 +86,13 @@ class Adapter:
             entry = package_inbox.get(inbox_id)
             if entry is None or entry.package_id != package.id:
                 raise docs.DocumentError("That exact inbox arrival does not name the requested package.")
-        read = language_projection.package_reader(package, revision)
-        canonical = json.loads(read("canonical.json"))
+        read = language_projection.package_reader(package)
+        bound = json.loads(read("canonical.json"))
+        # A view set's views are each grounded by their own document id; the
+        # package's own revision (its first view) when none is named.
+        prefix, canonical = next(((p, v) for p, v in language_projection.views_of(bound)
+                                  if document_id in (None, v.get("document_id"))),
+                                 ("", bound))
         for key, expected in (("document_id", document_id), ("revision", revision), ("source_revision", source_revision)):
             if expected is not None and canonical.get(key) != expected:
                 raise docs.DocumentError("The package canonical identity differs from this requested revision.")
@@ -99,7 +104,7 @@ class Adapter:
             raise docs.DocumentError("That declaration does not belong to the requested canonical revision.")
         # The authored view this package binds: its fresh author's
         # (make_package --document) or the revision's own (publish).
-        readable = language_projection.understanding_of(canonical) or {}
+        readable = language_projection.understanding_of(bound) or {}
         member = readable.get("member", "readable.md")
         manifest = json.loads(package.manifest.as_json())
         if member not in package_understanding.documents(manifest):
@@ -111,7 +116,7 @@ class Adapter:
                 "declaration": declaration, "check_ok": True,
                 "package": {"id": package.id, "version": package.manifest.version,
                             "delivered_archive_sha256": work_packages.sha256_of(package)},
-                "source": {"member": "source.yaml", "text": read("source.yaml").decode("utf-8"), "sha256": source_revision},
+                "source": {"member": prefix + "source.yaml", "text": read(prefix + "source.yaml").decode("utf-8"), "sha256": source_revision},
                 "understanding": {"member": member, "text": authored, "sha256": readable["markdown_sha256"],
                                   "origin": readable.get("origin")},
                 "followup_reference": (f"Canonical document: {document_id}.\nCanonical revision: {revision}."

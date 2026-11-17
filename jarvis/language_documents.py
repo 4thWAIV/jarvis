@@ -31,6 +31,13 @@ REVISION_COLUMNS = ("document_id", "revision", "parent_revision", "created_at", 
 PUBLICATION_COLUMNS = ("document_id", "revision", "archive_sha256", "archive_path", "created_at")
 
 
+# The view languages a document may be checked in, each checked and drawn
+# by the kit in force. A further view language (a build-and-release view,
+# once the kit's publisher adds it) is one more entry here; a package's view
+# set (language_projection) already holds views of different languages.
+VIEW_LANGUAGES = frozenset({"arch"})
+
+
 class DocumentError(ValueError):
     pass
 
@@ -264,7 +271,7 @@ class Documents:
         else:
             problems.append("The upstream renderer could not produce an inspection page.")
         language = parsed.get("language", "metalang")
-        if language != "arch":
+        if language not in VIEW_LANGUAGES:
             problems.append(f"Architecture publication requires language arch; this document names {language!r}.")
         problems.extend(_coverage(parsed, coverage))
         if not checked.ok:
