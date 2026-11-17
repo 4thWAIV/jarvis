@@ -2,7 +2,8 @@
 server moves the records it shows "Moving your records into the new
 engine", the step, the time left and that stopping is safe, over the whole
 workspace; once moved, the page loads again on the records; a move that
-failed says so and why.
+failed says so and why. A knowledge engine slow to open the records is
+shown opening, for how long so far, then the workspace, with no Try again.
 
 Headless Chromium on the built page; /api/records/move is answered here in
 the shapes records_move.status returns.
@@ -73,6 +74,26 @@ async def test_the_move_is_shown_step_by_step_then_the_workspace(page_url):
             assert box["width"] == 1440 and box["height"] == 900
             # Moved and checked: the page loads again on the records, the
             # workspace with nothing left of the move.
+            await async_api.expect(page.locator("#records-move")).to_have_count(0, timeout=15000)
+            await page.wait_for_selector(".right-tabs [role=tab]", timeout=15000)
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_slow_engine_is_shown_opening_then_the_workspace_with_no_try_again(page_url):
+    opening = _status("opening") | {"kind": "open", "elapsed": 75.0}
+    move = _Move(opening, opening, _status("starting") | {"kind": "open"}, _status("ready"))
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, move)
+        try:
+            shown = page.locator("#records-move.opening")
+            await async_api.expect(shown.locator("h1")).to_have_text("JARVIS is opening its records")
+            await async_api.expect(shown.locator(".records-move-step")).to_have_text(
+                "Opening for 1 minute so far")
+            await async_api.expect(shown).to_contain_text("starts the moment it answers")
+            await async_api.expect(shown.locator("#records-move-retry")).to_have_count(0)
+            # Opened: the page loads again on the records, nobody pressing anything.
             await async_api.expect(page.locator("#records-move")).to_have_count(0, timeout=15000)
             await page.wait_for_selector(".right-tabs [role=tab]", timeout=15000)
         finally:

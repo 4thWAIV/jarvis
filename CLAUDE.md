@@ -112,7 +112,20 @@ again. The plan refuses too little free disk first
   record deadline, and each copy write names the version it expects, so a
   write that times out or loses its connection is looked for and tried
   again only when not there (`_land`, at most `MOVE_ATTEMPTS`), never
-  doubling a version, before the move fails with the reason. The checks
+  doubling a version, before the move fails with the reason. An engine
+  still opening when `start_knowledge_engine`'s first wait
+  (`knowledge_client.READY_WAIT_SEC`, 60 s) ends is slow, not failed: the
+  engine and its supervisor keep running, the gate is `records_move.OPENING`
+  (`kind` `open`: 503 `records_opening`, the page's "JARVIS is opening its
+  records" with how long so far, no Try again, and the brain's
+  `records_move` the same), `_open_records_then_start` waits on
+  (`KnowledgeRuntime.wait_open`) and the moment it answers starts the move
+  check and everything that needs the records (`_open_records`). It is
+  `ENGINE` failed only when the engine exited more than
+  `knowledge_client.OPENING_EXITS_MAX` times while opening or had not
+  answered within `OPEN_BOUND_SEC` (10 minutes) of its start; Diagnostics'
+  knowledge row reads an engine still opening as degraded
+  (`knowledgeOpening`), never down. The checks
   read the records back in the file's own shape (`knowledge_move.Shape`: its
   tables and columns; a mapping whose tables changed over JARVIS's versions
   takes `shape` in `rows()`), so an older jarvis.db is proven against
@@ -2195,9 +2208,11 @@ it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
 through `knowledge_client.Supervisor` (loopback only, its own token,
 `knowledge-address.json`; its stderr appended to its own log,
 `knowledge-engine.log`, kept under 1 MB) and waits up to `READY_WAIT_SEC`
-(60 s), off the event loop, for its health before serving the page. JARVIS's
-records live in it, so past that nothing that needs them starts
-(`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
+(60 s), off the event loop, for its health before serving the page; one
+still opening then is kept and waited for while the page says the records
+are opening (see "Records"), up to `OPEN_BOUND_SEC` (10 minutes). JARVIS's
+records live in it, so until it answers nothing that needs them starts,
+and one that fails (`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
 the engine's log; the decision check's failure carries the same tail), but
 the server stays up: `lifespan` puts the records gate in its failed state
 (`records_move.failed(..., records_move.ENGINE)`), so every gated route

@@ -165,4 +165,8 @@ export const shellEn = {
   "move.retry": "Try again",
   "move.retrying": "Starting JARVIS again…",
   "move.retryRefused": "JARVIS did not start again: {error}",
+  "move.opening.title": "JARVIS is opening its records",
+  "move.opening.soFar": "Opening for {time} so far",
+  "move.opening.starting": "Opened. Starting JARVIS",
+  "move.opening.wait": "The knowledge engine that holds them is taking longer than usual. JARVIS starts the moment it answers; there is nothing to do.",
 } as const;

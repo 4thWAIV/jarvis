@@ -281,3 +281,127 @@ def test_a_start_on_the_records_that_fails_leaves_the_server_up_saying_why(monke
         assert st["state"] == "failed" and st["cause"] == "start"
         assert "RuntimeError: the settings record is unreadable" in st["reason"]
         assert client.get("/api/runs").status_code == 503
+
+
+# ── an engine slow to open: kept, waited for, and opened with no Try again ──
+
+class _OpeningSupervisor:
+    """An engine that runs but has yet to answer until `answer` is set, and
+    exits (each look a death the supervisor counts) once `dying` is."""
+
+    def __init__(self):
+        self.answer = threading.Event()
+        self.dying = False
+        self.failures = self.restarts = 0
+        self.state = "idle"
+        self.stopped = False
+
+        class Client:
+            transport = None
+        self.client = Client()
+
+    def start(self):
+        self.state = "running"
+
+    def pid(self):
+        return None if self.dying else 4242
+
+    def ready(self):
+        return self.answer.is_set()
+
+    def tick(self):
+        self.failures += 1
+        self.restarts += 1
+        return self.state
+
+    def health(self):
+        return {"state": self.state, "restarts": self.restarts,
+                "reason": "exited with 1" if self.dying else None}
+
+    def stop(self):
+        self.stopped = True
+
+
+@pytest.fixture
+def opening_engine(monkeypatch):
+    """The server's real KnowledgeRuntime over an engine still opening when
+    startup's first wait (shortened here) ends."""
+    from jarvis import knowledge_client, knowledge_runtime, server
+    sup = _OpeningSupervisor()
+    real = knowledge_runtime.KnowledgeRuntime
+    monkeypatch.setattr(knowledge_runtime, "KnowledgeRuntime",
+                        lambda **kw: real(supervisor=sup, **kw))
+    monkeypatch.setattr(knowledge_runtime, "READY_POLL_SEC", 0.01)
+    monkeypatch.setattr(knowledge_runtime, "end_leftover_ingest", lambda: None)
+    monkeypatch.setattr(knowledge_runtime, "end_leftover_content", lambda: None)
+    monkeypatch.setattr(knowledge_client, "READY_WAIT_SEC", 0.2)
+    monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "1")
+    monkeypatch.setattr(server.records, "bind", lambda uds: None)    # the test's own records stay
+    monkeypatch.setattr(server.records_cutover, "needed", lambda: False)
+    restarted = []
+    monkeypatch.setattr(server, "_restart_server", restarted.append)
+    began = []
+
+    async def start_on_records():
+        began.append(True)
+    monkeypatch.setattr(server, "_start_on_records", start_on_records)
+    return sup, began, restarted
+
+
+def _until_state(client, *states, tries=500):
+    for _ in range(tries):
+        st = client.get("/api/records/move").json()
+        if st["state"] in states:
+            return st
+        time.sleep(0.02)
+    return st
+
+
+def test_an_engine_that_answers_after_the_first_wait_brings_jarvis_up_with_no_try_again(opening_engine,
+                                                                                       monkeypatch):
+    from jarvis import server
+    sup, began, restarted = opening_engine
+    with TestClient(server.app, headers=PAGE) as client:
+        st = client.get("/api/records/move").json()
+        assert st["state"] == "opening" and st["kind"] == "open" and st["elapsed"] >= 0.2
+        r = client.get("/api/runs")
+        assert r.status_code == 503 and r.json()["error"] == "records_opening"
+        assert "opening its records" in r.json()["detail"]
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect("/ws/sessions") as ws:
+                ws.receive_text()
+        assert closed.value.code == 1013 and closed.value.reason == "records opening"
+        assert "opening its records" in records_move.said() and began == []
+        sup.answer.set()                           # the engine answers, late
+        assert _until_state(client, "ready")["state"] == "ready"
+        # The routes go through: read from the test's own records.
+        monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "0")
+        assert client.get("/api/runs").status_code == 200
+        assert began == [True] and restarted == [] and not sup.stopped
+
+
+def test_an_engine_that_keeps_exiting_while_it_opens_ends_failed_with_why(opening_engine):
+    from jarvis import server
+    sup, began, restarted = opening_engine
+    with TestClient(server.app, headers=PAGE) as client:
+        assert client.get("/api/records/move").json()["state"] == "opening"
+        sup.dying = True
+        st = _until_state(client, "failed")
+        assert st["state"] == "failed" and st["cause"] == "engine"
+        assert "while opening" in st["reason"] and "exited with 1" in st["reason"]
+        assert client.get("/api/runs").status_code == 503
+        assert client.post("/api/restart").json() == {"status": "restarting"}   # Try again
+    assert began == [] and sup.stopped
+
+
+def test_an_engine_not_open_within_the_bound_ends_failed_with_why(opening_engine, monkeypatch):
+    from jarvis import knowledge_client, server
+    sup, began, _ = opening_engine
+    monkeypatch.setattr(knowledge_client, "OPEN_BOUND_SEC", 0.6)
+    with TestClient(server.app, headers=PAGE) as client:
+        assert client.get("/api/records/move").json()["state"] == "opening"
+        st = _until_state(client, "failed")
+        assert st["state"] == "failed" and st["cause"] == "engine"
+        assert "had not answered 1 s after it started" in st["reason"]
+        assert "could not open its records" in records_move.said()
+    assert began == [] and sup.stopped

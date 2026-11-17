@@ -43,7 +43,14 @@ PING_EVERY_SEC = 5.0
 PING_FAILURES_MAX = 2
 RESTART_BACKOFF_SEC = (0.0, 1.0, 2.0, 5.0)
 STABLE_AFTER_SEC = 60.0
+# Startup waits this long for the engine's first answer before it serves;
+# an engine still opening then is slow, not failed: the server serves the
+# records gate's opening state and goes on waiting (records_move.OPENING).
 READY_WAIT_SEC = 60.0
+# Failed only when it has not answered within this of its start, or has
+# exited more times while opening than the backoff has steps.
+OPEN_BOUND_SEC = 600.0
+OPENING_EXITS_MAX = len(RESTART_BACKOFF_SEC)
 ENGINE_LOG_KEEP_BYTES = 1 << 20     # past this the engine's log keeps only its last quarter
 PREVIOUS_EXIT_WAIT_SEC = 10.0
 TERM_GRACE_SEC = 5.0
@@ -413,8 +420,9 @@ def engine_log_tail(lines: int = 40) -> str:
 
 
 class EngineNotUp(RuntimeError):
-    """The engine did not answer at startup. JARVIS's records live there, so
-    the server does not start without it."""
+    """The engine failed at startup: it kept exiting while it opened, or had
+    not answered within OPEN_BOUND_SEC. JARVIS's records live there, so
+    nothing that needs them starts without it."""
 
 
 def _end_process(proc: subprocess.Popen) -> None:

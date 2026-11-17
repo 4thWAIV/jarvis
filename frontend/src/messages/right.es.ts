@@ -389,6 +389,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.said.knowledgeRestarting": "Reiniciando: {reason}",
   "right.subsystem.said.knowledgeNotUp": "Aún no está en marcha",
   "right.subsystem.said.knowledgeNotAnswering": "No responde a su comprobación de salud",
+  "right.subsystem.said.knowledgeOpening": "Abriendo los registros ({age} hasta ahora)",
   "right.subsystem.said.knowledgeIngestOff": "Apagado",
   "right.subsystem.said.knowledgeReadOnly": "Solo lectura: {problem}",
   "right.subsystem.said.knowledgeOk": { one: "En marcha; {count} fragmento indexado", other: "En marcha; {count} fragmentos indexados" },

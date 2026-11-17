@@ -5,7 +5,9 @@ The engine is always up (UDS plan, "Always up"): unless
 `JARVIS_ENGINE_AUTOSTART` is off, the server makes one `KnowledgeRuntime`
 first thing at startup, starts the engine through the `Supervisor`
 (`start_engine`) and waits up to `knowledge_client.READY_WAIT_SEC` for its
-health before serving the page; then `run` watches it, every second while
+health before serving the page, then, if it is still opening, goes on
+waiting (`wait_open`) while the page says so, failing only past the open
+bound or the exits it allows; then `run` watches it, every second while
 it is not running and every `knowledge_client.PING_EVERY_SEC` while it is.
 `knowledge_settings` governs background indexing and embedding. Pausing
 stops the ingest and content children; record storage and search remain
@@ -59,6 +61,8 @@ INGEST_AGAIN_SEC = 5.0
 PROPOSALS_EVERY_SEC = 60.0
 PACE_EVERY_SEC = 1.0
 READY_POLL_SEC = 0.1
+# What `wait_open` found: the engine answered, is still opening, or failed.
+OPENED, OPENING, FAILED = "opened", "opening", "failed"
 
 
 class Pace:
@@ -338,6 +342,9 @@ class KnowledgeRuntime:
         self._indexing_enabled = False
         self.pace = Pace()
         self.started = False
+        self.opened = False                      # the engine has answered once
+        self.opening_since: Optional[float] = None
+        self.open_failure: Optional[str] = None
         self.pace_listeners: list[Callable[[str], None]] = []
         self.ingest = IngestScheduler(self.supervisor, enabled=lambda: self._indexing_enabled)
         self.pace_listeners.append(self.ingest)
@@ -355,22 +362,53 @@ class KnowledgeRuntime:
         self._sent: Optional[tuple[int, str, bool]] = None     # (engine pid, mode, indexing) last told
 
     # -- the loop -----------------------------------------------------------
-    async def start_engine(self, wait: float = knowledge_client.READY_WAIT_SEC) -> bool:
-        """Start the engine and wait up to `wait` seconds for its health to
-        answer, every blocking step in a thread. True once it answered."""
+    async def start_engine(self, wait: Optional[float] = None) -> str:
+        """Start the engine and wait up to `wait` seconds
+        (knowledge_client.READY_WAIT_SEC by default) for its health, every
+        blocking step in a thread: `wait_open`'s answer."""
         await asyncio.to_thread(end_leftover_ingest)
         await asyncio.to_thread(end_leftover_content)
+        self.opening_since = time.monotonic()
         await asyncio.to_thread(self.supervisor.start)
         self.started = True
-        end = time.monotonic() + wait
+        return await self.wait_open(knowledge_client.READY_WAIT_SEC if wait is None else wait)
+
+    async def wait_open(self, wait: Optional[float] = None) -> str:
+        """Wait up to `wait` more seconds (to the open bound when None) for
+        the engine's first answer. OPENED once it answered; OPENING while it
+        is still opening, slow but not failed; FAILED (why in
+        `open_failure`) once it has exited more than
+        knowledge_client.OPENING_EXITS_MAX times while opening, or has not
+        answered within knowledge_client.OPEN_BOUND_SEC of its start. While
+        it opens nothing pings it to death: only an exit is ticked, so the
+        supervisor restarts it as ever."""
+        since = self.opening_since if self.opening_since is not None else time.monotonic()
+        bound = since + knowledge_client.OPEN_BOUND_SEC
+        end = bound if wait is None else min(bound, time.monotonic() + wait)
         while True:
             if await asyncio.to_thread(self.supervisor.ready):
-                return True
-            if time.monotonic() >= end:
-                return False
+                self.opened = True
+                return OPENED
+            exits = self.supervisor.failures
+            if exits > knowledge_client.OPENING_EXITS_MAX:
+                self.open_failure = f"it exited {exits} times while opening"
+                return FAILED
+            now = time.monotonic()
+            if now >= bound:
+                self.open_failure = (f"it had not answered {knowledge_client.OPEN_BOUND_SEC:.0f} s "
+                                     "after it started")
+                return FAILED
+            if now >= end:
+                return OPENING
             await asyncio.sleep(READY_POLL_SEC)
             if self.supervisor.pid() is None:
                 await asyncio.to_thread(self.supervisor.tick)
+
+    def opening_for(self) -> Optional[float]:
+        """Seconds since the engine started while it has yet to answer."""
+        if self.opened or self.opening_since is None:
+            return None
+        return time.monotonic() - self.opening_since
 
     async def run(self) -> None:
         if not self.started:
@@ -472,7 +510,9 @@ class KnowledgeRuntime:
     def health(self) -> dict:
         sup = self.supervisor
         facts = sup.health()
+        opening = self.opening_for() if self.started and sup.state == "running" else None
         return {**facts, "state": facts["state"] if self.started else "starting",
+                "opening_for": None if opening is None else round(opening, 1),
                 "knowledge": self._indexing_enabled,
                 "pace": self.pace.mode, "pace_reason": self.pace.reason,
                 "engine": sup.last_health if sup.state == "running" else None,

@@ -2,6 +2,15 @@
 
 Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A slow start no longer leaves JARVIS without its records
+
+When the engine that holds JARVIS's records takes more than a minute to
+open them, as it can on a busy Mac, JARVIS no longer gives up and asks you
+to press Try again. The page says JARVIS is opening its records and for how
+long, and the workspace loads by itself the moment they are open. You see
+Try again only when the engine really fails: it keeps stopping, or it has
+not opened them after ten minutes.
+
 ## You can reject any package
 
 Every package now ends with Approve and Reject on the package itself, even

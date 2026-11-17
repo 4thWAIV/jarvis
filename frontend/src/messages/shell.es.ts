@@ -145,4 +145,8 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "move.retry": "Reintentar",
   "move.retrying": "Iniciando JARVIS de nuevo…",
   "move.retryRefused": "JARVIS no se inició de nuevo: {error}",
+  "move.opening.title": "JARVIS está abriendo sus registros",
+  "move.opening.soFar": "Abriendo desde hace {time}",
+  "move.opening.starting": "Abiertos. Iniciando JARVIS",
+  "move.opening.wait": "El motor de conocimiento que los guarda tarda más de lo habitual. JARVIS se inicia en cuanto responda; no tiene que hacer nada.",
 };

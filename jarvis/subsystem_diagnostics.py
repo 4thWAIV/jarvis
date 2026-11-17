@@ -256,6 +256,7 @@ SAID: dict[str, str | dict[str, str]] = {
     "knowledgeRestarting": "Restarting: {reason}",
     "knowledgeNotUp": "Not up yet",
     "knowledgeNotAnswering": "Not answering its health check",
+    "knowledgeOpening": "Opening the records ({age} so far)",
     "knowledgeIngestOff": "Switched off",
     "knowledgeReadOnly": "Read only: {problem}",
     "knowledgeOk": {"one": "Running; {count} chunk indexed", "other": "Running; {count} chunks indexed"},
@@ -894,6 +895,8 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
     """The knowledge engine (knowledge_runtime.health): its process, its
     pace, its ingest and its embedder. The engine is always up, so one that
     is not running (restarting, not yet up, or not answering) is down,
+    while one running that has yet to answer for the first time is opening
+    its data (degraded, never down: a slow start is not a failed one),
     whatever `JARVIS_KNOWLEDGE` says; with that off, ingest and the embedder
     are switched off (idle) while the engine itself can be fine. No runtime
     at all (`JARVIS_ENGINE_AUTOSTART` off) is switched off."""
@@ -907,6 +910,9 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
         shown = (DOWN, say("knowledgeNotUp"))
     elif state == "restarting":
         shown = (DOWN, say("knowledgeRestarting", reason=health.get("reason") or ""))
+    elif health.get("opening_for") is not None:
+        # Running and opening its data, slow perhaps: not down.
+        shown = (DEGRADED, say("knowledgeOpening", age=age(health["opening_for"])))
     elif not engine:
         shown = (DOWN, say("knowledgeNotAnswering"))
     elif store and not store.get("writable", True):
