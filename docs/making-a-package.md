@@ -123,6 +123,34 @@ In a narrow frame (narrower than 662 px or shorter than 489 px) JARVIS draws eve
 
 A decision's slide, its lead-in and the answers slide are JARVIS's own. Run `python -m jarvis.make_package presentation.yaml --check-only` to check it: it starts no browser, so it runs the same on any engine. Unknown fields, duplicate keys and IDs, YAML aliases and tags, missing or cross-slide targets and an object in a slot that does not take it are refused with the line and column. Author IDs become the targets narration lights; you never write selectors or HTML. Text enlargement uses Document view from More, with the same objects in reading order; Details shows each object's evidence. The border calls the existing Tell, Stop and Continue actions; Previous, Next and Chapters move through every slide the deck shows.
 
+### Moving an existing source
+
+A `presentation.yaml` written before components, charts and narrow frames
+still builds as it is; nothing it says changes meaning. What to look at:
+
+- **Narrow frames are now proven.** Every word must fit a 360 px column. A
+  word longer than about forty characters (a long path, a hash, a URL) is
+  refused with the width: break it at its natural parts, or put it in the
+  evidence rather than on a slide.
+- **Numbers belong in `datasets`.** A `bar` object and a literal `table`
+  still work. When the same figures appear in a chart and a table, or come
+  from a file, give them once as a dataset and draw both from it: they then
+  always agree, and each bar, point and cell can be lit by narration.
+- **Literal tables can name their columns.** Add `columns` (one id per
+  column) to a `table` with `rows`, and each cell becomes a target,
+  `<row id>-<column id>`.
+- **Components replace hand-made emphasis.** A text object that imitates a
+  boxed statement, a row of key numbers or numbered steps reads better as
+  `callout`, `figures` or `steps`.
+- **Never crop for small views.** A picture shaped for its wide place is
+  shown whole in a narrow frame at JARVIS's narrow height; nothing to add.
+
+Every source JARVIS ships or tests with (`examples/presentations`, the
+decks `--example` prints and the test fixtures) is built, proven, and
+proven again from its built bytes, as it would be on arrival, by
+`tests/test_presentation_corpus.py`, which CI runs: a change that breaks
+any of them is caught before a release.
+
 ### What JARVIS proves
 
 JARVIS proves every deck without a browser (`jarvis/presentation_proof.py`), in `--check-only`, as the command builds it and again in Tim's JARVIS as it arrives:

@@ -14,15 +14,12 @@ fails here, in CI.
 A browser page test: run with `pytest -m page` (see pytest.ini)."""
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-
 import pytest
-import yaml
 
-from jarvis import layout_spec, make_package as mp, picture_proof, presentation_proof
+from jarvis import layout_spec, make_package as mp, presentation_proof
 from jarvis.presentation_schema import ChartObject, ContentSlide
 from jarvis.presentation_source import read_source
+from tests.deck_fixtures import hard_deck
 
 pytestmark = pytest.mark.page
 
@@ -34,153 +31,6 @@ MODEL_PX = 0.2
 FRAMES = [*layout_spec.corners(), (1024, 700), (880, 640), (1131, 823),
           # narrow frames, where every slide is one column (layout_spec narrow)
           (360, 640), (480, 800), (661, 900), (1200, 420)]
-
-PICTURE = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
-           '<rect width="{w}" height="{h}" fill="{fill}"/></svg>\n')
-
-
-def _text(ident: str, slot: str, *paragraphs: tuple[str, str] | str) -> dict:
-    """A text object: each paragraph plain words, or (role, words), a
-    `**word**` run strong."""
-    out = []
-    for n, item in enumerate(paragraphs, 1):
-        role, words = item if isinstance(item, tuple) else ("paragraph", item)
-        runs = []
-        for m, part in enumerate(words.split("**")):
-            if part:
-                runs.append({"id": f"{ident}-{n}-{m}", "text": part,
-                             "emphasis": "strong" if m % 2 else "normal"})
-        out.append({"id": f"{ident}-p{n}", "role": role, "runs": runs})
-    return {"id": ident, "type": "text", "slot": slot, "source": {"reference": "evidence"},
-            "paragraphs": out}
-
-
-def _slide(ident: str, title: str, layout: str, *objects: dict) -> dict:
-    return {"id": ident, "type": "content", "title": title, "layout": layout,
-            "objects": list(objects), "readingOrder": [o["id"] for o in objects],
-            "narration": [{"id": f"{ident}-cue", "say": title, "focus": [objects[0]["id"]]}],
-            "notes": ""}
-
-
-def _image(ident: str, slot: str, asset: str) -> dict:
-    return {"id": ident, "type": "image", "slot": slot, "source": {"reference": "evidence"},
-            "asset": asset, "alt": "Una imagen de prueba", "fit": "contain"}
-
-
-def hard_deck(folder: Path) -> Path:
-    """The hard fixture set as presentation.yaml, its pictures beside it."""
-    assets = []
-    for ident, (w, h, fill) in {"ancho": (640, 360, "#38bdf8"), "alto": (300, 420, "#f97316"),
-                                "opcion-a": (320, 200, "#22c55e"),
-                                "opcion-b": (320, 200, "#a855f7")}.items():
-        raw = PICTURE.format(w=w, h=h, fill=fill).encode()
-        (folder / f"{ident}.svg").write_bytes(raw)
-        picture = picture_proof.prove_bytes(raw)
-        assets.append({"id": ident, "path": f"{ident}.svg",
-                       "sha256": hashlib.sha256(raw).hexdigest(), "mime": picture.mime,
-                       "width": picture.width, "height": picture.height,
-                       "source": {"reference": "evidence"}})
-    long = ("La internacionalización del electroencefalograma contrarrevolucionario "
-            "desproporcionadamente interdisciplinario")
-    deck = {
-        "version": "presentation/1", "id": "prueba-dificil", "title": "Una prueba difícil",
-        "purpose": "Comprobar que el modelo de altura coincide con el navegador.",
-        "conclusion": "El modelo y el navegador dan la misma altura en cada marco.",
-        "language": "es", "requires": ["presentation-core/1"], "assets": assets,
-        "situation": {
-            "subject": "Una baraja de prueba con palabras largas, tablas y cuatro columnas.",
-            "happened": "Se cambió cómo JARVIS dibuja las barajas; ahora lo calcula sin navegador.",
-            "approved_before": "Usted aprobó que JARVIS calcule el diseño sin navegador.",
-            "changes": "Si el modelo se aparta del navegador, esta prueba falla en CI."},
-        "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
-                        "revision": "1", "description": "Datos inventados para la prueba."}],
-        "datasets": [{"id": "manzanas", "source": {"reference": "evidence"},
-                      "columns": [{"id": "manzana", "label": "Manzana", "type": "text"},
-                                  {"id": "coste", "label": "Coste", "type": "number", "units": "k€"},
-                                  {"id": "escorrentia", "label": "Escorrentía", "type": "number", "units": "%"},
-                                  {"id": "arboles", "label": "Árboles", "type": "number"}],
-                      "rows": [{"id": f"m{n}", "values": {"manzana": name, "coste": cost,
-                                                          "escorrentia": runoff, "arboles": trees}}
-                               for n, (name, cost, runoff, trees) in enumerate([
-                                   ("Norte", 12000.5, 40, 18), ("Sur", 8, 85, 2), ("Este", 15.5, 35, 24),
-                                   ("Oeste", 10.25, 60, 9)], 1)]}],
-        "slides": [
-            _slide("palabras", "Palabras largas y viñetas", "title-and-body",
-                   _text("palabras-texto", "body",
-                         ("heading", "Electroencefalografía"), long,
-                         "Una frase **con negrita** en medio, y acentos: árbol, canción, pingüino.",
-                         ("bullet", "Primera viñeta con desproporcionadamente muchas sílabas."),
-                         ("bullet", "Segunda viñeta, más corta."),
-                         ("numbered", "Un paso numerado."))),
-            {"id": "tabla", "type": "content", "title": "Una tabla con cabeceras",
-             "layout": "table", "notes": "",
-             "objects": [{"id": "tabla-datos", "type": "table", "slot": "table",
-                          "source": {"reference": "evidence"}, "alt": "Costes por ruta",
-                          "head": ["Ruta", "Coste anual", "Mantenimiento"], "rowHeads": True,
-                          "rows": [{"id": f"fila-{n}", "cells": cells} for n, cells in enumerate([
-                              ["Plantada", "12 000", "Riego dos veces por semana"],
-                              ["Pavimentada", "8 000", "Ninguno"],
-                              ["Interdisciplinaria", "15 500", "Contrarrevolucionario"],
-                              ["Mixta", "10 250", "Poda anual"]], 1)]},
-                         _text("tabla-texto", "words", "Las cifras son inventadas.")],
-             "readingOrder": ["tabla-datos", "tabla-texto"],
-             "narration": [{"id": "tabla-cue", "say": "Una tabla.", "focus": ["tabla-datos"]}]},
-            _slide("dos", "Dos imágenes", "two-pictures", _image("dos-a", "first", "ancho"),
-                   _image("dos-b", "second", "alto"),
-                   _text("dos-texto", "words", "Una ancha y una alta, " + long + ".")),
-            _slide("cuatro", "Cuatro columnas", "comparison",
-                   *[_text(f"col-{slot}", slot, ("heading", name), text) for slot, name, text in [
-                       ("first", "Primera", "Interdisciplinar y contraproducente."),
-                       ("second", "Segunda", "Corta."),
-                       ("third", "Tercera", "Una columna con más palabras que las demás juntas."),
-                       ("fourth", "Cuarta", "Desproporcionado.")]],
-                   _text("cuatro-texto", "words", "Cuatro columnas comparadas, una frase debajo.")),
-            _slide("componentes", "Componentes de JARVIS", "comparison",
-                   {"id": "comp-aviso", "type": "callout", "slot": "first", "source": {"reference": "evidence"},
-                    "label": "Conclusión", "says": "La ruta plantada cuesta menos que repavimentar " + long},
-                   {"id": "comp-cifras", "type": "figures", "slot": "second", "source": {"reference": "evidence"},
-                    "items": [{"id": "cifra-coste", "value": "12 000 €", "label": "al año"},
-                              {"id": "cifra-lluvia", "value": "40 %", "label": "menos agua"}]},
-                   {"id": "comp-pasos", "type": "steps", "slot": "third", "source": {"reference": "evidence"},
-                    "items": [{"id": "paso-medir", "title": "Medir", "says": "Un mes antes."},
-                              {"id": "paso-plantar", "title": "Plantar la manzana interdisciplinaria"}]}),
-            _slide("datos", "Costes y escorrentía por manzana", "two-pictures",
-                   {"id": "datos-barras", "type": "chart", "slot": "first", "kind": "bar",
-                    "source": {"reference": "evidence"}, "alt": "Coste y escorrentía",
-                    "data": {"dataset": "manzanas"}, "x": "manzana", "y": ["coste", "escorrentia"]},
-                   {"id": "datos-puntos", "type": "chart", "slot": "second", "kind": "scatter",
-                    "source": {"reference": "evidence"}, "alt": "Escorrentía según árboles",
-                    "data": {"dataset": "manzanas"}, "x": "arboles", "y": ["escorrentia"]},
-                   _text("datos-texto", "words", "Cifras inventadas para la prueba.")),
-            {"id": "datos-tabla", "type": "content", "title": "Las manzanas no pavimentadas",
-             "layout": "table", "notes": "",
-             "objects": [{"id": "tabla-manzanas", "type": "table", "slot": "table", "rowHeads": True,
-                          "source": {"reference": "evidence"}, "alt": "Manzanas",
-                          "data": {"dataset": "manzanas", "where": [{"column": "arboles", "at_least": 5}],
-                                   "sort": {"column": "coste", "order": "descending"}},
-                          "columns": ["manzana", "coste", "escorrentia"]}],
-             "readingOrder": ["tabla-manzanas"],
-             "narration": [{"id": "datos-tabla-cue", "say": "Una tabla de datos.",
-                            "focus": ["tabla-manzanas-m3-coste"]}]},
-            _slide("imagen", "Una imagen y palabras", "picture-and-words",
-                   _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
-                   _image("imagen-dibujo", "picture", "ancho")),
-            {"id": "decidir", "type": "decision", "decision": "elegir-ruta"},
-        ],
-        "decisions": [{
-            "id": "elegir-ruta", "question": "¿Qué ruta probamos?",
-            "why_you": "Usted decide el presupuesto de la prueba.",
-            "evidence": ["Las dos rutas están listas."],
-            "options": [{"id": "plantada", "name": "La plantada", "says": "Plantas en la calle.",
-                         "picture": "opcion-a"},
-                        {"id": "pavimentada", "name": "La pavimentada", "says": "Como ahora.",
-                         "picture": "opcion-b"}],
-            "recommended": "plantada", "reason": "Retiene más lluvia."}],
-    }
-    source = folder / "presentation.yaml"
-    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    return source
-
 
 # What the browser drew for one slot: the height of its words (each block's
 # box and the space after it), or of its table.

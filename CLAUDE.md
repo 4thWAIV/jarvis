@@ -1296,7 +1296,9 @@ deck's `datasets` are records frozen in its source; a table's or chart's
 a chart, bar, line or scatter, into ticks, labels and points as shares of
 the plot that presentation.js only places; `presentation_proof.chart_parts`
 measures its labels against the spec's `chart`; every bar, point and named
-cell a target), that every picture is real and readable from its
+cell a target; the release check, `tests/test_presentation_corpus.py`,
+builds and proves every shipped and fixture deck and proves it again from
+its built bytes), that every picture is real and readable from its
 bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn
 size and label floor at the smallest frame; `--fill-assets` writes each
 asset's size and hash), that the story points only at what is drawn and
