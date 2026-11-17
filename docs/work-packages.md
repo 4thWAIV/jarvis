@@ -189,8 +189,29 @@ waits for the answer he may be giving). Stop ends it at once whatever it is
 doing: the Stop beside it, JARVIS's Stop speaking, the brain's
 `tell_package_story` stop, "stop" said as a whole utterance, or closing the
 package's page. Asked to stop again, JARVIS says it is already stopped.
-`resume` (the page's Continue) tells it again from the first question with
-no answer.
+`resume` (the page's Continue) goes on from the beat a pause left it at,
+told again from its beginning (or waits again on the question it was
+waiting on), else from the first question with no answer. Stop keeps its
+place for Return (below).
+
+Ask and Return. The border's Ask (the brain's `tell_package_story` action
+`ask`, when he asks about what he is looking at) keeps exactly where he is:
+the story's slide and the beat being heard (the first whose words were not
+all played), what the story was doing, and what the frame shows (the deck
+slide, where each scrolled part is, the part he clicked or selected with
+its words and his selection in them, and what had keyboard focus). If the
+story's words were sounding, they pause at that beat. His speaking over a
+slide, and Stop, keep its place the same way. JARVIS is given the part he selected,
+walled as the sender's words, to answer about. Places nest: each Ask is
+kept on top of the one before. Return (the border's, shown with how many
+are kept, or the brain's action `return`) goes back to the last: the page
+opens again if it was closed, the frame brings the view back first (what
+the story had revealed on that slide, then the slide, the scrolling, his
+selection and keyboard focus), and only then, if the words were sounding
+when he asked, that beat is told again from its beginning; a story that was
+paused, waiting for an answer or stopped stays so. A place in a package
+that is no longer the revision it was asked about (replaced by a newer one,
+gone, or its bytes changed) is refused and set aside, never restored.
 
 Besides `save` and `listen`, the bridge carries the story:
 
@@ -202,6 +223,7 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "focus.show", key, targets}` | a question is his (the story waits on it, or he opened its card from Questions): the part it is about, the waiting slide's targets, is brought into view and reported, never ringed in the frame |
 | `{jarvis: "package", type: "focus.clear"}` | that question is no longer in focus |
 | `{jarvis: "package", type: "slide.open", opener}` | he chose a slide in the border (Previous, Next, Chapters) while no story is told: the helper clicks `opener`, that story slide's first click (the story outline's `openers`); sent only to a page that has said `slide.shown` |
+| `{jarvis: "package", type: "place.restore", view, revealed}` | Return: the helper runs `revealed` (`show` and `click` actions, in order), clicks the view's `page` opener, then puts back its `scroll` (`[{at, x, y}]`, `at` "" for the page), its `part`'s `selection` (character offsets) and keyboard focus (`focused`), and says `place.restored` |
 
 | from the page | what JARVIS does |
 |---|---|
@@ -209,6 +231,8 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
 | `{jarvis: "package", type: "story.focus", key, rect}` | where the part in focus is, in the frame's own coordinates (`{left, top, width, height}`, the box around everything its targets match; `null` when none is visible): for each beat (key `beat:<beat>`) and for a `focus.show` (its key), again whenever it moves. The page lights it and dims the rest, its card beside it; the page never reads the frame itself |
 | `{jarvis: "package", type: "slide.shown", opener}` | the page shows the slide `opener` opens (a deck's `#go-N`), however it got there: the border counts itself on the story slide whose openers hold it, and from then on moves the page with `slide.open` |
+| `{jarvis: "package", type: "place", scroll, part, words, selection, selected, focused}` | where he is, whenever it changes (a scroll, his click, his selection, keyboard focus): kept as what the frame shows, which an Ask keeps (sent to `POST /api/packages/<id>/view` once it settles) |
+| `{jarvis: "package", type: "place.restored"}` | a `place.restore` is done |
 
 ### The room a page has (page)
 

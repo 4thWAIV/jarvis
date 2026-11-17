@@ -1905,19 +1905,31 @@ TOOL_SPECS = [
             "waits for his answer (his Choose on the page, or his words recorded with the "
             "package's script), then goes on by itself; while it waits it is still running. "
             "`slide` starts from that slide (it also jumps a story being told, and asks that "
-            "slide's question again); action resume goes on from the first question with no "
-            "answer (\"continue the decisions\"); action stop ends it, told or waiting; "
-            "action status says what it is doing and which question it waits for. The "
-            "page's Tell the story, Continue and Stop do the same."),
+            "slide's question again); action resume goes on from where it is paused (that beat "
+            "said again) or waiting, else from the first question with no answer "
+            "(\"continue the decisions\"); action stop ends it, told or waiting, and keeps "
+            "its place for action return; action status says what it is doing and which question it waits for. "
+            "Ask and Return: when he wants to ask about what he is looking at in a package "
+            "(\"wait, what does this mean?\"), action ask keeps exactly where he is (the "
+            "slide, the beat, the page shown, its scrolling and the part he selected), pauses "
+            "the story's words if they were sounding, and gives you that part to answer about; "
+            "action place says where he is without keeping it; action return (no package "
+            "needed) takes him back to the last place kept: the view first, then the beat that "
+            "was cut off is said again from its beginning (a paused or stopped story stays so). "
+            "Places nest: each ask is kept on the last, and each return goes back one. A place "
+            "in a revision of the package no longer in use is refused. The page's Tell the "
+            "story, Continue, Stop, Ask and Return do the same."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string", "description": "The package's id."},
-                "action": {"type": "string", "enum": ["tell", "resume", "stop", "status"],
-                           "description": "tell (the default), resume, stop or status."},
+                "action": {"type": "string",
+                           "enum": ["tell", "resume", "stop", "status", "ask", "return",
+                                    "place"],
+                           "description": "tell (the default), resume, stop, status, ask, "
+                                          "return or place."},
                 "slide": {"type": "integer", "description": "The slide to start from, from 1."},
             },
-            "required": ["package"],
         },
     },
     # Files a teammate sent, read as files (bundle_api.py): the same calls

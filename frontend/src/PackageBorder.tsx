@@ -4,17 +4,20 @@
  *  the count follows the slide the page shows (`shown`) and selecting a slide opens it there
  *  (`openSlide`) while no story is told; telling starts at the story slide that holds it
  *  (`storySlideOf`). Any other story page only takes the slide to tell from.
+ *  Ask keeps exactly where he is (`onAsk`, the view its frame reports) and pauses the story's words;
+ *  Return, shown while a place is kept, goes back to the last one (story_teller.py). Both are his clicks
+ *  on the server's one service, which the brain's tell_package_story reaches too.
  *  While the package has taken over, the border fades back without the pointer (`fade`, PackageView.tsx). */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useT, type Said } from "./locale";
-import { mountPackageControls, navigation, storyRunning, storyState, storySlideOf, tellStory, type PackageInfo } from "./packages";
+import { mountPackageControls, navigation, packageAsks, storyRunning, storyState, storySlideOf, tellStory, type PackageInfo } from "./packages";
 import { PackageIcon } from "./PackageIcons";
 import { TakeoverButton } from "./TakeoverBar";
 import { bind, bindingProps } from "./uiNavigation";
 import { byHand } from "./uiRegistry";
 import type { Fading } from "./PackageView";
 
-type Part = "chapters" | "previous" | "next" | "more" | "inspect" | "document" | "return" | "header" | "story" | "tell" | "stop" | "resume" | "fromSlide" | "takeover" | "close";
+type Part = "chapters" | "previous" | "next" | "more" | "inspect" | "document" | "return" | "header" | "story" | "tell" | "stop" | "resume" | "fromSlide" | "takeover" | "close" | "ask" | "goBack";
 interface Props {
   info: PackageInfo;
   offered: boolean;
@@ -29,10 +32,13 @@ interface Props {
   shown?: { slide: number; seq: number } | null;
   /** Open slide `slide` in the page; missing: the page does not report its slides. */
   openSlide?: ((slide: number) => void) | null;
+  /** His Ask: keep where he is (what the frame shows) and pause the words. */
+  onAsk(): Promise<Said | null>;
 }
-export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide }: Props) {
+export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide, onAsk }: Props) {
   const t = useT();
   const state = useSyncExternalStore(storyState.subscribe, storyState.get);
+  const kept = useSyncExternalStore(packageAsks.subscribe, packageAsks.get).length;
   const running = storyRunning(state, info.id);
   const mine = state?.package === info.id ? state : null;
   const status = mine?.state === "telling" ? t("main.package.story.telling", { slide: mine.slide, slides: mine.slides })
@@ -69,9 +75,12 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
   }, [menu]);
   const open = (which: "chapters" | "more") => { opener.current = document.activeElement as HTMLElement; setMenu(which); };
   const select = (value: number) => { setSlide(value); if (!running) openSlide?.(value); };
-  const act = async (action: "tell" | "resume" | "stop") => {
+  const act = async (action: "tell" | "resume" | "stop" | "ask" | "return") => {
     setBusy(true);
-    try { onSaid(await tellStory(info.id, action, action === "tell" ? storySlideOf(info, slide) : undefined)); }
+    try {
+      if (action === "ask") { const why = await onAsk(); onSaid(why ?? { words: () => t("main.package.asked") }); }
+      else onSaid(await tellStory(info.id, action, action === "tell" ? storySlideOf(info, slide) : undefined));
+    }
     finally { setBusy(false); }
   };
   useLayoutEffect(() => mountPackageControls({
@@ -93,6 +102,8 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
         <button className="package-icon" type="button" data-ui-action="domain" data-story-action={transport} ref={part(transport)} title={transportName} aria-label={transportName} disabled={busy} onClick={() => void act(transport)}><PackageIcon name={transport}/></button>
         {width >= 420 && <button className="package-icon" type="button" title={t("main.package.next")} aria-label={t("main.package.next")} data-package-step="next" disabled={slide === slides.length} ref={part("next")} {...bindingProps(bind("package.slide", {slide: slide + 1}))}><PackageIcon name="next"/></button>}
       </div>}
+      <button className="package-icon" type="button" data-ui-action="domain" data-story-action="ask" ref={part("ask")} title={t("main.package.ask")} aria-label={t("main.package.ask")} disabled={busy} onClick={() => void act("ask")}><PackageIcon name="ask"/></button>
+      {kept > 0 && <button className="package-icon package-go-back" type="button" data-ui-action="domain" data-story-action="return" ref={part("goBack")} title={t("main.package.goBack", { count: kept })} aria-label={t("main.package.goBack", { count: kept })} disabled={busy} onClick={() => void act("return")}><PackageIcon name="goBack"/><span className="package-go-back-count" aria-hidden="true">{kept}</span></button>}
       <span className="package-story-now visually-hidden" role="status">{status}</span>
       <h2 className="package-frame-title" title={`${title}. ${info.purpose}`}>{title}</h2>
       {info.story && width >= 500 && <span className="package-position" aria-label={t("main.package.story.fromSlide")}>{slide} / {slides.length}</span>}

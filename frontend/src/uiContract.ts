@@ -4750,7 +4750,9 @@ export const UI_CONTRACT = {
         "focusClose",
         "pause",
         "questionBack",
-        "questionNext"
+        "questionNext",
+        "ask",
+        "goBack"
       ],
       "presentations": [
         {

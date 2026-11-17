@@ -9457,10 +9457,24 @@ async def _close_package_page(reference: str) -> None:
 # Continue and Stop and the brain's tell_package_story go through
 # `_package_story`. It goes on after an answer only once the floor is free,
 # so the reply to his answer is heard before the next slide.
+def _package_superseded(package_id: str) -> str:
+    """Why a page package is no longer the revision in use (its inbox row
+    was closed when a newer one of it arrived), or "": a place he asked
+    from in it is not restored (story_teller's Return)."""
+    try:
+        entry = package_inbox.latest_for_package(package_id)
+    except Exception as e:                     # the record unreadable: nothing known
+        log.warning("could not read package %s's inbox row: %s", package_id, e)
+        return ""
+    if entry is not None and entry.closed_why == package_inbox.SUPERSEDED:
+        return "replaced by a newer revision"
+    return ""
+
+
 story_teller = StoryTeller(
     lambda: speech, _open_package_page, lambda f: _voice_emit(f),
     floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
-    note=_notes_for_brain.append, spoken=_note_spoken)
+    note=_notes_for_brain.append, spoken=_note_spoken, replaced=_package_superseded)
 
 
 def _story_said(told: "story_teller_module.Told") -> str:
@@ -9481,15 +9495,83 @@ def _story_said(told: "story_teller_module.Told") -> str:
     return f"The story of {t.package.id} is being told, at slide {t.slide} of {total}."
 
 
+def _place_said(told: "story_teller_module.Told") -> str:
+    """Where he is (or was) in a package, in words: the story's slide and
+    beat and what it was doing are JARVIS's own; the slide titles, the deck
+    slide shown and the part he selected are the sender's, walled."""
+    place = told.place
+    story = told.story
+    where = []
+    if place.slide and story is not None:
+        where.append(f"story slide {place.slide} of {len(story.slides)}"
+                     + (f", beat {place.beat} of {len(story.slides[place.slide - 1].beats)}"
+                        if place.beat else ""))
+    doing = {story_teller_module.TELLING: "being told", story_teller_module.WAITING:
+             "waiting for his answer", story_teller_module.PAUSED: "paused",
+             story_teller_module.STOPPED: "stopped",
+             story_teller_module.FINISHED: "told to its end"}.get(place.state, "not told")
+    head = (f"Package {place.package}, revision {place.revision[:19]}: "
+            f"{'; '.join(where) or 'no story slide'}; its story {doing}"
+            f"{', its words sounding when he asked' if place.speaking else ''}. "
+            f"{told.asks} place(s) kept to go back to.")
+    page_title = ""
+    if place.view.page:
+        try:
+            pages = package_inbox.deck_pages(work_packages.find(place.package)) or []
+            page_title = next((p.get("title", "") for p in pages
+                               if p.get("opener") == place.view.page), "")
+        except (work_packages.PackageError, ValueError):
+            pass
+    lines = []
+    if place.slide and story is not None:
+        lines.append(f"Story slide: {story.slides[place.slide - 1].title}")
+    if page_title:
+        lines.append(f"Page shown: {page_title}")
+    if place.view.words:
+        lines.append(f"The part he selected: {place.view.words}")
+    if place.view.selected:
+        lines.append(f"The words he selected in it: {place.view.selected}")
+    if not lines:
+        return head + " He selected no part of the page."
+    return head + " What he is looking at, from the package:\n" + \
+        _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines))
+
+
 async def _package_story(action: str, reference: str, slide: Optional[int] = None,
-                         by: str = "on the page") -> tuple[bool, str]:
+                         by: str = "on the page", view=None) -> tuple[bool, str]:
     """Tell (from `slide`), resume, stop or ask after a page package's
-    story: (done, what was done or why not). Started or stopped from the
-    page, the brain is told at its next turn, so it knows what he is
-    hearing."""
-    told = await story_teller.act(action, reference, slide, by=by)
+    story, or Ask (keep where he is, with the `view` its page reported) and
+    Return (go back to the last place kept), or say where he is: (done,
+    what was done or why not). Done from the page, the brain is told at
+    its next turn, so it knows what he is hearing and asking about."""
+    told = await story_teller.act(action, reference, slide, by=by, view=view)
     if told.package is None:
+        if action == story_teller_module.RETURN and told.place is not None and by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he asked to go back to where he "
+                                    f"was in package {told.place.package}, and it was refused: "
+                                    f"{told.problem}")
         return False, told.problem
+    if action == story_teller_module.PLACE:
+        return True, _place_said(told)
+    if action == story_teller_module.ASK:
+        if by != "by voice":
+            _notes_for_brain.append(
+                f"Since your last turn he paused package {told.package.id} on the page to ask "
+                f"you about what he is looking at; tell_package_story with action place gives "
+                f"it, and action return takes him back.")
+        return True, (f"Kept his place. {_place_said(told)} Answer what he asks about it; "
+                      f"action return takes him back to it.")
+    if action == story_teller_module.RETURN:
+        place = told.place
+        again = place.speaking and place.slide
+        said = (f"Back where he was in {told.package.id}"
+                + (f", at story slide {place.slide}" if place.slide else "")
+                + (f"; beat {place.beat} is told again from its beginning." if again else
+                   "; nothing is read: the story stays as it was.")
+                + f" {told.asks} place(s) still kept.")
+        if by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he went back on the page: {said}")
+        return True, said
     if action == story_teller_module.STATUS:
         said = _story_said(told)
         if said:
@@ -9544,7 +9626,8 @@ TAINT_EXEMPT_TOOLS["activate_language_kit"] = "it activates the held kit on his 
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
-                   saved=lambda package: (_inbox_saved(package), _key_error_act(package)))
+                   saved=lambda package: (_inbox_saved(package), _key_error_act(package)),
+                   seen=story_teller.seen)
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -9570,6 +9653,9 @@ async def tool_tell_package_story(args: dict) -> str:
                                       by="by voice")
     if not done:
         return f"{said} Nothing was changed."
+    if action in (story_teller_module.ASK, story_teller_module.PLACE,
+                  story_teller_module.RETURN):
+        return said
     if action in (story_teller_module.STOP, story_teller_module.STATUS) \
             or story_teller.telling is None:
         return f"{said} Say nothing more about it unless he asks."
@@ -9582,9 +9668,10 @@ async def tool_tell_package_story(args: dict) -> str:
             "(run_package_command); then it goes on by itself. Do not move it on yourself. "
             if any(s.waits for s in story.slides) else "")
     return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
-            f"points at each part on his screen as it is said. {asks}Stop ends it; action "
-            f"resume goes on from the first question with no answer; action status says "
-            f"what it is doing. Do not repeat the story yourself. Its slides:\n"
+            f"points at each part on his screen as it is said. {asks}Stop ends it and keeps "
+            f"its place for action return; action resume goes on from where it is paused, "
+            f"else the first question with no answer; action status says what it is doing. Do not repeat the story "
+            f"yourself. Its slides:\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
@@ -9619,7 +9706,8 @@ TAINTING_TOOLS.update({
     "open_local_package": "a work package's own package.json and skill",
     "list_packages": "work packages teammates sent",
     "run_package_command": "the output of a work package's step",
-    "tell_package_story": "the slide titles of a story a teammate sent",
+    "tell_package_story": ("the slide titles of a story a teammate sent, and the part of "
+                           "its page he is looking at"),
 })
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
@@ -17475,7 +17563,7 @@ def _note_replayed(utt) -> None:
 def _opening_frames() -> list[dict]:
     """What a page is told as its voice socket opens: the settings it
     needs, that JARVIS is idle, the page package shown (so a reload keeps
-    it) and the story being told, if any."""
+    it), the story being told, if any, and the places he can go back to."""
     frames = [_config_frame(), {"type": "status", "state": "idle"}]
     if _package_shown is not None:
         # Described again: what it asks may have moved since it was shown
@@ -17488,6 +17576,8 @@ def _opening_frames() -> list[dict]:
         frames.append({"type": "package_page", "package": shown})
     if story_teller.status() is not None:
         frames.append(story_teller.status())
+    if story_teller.asks:
+        frames.append({"type": "package_asks", "asks": [p.frame() for p in story_teller.asks]})
     return frames
 
 

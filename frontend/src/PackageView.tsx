@@ -60,8 +60,9 @@ import { SaidText, useT, type Said } from "./locale";
 import { connectBridge, type Bridge, type FrameRect } from "./packageBridge";
 import { answerInbox, signOff } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
-import { entryUrl, navigation, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
-         type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
+import { askAbout, entryUrl, navigation, packageFileUrl, packageVote, readPackageText, reportView, storyCue, storyRunning,
+         storyState, tellStory, type FrameView, type HeaderQuestion, type PackageInfo, type PageVote,
+         type StoryCue } from "./packages";
 import { useUiTarget } from "./uiRegistry";
 import { layout } from "./uiNavigation";
 import { PackageBorder } from "./PackageBorder";
@@ -102,10 +103,14 @@ export function PackageView({ info }: { info: PackageInfo }) {
   // "q:<question>" for a question's part); missing: not said yet.
   const [where, setWhere] = useState<Record<string, FrameRect | null>>({});
   const bridge = useRef<Bridge | null>(null);
+  // What the frame shows now (its helper's `place`): an Ask keeps it.
+  const view = useRef<FrameView | null>(null);
   useEffect(() => {
     if (!frame.current) return undefined;
     setWhere({});
+    view.current = null;
     const connected = connectBridge(frame.current, info.id, {
+      onPlace: (now) => { view.current = now; reportView(info.id, now); },
       onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true),
       onPresentationReady: () => setPresentation(true),
       onPresentationReturnFocus: () => document.querySelector<HTMLButtonElement>("#package-view [data-package-menu=more]")?.focus(),
@@ -262,7 +267,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
-        fade={fading} shown={shown}
+        fade={fading} shown={shown} onAsk={() => askAbout(info.id, view.current)}
         openSlide={shown && ((slide) => {
           const opener = navigation(info)[slide - 1]?.opener;
           if (opener) bridge.current?.openSlide(opener);
@@ -368,16 +373,16 @@ function LeaveFocus({ onLeave, target }: { onLeave: () => void; target: (el: Ele
 
 /** JARVIS's words for the beat being told, with Pause (the reading
  *  skipped, as the playback bar's Skip does: a slide not heard in full
- *  pauses the story there) and Stop; paused, Continue tells it again from
- *  that slide. */
+ *  pauses the story there) and Stop; paused, Continue goes on from the beat
+ *  it was cut at (resume). */
 function Narration({ info, beat, paused, slide, onSaid, pauseRef }: {
   info: PackageInfo; beat: StoryCue; paused: boolean; slide: number;
   onSaid: (s: Said | null) => void; pauseRef: (el: Element | null) => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const act = async (action: "tell" | "stop") => {
+  const act = async (action: "resume" | "stop") => {
     setBusy(true);
-    onSaid(await tellStory(info.id, action, action === "tell" ? slide : undefined));
+    onSaid(await tellStory(info.id, action));
     setBusy(false);
   };
   return (
@@ -390,7 +395,7 @@ function Narration({ info, beat, paused, slide, onSaid, pauseRef }: {
       <div className="package-ask-options">
         {paused
           ? <button type="button" className="settings-btn primary" data-ui-action="domain" disabled={busy}
-                    onClick={() => void act("tell")}>{t("main.package.story.continue")}</button>
+                    onClick={() => void act("resume")}>{t("main.package.story.continue")}</button>
           : <button type="button" className="settings-btn" data-ui-action="speech" ref={pauseRef}
                     onClick={() => skipReading.current()}>{t("main.package.focus.pause")}</button>}
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}

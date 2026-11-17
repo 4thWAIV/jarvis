@@ -1242,12 +1242,37 @@ WAITING, as running state the server knows (which question), until the
 answers file has a new answer (a Choose saved through the bridge, or
 `scripts/decide.py`), and goes on once `conversation_floor` is idle; an
 answered question is passed over unless told from its own slide; `resume`
-starts at the first with no answer. His speaking over a slide PAUSES it
+goes on from where a running story is paused or waiting
+(`StoryTeller._kept`: that beat told again, or its question waited on
+again), else the first with no answer. His speaking over a slide PAUSES it
 (on a waiting slide it waits), never ends it, so Stop always finds it. Stop
-ends it told, paused or waiting: the page's Stop, the tool, `_stop_speaking`
+ends it told, paused or waiting, and keeps its place for Return (`Ended.place`, on the stack below): the page's Stop, the tool, `_stop_speaking`
 (hush), a whole utterance of `Vocabulary.stop_words` (checked after
 `user_final`, before the brain hears it) and closing its page; a second
 stop says it is already stopped (`StoryTeller.ended`), never "no story".
+Ask and Return (the approved Restore place choice): a place
+(`package_place.Place`) is the story's slide and beat (the first beat not
+all played, `story_teller._cut_beat`, from the scheduler's own outcomes),
+what it was doing, whether its words were sounding, and the frame's view
+(`package_place.View`: the deck slide's opener, each scrolled part, the part
+he clicked or selected with its words and his selection, keyboard focus),
+which the helper reports as `place` and the page keeps on the server
+(`POST /api/packages/<id>/view`, `StoryTeller.seen`), and its revision
+(`revision_of`: the zip's SHA-256 or an architecture revision). Ask (the
+border's Ask, `POST .../story` `{"action": "ask", "view"}`, his click, and
+the brain's `tell_package_story` action `ask`) keeps it on a stack
+(`StoryTeller.asks`, at most `MAX_ASKS`, a `package_asks` frame) and pauses
+words that were sounding; his speaking over a slide and a Stop keep their
+place too.
+The brain gets the part walled (`server._place_said`; action `place` says
+where he is, kept nowhere). Return (the border's Return with its count, the
+action `return`) pops the last: refused and set aside when its package is
+gone, `superseded` (`server._package_superseded`) or not its revision;
+otherwise the page is opened, a `package_return` frame has the frame bring
+the view back first (`place.restore`: `package_place.revealed`, the slide,
+scrolling, selection, focus; `place.restored`), and only then a place whose
+words were sounding is told again from its beat; a paused, waiting or
+stopped story stays so (`_settle_at`).
 Each chunk carries its beat as `cue` on its `audio` frame (the way
 `capture` rides); the page sets `packages.storyCue` when that chunk STARTS
 playing and clears it when the beat's last chunk is played or the voice
@@ -3129,7 +3154,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   story, and the story helper
 - `package_story.py` / `story_teller.py` / `package_story.js` — A page
   package's story: its format and cues, the one service that tells and
-  stops it, and the helper that rings its targets inside the frame
+  stops it (and keeps and returns to his place, Ask and Return), and the
+  helper that rings its targets inside the frame and reports and restores
+  where he is
+- `package_place.py` — Where he is in a package: the place Ask keeps and
+  Return restores, the frame's view, and the revision it is in
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open

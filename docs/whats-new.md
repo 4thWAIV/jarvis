@@ -1,6 +1,22 @@
 # The new JARVIS workspace
 
-Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Ask about what you are looking at, then go back to exactly that point
+
+A package's bar has an Ask button. Press it, or start talking over JARVIS
+while he tells a package's story, and he stops at the sentence he was on
+and keeps exactly where you are: the slide, how far down the page you had
+scrolled, and the part you clicked or selected, which he is given so he can
+answer about it. You can ask from somewhere else in the package too, and
+each place is kept. Return, beside Ask with how many places are kept, takes
+you back one place at a time: the page comes back as it was first, then he
+says that interrupted sentence again from its start. A story that was
+paused or waiting for your answer stays so. Stop keeps your place too, so
+Return after a Stop goes back to the sentence it cut off, and Continue on a
+paused story goes on from that sentence rather than the start of the slide. If the
+package has been replaced by a newer version since you asked, JARVIS says
+so instead of taking you to a place that no longer exists.
 
 ## Every slide of a deck is in its navigation
 
