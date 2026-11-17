@@ -1,11 +1,13 @@
 /** Compact frame for existing host actions. Selection never starts speech or writes an answer.
- *  For a page that reports its slides (a deck), the border is its one navigation: the count follows
- *  the slide the page shows (`shown`) and selecting a slide opens it there (`openSlide`) while no story
- *  is told; any other story page only takes the slide to tell from.
+ *  For a page that reports its slides (a deck), the border is its one navigation, over the deck's own
+ *  slides (`navigation`: every lead-in and every question its own, numbered as the deck numbers them):
+ *  the count follows the slide the page shows (`shown`) and selecting a slide opens it there
+ *  (`openSlide`) while no story is told; telling starts at the story slide that holds it
+ *  (`storySlideOf`). Any other story page only takes the slide to tell from.
  *  While the package has taken over, the border fades back without the pointer (`fade`, PackageView.tsx). */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useT, type Said } from "./locale";
-import { mountPackageControls, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
+import { mountPackageControls, navigation, storyRunning, storyState, storySlideOf, tellStory, type PackageInfo } from "./packages";
 import { PackageIcon } from "./PackageIcons";
 import { TakeoverButton } from "./TakeoverBar";
 import { bind, bindingProps } from "./uiNavigation";
@@ -22,9 +24,10 @@ interface Props {
   presentation: boolean;
   command(type: "presentation.inspect" | "presentation.document", value?: boolean): void;
   fade?: Fading;
-  /** The story slide the page says it shows, and how many times it has said so. */
+  /** The slide the page says it shows (a deck's own numbering, else the story's), and how many
+   *  times it has said so. */
   shown?: { slide: number; seq: number } | null;
-  /** Open story slide `slide` in the page; missing: the page does not report its slides. */
+  /** Open slide `slide` in the page; missing: the page does not report its slides. */
   openSlide?: ((slide: number) => void) | null;
 }
 export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide }: Props) {
@@ -37,7 +40,9 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
       : mine?.state === "paused" ? t("main.package.story.paused", { slide: mine.slide, slides: mine.slides })
         : mine?.state === "finished" ? t("main.package.story.told")
           : mine?.state === "stopped" ? t("main.package.story.stopped") : "";
-  const slides = info.story?.slides ?? [];
+  // A deck's own slides (its lead-ins and its questions each one), else the story's.
+  const pages = navigation(info);
+  const slides = pages.map(p => p.title);
   const [slide, setSlide] = useState(1);
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<"chapters" | "more" | null>(null);
@@ -66,7 +71,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
   const select = (value: number) => { setSlide(value); if (!running) openSlide?.(value); };
   const act = async (action: "tell" | "resume" | "stop") => {
     setBusy(true);
-    try { onSaid(await tellStory(info.id, action, action === "tell" ? slide : undefined)); }
+    try { onSaid(await tellStory(info.id, action, action === "tell" ? storySlideOf(info, slide) : undefined)); }
     finally { setBusy(false); }
   };
   useLayoutEffect(() => mountPackageControls({
@@ -84,9 +89,9 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
       data-faded={fade?.faded ? "true" : "false"} {...fade?.props}>
       {info.story && <div className="package-story" ref={part("story")} aria-label={t("main.package.story.label")}>
         <button className="package-icon" type="button" title={t("main.package.chapters")} aria-label={t("main.package.chapters")} data-package-menu="chapters" aria-expanded={menu === "chapters"} ref={part("chapters")} {...bindingProps(bind("package.menu", {show: "chapters"}))}><PackageIcon name="chapters"/></button>
-        {width >= 420 && <button className="package-icon" type="button" title={t("main.package.previous")} aria-label={t("main.package.previous")} disabled={slide === 1} ref={part("previous")} {...bindingProps(bind("package.slide", {slide: slide - 1}))}><PackageIcon name="previous"/></button>}
+        {width >= 420 && <button className="package-icon" type="button" title={t("main.package.previous")} aria-label={t("main.package.previous")} data-package-step="previous" disabled={slide === 1} ref={part("previous")} {...bindingProps(bind("package.slide", {slide: slide - 1}))}><PackageIcon name="previous"/></button>}
         <button className="package-icon" type="button" data-ui-action="domain" data-story-action={transport} ref={part(transport)} title={transportName} aria-label={transportName} disabled={busy} onClick={() => void act(transport)}><PackageIcon name={transport}/></button>
-        {width >= 420 && <button className="package-icon" type="button" title={t("main.package.next")} aria-label={t("main.package.next")} disabled={slide === slides.length} ref={part("next")} {...bindingProps(bind("package.slide", {slide: slide + 1}))}><PackageIcon name="next"/></button>}
+        {width >= 420 && <button className="package-icon" type="button" title={t("main.package.next")} aria-label={t("main.package.next")} data-package-step="next" disabled={slide === slides.length} ref={part("next")} {...bindingProps(bind("package.slide", {slide: slide + 1}))}><PackageIcon name="next"/></button>}
       </div>}
       <span className="package-story-now visually-hidden" role="status">{status}</span>
       <h2 className="package-frame-title" title={`${title}. ${info.purpose}`}>{title}</h2>
@@ -107,8 +112,8 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
       <button type="button" className="folder-button" ref={part("return")} {...bindingProps(bind("package.menu", {show: "closed"}))}>{t("main.package.return")}</button>
       <h2>{menu === "chapters" ? t("main.package.chapters") : title}</h2>
       {menu === "chapters" && <>
-        <label>{t("main.package.story.fromSlide")} <select value={slide} ref={part("fromSlide")} onChange={e => byHand("package.slide", {slide: Number(e.target.value)})}>{slides.map((name, index) => <option key={index} value={index + 1}>{index + 1}. {name}</option>)}</select></label>
-        <div className="package-chapters">{slides.map((name, index) => <button type="button" key={index} aria-current={slide === index + 1 ? "step" : undefined} {...bindingProps(bind("package.slide", {slide: index + 1, closeMenu: true}))}>{index + 1}. {name}</button>)}</div>
+        <label>{t("main.package.story.fromSlide")} <select value={slide} ref={part("fromSlide")} onChange={e => byHand("package.slide", {slide: Number(e.target.value)})}>{slides.map((name, index) => <option key={index} value={index + 1}>{index + 1}. {name}{pages[index].asks ? ` (${t("main.package.asks")})` : ""}</option>)}</select></label>
+        <div className="package-chapters">{slides.map((name, index) => <button type="button" key={index} data-asks={pages[index].asks ?? undefined} aria-current={slide === index + 1 ? "step" : undefined} {...bindingProps(bind("package.slide", {slide: index + 1, closeMenu: true}))}>{index + 1}. {name}{pages[index].asks && <span className="package-chapter-asks"> · {t("main.package.asks")}</span>}</button>)}</div>
       </>}
       {menu === "more" && <>
         <p>{info.purpose}</p>

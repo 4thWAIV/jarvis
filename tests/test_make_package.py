@@ -580,6 +580,24 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     assert story.open_questions(record) == [3, 4], "resume picks the when slide, lead-in first, then the vote"
 
 
+def test_the_border_moves_through_every_slide_the_deck_draws(tmp_path):
+    """The border navigates the deck's own slides: each lead-in, each
+    question and the vote is its own page, numbered as the deck numbers
+    them, while the story still tells a lead-in with its question."""
+    deck = mp.deck_of(write(tmp_path, small_deck()))
+    pages = dp.builder().pages(deck)
+    told = dp.builder().story(deck)["slides"]
+    assert [p["opener"] for p in pages] == [f"#go-{n}" for n in range(1, len(pages) + 1)]
+    assert [p["asks"] for p in pages] == [None, None, "where", None, "when",
+                                         "approve-package", None]
+    assert pages[-1]["title"] == "Your answers"
+    assert pages[1]["title"] != pages[2]["title"], "a lead-in is not named as its question"
+    assert len(told) < len(pages), "the story still folds each lead-in into its question"
+    opened = {o for s in told for b in s["beats"] for kind, o in
+              ((k, v) for a in b.get("actions", []) for k, v in a.items()) if kind == "click"}
+    assert opened <= {p["opener"] for p in pages}
+
+
 def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):
     deck = small_deck() | {"language": "es"}
     lead = mp.deck_of(write(tmp_path, deck))["slides"][1]

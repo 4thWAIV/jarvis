@@ -72,7 +72,8 @@ _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg
 
 def describe(package: Package) -> dict:
     """A package as the page shows it; `story` is its story's outline, or
-    None (no story, or one that can no longer be told); `layout` the room
+    None (no story, or one that can no longer be told); `pages` a deck's
+    own slides (package_inbox.deck_pages); `layout` the room
     its page is made for; `vote` the standard vote the package carries,
     with his answer (package_inbox.page_vote), or None."""
     m = package.manifest
@@ -86,6 +87,10 @@ def describe(package: Package) -> dict:
             "sources": list(package.sources),
             **({"communication": m.communication} if m.communication else {}),
             "story": story.outline() if story is not None else None,
+            # A deck's own slides, which the border moves through (a
+            # decision's lead-in and its question each one); None for a
+            # page that is not a deck, whose border moves through its story.
+            "pages": package_inbox.deck_pages(package) if story is not None else None,
             # The standard vote the package carries, shown in the view's head.
             "vote": package_inbox.page_vote(package)}
 

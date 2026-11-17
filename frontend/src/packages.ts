@@ -98,12 +98,43 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
+  /** A deck's own slides in its order and numbering (a decision's lead-in
+   *  and its question each one), which the border moves through; null for
+   *  a page that is not a deck, whose border moves through its story. */
+  pages?: DeckPage[] | null;
   /** The standard vote a page (not a deck) carries, with his answer so far
    *  (package_inbox.page_vote), or null. */
   vote?: PageVote | null;
   /** The room its page is made for: "wide" offers to take over the page.
    *  Missing from an older JARVIS's frame: the centre. */
   layout?: "centre" | "wide";
+}
+
+export interface DeckPage {
+  /** The control that brings the slide up in the deck ("#go-3"). */
+  opener: string;
+  title: string;
+  /** The decision the slide asks, or null. */
+  asks: string | null;
+}
+
+/** What the border moves through: a deck's own slides, else its story's
+ *  slides, each with the opener that brings it up. */
+export function navigation(info: PackageInfo): DeckPage[] {
+  if (info.pages?.length) return info.pages;
+  const story = info.story;
+  if (!story) return [];
+  return story.slides.map((title, i) => ({ opener: story.openers?.[i]?.[0] ?? "", title,
+                                           asks: story.asks?.includes(i + 1) ? title : null }));
+}
+
+/** The story slide that tells navigation slide `page` (1-based): the one
+ *  whose openers hold its opener, else the same number. */
+export function storySlideOf(info: PackageInfo, page: number): number {
+  if (!info.pages?.length) return page;
+  const opener = info.pages[page - 1]?.opener;
+  const found = (info.story?.openers ?? []).findIndex((list) => opener !== undefined && list.includes(opener)) + 1;
+  return found || 1;
 }
 
 export interface StoryOutline {

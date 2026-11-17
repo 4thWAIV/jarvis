@@ -2,6 +2,15 @@
 
 Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Every slide of a deck is in its navigation
+
+A deck's Chapters, Previous and Next now go through every slide the deck
+draws, numbered as the deck numbers them: each decision's explanation and
+its question are separate entries, each question marked, and the Approve or
+Reject slide is reachable too. Before, a decision's explanation and its
+question shared one chapter that opened on the explanation, and Next went
+straight past every question slide.
+
 ## You can reject any package
 
 Every package now ends with Approve and Reject on the package itself, even

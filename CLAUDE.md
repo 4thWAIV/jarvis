@@ -1164,11 +1164,15 @@ width or 640th of the height, the smaller; every word 13 to 25 px), never
 a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
 draws no strip, Previous, Next or status of its own; it says each slide
 it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
-border counts itself on the story slide whose `openers` (the story
-outline's, `package_story._openers`: what its beats click) hold it; the
-border's Previous, Next and Chapters, while no story is told, post
+border moves through the deck's own slides (`describe`'s `pages`,
+`package_inbox.deck_pages` over the shared deck's `pages`: every lead-in,
+question and the vote its own, numbered as the deck numbers them, a
+question marked in Chapters; `packages.ts` `navigation`, the story's
+slides for a page that is no deck) and counts itself on the one it shows;
+its Previous, Next and Chapters, while no story is told, post
 `slide.open` {opener} for the story helper to click, only to a page that
-has reported a slide. The tally is on each question's slide and the
+has reported a slide, and Tell starts at the story slide holding it
+(`storySlideOf`). The tally is on each question's slide and the
 answers slide; a save is said in the view's status line; a refused answer
 (Reject without his words) on its own slide. Opened outside JARVIS the
 deck keeps its own bars. The presentation uses the whole display: a page package takes over
