@@ -2,6 +2,15 @@
 
 Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## You can reject any package
+
+Every package now ends with Approve and Reject on the package itself, even
+when it asks its own questions, and those two buttons sit in the bar above
+the package for a deck as well as a page. You can turn down a package
+because it is not good enough, with your words on what to change, without
+answering its questions first. Architecture packages that ask you to
+approve the design keep that question in the vote's place.
+
 ## JARVIS sums up a whole message, however long
 
 Asking JARVIS to read you a message used to give him only the first nine
