@@ -633,12 +633,12 @@ def test_a_decision_package_unpacks_here_only_signed_as_checked_by_an_onboarded_
              "scripts/decide.py": "print()"}
     archive = write_zip(folder, make_zip(files, PAGE), "deck.zip")
     r = wired.client.post("/api/packages/local", json={"path": str(archive)}, headers=_token())
-    assert r.status_code == 409 and "has not passed its check" in r.json()["error"]
+    assert r.status_code == 409 and "has not been proven" in r.json()["error"]
     signed = folder / "signed.zip"
     stranger = agent_keys.make_pair(tmp_path / "stranger", "x")
     package_signature.sign(archive, signed, *stranger, "sess-x", (package_signature.DECISION_CHECKED,))
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
-    assert r.status_code == 409 and "has not passed its check" in r.json()["error"], \
+    assert r.status_code == 409 and "has not been proven" in r.json()["error"], \
         "a key JARVIS never onboarded vouches for nothing"
     agent = onboarded_auth(session="sess-deck").agent
     package_signature.sign(archive, signed, agent.private, agent.public, "sess-deck")

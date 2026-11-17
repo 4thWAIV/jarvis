@@ -2,17 +2,19 @@
 
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
-                                  [--check-only] [--example [decisions|presentation]]
+                                  [--check-only] [--fill-assets] [--example [decisions|presentation]]
                                   [--document ID --revision REV]
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
-- CONTENT.json is a deck, drawn by the shared deck
-  (examples/packages/decision-deck/). With `decisions` it is a decision
-  package; with only `slides` it is a presentation (an update). Both end
-  with the standard vote (package_inbox.vote: Approve / Reject with his
-  words, in the deck's language or the one in force). Got it is retired: a
-  source that declares it (`understood`), or the vote itself, is refused. Everything that can be worked out is (decision_package.expand).
+- PRESENTATION.yaml (presentation/1) is a deck: the author writes words,
+  structure, pictures by path, narration and decisions, and names one of
+  JARVIS's layouts for each slide (layout_spec); JARVIS lays it out in its
+  own theme and bundled font and proves, without a browser, that every
+  word and picture fits at every frame (presentation_proof). With
+  `decisions` it is a decision package, else a presentation; both end with
+  the standard vote (package_inbox.vote: Approve / Reject with his words).
+  content.json decks are no longer made (JSON_DECK_RETIRED).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
   worked out from the files there. Every page gets the same vote as its
@@ -28,11 +30,9 @@ docs/making-a-package.md is the whole of how to use it. In short:
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
-The command checks the author's result, builds and zips it, checks every
-HTML package view in an isolated JARVIS (decision_check.py), and returns
-the actual screenshots and built bytes to the same author for visual
-inspection. One repair and re-render is allowed. Only after both checks
-accept the unchanged result does it sign and send it to the live JARVIS as a message carrying it (POST /api/messages,
+The command builds the author's unchanged result (a deck is proven as it
+compiles; no browser runs anywhere in a package's path, and his JARVIS
+makes the proof again as it arrives), then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
 messages_api.py): on the Work item `--work` names (else his Inbox), saying
 `--says`, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
@@ -66,22 +66,48 @@ MANIFEST_FIELDS = ("name", "version", "purpose", "runs", "skill", "brief", "entr
 STORY_HELPER = "/api/packages/story.js"
 FIRST_VERSION = "1.0.0"
 
+def _words(ident: str, *paragraphs: str, slot: str = "words") -> dict:
+    """A text object of plain paragraphs, for the examples."""
+    return {"id": ident, "type": "text", "slot": slot, "source": {"reference": "lunch-plan"},
+            "paragraphs": [{"id": f"{ident}-{n}", "role": "paragraph",
+                            "runs": [{"id": f"{ident}-{n}-words", "text": text, "emphasis": "normal"}]}
+                           for n, text in enumerate(paragraphs, 1)]}
+
+
+# The examples --example prints: presentation/1, named layouts, no pictures
+# (add them as `assets`, then run --fill-assets).
 PRESENTATION_EXAMPLE = {
-    "title": "Team lunch moved",
+    "version": "presentation/1", "id": "team-lunch", "title": "Team lunch moved",
     "purpose": "Tell the team where Friday's lunch is now.",
     "conclusion": "Friday's lunch is now in the office, at noon.",
+    "language": "en", "requires": ["presentation-core/1"], "assets": [],
+    "references": [{"id": "lunch-plan", "kind": "authored-example", "locator": "The lunch plan",
+                    "revision": "1", "description": "Where and when Friday's lunch is."}],
     "slides": [
-        {"title": "Friday's lunch has moved",
-         "blocks": [{"lead": "Friday's lunch is now in the office, at noon."},
-                    {"p": "Nobody has to book a table, and nothing is asked of you."}],
-         "say": "This tells you where Friday's lunch is now. It is in the office, at noon, "
-                "so nobody has to book a table."},
-        {"title": "What changed",
-         "blocks": [{"points": ["Food is brought in.", "Nobody has to book a table."]}]},
-        {"title": "What you need to do",
-         "blocks": [{"p": "Nothing: it is in everyone's calendar."}]},
+        {"id": "opening", "type": "content", "title": "Friday's lunch has moved", "layout": "opening",
+         "objects": [_words("opening-words", "Friday's lunch is now in the office, at noon.",
+                            "This tells the team where Friday's lunch is now: nobody has to book a table.")],
+         "readingOrder": ["opening-words"],
+         "narration": [{"id": "opening-cue", "focus": ["opening-words"],
+                        "say": "This tells you where Friday's lunch is now. It is in the office, at noon."}],
+         "notes": ""},
+        {"id": "what-changed", "type": "content", "title": "What changed", "layout": "title-and-body",
+         "objects": [_words("changes", "Food is brought in.", "Nobody has to book a table.", slot="body")],
+         "readingOrder": ["changes"],
+         "narration": [{"id": "changes-cue", "focus": ["changes"], "say": "Food is brought in."}],
+         "notes": ""},
     ],
+    "decisions": [],
 }
+EXAMPLE = {**PRESENTATION_EXAMPLE, "id": "team-lunch-choice", "title": "Team lunch",
+           "slides": [*PRESENTATION_EXAMPLE["slides"], {"id": "where", "type": "decision", "decision": "where-to-eat"}],
+           "decisions": [{"id": "where-to-eat", "question": "Where do we eat on Friday?",
+                          "why_you": "It is your team's day and your budget.",
+                          "evidence": ["The restaurant needs a booking by Wednesday."],
+                          "options": [{"id": "office", "name": "In the office", "says": "Food is brought in."},
+                                      {"id": "restaurant", "name": "A restaurant", "says": "A short walk away."}],
+                          "recommended": "office", "reason": "Nobody has to book a table.",
+                          "text_only": "Both places are familiar to everyone, so a picture adds nothing."}]}
 
 # What a checked architecture document's package is called (make_package --document).
 ARCHITECTURE_KIND = "architecture package"
@@ -139,6 +165,8 @@ def prepare_deck(raw: dict, source_dir: Path) -> dict:
     # author wrote them, the opening that shows them and each decision's
     # lead-in. The standard vote is JARVIS's own and needs none.
     problems = dp.problems_of(deck, source_dir) + dp.briefing_problems(raw, deck)
+    if not problems:
+        problems += dp.story_problems(deck)
     if not problems:
         from jarvis.package_understanding import validate_deck_inputs
         try:
@@ -559,29 +587,48 @@ def check_vote(source: Path, work: str) -> None:
         raise dp.Refused([package_inbox.no_vote(work, runs)])
 
 
-# -- checking ------------------------------------------------------------------------
+# -- a presentation's pictures --------------------------------------------------------
 
-def _check(made: Made, out: Path, signer: tuple[Path, str], session: str):
-    """Inspect every rendered package kind in the existing isolated JARVIS."""
-    from jarvis import decision_check
-    print("Checking it in an isolated JARVIS…", flush=True)
-    result = decision_check.check(made.archive, made.deck, out / "check", signer, session)
-    if not result.ok:
-        if result.passed:
-            print("These checks passed:")
-            for line in result.passed:
-                print(f"  ok: {line}")
-        print("Not delivered. These checks failed:")
-        for line in result.failures:
-            print(f"  - {line}")
-        print("Screenshots:")
-        for shot in result.screenshots:
-            print(f"  {shot}")
-        return result
-    print(f"Every check passed ({len(result.passed)}). Screenshots are in {out / 'check'}.")
-    for line in result.passed:
-        print(f"  ok: {line}")
-    return result
+def fill_assets(source: Path) -> list[str]:
+    """Write each asset's SHA-256, kind and size into presentation.yaml from
+    its file, proven (picture_proof); the lines it changed. The file is
+    written back as YAML, so comments in it are not kept."""
+    import hashlib
+    import yaml
+    from jarvis import picture_proof
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    changed, problems = [], []
+    for asset in (data or {}).get("assets") or []:
+        path = source.parent / str(asset.get("path", ""))
+        try:
+            picture = picture_proof.prove(path)
+        except picture_proof.PictureProblem as error:
+            problems.append(f"Asset {asset.get('id')} ({asset.get('path')}): {error}.")
+            continue
+        found = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "mime": picture.mime,
+                 "width": picture.width, "height": picture.height}
+        if any(asset.get(k) != v for k, v in found.items()):
+            asset.update(found)
+            changed.append(f"{asset.get('id')}: {picture.width:g} x {picture.height:g} {picture.mime}")
+    if problems:
+        raise dp.Refused(problems)
+    if changed:
+        source.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100),
+                          encoding="utf-8")
+    return changed
+
+
+# -- what is refused -----------------------------------------------------------------
+
+JSON_DECK_RETIRED = ("A deck is written as presentation.yaml (presentation/1): JARVIS lays it out "
+                     "and proves it fits. content.json decks are no longer made; "
+                     "python -m jarvis.make_package --example presentation prints one to start from.")
+
+
+def refuse_json_deck(source: Path) -> None:
+    """content.json is no deck source any more (presentation.yaml is the one)."""
+    if source.is_file() and not is_presentation(source):
+        raise dp.Refused([JSON_DECK_RETIRED])
 
 
 # -- the command -----------------------------------------------------------------------
@@ -600,6 +647,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="print a minimal deck to start from, and stop")
     parser.add_argument("--check-only", action="store_true",
                         help="check the content and stop: nothing is built or delivered")
+    parser.add_argument("--fill-assets", action="store_true",
+                        help="write each asset's SHA-256, kind and size into presentation.yaml, and stop")
     parser.add_argument("--project", default=Path.cwd().name,
                         help="the project asking (default: this folder's name)")
     parser.add_argument("--session", default="",
@@ -634,18 +683,25 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         parser.error("a package is for one work item (--work) or for none (--general), not both")
 
     if args.example:
-        print(json.dumps(dp.EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
-                         indent=2))
+        import yaml
+        print(yaml.safe_dump(EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
+                             sort_keys=False, allow_unicode=True, width=100), end="")
         return 0
-    if args.source is None and (args.check_only or args.handoff is None):
-        parser.error("give source for --check-only, or --handoff for creation")
+    if args.source is None and (args.check_only or args.fill_assets or args.handoff is None):
+        parser.error("give source for --check-only or --fill-assets, or --handoff for creation")
     source = args.source.resolve() if args.source else None
     if source is not None and not source.exists():
         print(f"There is nothing at {source}.")
         return 1
-    review_started = False
+    built = False
     signer = None
     try:
+        if args.fill_assets:
+            if not is_presentation(source):
+                raise dp.Refused(["--fill-assets fills a presentation.yaml's assets."])
+            changed = fill_assets(source)
+            print("Filled: " + "; ".join(changed) if changed else "Every asset was already right.")
+            return 0
         if args.check_only and args.document:
             # The author's own check of its explanation; the factory projects
             # and checks the revision around it once the author is done.
@@ -664,21 +720,19 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                     with tempfile.TemporaryDirectory(prefix="presentation-check-") as temporary:
                         compiled = compile_deck(source, Path(temporary))
                         deck = dp.read(compiled.package_source / "deck-data.js")
-                    print(f"The presentation source is right: {deck['name']}, with measured layout and existing story checks.")
+                    kind = deck_kind(deck)
+                    asks = ("ending with the standard vote (Approve / Reject)" if kind == "presentation"
+                            else f"{len(deck.get('decisions') or [])} decision(s)")
+                    print(f"The content is right: a {kind}, {asks}, package {deck['name']}-"
+                          f"{deck['version']}; its references, pictures, story and layout proven.")
                 except DeckCompileError as error:
                     raise dp.Refused([str(error)]) from None
-            elif source.is_dir():
+            elif not source.is_dir():
+                refuse_json_deck(source)
+            else:
                 manifest = manifest_of(source)
                 print(f"The folder is right: a {manifest['runs']} package, "
                       f"{manifest['name']}-{manifest['version']}.")
-            else:
-                deck = deck_of(source)
-                kind = deck_kind(deck)
-                asks = ("ending with the standard vote (Approve / Reject)"
-                        if kind == "presentation"
-                        else f"{len(deck.get('decisions') or [])} decision(s)")
-                print(f"The content is right: a {kind}, {asks}, "
-                      f"package {deck['name']}-{deck['version']}.")
             # What a fresh author's own last check shows (author_proof.MARK).
             print(author_proof.MARK + author_proof.source_digest(source))
             return 0
@@ -701,74 +755,47 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                                                document_evidence(envelope, out))
         from jarvis import agent_keys
         signer = agent_keys.signer_for(args.session)
-        made = author = review = None
+        made = author = None
 
         async def finish(authored_source, turn):
+            """Build the author's unchanged source once: a deck is laid out
+            and proven by JARVIS (presentation_proof) as it compiles, with no
+            browser and no screenshot review; anything refused is said."""
             import asyncio
-            nonlocal made, author, review, review_started
-            for attempt in range(2):
-                attempt_out = out / f"review-{attempt + 1}"
-                try:
-                    if envelope is not None:
-                        # The package states the handoff's purpose: the originating
-                        # session's, never the author's (it is bound in canonical.json).
-                        handed = package_author.read_handoff(args.handoff)
-                        made = make_architecture(envelope, authored_source, out, handed["purpose"],
-                                                 handed.get("approval") is True)
-                    else:
-                        check_vote(authored_source, args.work)
-                        # YAML compilation owns fresh staging for each visual repair;
-                        # it never overwrites an already checked generated package.
-                        if is_presentation(authored_source):
-                            made = await asyncio.to_thread(make_presentation, authored_source, attempt_out)
-                        else:
-                            made = (make_folder(authored_source, out) if authored_source.is_dir()
-                                    else make_deck(authored_source, out))
-                    author = with_author(made, authored_source, args.session)
-                    print(f"Built a {made.kind}: {made.archive}")
-                    if signer is None:
-                        raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
-                    review_started = True
-                    result = await asyncio.to_thread(_check, made, attempt_out, signer, args.session)
-                    review = await package_author.review(authored_source, made.archive, result,
-                                                         turn, authored_source.parent / attempt_out.name)
-                    status = review["review"]["status"]
-                    if status in ("accepted", "not-applicable"):
-                        return review
-                    why = review["review"].get("notes") or "Author did not accept the visual inspection."
-                    if status == "blocked" or attempt == 1:
-                        raise dp.Refused([str(why)])
-                    # The repair turn has already changed source and run check-only.
-                    continue
-                except dp.Refused as error:
-                    if signer is None or attempt == 1 or (review and review["review"]["status"] == "blocked"):
-                        raise
-                    await turn("The rendered package cannot be delivered: "
-                               + "\n".join(error.problems)
-                               + "\nRepair your source/assets within this same assignment, then run "
-                               "the supplied check-only command after your final change. This is "
-                               "the one repair attempt. The factory will build and render again.")
-            raise dp.Refused(["Visual review did not accept a rendered package after repair."])
+            nonlocal made, author, built
+            if envelope is None:
+                check_vote(authored_source, args.work)
+                refuse_json_deck(authored_source)
+            built = True        # the author's source is taken: a refusal now is reported on --work
+            if envelope is not None:
+                # The package states the handoff's purpose: the originating
+                # session's, never the author's (it is bound in canonical.json).
+                handed = package_author.read_handoff(args.handoff)
+                made = make_architecture(envelope, authored_source, out, handed["purpose"],
+                                         handed.get("approval") is True)
+            else:
+                made = (await asyncio.to_thread(make_presentation, authored_source, out)
+                        if is_presentation(authored_source) else make_folder(authored_source, out))
+            author = with_author(made, authored_source, args.session)
+            print(f"Built a {made.kind}: {made.archive}")
+            if signer is None:
+                raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
+            return {"status": "built", "archive_sha256": author_proof._sha(made.archive)}
 
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
                                         document=document, finish=finish)
-        if made is None or review is None:
-            raise dp.Refused(["The same fresh author did not finish the rendered visual review."])
-        if author_proof._sha(made.archive) != review["archive_sha256"] or \
-                author_proof.source_digest(source) != review["source_sha256"]:
-            raise dp.Refused(["Built bytes changed after visual acceptance; render and review again."])
-        # The existing signature covers both the exact built/template bytes and
-        # the author's receipt identifying their pre-signing archive digest.
-        package_signature.add_files(made.archive, {".jarvis/visual-review.json":
-                                    (json.dumps(review, indent=2) + "\n").encode()})
+        if made is None or author is None:
+            raise dp.Refused(["The fresh author's source was not built."])
+        if author_proof.source_digest(source) != author.source:
+            raise dp.Refused(["The source changed after it was built; build it again."])
     except dp.Refused as e:
-        print("Not delivered. These need changing:" if review_started else "Not built. These need changing:")
+        print("Not delivered. These need changing:" if built else "Not built. These need changing:")
         for line in e.problems:
             print(f"  - {line}")
-        if review_started and args.work and signer:
+        if built and args.work and signer:
             from jarvis import message
-            text = "Package not delivered after visual review: " + "; ".join(e.problems)
+            text = "Package not delivered: " + "; ".join(e.problems)
             try:
                 dp.post(args.deliver_to.rstrip("/") + message.ROUTE + "?"
                         + urllib.parse.urlencode({"work": args.work}), "",
@@ -777,15 +804,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 print(f"The failure could not be reported on Work {args.work}: {report_error}")
         return 1
     try:
-        decision = made.deck is not None and bool(made.deck.get("decisions"))
         # Signed with the session's own key (package_signature.py): who sent
-        # it, and, for a deck, that the files checked are these. An agent
+        # it and that these are its files. A deck carries its own layout
+        # proof, which his JARVIS makes again as it arrives. An agent
         # package for a Work item carries a key for that item alone.
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
-        sign(made.archive, signer, args.session,
-             (package_signature.DECISION_CHECKED,) if decision else (), grant,
-             author.as_dict())
+        sign(made.archive, signer, args.session, (), grant, author.as_dict())
         delivered = dp.deliver(made.archive, args.deliver_to,
                                args.says.strip() or dp.says_of(made.title, made.kind),
                                project=args.project, workflow=args.workflow, work=args.work,

@@ -26,6 +26,17 @@ def _files(archive: zipfile.ZipFile) -> dict:
     return {path[len(root):]: m for path, m in listing.files().items() if path.startswith(root)}
 
 
+# What a deck JARVIS laid out carries: its source and the static proof that
+# it fits (presentation_proof), which the receiving JARVIS makes again.
+PROVEN = ("source.yaml", ".jarvis/layout-proof.json", "target-index.json")
+
+
+def carries_proof(zip_path: Path) -> bool:
+    with bundle_archive.open_archive(zip_path) as archive:
+        files = _files(archive)
+    return all(name in files for name in PROVEN)
+
+
 def is_decision_package(zip_path: Path) -> bool:
     with bundle_archive.open_archive(zip_path) as archive:
         files = _files(archive)

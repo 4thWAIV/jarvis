@@ -1176,8 +1176,14 @@ EXEMPT = {
         'it projects the authored presentation into shared deck data, including chart labels and values; that content stays package content, never a trusted session or run header'),
     'presentation._targets': (
         'it builds accessible names and provenance entries for authored slide objects, including chart labels and units; these are JSON package data and DOM text, never trusted brain headers'),
-    'presentation_check.check_layout': (
-        'it checks an isolated generated page and records source member ids and browser geometry in measurements.json; no session record is read and no result becomes a trusted brain header'),
+    'layout_spec.generated_css': (
+        'it writes JARVIS\'s own layout spec numbers and named layout ids into presentation.css; no session record or brain header is involved'),
+    'make_package.fill_assets': (
+        'it writes the author\'s own asset ids, sizes and hashes back into the author\'s presentation.yaml and prints them to the author command; never a trusted session header'),
+    'presentation_proof.prove_slides': (
+        'it measures authored slide words against the bundled font and returns compiler failures naming source member ids; package content, never a trusted brain header'),
+    'presentation_proof.prove_targets': (
+        'it compares the generated story\'s selectors with the compiler\'s target index and returns failures naming slide titles; package content, never a trusted brain header'),
     'presentation_source._semantics': (
         'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
     'presentation_source.identities': (

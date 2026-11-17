@@ -1,8 +1,9 @@
 """The one command that sends Tim a decision package
 (jarvis/decision_package.py): what it refuses in the content, that it builds
-with the shared deck's own builder, and that it delivers only after every
-check passed. The check in a real, isolated JARVIS is
-tests/test_voice_page_decision_package.py; here it is a stand-in."""
+with the shared deck's own builder, and that it delivers only a deck
+JARVIS laid out and proved (presentation_proof), signed with the session's
+own key. Decks are written as presentation.yaml (tests/deck_fixtures); the
+shared deck's data form is what these content rules read."""
 from __future__ import annotations
 
 import base64
@@ -13,12 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import decision_check, decision_package as dp
+from jarvis import decision_package as dp, decision_stamp
+from tests import picture_fixtures
 
 pytestmark = pytest.mark.usefixtures("authored_package_source")
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "packages" / "decision-deck"
-PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+PNG = picture_fixtures.png()
 SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
        '<rect width="320" height="200" fill="#38bdf8"/></svg>\n')
 
@@ -113,8 +115,10 @@ def test_pictures_must_be_images_beside_the_content(tmp_path):
     deck["slides"][0]["blocks"][1]["picture"] = "pictures/notes.png"
     (tmp_path / "pictures").mkdir(exist_ok=True)
     (tmp_path / "pictures" / "notes.png").write_text("not an image")
-    assert any("is not a PNG, JPEG" in p for p in problems(tmp_path, deck))
+    assert any("is not a PNG, GIF, JPEG" in p for p in problems(tmp_path, deck))
     (tmp_path / "pictures" / "notes.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 20)
+    assert any("fails its CRC" in p for p in problems(tmp_path, deck))
+    (tmp_path / "pictures" / "notes.png").write_bytes(PNG)
     assert problems(tmp_path, deck) == []
 
 
@@ -132,8 +136,8 @@ def test_an_svg_with_no_size_of_its_own_is_refused_on_a_slide_and_an_option(
     content = write(tmp_path, deck)
     (tmp_path / "pictures" / "plate.svg").write_text(root + '<rect width="10" height="10"/></svg>')
     found = dp.problems_of(deck, content.parent)
-    assert any("Picture pictures/plate.svg" in p and said in p and "width and height in pixels"
-               in p for p in found), found
+    assert any("Picture pictures/plate.svg" in p and "width and height in pixels"
+               in p for p in found), (said, found)
     (tmp_path / "pictures" / "plate.svg").write_text(
         "<?xml version='1.0'?>\n<svg xmlns='http://www.w3.org/2000/svg' width='320px' "
         "height=\"200\" viewBox='0 0 320 200'><rect width='10' height='10'/></svg>")
@@ -161,29 +165,28 @@ class _Delivery:
                 "arrived": True, "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
 
 
-def test_refused_content_is_not_built_checked_or_delivered(tmp_path, monkeypatch, capsys):
+def test_refused_content_is_not_built_or_delivered(tmp_path, monkeypatch, capsys):
+    from tests.deck_fixtures import write_yaml
     deck = small_deck()
     deck["decisions"][0]["recommended"] = "elsewhere"
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
-    assert dp.main([str(write(tmp_path / "in", deck)), "--out", str(tmp_path / "out")]) == 1
-    assert "Not built" in capsys.readouterr().out
+    assert dp.main([str(write_yaml(tmp_path / "in", deck)), "--out", str(tmp_path / "out")]) == 1
+    assert "does not belong to this decision" in capsys.readouterr().out
     assert delivery.calls == [] and not list((tmp_path / "out").glob("*.zip"))
 
 
-def test_a_failed_check_delivers_nothing(tmp_path, monkeypatch, capsys):
+def test_a_deck_that_does_not_fit_delivers_nothing(tmp_path, monkeypatch, capsys):
+    from tests.deck_fixtures import write_yaml
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    (tmp_path / "shot.png").write_bytes(b"rendered failed view")
-    failed = decision_check.Result(passed=["one"], failures=["809x589 slide 2: too tall"],
-                                   screenshots=[tmp_path / "shot.png"])
-    monkeypatch.setattr(decision_check, "check", lambda *a: failed)
+    deck = small_deck()
+    deck["slides"][0]["blocks"].insert(1, {"p": "Unbreakable" * 10})
     _key()
-    assert dp.main([str(write(tmp_path / "in", small_deck())),
+    assert dp.main([str(write_yaml(tmp_path / "in", deck)),
                     "--out", str(tmp_path / "out"), "--session", "abc"]) == 1
     said = capsys.readouterr().out
-    assert "Not delivered" in said and "too tall" in said and "shot.png" in said
+    assert "Not delivered" in said and "wider than" in said
     assert delivery.calls == []
 
 
@@ -194,23 +197,22 @@ def _key(session="abc"):
 
 
 def test_nothing_is_delivered_without_the_session_s_own_key(tmp_path, monkeypatch, capsys):
+    from tests.deck_fixtures import write_yaml
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
-    assert dp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert dp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
                     "--session", "nokey"]) == 1
     assert "no key to sign it with" in capsys.readouterr().out and delivery.calls == []
 
 
-def test_a_passed_check_delivers_once_signed_with_the_session_s_key(tmp_path, monkeypatch,
-                                                                   capsys):
+def test_a_proven_deck_delivers_once_signed_with_the_session_s_key(tmp_path, monkeypatch,
+                                                                  capsys):
     from jarvis import package_signature
+    from tests.deck_fixtures import write_yaml
     private, public = _key()
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check",
-                        lambda *a: decision_check.Result(passed=["everything"]))
-    assert dp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert dp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, signer, body)] = delivery.calls
@@ -220,19 +222,17 @@ def test_a_passed_check_delivers_once_signed_with_the_session_s_key(tmp_path, mo
     archive = tmp_path / "out" / "lunch-decisions-1.0.0.zip"
     assert base64.b64decode(body["package"]) == archive.read_bytes()
     assert body["says"] == "Decision package: Team lunch"
+    assert decision_stamp.carries_proof(archive), "its source and layout proof go with it"
     signed = package_signature.read(archive)
     assert signed.session == "abc" and signed.checks(public)
-    assert package_signature.DECISION_CHECKED in signed.statements
+    package = json.loads(zipfile.ZipFile(archive).read("package.json"))
+    assert package["name"] == "lunch-decisions" and package["runs"] == "page"
+    story = json.loads(zipfile.ZipFile(archive).read("story.json"))
+    assert [s["title"] for s in story["slides"]][-1] == "Your answers"
     said = capsys.readouterr().out
     assert "lunch-decisions-1.0.0-local1" in said and "pkg-0123456789ab" in said
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
     assert record["project"] == "lunch" and record["session"] == "abc"
-
-
-def test_a_check_result_needs_a_pass_and_no_failure():
-    assert not decision_check.Result().ok
-    assert decision_check.Result(passed=["a"]).ok
-    assert not decision_check.Result(passed=["a"], failures=["b"]).ok
 
 
 def test_the_deck_given_is_not_changed(tmp_path):
@@ -318,36 +318,11 @@ def test_a_short_form_without_a_recommendation_is_refused(tmp_path):
 
 
 def test_check_only_validates_and_stops(tmp_path, monkeypatch, capsys):
+    from tests.deck_fixtures import write_yaml
     monkeypatch.setattr(dp, "post", lambda *a, **k: pytest.fail("delivered"))
-    monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
-    assert dp.main([str(write(tmp_path, brief())), "--check-only"]) == 0
-    assert "3 decision(s), package team-lunch-1.0.0" in capsys.readouterr().out
-
-
-def test_the_printed_example_is_itself_a_valid_deck(tmp_path, capsys):
-    assert dp.main(["--example"]) == 0
-    content = tmp_path / "content.json"
-    content.write_text(capsys.readouterr().out)
-    for pic in dp.builder().pictures_of(json.loads(content.read_text())):
-        (tmp_path / pic).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / pic).write_bytes(PNG)
-    assert dp.main([str(content), "--check-only"]) == 0
-
-
-def test_a_short_form_builds_and_delivers_end_to_end(tmp_path, monkeypatch, capsys):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    monkeypatch.setattr(decision_check, "check", lambda archive, deck, out, signer, session:
-                        decision_check.Result(passed=[deck["name"]]))
-    _key()
-    assert dp.main([str(write(tmp_path / "in", brief())), "--out", str(tmp_path / "out"),
-                    "--session", "abc", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    archive = tmp_path / "out" / "team-lunch-1.0.0.zip"
-    package = json.loads(zipfile.ZipFile(archive).read("package.json"))
-    assert package["name"] == "team-lunch" and package["runs"] == "page"
-    story = json.loads(zipfile.ZipFile(archive).read("story.json"))
-    assert [s["title"] for s in story["slides"]][-1] == "Your answers"
-    assert len(delivery.calls) == 1
+    assert dp.main([str(write_yaml(tmp_path, small_deck())), "--check-only"]) == 0
+    assert "3 decision(s), package lunch-decisions-1.0.0" in capsys.readouterr().out
+    assert not list(tmp_path.glob("*.zip"))
 
 
 def test_every_option_is_pictured_unless_the_decision_says_why_not(tmp_path):
@@ -389,17 +364,3 @@ def test_a_signature_covers_every_file_and_names_what_it_vouches_for(tmp_path):
     with zipfile.ZipFile(plain, "w") as z:
         z.writestr("package.json", "{}")
     assert not decision_stamp.is_decision_package(plain), "only decision packages"
-
-
-def test_installed_checker_uses_shipped_page_without_node(tmp_path, monkeypatch):
-    from jarvis import data_paths
-    shipped = tmp_path / "web"
-    shipped.mkdir()
-    (shipped / "index.html").write_text("<!doctype html><title>JARVIS</title>")
-    monkeypatch.setattr(data_paths, "CHECKOUT", False)
-    monkeypatch.setattr(data_paths, "FRONTEND_DIST", shipped)
-    monkeypatch.setattr(decision_check.subprocess, "run", lambda *a, **kw: pytest.fail("installed checker rebuilt source"))
-    assert decision_check.built_page() == shipped
-    (shipped / "index.html").unlink()
-    with pytest.raises(decision_check.CheckFailed, match="missing from this distribution"):
-        decision_check.built_page()

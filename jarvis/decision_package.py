@@ -58,6 +58,12 @@ CAPS = {
     "evidence": 160,      # one line of a decision's evidence
 }
 
+# How long the story told over a deck may run, estimated from its words at
+# an unhurried speaking pace: a longer one is a deck to split, not to sit
+# through.
+SPOKEN_WORDS_PER_SEC = 2.5
+SPOKEN_MAX_SEC = 15 * 60
+
 # A decision whose options are not pictured says why in at least this many
 # words ("text_only"); it should be rare.
 TEXT_ONLY_WORDS = 5
@@ -82,18 +88,6 @@ LEAD_IN_WORDS = {
     "es": {"title": "Antes de decidir: {short}", "why": "Por qué le toca a usted:",
            "evidence": "En qué se apoya:"},
 }
-
-IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
-
-# An SVG says its own size: its root <svg> has width and height, each a
-# positive number of pixels ("320" or "320px"). One without them (a viewBox
-# alone, or a percentage) has no size of its own in an <img> and can draw as
-# nothing, so a slide showing it is blank (docs/making-a-package.md).
-SVG_HEAD_BYTES = 64 * 1024
-_SVG_ROOT = re.compile(rb"<svg\b([^>]*)>", re.IGNORECASE)
-_SVG_ATTR = re.compile(rb"""([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-_SVG_PIXELS = re.compile(r"(\d+(?:\.\d+)?|\.\d+)(?:px)?")
-
 
 class Refused(Exception):
     """The content cannot become a decision package; `problems` says why."""
@@ -151,37 +145,56 @@ def _block_texts(block: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _is_image(path: Path) -> bool:
-    head = path.read_bytes()[:1024]
-    if head.startswith(IMAGE_MAGIC) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
-        return True
-    return _is_svg(path, head)
+def placed_pictures(deck: dict):
+    """Every picture the deck names, with the place the shared deck draws it
+    in (layout_spec.picture_box): (path, role, how many side by side)."""
+    def src(pic):
+        return pic if isinstance(pic, str) else (pic or {}).get("src", "")
+
+    for s in deck.get("slides") or []:
+        for b in (s.get("blocks") or []) if isinstance(s, dict) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("picture"):
+                yield src(b["picture"]), "content", 1
+            many = b.get("pictures") or []
+            for pic in many:
+                yield src(pic), "content", len(many)
+    for d in deck.get("decisions") or []:
+        if not isinstance(d, dict):
+            continue
+        if d.get("picture"):
+            yield src(d["picture"]), "context", 1
+        if d.get("compare"):
+            yield src(d["compare"]), "compare", 1
+        options = [o for o in d.get("options") or [] if isinstance(o, dict)]
+        for o in options:
+            if o.get("picture"):
+                yield src(o["picture"]), "option", len(options)
 
 
-def _is_svg(path: Path, head: bytes) -> bool:
-    return path.suffix.lower() == ".svg" and b"<svg" in head
-
-
-def svg_size_problem(path: Path) -> str:
-    """Why an SVG has no size of its own ("" when its root <svg> gives width
-    and height in pixels, or it is no SVG), by the rule above SVG_HEAD_BYTES."""
-    with open(path, "rb") as f:
-        head = f.read(SVG_HEAD_BYTES)
-    if not _is_svg(path, head[:1024]):
-        return ""
-    root = _SVG_ROOT.search(head)
-    attrs = {m.group(1).lower(): (m.group(2) if m.group(2) is not None else m.group(3))
-             for m in _SVG_ATTR.finditer(root.group(1))} if root else {}
-    bad = []
-    for name in (b"width", b"height"):
-        value = (attrs.get(name) or b"").decode("utf-8", "replace")
-        size = _SVG_PIXELS.fullmatch(value.strip())
-        if not size or float(size.group(1)) <= 0:
-            bad.append(f"{name.decode()}={value!r}" if value else f"no {name.decode()}")
-    if not bad:
-        return ""
-    return (f"its <svg> has {' and '.join(bad)}: give the root <svg> width and height in "
-            f"pixels (for example width=\"320\" height=\"220\"), or it can draw as nothing")
+def picture_problems(deck: dict, folder: Path) -> list[str]:
+    """Each picture proven real (picture_proof) and readable where the deck
+    draws it, without a browser."""
+    from jarvis import layout_spec, picture_proof
+    problems, proven = [], {}
+    for pic, role, count in placed_pictures(deck):
+        p = Path(pic)
+        if not pic or p.is_absolute() or ".." in p.parts:
+            problems.append(f"Picture {pic!r} must be a path beside the content file.")
+            continue
+        if pic not in proven:
+            try:
+                proven[pic] = picture_proof.prove(folder / p)
+            except picture_proof.PictureProblem as error:
+                proven[pic] = None
+                problems.append(f"Picture {pic}: {error}." if (folder / p).exists()
+                                else f"Picture {pic} is not at {folder / p}.")
+        if proven[pic] is not None:
+            drawn = picture_proof.drawn_problem(proven[pic], layout_spec.picture_box(role, count))
+            if drawn:
+                problems.append(f"Picture {pic}: {drawn}.")
+    return list(dict.fromkeys(problems))
 
 
 def problems_of(deck: dict, folder: Path) -> list[str]:
@@ -296,17 +309,29 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
                             f"{CAPS['slide']}. Split it into two slides.")
     problems += too_many_words(deck)
 
-    for pic in builder().pictures_of(deck) if not problems else []:
-        p = Path(pic)
-        if not pic or p.is_absolute() or ".." in p.parts:
-            problems.append(f"Picture {pic!r} must be a path beside the content file.")
-        elif not (folder / p).is_file():
-            problems.append(f"Picture {pic} is not at {folder / p}.")
-        elif not _is_image(folder / p):
-            problems.append(f"Picture {pic} is not a PNG, JPEG, GIF, WebP or SVG image.")
-        elif (unsized := svg_size_problem(folder / p)):
-            problems.append(f"Picture {pic}: {unsized}.")
+    if not problems:
+        problems += picture_problems(deck, folder)
     return problems
+
+
+def story_problems(deck: dict) -> list[str]:
+    """The story JARVIS will tell over the deck, made by the shared deck's
+    own rules (new_deck.story: each beat at most its SAY_MAX characters)
+    and package_story's limits, and how long it runs when spoken; [] when
+    it can be told."""
+    from jarvis import package_story
+    module = builder()
+    try:
+        story = module.story(deck)
+        package_story.parse(package_story.encode(story))
+    except (module.Bad, package_story.StoryError) as error:
+        return [f"The story told over it: {error}"]
+    words = sum(len(beat["say"].split()) for slide in story["slides"] for beat in slide["beats"])
+    seconds = words / SPOKEN_WORDS_PER_SEC
+    if seconds > SPOKEN_MAX_SEC:
+        return [f"The story told over it runs about {seconds / 60:.0f} minutes ({words} words); "
+                f"at most {SPOKEN_MAX_SEC // 60}. Say less, or split it into two packages."]
+    return []
 
 
 def _slide_where(n: int, s: dict) -> str:

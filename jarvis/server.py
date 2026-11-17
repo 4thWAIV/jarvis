@@ -9970,23 +9970,45 @@ def _package_signer(signed):
 
 
 def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
-    """Why this zip may not be unpacked here, or None: only a decision
-    package needs proof it passed its end-to-end check, which is its
-    onboarded signer's statement (package_signature.DECISION_CHECKED). An
-    isolated check JARVIS (decision_check_server) takes the signature of
-    the key it was seeded with alone, since it is the check."""
+    """Why this deck may not be unpacked here, or None. Every deck comes
+    signed by an onboarded agent's key; one JARVIS laid out carries its
+    source and layout proof, which is made again here, without a browser
+    (presentation_proof.reprove): it unpacks only when it proves. A deck
+    from before (no proof) is admitted on its signer's statement that it
+    passed the old end-to-end check (package_signature.DECISION_CHECKED).
+    An isolated check JARVIS (decision_check_server) takes the signature of
+    the key it was seeded with alone."""
     try:
         if not decision_stamp.is_decision_package(zip_path):
             return None
+        proven = decision_stamp.carries_proof(zip_path)
     except (OSError, ValueError) as e:
         return f"It could not be read: {e}"
-    if key is not None and signed is not None and (
-            package_signature.DECISION_CHECKED in signed.statements
-            or env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1"):
+    refused = ("This is a deck that has not been proven: decks reach him only through "
+               "python -m jarvis.make_package, which lays them out, proves they fit and then "
+               "signs them with your key.")
+    if key is None or signed is None:
+        return refused
+    if env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1":
         return None
-    return ("This is a decision package that has not passed its check: decision packages "
-            "reach him only through python -m jarvis.make_package, which checks them end to "
-            "end and then signs them with your key.")
+    if proven:
+        return _deck_proof_problem(zip_path)
+    return None if package_signature.DECISION_CHECKED in signed.statements else refused
+
+
+def _deck_proof_problem(zip_path: Path) -> Optional[str]:
+    """The deck's layout proof made again from its own bytes, or why not."""
+    from jarvis import presentation_proof
+    with tempfile.TemporaryDirectory(prefix="deck-proof-") as temporary:
+        try:
+            with bundle_archive.open_archive(zip_path) as archive:
+                listing = bundle_archive.list_members(archive)
+                folder = bundle_archive.extract(archive, listing, Path(temporary) / "deck",
+                                                folder=listing.wrapper)
+        except (OSError, bundle_archive.ArchiveError) as e:
+            return f"It could not be read: {e}"
+        problems = presentation_proof.reprove(folder)
+    return ("Its layout does not prove here: " + " ".join(problems[:3])) if problems else None
 
 
 def _admit_agent_package(zip_path: Path, signed, status: str,

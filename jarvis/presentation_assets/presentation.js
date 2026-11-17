@@ -4,7 +4,7 @@
   const model = window.PRESENTATION;
   const doc = model.document;
   const byId = items => new Map(items.map(item => [item.id, item]));
-  const slides = byId(doc.slides), layouts = byId(doc.layouts), assets = byId(doc.assets);
+  const slides = byId(doc.slides), assets = byId(doc.assets);
   const targets = new Map(model.targets.map(target => [target.member, target]));
   const references = byId(doc.references);
   references.set(doc.id,{description:"Authored presentation source",locator:"source.yaml",revision:model.source_sha256});
@@ -48,18 +48,30 @@
     });
     const axis=node("div");axis.className="presentation-axis";axis.append(node("span",`0 ${object.units}`),node("span",`${object.domain[1]} ${object.units}`));parent.append(axis);
   }
-  const renderers={text:textObject,vector:vectorObject,bar:barObject,image:(object,parent)=>{
-    const asset=assets.get(object.asset),image=node("img");image.src=asset.path;image.alt=object.alt;image.dataset.asset=asset.id;parent.append(image);
+  function tableObject(object,parent) {
+    const table=node("table");table.className="table";table.setAttribute("aria-label",object.alt);
+    if(object.head){const row=node("tr");object.head.forEach(cell=>row.append(node("th",cell)));table.append(node("thead"));table.firstChild.append(row);}
+    const body=node("tbody");
+    object.rows.forEach(row=>{const line=identify(node("tr"),row.id);row.cells.forEach((cell,i)=>line.append(node(i===0&&object.rowHeads?"th":"td",cell)));body.append(line);});
+    table.append(body);parent.append(table);
+  }
+  const renderers={text:textObject,vector:vectorObject,bar:barObject,table:tableObject,image:(object,parent)=>{
+    const asset=assets.get(object.asset),image=node("img");image.src=asset.path;image.alt=object.alt;image.dataset.asset=asset.id;
+    image.style.setProperty("--natural-width",String(asset.width));image.style.setProperty("--natural-height",String(asset.height));parent.append(image);
   }};
   function render(id) {
     const slide=slides.get(id.replace(/^presentation-slide-/,"")); if(!slide||slide.type!=="content")return null;
     const section=node("section");section.id=id;section.className="slide content presentation-slide";section.dataset.sourceSlide=slide.id;section.setAttribute("aria-label",slide.title);
-    const regions=byId(layouts.get(slide.layout).regions),objects=byId(slide.objects);
+    // JARVIS's named layout (layout_spec): the title in its place, each
+    // object in its slot, the boxes from the generated presentation.css.
+    const canvas=node("div");canvas.className="presentation-canvas";section.append(canvas);
+    const title=identify(node("h2",slide.title),slide.id+"-title");title.className="presentation-title";canvas.append(title);
+    const objects=byId(slide.objects),columns=slide.objects.filter(o=>["first","second","third","fourth"].includes(o.slot)).length;
     slide.readingOrder.forEach(id=>{
-      const object=objects.get(id),r=regions.get(object.region).rect,region=identify(node("div"),id);
-      region.className="presentation-region";region.dataset.object=id;
-      Object.assign(region.style,{left:r.x+"%",top:r.y+"%",width:r.width+"%",height:r.height+"%",padding:doc.theme.gapPx+"px"});
-      renderers[object.type](object,region);section.append(region);
+      const object=objects.get(id),slot=identify(node("div"),id);
+      slot.className="presentation-slot";slot.dataset.object=id;slot.dataset.layout=slide.layout;slot.dataset.slot=object.slot;
+      if(columns)slot.dataset.columns=String(columns);
+      renderers[object.type](object,slot);canvas.append(slot);
     });
     return section;
   }
@@ -103,9 +115,7 @@
     overlay.onkeydown=e=>{if(e.key==="Escape")close.click();if(e.key==="Tab"){const buttons=[...overlay.querySelectorAll("button")];if(e.shiftKey&&document.activeElement===buttons[0]){e.preventDefault();buttons.at(-1).focus();}else if(!e.shiftKey&&document.activeElement===buttons.at(-1)){e.preventDefault();buttons[0].focus();}}};
     inspector=overlay;stage.inert=true;document.body.append(overlay);close.focus();
   }
-  const style=document.documentElement.style;
-  Object.entries({"--ground":doc.theme.background,"--text":doc.theme.foreground,"--accent":doc.theme.accent,"--muted":doc.theme.muted,"--body":doc.theme.bodyPx+"px","--heading":doc.theme.headingPx+"px"}).forEach(([k,v])=>style.setProperty(k,v));
-  document.documentElement.lang=doc.language;
+  if(doc.language)document.documentElement.lang=doc.language;
   function decorateDecision(section, decision) {
     const sourceSlide=doc.slides.find(s=>s.type==="decision"&&s.decision===decision.id);
     if(sourceSlide)section.dataset.sourceSlide=sourceSlide.id;
