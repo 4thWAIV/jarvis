@@ -218,7 +218,7 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
     assert len(delivery.calls) == 1
 
 
-def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, monkeypatch):
+def test_a_page_s_own_story_ends_with_the_vote_whatever_it_asks(tmp_path, monkeypatch):
     passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     folder = page_folder(tmp_path / "in")
@@ -228,13 +228,17 @@ def test_a_page_s_own_story_ends_with_the_vote_unless_it_already_asks(tmp_path, 
     story = built_story(tmp_path / "a")
     assert [s["title"] for s in story["slides"]][:-1] == [s["title"] for s in given["slides"]]
     assert story["slides"][-1]["waits"] == "approve-package"
-    # A story that already waits on its own question is left as it is.
+    # A story that waits on its own question still ends with the vote on
+    # the package, after its question, in the same answers file.
     given["answers"] = "results/mine.json"
     given["slides"][-1]["waits"] = "go-ahead"
     (folder / "story.json").write_text(json.dumps(given))
     assert mp.main([str(folder), "--out", str(tmp_path / "b"),
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    assert built_story(tmp_path / "b") == given
+    built = built_story(tmp_path / "b")
+    assert built["slides"][:-1] == given["slides"]
+    assert built["answers"] == "results/mine.json"
+    assert [s.get("waits") for s in built["slides"]][-2:] == ["go-ahead", "approve-package"]
 
 
 def in_force(language: str) -> None:
@@ -308,9 +312,9 @@ def test_a_page_whose_story_asks_got_it_is_refused(tmp_path, monkeypatch, capsys
 
 
 @pytest.mark.parametrize("question", ["approve-item", "merge-pr"])
-def test_a_deck_that_already_asks_approval_gets_no_second_vote(tmp_path, question):
-    """A review package (approve-item) or a merge package (merge-pr) is
-    already Approve or not: no approve-package follows it."""
+def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, question):
+    """A review package (approve-item) or a merge package (merge-pr) asks
+    about the work; the package itself still ends with Approve or Reject."""
     content = presentation() | {"decisions": [{
         "id": question, "question": "Approve it?", "reason": "It is done.",
         "recommended": "approve", "text_only": "A verdict is a reply, not a choice between looks.",
@@ -318,7 +322,7 @@ def test_a_deck_that_already_asks_approval_gets_no_second_vote(tmp_path, questio
         "options": [{"id": "approve", "name": "Approve", "says": "Done."},
                     {"id": "hold", "name": "Hold", "says": "Not yet."}]}]}
     deck = mp.deck_of(write(tmp_path, content))
-    assert [d["id"] for d in deck["decisions"]] == [question]
+    assert [d["id"] for d in deck["decisions"]] == [question, "approve-package"]
     assert mp.deck_kind(deck) == "decision package"
 
 
@@ -561,7 +565,7 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     # the story asks, waits and resumes there: never the question without it.
     deck["decisions"][0]["options"][0]["opens"] = ["when"]
     told = dp.builder().story(deck)["slides"]
-    assert [s.get("waits") for s in told] == [None, "where", "when", None]
+    assert [s.get("waits") for s in told] == [None, "where", "when", "approve-package", None]
     where, when = told[1], told[2]
     assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
     assert where["beats"][0]["targets"] == ["#lead-where h2"]
@@ -573,7 +577,7 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     from jarvis import package_story
     story = package_story.parse(package_story.encode(dp.builder().story(deck)))
     record = {"where": {"answer": "in"}}
-    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
+    assert story.open_questions(record) == [3, 4], "resume picks the when slide, lead-in first, then the vote"
 
 
 def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):

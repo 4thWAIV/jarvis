@@ -1338,8 +1338,9 @@ the workflow or work item it names must exist and be open, the bytes are
 unpacked by `work_packages.unpack` exactly as a local zip (a decision
 package only signed as checked, `_receive_package_zip`), and
 `package_inbox.arrive` records it. Every
-package carries his vote: `make_package` gives a deck or page that asks
-nothing the standard one, his approval of the package, `package_inbox.vote`
+package carries his vote on the package itself, whatever else it asks
+(Tim, 2026-11-16): `make_package` gives every deck and page the standard
+one last, his approval of the package, `package_inbox.vote`
 (`approve-package`: `approve` Approve, `reject` Reject, which needs his
 words saying what to change, `needs_words`, held to it by the answer route,
 `record_story_answer`, the shared deck's deck.js and decide.py, and a Work
@@ -1349,11 +1350,10 @@ story's language, else the language in force as it is built
 (`make_package.built_language`, `language_setting.saved`; a page's own
 story is in its own language, English when it names none): a deck as one
 more decision, a page as its story's last slide (`with_vote_slide`,
-`vote_slide`) waiting on its answers file. A package that already asks
-his approval (a review package's `approve-item`, a merge package's
-`merge-pr`, an architecture package's `approve-architecture`, which
-`package_story.compose` puts last in place of the vote) gets no second
-one. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
+`vote_slide`) waiting on its answers file, after any questions of its
+own (a review package's `approve-item` and a merge package's `merge-pr`
+included). Only an architecture package's `approve-architecture`, which
+`package_story.compose` puts last in place of the vote, takes its place. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
 records `understood` (`got-it`, `questions`) for any package.
 `make_package.refuse_vote_ids` refuses a deck decision or story slide that
 asks it (and a deck that declares `approve-package` itself), the answer
@@ -1368,13 +1368,14 @@ architecture gate still recognises a story composed then
 (`package_story.compose`'s `legacy`). An answer given to Got it before
 stays on record and is read back (`_legacy_question`, `page_vote`'s
 `answer_name`; `story_teller.read_answers` lets it stand for the slide),
-never asked again. A page that carries it has
-Approve and Reject (a field for his words, then Send) in the
+never asked again. Every package that carries it, a deck as well as a
+page, has Approve and Reject (a field for his words, then Send) in the
 package view's head beside Done, outside the frame (`PackageView.tsx`
 `VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
 post to the inbox's answer route, which takes only his click
 (`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
-package shown so a reload shows his answer. A deck asks on its own slide.
+package shown so a reload shows his answer. A deck asks its own questions
+on its own slides, and the vote on its last one as well as in the head.
 A page's vote is read from that file (`package_inbox.questions`,
 `_story_questions`) and his answer written there
 (`record_story_answer`, from `_answer_inbox_decision` when there is no
