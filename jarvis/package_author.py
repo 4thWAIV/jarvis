@@ -77,10 +77,14 @@ def _assignment(document: Document | None) -> str:
     if document is None:
         return ("Write a deck to content.json or a presentation/1 deck to presentation.yaml in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
-                "source, and your evidence/review notes in evidence.md. A deck gives its "
-                "\"purpose\" and one-sentence \"conclusion\", opens with a slide that shows "
-                "both, and gives each decision its \"why_you\" and \"evidence\" "
-                "(docs/making-a-package.md). Validate with this "
+                "source, and your evidence/review notes in evidence.md. A deck follows the skill's "
+                "decision-memo order (what it is about and where it stands, what was already "
+                "decided, what happened and why, the options and what changes, then the "
+                "decision, technical detail last), gives its \"purpose\" and one-sentence "
+                "\"conclusion\" (the bottom line, never a bare request), opens with a slide "
+                "that shows both, and gives each decision its \"why_you\" and \"evidence\" "
+                "(docs/making-a-package.md). A handoff's suggested shape is input; where it "
+                "disagrees with that order, follow the order. Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
     return ("This package explains one checked canonical architecture document. Its exact "
