@@ -414,6 +414,8 @@ class ClaudeSession:
             cmd += ["--effort", c.effort]
         if c.mcp_config:
             cmd += ["--mcp-config", str(c.mcp_config)]
+        if c.resume:
+            cmd += ["--resume", c.resume]
         cmd += list(c.extra_args)
         return cmd
 

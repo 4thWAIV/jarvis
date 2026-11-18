@@ -1394,6 +1394,23 @@ author session vouches for one package's bytes
 (`agent_key_store.bind_author`, migration 4), so a new revision needs a new
 author. A person's package, JARVIS's own, the same bytes already here and
 the isolated check JARVIS are not asked.
+A package is also made as a job (`package_jobs.py`; `make_package --start`,
+`--status`, `--answer`, and the agent MCP server's `package_start`,
+`package_status`, `package_answer`): one `job` document,
+`/packages/jobs/<id>.job` (records), each step a version (`queued`,
+`researching`, `writing`, `checking`, `waiting_on_sender`, `delivered`,
+`refused`), its process detached (`python -m jarvis.package_jobs run <id>`,
+`SPAWN`), a process that ended without finishing read as refused. The
+author is started with the agent MCP server alone (`author-mcp.json`,
+`package_author.agent_mcp_config`: `python -m jarvis.agent_mcp`, signed as
+the sending session by `JARVIS_AGENT_SESSION`). An author that needs facts
+only its sender has writes `author-blocked.json`
+(`package_author.read_questions`); the job waits on the sender, who answers
+by question id, and resumes the SAME author session (`BrainConfig.resume`:
+Claude's `--resume`, Codex's `thread/resume`), so `author_proof` reads the
+transcript it began; after `MAX_ROUNDS` (2) the author writes the package
+with what is still unanswered marked UNANSWERED. Without a job, its
+questions refuse the package.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
