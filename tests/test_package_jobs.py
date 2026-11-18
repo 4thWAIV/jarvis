@@ -9,7 +9,7 @@ import time
 import pytest
 
 from jarvis import author_proof, make_package as mp, package_author as pa, package_jobs as pj
-from jarvis import decision_package as dp, package_signature, records
+from jarvis import agent_mcp, decision_package as dp, package_signature, records
 from tests.test_decision_package import _Delivery
 from tests.test_package_author import handoff, only_engine, origin_key  # noqa: F401 (fixtures)
 
@@ -110,7 +110,10 @@ def test_questions_wait_on_the_sender_and_the_same_author_resumes(
     assert pj.run(job_id) == 0
     job = pj.package_status(job_id)
     assert job['state'] == pj.DELIVERED and job['author_session'] == author
-    first, second = turns(job_id)
+    # Its first turn asked; the second resumed it with the answers; the
+    # briefing and the deck followed in the same session.
+    first, second, *rest = turns(job_id)
+    assert all(t['resumed'] for t in rest)
     assert not first['resumed'] and first['text'].startswith(author_proof.PROMPT_HEAD)
     assert second['resumed'], 'the same session, resumed'
     assert 'Monday 10:00' in second['text'] and 'UNANSWERED' in second['text']
@@ -141,8 +144,10 @@ def test_after_two_rounds_the_rest_goes_to_tim_unanswered(
     job = pj.package_status(job_id)
     assert job['state'] == pj.DELIVERED and len(job['rounds']) == pj.MAX_ROUNDS
     assert [q['id'] for q in job['unanswered']] == ['release-date', 'owner']
-    last = turns(job_id)[-1]['text']
-    assert 'no more question rounds' in last and 'UNANSWERED' in last
+    told = [t['text'] for t in turns(job_id) if 'no more question rounds' in t['text']]
+    assert len(told) == 1 and 'UNANSWERED' in told[0]
+    assert turns(job_id)[-1]['text'].startswith('The script passed'), \
+        "the deck is still written from the passed script"
 
 
 def test_an_author_that_never_stops_asking_is_refused(
@@ -242,4 +247,5 @@ def test_engines_resume_the_author_s_own_session(tmp_path):
     assert cmd[cmd.index('--mcp-config') + 1] == str(mcp) and '--strict-mcp-config' in cmd
     overrides = codex_provider.config_overrides(codex_provider._servers_of(mcp))
     assert f'mcp_servers.{pa.AGENT_MCP}.command="{sys.executable}"' in overrides
-    assert f'mcp_servers.{pa.AGENT_MCP}.args=["-P", "-m", "jarvis.agent_mcp"]' in overrides
+    args = json.dumps(agent_mcp.entry('origin-session')['args'])
+    assert f'mcp_servers.{pa.AGENT_MCP}.args={args}' in overrides, "agent_mcp.entry, the one description"

@@ -147,7 +147,7 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     # The author has the agent MCP server alone, signed as the sending agent.
     config = json.loads((receipt_path.parent / 'author-mcp.json').read_text())
     [(name, server)] = config['mcpServers'].items()
-    assert name == pa.AGENT_MCP and server['args'][-2:] == ['-m', 'jarvis.agent_mcp']
+    assert name == pa.AGENT_MCP and server['args'][1:3] == ['-m', 'jarvis.agent_mcp']
     assert server['env']['JARVIS_AGENT_SESSION'] == 'origin-session'
     first, deck = prompt.split('---turn---')[:2]
     assert 'prep.md and script.md now' in first and 'presentation.yaml in your' not in first, \

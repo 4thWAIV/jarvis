@@ -132,7 +132,9 @@ def package_start(handoff_path, work: Optional[str] = None, general: bool = Fals
     out.mkdir(parents=True, exist_ok=True)
     argv = ["--handoff", str(handoff), "--engine", engine, "--session", session,
             "--project", project or Path.cwd().name, "--out", str(out),
-            "--deliver-to", deliver_to or dp.LIVE]
+            # Delivered where the agent's own commands and tools reach JARVIS
+            # (JARVIS_URL), never past it to another one.
+            "--deliver-to", deliver_to or env_names.read("JARVIS_URL").strip() or dp.LIVE]
     for flag, value in (("--work", work), ("--workflow", workflow), ("--says", says)):
         if value:
             argv += [flag, str(value)]

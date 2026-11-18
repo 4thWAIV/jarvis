@@ -273,16 +273,16 @@ def test_the_package_job_tools_call_package_jobs(monkeypatch):
     monkeypatch.setenv("JARVIS_AGENT_SESSION", "")
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     ok, text, _ = agent_mcp.call("package_status", {"job": "j1"})
-    assert not ok and "not available" in text
+    assert not ok and text == "Refused: There is no package job j1."
 
     seen = []
     monkeypatch.setattr(package_jobs, "package_start",
-                        lambda handoff, work=None, general=False:
-                        seen.append((handoff, work, general)) or {"job": "j9"})
+                        lambda handoff, work=None, general=False, session=None:
+                        seen.append((handoff, work, general, session)) or {"job": "j9"})
     ok, text, _ = agent_mcp.call("package_start", {"handoff": "/h.json", "work": "w1",
                                                    "as_session": "sess-x"})
     assert ok and json.loads(text) == {"job": "j9"}
-    assert seen == [("/h.json", "w1", False)]
+    assert seen == [("/h.json", "w1", False, "sess-x")]
     from jarvis import env_names
     assert env_names.read("JARVIS_AGENT_SESSION") == "sess-x", "the job signs as the sender"
 
