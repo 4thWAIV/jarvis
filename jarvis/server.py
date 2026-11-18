@@ -10,6 +10,7 @@ Handles:
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import itertools
 import json
@@ -98,6 +99,7 @@ from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
 from jarvis import bundle_archive
 from jarvis import reporters
+from jarvis import agent_rights
 from jarvis import make_package
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
@@ -4774,6 +4776,19 @@ def _tool_reply(ok: bool, text: str, image: dict | None = None) -> dict:
 
 # Populated by Task 6 and Task 7. name -> callable(arguments: dict) -> str
 TOOL_HANDLERS: dict = {}
+
+# Who is calling a tool: None for the brain (whose turns are his), else the
+# onboarded agent's principal, set by `api_agent_tool` for the call. A tool
+# an agent calls gives it the same answer, walled the same way, but touches
+# nothing of his turn: no taint on the brain's turn, no message he is "on",
+# no update waiting to be seen, no "that session".
+_tool_caller: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "tool_caller", default=None)
+
+
+def _for_him() -> bool:
+    """The tool running now was called by the brain, in a turn of his."""
+    return _tool_caller.get() is None
 TOOL_HANDLERS["show_on_screen"] = tool_show_on_screen
 
 
@@ -5099,8 +5114,9 @@ def _mark_untrusted_source(source: Optional[str]) -> None:
     """The turn now holds somebody else's words from `source`: what
     `_mark_the_turn_untrusted` does for a reading tool, and what a tool
     that only sometimes gives back other people's words (several messages
-    that fit, to ask which) does when it does. Never raises."""
-    if not source:
+    that fit, to ask which) does when it does. Never raises. An agent's
+    call marks nothing: the brain's turn read nothing."""
+    if not source or not _for_him():
         return
     try:
         marker = getattr(brain_instance, "mark_untrusted_content", None)
@@ -5169,16 +5185,58 @@ async def internal_tool(request: Request):
         tool_activity.activity.end(call, stage)
 
 
+@app.post(agent_rights.AGENT_TOOL_PATH)
+async def api_agent_tool(request: Request):
+    """An onboarded agent's call of one of the brain's tools (agent_mcp.py):
+    signed with its own key, admitted by the gate only for a right that
+    covers this route, and then only for a tool its rights name
+    (`agent_rights.allows_tool`). Answered by the brain's own handler
+    through `_dispatch_tool`, capped and walled as the brain's answer is,
+    with the agent as the caller (`_tool_caller`). The tool token, a page
+    and a work-item key are refused."""
+    principal = web_auth.principal(request.scope) or ""
+    if not principal.startswith(reporters.AGENT_PREFIX):
+        return JSONResponse({"error": "Only an onboarded agent, signing with its own key, "
+                                      "calls JARVIS's tools here."}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return _tool_reply(False, "Unreadable request.")
+    if not isinstance(body, dict):
+        return _tool_reply(False, "Request body must be an object.")
+    tool = str(body.get("tool", ""))
+    args = body.get("arguments") or {}
+    if not isinstance(args, dict):
+        return _tool_reply(False, "Arguments must be an object.")
+    handler = TOOL_HANDLERS.get(tool)
+    if handler is None or not await asyncio.to_thread(agent_rights.allows_tool, principal, tool):
+        return JSONResponse({"error": f"Refused: this agent's rights do not cover the tool "
+                                      f"{tool!r}."}, status_code=403)
+    token = _tool_caller.set(principal)
+    try:
+        reply, stage = await _dispatch_tool(tool, handler, args)
+    finally:
+        _tool_caller.reset(token)
+    log.info("agent tool: %s called %s (%s)", principal, tool, stage)
+    return reply
+
+
 async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
     """Run one named tool through the gates: its reply, and how the call
-    ended for the activity feed (refused, failed or completed)."""
-    if brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
+    ended for the activity feed (refused, failed or completed). An agent's
+    call (`_tool_caller`) is never an acting tool's: those wait on his own
+    turn, which an agent's call never is."""
+    if not _for_him():
+        if tool in ACTING_TOOLS:
+            return (_tool_reply(False, "not_allowed_for_agents — only he can make "
+                                       "that happen."), tool_activity.REFUSED)
+    elif brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
         # The attention digest is read-only: its facts are in its prompt,
         # and no tool, reading or acting, runs in that turn.
         return (_tool_reply(False, "not_allowed_in_digest — no tools in a digest turn."),
                 tool_activity.REFUSED)
 
-    if tool in ACTING_TOOLS:
+    if tool in ACTING_TOOLS and _for_him():
         origin = brain_instance.current_origin if brain_instance else None
         if origin != "user":
             return (_tool_reply(
@@ -5859,7 +5917,8 @@ def tool_read_session_reply(args: dict) -> str:
     session, problem, _reason = _resolve_or_explain(str(args.get("name") or ""))
     if problem:
         return problem
-    last_mentioned_session = session.session_id
+    if _for_him():
+        last_mentioned_session = session.session_id
     name = _said_name(session, "That session")
     reply = _session_reply(session)
     if not reply:
@@ -6226,7 +6285,8 @@ _message_on: Optional[int] = None
 
 def _on_message(item_id) -> None:
     global _message_on
-    _message_on = int(item_id)
+    if _for_him():
+        _message_on = int(item_id)
 
 
 def _message_meant(args: dict) -> tuple:
@@ -6606,7 +6666,7 @@ def _read_to_him(kind: str, source_id) -> None:
     it is (conversation_log), if any, waits to be read, until he has heard
     the reply that reads it. Never raises."""
     if (_turn_reads is None or brain_instance is None
-            or brain_instance.current_origin != "user"):
+            or brain_instance.current_origin != "user" or not _for_him()):
         return
     if attention_record is not None:
         try:
@@ -6630,7 +6690,7 @@ def _message_read_to_him(item) -> None:
     if update is not None:
         _read_to_him(*update)
     if _turn_reads is not None and brain_instance is not None \
-            and brain_instance.current_origin == "user":
+            and brain_instance.current_origin == "user" and _for_him():
         read = (_MESSAGE_READ, str(item.id), None)
         if read not in _turn_reads:
             _turn_reads.append(read)

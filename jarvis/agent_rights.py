@@ -10,7 +10,10 @@ signed request's rights are judged (web_auth's BY_AGENT_KEY). The rights
 were the access keys' categories, which admit nothing any more.
 
 The voice socket, settings, brains, restart and /internal/tool are in no
-right: those stay with the browser and the tool token.
+right: those stay with the browser and the tool token. A right may also
+name brain tools (`TOOLS`): `research` reaches the brain's own reading
+tools through one route, `AGENT_TOOL_PATH`, each call judged by
+`allows_tool` (agent_mcp.py is the agent's side).
 """
 from __future__ import annotations
 
@@ -22,6 +25,9 @@ from dataclasses import dataclass
 WEBSOCKET = "WS"
 ANY_SCOPE = "*"
 WORK_SCOPE = "work:"
+# The one route an agent's MCP server reaches the brain's tools by
+# (agent_mcp.py, server.api_agent_tool); which tools is `TOOLS`.
+AGENT_TOOL_PATH = "/api/agent-tool"
 # Whether one of the caller's own reports landed (report_keys.py): it reads
 # only the caller's own keys, so every grant that may report may ask it.
 OWN_REPORTS = r"/api/reports/[^/]+"
@@ -68,13 +74,31 @@ RIGHTS: dict[str, Right] = {
     "watch": Right(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),
+    "research": Right(
+        "Read what JARVIS knows, for research: the brain's own reading tools (what the user said "
+        "and decided, his messages, Work, packages, runs, workflows, the knowledge engine, "
+        "projects and folders), other people's words walled as for the brain.",
+        (("POST", AGENT_TOOL_PATH),)),
+}
+
+# The brain tools each right reaches through AGENT_TOOL_PATH: only reading
+# tools (none is one of the server's ACTING_TOOLS, a test holds it), each
+# answered by the brain's own handler. A right not named here reaches none.
+TOOLS: dict[str, tuple[str, ...]] = {
+    "research": (
+        "conversation_history", "messages_to_him", "recall", "package_inbox", "list_packages",
+        "package_results", "work_status", "work_detail", "work_context", "workflow_status",
+        "run_status", "knowledge_search", "knowledge_status", "search_repo", "repo_overview",
+        "project_notes", "project_history", "list_folders", "browse_folder",
+        "read_folder_file", "list_agents", "read_message_reply", "read_session_reply"),
 }
 
 # The rights a newly onboarded agent is given, each with scope `*`: Tim's
 # answer to the design's Q2 ("plus-watch"), what agents use today (`work`,
 # `workflows`, and `packages`, which make_package reached through the tool
-# token) and `watch`. Changing the default is a change to this one line.
-DEFAULT_RIGHTS: tuple[str, ...] = ("work", "workflows", "packages", "watch")
+# token), `watch`, and `research` (the one package system: a package's
+# author reads his record through the brain's reading tools). Changing the default is a change to this one line.
+DEFAULT_RIGHTS: tuple[str, ...] = ("work", "workflows", "packages", "watch", "research")
 
 # What a work-item key may reach, scoped to its one item: reports on it,
 # answers to its decisions, packages sent for it and messages about it
@@ -117,3 +141,22 @@ def allows(principal: str, method: str, path: str, query: str = "") -> bool:
     method = method.upper()
     return any(r.right in RIGHTS and RIGHTS[r.right].covers(method, path)
                and in_scope(r.scope, method, path, query) for r in held)
+
+
+def tools_of(principal: str) -> frozenset[str]:
+    """Every brain tool `principal`'s grants reach through AGENT_TOOL_PATH:
+    only grants for every target (a tool reads across items, so a work-item
+    key's scope admits none). Never raises: an unreadable record reaches
+    nothing."""
+    from jarvis import agent_key_store
+    try:
+        held = agent_key_store.grants(principal)
+    except Exception:
+        return frozenset()
+    return frozenset(tool for r in held if r.scope == ANY_SCOPE
+                     for tool in TOOLS.get(r.right, ()))
+
+
+def allows_tool(principal: str, tool: str) -> bool:
+    """Whether `principal` may call the brain tool `tool` (AGENT_TOOL_PATH)."""
+    return tool in tools_of(principal)

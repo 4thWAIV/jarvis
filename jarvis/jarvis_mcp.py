@@ -3089,12 +3089,19 @@ def _error(rid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
-def handle(msg: dict) -> dict | None:
+def handle(msg: dict, tools: list | None = None, call=None,
+           server_name: str = "jarvis") -> dict | None:
     """One JSON-RPC message in, at most one reply out.
 
     Per the JSON-RPC 2.0 spec a notification — a message with no "id"
     member at all — gets NO reply, for any method, success or error alike.
+
+    `tools` and `call` (name, arguments -> (ok, text, image block)) are the
+    brain's (TOOL_SPECS, `_forward`) unless another server built on this
+    one names its own (agent_mcp.py, the agent's).
     """
+    tools = TOOL_SPECS if tools is None else tools
+    call = _forward if call is None else call
     method = msg.get("method")
     is_notification = "id" not in msg
     rid = msg.get("id")
@@ -3105,11 +3112,11 @@ def handle(msg: dict) -> dict | None:
         reply = {"jsonrpc": "2.0", "id": rid,
                  "result": {"protocolVersion": PROTOCOL_VERSION,
                             "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "jarvis", "version": "1.0.0"}}}
+                            "serverInfo": {"name": server_name, "version": "1.0.0"}}}
     elif method == "ping":
         reply = {"jsonrpc": "2.0", "id": rid, "result": {}}
     elif method == "tools/list":
-        reply = {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOL_SPECS}}
+        reply = {"jsonrpc": "2.0", "id": rid, "result": {"tools": tools}}
     elif method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name", "")
@@ -3117,7 +3124,7 @@ def handle(msg: dict) -> dict | None:
         if not isinstance(args, dict):
             reply = _result(rid, False, "Arguments must be an object.")
         else:
-            ok, text, image = _forward(name, args)
+            ok, text, image = call(name, args)
             reply = _result(rid, ok, text, image)
     else:
         reply = _error(rid, -32601, f"Unknown method: {method}")
@@ -3125,7 +3132,10 @@ def handle(msg: dict) -> dict | None:
     return None if is_notification else reply
 
 
-def main() -> None:
+def main(handler=None) -> None:
+    """Serve JSON-RPC on stdin/stdout with `handler` (the brain's `handle`
+    unless another server names its own)."""
+    handler = handle if handler is None else handler
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -3137,7 +3147,7 @@ def main() -> None:
         if not isinstance(msg, dict):
             continue
         try:
-            reply = handle(msg)
+            reply = handler(msg)
         except Exception as e:            # never die mid-conversation
             reply = _error(msg.get("id"), -32603, f"Internal error: {e}")
         if reply is not None:
