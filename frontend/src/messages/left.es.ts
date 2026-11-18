@@ -375,6 +375,8 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.updates.upToDate": "Actualizado.",
   "left.updates.newer": { one: "{count} versión más nueva en main. Elija una para instalar.", other: "{count} versiones más nuevas en main. Elija una para instalar." },
   "left.updates.running": "En ejecución: {version}",
+  "left.updates.commit": "Versión {commit}",
+  "left.updates.restartToRun": "El repositorio pasó a {version} desde que JARVIS arrancó: reinícialo para ejecutarlo.",
   "left.updates.prName": "PR {pr}",
   "left.updates.latest": "ÚLTIMA",
   "left.updates.ci.passed": "Pruebas superadas",

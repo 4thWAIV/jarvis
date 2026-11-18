@@ -81,6 +81,10 @@ export interface HeaderQuestion {
   note_required?: string[];
   stale?: boolean;
   answered_revision?: string | null;
+  /** A view set: every view's revision his approval is of, and those of
+   *  the set his answer was given to. */
+  revisions?: (string | null)[];
+  answered_revisions?: (string | null)[] | null;
 }
 
 export interface PackageInfo {
@@ -108,6 +112,21 @@ export interface PackageInfo {
   /** The room its page is made for: "wide" offers to take over the page.
    *  Missing from an older JARVIS's frame: the centre. */
   layout?: "centre" | "wide";
+  /** An architecture view set's views in order (language_projection.views_shown):
+   *  the frame shows one at a time, and the chapters move between them. */
+  views?: PackageViewInfo[] | null;
+}
+
+/** One view of an architecture view set: one checked document. */
+export interface PackageViewInfo {
+  /** Its document id, which a story slide names as its `view`. */
+  id: string;
+  title: string;
+  language: string;
+  /** Its page in the package ("views/<id>/index.html"; the first's "index.html"). */
+  entry: string;
+  /** The element ids it declares: the same id is the same element in every view. */
+  declarations: string[];
 }
 
 export interface DeckPage {
@@ -116,6 +135,8 @@ export interface DeckPage {
   title: string;
   /** The decision the slide asks, or null. */
   asks: string | null;
+  /** The view of a view set the slide is told over, or null. */
+  view?: string | null;
 }
 
 /** What the border moves through: a deck's own slides, else its story's
@@ -125,7 +146,34 @@ export function navigation(info: PackageInfo): DeckPage[] {
   const story = info.story;
   if (!story) return [];
   return story.slides.map((title, i) => ({ opener: story.openers?.[i]?.[0] ?? "", title,
-                                           asks: story.asks?.includes(i + 1) ? title : null }));
+                                           asks: story.asks?.includes(i + 1) ? title : null,
+                                           view: story.views?.[i] ?? null }));
+}
+
+/** The view a view set shows: `chosen` while it is one of its views, else
+ *  the first; null for any other package. */
+export function viewShown(info: PackageInfo, chosen: string | null): PackageViewInfo | null {
+  const views = info.views;
+  if (!views?.length) return null;
+  return views.find((v) => v.id === chosen) ?? views[0];
+}
+
+/** Where a view's files are in the package ("" for the first). */
+export function viewFolder(view: PackageViewInfo | null): string {
+  return view ? view.entry.slice(0, view.entry.length - "index.html".length) : "";
+}
+
+/** The element ids a beat points at precisely: each `[data-declaration="..."]`
+ *  in its targets, as the story helper's selectors quote it. */
+export function declarationsIn(targets: string[]): string[] {
+  const found: string[] = [];
+  for (const selector of targets) {
+    for (const m of selector.matchAll(/\[data-declaration="((?:[^"\\]|\\.)*)"\]/g)) {
+      const id = m[1].replace(/\\(.)/g, "$1");
+      if (!found.includes(id)) found.push(id);
+    }
+  }
+  return found;
 }
 
 /** The story slide that tells navigation slide `page` (1-based): the one
@@ -151,6 +199,10 @@ export interface StoryOutline {
    *  opens a slide with its first, and counts itself on the slide whose
    *  openers include the one the page says it shows (`slide.shown`). */
   openers?: string[][];
+  /** A view set's story: the view each slide is told over (a document id). */
+  views?: (string | null)[];
+  /** The one concrete input a view set's story walks through every view. */
+  scenario?: string;
 }
 
 /** A beat of a story, as its audio frames carry it (package_story.py). */
@@ -164,6 +216,8 @@ export interface StoryCue {
   actions: Record<string, string>[];
   /** The beat's last chunk: the cue ends when it has played. */
   last?: boolean;
+  /** The view of a view set it is told over: the frame shows it first. */
+  view?: string;
 }
 
 /** What the server last said of a story (story_teller.py): telling,
@@ -174,7 +228,43 @@ export interface StoryState {
   state: "telling" | "waiting" | "paused" | "finished" | "stopped";
   slide: number;
   slides: number;
+  /** The beat of the slide being heard, or to go on from. */
+  beat?: number;
   question?: string;
+}
+
+/** What a package's frame shows (package_place.View): the deck slide on
+ *  screen (its opener), where each scrolled part is, the part he selected
+ *  with its words and his selection in them, and what had keyboard focus.
+ *  The frame's helper reports it (package_story.js `place`). */
+export interface FrameView {
+  page: string | null;
+  scroll: { at: string; x: number; y: number }[];
+  part: string | null;
+  words: string;
+  selection: [number, number] | null;
+  selected: string;
+  focused: string | null;
+}
+
+/** A place he asked from (story_teller.py's Ask), as the server tells the
+ *  page: the last is the one Return goes back to. */
+export interface AskedPlace {
+  package: string;
+  state: string;
+  slide: number | null;
+  beat: number | null;
+  speaking: boolean;
+  page: string | null;
+}
+
+/** Going back to a place (the server's `package_return`): the view to bring
+ *  up in its frame, and what the story had revealed there first. */
+export interface ReturnTo {
+  package: string;
+  view: FrameView;
+  revealed: Record<string, string>[];
+  seq: number;
 }
 
 /** Whether a story in this state is running: Stop ends it. */
@@ -188,6 +278,18 @@ export const storyCue = createStore<StoryCue | null>(null);
 
 /** The story the server last spoke of, or none. */
 export const storyState = createStore<StoryState | null>(null);
+
+/** The places he can go back to, the last on top (`package_asks`). */
+export const packageAsks = createStore<AskedPlace[]>([]);
+
+/** A place being gone back to, until its frame has brought it up. */
+export const returnTo = createStore<ReturnTo | null>(null);
+let returns = 0;
+
+/** The server's `package_return` frame. */
+export function returnToPlace(msg: Omit<ReturnTo, "seq">): void {
+  returnTo.set({ ...msg, seq: ++returns });
+}
 
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
@@ -368,19 +470,43 @@ export async function openLocalPackage(path: string): Promise<Said | null> {
   }
 }
 
-/** Tell its story from `slide` (from 1), resume it from the first question
- *  with no answer, or stop it: null once done, else why not. */
-export async function tellStory(id: string, action: "tell" | "resume" | "stop",
-                                slide?: number): Promise<Said | null> {
+/** Tell its story from `slide` (from 1), resume it from the place kept (else
+ *  the first question with no answer), stop it, Ask (keep where he is, with
+ *  what its frame shows) or Return (to the last place kept): null once done,
+ *  else why not. */
+export async function tellStory(id: string, action: "tell" | "resume" | "stop" | "ask" | "return",
+                                slide?: number, view?: FrameView | null): Promise<Said | null> {
   try {
     await answer(await fetch(`${base(id)}/story`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(slide ? { action, slide } : { action }),
+      body: JSON.stringify({ action, ...(slide ? { slide } : {}), ...(view ? { view } : {}) }),
     }));
     return null;
   } catch (e) {
     return original(e);
   }
+}
+
+// What a frame shows, sent to the server once it has stayed the same this
+// long (an Ask sends it at once).
+const VIEW_SETTLES_MS = 300;
+let viewTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Tell the server what package `id`'s frame shows now, so an Ask made by
+ *  voice keeps it too; sent once it settles. */
+export function reportView(id: string, view: FrameView): void {
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => {
+    void fetch(`${base(id)}/view`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ view }),
+    }).catch(() => undefined);
+  }, VIEW_SETTLES_MS);
+}
+
+/** His Ask: keep where he is in package `id` (what its frame shows now). */
+export function askAbout(id: string, view: FrameView | null): Promise<Said | null> {
+  clearTimeout(viewTimer);
+  return tellStory(id, "ask", undefined, view);
 }
 
 /** Where its entry is served, to its frame. */

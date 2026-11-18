@@ -134,8 +134,14 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             voice.ws.send(json.dumps({"type": "package_page",
                                       "package": packages_api.describe(package)}))
             await page.locator("#package-view iframe").wait_for()
+            # The vote is asked at the check mark, once: nothing of it under
+            # the border until Done is pressed.
+            assert await page.get_by_role("button", name="Approve").count() == 0
+            await page.locator("#package-view .package-done").click()
             assert await page.get_by_role("button", name="Approve").count() == 1, "the vote, once"
             assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
+            await page.keyboard.press("Escape")
+            await async_api.expect(page.locator("#package-view .package-signoff")).to_have_count(0)
             await page.locator("#package-view [data-package-menu=chapters]").click()
             slides = await page.locator("#package-view .package-border-overlay select option").all_inner_texts()
             await page.keyboard.press("Escape")

@@ -1905,19 +1905,31 @@ TOOL_SPECS = [
             "waits for his answer (his Choose on the page, or his words recorded with the "
             "package's script), then goes on by itself; while it waits it is still running. "
             "`slide` starts from that slide (it also jumps a story being told, and asks that "
-            "slide's question again); action resume goes on from the first question with no "
-            "answer (\"continue the decisions\"); action stop ends it, told or waiting; "
-            "action status says what it is doing and which question it waits for. The "
-            "page's Tell the story, Continue and Stop do the same."),
+            "slide's question again); action resume goes on from where it is paused (that beat "
+            "said again) or waiting, else from the first question with no answer "
+            "(\"continue the decisions\"); action stop ends it, told or waiting, and keeps "
+            "its place for action return; action status says what it is doing and which question it waits for. "
+            "Ask and Return: when he wants to ask about what he is looking at in a package "
+            "(\"wait, what does this mean?\"), action ask keeps exactly where he is (the "
+            "slide, the beat, the page shown, its scrolling and the part he selected), pauses "
+            "the story's words if they were sounding, and gives you that part to answer about; "
+            "action place says where he is without keeping it; action return (no package "
+            "needed) takes him back to the last place kept: the view first, then the beat that "
+            "was cut off is said again from its beginning (a paused or stopped story stays so). "
+            "Places nest: each ask is kept on the last, and each return goes back one. A place "
+            "in a revision of the package no longer in use is refused. The page's Tell the "
+            "story, Continue, Stop, Ask and Return do the same."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "package": {"type": "string", "description": "The package's id."},
-                "action": {"type": "string", "enum": ["tell", "resume", "stop", "status"],
-                           "description": "tell (the default), resume, stop or status."},
+                "action": {"type": "string",
+                           "enum": ["tell", "resume", "stop", "status", "ask", "return",
+                                    "place"],
+                           "description": "tell (the default), resume, stop, status, ask, "
+                                          "return or place."},
                 "slide": {"type": "integer", "description": "The slide to start from, from 1."},
             },
-            "required": ["package"],
         },
     },
     # Files a teammate sent, read as files (bundle_api.py): the same calls
@@ -2791,10 +2803,11 @@ TOOL_SPECS = [
     {
         "name": "package_inbox",
         "description": (
-            "The packages agents have sent him, waiting in his package inbox (the Queue tab's "
-            "Packages section): each one's id, title, who sent it, how many of its decisions "
-            "are answered, and where it stands (not opened, opened, partly answered, answered, "
-            "sent back, closed). With `package`, that one in full with every question it asks, "
+            "The packages agents have sent him, waiting in his package inbox (the Inbox tab's "
+            "Open packages list): each one's id, title, who sent it, its Work item, how many of "
+            "its decisions are answered, and where it stands (not opened, opened, partly "
+            "answered, answered, sent back, closed: signed off, dismissed, superseded or "
+            "withdrawn by its sender). With `package`, that one in full with every question it asks, "
             "its options, the recommendation and what is recorded. With `closed`, the closed "
             "ones. Arrivals are never announced: read this when he asks what packages he has. "
             "Titles and questions are the sender's words. With understanding_offset=0, read only the author's "
@@ -2858,12 +2871,17 @@ TOOL_SPECS = [
             "capture back with read_capture and send it with steer_session only on his yes. "
             "A Work item decision that names the package gets the answer he gave in the "
             "package, or is closed as signed off without one. The package is closed and its "
-            "view on his screen closes. Ask about unanswered questions first only if he "
-            "seems to have missed them."),
+            "view on his screen closes. While any question is unanswered nothing is signed "
+            "off: it says which, and you ask him once whether he is done with it anyway; "
+            "only on his yes call it again with confirm true (anything waiting on those "
+            "questions then ends as closed unanswered), as the page's Done anyway does."),
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string",
-                                       "description": "Its id, or its title or sender as he said it."}},
+                                       "description": "Its id, or its title or sender as he said it."},
+                           "confirm": {"type": "boolean",
+                                       "description": "He said he is done with it although "
+                                                      "questions are unanswered."}},
             "required": ["package"],
         },
     },

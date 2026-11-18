@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, NoReturn, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -2662,30 +2662,48 @@ def _offer_knowledge_seeds() -> None:
         log.warning("knowledge seeds could not be offered", exc_info=True)
 
 
-async def start_knowledge_engine() -> None:
+async def start_knowledge_engine() -> bool:
     """The engine first, before the rest of startup: started, and waited for
     up to knowledge_client.READY_WAIT_SEC, off the event loop's thread.
-    JARVIS's records live in it, so nothing that needs them starts without
-    it: an engine that has not answered by then raises `EngineNotUp` with the
-    supervisor's reason and the end of the engine's own log, which `lifespan`
-    turns into the records gate's failed state (records_move.ENGINE): the
-    server stays up, every route that needs the records answers 503 with the
-    reason, and the page shows it with Try again."""
+    True once it answered (or with no engine to start); False while it is
+    still opening, slow but not failed: the engine and its supervisor keep
+    running and `lifespan` serves the records gate's opening state while
+    `_open_records_then_start` waits on. JARVIS's records live in it, so
+    nothing that needs them starts without it: an engine that failed
+    (`_engine_failed`) raises `EngineNotUp`, which `lifespan` turns into the
+    records gate's failed state (records_move.ENGINE): the server stays up,
+    every route that needs the records answers 503 with the reason, and the
+    page shows it with Try again."""
     global knowledge
     from jarvis import knowledge_runtime
     if not knowledge_client.autostart():
-        return
+        return True
     knowledge = knowledge_runtime.KnowledgeRuntime(floor_busy=_knowledge_floor_busy)
     # Every record goes to the engine this server started, and no other.
     from jarvis.knowledge.uds import EngineUDS
     supervisor = getattr(knowledge, "supervisor", None)
     if supervisor is not None:
         records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
-    if await knowledge.start_engine():
+    outcome = await knowledge.start_engine()
+    if outcome == knowledge_runtime.OPENED:
         log.info("knowledge engine: up")
-        return
+        return True
+    if outcome == knowledge_runtime.OPENING:
+        log.warning("knowledge engine: still opening after %.0f s; waiting up to %.0f s in all, "
+                    "and starting everything that needs the records the moment it answers",
+                    knowledge_client.READY_WAIT_SEC, knowledge_client.OPEN_BOUND_SEC)
+        return False
+    await _engine_failed()
+
+
+async def _engine_failed() -> NoReturn:
+    """The engine failed while it opened (`KnowledgeRuntime.open_failure`):
+    stopped, with the supervisor's reason and the end of the engine's own
+    log raised as `EngineNotUp`."""
+    global knowledge
     sup = knowledge.supervisor.health()
-    words = (f"the knowledge engine did not answer within {knowledge_client.READY_WAIT_SEC:.0f} s "
+    words = (f"the knowledge engine did not open the records: "
+             f"{getattr(knowledge, 'open_failure', None) or 'it did not answer'} "
              f"(state {sup['state']}, restarts {sup['restarts']}, last reason {sup['reason']}); "
              f"JARVIS's records live there, so it does not start without it. The engine's log "
              f"({data_paths.knowledge_engine_log_path()}) ends:\n{knowledge_client.engine_log_tail()}")
@@ -3292,14 +3310,53 @@ async def _move_records_then_start() -> None:
     records_move.started()
 
 
-async def _start_records_now() -> None:
+async def _start_records_now() -> bool:
     """Everything that needs the records, with no move first; a failure
-    leaves the server up saying why, with Try again (records_move.START)."""
+    leaves the server up saying why, with Try again (records_move.START).
+    True once it started."""
     try:
         await _start_on_records()
     except Exception as e:
         log.exception("startup on the records failed")
         records_move.failed(f"{type(e).__name__}: {e}", records_move.START)
+        return False
+    return True
+
+
+async def _open_records() -> None:
+    """The engine has answered: jarvis.db into it, once, proven both ways
+    before any store is touched (records_cutover.py), then everything that
+    needs the records. The move takes minutes on a large file, so it runs in
+    the background (`_records_task`) while the server serves, saying the
+    records are moving (records_move.py); a move it cannot prove leaves the
+    server up saying why. Otherwise the gate waits (`STARTING`) while the
+    rest starts, and opens once it has."""
+    global _records_task
+    if await asyncio.to_thread(records_cutover.needed):
+        records_move.begin()
+        _records_task = _spawn(_move_records_then_start())
+        return
+    records_move.opened()
+    if await _start_records_now():
+        records_move.started()
+
+
+async def _open_records_then_start() -> None:
+    """The engine was still opening when startup's wait ended: wait on, to
+    knowledge_client.OPEN_BOUND_SEC of its start, while the gate says the
+    records are opening; the moment it answers, everything that needs them
+    starts with no Try again. Failed only when the engine really failed
+    (records_move.ENGINE, with the reason)."""
+    from jarvis import knowledge_runtime
+    outcome = await knowledge.wait_open()
+    if outcome != knowledge_runtime.OPENED:
+        try:
+            await _engine_failed()
+        except knowledge_client.EngineNotUp as e:
+            records_move.failed(str(e), records_move.ENGINE)
+        return
+    log.info("knowledge engine: up, after %.0f s", time.monotonic() - knowledge.opening_since)
+    await _open_records()
 
 
 async def _start_on_records() -> None:
@@ -3471,6 +3528,8 @@ async def lifespan(application: FastAPI):
     _announce_bind(web_auth.detect_bind())
     # Where this server is, for `python -m jarvis.update` (server_address.py).
     server_address.record()
+    # The commit this process runs: HEAD as it starts (/api/health, Updates).
+    await asyncio.to_thread(self_update.note_running)
     # Confirm or revert (start_settings): a changed start setup is a trial
     # once the server is listening, confirmed by a page reaching it, else
     # gone back from. Only from main(), the launcher that reads the start
@@ -3486,24 +3545,21 @@ async def lifespan(application: FastAPI):
     _on_records_begun = False
     records_move.reset()
     # The knowledge engine before anything else; the page waits for it. One
-    # that does not come up leaves the server up saying why, with Try again
-    # on the page (records_move.ENGINE), never a server that is not there.
+    # still opening after knowledge_client.READY_WAIT_SEC is slow, not
+    # failed: the server serves, saying the records are opening, and starts
+    # everything the moment it answers (`_open_records_then_start`). One
+    # that failed leaves the server up saying why, with Try again on the
+    # page (records_move.ENGINE), never a server that is not there.
     try:
-        await start_knowledge_engine()
+        up = await start_knowledge_engine()
     except knowledge_client.EngineNotUp as e:
         records_move.failed(str(e), records_move.ENGINE)
-    # jarvis.db into the engine, once, proven both ways before any store is
-    # touched (records_cutover.py). It takes minutes on a large file, so the
-    # server serves meanwhile, saying the records are moving, and starts
-    # everything that needs them once they are (records_move.py); a move it
-    # cannot prove leaves the server up saying why.
-    if not records_move.ready():
-        pass
-    elif await asyncio.to_thread(records_cutover.needed):
-        records_move.begin()
-        _records_task = _spawn(_move_records_then_start())
     else:
-        await _start_records_now()
+        if up:
+            await _open_records()
+        else:
+            records_move.opening(getattr(knowledge, "opening_since", None))
+            _records_task = _spawn(_open_records_then_start())
 
     yield
 
@@ -3626,7 +3682,11 @@ projects_api.mount(app, lambda: projects, on_change=_hint_projects)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "online", "name": "JARVIS", "version": "0.1.0"}
+    """Up, and the commit this process runs (self_update.running_json: the
+    one noted as it started, the checkout's HEAD now, and whether a restart
+    would run another)."""
+    return {"status": "online", "name": "JARVIS", "version": "0.1.0",
+            "commit": await asyncio.to_thread(self_update.running_json)}
 
 
 @app.get("/api/brain")
@@ -9457,10 +9517,24 @@ async def _close_package_page(reference: str) -> None:
 # Continue and Stop and the brain's tell_package_story go through
 # `_package_story`. It goes on after an answer only once the floor is free,
 # so the reply to his answer is heard before the next slide.
+def _package_superseded(package_id: str) -> str:
+    """Why a page package is no longer the revision in use (its inbox row
+    was closed when a newer one of it arrived), or "": a place he asked
+    from in it is not restored (story_teller's Return)."""
+    try:
+        entry = package_inbox.latest_for_package(package_id)
+    except Exception as e:                     # the record unreadable: nothing known
+        log.warning("could not read package %s's inbox row: %s", package_id, e)
+        return ""
+    if entry is not None and entry.closed_why == package_inbox.SUPERSEDED:
+        return "replaced by a newer revision"
+    return ""
+
+
 story_teller = StoryTeller(
     lambda: speech, _open_package_page, lambda f: _voice_emit(f),
     floor_free=lambda: conversation_floor.state() == attention.FLOOR_IDLE,
-    note=_notes_for_brain.append, spoken=_note_spoken)
+    note=_notes_for_brain.append, spoken=_note_spoken, replaced=_package_superseded)
 
 
 def _story_said(told: "story_teller_module.Told") -> str:
@@ -9481,15 +9555,83 @@ def _story_said(told: "story_teller_module.Told") -> str:
     return f"The story of {t.package.id} is being told, at slide {t.slide} of {total}."
 
 
+def _place_said(told: "story_teller_module.Told") -> str:
+    """Where he is (or was) in a package, in words: the story's slide and
+    beat and what it was doing are JARVIS's own; the slide titles, the deck
+    slide shown and the part he selected are the sender's, walled."""
+    place = told.place
+    story = told.story
+    where = []
+    if place.slide and story is not None:
+        where.append(f"story slide {place.slide} of {len(story.slides)}"
+                     + (f", beat {place.beat} of {len(story.slides[place.slide - 1].beats)}"
+                        if place.beat else ""))
+    doing = {story_teller_module.TELLING: "being told", story_teller_module.WAITING:
+             "waiting for his answer", story_teller_module.PAUSED: "paused",
+             story_teller_module.STOPPED: "stopped",
+             story_teller_module.FINISHED: "told to its end"}.get(place.state, "not told")
+    head = (f"Package {place.package}, revision {place.revision[:19]}: "
+            f"{'; '.join(where) or 'no story slide'}; its story {doing}"
+            f"{', its words sounding when he asked' if place.speaking else ''}. "
+            f"{told.asks} place(s) kept to go back to.")
+    page_title = ""
+    if place.view.page:
+        try:
+            pages = package_inbox.deck_pages(work_packages.find(place.package)) or []
+            page_title = next((p.get("title", "") for p in pages
+                               if p.get("opener") == place.view.page), "")
+        except (work_packages.PackageError, ValueError):
+            pass
+    lines = []
+    if place.slide and story is not None:
+        lines.append(f"Story slide: {story.slides[place.slide - 1].title}")
+    if page_title:
+        lines.append(f"Page shown: {page_title}")
+    if place.view.words:
+        lines.append(f"The part he selected: {place.view.words}")
+    if place.view.selected:
+        lines.append(f"The words he selected in it: {place.view.selected}")
+    if not lines:
+        return head + " He selected no part of the page."
+    return head + " What he is looking at, from the package:\n" + \
+        _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines))
+
+
 async def _package_story(action: str, reference: str, slide: Optional[int] = None,
-                         by: str = "on the page") -> tuple[bool, str]:
+                         by: str = "on the page", view=None) -> tuple[bool, str]:
     """Tell (from `slide`), resume, stop or ask after a page package's
-    story: (done, what was done or why not). Started or stopped from the
-    page, the brain is told at its next turn, so it knows what he is
-    hearing."""
-    told = await story_teller.act(action, reference, slide, by=by)
+    story, or Ask (keep where he is, with the `view` its page reported) and
+    Return (go back to the last place kept), or say where he is: (done,
+    what was done or why not). Done from the page, the brain is told at
+    its next turn, so it knows what he is hearing and asking about."""
+    told = await story_teller.act(action, reference, slide, by=by, view=view)
     if told.package is None:
+        if action == story_teller_module.RETURN and told.place is not None and by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he asked to go back to where he "
+                                    f"was in package {told.place.package}, and it was refused: "
+                                    f"{told.problem}")
         return False, told.problem
+    if action == story_teller_module.PLACE:
+        return True, _place_said(told)
+    if action == story_teller_module.ASK:
+        if by != "by voice":
+            _notes_for_brain.append(
+                f"Since your last turn he paused package {told.package.id} on the page to ask "
+                f"you about what he is looking at; tell_package_story with action place gives "
+                f"it, and action return takes him back.")
+        return True, (f"Kept his place. {_place_said(told)} Answer what he asks about it; "
+                      f"action return takes him back to it.")
+    if action == story_teller_module.RETURN:
+        place = told.place
+        again = place.speaking and place.slide
+        said = (f"Back where he was in {told.package.id}"
+                + (f", at story slide {place.slide}" if place.slide else "")
+                + (f"; beat {place.beat} is told again from its beginning." if again else
+                   "; nothing is read: the story stays as it was.")
+                + f" {told.asks} place(s) still kept.")
+        if by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he went back on the page: {said}")
+        return True, said
     if action == story_teller_module.STATUS:
         said = _story_said(told)
         if said:
@@ -9544,7 +9686,8 @@ TAINT_EXEMPT_TOOLS["activate_language_kit"] = "it activates the held kit on his 
 
 packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
                    _open_local_package, _close_package_page,
-                   saved=lambda package: (_inbox_saved(package), _key_error_act(package)))
+                   saved=lambda package: (_inbox_saved(package), _key_error_act(package)),
+                   seen=story_teller.seen)
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -9570,6 +9713,9 @@ async def tool_tell_package_story(args: dict) -> str:
                                       by="by voice")
     if not done:
         return f"{said} Nothing was changed."
+    if action in (story_teller_module.ASK, story_teller_module.PLACE,
+                  story_teller_module.RETURN):
+        return said
     if action in (story_teller_module.STOP, story_teller_module.STATUS) \
             or story_teller.telling is None:
         return f"{said} Say nothing more about it unless he asks."
@@ -9582,9 +9728,10 @@ async def tool_tell_package_story(args: dict) -> str:
             "(run_package_command); then it goes on by itself. Do not move it on yourself. "
             if any(s.waits for s in story.slides) else "")
     return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
-            f"points at each part on his screen as it is said. {asks}Stop ends it; action "
-            f"resume goes on from the first question with no answer; action status says "
-            f"what it is doing. Do not repeat the story yourself. Its slides:\n"
+            f"points at each part on his screen as it is said. {asks}Stop ends it and keeps "
+            f"its place for action return; action resume goes on from where it is paused, "
+            f"else the first question with no answer; action status says what it is doing. Do not repeat the story "
+            f"yourself. Its slides:\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
@@ -9619,7 +9766,8 @@ TAINTING_TOOLS.update({
     "open_local_package": "a work package's own package.json and skill",
     "list_packages": "work packages teammates sent",
     "run_package_command": "the output of a work package's step",
-    "tell_package_story": "the slide titles of a story a teammate sent",
+    "tell_package_story": ("the slide titles of a story a teammate sent, and the part of "
+                           "its page he is looking at"),
 })
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
@@ -10382,13 +10530,6 @@ def _apply_package_reviews() -> None:
 # them in the same transaction; these tell the pages, and say whether a
 # package link is answered (the package inbox is the server's).
 
-def _package_finished_at(entry) -> Optional[float]:
-    """When he signed a package off, else None."""
-    if entry.state == package_inbox.CLOSED and entry.closed_why == package_inbox.SIGNED_OFF:
-        return entry.signed_off_at or entry.closed_at
-    return None
-
-
 def _package_entries(ref: str) -> list:
     """The inbox rows a link's `ref` names: its open ones if it has any (a
     name an older version also had names the one he can open), else its
@@ -10398,20 +10539,17 @@ def _package_entries(ref: str) -> list:
 
 
 def _package_answer(ref: str, key: Optional[str]):
-    """The answer of his that ends a link to package `ref` (decision `key`,
-    or the whole package: signed off, or set aside), or None while there is
-    none. A package replaced by a newer version is no answer: its waits are
-    carried (`_package_replaced`)."""
+    """The answer that ends a link to package `ref` (decision `key`, or the
+    whole package): his answer to that decision, or the package's close
+    (signed off, set aside or withdrawn; a decision it left unanswered ends
+    as closed unanswered, package_inbox.closing_answer), or None while
+    there is none. A package replaced by a newer version is no answer: its
+    waits are carried (`_package_replaced`)."""
     entries = _package_entries(ref)
     if entries and not entries[0].is_open:
-        e = entries[0]
-        refs = package_inbox.refs(e.package_id)
-        at = _package_finished_at(e)
-        if at is not None and key not in wait_links.APPROVAL_ONLY:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.SIGNED_OFF, at)
-        if e.closed_why == package_inbox.DISMISSED:
-            return wait_links.answer(wait_links.PACKAGE, refs, None, wait_links.DISMISSED,
-                                     e.closed_at)
+        closed = package_inbox.closing_answer(entries[0])
+        if closed is not None:
+            return closed.at_link(wait_links.Link(wait_links.PACKAGE, ref, key))
     for e in entries:
         refs = package_inbox.refs(e.package_id)
         if key is None:
@@ -10550,11 +10688,11 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
     if wanting:
         return None, f"{wanting} Nothing was recorded."
     if question.id == package_inbox.VOTE_ID and \
-            await asyncio.to_thread(package_inbox.legacy_deck, package):
-        # An old deck asks the retired vote in its own decide.py: his
-        # approval is written into its record by JARVIS.
+            await asyncio.to_thread(package_inbox.records_vote_itself, package):
+        # The vote asked at Done (or an old deck's, whose decide.py knows
+        # only the retired vote): his approval is written by JARVIS.
         try:
-            await asyncio.to_thread(package_inbox.record_deck_vote, package, question,
+            await asyncio.to_thread(package_inbox.record_vote, package, question,
                                     chosen, note)
         except work_packages.PackageError as e:
             return None, f"{e} Nothing was recorded."
@@ -10613,6 +10751,10 @@ def _sign_off_text(entry, package) -> str:
     if asked:
         lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
         lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
+        left = [q.id for q in package_inbox.unanswered(package)]
+        if left:
+            lines.append(f"Unanswered when he signed it off: {', '.join(left)}. Anything "
+                         f"waiting on them has ended as closed unanswered.")
         rejected = _rejected(asked)
         if entry.work_id and rejected:
             lines.append(f"His words are on work item {entry.work_id} as decision "
@@ -10774,19 +10916,37 @@ async def _close_package_view(package_id: str) -> None:
         await _voice_emit({"type": "package_closed", "package": package_id})
 
 
-async def _sign_off_package(reference: str, how: str):
+def _unanswered_ask(entry, left) -> str:
+    """Why Done waits for his word: the questions it would leave
+    unanswered, by their slug ids (package_inbox.ID), and what to do."""
+    ids = ", ".join(q.id for q in left)
+    return (f"Not signed off yet: {entry.id} still has {_say_number(len(left))} question"
+            f"{'s' if len(left) != 1 else ''} unanswered ({ids}; package_inbox reads their "
+            f"words). Tell him which, and ask him "
+            f"once whether he is done with it anyway; on his yes sign it off again with "
+            f"confirm. Anything waiting on them then ends as closed unanswered.")
+
+
+async def _sign_off_package(reference: str, how: str, confirmed: bool = False):
     """He is done with a package: the page's Done (on the package's view and
     its Queue row) and the brain's acting `sign_off_package` alike, for
-    every kind of package. Whatever he answered goes back the one way: as
+    every kind of package. With questions still unanswered it asks him once
+    first (Tim's decision done-on-unanswered): nothing is done until he
+    confirms (`confirmed`), and then the waits on those questions end as
+    closed unanswered. Whatever he answered goes back the one way: as
     its workflow's decisions, and as a capture to the session that sent it
     (each answer, unanswered ones said so; for a package that asks nothing,
     that he has reviewed it), which is read back and goes only on his yes
     or Send. Its Work item learns it; it is closed, signed off with its
     time, its update line resolved, and its view closed. (the row, what to
-    do next) or (None, why not)."""
+    do next, []) or (None, why not, the questions left unanswered when that
+    is why)."""
     entry, package, problem = await asyncio.to_thread(_sign_off_entry, reference, how)
     if entry is None:
-        return None, problem
+        return None, problem, []
+    left = await asyncio.to_thread(package_inbox.unanswered, package)
+    if left and not confirmed:
+        return None, _unanswered_ask(entry, left), left
     text = await asyncio.to_thread(_sign_off_text, entry, package)
     # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
@@ -10802,19 +10962,19 @@ async def _sign_off_package(reference: str, how: str):
         entry = await asyncio.to_thread(package_inbox.signed_off, entry.id,
                                         capture["id"] if capture else None, how)
     except package_inbox.InboxRefused as e:
-        return None, f"{e} Nothing was signed off."
+        return None, f"{e} Nothing was signed off.", []
     _inbox_closed([entry])
     _hint_inbox([entry])
     await _close_package_view(package.id)
     if capture is not None:
         return entry, (f"Signed off. Capture {capture['id']} tells "
                        f"{_said_name({'voice_name': to}, 'its session')} so, with his answers. Read it back now "
-                       f"with read_capture; it goes only on his yes or Send.")
+                       f"with read_capture; it goes only on his yes or Send."), []
     who = ("the session that sent it is not running" if entry.from_session
            else "the session it named was not proven to have sent it" if entry.unproven_claim
            else "no sender is on record for it")
     return entry, (f"Signed off" + (", and its workflow has his answers" if entry.workflow_id
-                                    else "") + f". No message went back: {who}.")
+                                    else "") + f". No message went back: {who}."), []
 
 
 async def _close_inbox_package(reference: str, how: str):
@@ -10833,6 +10993,26 @@ async def _close_inbox_package(reference: str, how: str):
     return entry, ""
 
 
+async def _withdraw_inbox_package(inbox_id: str, principal: Optional[str]):
+    """Its sender takes back a package it sent that is still open (Tim's
+    rule, sender-withdraws): the signed route `make_package --withdraw`
+    posts to. Only the session proven to have sent it may (its principal,
+    `agent:<session id>`). It leaves his Inbox, its view closes on every
+    page, what waited on it ends and its vote closes; nothing goes back.
+    (the row, "") or (None, why not)."""
+    session = principal[len("agent:"):] if principal and principal.startswith("agent:") else ""
+    if not session:
+        return None, "Only the agent session that sent a package may withdraw it, signed with its own key."
+    try:
+        entry = await asyncio.to_thread(package_inbox.withdraw, inbox_id, session)
+    except package_inbox.InboxRefused as e:
+        return None, f"{e} Nothing was withdrawn."
+    _inbox_closed([entry])
+    _hint_inbox([entry])
+    await _close_package_view(entry.package_id)
+    return entry, ""
+
+
 def _follow_inbox_messages() -> None:
     """A message JARVIS sent has moved on: a signed-off package whose
     answers it carries is given its id. Never raises."""
@@ -10847,7 +11027,7 @@ def _follow_inbox_messages() -> None:
 
 package_inbox_api.mount(app, package_inbox_api.Calls(
     receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
-    sign_off=_sign_off_package, close=_close_inbox_package))
+    sign_off=_sign_off_package, close=_close_inbox_package, withdraw=_withdraw_inbox_package))
 
 
 # The states as the brain reads them.
@@ -11004,8 +11184,13 @@ async def tool_answer_package_decision(args: dict) -> str:
 
 
 async def tool_sign_off_package(args: dict) -> str:
-    """He is done with a package: sign it off, on his word."""
-    entry, said = await _sign_off_package(str(args.get("package") or ""), package_inbox.BY_VOICE)
+    """He is done with a package: sign it off, on his word. With questions
+    unanswered, only once he has said he is done with it anyway
+    (`confirm`): the first call says which, by id (package_inbox reads
+    their words)."""
+    entry, said, left = await _sign_off_package(str(args.get("package") or ""),
+                                                package_inbox.BY_VOICE,
+                                                args.get("confirm") is True)
     return said
 
 
@@ -17475,7 +17660,7 @@ def _note_replayed(utt) -> None:
 def _opening_frames() -> list[dict]:
     """What a page is told as its voice socket opens: the settings it
     needs, that JARVIS is idle, the page package shown (so a reload keeps
-    it) and the story being told, if any."""
+    it), the story being told, if any, and the places he can go back to."""
     frames = [_config_frame(), {"type": "status", "state": "idle"}]
     if _package_shown is not None:
         # Described again: what it asks may have moved since it was shown
@@ -17488,6 +17673,8 @@ def _opening_frames() -> list[dict]:
         frames.append({"type": "package_page", "package": shown})
     if story_teller.status() is not None:
         frames.append(story_teller.status())
+    if story_teller.asks:
+        frames.append({"type": "package_asks", "asks": [p.frame() for p in story_teller.asks]})
     return frames
 
 
@@ -18002,9 +18189,25 @@ async def tool_jarvis_settings(args: dict) -> str:
     """Settings: every setting, or one section's, as the page shows them."""
     area = _plain_name(str(args.get("area") or "").strip(), "") or None
     try:
-        return _settings_said(await asyncio.to_thread(settings_service.view, area))
+        said = _settings_said(await asyncio.to_thread(settings_service.view, area))
     except settings_service.Refused as e:
         return f"Nothing to read, sir: {e}."
+    if area in (None, "server"):
+        said += "\n" + _running_said(await asyncio.to_thread(self_update.running_json))
+    return said
+
+
+def _running_said(ran: dict) -> str:
+    """The commit this process runs, as Settings, Updates and /api/health
+    show it: by its name and sha only (fixed words and hex), never its
+    title, which is a teammate's words."""
+    if not ran.get("commit"):
+        return "Which commit this JARVIS runs is not known: it is not a git checkout."
+    said = f"This JARVIS runs commit {ran['commit'][:12]} ({ran['name']})."
+    if ran.get("restart_needed"):
+        said += (f" The checkout has moved to {ran['checkout'][:12]} since it started: a "
+                 f"restart runs that.")
+    return said
 
 
 async def tool_set_jarvis_setting(args: dict) -> str:

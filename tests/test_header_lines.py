@@ -458,6 +458,11 @@ EXEMPT = {
         "stays metadata in package.json and canonical.json; nothing it writes is a trusted brain "
         "header. The projection is driven by test_language_projection.py and "
         "test_architecture_packages.py"),
+    "language_projection.views_shown": (
+        "it returns a view set's document ids, titles and declared ids as JSON fields of the "
+        "page's package description, drawn as text in the border and the package view; nothing "
+        "becomes a trusted brain header or a spoken line. Driven by test_architecture_view_set.py "
+        "and test_voice_page_architecture_view_set.py"),
     "language_document_api._ground": (
         "the canonical source and the author's explanation come back as JSON fields of the "
         "paged envelope, which the brain adapter escapes and wraps as untrusted; grounding by "
@@ -666,11 +671,11 @@ EXEMPT = {
         "memory block (`_wrap_untrusted(_MEMORY_WRAP_NAME, ...)`); the header "
         "line says only the project, through `_plain_name`. Driven by "
         "tests/test_memory_tools.py"),
-    "server.start_knowledge_engine": (
-        "it logs and raises, at startup, the supervisor's own state words and "
-        "the end of the knowledge engine's own log (JARVIS's process, its "
-        "own lines); nothing of it reaches the brain, the voice or a page, "
-        "only the server's log and the exception that stops startup. Driven "
+    "server._engine_failed": (
+        "it logs and raises, when the engine fails to open the records, the supervisor's own "
+        "state words and the end of the knowledge engine's own log (JARVIS's process, its "
+        "own lines); nothing of it reaches the brain or the voice, only the server's log and "
+        "the records gate's failed page. Driven "
         "by tests/test_knowledge_runtime.py"),
     "server.tool_voice_turn": (
         "it checks `action` against TURN_ACTIONS before acting and answers only "
@@ -1185,6 +1190,18 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.withdraw": (
+        "the command line: it prints the inbox id JARVIS answered with (an id, "
+        "package_inbox.ID's shape) and fixed words to its own runner's terminal; "
+        "driven by test_wait_links.py"),
+    "package_inbox.withdraw": (
+        "its refusal names only the inbox id (JARVIS's own, never the sender's words) "
+        "and the closed_why word, and goes back as the HTTP error to the signed "
+        "request of the agent that tried; driven by test_wait_links.py"),
+    "package_inbox.write": (
+        "the inner unit of package_inbox.withdraw (and the inbox's other writers): "
+        "its refusal names only JARVIS's own inbox id and goes back to the "
+        "requester; driven by test_wait_links.py"),
     "make_package.finish": (
         "the factory's private author continuation compares fixed review states and sends "
         "build diagnostics back to that same author; it prints only to its CLI, never a "
@@ -1208,6 +1225,13 @@ EXEMPT = {
     "server._package_story": (
         "it says what the teller did, by its fixed states, slide numbers, JARVIS's "
         "package id and JARVIS's own words for who stopped it; no story text"),
+    "server._place_said": (
+        "it says the teller's own state, slide and beat numbers, JARVIS's package id and its "
+        "revision hash above the wall; the slide titles, the page shown and the part he "
+        "selected are the sender's words and go back only inside an untrusted block"),
+    "story_teller._start": (
+        "its log line names only JARVIS's package id and slide and beat numbers; it reads "
+        "the kept place's state only to compare it with the teller's own fixed WAITING"),
     "story_teller._stop_locked": (
         "its note to the brain names only slide numbers, JARVIS's package id and JARVIS's "
         "own words for who stopped it; the slides' titles stay behind the status wall"),

@@ -1,6 +1,7 @@
 """A stand-in `claude` that authors an architecture document's explanation
 the way the real fresh author is told to (package_author._assignment): it
-reads the document folder the prompt names, writes package/UNDERSTANDING.md
+reads the document folder the prompt names (a view set's first view's),
+writes package/UNDERSTANDING.md
 (and package/story.json, copied from `AUTHOR_TEST_STORY` when it is set),
 runs the exact check command the prompt gives as a real subprocess, and
 records that call and its real output in its own transcript under
@@ -30,8 +31,10 @@ ACTION = '''
         _sys.path.insert(0, {root!r})
         from jarvis import session_watch as _sw
         from tests.author_fixtures import lines as _lines
-        _cmd = _re.search(r"exact command: (.*? --revision [0-9a-f]{{64}})", text).group(1)
-        _doc = _P(_re.search(r"Its exact revision is in (\\S+?): source.yaml", text).group(1))
+        _cmd = _re.search(r"exact command: (.*--revision [0-9a-f]{{64}})", text).group(1)
+        # One document's folder, or a view set's first ("view 1, document D, in F;").
+        _doc = _P((_re.search(r"Its exact revision is in (\\S+?): source.yaml", text)
+                   or _re.search(r"view 1, document \\S+, in (\\S+?);", text)).group(1))
         _meta = _json.loads((_doc / 'document.json').read_text())
         _P('package').mkdir(exist_ok=True)
         _P('package/UNDERSTANDING.md').write_text(

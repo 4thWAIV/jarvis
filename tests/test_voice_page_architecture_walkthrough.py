@@ -124,8 +124,14 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             await head.get_by_role("button", name="More", exact=True).click()
             assert PURPOSE in await page.locator(".package-border-overlay").inner_text(), "the handoff purpose is in Details"
             await page.keyboard.press("Escape")
+            # The vote is asked at the check mark, once: nothing of it under
+            # the border until Done is pressed.
+            assert await page.get_by_role("button", name="Approve").count() == 0
+            await page.locator("#package-view .package-done").click()
             assert await page.get_by_role("button", name="Approve").count() == 1, "the vote, once"
             assert await page.get_by_role("button", name="Got it").count() == 0, "never Got it"
+            await page.keyboard.press("Escape")
+            await async_api.expect(page.locator("#package-view .package-signoff")).to_have_count(0)
 
             # The first question by click in its card, with his words; the
             # follow-up is asked only once his answer opens it.
@@ -133,11 +139,12 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
             clear = card.locator('[data-question="ownership-clear"]')
             if n == 0:
                 position = card.locator(".package-focus-position")
-                await async_api.expect(position).to_have_text("Question 1 of 2")
+                # The standard vote is asked at Done, not counted here.
+                await async_api.expect(position).to_have_text("Question 1 of 1")
                 await clear.get_by_role("textbox").fill("Who writes a revision?")
                 await clear.get_by_role("button", name="Unclear").click()
                 await clear.locator(".package-vote-recorded").wait_for()
-                await async_api.expect(position).to_have_text("Question 1 of 3")
+                await async_api.expect(position).to_have_text("Question 1 of 2")
                 await card.get_by_role("button", name="Next", exact=True).click()
                 follow = card.locator('[data-question="which-part"]')
                 await follow.wait_for()
@@ -201,7 +208,17 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
                 back = await http.post(f"/api/packages/inbox/{first}/open", headers={"Origin": base})
                 assert back.status_code == 200
                 await page.locator(f'#package-view[data-package*="walkthrough-one"]').wait_for()
+                # The vote is unanswered: Done offers it, and signing off
+                # without it names what is left and asks once.
                 await page.locator(".package-done").click()
+                await page.locator("#package-view .package-signoff").get_by_role(
+                    "button", name="Sign off without approving or rejecting").click()
+                ask = page.locator("#package-view .package-done-ask")
+                await ask.wait_for()
+                assert "approve-package" in await ask.inner_text() or \
+                    await ask.locator("li").count() >= 1
+                assert package_inbox.get(first).is_open, "nothing done before Done anyway"
+                await ask.get_by_role("button", name="Done anyway").click()
                 await view.wait_for(state="detached")
                 entry = package_inbox.get(first)
                 assert entry.state == package_inbox.CLOSED

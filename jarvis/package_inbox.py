@@ -9,8 +9,9 @@ asking JARVIS on a turn he drove).
 
 One document per arrival in JARVIS's records (`records`, the document
 engine), `/packages/<inbox id>.package`, and every change to it one version
-recording its event (no words of the package). The entries are the backlog
-the Queue's Packages section lists and the brain's `package_inbox` reads.
+recording its event (no words of the package). The open entries are the
+backlog the Inbox's Open packages list (InboxPackages.tsx) and the brain's
+`package_inbox` read.
 This module is the only writer: one write per change (`records.atomic`),
 the revision moved inside it, written before any hint.
 
@@ -20,14 +21,18 @@ States, in order:
 
 closed with why: `signed_off` (he is done with it: whatever he answered, or
 that he has reviewed it, goes back to its sender, `signed_off_at` its
-time), `dismissed` (he set it aside, nothing sent back) or `superseded` (a
+time), `dismissed` (he set it aside, nothing sent back), `withdrawn` (its
+sender took it back while it was open, `withdraw`) or `superseded` (a
 newer one of the same name came from the same sender while it was open).
 Whatever way it closes, nothing is left waiting on it in the same write
-(wait_links): signed off or set aside, every wait on it ends and its Work
-item's vote (`approve-package-<inbox id>`, or `understood-<inbox id>` from
-before Got it was retired) closes with it; replaced, every wait
-on it waits on the newer one instead (`superseded_by`, which also takes its
-Work item when it names none) and its vote closes.
+(wait_links): signed off, set aside or withdrawn, every wait on it ends (a
+wait on one of its questions left unanswered as "closed unanswered",
+`closing_answer`) and its Work item's vote (`approve-package-<inbox id>`,
+or `understood-<inbox id>` from before Got it was retired) closes with it;
+replaced, every wait on it waits on the newer one instead
+(`superseded_by`, which also takes its Work item when it names none) and
+its vote closes. Signing one off with questions unanswered is asked once
+first (`unanswered`, server._sign_off_package).
 A package unpacked here outside the inbox gets a row when he signs it off
 (`adopt`), so every package is signed off the same way.
 
@@ -51,8 +56,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import (decision_stamp, package_story, record_cells, records, wait_links,
-                    work_packages)
+from jarvis import (decision_stamp, language_projection, package_story, record_cells, records,
+                    wait_links, work_packages)
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -60,8 +65,9 @@ ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
 STATES = (ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED)
 # Not closed: in the backlog.
 OPEN_STATES = STATES[:-1]
-SIGNED_OFF, DISMISSED, SUPERSEDED = "signed_off", "dismissed", "superseded"
-CLOSED_WHY = (SIGNED_OFF, DISMISSED, SUPERSEDED)
+SIGNED_OFF, DISMISSED, SUPERSEDED, WITHDRAWN = (
+    "signed_off", "dismissed", "superseded", "withdrawn")
+CLOSED_WHY = (SIGNED_OFF, DISMISSED, SUPERSEDED, WITHDRAWN)
 
 # How a change came about, as each event records it.
 BY_VOICE, ON_THE_PAGE, BY_THE_SENDER, BY_JARVIS = (
@@ -219,7 +225,9 @@ class Question:
         subject = (self.answer or {}).get("subject")
         if not subject:
             return ""
-        said = f", given to revision {subject.get('revision')} of {subject.get('document_id')}"
+        said = ", given to " + " and ".join(
+            f"revision {view.get('revision')} of {view.get('document_id')}"
+            for view in subject_views(subject))
         return said + (" (stale: a newer revision has been checked since, or the kit's language changed)"
                        if self.stale else "")
 
@@ -301,9 +309,20 @@ def _text(value) -> str:
 
 
 def questions(package: Package) -> list[Question]:
+    """Everything a package asks him, in order: a deck's decisions (or,
+    with no deck, its story's questions, `_story_questions`), then the
+    standard vote when it carries it outside its slides (`carries_vote`),
+    asked at the package view's Done; [] for a package that asks nothing."""
+    asked = _asked(package)
+    if carries_vote(package) and not any(q.id in VOTE_IDS for q in asked):
+        asked.append(_standard_vote(package))
+    return asked
+
+
+def _asked(package: Package) -> list[Question]:
     """The deck's decisions in its order, each with whether it applies (a
     follow-up only once its parent's answer opens it, as decide.py says)
-    and the answer recorded; [] for a package that asks none."""
+    and the answer recorded; else its story's questions."""
     record = _record(package) if is_decision_package(package) else {}
     # An old deck's retired vote is asked as the approval (current_deck).
     data = current_deck(deck(package), record)
@@ -346,6 +365,16 @@ def questions(package: Package) -> list[Question]:
                      options[d["id"]], _text(d.get("recommended")), _text(d.get("reason")),
                      applies(d["id"]), answer_of(d["id"]))
             for d in raw]
+
+
+def unanswered(package: Optional[Package]) -> list[Question]:
+    """The questions that apply with no answer that stands (none given, or
+    his approval of a revision no longer current): what signing it off now
+    leaves unanswered, and the waits its close ends as closed unanswered.
+    [] for a package that asks nothing, or none here."""
+    if package is None:
+        return []
+    return [q for q in questions(package) if q.applies and not q.counts()]
 
 
 def counts(asked: list[Question]) -> tuple[int, int]:
@@ -522,28 +551,97 @@ def deck_data_shown(package: Package, raw: bytes) -> bytes:
 
 def legacy_deck(package: Package) -> bool:
     """Whether a decision package's own deck-data.js still asks the retired
-    vote, so its decide.py cannot record the approval (`record_deck_vote`)."""
+    vote, so its decide.py cannot record the approval (`record_vote`)."""
     data = deck(package) or {}
     return any(isinstance(d, dict) and d.get("id") == LEGACY_VOTE_ID
                for d in data.get("decisions") or [])
 
 
-def record_deck_vote(package: Package, question: "Question", option: str, note: str) -> None:
-    """His answer to the vote of an old deck, whose own decide.py knows only
-    the retired vote: written into its record as decide.py writes it
-    (results/decisions.json, and decisions.js the page reads back), under
-    `approve-package`. Refused (PackageError) for anything else."""
-    if question.id != VOTE_ID or not legacy_deck(package):
+def _deck_asks_vote(package: Package) -> bool:
+    """Whether a deck's own decide.py records the standard vote: one built
+    before the vote moved to Done, which asks it as its last decision."""
+    data = deck(package) or {}
+    return any(isinstance(d, dict) and d.get("id") == VOTE_ID
+               for d in data.get("decisions") or [])
+
+
+def records_vote_itself(package: Package) -> bool:
+    """Whether JARVIS writes his answer to the standard vote (`record_vote`)
+    rather than the package's own decide.py: every page, a deck that does
+    not ask the vote on a slide (it is asked at Done), and an old deck
+    that still asks the retired vote."""
+    return not is_decision_package(package) or not _deck_asks_vote(package)
+
+
+# ── the standard vote, asked at Done ─────────────────────────────────────
+# The vote is asked at the package view's Done (PackageView.tsx), never as
+# a slide of its own: its package.json names it (`vote`), which the shared
+# deck writes for every deck and make_package for every page. A deck or story built before, which still asks it on a slide,
+# carries it there, and that slide still answers it. His answer is kept
+# where the package's other answers are: its story's answers file, else
+# results/decisions.json (and decisions.js, which a deck reads back).
+
+def carries_vote(package: Package) -> bool:
+    """Whether the package carries the standard vote outside its slides."""
+    return package.manifest.vote == VOTE_ID
+
+
+def _vote_record_name(package: Package) -> str:
+    story = None if is_decision_package(package) else _story_of(package)
+    return story.answers.split("/", 1)[1] if story is not None and story.answers else RECORD
+
+
+def _language_of(package: Package) -> str:
+    """The vote's language: its deck's or story's, else the one in force."""
+    from jarvis import spoken_words
+    data = deck(package)
+    if data is not None:
+        language = data.get("language")
+    else:
+        story = _story_of(package)
+        language = story.language if story is not None else None
+    return language if language in _VOTE_WORDS else (
+        spoken_words.active_language() if spoken_words.active_language() in _VOTE_WORDS else "en")
+
+
+def _standard_vote(package: Package) -> "Question":
+    """The standard vote of a package that carries it outside its slides,
+    with his answer; an answer given before to the retired vote is read
+    back as it was."""
+    language = _language_of(package)
+    record = _record(package, _vote_record_name(package))
+    if not isinstance(record.get(VOTE_ID), dict):
+        before = _legacy_question(record.get(LEGACY_VOTE_ID), language)
+        if before is not None:
+            return before
+    shown = vote(language)
+    options = [{k: o[k] for k in ("id", "name", "says")} for o in shown["options"]]
+    return Question(VOTE_ID, shown["question"], "", options, VOTE_APPROVE, shown["reason"],
+                    True, _story_answer(record.get(VOTE_ID), options, VOTE_APPROVE))
+
+
+def record_vote(package: Package, question: "Question", option: str, note: str) -> None:
+    """His answer to the standard vote, written by JARVIS where the package
+    keeps its answers (`records_vote_itself`): Approve, or Reject with his
+    words. Refused (PackageError) for anything else."""
+    if question.id != VOTE_ID or not records_vote_itself(package):
         raise PackageError(f"{package.id}'s own decide.py records {question.id}.")
-    record = _record(package)
+    if option not in (VOTE_APPROVE, VOTE_REJECT):
+        raise PackageError(f"{VOTE_ID} takes {VOTE_APPROVE} or {VOTE_REJECT}.")
+    wanting = needs_words(VOTE_ID, option, note, _language_of(package))
+    if wanting:
+        raise PackageError(wanting)
+    name = _vote_record_name(package)
+    record = _record(package, name)
     record[VOTE_ID] = {
         "answer": option, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "choice": question.option_name(option) if option not in SPECIAL else "",
-        "note": note, "recommended": option == question.recommended}
+        "choice": question.option_name(option), "note": note,
+        "recommended": option == question.recommended}
     text = json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    work_packages.save_result(package, RECORD, text.encode("utf-8"))
-    work_packages.save_result(package, "decisions.js", (
-        "window.JARVIS_DECISIONS = " + text.rstrip() + ";\n").encode("utf-8"))
+    work_packages.save_result(package, name, text.encode("utf-8"))
+    if is_decision_package(package):
+        work_packages.save_result(package, "decisions.js", (
+            "window.JARVIS_DECISIONS = " + text.rstrip() + ";\n").encode("utf-8"))
 
 
 # ── his approval of an architecture design ───────────────────────────────
@@ -575,6 +673,9 @@ _APPROVAL_WORDS = {
            "say": "¿Aprueba este diseño tal como está, o quiere cambios?"},
 }
 SUBJECT = ("document_id", "revision", "source_revision", "kit_digest")
+# A view set's further views, in a subject as in the package's
+# communication.
+SET = language_projection.SET
 
 
 def approval_slide(language: str) -> dict:
@@ -593,12 +694,28 @@ def _approval_question(language: str) -> tuple[str, list[dict], str]:
 
 def subject_of(package: Package) -> Optional[dict]:
     """The checked canonical revision an architecture package puts to him:
-    {document_id, revision, source_revision, kit_digest}; None for any
-    other package."""
+    {document_id, revision, source_revision, kit_digest}, and for a view
+    set its further views' the same way in `set` (the exact set: his
+    approval is of every view's revision at once); None for any other
+    package."""
     communication = package.manifest.communication or {}
     if communication.get("kind") != "architecture":
         return None
-    return {key: communication.get(key) for key in SUBJECT}
+    subject = {key: communication.get(key) for key in SUBJECT}
+    if communication.get(SET):
+        subject[SET] = [{key: (view or {}).get(key) for key in SUBJECT}
+                        for view in communication[SET]]
+    return subject
+
+
+def subject_views(subject) -> list[dict]:
+    """Every view's revision a subject names, its own first: one for a
+    single document, each view of a set in order."""
+    if not isinstance(subject, dict):
+        return []
+    further = subject.get(SET)
+    return [{key: subject.get(key) for key in SUBJECT},
+            *(further if isinstance(further, list) else [])]
 
 
 def asks_approval(package: Package) -> bool:
@@ -690,11 +807,13 @@ def _story_questions(package: Package) -> list[Question]:
 def current_subject(subject) -> bool:
     """Whether a checked canonical revision is still the one in force: the
     newest checked revision of its document, checked by a kit with the
-    language files of the kit in force (language_projection). False
-    when it cannot be told (fail closed: a stale approval satisfies
-    nothing)."""
-    from jarvis import language_projection
-    return language_projection.current_subject(subject)
+    language files of the kit in force (language_projection); for a view
+    set, every view's. False when it cannot be told (fail closed: a stale
+    approval satisfies nothing)."""
+    views = subject_views(subject)
+    if isinstance(subject, dict) and SET in subject and not isinstance(subject[SET], list):
+        return False
+    return bool(views) and all(language_projection.current_subject(view) for view in views)
 
 
 def _story_answer(entry, options: list[dict], recommended: str) -> Optional[dict]:
@@ -715,6 +834,9 @@ def record_story_answer(package: Package, question: Question, option: str,
     decide.py writes a deck's (the story waiting on it goes on). Refused
     (PackageError) for a package whose story does not ask it there, or not
     yet (a question that does not apply)."""
+    if question.id == VOTE_ID and carries_vote(package) and not any(
+            q.id in VOTE_IDS for q in _story_questions(package)):
+        return record_vote(package, question, option, note)     # asked at Done
     story = _story_of(package)
     asked = next((q for q in _story_questions(package) if q.id == question.id), None)
     if story is None or story.answers is None or asked is None:
@@ -768,7 +890,7 @@ def page_vote(package: Package) -> Optional[dict]:
     "approval", never the vote: with the revision it puts to him, the
     options that need his words, and whether his answer is stale."""
     deck_package = is_decision_package(package)
-    asked = questions(package) if deck_package else _story_questions(package)
+    asked = questions(package)
     standard = next((q for q in asked if q.id in VOTE_IDS), None)
     declared = [] if deck_package else [q for q in asked if q.id not in VOTE_IDS]
     if standard is None and not declared:
@@ -785,6 +907,12 @@ def page_vote(package: Package) -> Optional[dict]:
                          note_required=[REQUEST_CHANGES], stale=q.stale,
                          answered_revision=(q.answer.get("subject") or {}).get("revision")
                          if q.answer else None)
+            if subject.get(SET):
+                # A view set: his approval is of every view's revision.
+                shown.update(revisions=[v.get("revision") for v in subject_views(subject)],
+                             answered_revisions=[v.get("revision") for v in
+                                                 subject_views(q.answer.get("subject"))]
+                             if q.answer else None)
         return shown
     # An answer given before to the retired vote is read back by its name
     # (`answer_name`), never asked again. The vote's own words and why it is
@@ -1157,12 +1285,33 @@ def _actor(how: str) -> str:
     return "user" if how in (BY_VOICE, ON_THE_PAGE) else "jarvis"
 
 
+# How each close ends the waits on the package (wait_links' words for it).
+_CLOSED_HOW = {SIGNED_OFF: wait_links.SIGNED_OFF, DISMISSED: wait_links.DISMISSED,
+               WITHDRAWN: wait_links.WITHDRAWN}
+
+
+def closing_answer(entry: Entry, actor: str = "", unit=None) -> Optional["wait_links.Answer"]:
+    """What a closed entry's close is to the waits on it: signed off, set
+    aside or withdrawn, with when, whose act (`actor`, else the one its
+    `how` implies) and the questions it left unanswered (those waits end
+    "closed unanswered"); None while it is open, or replaced (its waits
+    are carried to the newer one)."""
+    how = _CLOSED_HOW.get(entry.closed_why or "")
+    if entry.is_open or how is None:
+        return None
+    at = (entry.signed_off_at or entry.closed_at) if entry.closed_why == SIGNED_OFF \
+        else entry.closed_at
+    left = {q.id for q in unanswered(work_packages.by_id(entry.package_id))}
+    return wait_links.answer(wait_links.PACKAGE, _refs(unit, entry.package_id), None, how, at,
+                             actor, left)
+
+
 def _ended(unit, entry: Entry, why: str, actor: str, now: float) -> "wait_links.Settled":
-    """It is closed, signed off or set aside (`why`): every wait on it ends
-    (wait_links.settle) and its Work item's vote closes, in the caller's
+    """It is closed, signed off, set aside or withdrawn (`why`): every wait
+    on it ends (wait_links.settle; one on a question left unanswered as
+    closed unanswered) and its Work item's vote closes, in the caller's
     unit (the close's own write)."""
-    moved = wait_links.settle(unit, wait_links.answer(
-        wait_links.PACKAGE, _refs(unit, entry.package_id), None, why, now, actor), now)
+    moved = wait_links.settle(unit, closing_answer(entry, actor, unit), now)
     if why != SIGNED_OFF:
         # Signed off, its vote is answered or closed by the sign-off itself
         # (server._inbox_sign_off_work), which knows his answer.
@@ -1348,6 +1497,29 @@ def close(inbox_id: str, how: str, now: Optional[float] = None) -> Entry:
         return entry, _ended(unit, entry, DISMISSED, _actor(how), now)
 
     entry, moved = records.atomic(write, by=_caller(how), full_sync=True)
+    wait_links.tell(moved)
+    return entry
+
+
+def withdraw(inbox_id: str, session: str, now: Optional[float] = None) -> Entry:
+    """Its sender takes it back while it is open (Tim's rule,
+    sender-withdraws): only the session proven to have sent it
+    (`from_session`) may. Closed `withdrawn`, whatever he answered so far
+    kept in its record and nothing sent back; every wait on it ends and its
+    Work item's vote closes, in the same write, as the sender's act."""
+    now = time.time() if now is None else now
+
+    def write(unit) -> tuple[Entry, "wait_links.Settled"]:
+        doc = _take(unit, inbox_id)
+        if not session or doc["from_session"] != session:
+            raise InboxRefused(f"{doc['id']} was not sent by your session: only the session "
+                               f"that sent a package may withdraw it.")
+        _still_open(doc, "already ")
+        entry = _change(unit, doc, "withdrawn", BY_THE_SENDER, now, state=CLOSED,
+                        closed_at=now, closed_why=WITHDRAWN)
+        return entry, _ended(unit, entry, WITHDRAWN, "asker", now)
+
+    entry, moved = records.atomic(write, by=_caller(BY_THE_SENDER, session), full_sync=True)
     wait_links.tell(moved)
     return entry
 

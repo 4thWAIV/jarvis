@@ -1,6 +1,73 @@
 # The new JARVIS workspace
 
-Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Architecture in several views at once
+
+An architecture package can now carry several checked views of the same
+system, such as how the code is organised and where each part is placed,
+instead of only one. The package shows one view at a time: its story walks
+one concrete example through every view in turn, and Chapters name the
+view each chapter is on and move between them. Click an element in one
+view and it stays highlighted in every other view that shows it, and
+Chapters say which views do. When the package asks you to approve the
+design, your approval covers every view together, and it is shown as out
+of date once any one of them is revised.
+
+## Done tells you what is still unanswered
+
+Pressing Done on a package that still has questions without your answer
+now names them and asks you once whether you are done anyway. Done anyway
+signs it off as it is, and the sender is told which questions you left;
+Not yet leaves it open. Anything an agent was waiting on for those
+questions stops waiting, marked "closed unanswered" rather than looking
+like your answer. Asking JARVIS to sign a package off asks the same way.
+
+## Your open packages are listed in the Inbox
+
+The Inbox tab now lists every package agents have sent you that is still
+open: what it is, who sent it, the Work item it is for, how many of its
+questions are unanswered and whether you have opened it, each with Open.
+A package leaves the list once it is closed.
+
+## An agent can take back a package it sent
+
+An agent that sent you a package by mistake, or one no longer wanted, can
+withdraw it while it is still open. Only the session that sent it can. It
+leaves your Inbox, and anything waiting on it stops waiting.
+
+## Corrected evidence, and which version is running
+
+An agent can remove evidence it attached to a piece of work, such as a
+wrong commit, and the removal is kept on the item's record. Only the agent
+that added it can remove it. Settings, Updates now shows the exact commit
+JARVIS is running and says when the checkout has moved on so that a
+restart would run something newer; JARVIS can tell you the same.
+
+## Approve or reject a package at its check mark
+
+Approve and Reject are no longer a row under the package's bar or a slide
+at its end: they are on the check mark at the upper right. Press it and a
+small card opens with Approve, Reject (with your words on what to change)
+and a plain sign-off; Approve or Reject records your answer and signs the
+package off in one go. The package's own questions, when it asks any, open
+from a Questions icon in the bar, so the slides keep the whole space.
+
+## Ask about what you are looking at, then go back to exactly that point
+
+A package's bar has an Ask button. Press it, or start talking over JARVIS
+while he tells a package's story, and he stops at the sentence he was on
+and keeps exactly where you are: the slide, how far down the page you had
+scrolled, and the part you clicked or selected, which he is given so he can
+answer about it. You can ask from somewhere else in the package too, and
+each place is kept. Return, beside Ask with how many places are kept, takes
+you back one place at a time: the page comes back as it was first, then he
+says that interrupted sentence again from its start. A story that was
+paused or waiting for your answer stays so. Stop keeps your place too, so
+Return after a Stop goes back to the sentence it cut off, and Continue on a
+paused story goes on from that sentence rather than the start of the slide. If the
+package has been replaced by a newer version since you asked, JARVIS says
+so instead of taking you to a place that no longer exists.
 
 ## Every slide of a deck is in its navigation
 
@@ -10,6 +77,15 @@ its question are separate entries, each question marked, and the Approve or
 Reject slide is reachable too. Before, a decision's explanation and its
 question shared one chapter that opened on the explanation, and Next went
 straight past every question slide.
+
+## A slow start no longer leaves JARVIS without its records
+
+When the engine that holds JARVIS's records takes more than a minute to
+open them, as it can on a busy Mac, JARVIS no longer gives up and asks you
+to press Try again. The page says JARVIS is opening its records and for how
+long, and the workspace loads by itself the moment they are open. You see
+Try again only when the engine really fails: it keeps stopping, or it has
+not opened them after ten minutes.
 
 ## You can reject any package
 

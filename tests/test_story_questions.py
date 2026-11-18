@@ -234,7 +234,7 @@ def test_an_unanswered_question_stays_unanswered_when_he_signs_off_early(
         wired, shown, marks, tmp_path, chitauri):
     inbox_id = send(wired, story_zip(composed()), session="sess-1").json()["inbox"]["id"]
     assert answer(wired, "page", inbox_id, "sign-surface", "sign").status_code == 200
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert "sign-surface: sign" in capture["text"]
     assert "approve-package: not answered" in capture["text"], capture["text"]

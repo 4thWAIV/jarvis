@@ -92,8 +92,14 @@ RESERVED_QUESTIONS = (VOTE_QUESTION, LEGACY_VOTE_QUESTION, "approve-item", APPRO
 # What an author's story (beside an architecture package's UNDERSTANDING.md)
 # may hold, at each level, and its size.
 AUTHORED_MAX_BYTES = 128 * 1024
-AUTHORED_FIELDS = ("title", "language", "slides", "questions")
-SLIDE_FIELDS = ("title", "target", "beats", "waits", "asks_when")
+AUTHORED_FIELDS = ("title", "language", "slides", "questions", "scenario")
+SLIDE_FIELDS = ("title", "target", "beats", "waits", "asks_when", "view")
+# An architecture package of several checked views (a view set,
+# language_projection): a slide names the view it is told over by that
+# view's document id, and the story names the one concrete scenario it walks
+# through every view in turn.
+DOCUMENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}")
+SCENARIO_MAX_CHARS = 300
 BEAT_FIELDS = ("say", "targets", "actions")
 
 
@@ -121,6 +127,9 @@ class Slide:
     waits: Optional[str] = None                 # the question this slide asks
     # (question, answers): it applies only once that question has one of them
     asks_when: Optional[tuple[str, tuple[str, ...]]] = None
+    # The view of a view set it is told over (its document id); None: the
+    # view shown stays.
+    view: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +157,7 @@ class Story:
     slides: tuple[Slide, ...]
     answers: Optional[str] = None               # results/<name>.json
     questions: tuple[Declared, ...] = ()        # answered in the view's head
+    scenario: str = ""                          # a view set's walk-through
 
     def declared(self, question: str) -> Optional[Declared]:
         return next((q for q in self.questions if q.id == question), None)
@@ -183,9 +193,12 @@ class Story:
         runs its own actions; its targets are what is pointed at."""
         slide = self.slides[number - 1]
         go = [{"show": slide.target}] if slide.target else []
+        # A view set's slide names its view: the page shows that view before
+        # the beat is pointed at in it.
+        view = {"view": slide.view} if slide.view else {}
         return [(beat.say, {"package": package_id, "beat": f"{number}.{n}", "slide": number,
                             "say": beat.say, "targets": list(beat.targets),
-                            "actions": go + [{kind: sel} for kind, sel in beat.actions]})
+                            "actions": go + [{kind: sel} for kind, sel in beat.actions], **view})
                 for n, beat in enumerate(slide.beats, 1)]
 
     def outline(self) -> dict:
@@ -197,12 +210,19 @@ class Story:
         what its beats click, in order, once each. The page's border opens
         a slide with its first opener and, when the page says it shows one
         (a deck's `slide.shown`), counts itself on the slide that clicks it,
-        so the border and the page never disagree on where they are."""
-        return {"title": self.title, "language": self.language,
-                "slides": [s.title for s in self.slides],
-                "asks": [n for n, s in enumerate(self.slides, 1) if s.waits],
-                "focus": {s.waits: _about(s) for s in self.slides if s.waits},
-                "openers": [_openers(s) for s in self.slides]}
+        so the border and the page never disagree on where they are.
+        A view set's story adds `views` (each slide's view, or None) and
+        its `scenario`: the border's chapters move between the views."""
+        shown = {"title": self.title, "language": self.language,
+                 "slides": [s.title for s in self.slides],
+                 "asks": [n for n, s in enumerate(self.slides, 1) if s.waits],
+                 "focus": {s.waits: _about(s) for s in self.slides if s.waits},
+                 "openers": [_openers(s) for s in self.slides]}
+        if any(s.view for s in self.slides):
+            shown["views"] = [s.view for s in self.slides]
+        if self.scenario:
+            shown["scenario"] = self.scenario
+        return shown
 
 
 def _openers(slide: Slide) -> list[str]:
@@ -355,12 +375,15 @@ def parse(raw: bytes) -> Story:
         target = raw_slide.get("target")
         beats = _list(raw_slide.get("beats"), f"{where}'s beats", MAX_BEATS, required=True)
         waits = raw_slide.get("waits")
+        view = raw_slide.get("view")
+        if view is not None and (not isinstance(view, str) or not DOCUMENT_ID.fullmatch(view)):
+            raise StoryError(f"{where}'s view is not a document id.")
         slides.append(Slide(
             _text(raw_slide.get("title"), f"{where}'s title", MAX_TITLE_CHARS),
             None if target is None else _selector(target, f"{where}'s target"),
             tuple(_beat(b, f"{where}, beat {m}") for m, b in enumerate(beats, 1)),
             None if waits is None else _question(waits, f"{where}'s waits"),
-            _asks_when(raw_slide.get("asks_when"), where)))
+            _asks_when(raw_slide.get("asks_when"), where), view))
     answers = body.get("answers")
     if answers is not None and (not isinstance(answers, str) or not ANSWERS.fullmatch(answers)):
         raise StoryError("The story's answers is not results/<name>.json.")
@@ -381,8 +404,10 @@ def parse(raw: bytes) -> Story:
     for q in declared:
         if q.id not in asked:
             raise StoryError(f"Question {q.id} is declared, but no slide waits for it.")
+    scenario = ("" if body.get("scenario") is None
+                else _line(body["scenario"], "The story's scenario", SCENARIO_MAX_CHARS))
     return Story(_text(body.get("title"), "The story's title", MAX_TITLE_CHARS), language,
-                 tuple(slides), answers, declared)
+                 tuple(slides), answers, declared, scenario)
 
 
 # -- an author's story, and the one composition with the standard vote ----------------
@@ -498,6 +523,43 @@ def compose(story: Optional[dict], language: str, approval: bool = False,
     return encoded
 
 
+def walk_problem(story: Optional[dict], views: tuple[str, ...]) -> Optional[str]:
+    """What is wrong with an author's story (`authored`) for an
+    architecture package of `views` (its checked documents' ids, in the
+    package's order), or None. One view: a slide may name only that view,
+    and nothing more is asked. Several (a view set): one concrete scenario
+    walked through every view in turn, the "+1" that ties the views
+    together: the story names its `scenario` (one line), every slide names
+    its view, each view has at least one slide, and the views come in the
+    package's order, each told whole before the next."""
+    slides = [s for s in (story or {}).get("slides") or [] if isinstance(s, dict)]
+    named = [s.get("view") for s in slides]
+    if len(views) < 2:
+        if any(v is not None and v not in views for v in named):
+            return "A slide names a view this package does not hold."
+        return None
+    if story is None:
+        return (f"A view set of {len(views)} views needs a story that walks one concrete "
+                f"scenario through every view in turn.")
+    scenario = story.get("scenario")
+    if not isinstance(scenario, str) or not scenario.strip() or "\n" in scenario.strip() \
+            or len(scenario.strip()) > SCENARIO_MAX_CHARS:
+        return (f"A view set's story names its scenario: the one concrete input it walks "
+                f"through every view, in one line of at most {SCENARIO_MAX_CHARS} characters.")
+    for n, view in enumerate(named, 1):
+        if view not in views:
+            return (f"Slide {n} names no view of this set: every slide of a view set's story "
+                    f"names its view ({', '.join(views)}).")
+    order = [views.index(v) for v in named]
+    if order != sorted(order):
+        return ("The story walks the views out of order: tell each view whole, in the "
+                f"package's order ({', '.join(views)}).")
+    missing = [v for v in views if v not in named]
+    if missing:
+        return f"The scenario never reaches view {', '.join(missing)}: walk it through every view."
+    return None
+
+
 def current(story: Story) -> Story:
     """A story as it is told and asked now: a slide waiting on the retired
     vote (Got it, `understood`, in a package delivered before it was
@@ -511,8 +573,9 @@ def current(story: Story) -> Story:
     shown = package_inbox.vote_slide(story.language)
     slides = tuple(s if s.waits != LEGACY_VOTE_QUESTION else Slide(
         shown["title"], s.target, tuple(Beat(b["say"], (), ()) for b in shown["beats"]),
-        VOTE_QUESTION, s.asks_when) for s in story.slides)
-    return Story(story.title, story.language, slides, story.answers, story.questions)
+        VOTE_QUESTION, s.asks_when, s.view) for s in story.slides)
+    return Story(story.title, story.language, slides, story.answers, story.questions,
+                 story.scenario)
 
 
 def target(declaration: str, member: Optional[str] = None, part: Optional[str] = None) -> str:

@@ -140,14 +140,22 @@ def jarvis_app(monkeypatch, tmp_path):
 
 def _through(server, client):
     """The page's /api/packages requests: JARVIS's own app, and Tell the
-    story through the server's `_package_story` on this loop."""
+    story (and Ask and Return) through the server's `_package_story` on this
+    loop, and what the frame shows kept by its story teller."""
     async def handle(route):
         request = route.request
         path = "/" + request.url.split("://", 1)[1].split("/", 1)[1]
+        if request.method == "POST" and path.endswith("/view"):
+            from jarvis.package_place import view_from
+            server.story_teller.seen(path.split("/")[3],
+                                     view_from(json.loads(request.post_data or "{}").get("view")))
+            await route.fulfill(status=204)
+            return
         if request.method == "POST" and path.endswith("/story"):
             body = json.loads(request.post_data or "{}")
             done, said = await server._package_story(body.get("action", ""),
-                                                     path.split("/")[3], body.get("slide"))
+                                                     path.split("/")[3], body.get("slide"),
+                                                     view=body.get("view"))
             await route.fulfill(status=200 if done else 409, content_type="application/json",
                                 body=json.dumps({"said": said} if done else {"error": said}))
             return

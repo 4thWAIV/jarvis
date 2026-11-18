@@ -192,6 +192,10 @@ class Status:
     chosen: Optional[Version] = None
     ci: str = ""
     blockers: list[Blocker] = field(default_factory=list)
+    # The commit this process runs (`note_running`, at server start), and
+    # whether the checkout has moved since, so a restart would run another.
+    running: Optional[Version] = None
+    restart_needed: bool = False
 
     @property
     def up_to_date(self) -> bool:
@@ -208,6 +212,7 @@ class Status:
         out["current"] = self.current.to_json() if self.current else None
         out["versions"] = [v.to_json() for v in self.versions]
         out["chosen"] = self.chosen.to_json() if self.chosen else None
+        out["running"] = self.running.to_json() if self.running else None
         out.update(up_to_date=self.up_to_date, can_update=self.can_update)
         return out
 
@@ -224,7 +229,9 @@ class Status:
                    chosen=Version.from_json(data.get("chosen")),
                    ci=data.get("ci", ""),
                    blockers=[Blocker(b["code"], b.get("detail") or [], b.get("values") or {})
-                             for b in data.get("blockers") or [] if b.get("code") in BLOCKER_WORDS])
+                             for b in data.get("blockers") or [] if b.get("code") in BLOCKER_WORDS],
+                   running=Version.from_json(data.get("running")),
+                   restart_needed=bool(data.get("restart_needed")))
 
 
 @dataclass
@@ -400,6 +407,49 @@ def current_version(root: Path) -> Version:
     return _read_log(_git(root, "log", "-1", _LOG_FORMAT, "HEAD"))[0][0]
 
 
+# --- the commit this process runs -------------------------------------------
+
+# HEAD as the server started: the code it imported. None for an installed
+# copy, a checkout git cannot read, or before the server has noted it.
+_running: Optional[Version] = None
+
+
+def note_running(root: Optional[Path] = None) -> Optional[Version]:
+    """At server start: the commit it runs is HEAD now. Never raises."""
+    global _running
+    try:
+        _running = current_version(root or repo_root()) if is_checkout() else None
+    except (UpdateError, OSError, IndexError, subprocess.SubprocessError):
+        _running = None
+    return _running
+
+
+def running() -> Optional[Version]:
+    """The commit this process runs, as noted at its start, or None."""
+    return _running
+
+
+def checkout_head(root: Optional[Path] = None) -> str:
+    """The checkout's HEAD now ("" when git cannot say). Never raises."""
+    if not is_checkout():
+        return ""
+    try:
+        return _git(root or repo_root(), "rev-parse", "HEAD").strip()
+    except (UpdateError, OSError, subprocess.SubprocessError):
+        return ""
+
+
+def running_json(root: Optional[Path] = None) -> dict:
+    """The commit this process runs, for /api/health: its sha, its name
+    (PR number or short sha) and title, the checkout's HEAD now, and
+    whether a restart would run another commit."""
+    ran = _running
+    head = checkout_head(root)
+    return {"commit": ran.sha if ran else None, "name": ran.name if ran else None,
+            "title": ran.title if ran else "", "checkout": head or None,
+            "restart_needed": bool(ran and head and head != ran.sha)}
+
+
 def newer_versions(root: Path) -> list[Version]:
     """Newest first: each first-parent merge on origin/main newer than HEAD,
     and origin/main's latest commit when it is not a merge, so the default
@@ -454,9 +504,13 @@ def check(root: Optional[Path] = None, version: Optional[str] = None) -> Status:
     status's `error`."""
     root = root or repo_root()
     where = source(root)
+    head = checkout_head(root)
+    ran = running()
+    moved = bool(ran and head and head != ran.sha)
     if where != GITHUB:
-        return Status(source=where, reason=_SOURCE_REASONS[where])
-    status = Status(source=GITHUB)
+        return Status(source=where, reason=_SOURCE_REASONS[where], running=ran,
+                      restart_needed=moved)
+    status = Status(source=GITHUB, running=ran, restart_needed=moved)
     asked = (version or "").strip()
     not_chosen = ""
     try:
@@ -625,12 +679,13 @@ def newest_choosable(status: Status) -> Optional[Version]:
 
 def describe(status: Status) -> tuple[str, list[str]]:
     """(a head in fixed words, the details that quote titles and files)."""
+    ran = _running_lines(status)
     if status.source != GITHUB:
-        return status.reason, []
+        return status.reason, ran
     if status.error:
-        return CANNOT_CHECK, [status.error]
-    running = ([f"Running {version_line(status.current)}, on {status.branch}."]
-               if status.current else [])
+        return CANNOT_CHECK, ran + [status.error]
+    running = ran or ([f"Running {version_line(status.current)}, on {status.branch}."]
+                      if status.current else [])
     if status.up_to_date:
         head = "Up to date."
         details = running
@@ -649,6 +704,19 @@ def describe(status: Status) -> tuple[str, list[str]]:
     elif status.can_update:
         head += f" {status.chosen.name} can be installed."
     return head, details
+
+
+def _running_lines(status: Status) -> list[str]:
+    """The commit this process runs, and, when the checkout has moved since
+    it started, that a restart would run that one."""
+    if status.running is None:
+        return []
+    lines = [f"Running {version_line(status.running)}"
+             + (f", on {status.branch}." if status.branch else ".")]
+    if status.restart_needed:
+        at = status.current.name if status.current else "another commit"
+        lines.append(f"The checkout is at {at} since it started: a restart runs that.")
+    return lines
 
 
 def _blocker_lines(status: Status) -> list[str]:

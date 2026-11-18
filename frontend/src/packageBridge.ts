@@ -49,6 +49,27 @@
  * posts `slide.open` {opener} (the story helper clicks it) for Previous,
  * Next and Chapters, so the border is the deck's one navigation.
  *
+ * And an architecture view set (several checked views of one system, one
+ * shown at a time): JARVIS posts `element.light` {declarations} to light
+ * the elements with those ids wherever the page shows them, again each time
+ * a view loads (`story.ready`), so the same element is lit in every view
+ * that shows it; the frame says `element.selected` {declaration} when he
+ * clicks inside one of its elements, which the view lights in every view.
+ *
+ * And where he is (Ask and Return, story_teller.py): the frame's helper
+ * says `place` {scroll, part, words, selection, selected, focused} whenever
+ * what it shows changes (a scroll, his click, his selection, keyboard
+ * focus): each scrolled part ({at: selector, "" for the page, x, y}), the
+ * part he selected (a selector, its words, his selection in them as
+ * character offsets, the words selected) and what has keyboard focus. With
+ * the deck slide it last said it shows, that is the view an Ask keeps
+ * (packages.ts `FrameView`). Going back (the server's `package_return`),
+ * JARVIS posts `place.restore` {view, revealed}: the helper brings up what
+ * the story had revealed (`revealed`: shows and clicks, in order), then the
+ * slide shown, then the scrolling, his selection and keyboard focus, and
+ * says `place.restored`; a frame that loads later (its page was closed) is
+ * posted it once its helper is ready.
+ *
  * And the room it has (takeover mode, uiNavigation.ts `layout`): JARVIS
  * posts `layout` {mode, width, height} once the frame has loaded and
  * whenever the layout or the frame's size changes (the frame's own page
@@ -63,7 +84,7 @@
 
 import { t, type Said } from "./locale";
 import { inputStatus } from "./mic";
-import { saveResult, storyCue, storyState } from "./packages";
+import { returnTo, saveResult, storyCue, storyState, type FrameView } from "./packages";
 import { layout } from "./uiNavigation";
 import { byHand } from "./uiRegistry";
 import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
@@ -84,6 +105,10 @@ export interface BridgeEvents {
   onPresentationReturnFocus?(): void;
   /** The frame shows the slide `opener` opens. */
   onSlideShown?(opener: string): void;
+  /** He clicked inside the element with this id in the frame. */
+  onSelected?(declaration: string): void;
+  /** What the frame shows now, with the deck slide it last said it shows. */
+  onPlace?(view: FrameView): void;
 }
 
 /** A box in the frame's own coordinates, as its helper reports it. */
@@ -98,6 +123,9 @@ export interface Bridge {
   focus(key: string | null, targets?: string[]): void;
   /** Ask the frame to open the slide `opener` opens. */
   openSlide(opener: string): void;
+  /** Light the elements with these ids wherever the frame's page shows them
+   *  (again whenever a page loads); [] lights none. */
+  light(declarations: string[]): void;
 }
 
 const asRect = (value: unknown): FrameRect | null => {
@@ -107,6 +135,24 @@ const asRect = (value: unknown): FrameRect | null => {
   return n(r.left) && n(r.top) && n(r.width) && n(r.height)
     ? { left: Number(r.left), top: Number(r.top), width: Number(r.width), height: Number(r.height) } : null;
 };
+
+const text = (v: unknown, most: number) => typeof v === "string" ? v.slice(0, most) : "";
+const selector = (v: unknown) => typeof v === "string" && v && v.length <= 400 ? v : null;
+
+/** The frame's `place`, as a view: what it reported, bounded, with the deck
+ *  slide `page`; the server checks it again (package_place.view_from). */
+function viewOf(message: Record<string, unknown>, page: string | null): FrameView {
+  const scroll = (Array.isArray(message.scroll) ? message.scroll : []).slice(0, 8).flatMap((s) => {
+    const r = s as Record<string, unknown>;
+    return typeof r?.x === "number" && typeof r?.y === "number" && Number.isFinite(r.x) && Number.isFinite(r.y)
+      ? [{ at: selector(r.at) ?? "", x: Math.round(r.x), y: Math.round(r.y) }] : [];
+  });
+  const sel = message.selection;
+  const selection = Array.isArray(sel) && sel.length === 2 && sel.every((n) => Number.isInteger(n) && n >= 0)
+    && sel[0] <= sel[1] ? [sel[0], sel[1]] as [number, number] : null;
+  return { page, scroll, part: selector(message.part), words: text(message.words, 600), selection,
+           selected: text(message.selected, 600), focused: selector(message.focused) };
+}
 
 /** Whether this package is what has taken over the page. */
 const tookOver = (packageId: string) => {
@@ -125,8 +171,10 @@ function asBlob(data: unknown): Blob | null {
 /** Hear `frame`'s requests for package `packageId`. */
 export function connectBridge(frame: HTMLIFrameElement, packageId: string,
                               events: BridgeEvents): Bridge {
-  // The focus asked for, posted again once the frame (re)loads its helper.
+  // The focus asked for, and the elements lit, posted again once the frame
+  // (re)loads its helper.
   let asked: { key: string; targets: string[] } | null = null;
+  let lit: string[] = [];
   let stopListening: (() => void) | null = null;
   const post = (message: Record<string, unknown>, transfer: Transferable[] = []) =>
     frame.contentWindow?.postMessage({ jarvis: BRIDGE, ...message }, "*", transfer);
@@ -185,6 +233,22 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   };
   const unsubscribeState = storyState.subscribe(showState);
 
+  // Where he is: the frame's last `place`, and the deck slide it shows.
+  let page: string | null = null;
+  let place: Record<string, unknown> = {};
+  const showPlace = () => events.onPlace?.(viewOf(place, page));
+  // A place being gone back to: brought up once the helper can hear it.
+  let restoring = 0;
+  const restore = () => {
+    const back = returnTo.get();
+    if (!back || back.package !== packageId || back.seq === restoring) return;
+    restoring = back.seq;
+    // Keyboard focus goes back into the page when it had it there.
+    if (back.view.focused) frame.focus();
+    post({ type: "place.restore", view: back.view, revealed: back.revealed });
+  };
+  const unsubscribeReturn = returnTo.subscribe(restore);
+
   // The room the frame has: told once it has loaded, and on every change.
   let told = "";
   const showLayout = () => {
@@ -211,9 +275,20 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     if (message.type === "presentation.ready" && message.version === "presentation/1") events.onPresentationReady?.();
     else if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
-    else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); }
+    else if (message.type === "story.ready") { showCue(true); showState(); askFocus(); showLit(); restoring = 0; restore(); }
+    else if (message.type === "place") { place = message; showPlace(); }
+    else if (message.type === "place.restored") {
+      if (returnTo.get()?.package === packageId) returnTo.set(null);
+    }
+    else if (message.type === "element.selected" && typeof message.declaration === "string") {
+      events.onSelected?.(message.declaration);
+    }
     else if (message.type === "layout.request") events.onLayoutRequest();
-    else if (message.type === "slide.shown" && typeof message.opener === "string") events.onSlideShown?.(message.opener);
+    else if (message.type === "slide.shown" && typeof message.opener === "string") {
+      page = message.opener;
+      events.onSlideShown?.(message.opener);
+      showPlace();
+    }
     else if (message.type === "story.focus" && typeof message.key === "string") {
       events.onFocus?.(message.key, asRect(message.rect));
     }
@@ -231,12 +306,14 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   const askFocus = () => {
     if (asked) post({ type: "focus.show", key: asked.key, targets: asked.targets });
   };
+  const showLit = () => post({ type: "element.light", declarations: lit });
 
   window.addEventListener("message", onMessage);
   const close = () => {
     window.removeEventListener("message", onMessage);
     unsubscribe();
     unsubscribeState();
+    unsubscribeReturn();
     unsubscribeLayout();
     resized.disconnect();
     frame.removeEventListener("load", loaded);
@@ -245,6 +322,7 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   return {
     close,
     openSlide(opener) { post({ type: "slide.open", opener }); },
+    light(declarations) { lit = [...declarations]; showLit(); },
     focus(key, targets = []) {
       if (key === null) {
         if (asked) post({ type: "focus.clear" });

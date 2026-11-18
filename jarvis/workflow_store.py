@@ -599,7 +599,7 @@ def end_waits(unit, found: "wait_links.Answer", now: float) -> set:
     """End every open wait `found` answers, in the caller's unit. The
     workflows it moved."""
     return _end_answered(
-        unit, lambda link, wid: found if found.ends(link, wait_links.WORKFLOW, wid) else None,
+        unit, lambda link, wid: found.ending(link, wait_links.WORKFLOW, wid),
         now)
 
 

@@ -773,7 +773,7 @@ def record(event: WorkEvent) -> WorkItem:
             # late answer to a decision it asked.
             raise WorkRefused("That work item is closed; it is kept in History. Start a new one.")
         given = {**detail, "by": event.reporter} if event.kind == WAIT_ENDED else detail
-        kept = _apply(doc, event.item_id, event.kind, summary, given, now)
+        kept = _apply(doc, event.item_id, event.kind, summary, given, now, event.reporter)
         doc.update(latest_update=summary, revision=doc["revision"] + 1, updated_at=now)
         if event.kind in REPORTED_KINDS:
             doc["reported_at"] = now
@@ -926,7 +926,8 @@ def _move(doc: dict, holder: dict, what: str, item_id: str, detail: dict, now: f
     return {"state": new, "until": holds, "then": then}
 
 
-def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: float) -> dict:
+def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: float,
+           reporter: str = "") -> dict:
     """Bring the document up to date with one event; what of its detail is kept."""
     if kind == UPDATE:
         kept: dict = {}
@@ -938,7 +939,7 @@ def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: 
             doc["area"] = kept["area"]
         return kept
     if kind == PIECE:
-        return _apply_piece(doc, item_id, summary, detail, now)
+        return _apply_piece(doc, item_id, summary, detail, now, reporter)
     if kind in REVIEW_KINDS:
         return _review(doc, item_id, kind, summary, detail, now)
     if kind == REVIEW_NOTED:
@@ -1243,20 +1244,50 @@ def _after(doc: dict, item_id: str, key: str, value) -> list[str]:
     return wanted
 
 
-def _add_evidence(have: list, value) -> list[dict]:
-    """The piece's evidence with the new added, each once, oldest first."""
+def _same(a: dict, b: dict) -> bool:
+    return (a["kind"], a["value"]) == (b["kind"], b["value"])
+
+
+def _add_evidence(have: list, value, reporter: str = "") -> list[dict]:
+    """The piece's evidence with the new added, each once, oldest first,
+    each new one recording who reported it (`by`: the one reporter that
+    may remove it again)."""
     given = value if isinstance(value, list) else [value]
     kept = [dict(e) for e in have or []]
     for one in given:
         found = dataclasses.asdict(evidence(one))
-        if found not in kept:
-            kept.append(found)
+        if not any(_same(found, e) for e in kept):
+            kept.append({**found, "by": reporter})
     if len(kept) > EVIDENCE_MAX:
         raise WorkRefused(f"A piece keeps at most {EVIDENCE_MAX} pieces of evidence.")
     return kept
 
 
-def _apply_piece(doc: dict, item_id: str, summary: str, detail: dict, now: float) -> dict:
+def _drop_evidence(piece: dict, value, reporter: str) -> tuple[list[dict], list[dict]]:
+    """(the piece's evidence without the ones named, those removed): only
+    by the reporter that reported each (its `by`; for evidence from before
+    that was kept, the piece's latest reporter). Refused, naming it, for
+    evidence the piece does not have or another reporter's."""
+    given = value if isinstance(value, list) else [value]
+    kept = [dict(e) for e in piece.get("evidence") or []]
+    gone = []
+    for one in given:
+        named = dataclasses.asdict(evidence(one))
+        have = next((e for e in kept if _same(named, e)), None)
+        if have is None:
+            raise WorkRefused(f"Piece {piece['key']} has no evidence {named['value']}.")
+        owner = have.get("by") or piece.get("reporter") or ""
+        if not reporter or owner != reporter:
+            raise WorkRefused(f"Evidence {named['value']} on piece {piece['key']} was reported "
+                              f"by another reporter: only the reporter that reported it may "
+                              f"remove it.")
+        kept.remove(have)
+        gone.append({"kind": have["kind"], "value": have["value"]})
+    return kept, gone
+
+
+def _apply_piece(doc: dict, item_id: str, summary: str, detail: dict, now: float,
+                 reporter: str = "") -> dict:
     """Add a piece, or change its title, who is on it, its state, its worker
     label, the pieces it comes after or its evidence. The report's summary is
     the piece's latest note."""
@@ -1290,8 +1321,14 @@ def _apply_piece(doc: dict, item_id: str, summary: str, detail: dict, now: float
     if detail.get("after") is not None:
         kept["after"] = _after(doc, item_id, key, detail["after"])
         piece["after_keys"] = kept["after"]
+    if detail.get("drop_evidence"):
+        if have is None:
+            raise WorkRefused("A new piece has no evidence to remove.")
+        piece["evidence"], kept["evidence_dropped"] = _drop_evidence(
+            piece, detail["drop_evidence"], reporter)
+        kept["evidence"] = piece["evidence"]
     if detail.get("evidence"):
-        every = _add_evidence(piece["evidence"], detail["evidence"])
+        every = _add_evidence(piece["evidence"], detail["evidence"], reporter)
         piece["evidence"] = every
         kept["evidence"] = every
     return kept
@@ -1919,7 +1956,7 @@ def end_waits(unit, found: "wait_links.Answer", now: float) -> set:
     """Release every hold `found` answers, in the caller's unit. The items
     it moved."""
     return _release_answered(
-        unit, lambda link, item_id: found if found.ends(link, wait_links.WORK, item_id) else None,
+        unit, lambda link, item_id: found.ending(link, wait_links.WORK, item_id),
         now)
 
 

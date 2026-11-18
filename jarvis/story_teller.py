@@ -27,7 +27,24 @@ slide that waits is taken as waiting for his answer, since that is what he
 was asked. Stop (the page's, the brain's, Stop speaking or a whole
 utterance of stop words, `stop_words`) ends it at once and says so; after a
 Stop, asking to stop again says it is already stopped, never that there is
-no story. `resume` tells it again from the first question with no answer.
+no story. `resume` goes on from where a running story is paused (that beat said again)
+or waiting, else from the first question with no answer.
+
+Ask and Return (package_place.py). Ask keeps exactly where he is (the slide
+and the beat being heard, read from the scheduler's own outcomes, what the
+story was doing, and what the page reported its frame shows: the deck slide,
+scrolling, the part he selected) and pauses the words if they were sounding;
+his speaking over a slide keeps its place the same way. Places nest: each
+Ask is kept on top of the one before, at most MAX_ASKS. Return takes the
+last place back: the page is opened if it was closed, its frame brings that
+view up again (`package_return`: what the story had revealed on its slide,
+the slide shown, its scrolling, the part and its keyboard focus), and only
+then, if the words were sounding when he asked, that beat is told again
+from its beginning; a story that was paused, waiting or stopped stays so. A
+place whose package is no longer the revision it was asked about (replaced,
+gone, or changed) is refused and set aside, never restored. Stop keeps its
+place too, as an Ask does: Return goes back to it, and says the beat again
+when its words were sounding.
 
 The beats are the package's narration: JARVIS speaks the sender's words
 verbatim, in his own voice, as a reading of what the package says. They
@@ -41,11 +58,14 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable, Optional
 
 from jarvis import language_setting, package_story, spoken_words, work_packages
+from jarvis.package_place import (MAX_ASKS, Place, View, ViewError, revealed, revision_of,
+                                  view_from)
 from jarvis.package_story import Slide, Story
+from jarvis.speech import Outcome
 from jarvis.work_packages import Package, PackageError
 
 log = logging.getLogger("jarvis.story_teller")
@@ -60,7 +80,8 @@ FLOOR_SETTLE_SEC = 0.4
 REMEMBER_STOPPED_SEC = 60 * 60
 
 TELL, RESUME, STOP, STATUS = "tell", "resume", "stop", "status"
-ACTIONS = (TELL, RESUME, STOP, STATUS)
+ASK, RETURN, PLACE = "ask", "return", "place"
+ACTIONS = (TELL, RESUME, STOP, STATUS, ASK, RETURN, PLACE)
 # What a story is doing, as the page's `package_story` frame says it.
 TELLING, WAITING, PAUSED, FINISHED, STOPPED = "telling", "waiting", "paused", "finished", "stopped"
 RUNNING = (TELLING, WAITING, PAUSED)
@@ -81,6 +102,11 @@ class Telling:
     told: list = field(default_factory=list)     # slides read him since the brain was told
     cut: list = field(default_factory=list)      # slides begun but not heard in full since
     under_way: Optional[int] = None              # the slide sounding now, not yet settled
+    beat: int = 1                                # the beat of `slide` heard, or to go on from
+    first_beat: int = 1                          # the beat the first slide is told from
+    kept: bool = False                           # told from a kept place (resume, return)
+    wait_first: bool = False                     # that place waited: wait again, say nothing
+    asking: bool = False                         # paused by his Ask, not by his speaking
 
 
 @dataclass(frozen=True)
@@ -92,6 +118,7 @@ class Ended:
     state: str
     by: str
     at: float
+    place: Optional[Place] = None                # where it was: Return goes back here
 
 
 @dataclass(frozen=True)
@@ -106,6 +133,8 @@ class Told:
     already: bool = False
     ended: Optional[Ended] = None
     waiting: Optional[str] = None                # the question a stopped story waited for
+    place: Optional[Place] = None                # an ask's, a return's or the place now
+    asks: int = 0                                # places kept to return to, after it
 
 
 class StoryTeller:
@@ -115,7 +144,9 @@ class StoryTeller:
     `package_story` frame to every page; `floor_free()` says nobody is
     speaking or about to (his turn, the brain's reply); `note(text)` tells
     the brain at its next turn; `spoken(what, which, how)` tells it which
-    slides were read him word for word and where the story stands."""
+    slides were read him word for word and where the story stands;
+    `replaced(package_id)` says why a package is no longer the revision in
+    use (a newer one replaced it), or ""."""
 
     def __init__(self, speech: Callable[[], object],
                  open_page: Callable[[str], Awaitable[tuple[Optional[Package], str]]],
@@ -123,29 +154,43 @@ class StoryTeller:
                  floor_free: Callable[[], bool] = lambda: True,
                  note: Callable[[str], None] = lambda _text: None,
                  clock: Callable[[], float] = time.monotonic,
-                 spoken: Callable[[str, str, str], None] = lambda *_: None):
+                 spoken: Callable[[str, str, str], None] = lambda *_: None,
+                 replaced: Callable[[str], str] = lambda _id: ""):
         self._speech = speech
         self._open_page = open_page
         self._announce = announce
         self._floor_free = floor_free
         self._note = note
         self._spoken = spoken
+        self._replaced = replaced
         self._clock = clock
         self._lock = asyncio.Lock()
         self.telling: Optional[Telling] = None
         self.ended: Optional[Ended] = None
+        # What each package's frame last reported it shows, and the places
+        # he asked from, the last on top.
+        self.views: dict[str, View] = {}
+        self.asks: list[Place] = []
 
     async def act(self, action: str, reference: str, slide: Optional[int] = None,
-                  by: str = "on the page") -> Told:
+                  by: str = "on the page", view=None) -> Told:
         """The page's buttons and the brain's tool: tell (from `slide`, or
-        the first), resume (from the first question with no answer), stop,
-        or status."""
+        the first), resume (from where it is paused or waiting, else the
+        first question with no answer), stop, status, ask (keep the place, with `view` the
+        page reported), return (to the last place kept) or place (where he
+        is now, kept nowhere)."""
         if action == STOP:
             return await self.stop(by)
         if action == STATUS:
             return self.state_of(reference)
         if action == RESUME:
             return await self.tell(reference, None)
+        if action == ASK:
+            return await self.ask(reference, view)
+        if action == RETURN:
+            return await self.return_()
+        if action == PLACE:
+            return await self.place(reference)
         if action != TELL:
             return Told(None, problem=f"{action!r} is not one of {', '.join(ACTIONS)}.")
         return await self.tell(reference, slide or 1)
@@ -153,8 +198,10 @@ class StoryTeller:
     # -- telling --------------------------------------------------------------------------
 
     async def tell(self, reference: str, slide: Optional[int] = 1) -> Told:
-        """Tell from `slide`, or with None from where it left off: the first
-        question with no answer (slide 1 when none has one yet)."""
+        """Tell from `slide`, or with None from where it left off: where it
+        is paused (that beat told again) or waiting (that question waited on
+        again), else the first question with no answer (slide 1 when none
+        has one yet)."""
         async with self._lock:
             speech = self._speech()
             if speech is None:
@@ -168,23 +215,202 @@ class StoryTeller:
                 return Told(None, problem=str(e))
             if story is None:
                 return Told(None, problem=f"{package.id} has no story to tell.")
-            explicit = slide is not None
-            if slide is None:
+            kept = self._kept(package.id) if slide is None else None
+            if slide is None and kept is None:
                 slide = await asyncio.to_thread(self._resume_slide, package, story)
-            if not 1 <= slide <= len(story.slides):
-                return Told(None, problem=f"Its story has slides 1 to {len(story.slides)}.")
-            language = spoken_words.active_language()
-            if story.language != language:
-                names = language_setting.NAMES
-                return Told(None, problem=(
-                    f"Its story is told in {names[story.language]}, and I am speaking "
-                    f"{names[language]}; switch the language first."))
-            await self._stop_locked("to be told again")
-            telling = Telling(package, story, slide, slide, explicit)
-            self.telling = telling
-            telling.task = asyncio.create_task(self._tell(speech, telling))
-            log.info("story of %s told from slide %d", package.id, slide)
-            return Told(package, story, slide)
+            told = await self._start(speech, package, story, slide, kept)
+            if slide is None and told.package is not None:
+                # He goes on with it: the places he asked from in it are
+                # behind him.
+                self.asks = [p for p in self.asks if p.package != package.id]
+                await self._announce_asks()
+            return told
+
+    async def _start(self, speech, package: Package, story: Story, slide: Optional[int],
+                     kept: Optional[Place] = None) -> Told:
+        """Tell `story` from `slide` (told from there on purpose), or from a
+        kept place: its beat told again, or its question waited on again.
+        The story told now is stopped first. Under the lock."""
+        if kept is not None:
+            slide = kept.slide or 1
+        if not 1 <= slide <= len(story.slides):
+            return Told(None, problem=f"Its story has slides 1 to {len(story.slides)}.")
+        language = spoken_words.active_language()
+        if story.language != language:
+            names = language_setting.NAMES
+            return Told(None, problem=(
+                f"Its story is told in {names[story.language]}, and I am speaking "
+                f"{names[language]}; switch the language first."))
+        await self._stop_locked("to be told again")
+        telling = Telling(package, story, slide, slide, explicit=kept is None)
+        if kept is not None:
+            telling.kept = True
+            telling.first_beat = telling.beat = max(1, min(kept.beat or 1,
+                                                           len(story.slides[slide - 1].beats)))
+            telling.wait_first = kept.state == WAITING and not kept.speaking
+        self.telling = telling
+        telling.task = asyncio.create_task(self._tell(speech, telling))
+        log.info("story of %s told from slide %d, beat %d", package.id, slide, telling.beat)
+        return Told(package, story, slide)
+
+    def _kept(self, package_id: str) -> Optional[Place]:
+        """Where its story, paused or waiting now, goes on from; None when it
+        is not running (a stopped story resumes at the first question with
+        no answer; the place its Stop kept is Return's)."""
+        t = self.telling
+        if t is None or t.package.id != package_id or t.state not in (PAUSED, WAITING):
+            return None
+        return Place(package_id, "", t.state, t.slide, t.beat, False, t.question)
+
+    # -- ask and return -------------------------------------------------------------------
+
+    def seen(self, package_id: str, view: View) -> None:
+        """What the package's frame reports it shows now (the page sends it
+        as it changes); kept for a few packages at most."""
+        self.views.pop(package_id, None)
+        self.views[package_id] = view
+        while len(self.views) > MAX_ASKS:
+            self.views.pop(next(iter(self.views)))
+
+    def _place_now(self, package: Package) -> Place:
+        """Exactly where he is in `package`: the story's slide and beat and
+        what it is doing (a Stop's kept place when it is not told), and
+        what its frame last reported it shows."""
+        view = self.views.get(package.id, View())
+        revision = revision_of(package)
+        t = self.telling
+        if t is not None and t.package.id == package.id:
+            speaking = t.state == TELLING and bool(t.utterances)
+            beat = _cut_beat(t.utterances[0], t.beat) if speaking else t.beat
+            return Place(package.id, revision, t.state, t.slide, beat, speaking, t.question,
+                         view, self._clock())
+        e = self.ended
+        if e is not None and e.package.id == package.id and e.place is not None:
+            p = e.place
+            return Place(package.id, revision, e.state, p.slide, p.beat, False, p.question,
+                         view, self._clock())
+        return Place(package.id, revision, "", view=view, at=self._clock())
+
+    async def ask(self, reference: str, view=None) -> Told:
+        """His Ask: the place he is at kept on top of any before it, and the
+        story's words, if they were sounding, paused at that beat. `view`
+        is what the page reports its frame shows (`package_place.view_from`)."""
+        async with self._lock:
+            try:
+                package = await asyncio.to_thread(work_packages.find, reference,
+                                                  work_packages.PAGE)
+                if view is not None:
+                    self.seen(package.id, view_from(view))
+            except (PackageError, ViewError) as e:
+                return Told(None, problem=str(e))
+            place = self._place_now(package)
+            await self._keep(place)
+            t = self.telling
+            if place.speaking and t is not None:
+                t.asking = True
+                t.beat = place.beat or t.beat
+                for utt in list(t.utterances):
+                    await self._speech().withdraw(utt, reason="he asked")
+            log.info("asked from %s at slide %s, beat %s (%s)", package.id, place.slide,
+                     place.beat, place.state or "no story")
+            story = t.story if t is not None and t.package.id == package.id else None
+            return Told(package, story, place.slide, place=place, asks=len(self.asks))
+
+    async def _keep(self, place: Place) -> None:
+        self.asks.append(place)
+        del self.asks[:-MAX_ASKS]
+        await self._announce_asks()
+
+    async def _announce_asks(self) -> None:
+        await self._announce({"type": "package_asks", "asks": [p.frame() for p in self.asks]})
+
+    async def place(self, reference: str = "") -> Told:
+        """Where he is now (`reference`'s package, else the one he last asked
+        from, else the story told), kept nowhere."""
+        if not reference:
+            reference = (self.asks[-1].package if self.asks else
+                         self.telling.package.id if self.telling is not None else "")
+        if not reference:
+            return Told(None, problem="No package is open to say where he is in.")
+        try:
+            package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+        except PackageError as e:
+            return Told(None, problem=str(e))
+        place = self._place_now(package)
+        story = await asyncio.to_thread(_story_of, package)
+        return Told(package, story, place.slide, place=place, asks=len(self.asks))
+
+    async def return_(self) -> Told:
+        """His Return: the last place kept, taken back. Refused, and set
+        aside, when its package is no longer the revision it was asked
+        about. Its page is opened, the view restored, and only then, if its
+        words were sounding when he asked, that beat told again from its
+        beginning; otherwise the story stays as it is (paused, waiting or
+        stopped, now at that place)."""
+        async with self._lock:
+            if not self.asks:
+                return Told(None, problem="There is no place to go back to: nothing was "
+                                          "asked from a package.")
+            place = self.asks.pop()
+            await self._announce_asks()
+            stale = await asyncio.to_thread(self._stale, place)
+            if stale:
+                log.info("return to %s refused: %s", place.package, stale)
+                return Told(None, problem=stale, place=place, asks=len(self.asks))
+            package, problem = await self._open_page(place.package)
+            if package is None:
+                await self._keep(place)               # not stale: still there to go back to
+                return Told(None, problem=problem, place=place, asks=len(self.asks))
+            story = await asyncio.to_thread(_story_of, package)
+            restart = bool(place.speaking and place.slide and story is not None)
+            await self._announce({
+                "type": "package_return", "package": package.id, "view": place.view.as_dict(),
+                "revealed": revealed(story, place.slide, place.beat, through=not restart)})
+            if restart:
+                speech = self._speech()
+                if speech is None:
+                    return Told(None, problem="My voice isn't ready yet.", place=place)
+                told = await self._start(speech, package, story, None, place)
+                if told.package is None:
+                    return Told(None, problem=told.problem, place=place, asks=len(self.asks))
+            else:
+                await self._settle_at(place)
+            log.info("returned to %s at slide %s, beat %s (%s)", package.id, place.slide,
+                     place.beat, "told again" if restart else "as it was")
+            return Told(package, story, place.slide, place=place, asks=len(self.asks))
+
+    def _stale(self, place: Place) -> str:
+        """Why the place can no longer be restored, or "": its package gone,
+        replaced by a newer revision, or not the revision it was asked
+        about."""
+        try:
+            package = work_packages.find(place.package, work_packages.PAGE)
+        except PackageError:
+            return (f"{place.package} is no longer here, so the place he asked from cannot "
+                    f"be restored; it is set aside.")
+        replaced = self._replaced(package.id)
+        if replaced:
+            return (f"{package.id} was {replaced}, so the place he asked from is in a "
+                    f"revision no longer in use and is not restored; it is set aside.")
+        if revision_of(package) != place.revision:
+            return (f"{package.id} is not the revision he asked from any more, so that place "
+                    f"is not restored; it is set aside.")
+        return ""
+
+    async def _settle_at(self, place: Place) -> None:
+        """A place returned to without telling: a paused story of its
+        package stays paused, now at that slide and beat; a stopped one
+        goes on from there when resumed."""
+        t = self.telling
+        if place.slide is None:
+            return
+        if t is not None and t.package.id == place.package and t.state == PAUSED:
+            t.slide, t.beat = place.slide, place.beat or 1
+            await self._announce(self._frame(t))
+        elif t is None and self.ended is not None and self.ended.package.id == place.package \
+                and self.ended.state == STOPPED:
+            e = self.ended
+            self.ended = Ended(e.package, e.story, place.slide, e.state, e.by, e.at, place)
 
     def _resume_slide(self, package: Package, story: Story) -> int:
         record = read_answers(package, story)
@@ -203,7 +429,8 @@ class StoryTeller:
             while number <= len(t.story.slides) and not t.stopped:
                 slide = t.story.slides[number - 1]
                 record = await asyncio.to_thread(read_answers, t.package, t.story)
-                asked_again = t.explicit and number == t.start
+                first = number == t.start
+                asked_again = t.explicit and first
                 if slide.waits and not asked_again and (
                         isinstance(record.get(slide.waits), dict)
                         or not t.story.applies(slide, record)):
@@ -214,17 +441,25 @@ class StoryTeller:
                     continue
                 before = record.get(slide.waits) if slide.waits else None
                 t.slide, t.state, t.question = number, TELLING, None
-                utt = speech.narrate(t.story.cues(t.package.id, number))
-                t.utterances, t.under_way = [utt], number
-                await self._announce(self._frame(t))
-                heard = await speech.wait_for(utt, timeout=SLIDE_TIMEOUT_SEC)
-                t.utterances = []
-                # Only a slide heard in full was read him word for word.
-                (t.told if heard else t.cut).append(number)
-                t.under_way = None
+                beat = t.first_beat if first else 1
+                t.beat = beat
+                if first and t.wait_first and slide.waits:
+                    heard = True                 # it waited there: it waits again, unsaid
+                else:
+                    utt = speech.narrate(t.story.cues(t.package.id, number)[beat - 1:])
+                    t.utterances, t.under_way = [utt], number
+                    await self._announce(self._frame(t))
+                    heard = await speech.wait_for(utt, timeout=SLIDE_TIMEOUT_SEC)
+                    t.utterances = []
+                    if not heard:
+                        t.beat = _cut_beat(utt, beat)
+                    # Only a slide heard in full was read him word for word.
+                    (t.told if heard else t.cut).append(number)
+                    t.under_way = None
                 if t.stopped:
                     break
                 if slide.waits:
+                    t.asking = False             # an Ask on a question waits for its answer
                     await self._wait_for_answer(t, slide, before)
                     if t.stopped:
                         break
@@ -235,10 +470,21 @@ class StoryTeller:
                     paused = True
                     t.state = PAUSED
                     await self._announce(self._frame(t))
-                    self._told(t, f"he spoke over slide {number} of "
-                                  f"{len(t.story.slides)}, so the story is paused there; "
-                                  f"tell_package_story with action resume goes on from where "
-                                  f"it left off, and stop ends it")
+                    where = (f"slide {number} of {len(t.story.slides)}, at beat {t.beat} of "
+                             f"{len(slide.beats)}")
+                    back = ("tell_package_story with action place says what he is looking "
+                            "at; action return goes back there and says that beat again; stop "
+                            "ends it")
+                    if t.asking:
+                        t.asking = False
+                        self._told(t, f"he paused {where} to ask you about what he is looking "
+                                      f"at, so the story is paused there; {back}")
+                    else:
+                        # His speaking over it is asking too: its place is kept.
+                        await self._keep(replace(self._place_now(t.package), state=TELLING,
+                                                 speaking=True))
+                        self._told(t, f"he spoke over {where}, so the story is paused there "
+                                      f"and its place is kept; {back}")
                     return                       # still running, on this slide
                 number += 1
         except asyncio.CancelledError:
@@ -320,6 +566,10 @@ class StoryTeller:
     async def stop(self, by: str = "on the page") -> Told:
         async with self._lock:
             telling = await self._stop_locked(by)
+            if telling is not None and self.ended is not None and self.ended.place is not None:
+                # Stop keeps the place: Return goes back to it, and says
+                # the beat again if its words were sounding.
+                await self._keep(self.ended.place)
             if telling is None:
                 ended = self.ended
                 if (ended is not None and ended.state == STOPPED
@@ -341,6 +591,14 @@ class StoryTeller:
         if telling is None:
             return None
         telling.stopped = True
+        # Stop keeps the place: the beat sounding (or to go on from), what
+        # the story was doing, and whether its words were sounding.
+        beat = _cut_beat(telling.utterances[0], telling.beat) if telling.utterances \
+            else telling.beat
+        kept = Place(telling.package.id, revision_of(telling.package), telling.state,
+                     telling.slide, beat, telling.state == TELLING and bool(telling.utterances),
+                     telling.question,
+                     self.views.get(telling.package.id, View()), self._clock())
         speech = self._speech()
         for utt in list(telling.utterances):
             await speech.withdraw(utt, reason="story stopped")
@@ -354,7 +612,7 @@ class StoryTeller:
         state_before = telling.state
         telling.state = STOPPED
         self.ended = Ended(telling.package, telling.story, telling.slide, STOPPED, by,
-                           self._clock())
+                           self._clock(), kept)
         await self._announce(self._frame(telling))
         self._told(telling, f"it was stopped {by}, at slide {telling.slide} of "
                             f"{len(telling.story.slides)}")
@@ -382,10 +640,30 @@ class StoryTeller:
     @staticmethod
     def _frame(t: Telling) -> dict:
         frame = {"type": "package_story", "package": t.package.id, "state": t.state,
-                 "slide": t.slide, "slides": len(t.story.slides)}
+                 "slide": t.slide, "slides": len(t.story.slides), "beat": t.beat}
         if t.question:
             frame["question"] = t.question
         return frame
+
+
+def _cut_beat(utt, default: int) -> int:
+    """The beat a slide's words were at when they stopped: the first whose
+    words were not all played (the scheduler's own outcomes), else
+    `default`."""
+    for chunk in utt.chunks:
+        if chunk.outcome != Outcome.PLAYED and chunk.cue:
+            try:
+                return int(str(chunk.cue.get("beat", "")).rsplit(".", 1)[1])
+            except (IndexError, ValueError):
+                return default
+    return default
+
+
+def _story_of(package: Package) -> Optional[Story]:
+    try:
+        return package.story()
+    except PackageError:
+        return None
 
 
 def _slides(numbers: list) -> str:

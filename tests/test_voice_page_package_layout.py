@@ -33,8 +33,8 @@ EXPLANATION = "# The document store\n\n" + "\n\n".join(
     "so the explanation is longer than its card." for i in range(30))
 # Tim's own windows beside the checker's.
 WINDOWS = [w for w, _frame in decision_check.SIZES] + [(1440, 900), (1280, 720), (1024, 700)]
-# The page's share of the view's height (the border, the vote row and the
-# architecture links above it), and the most its sides may differ from the
+# The page's share of the view's height (the border and the architecture
+# links above it), and the most its sides may differ from the
 # view's own inner edges (the view's 16 px padding each side, and a pixel).
 HEIGHT_SHARE, PADDING, PX = 0.6, 16, 1.5
 

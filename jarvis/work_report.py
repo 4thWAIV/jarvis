@@ -14,6 +14,7 @@ before it is sent again (`workflow_report.report`).
     python work_report.py update <id> <summary> [--state <state>] [--area <area>] [--until <hold> ...] [--cleared]
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
+                          [--drop-evidence <commit|path|url> ...]
                           [--until <hold> ...] [--then <state>] [--cleared]
     python work_report.py end-wait <id> <summary> [--piece <key>] [--until <hold> ...]
     python work_report.py answer <id> <key>
@@ -35,7 +36,9 @@ files show the piece Working while it writes), `run:<run id>`,
 groups items on the Work tab (an empty one goes back to the source's
 folder); `--worker` is your own words for who did a piece, shown beside its
 owner; `--after` names the pieces it waits on (an empty value clears them);
-each `--evidence` is added to the piece's.
+each `--evidence` is added to the piece's, and each `--drop-evidence`
+removes one you reported yourself (a wrong commit, a moved path), as a
+report of its own on the piece's record.
 
 A piece that waits on the user (`--state waiting_on_tim`) or is blocked
 (`--state blocked`) is held, and must name what holds it with `--until`
@@ -153,6 +156,7 @@ def main(argv: list[str]) -> int:
     piece.add_argument("--worker")
     piece.add_argument("--after")
     piece.add_argument("--evidence", action="append", default=[])
+    piece.add_argument("--drop-evidence", action="append", default=[])
     piece.add_argument("--until", action="append")
     piece.add_argument("--then")
     piece.add_argument("--cleared", action="store_true")
@@ -196,7 +200,8 @@ def main(argv: list[str]) -> int:
                 if e["detail"].get("key") == args.key:
                     if e["kind"] == "decision_signed_off":
                         why = {"dismissed": "the user set its package aside",
-                               "superseded": "its package was replaced by a newer version"}.get(
+                               "superseded": "its package was replaced by a newer version",
+                               "withdrawn": "its sender withdrew its package"}.get(
                             e["detail"].get("where"),
                             "the user signed off its package without answering it")
                         print(f"Decision {args.key} was closed without an answer: {why}.",
@@ -244,6 +249,8 @@ def main(argv: list[str]) -> int:
                 detail["after"] = [k.strip() for k in args.after.split(",") if k.strip()]
             if args.evidence:
                 detail["evidence"] = [_evidence(e) for e in args.evidence]
+            if args.drop_evidence:
+                detail["drop_evidence"] = [_evidence(e) for e in args.drop_evidence]
             if args.cleared:
                 detail["cleared"] = True
         item = report(client, f"/api/work/{args.id}/events",

@@ -60,9 +60,11 @@ RIGHTS: dict[str, Right] = {
          ("GET", r"/api/work/answers"), ("GET", OWN_REPORTS), ("POST", r"/api/agent-keys/work-keys"),
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
-        "Send Tim packages for his package inbox, and write canonical language documents "
-        "for them, and retrieve and inspect received attachments without opening or running them.",
-        (("POST", r"/api/packages/inbox"), ("POST", r"/api/language-documents"),
+        "Send Tim packages for his package inbox, withdraw one it sent while it is open, "
+        "write canonical language documents for them, and retrieve and inspect received "
+        "attachments without opening or running them.",
+        (("POST", r"/api/packages/inbox"), ("POST", r"/api/packages/inbox/[^/]+/withdraw"),
+         ("POST", r"/api/language-documents"),
          ("POST", r"/api/team/messages/[^/]+/files/[^/]+/(location|download)"),
          ("POST", r"/api/team/messages/[^/]+/attachments/[^/]+/bundle"))),
     "watch": Right(

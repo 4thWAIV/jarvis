@@ -21,9 +21,13 @@ Until then:
   (a file) are open.
 - A move that fails leaves the server up saying so and why; jarvis.db is
   untouched, and the next start tries again.
-- The same cover holds for a start that cannot open the records at all
-  (`cause` `ENGINE`: the knowledge engine did not answer within
-  knowledge_client.READY_WAIT_SEC, with the supervisor's reason and the end
+- The same cover holds while the knowledge engine is still opening the
+  records past knowledge_client.READY_WAIT_SEC (`OPENING`, `kind` `open`:
+  slow, not failed; the server starts everything the moment it answers,
+  then `STARTING` and `READY` as after a move, with no Try again), for a
+  start that cannot open the records at all (`cause` `ENGINE`: the engine
+  kept exiting while it opened, or had not answered within
+  knowledge_client.OPEN_BOUND_SEC, with the supervisor's reason and the end
   of the engine's log) and for a start that failed once they were open
   (`START`). Nothing is up but this server and the page.
 - While it has failed, `POST /api/restart` from the page's own origin
@@ -52,6 +56,9 @@ from jarvis import records_cutover
 log = logging.getLogger("jarvis.records_move")
 
 MOVING, STARTING, READY, FAILED = "moving", "starting", "ready", "failed"
+OPENING = "opening"
+# What the page is waiting on: the records moving, or the engine opening them.
+MOVE_KIND, OPEN_KIND = "move", "open"
 OPEN = frozenset({("GET", "/api/health"), ("GET", "/api/records/move"),
                   ("GET", "/api/settings/language")})
 GATED_PREFIXES = ("/api/", "/ws/", "/internal/")
@@ -74,6 +81,7 @@ class _State:
 
     def reset(self) -> None:
         self.state = READY
+        self.kind = MOVE_KIND
         self.step: Optional[str] = None
         self.started_at: Optional[float] = None       # time.time()
         self.step_at: Optional[float] = None          # time.monotonic()
@@ -115,7 +123,7 @@ def status() -> dict:
         now = time.monotonic()
         in_step = now - s.step_at if s.step_at is not None else 0.0
         out: dict[str, Any] = {
-            "state": s.state, "step": s.step,
+            "state": s.state, "kind": s.kind, "step": s.step,
             "steps": [st for st in records_cutover.STEPS
                       if st != records_cutover.CLEAR or (s.plan or {}).get("clearing")],
             "done_steps": list(s.done_steps), "started_at": s.started_at,
@@ -143,6 +151,23 @@ def _set(state: str, reason: Optional[str] = None, cause: Optional[str] = None) 
             _state.reason = reason
         if cause is not None:
             _state.cause = cause
+
+
+def opening(since: Optional[float] = None) -> None:
+    """The engine is still opening the records (slow, not failed): every
+    route that needs them waits, saying so, timed from `since`
+    (time.monotonic(), the engine's start) for how long so far."""
+    with _state.lock:
+        _state.reset()
+        _state.state, _state.kind = OPENING, OPEN_KIND
+        now = time.monotonic()
+        _state.begun = now if since is None else since
+        _state.started_at = time.time() - (now - _state.begun)
+
+
+def opened() -> None:
+    """The engine answered: everything that needs the records starts."""
+    _set(STARTING)
 
 
 def begin() -> None:
@@ -222,6 +247,11 @@ def said(record: Optional[dict] = None) -> str:
     if st["state"] == FAILED:
         return (f"The records move failed: {st['reason']}. jarvis.db is untouched; the page's Try "
                 "again starts JARVIS again, which tries the move again.")
+    if st["kind"] == OPEN_KIND and st["state"] == OPENING:
+        return (f"JARVIS is opening its records: the knowledge engine has been opening them for "
+                f"{round(st['elapsed'] or 0)} s. Everything starts the moment it answers.")
+    if st["kind"] == OPEN_KIND and st["state"] == STARTING:
+        return "JARVIS has opened its records and is starting everything that needs them."
     if st["state"] in (MOVING, STARTING):
         left = st["left"]
         return (f"The records are moving into the engine (step {st['step']}"
@@ -250,10 +280,14 @@ class Gate:
         if scope["type"] == "websocket":
             await receive()                   # the connect
             await send({"type": "websocket.close", "code": 1013,
-                        "reason": "records moving" if st["state"] != FAILED else "records move failed"})
+                        "reason": "records move failed" if st["state"] == FAILED
+                        else "records opening" if st["kind"] == OPEN_KIND else "records moving"})
             return
-        error = "records_move_failed" if st["state"] == FAILED else "records_moving"
-        detail = ("JARVIS is moving its records into the new engine; try again shortly."
+        error = ("records_move_failed" if st["state"] == FAILED
+                 else "records_opening" if st["kind"] == OPEN_KIND else "records_moving")
+        detail = ("JARVIS is opening its records; try again shortly."
+                  if st["state"] != FAILED and st["kind"] == OPEN_KIND
+                  else "JARVIS is moving its records into the new engine; try again shortly."
                   if st["state"] != FAILED
                   else f"JARVIS could not open its records: {st['reason']}" if st["cause"] == ENGINE
                   else f"JARVIS could not start on its records: {st['reason']}" if st["cause"] == START

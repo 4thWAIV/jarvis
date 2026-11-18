@@ -16,6 +16,20 @@ from pathlib import Path
 from jarvis import language_documents as docs, language_kit as kit
 
 IDENTITY = ("document_id", "revision", "source_revision", "kit_digest")
+# A view set: one package of several checked revisions, each a view of the
+# same system (one per document or language), tied together by one scenario
+# walked through every view (package_story.walk_problem). The package's own
+# revision (canonical.json's top level, communication's identity) is its
+# first view, at the package's root; `set` lists the others in order, each
+# its own canonical revision (VIEW_CANONICAL) whose files are under
+# views/<document id>/ (`view_prefix`). Each view is in one of
+# language_documents.VIEW_LANGUAGES, so a further view language slots in
+# there. A package with no `set` is one view, exactly as before.
+SET = "set"
+SET_MAX = 6
+VIEW_FILES = ("source.yaml", "check.json", "index.html")
+VIEW_CANONICAL = (*IDENTITY, "parent_revision", "language", "work_id", "view_sha256", "metadata")
+
 # The one authored Markdown member a projection carries, and the origin of a
 # fresh author's (make_package --document) as canonical.json binds it.
 MEMBER = "UNDERSTANDING.md"
@@ -57,25 +71,22 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
     canonical = json.loads(canonical_bytes)
     if not isinstance(canonical, dict) or any(canonical.get(key) != communication.get(key) for key in IDENTITY):
         raise docs.DocumentError("The architecture package is missing its exact canonical revision binding.")
-    if (not isinstance(canonical.get("document_id"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", canonical["document_id"])
-            or any(not isinstance(canonical.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", canonical[key]) for key in ("revision", "source_revision", "kit_digest"))
-            or not isinstance(canonical.get("metadata"), dict)):
-        raise docs.DocumentError("The canonical identity or metadata is malformed.")
-    if canonical["revision"] != docs.revision_for(canonical["document_id"], canonical["source_revision"], canonical["kit_digest"], canonical["metadata"], canonical.get("parent_revision")):
-        raise docs.DocumentError("The canonical revision does not match its source and provenance.")
-    if canonical.get("work_id") != canonical["metadata"].get("work_id") or not canonical.get("work_id"):
-        raise docs.DocumentError("The Work linkage differs from the immutable canonical provenance.")
-    source, view, check_bytes = read("source.yaml"), read("index.html"), read("check.json")
-    evidence = json.loads(check_bytes)
-    if (not isinstance(evidence, dict) or kit.sha256(source) != canonical.get("source_revision")
-            or kit.sha256(view) != canonical.get("view_sha256")
-            or evidence.get("source_sha256") != canonical.get("source_revision")
-            or evidence.get("kit_digest") != canonical.get("kit_digest")
-            or evidence.get("view_sha256") != canonical.get("view_sha256") or evidence.get("ok") is not True):
-        raise docs.DocumentError("The architecture source, checker evidence and rendered page must belong to one checked revision.")
+    views = views_of(canonical)
+    if communication.get(SET) != set_identity(canonical):
+        raise docs.DocumentError("The view set the package names differs from the one its canonical revision binds.")
+    view_bytes = []
+    for prefix, one in views:
+        _check_identity(one)
+        if one.get("work_id") != canonical.get("work_id"):
+            raise docs.DocumentError("Every view of a set belongs to the first view's Work item.")
+        files = tuple(read(prefix + name) for name in VIEW_FILES)
+        _check_files(one, *files)
+        view_bytes.append(files)
     readable = understanding_of(canonical)
     if communication.get("readable", False) is not bool(readable):
         raise docs.DocumentError("The readable view availability differs from its canonical provenance.")
+    if len(views) > 1 and not (readable and readable.get("member") == MEMBER and readable.get("story_sha256")):
+        raise docs.DocumentError("A view set is told by its fresh author's story, walking one scenario through every view.")
     readable_bytes = []
     if readable is not None:
         member = readable.get("member", "readable.md")
@@ -93,7 +104,7 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
     manifest = json.loads(manifest_bytes)
     factory_bytes = []
     if readable and readable.get("member") == MEMBER:
-        expected = {member: MEMBER for member in ("source.yaml", "check.json", "canonical.json", "index.html")}
+        expected = {member: MEMBER for member in understood(canonical)}
         bound_story = readable.get("story_sha256")
         # His approval is asked only where the binding says the handoff
         # asked for it, and then always (package_story.compose).
@@ -116,6 +127,7 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
                 if bound_story:
                     authored = package_story.authored(written)
                 language = package_story.parse(told).language
+                walked = package_story.walk_problem(authored, tuple(v["document_id"] for _, v in views))
                 composed = package_story.compose(authored, language, approval)
                 # A package delivered before Got it was retired carries the
                 # composition of then: still its own, asked as the standard
@@ -125,6 +137,8 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
                 raise docs.DocumentError(refused) from None
             if told not in (composed, before):
                 raise docs.DocumentError(refused)
+            if walked:
+                raise docs.DocumentError(walked)
             expected[story] = MEMBER
             factory_bytes.append(told)
         if "purpose" in readable and manifest.get("purpose") != readable["purpose"]:
@@ -142,28 +156,126 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
             if readable.get("origin") != FRESH_AUTHOR or author != wanted:
                 raise docs.DocumentError("The author's attached source differs from the explanation and story this canonical revision binds.")
     author_bytes = [part for name in sorted(author or {}) for part in (name.encode(), author[name])]
-    key = kit.sha256(b"\0".join((canonical_bytes, source, view, check_bytes, *readable_bytes, *factory_bytes, manifest_bytes, *author_bytes, json.dumps(communication, sort_keys=True).encode())))
+    key = kit.sha256(b"\0".join((canonical_bytes, *(part for files in view_bytes for part in files), *readable_bytes, *factory_bytes, manifest_bytes, *author_bytes, json.dumps(communication, sort_keys=True).encode())))
     with _gate_lock:
         if key in _checked_projections:
             _checked_projections.move_to_end(key)
             return
-    installed = kit.active(canonical["kit_digest"])
-    checked = installed.run("check", source)
-    rendered = installed.run("render", source)
-    if not checked.ok or not rendered.ok or rendered.view != view:
-        raise docs.DocumentError("The pinned upstream check/render gate rejected this architecture package.")
-    parsed = docs.page_data(view)["doc"]
-    if canonical.get("metadata", {}).get("title") != docs.document_title(parsed) or communication.get("title") != docs.document_title(parsed):
+    for (_, one), (source, _, view) in zip(views, view_bytes):
+        parsed = _checked_render(one, source, view)
+        if one.get("metadata", {}).get("title") != docs.document_title(parsed):
+            raise docs.DocumentError("The package title must derive from the canonical document.")
+    if communication.get("title") != canonical["metadata"].get("title"):
         raise docs.DocumentError("The package title must derive from the canonical document.")
-    if parsed.get("language") != "arch" or canonical.get("language") != "arch":
-        raise docs.DocumentError("An architecture package must use the enabled arch language.")
-    problems = docs._coverage(parsed, canonical.get("metadata", {}).get("coverage", {}))
-    if problems:
-        raise docs.DocumentError("Architecture coverage is incomplete or unresolved; inspect its canonical coverage contract.")
     with _gate_lock:
         _checked_projections[key] = None
         while len(_checked_projections) > 256:
             _checked_projections.popitem(last=False)
+
+
+def view_prefix(document_id: str) -> str:
+    """Where a further view of a set keeps its files in the package."""
+    return f"views/{document_id}/"
+
+
+def identity_of(view: dict) -> dict:
+    return {key: view.get(key) for key in IDENTITY}
+
+
+def views_of(canonical: dict) -> list[tuple[str, dict]]:
+    """Every view a canonical.json binds, in order, as (where its files are
+    in the package, its canonical revision): the package's own revision at
+    the root first, then its `set`. Refused when the set is malformed: not
+    a list of 1 to SET_MAX - 1 objects, or a document twice."""
+    further = canonical.get(SET)
+    if further is None:
+        return [("", canonical)]
+    if (not isinstance(further, list) or not 1 <= len(further) < SET_MAX
+            or any(not isinstance(v, dict) or set(v) != set(VIEW_CANONICAL) for v in further)):
+        raise docs.DocumentError(f"The view set is malformed: 2 to {SET_MAX} checked views.")
+    ids = [canonical.get("document_id"), *(v.get("document_id") for v in further)]
+    if len(set(map(str, ids))) != len(ids):
+        raise docs.DocumentError("A view set holds each document once.")
+    return [("", canonical), *((view_prefix(v["document_id"]), v) for v in further)]
+
+
+def set_identity(canonical: dict) -> list[dict] | None:
+    """The further views' identities, as communication and his approval
+    name them; None for a package of one view."""
+    views = views_of(canonical)
+    return [identity_of(v) for _, v in views[1:]] if len(views) > 1 else None
+
+
+def understood(canonical: dict) -> list[str]:
+    """The canonical members the explanation explains, every view's files
+    and canonical.json, as package.json's `understanding` names them."""
+    return [*(prefix + name for prefix, _ in views_of(canonical) for name in ("source.yaml", "check.json")),
+            "canonical.json", *(prefix + "index.html" for prefix, _ in views_of(canonical))]
+
+
+def _check_identity(view: dict) -> None:
+    """One view's canonical revision: well formed and its revision the one
+    its source and provenance give."""
+    if (not isinstance(view.get("document_id"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", view["document_id"])
+            or any(not isinstance(view.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", view[key]) for key in ("revision", "source_revision", "kit_digest"))
+            or not isinstance(view.get("metadata"), dict)):
+        raise docs.DocumentError("The canonical identity or metadata is malformed.")
+    if view["revision"] != docs.revision_for(view["document_id"], view["source_revision"], view["kit_digest"], view["metadata"], view.get("parent_revision")):
+        raise docs.DocumentError("The canonical revision does not match its source and provenance.")
+    if view.get("work_id") != view["metadata"].get("work_id") or not view.get("work_id"):
+        raise docs.DocumentError("The Work linkage differs from the immutable canonical provenance.")
+
+
+def _check_files(view: dict, source: bytes, check_bytes: bytes, page: bytes) -> None:
+    """One view's source, checker evidence and rendered page: one checked
+    revision, the one its canonical revision names."""
+    try:
+        evidence = json.loads(check_bytes)
+    except ValueError:
+        evidence = None
+    if (not isinstance(evidence, dict) or kit.sha256(source) != view.get("source_revision")
+            or kit.sha256(page) != view.get("view_sha256")
+            or evidence.get("source_sha256") != view.get("source_revision")
+            or evidence.get("kit_digest") != view.get("kit_digest")
+            or evidence.get("view_sha256") != view.get("view_sha256") or evidence.get("ok") is not True):
+        raise docs.DocumentError("The architecture source, checker evidence and rendered page must belong to one checked revision.")
+
+
+def _checked_render(view: dict, source: bytes, page: bytes) -> dict:
+    """One view checked and drawn again by the kit it names, in a view
+    language JARVIS carries, its coverage complete: its parsed document."""
+    installed = kit.active(view["kit_digest"])
+    checked = installed.run("check", source)
+    rendered = installed.run("render", source)
+    if not checked.ok or not rendered.ok or rendered.view != page:
+        raise docs.DocumentError("The pinned upstream check/render gate rejected this architecture package.")
+    parsed = docs.page_data(page)["doc"]
+    if parsed.get("language") not in docs.VIEW_LANGUAGES or view.get("language") != parsed.get("language"):
+        raise docs.DocumentError("An architecture package must use the enabled arch language.")
+    problems = docs._coverage(parsed, view.get("metadata", {}).get("coverage", {}))
+    if problems:
+        raise docs.DocumentError("Architecture coverage is incomplete or unresolved; inspect its canonical coverage contract.")
+    return parsed
+
+
+def views_shown(package) -> list[dict] | None:
+    """A view set as the page shows it: each view in order, its document
+    id, title, language, the page it opens (`entry`) and the ids it
+    declares, so the page lights the same element in every view that shows
+    it. None for a package of one view (or none that can be read)."""
+    from jarvis import work_packages
+    communication = package.manifest.communication or {}
+    if communication.get("kind") != "architecture" or not communication.get(SET):
+        return None
+    try:
+        canonical = json.loads(work_packages.page_file(package, "canonical.json"))
+        views = views_of(canonical)
+    except (ValueError, work_packages.PackageError):
+        return None
+    return [{"id": view["document_id"], "title": view["metadata"].get("title") or view["document_id"],
+             "language": view.get("language"), "entry": prefix + "index.html",
+             "declarations": [d for d in view["metadata"].get("declarations") or [] if isinstance(d, str)]}
+            for prefix, view in views]
 
 
 def package_reader(package, expected_revision: str | None = None):
@@ -256,7 +368,8 @@ def purpose_of(text) -> str:
 
 def project(envelope: dict, folder: Path, understanding: bytes | None = None,
             story: bytes | None = None, purpose: str | None = None,
-            language: str | None = None, approval: bool = False) -> dict:
+            language: str | None = None, approval: bool = False,
+            more: tuple[dict, ...] = ()) -> dict:
     """THE projection of one checked revision into a page package folder,
     for the brain's publish and make_package --document alike: the exact
     source, its checker evidence, its rendered page, its canonical identity
@@ -268,11 +381,29 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
     own language or else `language`). With `approval` (the handoff asked
     for it) the binding says so and the story asks his approval of this
     revision before the vote (package_inbox.APPROVAL_ID). Otherwise the
-    revision's own author-supplied view is used. The package.json written
+    revision's own author-supplied view is used.
+    `more` makes it a view set: further checked revisions (of other
+    documents on the same Work item), each a view after the first, under
+    views/<document id>/, bound in canonical.json's `set`. Only a fresh
+    author's explanation and story tell a set, the story walking one
+    scenario through every view (package_story.walk_problem), and his
+    approval, when asked, is of the exact set. The package.json written
     (its version still to be worked out by the factory)."""
-    if not envelope["check"]["ok"] or not envelope.get("view_sha256"):
-        raise docs.DocumentError("This draft has no validated render; inspect its checker diagnostics.")
-    canonical = {key: envelope[key] for key in (*IDENTITY, "parent_revision", "language", "work_id", "view_sha256", "metadata")}
+    envelopes = (envelope, *more)
+    for one in envelopes:
+        if not one["check"]["ok"] or not one.get("view_sha256"):
+            raise docs.DocumentError("This draft has no validated render; inspect its checker diagnostics.")
+    if len(envelopes) > SET_MAX:
+        raise docs.DocumentError(f"A view set holds at most {SET_MAX} views.")
+    if len({one["document_id"] for one in envelopes}) != len(envelopes):
+        raise docs.DocumentError("A view set holds each document once.")
+    if any(one["work_id"] != envelope["work_id"] for one in more):
+        raise docs.DocumentError("Every view of a set belongs to the first view's Work item.")
+    if more and (understanding is None or story is None):
+        raise docs.DocumentError("A view set is told by its fresh author's story, walking one scenario through every view.")
+    canonical = {key: envelope[key] for key in VIEW_CANONICAL}
+    if more:
+        canonical[SET] = [{key: one[key] for key in VIEW_CANONICAL} for one in more]
     told = None
     if understanding is not None:
         if not understanding.strip() or len(understanding) > kit.MAX_SOURCE_BYTES:
@@ -294,10 +425,13 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
                                              approval)
             except package_story.StoryError as e:
                 raise docs.DocumentError(f"The authored story cannot be told: {e}") from None
+            walked = package_story.walk_problem(authored, tuple(one["document_id"] for one in envelopes))
+            if walked:
+                raise docs.DocumentError(f"The authored story cannot be told: {walked}")
             pointing = any(beat.get("targets") or beat.get("actions")
                            for slide in authored["slides"] for beat in slide.get("beats") or [])
-            view = Path(envelope["references"]["view"]).read_bytes()
-            if pointing and package_story.HELPER_PATH.encode() not in view:
+            if pointing and any(package_story.HELPER_PATH.encode() not in Path(one["references"]["view"]).read_bytes()
+                                for one in envelopes):
                 raise docs.DocumentError(
                     "The authored story points at the page, but this kit's rendered page does not "
                     "load the story helper, so nothing could be pointed at: narrate without "
@@ -311,9 +445,13 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
     else:
         raise docs.DocumentError("Publication needs an author-supplied readable Markdown view; submit a proposed revision with readable_markdown.")
     communication = {"kind": "architecture", "title": envelope["metadata"]["title"], "readable": True, **{key: canonical[key] for key in IDENTITY}}
+    if more:
+        communication[SET] = set_identity(canonical)
     folder.mkdir(parents=True, exist_ok=True)
-    for source_name, destination in (("source", "source.yaml"), ("check", "check.json"), ("view", "index.html")):
-        shutil.copyfile(envelope["references"][source_name], folder / destination)
+    for (prefix, _), one in zip(views_of(canonical), envelopes):
+        (folder / prefix).mkdir(parents=True, exist_ok=True)
+        for source_name, destination in (("source", "source.yaml"), ("check", "check.json"), ("view", "index.html")):
+            shutil.copyfile(one["references"][source_name], folder / prefix / destination)
     (folder / MEMBER).write_bytes(understanding)
     (folder / "canonical.json").write_text(json.dumps(canonical, sort_keys=True))
     from jarvis import make_package
@@ -322,10 +460,16 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
         "runs": "page", "entry": "index.html",
         "purpose": purpose or "Inspect the checked architecture and discuss its exact canonical source revision.",
         "returns": ["results/**"], "communication": communication, "brief": MEMBER,
-        "understanding": {member: MEMBER for member in ("source.yaml", "check.json", "canonical.json", "index.html")}}
+        "understanding": {member: MEMBER for member in understood(canonical)}}
+    if told is None:
+        # An architecture package's story is always the factory's
+        # composition: with nothing authored and no approval asked, the
+        # standard vote alone, in the language in force as it is built.
+        from jarvis import package_story
+        told = package_story.compose(None, language or make_package.built_language())
     if told is not None:
         # The story told is the composition; the factory's _with_vote leaves
-        # a story that asks a question as it is.
+        # a story that ends with his one vote as it is.
         (folder / make_package.STORY_FILE).write_bytes(told)
         manifest["story"] = make_package.STORY_FILE
         manifest["understanding"][make_package.STORY_FILE] = MEMBER

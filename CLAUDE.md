@@ -112,7 +112,20 @@ again. The plan refuses too little free disk first
   record deadline, and each copy write names the version it expects, so a
   write that times out or loses its connection is looked for and tried
   again only when not there (`_land`, at most `MOVE_ATTEMPTS`), never
-  doubling a version, before the move fails with the reason. The checks
+  doubling a version, before the move fails with the reason. An engine
+  still opening when `start_knowledge_engine`'s first wait
+  (`knowledge_client.READY_WAIT_SEC`, 60 s) ends is slow, not failed: the
+  engine and its supervisor keep running, the gate is `records_move.OPENING`
+  (`kind` `open`: 503 `records_opening`, the page's "JARVIS is opening its
+  records" with how long so far, no Try again, and the brain's
+  `records_move` the same), `_open_records_then_start` waits on
+  (`KnowledgeRuntime.wait_open`) and the moment it answers starts the move
+  check and everything that needs the records (`_open_records`). It is
+  `ENGINE` failed only when the engine exited more than
+  `knowledge_client.OPENING_EXITS_MAX` times while opening or had not
+  answered within `OPEN_BOUND_SEC` (10 minutes) of its start; Diagnostics'
+  knowledge row reads an engine still opening as degraded
+  (`knowledgeOpening`), never down. The checks
   read the records back in the file's own shape (`knowledge_move.Shape`: its
   tables and columns; a mapping whose tables changed over JARVIS's versions
   takes `shape` in `rows()`), so an older jarvis.db is proven against
@@ -507,7 +520,12 @@ line is its first new message's first line. The right panel's Queue tab is
 the Inbox (`InboxMessages.tsx` above people's threads, signed in or not):
 each Work item with new messages as one line opening its Messages tab
 (`inboxWork`), then the messages with no item that are not done
-(`inboxMessage`); the Packages section is gone. Updates waiting
+(`inboxMessage`), then his open packages (`InboxPackages.tsx`, `inboxPackage`:
+every package not closed, newest first, from `GET /api/packages/inbox`
+through `packageInbox.ts` `openPackages`: title, sender, Work item,
+questions unanswered and where it stands, with Open, his click, through
+`_open_inbox_package`; the brain's `package_inbox` reads the same rows).
+Updates waiting
 (`UpdatesNotice.tsx`) lists only JARVIS's own facts: an update that is a
 message is counted in one line, "3 new messages" (agents' new messages and
 people's waiting unread), whose Open is `right.tab.select` to the Inbox; the
@@ -661,9 +679,14 @@ which record each as done "on the page" or "by voice".
 Nothing waits on him once he has answered (`wait_links.py`). A
 `wait_started` names what will answer it with `--until` (`detail.until`,
 kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
-first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
-signs it off or sets it aside) or `package:<id>:<decision>`; anything else
-stays words. His answer by any route (the workflow's or a Work item's
+first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until it
+closes: he signs it off or sets it aside, or its sender withdraws it) or
+`package:<id>:<decision>`; anything else stays words. A package closed with
+a decision unanswered (signed off on his Done anyway, set aside, withdrawn)
+ends a wait on that decision too, recorded `closed_unanswered`, never as his
+answer (`wait_links.CLOSED_UNANSWERED`, `Answer.at_link`; the close's
+answer is `package_inbox.closing_answer`, which the sweep's
+`_package_answer` uses as well), his approval of a design included. His answer by any route (the workflow's or a Work item's
 decision, page or voice; a package decision through its decide.py,
 `_inbox_recount`; his finishing with a package, signed off or set aside)
 ends every wait linked to it in the same
@@ -705,7 +728,10 @@ its place, and walled for the brain), the pieces it comes after (`--after
 key[,key]`: pieces of the same item, never itself or a circle; `waits_for`
 the ones not done) and its evidence (`--evidence`, repeatable, added to
 what it has: a commit, an absolute path or an http(s) URL, told apart by
-shape and never opened). The detail lists the pieces in dependency order,
+shape and never opened, each recording its reporter as `by`); `--drop-evidence`
+(repeatable) removes one, only by the reporter that reported it (for
+evidence from before, the piece's latest reporter), as a report on the
+record (`evidence_dropped`, `work_store._drop_evidence`). The detail lists the pieces in dependency order,
 numbered, a URL as a link and a commit or path with Copy.
 The detail is tabbed (`work.tab.select`; `work.open` takes a `tab`):
 Messages (first: the item's conversation, its decisions answered there; see
@@ -1148,9 +1174,8 @@ retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
 he agrees. The presentation first: in `PackageView.tsx` the icon border
 (`PackageBorder.tsx`: the story's controls, chapters, More, Done, Take
-over, Close) is the only bar, with under it only the vote row
-(`.package-vote-row`: Questions and the standard vote's Approve and
-Reject) and, for an architecture package, one row of links
+over, Close, and Questions while the package asks its own) is the only
+bar, with under it nothing but, for an architecture package, one row of links
 (`.package-tools`: its source, checker evidence and explanation); the
 package's own page takes the rest of the view, its whole width. There is
 no side column: nothing goes beside or above the page, and with nothing
@@ -1195,7 +1220,7 @@ when there is no part). Where a part is comes only from the frame's helper
 (`story.focus` {key, rect} through the bridge; the page asks for a
 question's part with `focus.show` {key, targets}), never from the frame's
 DOM. Every question is asked in a card: one opens when the story waits on
-it, or when he presses Questions in the vote row (the first he has not
+it, or when he presses the border's Questions icon (the first he has not
 answered); its part is the waiting slide's targets (`Story.outline`'s
 `focus`: its beats' targets, else its own element), dimmed to 55 percent
 around it; its card (`QuestionItem` over one `usePackageQuestions`, so
@@ -1203,8 +1228,9 @@ every answer goes through the inbox's one answer route) has the question,
 why him, the evidence, the options with the recommended one marked, his
 words and what is recorded, and "Question N of M" with Back and Next
 through the sequence (his approval of a design first, then the story's
-other questions that apply, then the standard vote, whose card is
-`VoteControls`; Next after the last closes). An answer leaves the card on
+other questions that apply; Next after the last closes; the standard vote
+is asked at Done, and in this card only while a story built before still
+waits on it, `VoteControls`). An answer leaves the card on
 its question with what is recorded. An architecture package's Read the
 explanation opens it as a wider card centred over the whole view,
 scrolling within it. A told beat (its cue carries `say`) lights its
@@ -1242,12 +1268,37 @@ WAITING, as running state the server knows (which question), until the
 answers file has a new answer (a Choose saved through the bridge, or
 `scripts/decide.py`), and goes on once `conversation_floor` is idle; an
 answered question is passed over unless told from its own slide; `resume`
-starts at the first with no answer. His speaking over a slide PAUSES it
+goes on from where a running story is paused or waiting
+(`StoryTeller._kept`: that beat told again, or its question waited on
+again), else the first with no answer. His speaking over a slide PAUSES it
 (on a waiting slide it waits), never ends it, so Stop always finds it. Stop
-ends it told, paused or waiting: the page's Stop, the tool, `_stop_speaking`
+ends it told, paused or waiting, and keeps its place for Return (`Ended.place`, on the stack below): the page's Stop, the tool, `_stop_speaking`
 (hush), a whole utterance of `Vocabulary.stop_words` (checked after
 `user_final`, before the brain hears it) and closing its page; a second
 stop says it is already stopped (`StoryTeller.ended`), never "no story".
+Ask and Return (the approved Restore place choice): a place
+(`package_place.Place`) is the story's slide and beat (the first beat not
+all played, `story_teller._cut_beat`, from the scheduler's own outcomes),
+what it was doing, whether its words were sounding, and the frame's view
+(`package_place.View`: the deck slide's opener, each scrolled part, the part
+he clicked or selected with its words and his selection, keyboard focus),
+which the helper reports as `place` and the page keeps on the server
+(`POST /api/packages/<id>/view`, `StoryTeller.seen`), and its revision
+(`revision_of`: the zip's SHA-256 or an architecture revision). Ask (the
+border's Ask, `POST .../story` `{"action": "ask", "view"}`, his click, and
+the brain's `tell_package_story` action `ask`) keeps it on a stack
+(`StoryTeller.asks`, at most `MAX_ASKS`, a `package_asks` frame) and pauses
+words that were sounding; his speaking over a slide and a Stop keep their
+place too.
+The brain gets the part walled (`server._place_said`; action `place` says
+where he is, kept nowhere). Return (the border's Return with its count, the
+action `return`) pops the last: refused and set aside when its package is
+gone, `superseded` (`server._package_superseded`) or not its revision;
+otherwise the page is opened, a `package_return` frame has the frame bring
+the view back first (`place.restore`: `package_place.revealed`, the slide,
+scrolling, selection, focus; `place.restored`), and only then a place whose
+words were sounding is told again from its beat; a paused, waiting or
+stopped story stays so (`_settle_at`).
 Each chunk carries its beat as `cue` on its `audio` frame (the way
 `capture` rides); the page sets `packages.storyCue` when that chunk STARTS
 playing and clears it when the beat's last chunk is played or the voice
@@ -1349,15 +1400,21 @@ one last, his approval of the package, `package_inbox.vote`
 words saying what to change, `needs_words`, held to it by the answer route,
 `record_story_answer`, the shared deck's deck.js and decide.py, and a Work
 item's answer, `package_inbox.bare_reject`; Aprobar and Rechazar in
-Spanish, `_VOTE_WORDS`), at its end, in the deck's or
-story's language, else the language in force as it is built
-(`make_package.built_language`, `language_setting.saved`; a page's own
-story is in its own language, English when it names none): a deck as one
-more decision, a page as its story's last slide (`with_vote_slide`,
-`vote_slide`) waiting on its answers file, after any questions of its
-own (a review package's `approve-item` and a merge package's `merge-pr`
-included). Only an architecture package's `approve-architecture`, which
-`package_story.compose` puts last in place of the vote, takes its place. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
+Spanish, `_VOTE_WORDS`), in the deck's or story's language, else the
+language in force, asked only at the package view's Done, never as a
+slide (Tim, 2026-11-17: space is used carefully): package.json names it
+(`vote`, `work_packages.Manifest.vote`; the shared deck's `new_deck.manifest`
+for every deck, `make_package._with_vote` for every page), and
+`package_inbox.carries_vote`, `questions` (`_standard_vote` after the
+package's own questions, a review package's `approve-item` and a merge
+package's `merge-pr` included) and `record_vote` (JARVIS writes his answer
+where the package keeps its others, its story's answers file else
+results/decisions.json and a deck's decisions.js; `records_vote_itself`)
+carry it. A deck or story built before, which asks it on a slide, carries
+it there and that slide still answers it. An architecture package's story
+is still composed by `package_story.compose` with the vote (or
+`approve-architecture`) as its last slide, bound into its canonical
+revision. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
 records `understood` (`got-it`, `questions`) for any package.
 `make_package.refuse_vote_ids` refuses a deck decision or story slide that
 asks it (and a deck that declares `approve-package` itself), the answer
@@ -1367,24 +1424,27 @@ as carrying the approval: its story through `package_story.current`
 (`Package.story()`), its deck through `package_inbox.current_deck`
 (`questions`, and its deck-data.js as served to its own page,
 `deck_data_shown`), its answer written by JARVIS under `approve-package`
-(`record_deck_vote`, since its own decide.py knows only the old id); the
+(`record_vote`, since its own decide.py knows only the old id); the
 architecture gate still recognises a story composed then
 (`package_story.compose`'s `legacy`). An answer given to Got it before
 stays on record and is read back (`_legacy_question`, `page_vote`'s
 `answer_name`; `story_teller.read_answers` lets it stand for the slide),
-never asked again. Every package that carries it, a deck as well as a
-page, has Approve and Reject (a field for his words, then Send) in the
-package view's head beside Done, outside the frame (`PackageView.tsx`
-`VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
-post to the inbox's answer route, which takes only his click
-(`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
-package shown so a reload shows his answer. A deck asks its own questions
-on its own slides, and the vote on its last one as well as in the head.
-A page's vote is read from that file (`package_inbox.questions`,
-`_story_questions`) and his answer written there
-(`record_story_answer`, from `_answer_inbox_decision` when there is no
-decide.py), so the Work tab, voice and the sign-off capture treat it as a
-deck's. At sign-off a Reject on a package sent with `--work` is also that
+never asked again. Every package that carries it has its vote at Done,
+the check mark in the border, outside the frame (`PackageView.tsx`
+`DoneControl`, from `describe`'s `vote`, `package_inbox.page_vote`):
+pressed, it opens a card anchored to it with Approve and Reject (a field
+for his words, then Send; `VoteControls`), each recorded through the
+inbox's answer route, which takes only his click
+(`packages_api.his_click`), and the package signed off in the same act
+(`signOff`), with a plain sign-off beside them and a place kept for the
+rule on questions left unanswered (`data-slot="unanswered"`); Escape or
+the check mark again closes it and focus goes back to the check mark. A
+package with no vote is signed off at once. `_answer_inbox_decision`
+refreshes the package shown so a reload shows his answer. A deck asks its
+own questions on its own slides. The vote is read through
+`package_inbox.questions` and written by `record_vote` (from
+`_answer_inbox_decision`, and `record_story_answer` for a page), so the
+Work tab, voice and the sign-off capture treat it as any question. At sign-off a Reject on a package sent with `--work` is also that
 item's decision `approve-package-<inbox id>`, asked and answered at once in
 his words (`server._inbox_questions_on_work`, `_rejected`; an I have
 questions given before Got it was retired, `understood-<inbox id>`), and
@@ -1436,7 +1496,15 @@ list and no shell (`_answer_inbox_decision`: the acting
 `answer_package_decision` and `POST .../answer`, which the Work tab uses).
 Signing a package off is one function, `_sign_off_package`, for every kind
 of package: the Done in the head of its view (`PackageView.tsx`, outside
-the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_package`. A package with no inbox row (unpacked
+the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_package`. With
+questions still unanswered (`package_inbox.unanswered`: applying, no answer
+that stands) it asks him once first (Tim's decision done-on-unanswered):
+the route answers 409 with `unanswered` (each id and question) and the page
+names them in Done's card (`DoneControl`'s `DoneAsk`: Done anyway, Not
+yet), the tool says which by id;
+nothing is done until `confirm` (his Done anyway, or the tool's `confirm`
+on his yes), and then the waits on them end as closed unanswered and the
+capture names them. A package with no inbox row (unpacked
 some other way, an older local one) is given one there and then
 (`package_inbox.adopt`). Whatever he answered goes back: each answered
 question as the workflow's own `decision_needed` then `decision_made`
@@ -1461,6 +1529,14 @@ of the message that carried it back once that has gone.
 .../close`) sets one aside with nothing sent back; in the same write every
 wait linked to it ends (`wait_links.settle`, how `dismissed`) and its item's
 vote closes, not answered (`where` dismissed; `package_inbox._ended`).
+Its sender may take it back while it is open (Tim's decision
+sender-withdraws): `python -m jarvis.make_package --withdraw <inbox id>
+--session <id>` posts `POST /api/packages/inbox/{id}/withdraw` signed with
+that session's key (the `packages` right), and `_withdraw_inbox_package`
+(`package_inbox.withdraw`) takes it only from the session proven to have
+sent it (`from_session`): closed `withdrawn`, its waits ended and its vote
+closed (`where` withdrawn) in the same write, as the asker's act, its view
+closed and its message done; nothing goes back.
 `package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
 is a message on that work item's Messages tab, what he chose in it shown
@@ -2199,9 +2275,11 @@ it off): `server.start_knowledge_engine` starts it first thing in `lifespan`
 through `knowledge_client.Supervisor` (loopback only, its own token,
 `knowledge-address.json`; its stderr appended to its own log,
 `knowledge-engine.log`, kept under 1 MB) and waits up to `READY_WAIT_SEC`
-(60 s), off the event loop, for its health before serving the page. JARVIS's
-records live in it, so past that nothing that needs them starts
-(`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
+(60 s), off the event loop, for its health before serving the page; one
+still opening then is kept and waited for while the page says the records
+are opening (see "Records"), up to `OPEN_BOUND_SEC` (10 minutes). JARVIS's
+records live in it, so until it answers nothing that needs them starts,
+and one that fails (`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
 the engine's log; the decision check's failure carries the same tail), but
 the server stays up: `lifespan` puts the records gate in its failed state
 (`records_move.failed(..., records_move.ENGINE)`), so every gated route
@@ -2327,6 +2405,13 @@ with the reason, when not on main, with modified tracked files, with local
 commits not on origin/main, with untracked files the update would add
 (renames included), or when the latest commit's CI has not passed; an
 installed copy or another origin is told why it is not offered.
+The commit the server runs is HEAD as it started (`self_update.note_running`
+in `lifespan`, `running`): `/api/health`'s `commit`
+(`self_update.running_json`: sha, name, title, the checkout's HEAD now and
+`restart_needed` once the checkout has moved), the check's `running` and
+`restart_needed`, shown in Settings, Updates (with "restart it to run
+that") and said by `update_status` and `jarvis_settings` (sha and name
+only).
 `GET /api/update` is the check, with the versions and the current one, and
 `POST /api/update` (optional `{"version": ...}`) the update, then the
 restart (page origin or tool token; no access-key category). The restart is
@@ -2396,6 +2481,27 @@ files (`language_kit.language_digests`, the three files' SHA-256s, the
 same test `activate` asks a review by), so a release that changes none of
 them leaves an approval and an open question as they were; one that
 changes any makes it stale, and that kit is held for his review anyway.
+An architecture package may be a view set (`language_projection`: several
+checked revisions, each a view of the same system, one per document or
+language, on one Work item; `make_package --document D --revision R`
+given once per view): the package's own revision is its first view, the
+others are `canonical.json`'s and communication's `set`, their files
+under `views/<document id>/` (`view_prefix`, `views_of`), each checked by
+the one gate as the first is, each in a language of
+`language_documents.VIEW_LANGUAGES` (`arch` today; a build-and-release
+view language is one more entry there, once the kit's publisher adds it).
+Only a fresh author's explanation and story tell a set, the story walking
+one concrete `scenario` through every view in turn (each slide's `view`,
+`package_story.walk_problem`, checked by the author's check, the factory
+and the gate). The page (`describe`'s `views`, `views_shown`) shows one
+view at a time; a beat shows its slide's view, the border's Chapters move
+between views while no story is told, the source and check links follow
+the view shown, and the element a beat points at or he clicks
+(`element.selected`) stays lit in every view that shows it
+(`element.light`, the same id), the Chapters saying which. His approval
+of a set is of the exact set (`package_inbox.subject_of`'s `set`,
+`subject_views`): stale once any one view's revision is no longer in
+force. `ground` takes any view's `document_id`.
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
@@ -3129,7 +3235,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   story, and the story helper
 - `package_story.py` / `story_teller.py` / `package_story.js` — A page
   package's story: its format and cues, the one service that tells and
-  stops it, and the helper that rings its targets inside the frame
+  stops it (and keeps and returns to his place, Ask and Return), and the
+  helper that rings its targets inside the frame and reports and restores
+  where he is
+- `package_place.py` — Where he is in a package: the place Ask keeps and
+  Return restores, the frame's view, and the revision it is in
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open

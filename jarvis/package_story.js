@@ -20,6 +20,17 @@
 //                 (the story outline's `openers`, a deck's #go-N) clicked,
 //                 nothing ringed; sent only to a page that reports the
 //                 slide it shows (a deck's `slide.shown`)
+//                 {jarvis: "package", type: "element.light", declarations}
+//                 an architecture view set's elements lit by id
+//                 ([data-declaration="<id>"], each matching exactly one),
+//                 with a quieter ring than a beat's, until the next
+//                 element.light; JARVIS posts it again as each view loads,
+//                 so one element is lit in every view that shows it
+//                 {jarvis: "package", type: "place.restore", view, revealed}
+//                 going back to a place he asked from: `revealed` (shows
+//                 and clicks) run in order, then the view's slide opener
+//                 clicked, then its scrolling, his selection and keyboard
+//                 focus put back; answered with place.restored
 //   to JARVIS     {jarvis: "package", type: "story.ready"} once loaded, so a
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
@@ -35,6 +46,18 @@
 //                 focus JARVIS asked for (its own key) until focus.clear;
 //                 posted again whenever it moves (a scroll, a resize), so
 //                 the page's focus layer (PackageFocus.tsx) follows it
+//                 {jarvis: "package", type: "element.selected", declaration}
+//                 he clicked inside the element with that id
+//                 ([data-declaration]); nothing here stops the click
+//                 {jarvis: "package", type: "place", scroll, part, words,
+//                 selection, selected, focused} where he is, whenever it
+//                 changes (a scroll, his click, his selection, keyboard
+//                 focus): each scrolled part ({at: selector, "" for the page,
+//                 x, y}), the part he selected (a selector, its words, his
+//                 selection in them as character offsets, the words
+//                 selected) and what has keyboard focus, for Ask to keep
+//                 {jarvis: "package", type: "place.restored"} once a
+//                 place.restore is done
 //                 {jarvis: "package", type: "layout.restore"} on Option+Shift+T
 //                 pressed inside the frame: keys pressed here never reach
 //                 JARVIS's page, so the restore key is passed on. Restore
@@ -66,6 +89,8 @@
     ".jarvis-story-pointer b{position:absolute;right:-12px;top:12px;width:0;height:0;" +
     "border-top:10px solid transparent;border-bottom:10px solid transparent;" +
     "border-left:14px solid #f5a623}" +
+    ".jarvis-story-lit{position:fixed;box-sizing:border-box;border:2px dashed #f5a623;" +
+    "border-radius:10px;background:rgba(245,166,35,.08)}" +
     "@keyframes jarvis-story-pulse{0%,100%{box-shadow:0 0 0 4px rgba(245,166,35,.25)," +
     "0 0 22px rgba(245,166,35,.55)}50%{box-shadow:0 0 0 9px rgba(245,166,35,.12)," +
     "0 0 30px rgba(245,166,35,.75)}}" +
@@ -79,6 +104,7 @@
   var pointer = null;
   var frame = 0;
   var asked = null;      // {key, targets} while JARVIS asks for a focus
+  var lit = [];          // [{selector, el, parts}]: a view set's elements lit by id
   var reported = {};     // key -> the rect last told, as text
 
   function tell(message) {
@@ -155,26 +181,36 @@
     }, null);
   }
 
+  // One ring on its selector's boxes, a part for each (inline content can
+  // wrap onto several lines): the first box it is drawn on, or null.
+  function draw(ring) {
+    var rects = boxes(ring.selector);
+    var first = null;
+    while (ring.parts.length < rects.length) {
+      var extra = ring.el.cloneNode(false);
+      layer.appendChild(extra);
+      ring.parts.push(extra);
+    }
+    while (ring.parts.length > Math.max(1, rects.length)) ring.parts.pop().remove();
+    ring.parts.forEach(function (el, index) {
+      var r = rects[index];
+      el.style.display = r ? "block" : "none";
+      if (!r) return;
+      el.style.left = (r.left - PAD) + "px";
+      el.style.top = (r.top - PAD) + "px";
+      el.style.width = (r.right - r.left + 2 * PAD) + "px";
+      el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
+      if (!first) first = r;
+    });
+    return first;
+  }
+
   function place() {
     var first = null;
+    lit.forEach(draw);
     rings.forEach(function (ring) {
-      var rects = boxes(ring.selector);
-      while (ring.parts.length < rects.length) {
-        var extra = ring.el.cloneNode(false);
-        layer.appendChild(extra);
-        ring.parts.push(extra);
-      }
-      while (ring.parts.length > Math.max(1, rects.length)) ring.parts.pop().remove();
-      ring.parts.forEach(function (el, index) {
-        var r = rects[index];
-        el.style.display = r ? "block" : "none";
-        if (!r) return;
-        el.style.left = (r.left - PAD) + "px";
-        el.style.top = (r.top - PAD) + "px";
-        el.style.width = (r.right - r.left + 2 * PAD) + "px";
-        el.style.height = (r.bottom - r.top + 2 * PAD) + "px";
-        if (!first) first = r;
-      });
+      var drawn = draw(ring);
+      if (!first) first = drawn;
     });
     if (!pointer) return;
     pointer.style.display = first ? "block" : "none";
@@ -219,7 +255,7 @@
     place();
     if (beat) report("beat:" + beat.id, beat.targets);
     if (asked) report(asked.key, asked.targets);
-    frame = beat || asked ? requestAnimationFrame(follow) : 0;
+    frame = beat || asked || lit.length ? requestAnimationFrame(follow) : 0;
   }
 
   function clear() {
@@ -228,7 +264,25 @@
     rings.forEach(function (ring) { ring.parts.forEach(function (part) { part.remove(); }); });
     rings = [];
     if (pointer) { pointer.remove(); pointer = null; }
-    if (frame && !asked) { cancelAnimationFrame(frame); frame = 0; }
+    if (frame && !asked && !lit.length) { cancelAnimationFrame(frame); frame = 0; }
+  }
+
+  // A view set's elements, lit by id wherever this page shows them.
+  function light(message) {
+    lit.forEach(function (ring) { ring.parts.forEach(function (part) { part.remove(); }); });
+    lit = [];
+    var ids = (Array.isArray(message.declarations) ? message.declarations : []).map(String);
+    var root = ids.length ? ensureLayer() : null;
+    ids.forEach(function (id) {
+      var el = document.createElement("div");
+      el.className = "jarvis-story-lit";
+      el.dataset.declaration = id;
+      root.appendChild(el);
+      lit.push({ selector: '[data-declaration="' + id.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"]',
+                 el: el, parts: [el] });
+    });
+    place();
+    if (lit.length && !frame) frame = requestAnimationFrame(follow);
   }
 
   // JARVIS asks to focus the part a question is about: brought into view
@@ -251,7 +305,7 @@
   function unfocus() {
     if (asked) delete reported[asked.key];
     asked = null;
-    if (frame && !beat) { cancelAnimationFrame(frame); frame = 0; }
+    if (frame && !beat && !lit.length) { cancelAnimationFrame(frame); frame = 0; }
   }
 
   function act(action, missing) {
@@ -311,6 +365,151 @@
     }
   }
 
+  // -- where he is: the place an Ask keeps, and putting it back ------------------
+  var PLACE_EVERY_MS = 250;
+  var MAX_WORDS = 600;
+  var scrolled = [];     // elements he (or the story) scrolled, at most 8
+  var part = null;       // the element he selected
+  var placeTimer = 0;
+
+  // A selector for an element, from the nearest ancestor with an id (or
+  // the body): what the frame names it by when it is put back.
+  function quoted(value) {
+    return '"' + String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  }
+  function pathOf(el) {
+    if (!el || el === document.body || el === document.documentElement) return "";
+    if (el.id) return "#" + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
+    if (el.dataset && el.dataset.member) return "[data-member=" + quoted(el.dataset.member) + "]";
+    var parent = el.parentElement;
+    var n = 1;
+    for (var s = el.previousElementSibling; s; s = s.previousElementSibling) {
+      if (s.tagName === el.tagName) n++;
+    }
+    var step = el.tagName.toLowerCase() + ":nth-of-type(" + n + ")";
+    var above = pathOf(parent);
+    var path = (above ? above + " > " : "body > ") + step;
+    return path.length <= 400 ? path : "";
+  }
+
+  // The part a click or a selection is about: the member or declaration it
+  // is in, else the nearest whole thing on the page (an item, a paragraph,
+  // a heading, a cell, a control, or anything with an id), else itself.
+  var WHOLE = "li,p,h1,h2,h3,h4,h5,h6,figure,td,th,dt,dd,blockquote,pre,button,a,[id]";
+  function partOf(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!el || el.closest("#" + LAYER_ID)) return null;
+    var named = el.closest("[data-member],[data-declaration]") || el.closest(WHOLE);
+    return named && named !== document.body && named !== document.documentElement ? named : el;
+  }
+
+  function wordsOf(el) {
+    return (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, MAX_WORDS);
+  }
+
+  // Character offsets of the selection within `el`'s text, or null.
+  function offsetsIn(el, range) {
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+    var before = document.createRange();
+    before.selectNodeContents(el);
+    before.setEnd(range.startContainer, range.startOffset);
+    var start = before.toString().length;
+    return [start, start + range.toString().length];
+  }
+
+  function placeNow() {
+    var scroll = [{ at: "", x: Math.round(window.scrollX), y: Math.round(window.scrollY) }];
+    scrolled.forEach(function (el) {
+      var at = el.isConnected && pathOf(el);
+      if (at) scroll.push({ at: at, x: Math.round(el.scrollLeft), y: Math.round(el.scrollTop) });
+    });
+    var sel = window.getSelection();
+    var range = sel && sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0) : null;
+    var selected = range ? partOf(range.commonAncestorContainer) : null;
+    var chosen = selected || (part && part.isConnected ? part : null);
+    var focused = document.activeElement;
+    return {
+      type: "place", scroll: scroll.slice(0, 8),
+      part: chosen ? pathOf(chosen) || null : null, words: chosen ? wordsOf(chosen) : "",
+      selection: range && selected ? offsetsIn(selected, range) : null,
+      selected: range ? range.toString().replace(/\s+/g, " ").trim().slice(0, MAX_WORDS) : "",
+      focused: focused && focused !== document.body ? pathOf(focused) || null : null,
+    };
+  }
+
+  function placeChanged() {
+    if (placeTimer) return;
+    placeTimer = setTimeout(function () { placeTimer = 0; tell(placeNow()); }, PLACE_EVERY_MS);
+  }
+
+  document.addEventListener("scroll", function (event) {
+    var el = event.target;
+    if (el && el.nodeType === 1 && scrolled.indexOf(el) < 0) {
+      scrolled.push(el);
+      if (scrolled.length > 7) scrolled.shift();
+    }
+    placeChanged();
+  }, true);
+  document.addEventListener("pointerdown", function (event) {
+    part = partOf(event.target) || part;
+    placeChanged();
+  }, true);
+  document.addEventListener("focusin", placeChanged, true);
+  document.addEventListener("selectionchange", placeChanged);
+
+  // Select characters [start, end) of `el`'s text.
+  function select(el, offsets) {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var range = document.createRange();
+    var at = 0, started = false, node;
+    while ((node = walker.nextNode())) {
+      var next = at + node.data.length;
+      if (!started && offsets[0] <= next) { range.setStart(node, offsets[0] - at); started = true; }
+      if (started && offsets[1] <= next) {
+        range.setEnd(node, offsets[1] - at);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      at = next;
+    }
+  }
+
+  function first(selector) {
+    return selector && !ambiguous(selector) ? matches(selector)[0] || null : null;
+  }
+
+  function restorePlace(message) {
+    clear();
+    (Array.isArray(message.revealed) ? message.revealed : []).forEach(function (a) {
+      if (!a || typeof a !== "object") return;
+      if (a.show) { var shown = first(String(a.show)); if (shown) shown.scrollIntoView({ block: "center" }); }
+      else if (a.click) { var clicked = first(String(a.click)); if (clicked) clicked.click(); }
+    });
+    var view = message.view && typeof message.view === "object" ? message.view : {};
+    if (typeof view.page === "string") { var opener = first(view.page); if (opener) opener.click(); }
+    // After the clicks have laid the page out: the scrolling, his part,
+    // his selection and keyboard focus.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      (Array.isArray(view.scroll) ? view.scroll : []).forEach(function (s) {
+        if (!s || typeof s !== "object") return;
+        var target = s.at ? first(String(s.at)) : null;
+        if (!s.at) window.scrollTo({ left: Number(s.x) || 0, top: Number(s.y) || 0, behavior: "instant" });
+        else if (target) target.scrollTo({ left: Number(s.x) || 0, top: Number(s.y) || 0, behavior: "instant" });
+      });
+      var chosen = typeof view.part === "string" ? first(view.part) : null;
+      if (chosen) {
+        part = chosen;
+        if (Array.isArray(view.selection) && view.selection.length === 2) select(chosen, view.selection);
+      }
+      var focused = typeof view.focused === "string" ? first(view.focused) : null;
+      if (focused && focused.focus) focused.focus({ preventScroll: true });
+      tell(placeNow());
+      tell({ type: "place.restored" });
+    }); });
+  }
+
   window.addEventListener("message", function (event) {
     if (event.source !== parent) return;
     var m = event.data;
@@ -320,7 +519,13 @@
     else if (m.type === "focus.show") focusOn(m);
     else if (m.type === "focus.clear") unfocus();
     else if (m.type === "slide.open" && typeof m.opener === "string") act({ click: m.opener }, []);
+    else if (m.type === "element.light") light(m);
+    else if (m.type === "place.restore") restorePlace(m);
   });
+  document.addEventListener("click", function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("[data-declaration]") : null;
+    if (el) tell({ type: "element.selected", declaration: String(el.dataset.declaration || "") });
+  }, true);
   window.addEventListener("resize", place);
   window.addEventListener("keydown", function (event) {
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "KeyT") {

@@ -10,6 +10,11 @@
  * workspace starts on the records. A server with no move (or any answer
  * that is not a move) leaves the workspace as it is.
  *
+ * The knowledge engine still opening the records past the server's first
+ * wait (`kind` "open", state "opening", then "starting") is shown the same
+ * way: JARVIS is opening its records, and for how long so far, with no Try
+ * again; the page loads again the moment they are open.
+ *
  * The same failed view covers a start that could not open the records at
  * all (`cause` "engine": the knowledge engine did not answer) or that failed
  * once they were open ("start"), each with its own words. Every failed view
@@ -24,7 +29,8 @@ import { postRestart } from "./MenuControl";
 import { spokenAge } from "./timeFormat";
 
 export interface RecordsMove {
-  readonly state: "moving" | "starting" | "ready" | "failed";
+  readonly state: "moving" | "opening" | "starting" | "ready" | "failed";
+  readonly kind?: "move" | "open";
   readonly step: string | null;
   readonly steps: readonly string[];
   readonly done_steps: readonly string[];
@@ -40,7 +46,7 @@ const READ_EVERY_MS = 2000;
 // before the page loads again whatever it finds.
 const RETRY_LOOK_MS = 1000;
 const RETRY_GIVE_UP_MS = 5 * 60 * 1000;
-const SHOWN: readonly string[] = ["moving", "starting", "failed"];
+const SHOWN: readonly string[] = ["moving", "opening", "starting", "failed"];
 
 /** The move as the server says, or null when there is none to show (no
  *  move route, or the server not answering yet: the workspace says so). */
@@ -49,7 +55,7 @@ export async function readRecordsMove(): Promise<RecordsMove | null> {
     const res = await fetch("/api/records/move");
     if (!res.ok) return null;
     const body = (await res.json()) as Partial<RecordsMove> | null;
-    // Only a move under way, starting after it, or failed is shown; any
+    // Only a move or an opening under way, starting after it, or failed is shown; any
     // other answer (ready, or not this route's) draws the workspace.
     return body && SHOWN.includes(body.state as string) && Array.isArray(body.steps)
       ? (body as RecordsMove) : null;
@@ -167,6 +173,19 @@ export function RecordsMoveView({ move, retrying }: {
         </p>
         {refused && <p className="records-move-refused">{t("move.retryRefused", { error: refused })}</p>}
         {cause === "move" && <p>{t("move.failed.back")}</p>}
+      </main>
+    );
+  }
+  if (move.kind === "open") {
+    const elapsed = move.elapsed ?? 0;
+    return (
+      <main className="records-move opening" id="records-move" aria-live="polite">
+        <h1>{t("move.opening.title")}</h1>
+        <p className="records-move-step">
+          {move.state === "starting" ? t("move.opening.starting")
+            : t("move.opening.soFar", { time: spokenAge(Math.max(1, elapsed) * 1000) })}
+        </p>
+        <p className="records-move-safe">{t("move.opening.wait")}</p>
       </main>
     );
   }
