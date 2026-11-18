@@ -158,6 +158,8 @@ with the reason if it is not valid.
 | `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
 | `answers` | Optional: `results/<name>.json`, a JSON object in the package's results keyed by question id (a decision deck's `results/decisions.json`). Needed when any slide `waits`. |
 | `waits` | Optional, on a slide: the id of the question it asks. Once the slide has been heard the story says nothing more until that question has an answer in `answers` (one it did not have when the slide began), then goes on by itself once nobody is speaking. |
+| `view` | Optional, on a slide of an architecture view set's story: the document id of the view it is told over. The page shows that view before the slide's beats point at it, and the border's Chapters open it. In a view set every slide of the author's story names its view (the standard vote, added last, names none and stays on the view shown); in a package of one view a slide may name only that view. |
+| `scenario` | An architecture view set's story only, and required there: one line naming the one concrete input the story walks through every view in turn, each view told whole before the next, in the package's order. Shown under More. |
 | `asks_when` | Optional, on a slide that waits: `{"question", "answers"}`. The slide's question is asked only once that question has one of those answers; otherwise it is passed over. |
 | `questions` | Optional: the questions the story asks in the package view's head, outside the page, each `{"id", "question", "options": [{"id", "name", "says"}], "recommended"?, "reason"?, "context"?}` (two to six options, a deck's word limits, never the ids `approve-package`, `understood` or `approve-item`). Each must be waited on by one slide. He answers it by click in the head or by voice, through the inbox's one answer route, and his answer is written to `answers` as decide.py writes a deck's; one that does not apply yet (`asks_when`) cannot be answered. A slide that waits for a question the story does not declare is the page's own to ask and record, as before. |
 
@@ -202,6 +204,7 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "focus.show", key, targets}` | a question is his (the story waits on it, or he opened its card from Questions): the part it is about, the waiting slide's targets, is brought into view and reported, never ringed in the frame |
 | `{jarvis: "package", type: "focus.clear"}` | that question is no longer in focus |
 | `{jarvis: "package", type: "slide.open", opener}` | he chose a slide in the border (Previous, Next, Chapters) while no story is told: the helper clicks `opener`, that story slide's first click (the story outline's `openers`); sent only to a page that has said `slide.shown` |
+| `{jarvis: "package", type: "element.light", declarations}` | an architecture view set: the elements with those ids (`[data-declaration="<id>"]`) lit with a quieter ring than a beat's, sent again as each view loads, so the same element is lit in every view that shows it; `[]` lights none |
 
 | from the page | what JARVIS does |
 |---|---|
@@ -209,6 +212,7 @@ Besides `save` and `listen`, the bridge carries the story:
 | `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
 | `{jarvis: "package", type: "story.focus", key, rect}` | where the part in focus is, in the frame's own coordinates (`{left, top, width, height}`, the box around everything its targets match; `null` when none is visible): for each beat (key `beat:<beat>`) and for a `focus.show` (its key), again whenever it moves. The page lights it and dims the rest, its card beside it; the page never reads the frame itself |
 | `{jarvis: "package", type: "slide.shown", opener}` | the page shows the slide `opener` opens (a deck's `#go-N`), however it got there: the border counts itself on the story slide whose openers hold it, and from then on moves the page with `slide.open` |
+| `{jarvis: "package", type: "element.selected", declaration}` | he clicked inside the element with that id: in a view set it is lit in every view that shows it, and the Chapters say which views show it |
 
 ### The room a page has (page)
 

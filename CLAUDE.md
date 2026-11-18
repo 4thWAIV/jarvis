@@ -2446,6 +2446,27 @@ files (`language_kit.language_digests`, the three files' SHA-256s, the
 same test `activate` asks a review by), so a release that changes none of
 them leaves an approval and an open question as they were; one that
 changes any makes it stale, and that kit is held for his review anyway.
+An architecture package may be a view set (`language_projection`: several
+checked revisions, each a view of the same system, one per document or
+language, on one Work item; `make_package --document D --revision R`
+given once per view): the package's own revision is its first view, the
+others are `canonical.json`'s and communication's `set`, their files
+under `views/<document id>/` (`view_prefix`, `views_of`), each checked by
+the one gate as the first is, each in a language of
+`language_documents.VIEW_LANGUAGES` (`arch` today; a build-and-release
+view language is one more entry there, once the kit's publisher adds it).
+Only a fresh author's explanation and story tell a set, the story walking
+one concrete `scenario` through every view in turn (each slide's `view`,
+`package_story.walk_problem`, checked by the author's check, the factory
+and the gate). The page (`describe`'s `views`, `views_shown`) shows one
+view at a time; a beat shows its slide's view, the border's Chapters move
+between views while no story is told, the source and check links follow
+the view shown, and the element a beat points at or he clicks
+(`element.selected`) stays lit in every view that shows it
+(`element.light`, the same id), the Chapters saying which. His approval
+of a set is of the exact set (`package_inbox.subject_of`'s `set`,
+`subject_views`): stale once any one view's revision is no longer in
+force. `ground` takes any view's `document_id`.
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message

@@ -50,6 +50,14 @@
  * Escape closes whatever card is open, and keyboard focus goes back where
  * it was.
  *
+ * An architecture view set (several checked views of one system,
+ * `info.views`) shows one view at a time in the frame: the story's beat
+ * shows the view its slide is told over, and the border's chapters, while
+ * no story is told, open the chapter's view. The element a beat points at
+ * (or the one he clicks in a view) stays lit in every view that shows it,
+ * and the chapters say which views show it. The source and check links
+ * follow the view shown.
+ *
  * Registered for pointing at as `packageView` (its border, its frame, Done,
  * Close, the story's controls, the vote, Questions, the focus card, its
  * Leave, Back, Next and Pause); Close runs `package.close`, as the brain
@@ -62,8 +70,8 @@ import { SaidText, useT, type Said } from "./locale";
 import { connectBridge, type Bridge, type FrameRect } from "./packageBridge";
 import { answerInbox, signOff, type Unanswered } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
-import { entryUrl, navigation, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
-         type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
+import { declarationsIn, entryUrl, navigation, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
+         viewFolder, viewShown, type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
 import { useUiTarget } from "./uiRegistry";
 import { layout } from "./uiNavigation";
 import { PackageBorder } from "./PackageBorder";
@@ -99,7 +107,12 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const [shown, setShown] = useState<{ slide: number; seq: number } | null>(null);
   const outline = useRef(info);
   outline.current = info;
-  useEffect(() => { setReading(false); setPresentation(false); setShown(null); setLeft(null); }, [info.id]);
+  // A view set: the view the frame shows (null: the first), and the
+  // elements lit in every view that shows them.
+  const [chosenView, setChosenView] = useState<string | null>(null);
+  const [lit, setLit] = useState<string[]>([]);
+  const view = viewShown(info, chosenView);
+  useEffect(() => { setReading(false); setPresentation(false); setShown(null); setChosenView(null); setLit([]); setLeft(null); }, [info.id]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   // Where the frame says each focused part is, by key ("beat:<beat>", or
@@ -120,6 +133,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
           : (outline.current?.story?.openers ?? []).findIndex((list) => list.includes(opener)) + 1;
         if (slide) setShown((was) => ({ slide, seq: (was?.seq ?? 0) + 1 }));
       },
+      onSelected: (declaration) => { if (outline.current?.views?.length) setLit([declaration]); },
     });
     bridge.current = connected;
     return () => { bridge.current = null; connected.close(); };
@@ -172,6 +186,15 @@ export function PackageView({ info }: { info: PackageInfo }) {
 
   // The beat being told, and the last one while the story is paused on it.
   const beat = cue?.package === info.id ? cue : null;
+  // A view set: the beat shows its slide's view, and what it points at
+  // precisely stays lit as the views change.
+  useEffect(() => {
+    if (!beat || !info.views?.length) return;
+    if (beat.view) setChosenView(beat.view);
+    const named = declarationsIn(beat.targets);
+    if (named.length) setLit(named);
+  }, [beat?.beat, info.views]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { bridge.current?.light(lit); }, [lit]);
   const lastBeat = useRef<StoryCue | null>(null);
   if (beat) lastBeat.current = beat;
   const running = storyRunning(mine, info.id);
@@ -266,8 +289,11 @@ export function PackageView({ info }: { info: PackageInfo }) {
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
-        fade={fading} shown={shown}
-        openSlide={shown && ((slide) => {
+        fade={fading} shown={shown} lit={lit}
+        openSlide={view ? ((slide) => {
+          const named = navigation(info)[slide - 1]?.view;
+          if (named) setChosenView(named);
+        }) : shown && ((slide) => {
           const opener = navigation(info)[slide - 1]?.opener;
           if (opener) bridge.current?.openSlide(opener);
         })}
@@ -292,8 +318,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
         <section className="package-canonical" aria-label={t("main.package.canonical")}
                  title={t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}>
           <span className="package-canonical-state">{t("main.package.canonicalState", { revision: info.communication.source_revision?.slice(0, 12) ?? "" })}</span>{" "}
-          <a href={packageFileUrl(info, "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
-          <a href={packageFileUrl(info, "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
+          {view && info.views && <><span className="package-view-now" data-view={view.id}>
+            {t("main.package.view.position", { n: info.views.indexOf(view) + 1, m: info.views.length, title: view.title })}</span>{" · "}</>}
+          <a href={packageFileUrl(info, viewFolder(view) + "source.yaml")} target="_blank" rel="noopener noreferrer" ref={ui.part("source")} data-ui-action="domain">{t("main.package.source")}</a>{" · "}
+          <a href={packageFileUrl(info, viewFolder(view) + "check.json")} target="_blank" rel="noopener noreferrer" ref={ui.part("check")} data-ui-action="domain">{t("main.package.check")}</a>
           {info.communication.readable && <> {" · "}
             <button type="button" className="link-button" ref={ui.part("readable")} data-ui-action="domain"
                     aria-expanded={explaining} aria-controls="package-explanation"
@@ -304,7 +332,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
       </div>}
       <div className="package-body">
         <iframe ref={(el) => { frame.current = el; ui.part("frame")(el); }} className="package-frame"
-                title={info.name} src={entryUrl(info)} sandbox="allow-scripts" />
+                title={info.name} src={view ? packageFileUrl(info, view.entry) : entryUrl(info)}
+                data-view={view?.id} sandbox="allow-scripts" />
       </div>
       {(listening || said) && <p className="package-status" role="status">
         {listening ? `${t("main.package.listening")} ` : ""}
@@ -566,6 +595,12 @@ function usePackageQuestions(id: string, asks: HeaderQuestion[], onSaid: (s: Sai
 /** One question in its card: its words, why it is his and the evidence,
  *  its options as buttons (his click records it at once, with his words if
  *  he typed any) and what is recorded. */
+/** Revisions as he reads them: each one's first twelve characters, a view
+ *  set's joined with " + ". */
+function shortRevisions(list?: (string | null)[] | null, one?: string | null): string {
+  return (list?.length ? list : [one ?? ""]).map((r) => (r ?? "").slice(0, 12)).join(" + ");
+}
+
 function QuestionItem({ q, questions }: { q: HeaderQuestion; questions: Questions }) {
   const t = useT();
   const { words, setWords, busy, record } = questions;
@@ -578,7 +613,9 @@ function QuestionItem({ q, questions }: { q: HeaderQuestion; questions: Question
          data-stale={q.stale ? "true" : undefined}>
       {approval && (
         <p className="package-approval-head">
-          {t("main.package.approval.head", { revision: (q.revision ?? "").slice(0, 12) })}
+          {q.revisions?.length
+            ? t("main.package.approval.headSet", { views: q.revisions.length, revision: shortRevisions(q.revisions) })
+            : t("main.package.approval.head", { revision: (q.revision ?? "").slice(0, 12) })}
         </p>
       )}
       <h3 className="package-ask-question">{q.question}</h3>
@@ -610,14 +647,14 @@ function QuestionItem({ q, questions }: { q: HeaderQuestion; questions: Question
       </div>
       {q.answer && q.stale && (
         <span className="package-approval-stale" role="status">
-          {t("main.package.approval.stale", { revision: (q.answered_revision ?? "").slice(0, 12) })}
+          {t("main.package.approval.stale", { revision: shortRevisions(q.answered_revisions, q.answered_revision) })}
         </span>
       )}
       {q.answer && !q.stale && (
         <span className="package-vote-recorded" role="status">
           {approval
             ? t(q.answer === "approve" ? "main.package.approval.approved" : "main.package.approval.changes",
-                { revision: (q.answered_revision ?? "").slice(0, 12) })
+                { revision: shortRevisions(q.answered_revisions, q.answered_revision) })
             : t("main.package.asks.recorded", {
                 choice: q.options.find((o) => o.id === q.answer)?.name ?? q.answer })}
         </span>

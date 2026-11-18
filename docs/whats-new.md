@@ -2,6 +2,18 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Architecture in several views at once
+
+An architecture package can now carry several checked views of the same
+system, such as how the code is organised and where each part is placed,
+instead of only one. The package shows one view at a time: its story walks
+one concrete example through every view in turn, and Chapters name the
+view each chapter is on and move between them. Click an element in one
+view and it stays highlighted in every other view that shows it, and
+Chapters say which views do. When the package asks you to approve the
+design, your approval covers every view together, and it is shown as out
+of date once any one of them is revised.
+
 ## Done tells you what is still unanswered
 
 Pressing Done on a package that still has questions without your answer

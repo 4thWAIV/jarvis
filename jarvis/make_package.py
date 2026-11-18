@@ -3,7 +3,7 @@
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
                                   [--check-only] [--example [decisions|presentation]]
-                                  [--document ID --revision REV]
+                                  [--document ID --revision REV]...
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
@@ -24,6 +24,10 @@ docs/making-a-package.md is the whole of how to use it. In short:
   (language_projection.project, the brain's publish shares it) around the
   fresh author's plain explanation, `package/UNDERSTANDING.md`, which is
   what the author proof covers. It goes on the document's own Work item.
+  Given more than once (each --document with its --revision, in order) it
+  is a view set: one package of several checked views of the same system
+  on the same Work item, the first its own revision, its story walking one
+  scenario through every view in turn.
 
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
@@ -387,13 +391,15 @@ class Explanation:
     story: bytes | None
 
 
-def understanding_in(source: Path) -> Explanation:
+def understanding_in(source: Path, views: tuple[str, ...] = ()) -> Explanation:
     """The fresh author's explanation of an architecture document: a folder
     holding UNDERSTANDING.md, readable author Markdown within 1 MiB, and
     optionally story.json, a story read strictly (package_story.authored)
     that composes with the standard vote (package_story.compose), and
     nothing else (JARVIS projects the checked revision around them); or
-    Refused."""
+    Refused. `views` are the documents it explains, in order: for a view
+    set the story is required and walks one scenario through every view
+    (package_story.walk_problem)."""
     from jarvis import language_kit, language_projection, package_story, package_understanding
     member = language_projection.MEMBER
     try:
@@ -420,6 +426,9 @@ def understanding_in(source: Path) -> Explanation:
             package_story.compose(authored, authored.get("language") or built_language())
         except package_story.StoryError as e:
             raise dp.Refused([f"{STORY_FILE}: {e}"]) from None
+    walked = package_story.walk_problem(authored if story is not None else None, views)
+    if walked:
+        raise dp.Refused([f"{STORY_FILE}: {walked}"])
     return Explanation(body, story)
 
 
@@ -450,11 +459,11 @@ def document_of(document_id: str, revision: str, base: str,
                           f"{e}"]) from None
 
 
-def document_evidence(envelope: dict, out: Path) -> Path:
-    """The checked revision as its fresh author reads it, under `out`: the
-    YAML, its rendered page, its check and document.json (identity,
+def document_evidence(envelope: dict, out: Path, name: str = "document") -> Path:
+    """The checked revision as its fresh author reads it, in `out`/`name`:
+    the YAML, its rendered page, its check and document.json (identity,
     provenance and coverage)."""
-    folder = out / "document"
+    folder = out / name
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     for name, copied in (("source", "source.yaml"), ("view", "view.html"), ("check", "check.json")):
@@ -470,18 +479,19 @@ def document_evidence(envelope: dict, out: Path) -> Path:
 
 
 def make_architecture(envelope: dict, source: Path, out: Path, purpose: str,
-                      approval: bool = False) -> Made:
+                      approval: bool = False, more: tuple[dict, ...] = ()) -> Made:
     """JARVIS's projection of the checked revision (language_projection.project,
     as the brain's publish) around the fresh author's explanation and story,
     stating the handoff's `purpose` and, when the handoff asks for it
     (`approval`), asking his approval of this exact revision, built and
-    read back as any folder package (make_folder)."""
+    read back as any folder package (make_folder). With `more`, further
+    checked revisions, it is a view set and his approval is of the set."""
     from jarvis import language_projection
-    explained = understanding_in(source)
+    explained = understanding_in(source, tuple(e["document_id"] for e in (envelope, *more)))
     folder = Path(tempfile.mkdtemp(prefix="projection-", dir=out)) / "architecture"
     try:
         language_projection.project(envelope, folder, explained.markdown, explained.story,
-                                    purpose, built_language(), approval)
+                                    purpose, built_language(), approval, more)
     except (ValueError, OSError) as e:
         raise dp.Refused([f"The checked revision cannot be projected: {e}"]) from None
     made = make_folder(folder, out)
@@ -643,13 +653,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the screenshots go "
                              "(default: a new temporary folder)")
-    parser.add_argument("--document", default="",
+    parser.add_argument("--document", action="append", default=[],
                         help="a canonical architecture document (python -m "
                              "jarvis.language_document validate): the package is JARVIS's "
                              "projection of its checked --revision, explained by the fresh "
-                             "author")
-    parser.add_argument("--revision", default="",
-                        help="the exact checked revision of --document")
+                             "author; give it again (each with its --revision) for a view "
+                             "set, several checked views of one system")
+    parser.add_argument("--revision", action="append", default=[],
+                        help="the exact checked revision of the --document before it")
     parser.add_argument("--withdraw", default="", metavar="INBOX_ID",
                         help="take back a package this session sent that is still open (its "
                              "inbox id, as delivery printed it): it leaves his Inbox, what "
@@ -658,8 +669,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     args = parser.parse_args(argv)
     if args.withdraw:
         return withdraw(args.withdraw, args.session, args.deliver_to)
-    if bool(args.document) != bool(args.revision):
+    if len(args.document) != len(args.revision):
         parser.error("--document and --revision go together")
+    if len(set(args.document)) != len(args.document):
+        parser.error("a view set holds each --document once")
+    views = tuple(zip(args.document, args.revision))
     if args.work and args.general:
         parser.error("a package is for one work item (--work) or for none (--general), not both")
 
@@ -679,10 +693,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         if args.check_only and args.document:
             # The author's own check of its explanation; the factory projects
             # and checks the revision around it once the author is done.
-            explained = understanding_in(source)
+            explained = understanding_in(source, tuple(args.document))
             told = f" and {source.name}/{STORY_FILE}" if explained.story is not None else ""
+            named = " and ".join(f"architecture document {d} revision {r}" for d, r in views)
             print(f"The explanation is right: {source.name}/UNDERSTANDING.md{told}, for "
-                  f"architecture document {args.document} revision {args.revision}.")
+                  f"{named}.")
             print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
@@ -716,19 +731,26 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         out.mkdir(parents=True, exist_ok=True)
         from jarvis import package_author
         envelope = document = None
-        if args.document:
+        more: tuple[dict, ...] = ()
+        if views:
             from jarvis import agent_keys
             reader = agent_keys.signer_for(args.session)
             if reader is None:
                 raise dp.Refused(["The document is read with your key: give --session <your "
                                   "session id>, once Tim has switched your agent on."])
-            envelope = document_of(args.document, args.revision, args.deliver_to, reader)
-            if args.work and args.work != envelope["work_id"]:
-                raise dp.Refused([f"Document {args.document} belongs to Work item "
-                                  f"{envelope['work_id']}, not {args.work}: send it there."])
+            envelopes = [document_of(d, r, args.deliver_to, reader) for d, r in views]
+            for (named, _), found in zip(views, envelopes):
+                if (args.work or envelopes[0]["work_id"]) != found["work_id"]:
+                    raise dp.Refused([f"Document {named} belongs to Work item "
+                                      f"{found['work_id']}, not "
+                                      f"{args.work or envelopes[0]['work_id']}: send it there "
+                                      f"(every view of a set is on one Work item)."])
+            envelope, more = envelopes[0], tuple(envelopes[1:])
             args.work = envelope["work_id"]
-            document = package_author.Document(args.document, args.revision,
-                                               document_evidence(envelope, out))
+            # One view's evidence where it always was; a set's each in its own folder.
+            document = tuple(package_author.Document(
+                d, r, document_evidence(found, out, "document" if len(views) == 1 else f"views/{d}"))
+                for (d, r), found in zip(views, envelopes))
         from jarvis import agent_keys
         signer = agent_keys.signer_for(args.session)
         made = author = review = None
@@ -744,7 +766,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         # session's, never the author's (it is bound in canonical.json).
                         handed = package_author.read_handoff(args.handoff)
                         made = make_architecture(envelope, authored_source, out, handed["purpose"],
-                                                 handed.get("approval") is True)
+                                                 handed.get("approval") is True, more)
                     else:
                         check_vote(authored_source, args.work)
                         # YAML compilation owns fresh staging for each visual repair;
@@ -831,7 +853,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
               "title": made.title, "kind": made.kind,
               "project": args.project, "session": args.session, "workflow": args.workflow,
               "work": args.work, "zip": str(made.archive),
-              "document": args.document or None, "revision": args.revision or None,
+              "document": args.document[0] if views else None,
+              "revision": args.revision[0] if views else None,
+              "views": [{"document": d, "revision": r} for d, r in views] if len(views) > 1 else None,
               "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)

@@ -56,25 +56,36 @@ class Document:
     folder: Path
 
 
-def _pointing(document: Document) -> str:
-    """Whether this revision's rendered page can be pointed at: only a kit
-    page that loads the story helper can (language_projection.project
+def _documents(document: Document | tuple[Document, ...] | None) -> tuple[Document, ...]:
+    """The checked revisions a fresh author explains, in order: none, one,
+    or a view set's several."""
+    if document is None:
+        return ()
+    return (document,) if isinstance(document, Document) else tuple(document)
+
+
+def _pointing(documents: tuple[Document, ...]) -> str:
+    """Whether the revisions' rendered pages can be pointed at: only kit
+    pages that load the story helper can (language_projection.project
     refuses a pointing story otherwise)."""
     from jarvis import package_story
-    try:
-        view = (document.folder / "view.html").read_bytes()
-    except OSError:
-        view = b""
-    if package_story.HELPER_PATH.encode() in view:
+
+    def view(document: Document) -> bytes:
+        try:
+            return (document.folder / "view.html").read_bytes()
+        except OSError:
+            return b""
+    if all(package_story.HELPER_PATH.encode() in view(d) for d in documents):
         return ("Its view.html loads the story helper, so a beat may point at the targets the "
                 "guide lists, each matching exactly one element of view.html.")
     return ("Its view.html does not load the story helper, so the story may not point: "
             "give beats no targets or actions.")
 
 
-def _assignment(document: Document | None) -> str:
+def _assignment(document: Document | tuple[Document, ...] | None) -> str:
     """What the fresh author writes, and the exact check it runs last."""
-    if document is None:
+    documents = _documents(document)
+    if not documents:
         return ("Write a deck to content.json or a presentation/1 deck to presentation.yaml in your working directory, or write a folder "
                 "package under package/ with package.json. Put supporting assets alongside that "
                 "source, and your evidence/review notes in evidence.md. A deck follows the skill's "
@@ -87,6 +98,9 @@ def _assignment(document: Document | None) -> str:
                 "disagrees with that order, follow the order. Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
+    if len(documents) > 1:
+        return _set_assignment(documents)
+    document = documents[0]
     return ("This package explains one checked canonical architecture document. Its exact "
             "revision is in " + str(document.folder) + ": source.yaml is the canonical YAML, "
             "view.html its rendered page, check.json the checker's evidence and document.json "
@@ -103,17 +117,51 @@ def _assignment(document: Document | None) -> str:
             "walk-through JARVIS tells over the rendered page, with any questions the reader "
             "should answer declared in its `questions` (the guide's Architecture documents "
             "section has the format; the factory adds the standard vote last, so never ask "
-            "it). " + _pointing(document)
-            + " Nothing else goes under package/. "
-            "Keep your evidence/review notes in evidence.md beside package/. Validate with this "
+            "it). " + _pointing(documents)
+            + " Nothing else goes under package/. " + _check_line(documents))
+
+
+def _check_line(documents: tuple[Document, ...]) -> str:
+    """Where the author keeps its notes, and the exact check it runs last."""
+    return ("Keep your evidence/review notes in evidence.md beside package/. Validate with this "
             "installation’s exact command: " + session_skill._module("make_package", cert=False)
-            + " package --check-only --document " + document.document_id + " --revision "
-            + document.revision + ". ")
+            + " package --check-only"
+            + "".join(f" --document {d.document_id} --revision {d.revision}" for d in documents)
+            + ". ")
+
+
+def _set_assignment(documents: tuple[Document, ...]) -> str:
+    """A view set's assignment: several checked views of one system, one
+    scenario walked through every view in turn (package_story.walk_problem)."""
+    where = "; ".join(f"view {n}, document {d.document_id}, in {d.folder}"
+                      for n, d in enumerate(documents, 1))
+    return ("This package explains a view set: " + str(len(documents)) + " checked canonical "
+            "architecture documents, each a view of the same system, in this order: " + where
+            + ". In each folder source.yaml is that view's canonical YAML, view.html its "
+            "rendered page, check.json the checker's evidence and document.json its identity, "
+            "coverage and what lies outside its language. JARVIS projects every exact revision "
+            "into the package, with the handoff's purpose as its purpose; you write one plain "
+            "explanation of the whole set, package/UNDERSTANDING.md, for the handoff's audience "
+            "and questions, in the skill's decision-memo order: open it with what the "
+            "architecture is for, the problem or question it serves, why it is in front of him "
+            "now and what he will decide at the end; say what each view answers and which "
+            "elements the views share (the same id names the same element in every view); say "
+            "plainly what each view's coverage leaves unresolved or outside its language. A gap "
+            "that needs his decision is stated as a problem first (what cannot be checked and "
+            "what goes wrong because of it), then its options and what each changes for him. "
+            "You must also write package/story.json, the walk-through JARVIS tells over the "
+            "views: name in its `scenario` one concrete input (one line), and walk that same "
+            "input through every view in turn, in the order above: every slide names its "
+            "`view` (the document id), each view is told whole before the next, and every view "
+            "has at least one slide. Declare any questions the reader should answer in its "
+            "`questions` (the guide's Architecture documents section has the format; the factory "
+            "adds the standard vote last, so never ask it). " + _pointing(documents)
+            + " Nothing else goes under package/. " + _check_line(documents))
 
 
 async def author(handoff: Path, engine: str, out: Path, *, source: Path | None = None,
                  timeout: float = 1800, session: str = "", work: str = "",
-                 workflow: str = "", document: Document | None = None, finish=None) -> Path:
+                 workflow: str = "", document: Document | tuple[Document, ...] | None = None, finish=None) -> Path:
     """One new session, no resume or fallback; return only its own package
     source (for a `document`, its package/ explanation)."""
     evidence = read_handoff(handoff)
@@ -140,8 +188,13 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
                "origin_session": session, "work": work,
                "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
                "source_folder": str(folder), "status": "started"}
-    if document is not None:
-        receipt["document"] = {"document_id": document.document_id, "revision": document.revision}
+    documents = _documents(document)
+    if documents:
+        receipt["document"] = {"document_id": documents[0].document_id,
+                               "revision": documents[0].revision}
+    if len(documents) > 1:
+        receipt["views"] = [{"document_id": d.document_id, "revision": d.revision}
+                            for d in documents]
     transcript = folder / "author-response.txt"
 
     def event(_session, value):
@@ -199,7 +252,7 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         if (folder / "author-blocked.md").exists():
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
         candidates = [p for p in (folder / "content.json", folder / "presentation.yaml", folder / "package") if p.exists()]
-        if document is not None and candidates != [folder / "package"]:
+        if documents and candidates != [folder / "package"]:
             raise OSError("Author must produce package/UNDERSTANDING.md (and optionally "
                           "package/story.json), and no content.json, in " + str(folder))
         if len(candidates) != 1:
