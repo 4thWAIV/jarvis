@@ -6,8 +6,8 @@ The fresh author (package_author.author) first writes, in its own folder,
 background he lacks; his first ten questions with sourced answers,
 UNANSWERED where not found; every fact scored 1-5 for how much it changes
 his answer) and `script.md` (the briefing ordered by those scores: the
-answer and the ask on slide 1, each decision's own explanation just before
-it, follow-up questions last). Then, at most `ROUNDS` times:
+most relevant information first, with the background he needs before each
+decision, follow-up questions last). Then, at most `ROUNDS` times:
 
 - three editors fix the script (`EDITORS`: cut, tighten, specifics). Each is
   one call to the author's engine that proposes exact before/after edits;
@@ -126,9 +126,8 @@ QUESTIONS: dict[str, Question] = {q.id: q for q in (
              "only repeats what he has, or when he has said he does not want it.",
              passing=("yes",)),
     Question("decision_ready", YES_NO,
-             "Can Tim decide from this script alone? Yes only when slide 1 states the answer "
-             "and the ask (Approve or Reject, or named options) with the recommendation, each "
-             "decision's own explanation comes immediately before that decision, every term "
+             "Can Tim decide from this script alone? Yes only when each decision's own "
+             "explanation, with the background he needs, comes before that decision, every term "
              "and code it uses is explained, and nothing he needs is left out or left to his "
              "memory of other work.",
              passing=("yes",)),
@@ -140,8 +139,9 @@ QUESTIONS: dict[str, Question] = {q.id: q for q in (
              options=("right", "lacks", "repeats", "both"), passing=("right",)),
     Question("order", SCALE,
              "How closely does the script's order follow the prep's fact scores, most "
-             "relevant first? 10: every slide comes in score order, the answer and ask on "
-             "slide 1, follow-up questions last; 0: the decisive facts come last.",
+             "relevant first? 10: the most relevant information comes first, with the "
+             "background he needs before each decision, follow-up questions last; 0: the "
+             "decisive facts come last.",
              at_least=8),
 )}
 JUDGES = ("cares", "decision_ready", "background", "order")
@@ -553,8 +553,8 @@ FIRST_STEP = (
     "and the evidence with JARVIS's read tools (the jarvis_agent MCP server); every answer "
     "in prep.md names its source, and one you cannot find, nor the sender give, says "
     "UNANSWERED. script.md is the briefing in the order of the "
-    "prep's fact scores, highest first: the answer and the ask on slide 1, each decision's own "
-    "explanation immediately before it, follow-up questions last. If the prep shows Tim would "
+    "prep's fact scores, highest first: the most relevant information first, the background "
+    "he needs before each decision, follow-up questions last. If the prep shows Tim would "
     "not want this now, write " + NOT_FOR_TIM + " saying why, and no script. Editors and "
     "judges read your script next; their findings come back to you in this session.")
 
