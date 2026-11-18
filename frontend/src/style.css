@@ -3922,6 +3922,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
    choose from, and the confirmation before installing (Settings.tsx). */
 .update-current { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
 .update-current b { font-weight: 600; }
+.update-commit { margin: 0; font-size: 11px; font-family: ui-monospace, monospace; color: rgba(255, 255, 255, 0.6); overflow-wrap: anywhere; }
 .update-current code, .update-version code {
   color: rgba(0, 212, 255, 0.7);
   font-family: ui-monospace, Menlo, monospace;
@@ -4198,6 +4199,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 /* The Inbox's messages from agents (InboxMessages.tsx): a heading with Hide
    messages, the new ones, and Read closed under them. */
 .inbox-agents { gap: 10px; }
+.inbox-package-row { cursor: default; }
+.inbox-package-row .row-side { color: rgba(255, 255, 255, 0.7); }
 .inbox-agents-head { display: flex; align-items: center; gap: 2px; }
 .inbox-agents-head .queue-heading { flex: 1 1 auto; white-space: nowrap; min-width: 0; overflow: hidden; }
 /* Minimise a list of messages (MessageCard.tsx MinimiseToggle): the page's
@@ -4602,6 +4605,11 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-chapters { display:flex; flex-direction:column; gap:8px; margin-top:16px; }
 .package-chapters button { padding:10px; text-align:left; background:transparent; color:inherit; border:1px solid rgba(255,255,255,.2); border-radius:5px; }
 #package-view > .package-vote-row, #package-view > .package-canonical { flex:none; padding:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+/* Done with questions unanswered: asked once, in the view's head, outside the frame. */
+#package-view > .package-done-ask { flex:none; padding:10px 12px; margin:6px 8px; border:1px solid rgba(251,191,36,.6); border-radius:6px; background:rgba(251,191,36,.08); }
+.package-done-ask-head { margin:0 0 4px; font-weight:600; }
+.package-done-ask-list { margin:0 0 6px; padding-left:20px; overflow-wrap:anywhere; }
+.package-done-ask-note { margin:0 0 8px; opacity:.85; }
 @media (pointer:coarse) {
   #package-view .package-border { height:48px; min-height:48px; }
   #package-view .package-icon { width:44px; height:44px; min-width:44px; flex-basis:44px; }

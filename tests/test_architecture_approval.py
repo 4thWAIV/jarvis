@@ -25,7 +25,7 @@ import json
 import pytest
 
 from jarvis import (data_paths, language_documents, language_projection, make_package,
-                    package_inbox, package_story, work_packages, workflow_store)
+                    package_inbox, package_story, wait_links, work_packages, workflow_store)
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (a fixture)
 from tests.test_language_documents import draft, installed_kit  # noqa: F401  (fixtures)
 from tests.test_package_inbox import BROWSER, INBOX, chitauri, claims_proven, shown  # noqa: F401
@@ -204,24 +204,32 @@ def test_approve_of_the_revision_in_force_ends_the_wait_and_goes_back_with_it(
     record = json.loads(work_packages.read_result(package_of(inbox_id), "decisions.json"))
     assert record["approve-architecture"]["subject"]["revision"] == revision["revision"]
     assert not set(record) & set(package_inbox.VOTE_IDS), "approval is the only vote"
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert (f"approve-architecture: approve, given to revision {revision['revision']} of "
             f"{revision['document_id']}") in capture["text"]
     assert "understood" not in capture["text"] and "approve-package" not in capture["text"]
 
 
-def test_a_sign_off_without_approval_ends_no_wait_on_it(wired, shown, marks, tmp_path, draft):  # noqa: F811
+def test_a_sign_off_without_approval_asks_once_and_ends_its_wait_unanswered(
+        wired, shown, marks, tmp_path, draft):  # noqa: F811
     inbox_id, _ = sent(wired, draft, tmp_path)
     on_package = waiting_on(inbox_id)
     wid = workflow_store.start("Store", "store", [])
     workflow_store.record(workflow_store.WorkflowEvent(
         wid, "wait_started", None, "Waiting on the package.",
         {"key": "deck", "until": f"package:{inbox_id}"}))
-    r = wired.client.post(f"/api/packages/{package_of(inbox_id).id}/signoff", headers=BROWSER)
+    url = f"/api/packages/{package_of(inbox_id).id}/signoff"
+    asked = wired.client.post(url, headers=BROWSER)
+    assert asked.status_code == 409
+    assert package_inbox.APPROVAL_ID in [q["id"] for q in asked.json()["unanswered"]]
+    assert still_waiting(on_package) and package_inbox.get(inbox_id).is_open, "nothing done yet"
+    r = wired.client.post(url, headers=BROWSER, json={"confirm": True})
     assert r.status_code == 200, r.text
     assert not workflow_store.snapshot(wid).open_waits, "a wait on the package ends on sign-off"
-    assert still_waiting(on_package), "a wait on his approval never ends on a sign-off"
+    assert not workflow_store.snapshot(on_package).open_waits, "a closed package is never approved"
+    ended = [e for e in workflow_store.events(on_package) if e.kind == "wait_ended"]
+    assert ended[-1].detail["how"] == wait_links.CLOSED_UNANSWERED, "never as his approval"
 
 
 # -- stale ----------------------------------------------------------------------------------
@@ -344,7 +352,7 @@ def test_an_open_package_from_before_keeps_working_with_approve_or_reject(
     record = json.loads(work_packages.read_result(package_of(inbox_id), "decisions.json"))
     assert record["approve-package"]["answer"] == "reject" and "understood" not in record
     assert package_of(inbox_id).story().open_questions(record) == []
-    r = wired.client.post(f"/api/packages/{package_of(inbox_id).id}/signoff", headers=BROWSER)
+    r = wired.client.post(f"/api/packages/{package_of(inbox_id).id}/signoff", headers=BROWSER, json={"confirm": True})
     assert r.status_code == 200, r.text
     assert package_inbox.get(inbox_id).state == package_inbox.CLOSED
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")

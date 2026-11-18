@@ -371,7 +371,7 @@ def test_his_reject_goes_back_to_the_sender_and_onto_the_work_item(
     answer_by(wired, how, inbox_id, "reject", "Why two keys?")
     entry = package_inbox.get(inbox_id)
     assert (entry.decisions_answered, entry.decisions_total) == (1, 1)
-    said = _call(wired, "sign_off_package", package=inbox_id)["text"]
+    said = _call(wired, "sign_off_package", confirm=True, package=inbox_id)["text"]
     assert said.startswith("Signed off. Capture"), said
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     key = f"approve-package-{inbox_id}"
@@ -388,7 +388,7 @@ def test_approve_goes_back_and_makes_no_work_decision(
     inbox_id = send(wired, story_zip(VOTES), session="sess-1",
                     work=work_item.id).json()["inbox"]["id"]
     answer_by(wired, "voice", inbox_id, "approve")
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert "- approve-package: approve" in capture["text"] and "His words" not in capture["text"]
     assert not [a for a in work_store.get(work_item.id).answered
@@ -540,7 +540,7 @@ def test_an_open_old_deck_asks_approve_or_reject_and_records_it_as_approval(
     assert "approve-package" in (package.folder / "results" / "decisions.js").read_text()
     entry = package_inbox.get(inbox_id)
     assert (entry.decisions_answered, entry.decisions_total) == (1, 1)
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert "- approve-package: reject (his words: Say who owns the keys.)" in capture["text"]
     key = f"approve-package-{inbox_id}"
@@ -569,7 +569,7 @@ def test_an_old_answer_to_got_it_stays_readable_and_is_never_asked_again(
         "the slide is not asked again"
     refused_by(wired, "page", inbox_id, "understood", "got-it")
     refused_by(wired, "page", inbox_id, "approve-package", "approve")
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert "- understood: questions (his words: Why two keys?)" in capture["text"]
 
@@ -624,7 +624,7 @@ def done_by(w, how: str, inbox_id: str) -> None:
         r = signoff(w, package_inbox.get(inbox_id).package_id)
         assert r.status_code == 200, r.text
     else:
-        assert _call(w, "sign_off_package", package=inbox_id)["text"].startswith("Signed off")
+        assert _call(w, "sign_off_package", confirm=True, package=inbox_id)["text"].startswith("Signed off")
 
 
 @pytest.mark.parametrize("how", ["page", "voice"])
@@ -713,7 +713,7 @@ def test_the_frame_s_save_is_counted_too(wired, shown, marks, tmp_path):
 # -- signing off -------------------------------------------------------------------------
 
 def signoff(w, package_id: str, headers=BROWSER):
-    return w.client.post(f"/api/packages/{package_id}/signoff", headers=headers)
+    return w.client.post(f"/api/packages/{package_id}/signoff", headers=headers, json={"confirm": True})
 
 
 @pytest.fixture
@@ -730,7 +730,7 @@ def test_sign_off_sends_what_he_answered_and_notes_what_he_did_not(
     _call(wired, "answer_package_decision", package=inbox_id, decision="kettle-kind",
           option="recommended", words="the fast one")
     shown.clear()
-    said = _call(wired, "sign_off_package", package="the tea one")["text"]
+    said = _call(wired, "sign_off_package", confirm=True, package="the tea one")["text"]
     assert said.startswith("Signed off. Capture") and "chitauri" in said and "read_capture" in said
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     text = capture["text"]
@@ -767,7 +767,7 @@ def test_a_message_before_he_signed_off_is_not_taken_for_his(wired, shown, marks
     from jarvis import records
     records.update(run_store._message_doc(early).path, lambda d: {
         **d, "message": {**d["message"], "staged_at": time.time() - 3600}})
-    _call(wired, "sign_off_package", package=inbox_id)
+    _call(wired, "sign_off_package", confirm=True, package=inbox_id)
     wired.server._follow_inbox_messages()
     assert package_inbox.get(inbox_id).message_id is None
 
@@ -791,7 +791,7 @@ def test_a_presentation_tells_its_sender_it_was_reviewed(wired, shown, marks, ch
 def test_sign_off_needs_his_click_or_his_turn(wired, shown, marks):
     package_id = send(wired, page_zip()).json()["package"]["id"]
     assert signoff(wired, package_id, headers={}).status_code == 403
-    refused = _call(wired, "sign_off_package", origin="event", package=package_id)
+    refused = _call(wired, "sign_off_package", origin="event", confirm=True, package=package_id)
     assert not refused["ok"] and package_inbox.listing()[0].is_open
 
 

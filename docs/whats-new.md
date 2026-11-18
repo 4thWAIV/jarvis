@@ -1,6 +1,36 @@
 # The new JARVIS workspace
 
-Updated 2026-11-16. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Done tells you what is still unanswered
+
+Pressing Done on a package that still has questions without your answer
+now names them and asks you once whether you are done anyway. Done anyway
+signs it off as it is, and the sender is told which questions you left;
+Not yet leaves it open. Anything an agent was waiting on for those
+questions stops waiting, marked "closed unanswered" rather than looking
+like your answer. Asking JARVIS to sign a package off asks the same way.
+
+## Your open packages are listed in the Inbox
+
+The Inbox tab now lists every package agents have sent you that is still
+open: what it is, who sent it, the Work item it is for, how many of its
+questions are unanswered and whether you have opened it, each with Open.
+A package leaves the list once it is closed.
+
+## An agent can take back a package it sent
+
+An agent that sent you a package by mistake, or one no longer wanted, can
+withdraw it while it is still open. Only the session that sent it can. It
+leaves your Inbox, and anything waiting on it stops waiting.
+
+## Corrected evidence, and which version is running
+
+An agent can remove evidence it attached to a piece of work, such as a
+wrong commit, and the removal is kept on the item's record. Only the agent
+that added it can remove it. Settings, Updates now shows the exact commit
+JARVIS is running and says when the checkout has moved on so that a
+restart would run something newer; JARVIS can tell you the same.
 
 ## Every slide of a deck is in its navigation
 

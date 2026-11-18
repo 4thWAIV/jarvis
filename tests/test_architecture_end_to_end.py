@@ -288,7 +288,8 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         assert shown["question"] is None, "his approval is the one vote it asks"
         approval_shown = {"approval": approval, "vote": {k: shown[k] for k in
                                                          ("question", "answer", "note")}}
-        ok, said = jarvis.tool("sign_off_package", package=record["inbox"])
+        # Signed off early, questions unanswered: on his "done anyway".
+        ok, said = jarvis.tool("sign_off_package", package=record["inbox"], confirm=True)
         assert ok, said
         with urllib.request.urlopen(urllib.request.Request(
                 f"{jarvis.base}/api/work/{work.id}",

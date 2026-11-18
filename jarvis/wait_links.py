@@ -8,8 +8,9 @@ for, its link:
     decision:<key>               a decision of the same workflow or work item
     work:<item id>:<key>         a Work item's decision
     workflow:<workflow id>:<key> a workflow's decision
-    package:<id or name>         a package, until he signs it off or sets it aside
-    package:<id or name>:<id>    one decision of a package (or its sign-off)
+    package:<id or name>         a package, until it is closed (he signs it off
+                                 or sets it aside, or its sender withdraws it)
+    package:<id or name>:<id>    one decision of a package (or its close)
 
 Whatever route he answers by (a workflow's or a Work item's decision, on
 the page or by voice; a package's decision through its decide.py; signing a
@@ -20,6 +21,11 @@ workflow, a piece moved to its next state, ready by default, on a Work
 item). `sweep` does the same for a link already answered or signed off when
 it is found (at server start, and each time either record is read), so a
 wait never outlives his answer.
+
+A package closed with a question still unanswered (signed off on his
+"done anyway", set aside, or withdrawn by its sender) can never be answered
+there, so a wait on that question ends with the close too, recorded as
+`closed_unanswered` ("closed unanswered"), never as his answer.
 
 A package replaced by a newer version from its sender is no answer: what
 waited on it waits on the newer one, which is the one he can open
@@ -40,14 +46,13 @@ land in one conditioned write, or not at all.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
-
-from jarvis import package_story
 
 log = logging.getLogger(__name__)
 
@@ -61,10 +66,9 @@ SIGNED_OFF, WITHDRAWN = "signed_off", "withdrawn"
 DISMISSED, SUPERSEDED = "dismissed", "superseded"
 # A wait ended by the agent that placed it, through its report route.
 ENDED = "ended"
+# A wait on one question of a package that closed with it unanswered.
+CLOSED_UNANSWERED = "closed_unanswered"
 KINDS = (DECISION, WORK, WORKFLOW, PACKAGE)
-# A package question a wait on which ends only on his approval of the
-# revision in force (package_inbox.Question.ends_waits), never on sign-off.
-APPROVAL_ONLY = frozenset({package_story.APPROVAL_QUESTION})
 
 # How long a wait with no link may stay open before it is flagged.
 UNLINKED_AFTER_SEC = 24 * 3600
@@ -124,6 +128,9 @@ class Answer:
     how: str                  # page, voice, signed_off, dismissed ...
     at: float
     actor: str = ""           # whose act, when it is not the one `how` implies
+    # A package's close (`key` None) only: its questions with no answer
+    # that stands, whose waits end as CLOSED_UNANSWERED.
+    unanswered: frozenset = frozenset()
 
     def ends(self, link: Link, owner_kind: str, owner_id: str) -> bool:
         """Whether this answer ends `link`, held by a wait of `owner_kind`
@@ -133,14 +140,27 @@ class Answer:
                     and self.key is not None and link.key == self.key)
         if link.kind != self.kind or link.ref not in self.refs:
             return False
-        if self.kind == PACKAGE:
-            if self.key is None:
-                # His sign-off ends a wait on the package or on any of its
-                # questions, but never a wait on his approval: only his
-                # approve of the revision in force ends that one.
-                return link.key not in APPROVAL_ONLY
-            return link.key == self.key
+        if self.kind == PACKAGE and self.key is None:
+            # Its close ends a wait on the package and on every one of its
+            # questions: one left unanswered can never be answered now
+            # (`at_link` records it so).
+            return True
         return link.key == self.key
+
+    def at_link(self, link: Link) -> "Answer":
+        """This answer as it ends `link`: a package's close, for a wait on
+        one of its questions left unanswered, is CLOSED_UNANSWERED for
+        that question, never his answer."""
+        if (self.kind == PACKAGE and self.key is None and link.key is not None
+                and link.key in self.unanswered):
+            return dataclasses.replace(self, key=link.key, how=CLOSED_UNANSWERED,
+                                       actor=self.by, unanswered=frozenset())
+        return self
+
+    def ending(self, link: Link, owner_kind: str, owner_id: str) -> Optional["Answer"]:
+        """This answer as it ends `link` (`at_link`), or None when it does
+        not (`ends`)."""
+        return self.at_link(link) if self.ends(link, owner_kind, owner_id) else None
 
     @property
     def by(self) -> str:
@@ -156,7 +176,11 @@ class Answer:
             if self.how == DISMISSED:
                 return ("JARVIS closed the package" if self.by == "jarvis"
                         else "Tim set the package aside")
+            if self.how == WITHDRAWN:
+                return "Its sender withdrew the package"
             return "Tim signed off the package"
+        if self.how == CLOSED_UNANSWERED:
+            return f"The package closed with {self.key} unanswered"
         if self.how == WITHDRAWN:
             return f"Its asker withdrew {self.key}"
         if self.how == SIGNED_OFF:
@@ -169,9 +193,9 @@ class Answer:
 
 
 def answer(kind: str, refs, key: Optional[str], how: str, at: Optional[float] = None,
-           actor: str = "") -> Answer:
+           actor: str = "", unanswered=()) -> Answer:
     return Answer(kind, frozenset(r for r in refs if r), key, how,
-                  time.time() if at is None else at, actor)
+                  time.time() if at is None else at, actor, frozenset(unanswered))
 
 
 @dataclass(frozen=True)

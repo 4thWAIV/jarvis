@@ -22,17 +22,27 @@ server's one function for it, which the brain's tool calls too.
                                      scripts/decide.py
   POST /api/packages/inbox/{id}/close
                                      dismiss it: set aside, nothing sent back
+  POST /api/packages/inbox/{id}/withdraw
+                                     its sender takes it back while it is
+                                     open (`make_package --withdraw`):
+                                     signed by the key of the session that
+                                     sent it, the `packages` right; closed
+                                     `withdrawn`, its waits ended and its
+                                     vote closed, nothing sent back
   POST /api/packages/{package_id}/signoff
-                                     his Done, on the package's view and its
-                                     Queue row: signed off, for any package
-                                     unpacked here (in the inbox or not); his
+                                     {"confirm"?}: his Done, on the package's
+                                     view and its Queue row: signed off, for
+                                     any package unpacked here (in the inbox
+                                     or not). With questions unanswered it is
+                                     refused (409, `unanswered`: each id and
+                                     question) until he confirms it; his
                                      answers go back (the workflow's
                                      decisions, and a message to the sending
                                      session that goes only on his yes), its
                                      Work item learns it, and it is closed
 
-Every route but the first needs the page's own origin or the tool token
-(web_auth.py); Open needs his click (packages_api.his_click), as every way
+Every route but the first and the withdrawal needs the page's own origin
+or the tool token (web_auth.py), and the withdrawal its sender's own key; Open needs his click (packages_api.his_click), as every way
 of showing a package does. Each change is written before its hint.
 """
 from __future__ import annotations
@@ -68,8 +78,12 @@ class Calls:
         package_inbox.Arrival], Optional[Package], str]]]
     open: Callable[[str, str], Awaitable[tuple[Optional[Entry], Optional[Package], str]]]
     answer: Callable[[str, str, str, str, str], Awaitable[Outcome]]
-    sign_off: Callable[[str, str], Awaitable[Outcome]]
+    # (the row, what was said, the questions left unanswered when that is
+    # why nothing was done: confirmed with the third argument)
+    sign_off: Callable[[str, str, bool], Awaitable[tuple[Optional[Entry], str, list]]]
     close: Callable[[str, str], Awaitable[Outcome]]
+    # (inbox id, the signing principal)
+    withdraw: Callable[[str, Optional[str]], Awaitable[Outcome]]
 
 
 def entry_json(entry: Entry) -> dict:
@@ -160,9 +174,13 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused(problem)
         return {"inbox": entry_json(entry), "said": problem}
 
-    async def sign_off(package_id: str):
-        entry, said = await calls.sign_off(package_id, package_inbox.ON_THE_PAGE)
+    async def sign_off(package_id: str, body: dict = Body(default_factory=dict)):
+        entry, said, left = await calls.sign_off(package_id, package_inbox.ON_THE_PAGE,
+                                                 body.get("confirm") is True)
         if entry is None:
+            if left:
+                return JSONResponse({"error": said, "unanswered": [
+                    {"id": q.id, "question": q.question} for q in left]}, status_code=409)
             return _refused(said)
         return {"inbox": entry_json(entry), "said": said}
 
@@ -172,6 +190,12 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused(problem)
         return {"inbox": entry_json(entry)}
 
+    async def withdraw(inbox_id: str, request: Request):
+        entry, problem = await calls.withdraw(inbox_id, web_auth.principal(request.scope))
+        if entry is None:
+            return _refused(problem, 403 if not web_auth.principal(request.scope) else 409)
+        return {"inbox": entry_json(entry)}
+
     app.add_api_route(INBOX_PATH, receive, methods=["POST"])
     app.add_api_route(INBOX_PATH, listing, methods=["GET"])
     app.add_api_route(INBOX_PATH + "/{inbox_id}", one, methods=["GET"])
@@ -179,3 +203,4 @@ def mount(app: FastAPI, calls: Calls) -> None:
     app.add_api_route(INBOX_PATH + "/{inbox_id}/answer", answer, methods=["POST"])
     app.add_api_route(SIGN_OFF_PATH, sign_off, methods=["POST"])
     app.add_api_route(INBOX_PATH + "/{inbox_id}/close", close, methods=["POST"])
+    app.add_api_route(INBOX_PATH + "/{inbox_id}/withdraw", withdraw, methods=["POST"])

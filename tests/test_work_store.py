@@ -380,3 +380,24 @@ def test_legacy_database_claim_is_projected_and_history_is_preserved(ws, folder)
     assert loaded.reported_state == "working"
     # A report alone never reads working; only a subagent writing now does.
     assert ws.public_state("working") == "activity_unknown"
+
+
+def test_evidence_is_removed_only_by_the_reporter_that_reported_it(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+
+    def report(reporter, **detail):
+        return ws.record(ws.WorkEvent(item.id, "piece", "Built.", {"key": "build", **detail},
+                                      reporter=reporter))
+
+    report("agent:a", who={"kind": "tim"}, evidence=["abc1234", "/tmp/out/logo.svg"])
+    report("agent:b", evidence=["https://x.example/pr/1"])
+    with pytest.raises(ws.WorkRefused, match="another reporter"):
+        report("agent:b", drop_evidence=["abc1234"])
+    with pytest.raises(ws.WorkRefused, match="has no evidence"):
+        report("agent:a", drop_evidence=["def5678"])
+    got = report("agent:a", drop_evidence=["ABC1234"])
+    assert [(e.kind, e.value) for e in got.pieces[0].evidence] == [
+        ("path", "/tmp/out/logo.svg"), ("url", "https://x.example/pr/1")]
+    [dropped] = [e for e in ws.events(item.id) if e.detail.get("evidence_dropped")]
+    assert dropped.detail["evidence_dropped"] == [{"kind": "commit", "value": "abc1234"}]
+    assert dropped.reporter == "agent:a", "the removal is a report on the record"
