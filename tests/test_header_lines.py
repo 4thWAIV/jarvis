@@ -458,6 +458,11 @@ EXEMPT = {
         "stays metadata in package.json and canonical.json; nothing it writes is a trusted brain "
         "header. The projection is driven by test_language_projection.py and "
         "test_architecture_packages.py"),
+    "language_projection.views_shown": (
+        "it returns a view set's document ids, titles and declared ids as JSON fields of the "
+        "page's package description, drawn as text in the border and the package view; nothing "
+        "becomes a trusted brain header or a spoken line. Driven by test_architecture_view_set.py "
+        "and test_voice_page_architecture_view_set.py"),
     "language_document_api._ground": (
         "the canonical source and the author's explanation come back as JSON fields of the "
         "paged envelope, which the brain adapter escapes and wraps as untrusted; grounding by "

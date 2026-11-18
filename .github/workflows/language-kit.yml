@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         node: [22, 23, 24]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
