@@ -415,7 +415,8 @@ def test_every_deck_carries_its_proof_and_is_signed_a_presentation_too(
         [archive] = out.glob("*.zip")
         signed = package_signature.read(archive)
         assert signed.session == "sess-1" and signed.checks(session_key[1])
-        assert package_signature.DECISION_CHECKED not in signed.statements
+        # Also signed as checked, for a JARVIS from before the proof.
+        assert package_signature.DECISION_CHECKED in signed.statements
         with zipfile.ZipFile(archive) as z:
             assert json.loads(z.read(presentation_proof.PROOF_FILE))["proven"]
 
