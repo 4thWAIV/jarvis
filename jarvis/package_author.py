@@ -347,15 +347,12 @@ def clear_questions(folder: Path) -> None:
 
 
 def agent_mcp_config(folder: Path, session: str) -> Path:
-    """The author's mcp.json: only the agent MCP server, signed as the
-    sending agent's session, so the author researches with JARVIS's read
-    tools within that agent's rights (part of the strict config: no other
-    server of the user's)."""
-    config = {"mcpServers": {AGENT_MCP: {
-        "command": sys.executable,
-        "args": ["-P", "-m", "jarvis.agent_mcp"],
-        "env": {"PYTHONPATH": str(data_paths.PACKAGE_DIR.parent),
-                "JARVIS_AGENT_SESSION": session}}}}
+    """The author's mcp.json: only the agent MCP server (agent_mcp.entry,
+    the one description of it), signed as the sending agent's session, so
+    the author researches with JARVIS's read tools within that agent's
+    rights (part of the strict config: no other server of the user's)."""
+    from jarvis import agent_mcp
+    config = {"mcpServers": {AGENT_MCP: agent_mcp.entry(session)}}
     path = folder / "author-mcp.json"
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return path

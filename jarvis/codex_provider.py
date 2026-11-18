@@ -189,16 +189,8 @@ def config_toml(mcp_servers: dict) -> str:
         'web_search = "live"',
     ]
     for name, spec in sorted(mcp_servers.items()):
-        if not isinstance(spec, dict) or not spec.get("command"):
-            continue
-        table = f"mcp_servers.{_toml_key(name)}"
-        lines += ["", f"[{table}]", f"command = {_toml_value(spec['command'])}"]
-        if spec.get("args"):
-            lines.append(f"args = {_toml_value(list(spec['args']))}")
-        lines.append('default_tools_approval_mode = "approve"')
-        if spec.get("env"):
-            lines += ["", f"[{table}.env]"]
-            lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sorted(spec["env"].items())]
+        if isinstance(spec, dict) and spec.get("command"):
+            lines += mcp_server_toml(name, spec)
     return "\n".join(lines) + "\n"
 
 
@@ -230,6 +222,21 @@ def config_overrides(mcp_servers: dict) -> list[str]:
         for key, value in sorted((spec.get("env") or {}).items()):
             argv += ["-c", f"{table}.env.{_toml_key(key)}={_toml_value(value)}"]
     return argv
+
+
+def mcp_server_toml(name: str, spec: dict) -> list[str]:
+    """One MCP server (an mcp.json entry: command, args, env) as config.toml
+    lines, approved as a whole server: the brain's, and the agent server
+    session_skill installs in the user's own Codex home."""
+    table = f"mcp_servers.{_toml_key(name)}"
+    lines = ["", f"[{table}]", f"command = {_toml_value(spec['command'])}"]
+    if spec.get("args"):
+        lines.append(f"args = {_toml_value(list(spec['args']))}")
+    lines.append('default_tools_approval_mode = "approve"')
+    if spec.get("env"):
+        lines += ["", f"[{table}.env]"]
+        lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sorted(spec["env"].items())]
+    return lines
 
 
 def write_config(mcp_config: Optional[Path]) -> Path:

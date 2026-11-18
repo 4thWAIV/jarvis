@@ -226,7 +226,7 @@ def test_switching_the_agent_on_onboards_its_key_as_his_act(wired, monkeypatch):
     onboarded = r.json()["key"]
     assert onboarded["state"] == "onboarded" and onboarded["onboarded_by"] == "page"
     assert onboarded["onboarded_at"] >= before
-    assert {g["right"] for g in onboarded["rights"]} == {"work", "workflows", "packages",
+    assert {g["right"] for g in onboarded["rights"]} == {"work", "workflows", "packages", "research",
                                                          "watch"}
     assert store.get("agent_key", key.fingerprint).state == "resolved"
     assert [e["kind"] for e in agent_key_store.events(key.fingerprint)] == [
@@ -251,7 +251,7 @@ def test_the_brain_reads_the_keys_and_revokes_one_as_his_revoke_does(wired):
     agent = Agent(home, PLAN).onboarded()
     said = server.tool_agent_keys({})
     assert "Planning" in said and agent.fingerprint in said and "onboarded" in said
-    assert "rights: packages, watch, work, workflows" in said
+    assert "rights: packages, research, watch, work, workflows" in said
     assert "revoke_agent_key" in server.ACTING_TOOLS
     assert "Revoked" in server.tool_revoke_agent_key({"name": "Planning"})
     assert "already" in server.tool_revoke_agent_key({"fingerprint": agent.fingerprint})

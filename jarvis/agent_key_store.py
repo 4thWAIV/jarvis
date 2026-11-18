@@ -125,11 +125,6 @@ def _event(w: agent_record.Writer, path: str, fingerprint: str, kind: str, now: 
     w.event(path, ev, agent_record.event_summary(ev))
 
 
-def _onboarded_on(by: str) -> str:
-    """Who granted an agent's default rights."""
-    return f"default, onboarded on {by}"
-
-
 def agent_principal(session_id: str) -> str:
     return AGENT + session_id
 
@@ -223,9 +218,9 @@ def proven(fingerprint: str, evidence: str, now: Optional[float] = None) -> Opti
 def onboard(session_id: str, by: str, label: str = "",
             now: Optional[float] = None) -> Optional[AgentKey]:
     """Tim switched the agent on: its waiting key is onboarded, recorded as
-    his act (`by`: the page or his voice) with the time, given the default
-    rights (agent_rights.DEFAULT_RIGHTS) unless the agent already has
-    rights, and any key it had before revoked, all in one write. `label` is
+    his act (`by`: the page or his voice) with the time, and any key it had
+    before revoked, all in one write. Its rights are the rights file's
+    (agent_rights.granted), never copied onto it. `label` is
     an access key's label that names exactly this agent, kept so the
     decisions it asked under that key stay its own. None when no key
     waits."""
@@ -249,9 +244,6 @@ def onboard(session_id: str, by: str, label: str = "",
                            revoked_why="replaced by a newer key")
                 _event(w, path, old["fingerprint"], "revoked", now, by=by, why="replaced")
         found.update(state=ONBOARDED, onboarded_at=float(now), onboarded_by=by, label=label)
-        if not any(g.get("principal") == principal for g in doc["rights"]):
-            _grant(doc, principal, agent_rights.DEFAULT_RIGHTS, agent_rights.ANY_SCOPE,
-                   _onboarded_on(by), now)
         _event(w, path, found["fingerprint"], "onboarded", now, by=by, label=label)
         return _key(found)
     return agent_record.change(run, by=agent_record.caller_for(by), full_sync=True)
@@ -318,6 +310,14 @@ def for_session(session_id: str) -> Optional[AgentKey]:
     return _key(keys[0]) if keys else None
 
 
+def is_onboarded(session_id: str) -> bool:
+    """Whether the agent holds an onboarded key now: only such an agent has
+    the rights file's rights (agent_rights.granted)."""
+    doc = CACHE.get(agent_record.agent_path(session_id)) or {}
+    return any(k.get("principal") == agent_principal(session_id)
+               and k.get("state") == ONBOARDED for k in doc.get("keys") or ())
+
+
 def by_session() -> dict[str, AgentKey]:
     """`for_session` for every session with a live key, in one read."""
     keys = [k for k in CACHE.keys() if str(k.get("principal", "")).startswith(AGENT)
@@ -379,6 +379,10 @@ def _set_rights(principal: str, rights: Iterable[str], scope: str, by: str,
 
 
 def grants(principal: str) -> list[Grant]:
+    """The grants stored in `principal`'s document: a work-item key's, and
+    an agent's from before the rights file (agent_rights.granted reads
+    them as its exceptions). What a principal may reach is
+    agent_rights.granted."""
     doc = CACHE.get(agent_record.holder_path(principal)) or {}
     held = [g for g in doc.get("rights") or () if g.get("principal") == principal]
     return [Grant(g["principal"], g["right"], g["scope"], g["granted_at"], g["granted_by"])

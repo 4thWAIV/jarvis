@@ -57,9 +57,11 @@ def test_install_writes_every_existing_home_and_status_follows(homes):
     assert claude / "skills/human-package-author/SKILL.md" in wanted
     assert codex / "skills/human-package-author/references/handoff.md" in wanted
 
-    assert session_skill.status() == {p: session_skill.MISSING for p in wanted}
-    assert session_skill.install() == wanted
-    assert session_skill.status() == {p: session_skill.INSTALLED for p in wanted}
+    configs = [claude / ".claude.json", codex / "config.toml"]
+    assert session_skill.mcp_targets() == configs, "the agent MCP server, in each home"
+    assert session_skill.status() == {p: session_skill.MISSING for p in wanted + configs}
+    assert session_skill.install() == wanted + configs
+    assert session_skill.status() == {p: session_skill.INSTALLED for p in wanted + configs}
 
     wanted[0].write_text("old")
     assert session_skill.status()[wanted[0]] == session_skill.OUT_OF_DATE
@@ -83,7 +85,7 @@ def test_a_tool_he_does_not_use_gets_nothing(homes, monkeypatch, tmp_path, engin
 def test_the_command_installs_and_anything_else_is_usage(homes, capsys):
     assert session_skill.main(["session_skill.py"]) == 2
     assert session_skill.main(["session_skill.py", "install"]) == 0
-    assert capsys.readouterr().out.count("installed ") == 6
+    assert capsys.readouterr().out.count("installed ") == 8
 
 
 def test_preflight_reports_and_never_installs(homes):

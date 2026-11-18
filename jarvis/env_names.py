@@ -59,6 +59,8 @@ WIRING_NAMES: dict[str, str] = {
 
 PLATFORM_NAMES: dict[str, str] = {
     "CLAUDE_CODE_MESSAGING_TOKEN": "given by Claude Code to a session's own commands",
+    "CLAUDE_CODE_SESSION_ID": "the session Claude Code runs a command or MCP server in, which "
+                              "the agent MCP server signs as",
     "CLAUDECODE": "set by Claude Code inside a session, scrubbed from children",
     "CLAUDE_CONFIG_DIR": "Claude Code's home, when not ~/.claude",
     "CODEX_HOME": "Codex's home, when not ~/.codex",

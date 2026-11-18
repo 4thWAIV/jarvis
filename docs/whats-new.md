@@ -2,6 +2,27 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Agents can look things up in JARVIS before they write to you
+
+Installing the talk-to-jarvis skill (Diagnostics, Setup's Install skill, or
+`python -m jarvis.session_skill install`) now also gives your Claude Code
+and Codex sessions JARVIS's own tools. With them an agent sends you a
+message, reports its work and workflows, and starts a package without a
+shell command, each signed with its own key exactly as its commands are. It
+can also read what JARVIS knows (what you said and decided, your messages,
+the Work list, packages, runs, workflows, the knowledge engine, projects
+and folders) through the same reading tools JARVIS itself uses, with other
+people's words kept apart the same way, so what it sends you starts from
+what you already know. Every agent you have accepted can read; nothing an
+agent does through these tools changes what you are looking at or what
+JARVIS treats as read.
+
+What agents may do is now one plain file, `agent-rights.json` in JARVIS's
+data folder: the rights every accepted agent has, and any agent's extra or
+removed rights by its session id or name. A change there applies to every
+agent at once; a file JARVIS cannot read is ignored (with a note in its
+log) in favour of the standard rights it ships with.
+
 ## Agents ask before they guess
 
 An agent's package is now made as a job: the agent gets on with its work
