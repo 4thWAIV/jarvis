@@ -293,6 +293,23 @@ async def _ask_engine(prompt: str, choice, folder: Path, timeout: float = ASK_TI
 # The engine every typed question and editor is asked through: (prompt,
 # engine choice, working folder) -> the reply's text. Tests replace it.
 ASK: Callable[..., Awaitable[str]] = _ask_engine
+# An ask the engine could not answer (a turn failed: a provider's rate
+# limit, a timeout, an exit) is asked again after these waits, in seconds,
+# before it counts as no answer.
+ASK_RETRY_SEC = (30.0, 90.0)
+
+
+async def _asked(prompt: str, choice, folder: Path, **kwargs) -> str:
+    """ASK, asked again after each of ASK_RETRY_SEC when its turn fails;
+    the last failure is raised."""
+    for wait in (*ASK_RETRY_SEC, None):
+        try:
+            return await ASK(prompt, choice, folder, **kwargs)
+        except (OSError, RuntimeError, TimeoutError):
+            if wait is None:
+                raise
+            await asyncio.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def _record(question: Question, text: str, context: dict, asked: list[dict], answer,
@@ -335,7 +352,7 @@ async def adecide(question_id: str, text: str, context: dict) -> dict:
         prompt = _juror_prompt(question, text, context, seat)
         async with limit:
             try:
-                reply = await ASK(prompt, context.get("choice"), folder, seat=seat)
+                reply = await _asked(prompt, context.get("choice"), folder, seat=seat)
             except (OSError, RuntimeError, TimeoutError):
                 return None
         said = _answer_of(question, reply)
@@ -505,8 +522,8 @@ async def edit(editor: Editor, folder: Path, context: dict) -> Edited:
     script = script_path.read_text(encoding="utf-8")
     prep = (folder / PREP).read_text(encoding="utf-8")
     try:
-        reply = await ASK(_edit_prompt(editor, script, prep), context.get("choice"),
-                          Path(context["folder"]))
+        reply = await _asked(_edit_prompt(editor, script, prep), context.get("choice"),
+                             Path(context["folder"]))
     except (OSError, RuntimeError, TimeoutError) as error:
         raise Refused([f"The {editor.id} editor did not finish: {error}"]) from None
     proposed = _last_json(reply or "")

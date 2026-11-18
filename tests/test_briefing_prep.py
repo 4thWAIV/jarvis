@@ -83,6 +83,23 @@ def test_unreadable_answers_are_left_out_and_none_at_all_is_refused(monkeypatch,
         bp.decide("cares", "s", dict(CONTEXT, folder=tmp_path))
 
 
+def test_an_ask_whose_turn_fails_is_asked_again(monkeypatch, tmp_path):
+    """A provider's rate limit or a failed turn is not a judge's answer: the
+    ask is put again after a wait, and only then counts as no answer."""
+    calls = []
+
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
+        calls.append(prompt)
+        if len(calls) % 2:
+            raise OSError("429 Too Many Requests")
+        return said("yes")
+    monkeypatch.setattr(bp, "ASK", ask)
+    monkeypatch.setattr(bp, "ASK_RETRY_SEC", (0.0, 0.0))
+    decided = bp.decide("cares", "script", {"prep": "prep", "folder": str(tmp_path)})
+    assert decided["answer"] == "yes" and decided["probability"] == 1.0
+    assert len(calls) == 2 * bp.ASKS
+
+
 def test_a_tie_goes_to_the_failing_answer():
     question = bp.QUESTIONS["background"]
     assert bp.agreement(question, ["right", "repeats"]) == ("repeats", 0.5)
