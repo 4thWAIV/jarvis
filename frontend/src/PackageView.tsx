@@ -60,7 +60,7 @@ import { SaidText, useT, type Said } from "./locale";
 import { connectBridge, type Bridge, type FrameRect } from "./packageBridge";
 import { answerInbox, signOff } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
-import { entryUrl, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
+import { entryUrl, navigation, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
          type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
 import { useUiTarget } from "./uiRegistry";
 import { layout } from "./uiNavigation";
@@ -93,8 +93,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
   // The story slide the deck says it shows, counted each time it says so;
   // null until a page reports one (only such a page is moved by the border).
   const [shown, setShown] = useState<{ slide: number; seq: number } | null>(null);
-  const outline = useRef(info.story);
-  outline.current = info.story;
+  const outline = useRef(info);
+  outline.current = info;
   useEffect(() => { setReading(false); setPresentation(false); setShown(null); }, [info.id]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
@@ -111,7 +111,9 @@ export function PackageView({ info }: { info: PackageInfo }) {
       onPresentationReturnFocus: () => document.querySelector<HTMLButtonElement>("#package-view [data-package-menu=more]")?.focus(),
       onFocus: (key, rect) => setWhere((now) => ({ ...now, [key]: rect })),
       onSlideShown: (opener) => {
-        const slide = (outline.current?.openers ?? []).findIndex((list) => list.includes(opener)) + 1;
+        const pages = outline.current?.pages;
+        const slide = pages?.length ? pages.findIndex((p) => p.opener === opener) + 1
+          : (outline.current?.story?.openers ?? []).findIndex((list) => list.includes(opener)) + 1;
         if (slide) setShown((was) => ({ slide, seq: (was?.seq ?? 0) + 1 }));
       },
     });
@@ -262,7 +264,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
       <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
         fade={fading} shown={shown}
         openSlide={shown && ((slide) => {
-          const opener = info.story?.openers?.[slide - 1]?.[0];
+          const opener = navigation(info)[slide - 1]?.opener;
           if (opener) bridge.current?.openSlide(opener);
         })}
         command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, enabled: value}, "*")}

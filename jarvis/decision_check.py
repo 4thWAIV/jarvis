@@ -652,11 +652,6 @@ class Deck:
         """The slide the border counts itself on, as it shows it ("3 / 6")."""
         return (await self.page.locator("#package-view .package-position").inner_text()).strip()
 
-    def story_slide_of(self, n: int) -> int:
-        """The story slide (from 1) whose openers open deck slide `n`, else 0."""
-        openers = self.parsed.outline()["openers"] if self.parsed else []
-        return next((k for k, o in enumerate(openers, 1) if f"#go-{n}" in o), 0)
-
     async def current_slide(self) -> str:
         return await self.js(
             "() => (document.querySelector('#track > .slide.current') || {}).id || ''",
@@ -708,22 +703,22 @@ async def _check_layout(d: Deck, label: str) -> None:
     voting_bad = 0
     pictures_bad = 0
     unfollowed = []
-    total = len(d.parsed.slides) if d.parsed else 0
+    # The border moves through the deck's own slides and counts as the deck
+    # numbers them: every lead-in, question and the vote its own.
+    total = len(slides)
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
         # Opened in the deck itself (a key, the story): the border follows.
         await d.inner.locator(f"#go-{n}").evaluate("element => element.click()")
         await d.inner.wait_for_selector(f"#{slide_id}.current")
-        story_slide = d.story_slide_of(n)
-        if story_slide:
-            want = f"{story_slide} / {total}"
-            try:
-                await d.page.wait_for_function(
-                    "(want) => document.querySelector('#package-view .package-position')"
-                    "?.textContent.trim() === want", arg=want, timeout=5000)
-            except Exception:
-                unfollowed.append(f"slide {n} ({slide_id}): the border says "
-                                  f"{await d.border_says()!r}, not {want!r}")
+        want = f"{n} / {total}"
+        try:
+            await d.page.wait_for_function(
+                "(want) => document.querySelector('#package-view .package-position')"
+                "?.textContent.trim() === want", arg=want, timeout=5000)
+        except Exception:
+            unfollowed.append(f"slide {n} ({slide_id}): the border says "
+                              f"{await d.border_says()!r}, not {want!r}")
         measured = await d.js(MEASURE, what=f"{label}: measuring slide {n}")
         voting = await d.js(VOTING, what=f"{label}: checking slide {n}'s voting")
         pictures = await d.js(PICTURES, what=f"{label}: measuring slide {n}'s pictures")
@@ -1036,7 +1031,19 @@ async def _check_border(d: Deck, label: str) -> None:
     chapters = view.locator("[data-package-menu=chapters]")
     await chapters.click()
     choice = view.locator(".package-border-overlay select")
-    selected = "2" if len(d.story["slides"]) > 1 else "1"
+    slides = await d.js(
+        "() => [...document.querySelectorAll('#track > .slide')]"
+        ".map(e => [e.id, e.classList.contains('decision')])", what=f"{label}: listing the slides")
+    entries = await view.locator(".package-chapters button").evaluate_all(
+        "els => els.map(e => e.getAttribute('data-asks'))")
+    asked = [k for k, (_, decision) in enumerate(slides, 1) if decision]
+    d.result.expect(len(entries) == len(slides)
+                    and [k for k, a in enumerate(entries, 1) if a] == asked,
+                    f"{label}: Chapters lists every slide of the deck, each question marked",
+                    f"{label}: Chapters lists {len(entries)} entries, asking at "
+                    f"{[k for k, a in enumerate(entries, 1) if a]}, for {len(slides)} slides "
+                    f"asking at {asked}")
+    selected = "2" if len(slides) > 1 else "1"
     await choice.select_option(selected)
     await d.page.keyboard.press("Escape")
     returned = await chapters.evaluate("e => document.activeElement === e")
@@ -1044,20 +1051,36 @@ async def _check_border(d: Deck, label: str) -> None:
                     f"{label}: Chapters selection returns keyboard focus and leaves answers unchanged",
                     f"{label}: Chapters changed answers or lost keyboard focus")
     # The border is the deck's navigation: the chosen slide opens in the deck.
-    opener = (d.parsed.outline()["openers"][int(selected) - 1] or [""])[0] if d.parsed else ""
-    if opener.startswith("#go-"):
-        want = await d.slide_opened_by(opener)
-        try:
-            await d.inner.wait_for_selector(f"#{want}.current", timeout=5000)
-            opened = True
-        except Exception:
-            opened = False
-        d.result.expect(opened, f"{label}: a slide chosen in the border's Chapters opens in the deck",
-                        f"{label}: Chapters slide {selected} did not open {want} in the deck; it "
-                        f"shows {await d.current_slide()}")
+    want = await d.slide_opened_by(f"#go-{selected}")
+    try:
+        await d.inner.wait_for_selector(f"#{want}.current", timeout=5000)
+        opened = True
+    except Exception:
+        opened = False
+    d.result.expect(opened, f"{label}: a slide chosen in the border's Chapters opens in the deck",
+                    f"{label}: Chapters slide {selected} did not open {want} in the deck; it "
+                    f"shows {await d.current_slide()}")
     await chapters.click()
     await choice.select_option("1")
     await d.page.keyboard.press("Escape")
+    # Next and Previous step one slide of the deck at a time, so every
+    # lead-in, every question and the vote is reached in turn.
+    step = {way: view.locator(f"[data-package-step={way}]") for way in ("next", "previous")}
+    if await step["next"].count():
+        missed = []
+        for way, walk in (("next", range(2, len(slides) + 1)),
+                          ("previous", range(len(slides) - 1, 0, -1))):
+            for n in walk:
+                await step[way].click()
+                try:
+                    await d.inner.wait_for_selector(f"#{slides[n - 1][0]}.current", timeout=5000)
+                except Exception:
+                    missed.append(f"{way} to slide {n} ({slides[n - 1][0]}) showed "
+                                  f"{await d.current_slide()}")
+                    break
+        d.result.expect(not missed,
+                        f"{label}: Next and Previous reach every slide of the deck in turn",
+                        f"{label}: the border's steps missed: {'; '.join(missed)}")
     more = view.locator("[data-package-menu=more]")
     await more.click()
     d.result.expect(d.deck["purpose"] in await view.locator(".package-border-overlay").inner_text(),

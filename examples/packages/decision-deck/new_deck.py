@@ -176,6 +176,30 @@ def order(deck: dict) -> list[dict]:
     return out + ([{"answers": True}] if deck.get("decisions") else [])
 
 
+def pages(deck: dict) -> list[dict]:
+    """Every slide the deck draws, in its order, as the page's border moves
+    through them: its opener (#go-N, the deck's own numbering), its title as
+    deck.js names it, and the decision it asks (None for a content slide or
+    the answers slide). The story tells over these; the border navigates
+    them, so a decision's lead-in and its question are each a slide of their
+    own."""
+    by_id = {d["id"]: d for d in deck.get("decisions", []) if isinstance(d, dict)}
+    out = []
+    for n, s in enumerate(order(deck), 1):
+        if "decision" in s:
+            d = by_id.get(s["decision"], {})
+            out.append({"opener": f"#go-{n}", "title": d.get("short") or s["decision"],
+                        "asks": s["decision"]})
+        elif "answers" in s:
+            out.append({"opener": f"#go-{n}", "title": "Your answers", "asks": None})
+        else:
+            # A lead-in by its own title ("Before you decide: ..."), so it is
+            # never named the same as the question it leads to.
+            title = s.get("title") if s.get("lead_in") else s.get("short") or s.get("title")
+            out.append({"opener": f"#go-{n}", "title": title or "", "asks": None})
+    return out
+
+
 # What JARVIS asks at the end of every decision slide, before it waits.
 ASK = {"en": "Which do you choose? Press Choose on one, or tell me.",
        "es": "¿Cuál elige? Pulse el botón de una, o dígamelo."}

@@ -531,6 +531,7 @@ export const mainEn = {
   "main.package.vote.recordedBefore": "Recorded before: {answer}.",
   "main.package.done": "Done",
   "main.package.chapters": "Chapters",
+  "main.package.asks": "question",
   "main.package.previous": "Previous slide",
   "main.package.next": "Next slide",
   "main.package.more": "More",

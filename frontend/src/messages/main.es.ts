@@ -504,6 +504,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.package.vote.recordedBefore": "Registrado antes: {answer}.",
   "main.package.done": "Listo",
   "main.package.chapters": "Capítulos",
+  "main.package.asks": "pregunta",
   "main.package.previous": "Diapositiva anterior",
   "main.package.next": "Diapositiva siguiente",
   "main.package.more": "Más",

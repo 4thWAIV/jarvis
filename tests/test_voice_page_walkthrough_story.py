@@ -139,7 +139,8 @@ async def test_a_walkthrough_waits_for_his_answers_and_stops_and_resumes_on_time
             await page.locator("#package-view [data-package-menu=chapters]").click()
             slides = await page.locator("#package-view .package-border-overlay select option").all_inner_texts()
             await page.keyboard.press("Escape")
-            assert slides[-1].endswith("Approve it?") and \
+            # The vote last and once, marked as a question in Chapters.
+            assert slides[-1].endswith("Approve it? (question)") and \
                 sum("Approve it?" in s for s in slides) == 1
 
             # Told from the start, it waits at his question.

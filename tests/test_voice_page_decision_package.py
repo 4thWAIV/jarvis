@@ -130,7 +130,9 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
         for check in ("the package frame is", "the deck's own styles are in force",
                       "slides fill the frame, fit", "every vote control is visible",
                       "every picture, on every slide", "the border's count followed the deck",
-                      "a slide chosen in the border's Chapters opens in the deck"):
+                      "a slide chosen in the border's Chapters opens in the deck",
+                      "Chapters lists every slide of the deck, each question marked",
+                      "Next and Previous reach every slide of the deck in turn"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))

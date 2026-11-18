@@ -270,6 +270,21 @@ def deck(package: Package) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
+def deck_pages(package: Package) -> Optional[list[dict]]:
+    """A decision package's slides as its border moves through them, in the
+    deck's own order and numbering (the shared deck's `pages`, over the deck
+    as it is asked now, `current_deck`); None for any other package or one
+    whose data cannot be read."""
+    data = current_deck(deck(package), _record(package))
+    if not isinstance(data, dict):
+        return None
+    from jarvis import decision_package
+    try:
+        return decision_package.builder().pages(data)
+    except (decision_package.Refused, KeyError, TypeError, ValueError):
+        return None
+
+
 def _record(package: Package, name: str = RECORD) -> dict:
     """Its answers as results/<name> (decisions.json by default) holds them
     now; {} when there are none or the file cannot be read."""
