@@ -461,9 +461,15 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
         "purpose": purpose or "Inspect the checked architecture and discuss its exact canonical source revision.",
         "returns": ["results/**"], "communication": communication, "brief": MEMBER,
         "understanding": {member: MEMBER for member in understood(canonical)}}
+    if told is None:
+        # An architecture package's story is always the factory's
+        # composition: with nothing authored and no approval asked, the
+        # standard vote alone, in the language in force as it is built.
+        from jarvis import package_story
+        told = package_story.compose(None, language or make_package.built_language())
     if told is not None:
         # The story told is the composition; the factory's _with_vote leaves
-        # a story that asks a question as it is.
+        # a story that ends with his one vote as it is.
         (folder / make_package.STORY_FILE).write_bytes(told)
         manifest["story"] = make_package.STORY_FILE
         manifest["understanding"][make_package.STORY_FILE] = MEMBER

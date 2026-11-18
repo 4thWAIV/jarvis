@@ -103,7 +103,9 @@ def test_compiler_reuses_decisions_and_preserves_target_source(source, tmp_path)
     assert roof["source_sha256"] == made.source_sha256
     assert roof["reference"] == "sample-evidence"
     story = package_story.parse((folder / "story.json").read_bytes())
+    # The standard vote is asked at the package view's Done, never as a slide.
     assert [slide.waits for slide in story.slides if slide.waits] == ["choose-street-trial"]
+    assert json.loads((folder / "package.json").read_text())["vote"] == "approve-package"
     assert any("#" + roof["dom_id"] in beat.targets for slide in story.slides for beat in slide.beats)
     manifest = json.loads((folder / "package.json").read_text())
     assert manifest["understanding"]["source.yaml"] == manifest["brief"]
@@ -117,7 +119,8 @@ def test_maximum_story_uses_the_existing_story_limit(source, tmp_path):
     opening = data["slides"][0]
     data["decisions"] = []
     data["slides"] = [opening]
-    # The factory adds no slide of its own: the vote is asked at Done.
+    # With no decisions the story is the slides alone: the standard vote is
+    # asked at the package view's Done, never as a slide.
     for n in range(package_story.MAX_SLIDES - 1):
         slide = deepcopy(opening)
         suffix = f"-repeat-{n}"

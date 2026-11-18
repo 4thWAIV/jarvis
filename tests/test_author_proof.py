@@ -347,3 +347,40 @@ def test_a_check_followed_by_a_long_review_still_proves_its_author(tmp_path, eng
     assert path.stat().st_size > 20 * 1024 * 1024
     assert author_proof.checked(path, digest, at)
     assert not author_proof.checked(path, "b" * 64, at)
+
+
+def _codex_line(at: float, payload: dict, kind: str = "response_item") -> str:
+    from datetime import datetime, timezone
+    stamp = datetime.fromtimestamp(at, timezone.utc).isoformat().replace("+00:00", "Z")
+    return json.dumps({"timestamp": stamp, "type": kind, "payload": payload}) + "\n"
+
+
+@pytest.mark.parametrize("command, proves", [
+    ("python -m jarvis.make_package content.json --check-only", True),
+    ("cat check.log", False),
+])
+def test_a_codex_check_whose_output_came_back_on_a_later_poll_proves_its_author(
+        tmp_path, command, proves):
+    """Codex hands a command that outlives its first wait back on a later
+    poll of its session (write_stdin), so the call that started the check
+    never carries its output; Codex's record of the finished command holds
+    both. It proves the author only when that command is the check."""
+    digest = "c" * 64
+    at = time.time()
+    printed = f"The content is right.\n{author_proof.MARK}{digest}\n"
+    path = tmp_path / "rollout.jsonl"
+    path.write_text(
+        _codex_line(at - 60, {"type": "custom_tool_call", "call_id": "call-start",
+                              "input": f'tools.exec_command({{cmd:"{command}"}})'})
+        + _codex_line(at - 59, {"type": "custom_tool_call_output", "call_id": "call-start",
+                                "output": [{"type": "input_text", "text": "Script running"}]})
+        + _codex_line(at - 58, {"type": "custom_tool_call", "call_id": "call-poll",
+                                "input": "tools.write_stdin({session_id:88939})"})
+        + _codex_line(at - 57, {"type": "custom_tool_call_output", "call_id": "call-poll",
+                                "output": [{"type": "input_text", "text": printed}]})
+        + _codex_line(at - 57, {"type": "item_completed", "item": {
+            "type": "CommandExecution", "process_id": "88939",
+            "command": ["/bin/zsh", "-lc", command], "aggregated_output": printed}},
+            kind="event_msg"))
+    assert author_proof.checked(path, digest, at) is proves
+    assert not author_proof.checked(path, "d" * 64, at)

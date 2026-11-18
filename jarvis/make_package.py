@@ -347,6 +347,13 @@ def _with_vote(built: Path, manifest: dict) -> None:
                         "slide")
     except (OSError, ValueError, package_story.StoryError) as e:
         raise dp.Refused([f"Its story cannot be read: {e}"])
+    # A story the factory composed (an architecture package's,
+    # package_story.compose) ends with his one vote: the standard one, or
+    # his approval of the design in its place. That slide asks it, so the
+    # package names no second vote at Done.
+    if parsed is not None and parsed.slides and parsed.slides[-1].waits in (
+            *package_inbox.VOTE_IDS, package_inbox.APPROVAL_ID):
+        return
     manifest["vote"] = package_inbox.VOTE_ID
     answers = parsed.answers if parsed is not None and parsed.answers else \
         package_inbox.STORY_ANSWERS
