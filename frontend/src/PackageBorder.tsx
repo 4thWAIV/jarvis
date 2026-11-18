@@ -118,6 +118,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
       <span className="package-story-now visually-hidden" role="status">{status}</span>
       <h2 className="package-frame-title" title={`${title}. ${info.purpose}`}>{title}</h2>
       {info.story && width >= 500 && <span className="package-position" aria-label={t("main.package.story.fromSlide")}>{slide} / {slides.length}</span>}
+      {info.runs === "page" && info.layout_checked === false && <span className="package-unchecked" title={t("main.package.layoutUnchecked.why")}>{t("main.package.layoutUnchecked")}</span>}
       <button className="package-icon" type="button" title={t("main.package.more")} aria-label={t("main.package.more")} data-package-menu="more" aria-expanded={menu === "more"} ref={part("more")} {...bindingProps(bind("package.menu", {show: "more"}))}><PackageIcon name="more"/></button>
       {done}
       {width >= 600 && <TakeoverButton partRef={part("takeover")} lit={offered} icon={<PackageIcon name="takeover"/>}/>}

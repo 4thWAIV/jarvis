@@ -1,8 +1,8 @@
-"""The isolated JARVIS a decision package is checked in (decision_check.py).
+"""The isolated JARVIS a decision package is checked in (tests/isolated_jarvis.py).
 
-    python -m jarvis.decision_check_server --port PORT --page DIR [--language en|es]
+    python -m tests.isolated_jarvis_server --port PORT --page DIR [--language en|es]
 
-Run only by `decision_check`, in a child process whose environment already
+Run only by tests/isolated_jarvis.py, in a child process whose environment already
 points its data at a temporary folder (JARVIS_DATA_DIR), with the settings
 it is given (`--settings`, held for this process: its speech models
 folder, the brain not started, a stand-in Fish key). It is JARVIS's real
@@ -25,9 +25,9 @@ changed for a check and nothing else:
   model is loaded for it.
 - Nothing listens beyond 127.0.0.1.
 - A decision package signed by the agent's key it was seeded with
-  (decision_check.seed) unpacks without the signed statement that it passed
+  (isolated_jarvis.seed) unpacks without the signed statement that it passed
   its check, since this is the check (JARVIS_DECISION_CHECK_SERVER, set by
-  decision_check; server._decision_problem).
+  tests/isolated_jarvis.py; server._decision_problem).
 """
 from __future__ import annotations
 

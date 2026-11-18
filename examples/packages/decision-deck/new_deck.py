@@ -37,6 +37,10 @@ SAY_MAX = 800
 # Words a slide may carry, so no slide is a wall of text: a content slide's
 # body, and each part of a decision. Split a longer slide in two.
 SLIDE_WORDS = 60
+# The opening JARVIS draws from a deck's situation (`opening` on the slide):
+# what it is about, what happened, what he approved before, what changes for
+# him and the bottom line, which takes more than one point's words.
+OPENING_WORDS = 130
 DECISION_WORDS = {"question": 30, "reason": 40, "context": 40, "says": 40}
 
 
@@ -91,13 +95,17 @@ def block_words(b: dict) -> int:
     return n
 
 
+def words_allowed(slide: dict) -> int:
+    return OPENING_WORDS if slide.get("opening") else SLIDE_WORDS
+
+
 def check_words(deck: dict) -> None:
     for s in deck.get("slides", []):
         if "decision" in s:
             continue
         n = sum(block_words(b) for b in s.get("blocks", []))
-        if n > SLIDE_WORDS:
-            raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {SLIDE_WORDS}. Split it in two.")
+        if n > words_allowed(s):
+            raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {words_allowed(s)}. Split it in two.")
     for d in deck.get("decisions", []):
         parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
         parts += [("says", o.get("says")) for o in d["options"]]

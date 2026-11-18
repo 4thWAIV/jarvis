@@ -1,4 +1,4 @@
-"""The delivery gate rejects a presentation picture that cannot be seen.
+"""The page harness (tests/isolated_jarvis.py) fails a picture that cannot be seen.
 
 A sized SVG draws at its size in the shared deck's styles. A picture that
 draws as nothing (a viewBox-only SVG, which the command refuses before it
@@ -7,7 +7,7 @@ builds), one hidden by its styles, or one that did not load is a failure.
 from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
-from jarvis.decision_check import PICTURES
+from tests.isolated_jarvis import PICTURES
 pytestmark = pytest.mark.page
 ROOT = Path(__file__).resolve().parents[1]
 

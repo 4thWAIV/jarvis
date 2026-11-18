@@ -1,6 +1,6 @@
 """The whole agent path, in a JARVIS of its own: an agent writes a small
 architecture YAML, validates it with its signed command, sends it with
-make_package --document, and the isolated JARVIS (decision_check.Isolated,
+make_package --document, and the isolated JARVIS (isolated_jarvis.Isolated,
 admitting exactly as the live one does: signature and author proof) takes
 it into the inbox as a message on its Work item; it opens from that message
 on a connected page, and ground by package id gives back the exact revision.
@@ -25,8 +25,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from jarvis import (agent_keys, data_paths, decision_check, language_kit as lk, package_inbox,
+from jarvis import (agent_keys, data_paths, language_kit as lk, package_inbox,
                     package_signature, records, settings_service, work_store)
+from tests import isolated_jarvis
 from jarvis import decision_package as dp
 from tests import architecture_author
 
@@ -79,7 +80,7 @@ def world(tmp_path):
         pytest.skip("Supply the pinned external release asset for upstream integration tests")
     folder = tmp_path / "jarvis"
     data = folder / "data"
-    with decision_check._data_dir(data):
+    with isolated_jarvis._data_dir(data):
         lk.activate(lk.stage(Path(asset), lk.Release(lk.PINNED_VERSION, lk.PINNED_COMMIT,
                                                      lk.PINNED_DIGEST, ("gate", "release"))))
     page = tmp_path / "page"
@@ -121,13 +122,13 @@ def world(tmp_path):
     def before(data: Path) -> None:
         # Its records (the Work item, the agent's key) are written into its
         # engine's folder before its server and engine start there.
-        with decision_check._data_dir(data), records.opened_at(data_paths.knowledge_dir()):
+        with isolated_jarvis._data_dir(data), records.opened_at(data_paths.knowledge_dir()):
             made["work"] = work_store.create("Architecture inbox", "folder", str(tmp_path))
             for key, value in saved.items():
                 settings_service.change(key, value)
-        decision_check.seed(data, public, session)
+        isolated_jarvis.seed(data, public, session)
 
-    jarvis = decision_check.Isolated(folder, "en", page, before, is_the_check=False, settings={
+    jarvis = isolated_jarvis.Isolated(folder, "en", page, before, is_the_check=False, settings={
         "codex_sessions_home": codex_home})
     work = made["work"]
     try:
@@ -207,11 +208,11 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
 
     # Admitted: in his inbox, its sender proven, its author proven (held
     # otherwise), as a message on the document's Work item.
-    with decision_check._data_dir(data):
+    with isolated_jarvis._data_dir(data):
         entry = package_inbox.get(record["inbox"])
     assert entry is not None and entry.from_session == session
     assert not entry.unproven_claim
-    with decision_check._data_dir(data):
+    with isolated_jarvis._data_dir(data):
         from jarvis import agent_key_store
         assert not agent_key_store.held(), "nothing was held for its key or its author"
 
@@ -255,7 +256,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         canonical = json.loads((folder / "canonical.json").read_text())
         assert canonical["understanding"]["story_sha256"] == hashlib.sha256(
             author_story.read_bytes()).hexdigest()
-        with decision_check._data_dir(data):
+        with isolated_jarvis._data_dir(data):
             from jarvis import work_packages
             package = work_packages.find(record["package"])
             told = package.story()
@@ -296,7 +297,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
                 headers={"Authorization": f"Bearer {jarvis.token}"}), timeout=30) as response:
             item = json.loads(response.read())
         item = item.get("item", item)
-        with decision_check._data_dir(data):
+        with isolated_jarvis._data_dir(data):
             entry = package_inbox.get(record["inbox"])
         assert item["state"] != "done" and not item.get("closed_at"), \
             "his review is not taken for done, and the Work item stays open"
@@ -339,7 +340,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     with pytest.raises(OSError):
         dp.deliver(forged, jarvis.base, "Architecture package: forged", work=work.id,
                    signer=(private, public))
-    with decision_check._data_dir(data):
+    with isolated_jarvis._data_dir(data):
         from jarvis import agent_key_store
         [held] = agent_key_store.held()
     assert held.kind == "package" and held.session_id == session

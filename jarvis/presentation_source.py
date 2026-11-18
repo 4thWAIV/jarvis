@@ -4,15 +4,16 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
 
-from jarvis.presentation_schema import (BarObject, ContentSlide, Ellipse, ImageObject,
-                                       Presentation, Rectangle, ShapePath, TextObject, VectorObject)
+from jarvis import layout_spec, picture_proof
+from jarvis.presentation_schema import (BarObject, ContentSlide, Cue, Ellipse, ImageObject,
+                                       Paragraph, Presentation, Rectangle, Run, ShapePath,
+                                       SourceRef, TableObject, TextObject, VectorObject)
 
 
 _NUMBER = re.compile(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?\Z")
@@ -41,6 +42,8 @@ class Source:
     document: Presentation
     locations: dict[tuple, tuple[int, int]]
     nodes: dict[str, tuple]
+    pictures: dict = field(default_factory=dict)     # asset id: picture_proof.Picture
+    language: str = "en"     # the deck's, else the one it is built in (read_source)
 
     @property
     def digest(self) -> str:
@@ -61,8 +64,13 @@ class Source:
         raise DeckCompileError((self.diagnostic(code, message, path, member),))
 
 
-def read_source(path: Path) -> Source:
-    """Parse nodes explicitly: no implicit date coercion or last-key-wins mappings."""
+def read_source(path: Path, built: bool = False, language: str | None = None) -> Source:
+    """Parse nodes explicitly: no implicit date coercion or last-key-wins mappings.
+
+    `built` reads the source.yaml inside a built package, where file
+    evidence is frozen under reference-evidence/ rather than at its locator.
+    `language` is the one the deck is built in when its source names none
+    (the opening's words, draw_opening)."""
     from jarvis.repo_read import READ_MAX_FILE_BYTES
     path = path.resolve()
     locations: dict[tuple, tuple[int, int]] = {}
@@ -126,6 +134,7 @@ def read_source(path: Path) -> Source:
         return value
 
     data = visit(node, ())
+    _no_authored_layout(source, data)
     try:
         source.document = Presentation.model_validate(data)
     except ValidationError as error:
@@ -138,13 +147,91 @@ def read_source(path: Path) -> Source:
                 if candidate + (part,) in locations:
                     candidate += (part,)
             code = "capability" if at and at[0] in {"version", "requires"} else "schema"
-            diagnostics.append(source.diagnostic(code, item["msg"], candidate))
+            # A field that is not there has no place of its own: name it.
+            missing = ".".join(str(p) for p in at[len(candidate):] if isinstance(p, (str, int)))
+            message = f"{missing}: {item['msg']}" if missing and item["type"] == "missing" else item["msg"]
+            diagnostics.append(source.diagnostic(code, message, candidate))
         raise DeckCompileError(tuple(diagnostics)) from None
-    _semantics(source, data)
+    _semantics(source, data, built)
+    source.language = source.document.language or language or "en"
+    draw_opening(source)
     return source
 
 
-def _semantics(source: Source, data: dict) -> None:
+# The opening JARVIS draws from `situation`: its slide's and words' ids,
+# which no author's id may take.
+OPENING_ID = "jarvis-opening"
+OPENING_WORDS = OPENING_ID + "-words"
+SITUATION_FIELDS = ("subject", "happened", "approved_before", "changes")
+NEEDS_SITUATION = (
+    "A deck that asks something opens with where things stand, which JARVIS draws as its "
+    "first slide: give `situation` with subject (what this is about, named and explained "
+    "for someone coming from other work), happened (what changed or failed, and why), "
+    "approved_before (what he already approved that this touches, or that nothing was) "
+    "and changes (what changes for him if he says yes).")
+
+
+def draw_opening(source: Source) -> None:
+    """A deck that asks something opens on where things stand: JARVIS draws
+    its first slide from the author's `situation` and `conclusion`, in its
+    `opening` layout (what it is about, what happened, what he approved
+    before, what changes for him, then the bottom line), told with the
+    purpose. Refused when the deck asks a decision and gives no situation."""
+    from jarvis.decision_package import SITUATION_WORDS
+    doc = source.document
+    if doc.situation is None:
+        if doc.decisions:
+            source.fail("production", NEEDS_SITUATION, ("decisions",))
+        return
+    for ident in (OPENING_ID, OPENING_WORDS):
+        if ident in source.nodes:
+            source.fail("reference", f"{ident!r} names the opening JARVIS draws; give yours "
+                        f"another id.", member=ident)
+    words = SITUATION_WORDS.get(source.language, SITUATION_WORDS["en"])
+    situation = doc.situation
+
+    def paragraph(n: int, text: str, label: str | None = None) -> Paragraph:
+        runs = [Run(id=f"{OPENING_WORDS}-{n}-label", text=label + " ", emphasis="strong")] if label else []
+        runs.append(Run(id=f"{OPENING_WORDS}-{n}", text=text, emphasis="normal"))
+        return Paragraph(id=f"{OPENING_WORDS}-p{n}", role="paragraph", runs=runs)
+
+    shown = ([paragraph(1, situation.subject)]
+             + [paragraph(n, getattr(situation, name), words[name])
+                for n, name in enumerate(SITUATION_FIELDS[1:], 2)]
+             + [paragraph(len(SITUATION_FIELDS) + 1, doc.conclusion, words["conclusion"])])
+    text = TextObject(id=OPENING_WORDS, type="text", slot="words",
+                      source=SourceRef(reference=doc.references[0].id), paragraphs=shown)
+    opening = ContentSlide(
+        id=OPENING_ID, type="content", title=doc.title, layout="opening", objects=[text],
+        readingOrder=[OPENING_WORDS], notes="", short=words["short"],
+        narration=[Cue(id=OPENING_ID + "-cue", focus=[OPENING_WORDS],
+                       say=f"{doc.purpose} {situation.subject}")])
+    doc.slides.insert(0, opening)
+    for member in [OPENING_ID, OPENING_WORDS] + [p.id for p in shown]:
+        source.nodes.setdefault(member, ("situation",))
+
+
+NO_LAYOUT = ("JARVIS lays out every deck: a source names one of its layouts on each content "
+             "slide ({layouts}) and a slot for each object, and never carries {what}.")
+
+
+def _no_authored_layout(source: Source, data) -> None:
+    """A source that lays itself out (a theme, region rectangles) is
+    refused, naming what replaces it."""
+    if not isinstance(data, dict):
+        return
+    named = ", ".join(layout_spec.layouts())
+    for key in ("theme", "layouts"):
+        if key in data:
+            source.fail("layout", NO_LAYOUT.format(layouts=named, what=f"`{key}`"), (key,))
+    for n, slide in enumerate(data.get("slides") or []):
+        for m, obj in enumerate((slide or {}).get("objects") or [] if isinstance(slide, dict) else []):
+            if isinstance(obj, dict) and "region" in obj:
+                source.fail("layout", NO_LAYOUT.format(layouts=named, what="a `region`: give it a `slot`"),
+                            ("slides", n, "objects", m, "region"))
+
+
+def _semantics(source: Source, data: dict, built: bool = False) -> None:
     doc = source.document
 
     def identities(item, at=()):
@@ -162,11 +249,12 @@ def _semantics(source: Source, data: dict) -> None:
                 identities(value, at + (n,))
 
     identities(data)
+    for slide in doc.slides:
+        if isinstance(slide, ContentSlide) and slide.id + "-title" in source.nodes:
+            source.fail("reference", f"{slide.id}-title names slide {slide.id}'s title, which JARVIS "
+                        f"draws; give the object another id.", member=slide.id + "-title")
     if not isinstance(doc.slides[0], ContentSlide):
         source.fail("production", "The opening must be a content slide.", ("slides", 0))
-    if min(doc.theme.bodyPx, doc.theme.headingPx) < doc.theme.minimumPx:
-        source.fail("accessibility", "Body and heading size must meet the effective readable floor.", ("theme",))
-    layouts = {layout.id: layout for layout in doc.layouts}
     references = {ref.id for ref in doc.references}
     assets = {asset.id: asset for asset in doc.assets}
     decisions = {decision.id: decision for decision in doc.decisions}
@@ -179,21 +267,15 @@ def _semantics(source: Source, data: dict) -> None:
 
     for reference in doc.references:
         if reference.kind == "file":
-            evidence = source.path.parent / reference.locator
+            evidence = source.path.parent / (f"reference-evidence/{reference.id}.bin" if built
+                                             else reference.locator)
             if not evidence.is_file() or evidence.is_symlink():
                 source.fail("reference", "File evidence must identify a regular source file.", member=reference.id)
+    pictures = {}
     for asset in doc.assets:
         provenance(asset.source, asset.id)
-        _asset(source, asset)
-    for layout in doc.layouts:
-        for index, region in enumerate(layout.regions):
-            r = region.rect
-            if r.x < 0 or r.y < 0 or r.x + r.width > 100 or r.y + r.height > 100:
-                source.fail("layout", "Region must fit the content rectangle [0,100] × [0,100].", member=region.id)
-            for other in layout.regions[:index]:
-                q = other.rect
-                if max(r.x, q.x) < min(r.x + r.width, q.x + q.width) and max(r.y, q.y) < min(r.y + r.height, q.y + q.height):
-                    source.fail("layout", f"Region overlaps {other.id!r}.", member=region.id)
+        pictures[asset.id] = _asset(source, asset)
+    source.pictures = pictures
     placed = []
     for slide in doc.slides:
         if not isinstance(slide, ContentSlide):
@@ -201,20 +283,35 @@ def _semantics(source: Source, data: dict) -> None:
                 source.fail("reference", "Decision slide names an unknown decision.", member=slide.id)
             placed.append(slide.decision)
             continue
-        layout = layouts.get(slide.layout)
-        if layout is None:
-            source.fail("reference", "Unknown slide layout.", member=slide.id)
-        regions = {region.id for region in layout.regions}
+        if slide.layout not in layout_spec.layouts():
+            source.fail("layout", f"Unknown layout {slide.layout!r}: JARVIS draws every slide in one of "
+                        f"its named layouts, {', '.join(layout_spec.layouts())}.", member=slide.id)
         ids = [obj.id for obj in slide.objects]
         if len(slide.readingOrder) != len(ids) or set(slide.readingOrder) != set(ids):
             source.fail("accessibility", "Reading order must name every slide object exactly once.", member=slide.id)
-        occupied = set()
-        visible = set(ids)
+        slots = layout_spec.slots_of(slide.layout)
+        accepts = layout_spec.spec()["accepts"]
+        filled = {}
+        visible = set(ids) | {slide.id + "-title"}
         for obj in slide.objects:
             provenance(obj.source, obj.id)
-            if obj.region not in regions or obj.region in occupied:
-                source.fail("reference", "Object region must exist in its layout and be occupied at most once.", member=obj.id)
-            occupied.add(obj.region)
+            if obj.slot not in slots or obj.slot in filled:
+                source.fail("layout", f"Slot {obj.slot!r} is not one of the {slide.layout} layout's "
+                            f"({', '.join(slots)}), or is filled twice.", member=obj.id)
+            if obj.type not in accepts[obj.slot]:
+                source.fail("layout", f"The {obj.slot} slot holds {' or '.join(accepts[obj.slot])}, "
+                            f"not {obj.type}.", member=obj.id)
+            filled[obj.slot] = obj
+        named = layout_spec.spec()["layouts"][slide.layout]
+        missing = [slot for slot in named["required"] if slot not in filled]
+        columns = named.get("columns", {}).get("slots", [])
+        used = [slot for slot in columns if slot in filled]
+        if missing or used != columns[:len(used)]:
+            source.fail("layout", f"The {slide.layout} layout needs {', '.join(named['required'])}"
+                        + (f", its columns filled in order ({', '.join(columns)})" if columns else "")
+                        + ".", member=slide.id)
+        boxes = layout_spec.boxes(slide.layout, set(filled))
+        for obj in slide.objects:
             if isinstance(obj, TextObject):
                 for paragraph in obj.paragraphs:
                     visible.add(paragraph.id)
@@ -222,6 +319,13 @@ def _semantics(source: Source, data: dict) -> None:
             elif isinstance(obj, ImageObject):
                 if obj.asset not in assets:
                     source.fail("reference", "Unknown image asset.", member=obj.id)
+                _drawn(source, pictures[obj.asset], layout_spec.slot_px(boxes[obj.slot]), obj.id)
+            elif isinstance(obj, TableObject):
+                width = len(obj.head) if obj.head else len(obj.rows[0].cells)
+                for row in obj.rows:
+                    visible.add(row.id)
+                    if len(row.cells) != width:
+                        source.fail("schema", f"Every row of the table has {width} cells.", member=row.id)
             elif isinstance(obj, BarObject):
                 if obj.domain[0] != 0 or obj.domain[1] <= 0:
                     source.fail("schema", "The bar domain starts at zero and ends above zero.", member=obj.id)
@@ -259,8 +363,19 @@ def _semantics(source: Source, data: dict) -> None:
         if decision.recommended not in {option.id for option in decision.options}:
             source.fail("reference", "Recommended option does not belong to this decision.", member=decision.id)
         for option in decision.options:
+            if option.picture is None:
+                continue
             if option.picture not in assets:
                 source.fail("reference", "Decision picture names an unknown asset.", member=option.id)
+            _drawn(source, pictures[option.picture],
+                   layout_spec.picture_box("option", len(decision.options)), option.id)
+        for field, role in (("picture", "context"), ("compare", "compare")):
+            asset = getattr(decision, field)
+            if asset is None:
+                continue
+            if asset not in assets:
+                source.fail("reference", f"The decision's {field} names an unknown asset.", member=decision.id)
+            _drawn(source, pictures[asset], layout_spec.picture_box(role), decision.id)
 
 
 def data_at(path, data):
@@ -271,7 +386,7 @@ def data_at(path, data):
 
 def _asset(source: Source, asset) -> None:
     relative = Path(asset.path)
-    reserved = {"index.html", "deck.css", "deck.js", "deck-data.js", "story.json", "package.json", "SKILL.md", "UNDERSTANDING.md", "presentation.js", "presentation.css", "presentation-data.js", "source.yaml", "target-index.json"}
+    reserved = {"index.html", "deck.css", "deck.js", "deck-data.js", "story.json", "package.json", "SKILL.md", "UNDERSTANDING.md", "presentation.js", "presentation.css", "presentation-font.css", "presentation-data.js", "source.yaml", "target-index.json"}
     if not relative.parts or relative.as_posix() in reserved or relative.parts[0] in {".jarvis", "results", "scripts", "reference-evidence"} or ".." in relative.parts:
         source.fail("asset", "Asset path collides with generated package files or traverses directories.", member=asset.id)
     path = source.path.parent / asset.path
@@ -280,38 +395,21 @@ def _asset(source: Source, asset) -> None:
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != asset.sha256:
         source.fail("asset", "Asset SHA-256 differs from the declared bytes.", member=asset.id)
-    signatures = {"image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
-                  "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
-                  "image/webp": raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"}
-    if asset.mime in signatures:
-        if not signatures[asset.mime]:
-            source.fail("asset", "Asset bytes do not match the declared MIME type.", member=asset.id)
-        return  # Browser measurement verifies intrinsic dimensions and full decoding.
     try:
-        if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
-            raise ValueError("SVG declarations and entities are not allowed")
-        root = ET.fromstring(raw)
-        allowed = {"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text", "tspan", "title", "desc", "defs", "linearGradient", "radialGradient", "stop", "clipPath", "mask"}
-        if root.tag.split("}")[-1] != "svg":
-            raise ValueError("The root is not SVG")
-        for element in root.iter():
-            if element.tag.split("}")[-1] not in allowed:
-                raise ValueError("SVG has an unsupported element")
-            for key, value in element.attrib.items():
-                name = key.split("}")[-1].lower()
-                if name.startswith("on") or name in {"href", "style"}:
-                    raise ValueError("SVG has an executable, linked or styled attribute")
-                if "url(" in value.lower() and not re.fullmatch(r"url\(#[a-zA-Z_][\w.-]*\)", value):
-                    raise ValueError("SVG has an external reference")
-        def dimension(name):
-            value = root.attrib.get(name, "")
-            if not re.fullmatch(r"\d+(?:\.\d+)?(?:px)?", value):
-                raise ValueError("SVG needs intrinsic pixel width and height")
-            return float(value.removesuffix("px"))
-        if (dimension("width"), dimension("height")) != (asset.width, asset.height):
-            raise ValueError("SVG dimensions differ from the declaration")
-    except (ET.ParseError, ValueError) as error:
-        source.fail("asset", str(error), member=asset.id)
+        picture = picture_proof.prove(path, asset.mime)
+    except picture_proof.PictureProblem as error:
+        source.fail("asset", f"Asset {asset.path}: {error}.", member=asset.id)
+    if (picture.width, picture.height) != (asset.width, asset.height):
+        source.fail("asset", f"Asset {asset.path} is {picture.width:g} x {picture.height:g} px, "
+                    f"not the declared {asset.width:g} x {asset.height:g}.", member=asset.id)
+    return picture
+
+
+def _drawn(source: Source, picture, box: tuple[float, float], member: str) -> None:
+    """A picture too small to read where it is drawn, at the smallest frame."""
+    problem = picture_proof.drawn_problem(picture, box)
+    if problem:
+        source.fail("asset", f"Picture {member}: {problem}.", member=member)
 
 
 # SVG's command grammar, not a permissive browser prefix parser. Geometry is

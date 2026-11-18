@@ -549,19 +549,26 @@ def authored_package_source(monkeypatch):
     provider adapters. This fixture is opt-in, never a global author bypass:
     the source is left as a fresh author leaves it, its receipt beside it
     and its own transcript showing its last check (tests/author_fixtures).
+    The cold reader answers everything (package_reader); what the factory
+    asks the author again is in the list this returns.
     """
-    from jarvis import package_author
-    from tests.author_fixtures import authored
+    from jarvis import package_author, package_reader
+    from tests.author_fixtures import authored, cold_reader
+
+    asked: list[str] = []
 
     def prepare(handoff, engine, out, **kw):
-        authored(kw["source"], engine or "claude")
+        try:
+            authored(kw["source"], engine or "claude")
+        except ValueError:
+            pass        # a source its own check refuses: the build says why
         if kw.get("finish"):
             import asyncio
-            from tests.author_fixtures import accept_visual_review
+
             async def turn(prompt):
-                if prompt.startswith("Inspect the rendered package"):
-                    request = Path(prompt.split("Read ", 1)[1].split(". Open EVERY", 1)[0])
-                    accept_visual_review(request)
+                asked.append(prompt)
             asyncio.run(kw["finish"](kw["source"], turn))
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)
+    monkeypatch.setattr(package_reader, "read", cold_reader())
+    return asked

@@ -41,32 +41,10 @@ class Asset(Model):
     id: Id
     path: Text
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-    mime: Literal["image/png", "image/jpeg", "image/webp", "image/svg+xml"]
+    mime: Literal["image/png", "image/gif", "image/jpeg", "image/webp", "image/svg+xml"]
     width: Positive
     height: Positive
     source: SourceRef
-
-
-class Theme(Model):
-    background: Color
-    foreground: Color
-    accent: Color
-    muted: Color
-    font: Literal["system-sans"]
-    bodyPx: Positive
-    headingPx: Positive
-    minimumPx: Annotated[Number, Field(ge=16)]
-    gapPx: Nonnegative
-
-
-class Region(Model):
-    id: Id
-    rect: Rect
-
-
-class Layout(Model):
-    id: Id
-    regions: Annotated[list[Region], Field(min_length=1)]
 
 
 class Run(Model):
@@ -83,7 +61,7 @@ class Paragraph(Model):
 
 class ObjectBase(Model):
     id: Id
-    region: Id
+    slot: Id          # where in its slide's named layout (layout_spec) it goes
     source: SourceRef
 
 
@@ -151,7 +129,23 @@ class BarObject(ObjectBase):
     alt: Text
 
 
-VisibleObject = Annotated[Union[TextObject, ImageObject, VectorObject, BarObject], Field(discriminator="type")]
+class TableRow(Model):
+    id: Id
+    cells: Annotated[list[Text], Field(min_length=1)]
+
+
+class TableObject(ObjectBase):
+    """Words in rows and columns: an optional heading row, and the first
+    cell of each row as its heading when `rowHeads`."""
+    type: Literal["table"]
+    head: Annotated[list[Text], Field(min_length=1)] | None = None
+    rows: Annotated[list[TableRow], Field(min_length=1)]
+    rowHeads: bool = False
+    alt: Text
+
+
+VisibleObject = Annotated[Union[TextObject, ImageObject, VectorObject, BarObject, TableObject],
+                          Field(discriminator="type")]
 
 
 class Cue(Model):
@@ -164,11 +158,12 @@ class ContentSlide(Model):
     id: Id
     type: Literal["content"]
     title: Text
-    layout: Id
+    layout: Id        # one of JARVIS's named layouts (layout_spec.layouts)
     objects: Annotated[list[VisibleObject], Field(min_length=1)]
     readingOrder: Annotated[list[Id], Field(min_length=1)]
     narration: Annotated[list[Cue], Field(min_length=1)]
     notes: str
+    short: Text | None = None     # its name in the border's Chapters
 
 
 class DecisionSlide(Model):
@@ -181,7 +176,8 @@ class Option(Model):
     id: Id
     name: Text
     says: Text
-    picture: Id
+    picture: Id | None = None     # every option is pictured unless the decision says text_only
+    opens: list[Id] = []          # follow-up decisions this answer opens
 
 
 class Decision(Model):
@@ -192,6 +188,23 @@ class Decision(Model):
     options: Annotated[list[Option], Field(min_length=2)]
     recommended: Id
     reason: Text
+    short: Text | None = None         # its name in the border's Chapters
+    context: Text | None = None       # what he needs beside the question
+    picture: Id | None = None         # a picture beside the question
+    compare: Id | None = None         # one picture comparing the options
+    say: Text | None = None           # what JARVIS says for it in place of the recommendation
+    text_only: Text | None = None     # why its options cannot be pictured
+    needs_words: list[Id] = []        # answers that need his words
+
+
+class Situation(Model):
+    """Where things stand, which JARVIS draws as the first slide of a deck
+    that asks something (presentation_source.draw_opening): every field in
+    words someone coming from other work follows."""
+    subject: Text           # what this is about: the thing itself, named and explained
+    happened: Text          # what led here: what changed or failed, and why
+    approved_before: Text   # what he already approved that this touches, or that nothing was
+    changes: Text           # what changes for him if he says yes
 
 
 class Presentation(Model):
@@ -200,11 +213,10 @@ class Presentation(Model):
     title: Text
     purpose: Text
     conclusion: Text
-    language: Literal["en", "es"]
+    language: Literal["en", "es"] | None = None     # else the language in force as it is built
     requires: Annotated[list[Literal["presentation-core/1"]], Field(min_length=1, max_length=1)]
-    theme: Theme
-    layouts: Annotated[list[Layout], Field(min_length=1)]
     assets: list[Asset]
+    situation: Situation | None = None     # required when it asks a decision
     references: Annotated[list[Reference], Field(min_length=1)]
     slides: Annotated[list[Annotated[Union[ContentSlide, DecisionSlide], Field(discriminator="type")]], Field(min_length=1)]
     decisions: list[Decision]

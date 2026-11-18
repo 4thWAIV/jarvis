@@ -4596,6 +4596,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #package-view .package-go-back-count { position:absolute; top:1px; right:1px; min-width:14px; height:14px; padding:0 3px; border-radius:7px; background:var(--ui-accent); color:#000; font-size:10px; line-height:14px; font-weight:700; text-align:center; }
 #package-view .package-frame-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; padding:0 5px; }
 .package-position { font-size:12px; white-space:nowrap; }
+.package-unchecked { font-size:12px; white-space:nowrap; color:#fbbf24; }
 #package-view .package-done { margin-left:5px; box-shadow:-4px 0 rgba(255,255,255,.15); color:var(--ui-accent); }
 /* Done's card: the standard vote and sign-off, anchored under the check mark. */
 #package-view .package-done-anchor { position:relative; display:inline-flex; }

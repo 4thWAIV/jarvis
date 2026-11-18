@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.presentation_source import DeckCompileError, read_source
+from jarvis import layout_spec
+from jarvis.presentation_source import OPENING_ID, DeckCompileError, read_source
 
 EXAMPLE = Path(__file__).parents[1] / "examples/presentations/street"
 
@@ -37,13 +38,18 @@ def test_stable_source_identity_and_provenance(source):
 
 @pytest.mark.parametrize("mutate,code,words", [
     (lambda d: d.update(version="presentation/2"), "capability", "presentation/1"),
-    (lambda d: d["theme"].update(bodyPx="16"), "schema", "number"),
+    (lambda d: d["slides"][1]["objects"][3]["bars"][0].update(value="85"), "schema", "number"),
+    (lambda d: d.update(theme={"font": "system-sans"}), "layout", "never carries `theme`"),
+    (lambda d: d["slides"][1]["objects"][0].update(region="street-heading"), "layout", "give it a `slot`"),
+    (lambda d: d["slides"][1].update(layout="street-layout"), "layout", "named layouts"),
+    (lambda d: (d["slides"][1]["objects"][0].update(slot="fourth"),
+                d["slides"][1]["objects"][1].update(slot="words")), "layout", "holds text"),
+    (lambda d: d["slides"][1]["objects"][1].update(slot="fourth"), "layout", "columns filled in order"),
     (lambda d: d["slides"][1]["objects"][0].update(typo=True), "schema", "Extra"),
     (lambda d: d["slides"][0]["narration"][0].update(focus=["roof"]), "reference", "not visible"),
     (lambda d: d["slides"][0]["narration"][0].update(focus=["#roof"]), "schema", "pattern"),
-    (lambda d: d["slides"][1]["objects"][0].update(id="recommendation"), "reference", "Duplicate ID"),
+    (lambda d: d["slides"][1]["objects"][0].update(id="opening-words"), "reference", "Duplicate ID"),
     (lambda d: d["slides"][1]["readingOrder"].append("water-route"), "accessibility", "exactly once"),
-    (lambda d: d["layouts"][0]["regions"][1]["rect"].update(y=20), "layout", "overlaps"),
     (lambda d: d["assets"][0].update(sha256="0" * 64), "asset", "SHA-256"),
     (lambda d: d["assets"][0].update(path="../escape.svg"), "asset", "traverses"),
     (lambda d: d["assets"][0].update(path="index.html"), "asset", "collides"),
@@ -51,6 +57,8 @@ def test_stable_source_identity_and_provenance(source):
     (lambda d: d["slides"][1]["objects"][1]["members"][0].update(d="M 1 2 L 3"), "schema", "argument count"),
     (lambda d: d["slides"][1]["objects"][1]["members"][0].update(d="M 1 2 A 3 4 0 2 1 8 9"), "schema", "flags"),
     (lambda d: d["slides"].pop(), "reference", "Every decision"),
+    (lambda d: d["assets"][0].update(width=241), "asset", "not the declared 241"),
+    (lambda d: d["assets"][0].update(mime="image/png"), "asset", "not the declared image/png"),
 ])
 def test_invalid_source_is_refused_before_rendering(source, mutate, code, words):
     change(source, mutate)
@@ -80,7 +88,7 @@ def test_static_svg_refuses_active_content(source):
     image = source.parent / "planted.svg"
     image.write_text(image.read_text().replace("<rect", '<script>alert(1)</script><rect', 1))
     change(source, lambda d: d["assets"][0].update(sha256=hashlib.sha256(image.read_bytes()).hexdigest()))
-    with pytest.raises(DeckCompileError, match="unsupported element"):
+    with pytest.raises(DeckCompileError, match="not a static drawing element"):
         read_source(source)
 
 
@@ -109,6 +117,7 @@ def test_maximum_story_uses_the_existing_story_limit(source, tmp_path):
     data = yaml.safe_load(source.read_text())
     opening = data["slides"][0]
     data["decisions"] = []
+    data.pop("situation")
     data["slides"] = [opening]
     # The factory adds the standard question and answer summary.
     for n in range(package_story.MAX_SLIDES - 3):
@@ -212,9 +221,17 @@ def presentation_page(source, tmp_path):
             helper = EXAMPLE.parents[2] / 'jarvis/package_story.js'
             page.route('**/api/packages/story.js', lambda route: route.fulfill(
                 body=helper.read_text(), content_type='application/javascript'))
+            page.route('**' + layout_spec.FONT_PATH, lambda route: route.fulfill(
+                body=layout_spec.font_css(), content_type='text/css'))
             page.goto((compiled.package_source / 'index.html').as_uri())
             page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
             page.evaluate('async()=>{await document.fonts.ready;}')
+            if page.evaluate("window.PRESENTATION.document.slides[0].id") == OPENING_ID:
+                # JARVIS's own opening (drawn from the situation) comes first;
+                # these tests look at the author's first slide.
+                page.locator('#go-2').evaluate('e=>e.click()')
+                page.wait_for_function("document.querySelector('.slide.current') !== "
+                                       "document.querySelector('#track > .slide')")
             return page, compiled
         yield load
 
@@ -227,17 +244,18 @@ def test_details_follows_reading_order_when_objects_are_reversed(presentation_pa
     page, compiled = presentation_page(reverse_objects)
     data = yaml.safe_load((compiled.package_source / 'source.yaml').read_text())
     targets = json.loads(compiled.target_index.read_text())
+    slide = data['slides'][1]
+    order = [target['member'] for target in targets if target['slide'] == slide['id']
+             and target['member'] in {obj['id'] for obj in slide['objects']}]
+    assert order == slide['readingOrder']
+    assert slide['readingOrder'] != [obj['id'] for obj in slide['objects']]
     opening = data['slides'][0]
-    objects = {obj['id']: obj for obj in opening['objects']}
-    expected = [opening['id']]
-    for ident in opening['readingOrder']:
-        expected.append(ident)
-        for paragraph in objects[ident]['paragraphs']:
+    expected = [opening['id'], opening['id'] + '-title']
+    for obj in opening['objects']:
+        expected.append(obj['id'])
+        for paragraph in obj['paragraphs']:
             expected.append(paragraph['id'])
             expected.extend(run['id'] for run in paragraph['runs'])
-    actual = [target['member'] for target in targets if target['slide'] == opening['id']]
-    assert actual == expected
-    assert opening['readingOrder'] != [obj['id'] for obj in opening['objects']]
     page.evaluate('window.JarvisPresentation.inspect()')
     labels = page.locator('.presentation-inspector button').all_text_contents()[1:]
     names = {target['member']: target['accessible_name'] for target in targets}
@@ -247,11 +265,11 @@ def test_details_follows_reading_order_when_objects_are_reversed(presentation_pa
 @pytest.mark.parametrize('role', ['paragraph', 'heading', 'bullet', 'numbered'])
 def test_wrapped_text_targets_share_range_geometry_with_narration(presentation_page, role):
     def text_role(data):
-        data['slides'][0]['objects'][1]['paragraphs'][0]['role'] = role
+        data['slides'][0]['objects'][0]['paragraphs'][1]['role'] = role
     page, compiled = presentation_page(text_role)
     data = yaml.safe_load((compiled.package_source / 'source.yaml').read_text())
-    obj = data['slides'][0]['objects'][1]
-    paragraph = obj['paragraphs'][0]
+    obj = data['slides'][0]['objects'][0]
+    paragraph = obj['paragraphs'][1]
     members = [obj['id'], paragraph['id'], paragraph['runs'][0]['id']]
     for width in (240, 388):
         page.set_viewport_size({'width': width, 'height': 602})
@@ -312,3 +330,187 @@ def test_details_suspends_background_slide_shortcuts(presentation_page):
         assert not page.locator('#stage').evaluate('e=>e.inert')
     page.keyboard.press('PageDown')
     assert page.locator('.slide.current').get_attribute('id') != current
+
+
+def _with_table_and_follow_up(data):
+    """The street deck with a table slide, a follow-up question, a decision's
+    context, compare picture and short name, and a text-only follow-up."""
+    data["slides"].insert(2, {
+        "id": "costs", "type": "content", "title": "What each route costs", "short": "Costs",
+        "layout": "table", "objects": [{
+            "id": "cost-table", "type": "table", "slot": "table",
+            "source": {"reference": "sample-evidence"}, "alt": "Cost of each route",
+            "head": ["Route", "Cost"], "rowHeads": True,
+            "rows": [{"id": "paved-row", "cells": ["Paved", "Low"]},
+                     {"id": "planted-row", "cells": ["Planted", "Medium"]}]}],
+        "readingOrder": ["cost-table"],
+        "narration": [{"id": "cost-cue", "say": "Planting costs a little more.",
+                       "focus": ["planted-row"]}],
+        "notes": ""})
+    decision = data["decisions"][0]
+    decision.update(short="Trial", context="Two streets are ready for it.",
+                    compare="paved-art", say="I recommend the planted trial.")
+    follow = {"id": "trial-length", "question": "How long should the trial run?",
+              "why_you": "It sets when the street is closed.", "evidence": ["The street plan."],
+              "options": [{"id": "one-month", "name": "One month", "says": "Shorter closure."},
+                          {"id": "three-months", "name": "Three months", "says": "More data."}],
+              "recommended": "three-months", "reason": "A season of rain is needed.",
+              "text_only": "These are lengths of time, which no picture shows better."}
+    decision["options"][0]["opens"] = ["trial-length"]
+    data["decisions"].append(follow)
+    data["slides"].append({"id": "length-choice", "type": "decision", "decision": "trial-length"})
+
+
+def test_presentation_yaml_says_everything_a_deck_says(source, tmp_path):
+    from jarvis import package_story
+    from jarvis.presentation import compile_deck
+    change(source, _with_table_and_follow_up)
+    made = compile_deck(source, tmp_path / "compiled")
+    folder = made.package_source
+    deck = json.loads((folder / "deck-data.js").read_text().split("=", 1)[1].rstrip().rstrip(";"))
+    table = next(b["table"] for s in deck["slides"] for b in s.get("blocks", []) if "table" in b)
+    assert table["head"] == ["Route", "Cost"] and table["rows"][1] == ["Planted", "Medium"]
+    assert next(s for s in deck["slides"] if s.get("title") == "What each route costs")["short"] == "Costs"
+    first, follow = deck["decisions"][0], deck["decisions"][1]
+    assert first["short"] == "Trial" and first["context"] and first["compare"] == "paved.svg"
+    assert first["options"][0]["opens"] == ["trial-length"]
+    assert follow["text_only"] and "picture" not in follow["options"][0]
+    story = package_story.parse((folder / "story.json").read_bytes())
+    child = next(slide for slide in story.slides if slide.waits == "trial-length")
+    assert child.asks_when is not None
+    rows = {t["member"]: t for t in json.loads(made.target_index.read_text())}
+    assert rows["planted-row"]["kind"] == "row"
+
+
+def test_a_story_too_long_to_hear_is_refused(source, tmp_path):
+    from jarvis import decision_package as dp
+    from jarvis.presentation import compile_deck
+    long = " ".join(["word"] * 150)
+    def lengthen(data):
+        data["slides"][0]["narration"] = [{"id": f"cue-{n}", "say": long, "focus": ["recommendation-words"]}
+                                          for n in range(int(dp.SPOKEN_MAX_SEC * dp.SPOKEN_WORDS_PER_SEC / 150) + 2)]
+    change(source, lengthen)
+    with pytest.raises(DeckCompileError, match="runs about"):
+        compile_deck(source, tmp_path / "compiled")
+
+
+def test_text_that_cannot_fit_is_refused_without_a_browser(source, tmp_path):
+    from jarvis.presentation import compile_deck
+    def crowd(data):
+        paragraphs = data["slides"][1]["objects"][0]["paragraphs"]
+        paragraphs[1:] = [{"id": f"more-{n}", "role": "paragraph", "runs": [
+            {"id": f"more-{n}-words", "text": "Rain stays on the planted block longer.", "emphasis": "normal"}]}
+            for n in range(4)]
+    change(source, crowd)
+    with pytest.raises(DeckCompileError, match="The words slot needs .* px of height"):
+        compile_deck(source, tmp_path / "compiled")
+
+
+def test_a_character_the_font_cannot_draw_is_refused(source, tmp_path):
+    from jarvis.presentation import compile_deck
+    change(source, lambda d: d["slides"][1].update(title="Rain ☃ routes"))
+    with pytest.raises(DeckCompileError, match="cannot draw"):
+        compile_deck(source, tmp_path / "compiled")
+
+
+def test_the_proof_is_recorded_and_templates_must_be_jarvis_own(source, tmp_path):
+    from jarvis import presentation_proof
+    from jarvis.presentation import compile_deck
+    folder = compile_deck(source, tmp_path / "compiled").package_source
+    proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text())
+    assert proof["proven"] and proof["templates"] == presentation_proof.template_hashes()
+    assert [662, 489] in proof["frames"] and [1600, 900] in proof["frames"]
+    assert presentation_proof.prove_templates(folder) == []
+    (folder / "deck.css").write_text((folder / "deck.css").read_text() + "\n.slide{zoom:3}\n")
+    assert [f.member for f in presentation_proof.prove_templates(folder)] == ["deck.css"]
+
+
+def test_the_generated_css_and_width_table_match_the_spec():
+    from jarvis import layout_spec
+    assert layout_spec.stale() == []
+
+
+# -- the opening JARVIS draws: where things stand, before anything is asked ------------
+
+def test_a_deck_that_asks_something_without_its_situation_is_refused(source):
+    change(source, lambda d: d.pop("situation"))
+    with pytest.raises(DeckCompileError, match="opens with where things stand") as refused:
+        read_source(source)
+    for field in ("subject", "happened", "approved_before", "changes"):
+        assert field in str(refused.value)
+
+
+@pytest.mark.parametrize("field", ["subject", "happened", "approved_before", "changes"])
+def test_each_situation_field_is_required_and_has_words(source, field):
+    change(source, lambda d: d["situation"].pop(field))
+    with pytest.raises(DeckCompileError, match=f"\\[situation\\].*{field}: Field required"):
+        read_source(source)
+    change(source, lambda d: d["situation"].update({field: " "}))
+    with pytest.raises(DeckCompileError, match=f"situation.{field}"):
+        read_source(source)
+
+
+def test_a_presentation_may_go_without_one(source):
+    def no_decisions(d):
+        d.pop("situation")
+        d["decisions"] = []
+        d["slides"] = [s for s in d["slides"] if s["type"] == "content"]
+    change(source, no_decisions)
+    assert read_source(source).document.slides[0].id != OPENING_ID
+
+
+@pytest.mark.parametrize("language, words", [
+    ("en", ["What happened:", "What you approved before:", "What changes for you:",
+            "Bottom line:"]),
+    ("es", ["Qué pasó:", "Lo que usted ya aprobó:", "Qué cambia para usted:", "En resumen:"])])
+def test_the_opening_is_drawn_first_from_the_situation_and_told(source, tmp_path, language,
+                                                                words):
+    from jarvis import package_story
+    from jarvis.presentation import compile_deck
+    change(source, lambda d: d.update(language=language))
+    data = yaml.safe_load(source.read_text())
+    made = compile_deck(source, tmp_path / "out")
+    model = json.loads((made.package_source / "presentation-data.js").read_text()
+                       .split("=", 1)[1].strip().rstrip(";"))
+    first = model["document"]["slides"][0]
+    assert (first["id"], first["layout"], first["title"]) == (OPENING_ID, "opening", data["title"])
+    [shown] = first["objects"]
+    paragraphs = ["".join(r["text"] for r in p["runs"]) for p in shown["paragraphs"]]
+    situation = data["situation"]
+    assert paragraphs == [situation["subject"],
+                          f"{words[0]} {situation['happened']}",
+                          f"{words[1]} {situation['approved_before']}",
+                          f"{words[2]} {situation['changes']}",
+                          f"{words[3]} {data['conclusion']}"]
+    assert model["document"]["slides"][1]["id"] == data["slides"][0]["id"], \
+        "the author's own slides follow it"
+    story = package_story.parse((made.package_source / "story.json").read_bytes())
+    assert data["purpose"] in story.slides[0].beats[0].say, "it is told with the purpose"
+    assert story.slides[0].waits is None, "nothing is asked on it"
+    proof = json.loads((made.package_source / ".jarvis/layout-proof.json").read_text())
+    assert proof["proven"] and proof["language"] == language
+
+
+def test_an_author_may_not_take_the_opening_s_id(source):
+    change(source, lambda d: d["slides"][0].update(id=OPENING_ID))
+    with pytest.raises(DeckCompileError, match="names the opening JARVIS draws"):
+        read_source(source)
+
+
+def test_a_situation_too_long_for_the_opening_is_refused_by_the_proof(source, tmp_path):
+    from jarvis.presentation import compile_deck
+    change(source, lambda d: d["situation"].update(
+        happened=" ".join(["The street flooded again after the storm drains backed up."] * 9)))
+    with pytest.raises(DeckCompileError) as refused:
+        compile_deck(source, tmp_path / "out")
+    assert "situation" in str(refused.value)
+
+
+def test_a_deck_links_the_font_jarvis_serves_and_carries_none(source, tmp_path):
+    from jarvis import layout_spec
+    from jarvis.presentation import compile_deck
+    made = compile_deck(source, tmp_path / "out")
+    html = (made.package_source / "index.html").read_text()
+    assert f'<link rel="stylesheet" href="{layout_spec.FONT_PATH}">' in html
+    assert not (made.package_source / "presentation-font.css").exists()
+    assert not any(p.stat().st_size > 600_000 for p in made.package_source.rglob("*") if p.is_file())

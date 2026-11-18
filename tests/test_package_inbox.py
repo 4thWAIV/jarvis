@@ -311,19 +311,19 @@ def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
 
 
 def presentation_zip(tmp_path) -> bytes:
-    """A presentation as make_package builds it, with the vote added, signed
-    as checked by an onboarded agent's key."""
-    content = tmp_path / "presentation" / "content.json"
+    """A presentation as make_package builds it, laid out and proven by
+    JARVIS with the vote added, signed by an onboarded agent's key."""
+    import yaml
+    content = tmp_path / "presentation" / "presentation.yaml"
     content.parent.mkdir()
-    content.write_text(json.dumps(make_package.PRESENTATION_EXAMPLE))
+    content.write_text(yaml.safe_dump(make_package.PRESENTATION_EXAMPLE))
     out = tmp_path / "presentation" / "out"
     out.mkdir()
-    made = make_package.make_deck(content, out)
+    made = make_package.make_presentation(content, out)
     from tests.agent_key_fixtures import onboarded_auth
     agent = onboarded_auth(session="sess-1").agent
     from tests.author_fixtures import sign_authored
-    sign_authored(made.archive, made.archive, agent, "sess-1",
-                           (package_signature.DECISION_CHECKED,))
+    sign_authored(made.archive, made.archive, agent, "sess-1")
     return made.archive.read_bytes()
 
 

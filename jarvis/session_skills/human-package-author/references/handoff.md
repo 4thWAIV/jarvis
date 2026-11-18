@@ -33,7 +33,7 @@ Return one result containing:
 - **Artifacts:** package source entry, referenced assets, supporting evidence, revision or commit, and the exact production-guide path used.
 - **Human answer:** a short account of what the package enables the reader to understand or decide. Include the decision keys and precise authorized effect if it asks anything.
 - **Reconciliation:** material corrections to the origin's findings, each with evidence. List remaining unknowns, whether they block a decision and the owner/next action for each.
-- **Review:** comprehension findings separately from source validation, rendered frame, narration and vote checks. Link actual output or screenshots; identify tests not run.
+- **Review:** comprehension findings separately from source validation (JARVIS's layout proof), narration and vote checks. Link actual output; identify tests not run.
 - **Ownership:** the recipient who now has the work, remaining delivery action, Work/workflow association and answer route. If already authorized and delivered, return actual package/inbox identifiers and delivery receipt. Otherwise say `not delivered`.
 
 The owner opens the returned source and resolves `needs-evidence` or `needs-scope-decision` before presenting an affected choice. They give factual corrections back to the author with evidence; they do not require preserving the earlier conclusion. They accept the author handoff explicitly or identify what is missing. For a ready package, the owner executes the production command in their own session so replies return to the responsible session, associates the existing Work item, and records evidence and the appropriate Work state using the existing reporting tools. Do not invent a new queue or set the user's completion state yourself.

@@ -25,7 +25,7 @@ def _iso(at: float) -> str:
 def lines(engine: str, session: str, digest: str, at: float,
           prompt: str = author_proof.PROMPT_HEAD + " You are the fresh author.",
           printed: str | None = None, ran: str = "python -m jarvis.make_package "
-                                                   "content.json --check-only") -> list[dict]:
+                                                   "presentation.yaml --check-only") -> list[dict]:
     """The author's transcript: its first prompt, its own check-only call and
     that call's result printing `printed` (the digest's line by default)."""
     printed = author_proof.MARK + digest if printed is None else printed
@@ -111,14 +111,19 @@ def sign_authored(raw: Path, target: Path, agent, session: str, statements=(),
     return claim
 
 
-def accept_visual_review(request_path: Path, *, status="accepted", notes="Illustrations and labels are readable."):
-    """A stand-in author's explicit response to the factory's current render."""
-    import hashlib
-    request = json.loads(request_path.read_text())
-    response = {"request_sha256": hashlib.sha256(request_path.read_bytes()).hexdigest(),
-                "status": status, "notes": notes, "visual_material": status != "not-applicable",
-                "screenshots": list(request["screenshots"]),
-                "members": {name: {"use": "support", "notes": "Supporting package file.",
-                                   "evidence": []} for name in request["members"]}}
-    request_path.with_name("visual-response.json").write_text(json.dumps(response))
-    return response
+def cold_reader(*misses: list[str]):
+    """A stand-in for package_reader.read: each read answers every question
+    but those its turn's list in `misses` names (as `missing`). The decks
+    it was given are on `.decks`."""
+    from jarvis import package_reader
+    reads = list(misses)
+    decks: list[dict] = []
+
+    async def read(deck, requester, out, attempt, timeout=0):
+        decks.append(deck)
+        missing = reads.pop(0) if reads else []
+        return [{"question": q, "answered": q not in missing, "answer": "",
+                 "missing": "it never says" if q in missing else ""}
+                for q in package_reader.QUESTIONS]
+    read.decks = decks
+    return read
