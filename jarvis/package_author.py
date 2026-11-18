@@ -509,6 +509,8 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
             raise OSError("Author did not report a distinct fresh session identity.")
         if resuming and child.identity != resuming["author_session"]:
             raise OSError("The resumed author is not the same session that asked.")
+        if job is not None:
+            job.authored_by(child.identity)
         await answered()
         passed = (receipt.get("briefing") or {}).get("status") == "passed"
         if not passed:

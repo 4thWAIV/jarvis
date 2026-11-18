@@ -87,9 +87,11 @@ def test_a_job_delivers(only_engine, origin_key, tmp_path, spawned, delivery):
     job = pj.package_status(job_id)
     assert job['state'] == pj.DELIVERED and job['rounds'] == []
     assert job['result']['inbox'] and job['result']['work'] == 'origin-work'
-    assert states(job_id) == [pj.QUEUED, pj.QUEUED, pj.RESEARCHING, pj.WRITING, pj.CHECKING,
-                              pj.DELIVERED]
+    # The author session is named on the job as soon as it is known.
+    assert states(job_id) == [pj.QUEUED, pj.QUEUED, pj.RESEARCHING, pj.RESEARCHING, pj.WRITING,
+                              pj.CHECKING, pj.DELIVERED]
     assert job['author_engine'] == only_engine
+    assert job['author_session'] and job['author_session'] != 'origin-session'
 
 
 def test_questions_wait_on_the_sender_and_the_same_author_resumes(

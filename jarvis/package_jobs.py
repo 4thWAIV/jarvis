@@ -281,6 +281,10 @@ class Progress:
         self._set(RESEARCHING, state=RESEARCHING, source_folder=folder,
                   author_engine=author_engine, author_model=author_model)
 
+    def authored_by(self, author_session: str) -> None:
+        """The author session, named on the job as soon as it is known."""
+        self._set("author", author_session=author_session)
+
     def writing(self) -> None:
         self._set(WRITING, state=WRITING)
 
