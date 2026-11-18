@@ -10638,11 +10638,11 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
     if wanting:
         return None, f"{wanting} Nothing was recorded."
     if question.id == package_inbox.VOTE_ID and \
-            await asyncio.to_thread(package_inbox.legacy_deck, package):
-        # An old deck asks the retired vote in its own decide.py: his
-        # approval is written into its record by JARVIS.
+            await asyncio.to_thread(package_inbox.records_vote_itself, package):
+        # The vote asked at Done (or an old deck's, whose decide.py knows
+        # only the retired vote): his approval is written by JARVIS.
         try:
-            await asyncio.to_thread(package_inbox.record_deck_vote, package, question,
+            await asyncio.to_thread(package_inbox.record_vote, package, question,
                                     chosen, note)
         except work_packages.PackageError as e:
             return None, f"{e} Nothing was recorded."

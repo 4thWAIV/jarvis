@@ -1,5 +1,5 @@
-"""Reaching a package's question the way he does: Questions in the vote row
-under the border opens the card on the first question he has not answered,
+"""Reaching a package's question the way he does: the Questions icon in the
+border opens the card on the first question he has not answered,
 Back steps to the first question, and Next steps through the rest
 (PackageView.tsx). Shared by the page tests that answer a package's
 questions."""
@@ -10,7 +10,8 @@ QUESTIONS = "#package-view .package-questions-open"
 
 async def open_question(page, question: str):
     """The focus card showing `question` (its id; "approve-package" for the
-    standard vote), opened from Questions and stepped to with Back and
+    standard vote of a story built before, which still waits on it), opened
+    from Questions and stepped to with Back and
     Next. Questions opens the first unanswered question, which may come
     after the one wanted (or be the last), so the card is walked back to
     "Question 1" first and then forward through every question once."""

@@ -24,12 +24,16 @@
  * seconds without the pointer and comes back when the pointer reaches it
  * or keyboard focus enters it; with reduced motion or Steady it stays.
  *
- * Done in the border signs it off (DoneButton), for every package. The
- * vote row under the border holds the standard vote on the package itself
- * (a deck's too, beside its own slide), Approve and Reject (VoteControls): the inbox's
- * answer route, his click, the same answer as his voice and the Work tab
- * give; and, when the story declares questions, Questions, which opens the
- * first one he has not answered.
+ * Done, the check mark in the border, is the one place the standard vote
+ * on the package itself is asked (DoneControl): for a package that carries
+ * it, it opens a small card anchored to it with Approve and Reject (Reject
+ * with his words), each recorded through the inbox's answer route (his
+ * click, the same answer as his voice and the Work tab give) and the
+ * package signed off in the same act, and a plain sign-off; a package with
+ * no vote is signed off at once. Nothing of the vote is drawn over or
+ * beside the slides. When the package asks its own questions (a story's
+ * declared questions, his approval of a design), the border's Questions
+ * icon opens the first one he has not answered.
  *
  * Focus (PackageFocus.tsx): every question is asked in a focus card. When
  * the story waits on one, or he opens one from the vote row, the part of
@@ -133,11 +137,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
 
   // Every question the card steps through, in order: his approval of a
   // design first (it is the decision the package is for), then the story's
-  // other questions that apply yet, then the standard vote.
+  // other questions that apply yet. The standard vote is asked at Done.
   const applying = questions.shown.filter((q) => q.applies);
   const sequence = [...applying.filter((q) => q.kind === "approval").map((q) => q.id),
-                    ...applying.filter((q) => q.kind !== "approval").map((q) => q.id),
-                    ...(standardVote ? [STANDARD_VOTE] : [])];
+                    ...applying.filter((q) => q.kind !== "approval").map((q) => q.id)];
   const answered = (id: string) => id === STANDARD_VOTE ? !!voteAnswer.answer
     : !!questions.shown.find((q) => q.id === id)?.answer;
   const firstOpen = sequence.find((id) => !answered(id)) ?? sequence[0] ?? null;
@@ -151,7 +154,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
   useEffect(() => { setPicked(null); setDismissed(null); }, [info.id]);
   const waitingOn = mine?.state === "waiting" ? mine.question ?? null : null;
   useEffect(() => { if (!waitingOn) setDismissed(null); }, [waitingOn]);
-  const presentable = (id: string | null) => !!id && sequence.includes(id);
+  // A story built before the vote moved to Done may still wait on it: its
+  // slide still answers it, in the card.
+  const presentable = (id: string | null) => !!id &&
+    (sequence.includes(id) || (id === STANDARD_VOTE && standardVote));
   const current = picked && presentable(picked) ? picked
     : waitingOn !== dismissed && presentable(waitingOn) ? waitingOn : null;
   const targets = current ? info.story?.focus?.[current] ?? [] : [];
@@ -207,7 +213,6 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const arranged = useSyncExternalStore(layout.subscribe, layout.get);
   const tookOver = arranged.mode === "takeover" && arranged.view === "package" && arranged.key === info.id;
   const fading = useFadingBar(tookOver);
-  const voteInCard = current === STANDARD_VOTE;
 
   let focus: ReactNode = null;
   if (current) {
@@ -222,19 +227,19 @@ export function PackageView({ info }: { info: PackageInfo }) {
                       dim={rect ? DIM.decision : DIM.whole} cardRef={ui.part("focus")}
                       label={q?.question ?? (info.vote?.words || t("main.package.vote.label"))}>
           <LeaveFocus onLeave={leave} target={ui.part("focusClose")} />
-          <p className="package-focus-position">
-            {t("main.package.questions.position", { n: at + 1, m: sequence.length })}</p>
+          {at >= 0 && <p className="package-focus-position">
+            {t("main.package.questions.position", { n: at + 1, m: sequence.length })}</p>}
           {/* Answered, the card stays on the question with what is recorded;
               Next moves on (the story, waiting on it, moves on by itself). */}
           {q ? <QuestionItem q={q} questions={questions} />
             : info.vote && <VoteControls id={info.id} vote={info.vote} now={voteAnswer} onAnswer={setVoteAnswer}
                                          onSaid={setSaid} part={ui.part} lead />}
-          <div className="package-focus-steps">
+          {at >= 0 && <div className="package-focus-steps">
             <button type="button" className="settings-btn" data-ui-action="domain" ref={ui.part("questionBack")}
                     disabled={at <= 0} onClick={() => step(-1)}>{t("main.package.questions.back")}</button>
             <button type="button" className="settings-btn" data-ui-action="domain" ref={ui.part("questionNext")}
                     onClick={() => step(1)}>{t("main.package.questions.next")}</button>
-          </div>
+          </div>}
         </PackageFocus>
       );
     }
@@ -262,30 +267,22 @@ export function PackageView({ info }: { info: PackageInfo }) {
     }
   }
 
-  const unanswered = sequence.filter((id) => id !== STANDARD_VOTE && !answered(id)).length;
-  const asking = sequence.some((id) => id !== STANDARD_VOTE);
+  const unanswered = sequence.filter((id) => !answered(id)).length;
+  const asking = sequence.length > 0;
   return (
     <div id="package-view" data-package={info.id} ref={ui.whole}>
       <PackageBorder info={info} offered={offered} onSaid={setSaid} part={ui.part} presentation={presentation}
         fade={fading} shown={shown} onAsk={() => askAbout(info.id, view.current)}
+        questions={asking ? { pressed: current !== null && current !== STANDARD_VOTE, open: () => open(firstOpen),
+                              label: unanswered ? t("main.package.questions.open", { left: unanswered })
+                                : t("main.package.questions.allAnswered") } : null}
         openSlide={shown && ((slide) => {
           const opener = navigation(info)[slide - 1]?.opener;
           if (opener) bridge.current?.openSlide(opener);
         })}
         command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, enabled: value}, "*")}
-        done={<DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />} />
-      {(asking || (info.vote?.question && !voteInCard)) &&
-        <div className="package-vote-row">
-          {asking &&
-            <button type="button" className="settings-btn package-questions-open" data-ui-action="domain"
-                    ref={ui.part("asks")} aria-pressed={current !== null && current !== STANDARD_VOTE}
-                    onClick={() => open(firstOpen)}>
-              {unanswered ? t("main.package.questions.open", { left: unanswered })
-                : t("main.package.questions.allAnswered")}</button>}
-          {info.vote?.question && !voteInCard &&
-            <VoteControls id={info.id} vote={info.vote} now={voteAnswer} onAnswer={setVoteAnswer}
-                          onSaid={setSaid} part={ui.part} />}
-        </div>}
+        done={<DoneControl info={info} now={voteAnswer} onAnswer={setVoteAnswer} onSaid={setSaid}
+                           part={ui.part} />} />
       {/* Architecture links stay compact under the border; the explanation
           opens as a card over the whole view. */}
       {info.communication?.kind === "architecture" && <div className="package-tools">
@@ -405,22 +402,66 @@ function Narration({ info, beat, paused, slide, onSaid, pauseRef }: {
   );
 }
 
-/** Done: he signs the package off, whatever kind it is (packageInbox.ts
+/** Done, the check mark: he signs the package off (packageInbox.ts
  *  `signOff`, the Queue row's Done and the brain's sign_off_package too).
- *  It sits in the head, outside the package's frame, so no package can hide
- *  or press it. Once signed off the server closes this view on every page. */
-function DoneButton({ id, onSaid, target }: {
-  id: string; onSaid: (s: Said | null) => void; target: (el: Element | null) => void }) {
+ *  For a package that carries the standard vote it is also where the vote
+ *  is asked: a card anchored to it with Approve and Reject (Reject with his
+ *  words), each recorded and the package signed off in the same act, and a
+ *  plain sign-off. Escape, or the check mark again, closes the card and
+ *  keyboard focus goes back to the check mark. It sits in the head, outside
+ *  the package's frame, so no package can hide or press it. Once signed off
+ *  the server closes this view on every page. */
+function DoneControl({ info, now, onAnswer, onSaid, part }: {
+  info: PackageInfo; now: { answer: PageVote["answer"]; note: string };
+  onAnswer: (now: { answer: PageVote["answer"]; note: string }) => void;
+  onSaid: (s: Said | null) => void; part: (name: VotePart | "done" | "signOff") => (el: Element | null) => void }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const check = useRef<HTMLButtonElement | null>(null);
+  const card = useRef<HTMLDivElement | null>(null);
+  const voting = info.vote?.question === STANDARD_VOTE;
+  const close = useCallback(() => { setOpen(false); check.current?.focus(); }, []);
+  const signOffNow = async () => {
+    setBusy(true);
+    const why = await signOff(info.id);
+    setBusy(false);
+    onSaid(why);
+    if (!why) setOpen(false);
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    card.current?.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [open, close]);
   return (
-    <button type="button" className="package-icon package-done" data-ui-action="domain"
-            disabled={busy} ref={target} title={t("main.package.doneTitle")} aria-label={t("main.package.done")}
-            onClick={() => {
-              setBusy(true);
-              void signOff(id).then((why) => { setBusy(false); onSaid(why); });
-            }}>
-      <PackageIcon name="done"/></button>
+    <span className="package-done-anchor">
+      <button type="button" className="package-icon package-done" data-ui-action="domain"
+              disabled={busy} ref={(el) => { check.current = el; part("done")(el); }}
+              title={t(voting ? "main.package.doneVoteTitle" : "main.package.doneTitle")}
+              aria-label={t("main.package.done")} aria-haspopup={voting ? "dialog" : undefined}
+              aria-expanded={voting ? open : undefined}
+              onClick={() => { if (!voting) void signOffNow(); else if (open) close(); else setOpen(true); }}>
+        <PackageIcon name="done"/></button>
+      {open && info.vote && (
+        <div className="package-signoff" role="dialog" aria-label={t("main.package.signOff.label")} ref={card}>
+          <VoteControls id={info.id} vote={info.vote} now={now} onAnswer={onAnswer} onSaid={onSaid}
+                        part={part} lead then={signOffNow} />
+          {/* Where the rule on questions left unanswered goes (Done anyway, Not yet). */}
+          <div className="package-signoff-unanswered" data-slot="unanswered" />
+          <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                  ref={part("signOff")} onClick={() => void signOffNow()}>
+            {t("main.package.signOff.only")}</button>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -430,12 +471,14 @@ type VotePart = "vote" | "approve" | "reject" | "words" | "send";
  *  his words saying what to change, recorded with Send (never without
  *  them). Each goes through the inbox's answer route (answerInbox), which
  *  takes only his click. An answer given before Got it was retired is only
- *  read back. In the vote row, or in the focus card (`lead`: the question
- *  itself above it) when the card steps to it; one answer for both. */
-function VoteControls({ id, vote, now, onAnswer, onSaid, part, lead = false }: {
+ *  read back. At Done (DoneControl), the package then signed off (`then`),
+ *  or in the focus card while a story built before still waits on it. */
+function VoteControls({ id, vote, now, onAnswer, onSaid, part, lead = false, then }: {
   id: string; vote: PageVote; now: { answer: PageVote["answer"]; note: string };
   onAnswer: (now: { answer: PageVote["answer"]; note: string }) => void; onSaid: (s: Said | null) => void;
-  part: (name: VotePart) => (el: Element | null) => void; lead?: boolean }) {
+  part: (name: VotePart) => (el: Element | null) => void; lead?: boolean;
+  /** What follows a recorded answer (at Done: the package signed off). */
+  then?: () => Promise<void> }) {
   const t = useT();
   const answer = now.answer;
   const [asking, setAsking] = useState(false);
@@ -453,6 +496,7 @@ function VoteControls({ id, vote, now, onAnswer, onSaid, part, lead = false }: {
     onAnswer({ answer: option, note });
     setAsking(false);
     onSaid(null);
+    await then?.();
   };
   return (
     <div className="package-vote" role="group" aria-label={t("main.package.vote.label")} ref={part("vote")}

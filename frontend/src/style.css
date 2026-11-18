@@ -4594,6 +4594,13 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #package-view .package-frame-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; padding:0 5px; }
 .package-position { font-size:12px; white-space:nowrap; }
 #package-view .package-done { margin-left:5px; box-shadow:-4px 0 rgba(255,255,255,.15); color:var(--ui-accent); }
+/* Done's card: the standard vote and sign-off, anchored under the check mark. */
+#package-view .package-done-anchor { position:relative; display:inline-flex; }
+#package-view .package-signoff { position:absolute; top:calc(100% + 6px); right:0; z-index:30; width:min(340px, calc(100vw - 32px)); display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:10px; background:#0b1220; color:rgba(255,255,255,.9); border:1px solid rgba(255,255,255,.18); box-shadow:0 12px 32px rgba(0,0,0,.45); }
+#package-view .package-signoff .package-vote { flex-wrap:wrap; }
+#package-view .package-signoff .package-ask-question, #package-view .package-signoff .package-ask-why { flex:1 0 100%; margin:0; }
+#package-view .package-signoff .package-vote-words { flex:1 0 100%; background:rgba(255,255,255,.06); color:inherit; }
+#package-view .package-signoff-unanswered:empty { display:none; }
 #package-view .package-frame { border-radius:0 0 8px 8px; border-width:0; }
 #package-view .package-status { flex:none; padding:4px 8px; min-height:0; }
 .package-border-overlay { position:absolute; inset:calc(36px + var(--ui-corridor)) 16px 0; z-index:20; padding:24px; overflow:auto; background:var(--ui-surface,#162331); }
@@ -4604,7 +4611,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .package-border-overlay .folder-button { margin:4px; }
 .package-chapters { display:flex; flex-direction:column; gap:8px; margin-top:16px; }
 .package-chapters button { padding:10px; text-align:left; background:transparent; color:inherit; border:1px solid rgba(255,255,255,.2); border-radius:5px; }
-#package-view > .package-vote-row, #package-view > .package-canonical { flex:none; padding:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#package-view > .package-canonical { flex:none; padding:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 @media (pointer:coarse) {
   #package-view .package-border { height:48px; min-height:48px; }
   #package-view .package-icon { width:44px; height:44px; min-width:44px; flex-basis:44px; }

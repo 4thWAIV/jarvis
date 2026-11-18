@@ -425,12 +425,12 @@ def test_the_page_s_answer_is_his_click_alone(wired, shown, marks, tmp_path):
 @pytest.mark.parametrize("how", ["page", "voice"])
 def test_the_head_s_buttons_and_his_voice_record_the_same_answer(
         wired, shown, marks, tmp_path, monkeypatch, how):
-    """Parity: the view head's Approve / Reject (the inbox's answer
-    route) and the brain's answer_package_decision reach the one writer,
-    package_inbox.record_story_answer, with the same arguments."""
+    """Parity: Done's Approve / Reject (the inbox's answer route) and the
+    brain's answer_package_decision reach the one writer of the vote,
+    package_inbox.record_vote, with the same arguments."""
     calls = []
-    real = package_inbox.record_story_answer
-    monkeypatch.setattr(package_inbox, "record_story_answer",
+    real = package_inbox.record_vote
+    monkeypatch.setattr(package_inbox, "record_vote",
                         lambda package, q, option, note: (calls.append((q.id, option, note)),
                                                           real(package, q, option, note)))
     inbox_id = send(wired, story_zip(VOTES)).json()["inbox"]["id"]
@@ -512,8 +512,13 @@ def old_vote_decision() -> dict:
 def old_presentation_zip(tmp_path, monkeypatch) -> bytes:
     """A presentation as make_package built it before Got it was retired:
     its deck-data.js and decide.py ask `understood`."""
+    real = make_package.prepare_deck
+
+    def then(raw, source):
+        deck = real(raw, source)
+        return {**deck, "decisions": [*(deck.get("decisions") or []), old_vote_decision()]}
     with monkeypatch.context() as m:
-        m.setattr(package_inbox, "vote", lambda language: old_vote_decision())
+        m.setattr(make_package, "prepare_deck", then)
         return presentation_zip(tmp_path)
 
 

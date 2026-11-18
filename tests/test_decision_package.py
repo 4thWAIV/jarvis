@@ -321,7 +321,8 @@ def test_check_only_validates_and_stops(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(dp, "post", lambda *a, **k: pytest.fail("delivered"))
     monkeypatch.setattr(decision_check, "check", lambda *a: pytest.fail("checked"))
     assert dp.main([str(write(tmp_path, brief())), "--check-only"]) == 0
-    assert "3 decision(s), package team-lunch-1.0.0" in capsys.readouterr().out
+    # Its two decisions; the standard vote is asked at Done, not counted here.
+    assert "2 decision(s), package team-lunch-1.0.0" in capsys.readouterr().out
 
 
 def test_the_printed_example_is_itself_a_valid_deck(tmp_path, capsys):

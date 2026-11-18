@@ -33,10 +33,10 @@ def test_creation_checks_declared_markdown_without_parsing_source_pdf(tmp_path):
         assert manifest['understanding']['chart.pdf'] == 'chart.md'
         assert z.read('chart.pdf').startswith(b'opaque PDF bytes')
         assert 'Draft to Review' in z.read('chart.md').decode()
-    # Authored explanations and package metadata need no circular self-map;
-    # the vote's story made for the page is understood as the page is.
-    assert set(manifest['understanding']) == {'index.html', 'chart.pdf', 'story.json'}
-    assert manifest['understanding']['story.json'] == manifest['understanding']['index.html']
+    # Authored explanations and package metadata need no circular self-map,
+    # and no story is made for the vote: it is asked at Done.
+    assert set(manifest['understanding']) == {'index.html', 'chart.pdf'}
+    assert manifest['vote'] == 'approve-package'
 
 
 @pytest.mark.parametrize('fault,reason', [

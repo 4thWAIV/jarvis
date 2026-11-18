@@ -9,14 +9,14 @@ docs/making-a-package.md is the whole of how to use it. In short:
 
 - CONTENT.json is a deck, drawn by the shared deck
   (examples/packages/decision-deck/). With `decisions` it is a decision
-  package; with only `slides` it is a presentation (an update). Both end
-  with the standard vote (package_inbox.vote: Approve / Reject with his
-  words, in the deck's language or the one in force). Got it is retired: a
+  package; with only `slides` it is a presentation (an update). Both carry
+  the standard vote (package_inbox.vote: Approve / Reject with his words),
+  asked at the package view's Done, never as a slide. Got it is retired: a
   source that declares it (`understood`), or the vote itself, is refused. Everything that can be worked out is (decision_package.expand).
 - FOLDER is a hand-made package (a page of its own, an agent's brief or a
   conversation's skill). Its package.json needs only `purpose`; the rest is
-  worked out from the files there. Every page gets the same vote as its
-  story's last slide (a story of that slide alone when it has none). An agent or
+  worked out from the files there. Every page carries the same vote,
+  named in its package.json (`vote`) and asked at Done. An agent or
   conversation package cannot carry a vote, so it may not name a Work item.
 - `--document ID --revision REV` is a canonical architecture document an
   agent checked with `python -m jarvis.language_document validate`: the
@@ -125,14 +125,10 @@ def deck_of(content: Path) -> dict:
 
 def prepare_deck(raw: dict, source_dir: Path) -> dict:
     """Shared briefing, decision and understanding policy for every deck language."""
-    from jarvis import package_inbox
     refuse_vote_ids(raw.get("decisions") if isinstance(raw, dict) else None)
+    # Every deck carries his vote on the package itself, asked at the
+    # package view's Done (package_inbox.carries_vote), never as a slide.
     deck = dp.expand(raw)
-    if isinstance(deck, dict) and deck.get("slides"):
-        # Every package carries his vote on the package itself, whatever
-        # else it asks: the standard one, last, in its language.
-        deck["decisions"] = [*(deck.get("decisions") or []),
-                             package_inbox.vote(raw.get("language") or built_language())]
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     # A briefing (dp.briefing_problems): its purpose and conclusion as the
@@ -299,8 +295,10 @@ def manifest_of(folder: Path) -> dict:
 
 
 def _with_vote(built: Path, manifest: dict) -> None:
-    """Every page gets the standard vote as its story's last slide, after
-    any questions of its own, waiting on its answers file."""
+    """Every page carries the standard vote, asked at the package view's
+    Done and never as a slide: package.json names it (`vote`), and its
+    answer is kept with the page's other answers (its story's answers
+    file, else results/decisions.json), which it returns."""
     from jarvis import package_inbox, package_story
     named = manifest.get("story")
     path = built / (named or STORY_FILE)
@@ -311,33 +309,12 @@ def _with_vote(built: Path, manifest: dict) -> None:
                         "slide")
     except (OSError, ValueError, package_story.StoryError) as e:
         raise dp.Refused([f"Its story cannot be read: {e}"])
-    # A story the factory already composed ends with his one vote: the
-    # standard one, an architecture design's approval in its place, or, in
-    # a package built before Got it was retired, the old vote, read now as
-    # the standard one (package_story.compose, current). Nothing is added.
-    if parsed is not None and parsed.slides and parsed.slides[-1].waits in (
-            *package_inbox.VOTE_IDS, package_inbox.APPROVAL_ID):
-        return
-    # The vote in the story's language (English when it names none, as it is
-    # told), or for a new story the language in force.
-    language = parsed.language if parsed is not None else built_language()
-    told = package_inbox.with_vote_slide(given, language)
-    try:
-        package_story.parse(json.dumps(told).encode("utf-8"))
-    except package_story.StoryError as e:
-        raise dp.Refused([f"The vote could not be added to its story: {e}"])
-    path.write_bytes(package_story.encode(told))
-    manifest["story"] = path.name if not named else named
-    # A story made here is understood as the page it is told over is: the
-    # author's understanding names every member it holds.
-    understanding = manifest.get("understanding")
-    if isinstance(understanding, dict) and manifest["story"] not in understanding:
-        about = understanding.get(manifest.get("entry")) or manifest.get("brief")
-        if about:
-            manifest["understanding"] = {**understanding, manifest["story"]: about}
+    manifest["vote"] = package_inbox.VOTE_ID
+    answers = parsed.answers if parsed is not None and parsed.answers else \
+        package_inbox.STORY_ANSWERS
     if DEFAULT_RETURNS[0] not in manifest.get("returns", []) and \
-            told["answers"] not in manifest.get("returns", []):
-        manifest["returns"] = [*manifest.get("returns", []), told["answers"]]
+            answers not in manifest.get("returns", []):
+        manifest["returns"] = [*manifest.get("returns", []), answers]
 
 
 def make_folder(folder: Path, out: Path) -> Made:
@@ -545,8 +522,8 @@ def add_work_key(archive: Path, work_id: str) -> dict:
 # -- his vote ---------------------------------------------------------------------------
 
 def check_vote(source: Path, work: str) -> None:
-    """Every package carries his vote: every deck and page gets the
-    standard one last. An agent package for a Work item carries it on
+    """Every package carries his vote: every deck and page carries the
+    standard one, asked at Done. An agent package for a Work item carries it on
     the item itself (its work-item key's package; server._receive_package_zip
     asks the standard vote there as it arrives). A conversation package
     cannot, so it may not name a Work item (package_inbox.no_vote, which the
@@ -777,7 +754,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 print(f"The failure could not be reported on Work {args.work}: {report_error}")
         return 1
     try:
-        decision = made.deck is not None and bool(made.deck.get("decisions"))
+        # Every deck is checked and signed as checked, a presentation too.
+        decision = made.deck is not None
         # Signed with the session's own key (package_signature.py): who sent
         # it, and, for a deck, that the files checked are these. An agent
         # package for a Work item carries a key for that item alone.

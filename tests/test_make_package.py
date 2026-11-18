@@ -43,7 +43,7 @@ def passing_check(monkeypatch, seen=None):
 
 # -- a presentation ---------------------------------------------------------------------
 
-def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsys):
+def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path, monkeypatch, capsys):
     delivery, seen = _Delivery(), []
     monkeypatch.setattr(dp, "post", delivery)
     passing_check(monkeypatch, seen)
@@ -52,27 +52,21 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     archive = tmp_path / "out" / "team-lunch-moved-1.0.0.zip"
     z = zipfile.ZipFile(archive)
-    assert "scripts/decide.py" in z.namelist(), "the vote is answered as any deck's is"
+    assert "scripts/decide.py" not in z.namelist(), "no slide asks the vote: JARVIS records it"
     package = json.loads(z.read("package.json"))
     understood = {f: "UNDERSTANDING.md" for f in (
-        "SKILL.md", "deck-data.js", "deck.css", "deck.js", "index.html", "scripts/decide.py",
-        "story.json")}
+        "deck-data.js", "deck.css", "deck.js", "index.html", "story.json")}
     assert package == {"name": "team-lunch-moved", "version": "1.0.0",
                        "purpose": "Tell the team where Friday's lunch is now.", "runs": "page", "entry": "index.html",
-                       "story": "story.json", "skill": "SKILL.md",
-                       "returns": ["results/decisions.json", "results/decisions.md"],
+                       "story": "story.json", "returns": ["results/decisions.json"],
+                       "vote": "approve-package",
                        "brief": "UNDERSTANDING.md", "understanding": understood}
-    [vote] = seen[0]["decisions"]
-    assert vote["id"] == package_inbox.VOTE_ID == "approve-package"
-    assert [(o["id"], o["name"]) for o in vote["options"]] == [("approve", "Approve"),
-                                                               ("reject", "Reject")]
-    assert vote["needs_words"] == ["reject"], "Reject is recorded only with his words"
+    assert not seen[0].get("decisions"), "the vote is no decision of the deck"
     story = json.loads(z.read("story.json"))
     titles = [s["title"] for s in story["slides"]]
     assert titles[:3] == ["Friday's lunch has moved", "What changed", "What you need to do"], \
         "its own slides first, its opening first of all"
-    assert [s.get("waits") for s in story["slides"]].index("approve-package") == 3, \
-        "the vote at the end, after every slide of its own"
+    assert not any(s.get("waits") for s in story["slides"]), "the vote is asked at Done"
     assert len(seen) == 1 and len(delivery.calls) == 1
     assert "Built a presentation" in capsys.readouterr().out
 
@@ -192,10 +186,10 @@ def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch
     assert mp.main([str(write(tmp_path / "in", presentation())), "--work", "work-1",
                     "--out", str(tmp_path / "out"), "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, _body)] = delivery.calls
-    assert "work=work-1" in url and seen[0]["decisions"][-1]["id"] == "approve-package"
+    assert "work=work-1" in url and not seen[0].get("decisions")
 
 
-def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch):
+def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path, monkeypatch):
     passing_check(monkeypatch)
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
@@ -208,37 +202,27 @@ def test_a_page_with_no_story_gets_one_that_asks_the_vote(tmp_path, monkeypatch)
     out = tmp_path / "out"
     assert mp.main([str(folder), "--work", "work-1", "--out", str(out),
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    story = built_story(out)
-    assert story["answers"] == "results/decisions.json"
-    assert [s.get("waits") for s in story["slides"]] == ["approve-package"]
     [archive] = out.glob("*.zip")
     manifest = json.loads(zipfile.ZipFile(archive).read("package.json"))
-    assert manifest["story"] == "story.json" and "results/decisions.json" in manifest["returns"]
-    assert not (folder / "story.json").exists(), "his folder is never changed"
+    assert manifest["vote"] == "approve-package" and "story" not in manifest
+    assert "results/decisions.json" in manifest["returns"]
+    assert "story.json" not in zipfile.ZipFile(archive).namelist()
     assert len(delivery.calls) == 1
 
 
-def test_a_page_s_own_story_ends_with_the_vote_whatever_it_asks(tmp_path, monkeypatch):
+def test_a_page_s_own_story_is_kept_as_it_is_and_the_vote_asked_at_done(tmp_path, monkeypatch):
     passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
-    assert mp.main([str(folder), "--out", str(tmp_path / "a"),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    story = built_story(tmp_path / "a")
-    assert [s["title"] for s in story["slides"]][:-1] == [s["title"] for s in given["slides"]]
-    assert story["slides"][-1]["waits"] == "approve-package"
-    # A story that waits on its own question still ends with the vote on
-    # the package, after its question, in the same answers file.
     given["answers"] = "results/mine.json"
     given["slides"][-1]["waits"] = "go-ahead"
     (folder / "story.json").write_text(json.dumps(given))
     assert mp.main([str(folder), "--out", str(tmp_path / "b"),
                     "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    built = built_story(tmp_path / "b")
-    assert built["slides"][:-1] == given["slides"]
-    assert built["answers"] == "results/mine.json"
-    assert [s.get("waits") for s in built["slides"]][-2:] == ["go-ahead", "approve-package"]
+    assert built_story(tmp_path / "b") == given
+    [archive] = (tmp_path / "b").glob("*.zip")
+    assert json.loads(zipfile.ZipFile(archive).read("package.json"))["vote"] == "approve-package"
 
 
 def in_force(language: str) -> None:
@@ -251,33 +235,27 @@ def in_force(language: str) -> None:
     (None, "es", ["Aprobar", "Rechazar"]),
     (None, "en", ["Approve", "Reject"]),
 ])
-def test_a_deck_s_vote_is_in_its_language_else_the_one_in_force(
+def test_the_vote_at_done_is_in_the_deck_s_language_else_the_one_in_force(
         tmp_path, monkeypatch, given, saved, words):
-    in_force(saved)
-    content = presentation() | ({"language": given} if given else {})
-    deck = mp.deck_of(write(tmp_path, content))
-    assert [o["name"] for o in deck["decisions"][-1]["options"]] == words
-
-
-def test_a_new_story_is_in_the_language_in_force_and_a_page_s_own_in_its_own(
-        tmp_path, monkeypatch):
-    passing_check(monkeypatch)
-    monkeypatch.setattr(dp, "post", _Delivery())
-    in_force("es")
-    folder = tmp_path / "in" / "Plain Page"
-    folder.mkdir(parents=True)
-    (folder / "index.html").write_text("<p>Hola</p>")
-    (folder / "about.md").write_text("# Hola\nUna página que saluda.")
-    (folder / "package.json").write_text(json.dumps({"purpose": "Saludar.",
-                                                     "understanding": {"index.html": "about.md"}}))
-    assert mp.main([str(folder), "--out", str(tmp_path / "a"),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    story = built_story(tmp_path / "a")
-    assert story["language"] == "es" and story["slides"][-1]["title"] == "¿Lo aprueba?"
-    # A page's own story names no language, so it is told in English: so is its vote.
-    assert mp.main([str(page_folder(tmp_path / "f")), "--out", str(tmp_path / "b"),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    assert built_story(tmp_path / "b")["slides"][-1]["title"] == "Approve it?"
+    from jarvis import spoken_words
+    monkeypatch.setattr(spoken_words, "_active", saved)
+    deck = mp.deck_of(write(tmp_path, presentation() | ({"language": given} if given else {})))
+    assert not deck.get("decisions")
+    folder = tmp_path / "page"
+    (folder / "web").mkdir(parents=True)
+    (folder / "web" / "index.html").write_text("x")
+    (folder / "package.json").write_text(json.dumps({
+        "name": "p", "version": "1.0.0", "purpose": "p", "runs": "page", "entry": "web/index.html",
+        "returns": [], "vote": "approve-package"}))
+    if given:
+        (folder / "deck-data.js").write_text("window.DECK = " + json.dumps({"language": given}) + ";")
+        (folder / "scripts").mkdir()
+        (folder / "scripts" / "decide.py").write_text("")
+    from jarvis import work_packages
+    package = work_packages.Package(folder, work_packages.Manifest.parse(
+        (folder / "package.json").read_bytes()))
+    [vote] = package_inbox.questions(package)
+    assert vote.id == "approve-package" and [o["name"] for o in vote.options] == words
 
 
 # -- Got it is retired --------------------------------------------------------------------
@@ -322,7 +300,7 @@ def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, qu
         "options": [{"id": "approve", "name": "Approve", "says": "Done."},
                     {"id": "hold", "name": "Hold", "says": "Not yet."}]}]}
     deck = mp.deck_of(write(tmp_path, content))
-    assert [d["id"] for d in deck["decisions"]] == [question, "approve-package"]
+    assert [d["id"] for d in deck["decisions"]] == [question], "the vote is asked at Done"
     assert mp.deck_kind(deck) == "decision package"
 
 
@@ -565,7 +543,7 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     # the story asks, waits and resumes there: never the question without it.
     deck["decisions"][0]["options"][0]["opens"] = ["when"]
     told = dp.builder().story(deck)["slides"]
-    assert [s.get("waits") for s in told] == [None, "where", "when", "approve-package", None]
+    assert [s.get("waits") for s in told] == [None, "where", "when", None]
     where, when = told[1], told[2]
     assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
     assert where["beats"][0]["targets"] == ["#lead-where h2"]
@@ -577,7 +555,7 @@ def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
     from jarvis import package_story
     story = package_story.parse(package_story.encode(dp.builder().story(deck)))
     record = {"where": {"answer": "in"}}
-    assert story.open_questions(record) == [3, 4], "resume picks the when slide, lead-in first, then the vote"
+    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
 
 
 def test_the_border_moves_through_every_slide_the_deck_draws(tmp_path):
@@ -588,8 +566,8 @@ def test_the_border_moves_through_every_slide_the_deck_draws(tmp_path):
     pages = dp.builder().pages(deck)
     told = dp.builder().story(deck)["slides"]
     assert [p["opener"] for p in pages] == [f"#go-{n}" for n in range(1, len(pages) + 1)]
-    assert [p["asks"] for p in pages] == [None, None, "where", None, "when",
-                                         "approve-package", None]
+    assert [p["asks"] for p in pages] == [None, None, "where", None, "when", None], \
+        "no slide asks the vote: it is asked at Done"
     assert pages[-1]["title"] == "Your answers"
     assert pages[1]["title"] != pages[2]["title"], "a lead-in is not named as its question"
     assert len(told) < len(pages), "the story still folds each lead-in into its question"

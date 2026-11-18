@@ -17,7 +17,7 @@ import { bind, bindingProps } from "./uiNavigation";
 import { byHand } from "./uiRegistry";
 import type { Fading } from "./PackageView";
 
-type Part = "chapters" | "previous" | "next" | "more" | "inspect" | "document" | "return" | "header" | "story" | "tell" | "stop" | "resume" | "fromSlide" | "takeover" | "close" | "ask" | "goBack";
+type Part = "chapters" | "previous" | "next" | "more" | "inspect" | "document" | "return" | "header" | "story" | "tell" | "stop" | "resume" | "fromSlide" | "takeover" | "close" | "ask" | "goBack" | "asks";
 interface Props {
   info: PackageInfo;
   offered: boolean;
@@ -34,8 +34,11 @@ interface Props {
   openSlide?: ((slide: number) => void) | null;
   /** His Ask: keep where he is (what the frame shows) and pause the words. */
   onAsk(): Promise<Said | null>;
+  /** The package's own questions (a story's declared questions, his approval of a design): the icon that
+   *  opens their cards, shown only when it asks some. The standard vote is asked at Done. */
+  questions?: { label: string; pressed: boolean; open(): void } | null;
 }
-export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide, onAsk }: Props) {
+export function PackageBorder({ info, offered, done, onSaid, part, presentation, command, fade, shown, openSlide, onAsk, questions }: Props) {
   const t = useT();
   const state = useSyncExternalStore(storyState.subscribe, storyState.get);
   const kept = useSyncExternalStore(packageAsks.subscribe, packageAsks.get).length;
@@ -102,6 +105,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
         <button className="package-icon" type="button" data-ui-action="domain" data-story-action={transport} ref={part(transport)} title={transportName} aria-label={transportName} disabled={busy} onClick={() => void act(transport)}><PackageIcon name={transport}/></button>
         {width >= 420 && <button className="package-icon" type="button" title={t("main.package.next")} aria-label={t("main.package.next")} data-package-step="next" disabled={slide === slides.length} ref={part("next")} {...bindingProps(bind("package.slide", {slide: slide + 1}))}><PackageIcon name="next"/></button>}
       </div>}
+      {questions && <button className="package-icon package-questions-open" type="button" data-ui-action="domain" ref={part("asks")} title={questions.label} aria-label={questions.label} aria-pressed={questions.pressed} onClick={questions.open}><PackageIcon name="questions"/></button>}
       <button className="package-icon" type="button" data-ui-action="domain" data-story-action="ask" ref={part("ask")} title={t("main.package.ask")} aria-label={t("main.package.ask")} disabled={busy} onClick={() => void act("ask")}><PackageIcon name="ask"/></button>
       {kept > 0 && <button className="package-icon package-go-back" type="button" data-ui-action="domain" data-story-action="return" ref={part("goBack")} title={t("main.package.goBack", { count: kept })} aria-label={t("main.package.goBack", { count: kept })} disabled={busy} onClick={() => void act("return")}><PackageIcon name="goBack"/><span className="package-go-back-count" aria-hidden="true">{kept}</span></button>}
       <span className="package-story-now visually-hidden" role="status">{status}</span>

@@ -301,9 +301,20 @@ def _text(value) -> str:
 
 
 def questions(package: Package) -> list[Question]:
+    """Everything a package asks him, in order: a deck's decisions (or,
+    with no deck, its story's questions, `_story_questions`), then the
+    standard vote when it carries it outside its slides (`carries_vote`),
+    asked at the package view's Done; [] for a package that asks nothing."""
+    asked = _asked(package)
+    if carries_vote(package) and not any(q.id in VOTE_IDS for q in asked):
+        asked.append(_standard_vote(package))
+    return asked
+
+
+def _asked(package: Package) -> list[Question]:
     """The deck's decisions in its order, each with whether it applies (a
     follow-up only once its parent's answer opens it, as decide.py says)
-    and the answer recorded; [] for a package that asks none."""
+    and the answer recorded; else its story's questions."""
     record = _record(package) if is_decision_package(package) else {}
     # An old deck's retired vote is asked as the approval (current_deck).
     data = current_deck(deck(package), record)
@@ -522,28 +533,97 @@ def deck_data_shown(package: Package, raw: bytes) -> bytes:
 
 def legacy_deck(package: Package) -> bool:
     """Whether a decision package's own deck-data.js still asks the retired
-    vote, so its decide.py cannot record the approval (`record_deck_vote`)."""
+    vote, so its decide.py cannot record the approval (`record_vote`)."""
     data = deck(package) or {}
     return any(isinstance(d, dict) and d.get("id") == LEGACY_VOTE_ID
                for d in data.get("decisions") or [])
 
 
-def record_deck_vote(package: Package, question: "Question", option: str, note: str) -> None:
-    """His answer to the vote of an old deck, whose own decide.py knows only
-    the retired vote: written into its record as decide.py writes it
-    (results/decisions.json, and decisions.js the page reads back), under
-    `approve-package`. Refused (PackageError) for anything else."""
-    if question.id != VOTE_ID or not legacy_deck(package):
+def _deck_asks_vote(package: Package) -> bool:
+    """Whether a deck's own decide.py records the standard vote: one built
+    before the vote moved to Done, which asks it as its last decision."""
+    data = deck(package) or {}
+    return any(isinstance(d, dict) and d.get("id") == VOTE_ID
+               for d in data.get("decisions") or [])
+
+
+def records_vote_itself(package: Package) -> bool:
+    """Whether JARVIS writes his answer to the standard vote (`record_vote`)
+    rather than the package's own decide.py: every page, a deck that does
+    not ask the vote on a slide (it is asked at Done), and an old deck
+    that still asks the retired vote."""
+    return not is_decision_package(package) or not _deck_asks_vote(package)
+
+
+# ── the standard vote, asked at Done ─────────────────────────────────────
+# The vote is asked at the package view's Done (PackageView.tsx), never as
+# a slide of its own: its package.json names it (`vote`), which the shared
+# deck writes for every deck and make_package for every page. A deck or story built before, which still asks it on a slide,
+# carries it there, and that slide still answers it. His answer is kept
+# where the package's other answers are: its story's answers file, else
+# results/decisions.json (and decisions.js, which a deck reads back).
+
+def carries_vote(package: Package) -> bool:
+    """Whether the package carries the standard vote outside its slides."""
+    return package.manifest.vote == VOTE_ID
+
+
+def _vote_record_name(package: Package) -> str:
+    story = None if is_decision_package(package) else _story_of(package)
+    return story.answers.split("/", 1)[1] if story is not None and story.answers else RECORD
+
+
+def _language_of(package: Package) -> str:
+    """The vote's language: its deck's or story's, else the one in force."""
+    from jarvis import spoken_words
+    data = deck(package)
+    if data is not None:
+        language = data.get("language")
+    else:
+        story = _story_of(package)
+        language = story.language if story is not None else None
+    return language if language in _VOTE_WORDS else (
+        spoken_words.active_language() if spoken_words.active_language() in _VOTE_WORDS else "en")
+
+
+def _standard_vote(package: Package) -> "Question":
+    """The standard vote of a package that carries it outside its slides,
+    with his answer; an answer given before to the retired vote is read
+    back as it was."""
+    language = _language_of(package)
+    record = _record(package, _vote_record_name(package))
+    if not isinstance(record.get(VOTE_ID), dict):
+        before = _legacy_question(record.get(LEGACY_VOTE_ID), language)
+        if before is not None:
+            return before
+    shown = vote(language)
+    options = [{k: o[k] for k in ("id", "name", "says")} for o in shown["options"]]
+    return Question(VOTE_ID, shown["question"], "", options, VOTE_APPROVE, shown["reason"],
+                    True, _story_answer(record.get(VOTE_ID), options, VOTE_APPROVE))
+
+
+def record_vote(package: Package, question: "Question", option: str, note: str) -> None:
+    """His answer to the standard vote, written by JARVIS where the package
+    keeps its answers (`records_vote_itself`): Approve, or Reject with his
+    words. Refused (PackageError) for anything else."""
+    if question.id != VOTE_ID or not records_vote_itself(package):
         raise PackageError(f"{package.id}'s own decide.py records {question.id}.")
-    record = _record(package)
+    if option not in (VOTE_APPROVE, VOTE_REJECT):
+        raise PackageError(f"{VOTE_ID} takes {VOTE_APPROVE} or {VOTE_REJECT}.")
+    wanting = needs_words(VOTE_ID, option, note, _language_of(package))
+    if wanting:
+        raise PackageError(wanting)
+    name = _vote_record_name(package)
+    record = _record(package, name)
     record[VOTE_ID] = {
         "answer": option, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "choice": question.option_name(option) if option not in SPECIAL else "",
-        "note": note, "recommended": option == question.recommended}
+        "choice": question.option_name(option), "note": note,
+        "recommended": option == question.recommended}
     text = json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    work_packages.save_result(package, RECORD, text.encode("utf-8"))
-    work_packages.save_result(package, "decisions.js", (
-        "window.JARVIS_DECISIONS = " + text.rstrip() + ";\n").encode("utf-8"))
+    work_packages.save_result(package, name, text.encode("utf-8"))
+    if is_decision_package(package):
+        work_packages.save_result(package, "decisions.js", (
+            "window.JARVIS_DECISIONS = " + text.rstrip() + ";\n").encode("utf-8"))
 
 
 # ── his approval of an architecture design ───────────────────────────────
@@ -715,6 +795,9 @@ def record_story_answer(package: Package, question: Question, option: str,
     decide.py writes a deck's (the story waiting on it goes on). Refused
     (PackageError) for a package whose story does not ask it there, or not
     yet (a question that does not apply)."""
+    if question.id == VOTE_ID and carries_vote(package) and not any(
+            q.id in VOTE_IDS for q in _story_questions(package)):
+        return record_vote(package, question, option, note)     # asked at Done
     story = _story_of(package)
     asked = next((q for q in _story_questions(package) if q.id == question.id), None)
     if story is None or story.answers is None or asked is None:
@@ -768,7 +851,7 @@ def page_vote(package: Package) -> Optional[dict]:
     "approval", never the vote: with the revision it puts to him, the
     options that need his words, and whether his answer is stale."""
     deck_package = is_decision_package(package)
-    asked = questions(package) if deck_package else _story_questions(package)
+    asked = questions(package)
     standard = next((q for q in asked if q.id in VOTE_IDS), None)
     declared = [] if deck_package else [q for q in asked if q.id not in VOTE_IDS]
     if standard is None and not declared:

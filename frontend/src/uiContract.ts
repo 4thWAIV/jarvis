@@ -4752,7 +4752,8 @@ export const UI_CONTRACT = {
         "questionBack",
         "questionNext",
         "ask",
-        "goBack"
+        "goBack",
+        "signOff"
       ],
       "presentations": [
         {

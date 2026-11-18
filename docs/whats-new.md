@@ -2,6 +2,15 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Approve or reject a package at its check mark
+
+Approve and Reject are no longer a row under the package's bar or a slide
+at its end: they are on the check mark at the upper right. Press it and a
+small card opens with Approve, Reject (with your words on what to change)
+and a plain sign-off; Approve or Reject records your answer and signs the
+package off in one go. The package's own questions, when it asks any, open
+from a Questions icon in the bar, so the slides keep the whole space.
+
 ## Ask about what you are looking at, then go back to exactly that point
 
 A package's bar has an Ask button. Press it, or start talking over JARVIS
