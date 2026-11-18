@@ -13,9 +13,15 @@ can also read what JARVIS knows (what you said and decided, your messages,
 the Work list, packages, runs, workflows, the knowledge engine, projects
 and folders) through the same reading tools JARVIS itself uses, with other
 people's words kept apart the same way, so what it sends you starts from
-what you already know. An agent you accept from now on can read; nothing an
+what you already know. Every agent you have accepted can read; nothing an
 agent does through these tools changes what you are looking at or what
 JARVIS treats as read.
+
+What agents may do is now one plain file, `agent-rights.json` in JARVIS's
+data folder: the rights every accepted agent has, and any agent's extra or
+removed rights by its session id or name. A change there applies to every
+agent at once; a file JARVIS cannot read is ignored (with a note in its
+log) in favour of the standard rights it ships with.
 
 ## Every package that asks you something opens on where things stand
 

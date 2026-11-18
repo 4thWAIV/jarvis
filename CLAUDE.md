@@ -187,12 +187,24 @@ pending. Proven, it is `waiting`: a silent attention item (`agent_key`)
 and "New key" on the agent's box. Switching the agent on is Tim's act of
 onboarding it (his answer, Q1): `server._set_agent_active`, shared by the
 page's switch and the brain's `set_agent_active`, onboards the waiting key,
-recorded with the time and `page` or `voice`, gives it
-`agent_rights.DEFAULT_RIGHTS` (`work`, `workflows`, `packages`, `watch`,
-his answer, Q2, and `research`, the one package system's) when the agent has none, revokes the session's older key,
-and adopts an access-key label naming exactly that agent
+recorded with the time and `page` or `voice`, revokes the session's older
+key, and adopts an access-key label naming exactly that agent
 (`_adopted_label`), so its earlier decisions stay its own
-(`reporters.aliases`). An active agent whose key waits shows its switch
+(`reporters.aliases`). Onboarding copies no rights onto the agent: an
+onboarded agent's rights come from ONE plain file, read on every check
+(`agent_rights.current`, cached and read again whenever the file changes):
+the data folder's `agent-rights.json`, made from the shipped
+`jarvis/agent_rights.json` when missing, holding `standard` (the rights
+every onboarded agent has: `work`, `workflows`, `packages`, `watch`, his
+answer, Q2, and `research`, the one package system's) and `agents`, the
+exceptions by session id or name, each `add` and `remove`
+(`agent_rights.granted`, what `allows`, `tools_of`, the agent's thread and
+`agent_keys` read). A file that cannot be read or names no right is logged
+and the shipped default used. Rights stored on an agent before (when
+onboarding copied them) count only where they differ from what it copied
+then (`LEGACY_STANDARD`), as exceptions; nothing moves them. A work-item
+key's rights stay its own document's grants. A plain file with no Settings control, by his decision (2026-11-18).
+An active agent whose key waits shows its switch
 off, so switching it on accepts it. Signed requests (`Authorization:
 JARVIS-Signature key=, created=, nonce=, body=, sig=` over
 `jarvis-request@v1`, method, path, query, Host, created, nonce and body

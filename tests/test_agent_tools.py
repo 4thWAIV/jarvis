@@ -39,7 +39,7 @@ def _agent_call(w, auth, tool, **arguments):
 
 def test_research_names_only_the_brain_s_reading_tools(wired):
     server = wired.server
-    assert "research" in agent_rights.DEFAULT_RIGHTS
+    assert "research" in agent_rights._shipped().standard
     assert agent_rights.RIGHTS["research"].covers("POST", agent_rights.AGENT_TOOL_PATH)
     assert set(RESEARCH) <= set(server.TOOL_HANDLERS)
     assert not set(RESEARCH) & server.ACTING_TOOLS, "no acting tool beyond what agents do"
@@ -51,8 +51,9 @@ def test_a_work_item_key_s_scope_reaches_no_tool(wired, monkeypatch):
     monkeypatch.setattr(agent_key_store, "grants", lambda principal: [
         SimpleNamespace(right="research", scope="work:w1")])
     assert agent_rights.tools_of("workkey:fp") == frozenset()
-    monkeypatch.setattr(agent_key_store, "grants", lambda principal: [
-        SimpleNamespace(right="research", scope="*")])
+    assert not agent_rights.allows_tool("agent:s", "work_status"), "not onboarded: nothing"
+    monkeypatch.setattr(agent_key_store, "is_onboarded", lambda session: True)
+    monkeypatch.setattr(agent_key_store, "grants", lambda principal: [])
     assert agent_rights.allows_tool("agent:s", "work_status")
     assert not agent_rights.allows_tool("agent:s", "spawn_run")
 
@@ -96,9 +97,66 @@ def test_a_tool_the_rights_do_not_name_is_refused(wired, researcher):
 
 def test_an_agent_without_research_is_refused_at_the_gate(wired, item):
     from tests.agent_key_fixtures import onboarded_auth
-    worker = onboarded_auth(("work",), "sess-worker")
+    worker = onboarded_auth(session="sess-worker")
+    _rights({"agents": {"sess-worker": {"remove": ["research"]}}})
     r = _agent_call(wired, worker, "work_status")
     assert r.status_code == 403
+
+
+# ── the one rights file ──────────────────────────────────────────────────
+
+def _rights(change: dict) -> None:
+    """Write the data folder's rights file: the shipped standard, changed."""
+    shipped = json.loads(agent_rights.SHIPPED_FILE.read_text())
+    agent_rights.rights_file().write_text(json.dumps({**shipped, **change}))
+
+
+def test_onboarding_copies_no_rights_and_the_file_gives_them(wired):
+    from jarvis import agent_key_store
+    from tests.agent_key_fixtures import onboarded_auth
+    onboarded_auth(session="sess-plain")
+    assert agent_key_store.grants("agent:sess-plain") == [], "nothing copied onto the agent"
+    assert [g.right for g in agent_rights.granted("agent:sess-plain")] == sorted(
+        agent_rights._shipped().standard)
+
+
+def test_a_right_added_to_the_standard_reaches_an_onboarded_agent_at_once(wired):
+    from tests.agent_key_fixtures import onboarded_auth
+    onboarded_auth(session="sess-std")
+    assert not agent_rights.allows("agent:sess-std", "POST", "/api/runs")
+    _rights({"standard": [*agent_rights._shipped().standard, "runs"]})
+    assert agent_rights.allows("agent:sess-std", "POST", "/api/runs")
+
+
+def test_an_exception_adds_and_removes_by_session_or_name(wired):
+    from jarvis import run_store
+    from tests.agent_key_fixtures import onboarded_auth
+    onboarded_auth(session="sess-exc")
+    name = run_store.agent_names()["sess-exc"]
+    _rights({"agents": {"sess-exc": {"add": ["agents"]},
+                        name.upper(): {"remove": ["research", "watch"]}}})
+    rights = [g.right for g in agent_rights.granted("agent:sess-exc")]
+    assert rights == ["agents", "packages", "work", "workflows"]
+    assert agent_rights.tools_of("agent:sess-exc") == frozenset()
+
+
+def test_rights_stored_before_count_only_where_they_differ(wired):
+    from tests.agent_key_fixtures import onboarded_auth
+    onboarded_auth(agent_rights.LEGACY_STANDARD, "sess-old")
+    assert "research" in [g.right for g in agent_rights.granted("agent:sess-old")]
+    onboarded_auth(("work", "captures"), "sess-odd")
+    assert [g.right for g in agent_rights.granted("agent:sess-odd")] == [
+        "captures", "research", "work"]
+
+
+def test_a_malformed_file_falls_back_to_the_shipped_default_and_says_so(wired, caplog):
+    from tests.agent_key_fixtures import onboarded_auth
+    onboarded_auth(session="sess-bad")
+    agent_rights.rights_file().write_text('{"standard": ["work", "flying"]}')
+    with caplog.at_level("WARNING", logger="jarvis.agent_rights"):
+        rights = [g.right for g in agent_rights.granted("agent:sess-bad")]
+    assert rights == sorted(agent_rights._shipped().standard)
+    assert "shipped default" in caplog.text and "flying" in caplog.text
 
 
 def test_the_tool_token_and_the_page_are_refused(wired):

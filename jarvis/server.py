@@ -4510,7 +4510,7 @@ def _revoke_agent_key(key, by: str, why: str):
 def _key_json(key) -> dict:
     """A key as the page and the brain read it: its row and its rights."""
     return {**key.public(), "rights": [dataclasses.asdict(g) for g in
-                                       agent_key_store.grants(key.principal)]}
+                                       agent_rights.granted(key.principal)]}
 
 
 # How long before its submission a key's submit command may have been
@@ -14402,7 +14402,7 @@ def _key_line(key, names: dict) -> str:
     when = (f", since {time.strftime('%d %B %H:%M', time.localtime(key.onboarded_at))} "
             f"({key.onboarded_by})" if key.onboarded_at and key.state == "onboarded" else "")
     rights = ", ".join(g.right + ("" if g.scope == "*" else f" ({g.scope})")
-                       for g in agent_key_store.grants(key.principal))
+                       for g in agent_rights.granted(key.principal))
     return (f"- {who}: key {key.fingerprint} {state}{when}"
             + (f"; rights: {rights}" if rights and key.state == "onboarded" else ""))
 
