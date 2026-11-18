@@ -9,9 +9,19 @@ a reason or a slide, for a first slide that is not a summary, or for an SVG
 picture that does not state its own size (JARVIS reads it). An agent's
 message is no longer refused for asking you something without a package,
 and a package for a Work item is no longer refused for asking you nothing.
-What stays: every decision offers at least two options, every picture is
-big enough to read, and a package's spoken story runs about fifteen
-minutes at most.
+Nor is a message refused for being long, a decision for a short reason
+why its options have no pictures, or a handoff, purpose or scenario for
+running past one line. What stays: every decision offers at least two
+options, every picture is big enough to read, and a package's spoken
+story runs about fifteen minutes at most.
+
+## Briefing judges remember what they asked
+
+The judges that check a briefing before it is written keep their own
+session from round to round. Each sees what it asked before and what the
+author said back, checks that its earlier ask was met, and may not fail a
+briefing for undoing something it asked for itself; it quotes that ask
+and the author may keep its answer.
 
 ## Agents can look things up in JARVIS before they write to you
 

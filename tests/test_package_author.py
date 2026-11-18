@@ -408,7 +408,10 @@ def test_a_narrow_handoff_reads(tmp_path):
                                 'evidence': ['PR 171', 'CI run 9123'],
                                 'decisions': [{'id': 'merge', 'question': 'Merge it?'}]}))
     assert pa.read_handoff(path)['question'] == 'Merge PR 171?'
-    for bad in ({'question': '', 'evidence': ['x']}, {'question': 'a\nb', 'evidence': ['x']},
+    path.write_text(json.dumps({'question': 'Merge PR 171?\nIt fixes the build.',
+                                'evidence': ['PR 171']}))
+    assert pa.read_handoff(path)['question'].startswith('Merge'), "a question is not held to one line"
+    for bad in ({'question': '', 'evidence': ['x']},
                 {'question': 'Q?', 'evidence': []}, {'question': 'Q?', 'evidence': ['x'], 'work': 3},
                 {'question': 'Q?', 'evidence': ['x'], 'decisions': ['merge']}):
         path.write_text(json.dumps(bad))

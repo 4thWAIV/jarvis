@@ -299,13 +299,6 @@ def _asks_when(raw, where: str) -> Optional[tuple[str, tuple[str, ...]]]:
             tuple(_question(a, f"{where}'s asks_when answer") for a in answers))
 
 
-def _line(value, what: str) -> str:
-    text = _text(value, what)
-    if "\n" in text:
-        raise StoryError(f"{what} is not one line.")
-    return text
-
-
 def _declared(raw, n: int) -> Declared:
     """One question a story declares: {"id", "question", "options": [{"id",
     "name", "says"}], "recommended"?, "reason"?, "context"?}, held to the
@@ -400,7 +393,7 @@ def parse(raw: bytes) -> Story:
         if q.id not in asked:
             raise StoryError(f"Question {q.id} is declared, but no slide waits for it.")
     scenario = ("" if body.get("scenario") is None
-                else _line(body["scenario"], "The story's scenario"))
+                else _text(body["scenario"], "The story's scenario"))
     return Story(_text(body.get("title"), "The story's title"), language,
                  tuple(slides), answers, declared, scenario)
 
@@ -537,9 +530,9 @@ def walk_problem(story: Optional[dict], views: tuple[str, ...]) -> Optional[str]
         return (f"A view set of {len(views)} views needs a story that walks one concrete "
                 f"scenario through every view in turn.")
     scenario = story.get("scenario")
-    if not isinstance(scenario, str) or not scenario.strip() or "\n" in scenario.strip():
+    if not isinstance(scenario, str) or not scenario.strip():
         return (f"A view set's story names its scenario: the one concrete input it walks "
-                f"through every view, in one line.")
+                f"through every view.")
     for n, view in enumerate(named, 1):
         if view not in views:
             return (f"Slide {n} names no view of this set: every slide of a view set's story "

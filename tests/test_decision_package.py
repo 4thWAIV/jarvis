@@ -336,10 +336,10 @@ def test_every_option_is_pictured_unless_the_decision_says_why_not(tmp_path):
     del deck["decisions"][1]["options"][1]["picture"]
     [problem] = problems(tmp_path, deck)
     assert "Decision when: option one has no picture" in problem and "text_only" in problem
-    deck["decisions"][1]["text_only"] = "too short"
-    assert len(problems(tmp_path, deck)) == 1
-    deck["decisions"][1]["text_only"] = "A time of day has no picture that shows it better."
-    assert problems(tmp_path, deck) == []
+    deck["decisions"][1]["text_only"] = "  "
+    assert len(problems(tmp_path, deck)) == 1, "it says why"
+    deck["decisions"][1]["text_only"] = "No picture."
+    assert problems(tmp_path, deck) == [], "however few its words"
 
 
 def test_a_signature_covers_every_file_and_names_what_it_vouches_for(tmp_path):

@@ -35,7 +35,7 @@ In Claude Code the tools know your session by themselves. In Codex give `as_sess
 {{message}} --as <your session id> (--work <item id> | --general) "<what it says>" [--package <zip>]
 ```
 
-A message says something short (at most 2000 characters): a finished piece of work, a report, a blocker. Give `--work` with the work item it is about; while you have a piece on an open item JARVIS refuses a message without it and names the item. When it is about no work item, say so with `--general` and it goes to the user's Inbox; with no item of yours open, leaving `--work` out does the same. It prints the message's id, or why it was refused (exit 1). The user can reply to every message; the reply comes to your session as an ordinary message.
+A message says something short: a finished piece of work, a report, a blocker. Give `--work` with the work item it is about; while you have a piece on an open item JARVIS refuses a message without it and names the item. When it is about no work item, say so with `--general` and it goes to the user's Inbox; with no item of yours open, leaving `--work` out does the same. It prints the message's id, or why it was refused (exit 1). The user can reply to every message; the reply comes to your session as an ordinary message.
 
 Every decision or question goes to the user inside a package that shows them what they need to decide (see "Packages"). Never ask "Do you approve the plan?" unless the package shows the plan.
 

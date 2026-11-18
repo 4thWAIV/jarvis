@@ -57,8 +57,6 @@ from jarvis import (agent_rights, conversation_log, package_inbox, package_inbox
                     packages_api, report_keys, reporters, web_auth, work_store)
 
 MESSAGES_PATH = "/api/messages"
-# A message says something short; anything longer is a package's.
-SAYS_MAX = 2000
 # The states his mark may give; answered is given only by his answer going.
 MARKS = (conversation_log.MessageState.READ, conversation_log.MessageState.DONE)
 
@@ -73,15 +71,12 @@ class Refused(ValueError):
 
 def read_request(body) -> tuple[str, Optional[bytes]]:
     """(what it says, the package's bytes or None) from a request's body,
-    or Refused: words, short."""
+    or Refused: it says nothing, or its package is not a zip in base64."""
     if not isinstance(body, dict):
         raise Refused("A message is a JSON object: says, and package when it carries one.", 400)
     says = str(body.get("says") or "").strip()
     if not says:
         raise Refused("A message says something: give says.", 400)
-    if len(says) > SAYS_MAX:
-        raise Refused(f"A message says something short (at most {SAYS_MAX} characters); "
-                      f"put the rest in a package and carry it.", 413)
     package = None
     if body.get("package"):
         try:

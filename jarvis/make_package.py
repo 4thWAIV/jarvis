@@ -883,7 +883,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             try:
                 dp.post(args.deliver_to.rstrip("/") + message.ROUTE + "?"
                         + urllib.parse.urlencode({"work": args.work}), "",
-                        message.body(text[:2000], None), signer=signer)
+                        message.body(text, None), signer=signer)
             except OSError as report_error:
                 print(f"The failure could not be reported on Work {args.work}: {report_error}")
         return 1

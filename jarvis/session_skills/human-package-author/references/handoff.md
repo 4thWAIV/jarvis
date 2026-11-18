@@ -6,7 +6,7 @@ The sender's handoff JSON gives only what the author cannot work out itself (`do
 
 | Field | What it is |
 |---|---|
-| `question` | The question or decision for Tim, one line. |
+| `question` | The question or decision for Tim. |
 | `work` | Its Work item id, or a list of them. |
 | `evidence` | References the answer rests on: files, commits, PRs, CI runs, records. Relative paths are relative to the handoff file. |
 | `decisions` | Optional: the decisions it asks, as decision objects. |

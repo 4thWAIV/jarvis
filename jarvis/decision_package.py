@@ -48,9 +48,6 @@ CAPS = {"short": 16}
 SPOKEN_WORDS_PER_SEC = 2.5
 SPOKEN_MAX_SEC = 15 * 60
 
-# A decision whose options are not pictured says why in at least this many
-# words ("text_only"); it should be rare.
-TEXT_ONLY_WORDS = 5
 
 
 class Refused(Exception):
@@ -225,13 +222,13 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         # so, and why, as text_only.
         unpictured = [o.get("id") for o in options if isinstance(o, dict) and not o.get("picture")]
         reason = d.get("text_only")
-        if unpictured and not (isinstance(reason, str) and len(reason.split()) >= TEXT_ONLY_WORDS):
+        if unpictured and not (isinstance(reason, str) and reason.strip()):
             problems.append(
                 f"{where}: option{'s' if len(unpictured) > 1 else ''} "
                 f"{', '.join(map(str, unpictured))} {'have' if len(unpictured) > 1 else 'has'} "
                 f"no picture. Every option needs a picture of what he would see; only a "
                 f"choice that truly cannot be pictured may say so with \"text_only\": "
-                f"\"<why, in at least {TEXT_ONLY_WORDS} words>\". Only real product choices "
+                f"\"<why>\". Only real product choices "
                 f"go to Tim: decide technical details yourself.")
 
     for n, s in enumerate(deck.get("slides") or [], 1):

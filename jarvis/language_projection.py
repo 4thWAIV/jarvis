@@ -45,7 +45,6 @@ AUTHOR_SOURCE = {MEMBER: "package/" + MEMBER, AUTHORED_STORY: "package/story.jso
 # the handoff's purpose was bound: kept readable exactly as it was.
 LEGACY_BINDING = frozenset({"origin", "member", "markdown_sha256"})
 BINDING = LEGACY_BINDING | {"purpose"}
-PURPOSE_MAX_CHARS = 300
 _VOTE_ONLY = "The canonical package review must be the unchanged factory-generated standard vote."
 _COMPOSED = ("The canonical package review must be the factory's composition of the author's "
              "bound story and the standard vote.")
@@ -358,12 +357,13 @@ def current_subject(subject) -> bool:
 
 
 def purpose_of(text) -> str:
-    """A handoff's purpose as a package states it: one line of at most
-    PURPOSE_MAX_CHARS, its spacing folded; "" when it is not one."""
+    """A handoff's purpose as a package states it: its spacing folded into
+    one line (the canonical form the receiver checks); "" when it has no
+    text."""
     if not isinstance(text, str):
         return ""
     line = " ".join(text.split())
-    return line if 0 < len(line) <= PURPOSE_MAX_CHARS and line.isprintable() else ""
+    return line if line and line.isprintable() else ""
 
 
 def project(envelope: dict, folder: Path, understanding: bytes | None = None,
@@ -409,7 +409,7 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
         if not understanding.strip() or len(understanding) > kit.MAX_SOURCE_BYTES:
             raise docs.DocumentError("The authored understanding must contain text and fit within 1 MiB.")
         if not purpose_of(purpose):
-            raise docs.DocumentError(f"The handoff purpose must be one line of at most {PURPOSE_MAX_CHARS} characters.")
+            raise docs.DocumentError("The handoff has no purpose (its question) to state.")
         purpose = purpose_of(purpose)
         canonical["understanding"] = {"origin": FRESH_AUTHOR, "member": MEMBER,
                                       "markdown_sha256": kit.sha256(understanding), "purpose": purpose}

@@ -49,7 +49,6 @@ def test_one_view_asks_no_walk_and_names_only_its_own_view():
 @pytest.mark.parametrize("story, said", [
     (None, "needs a story"),
     (walk(["doc-a", "doc-b"], scenario=None), "names its scenario"),
-    (walk(["doc-a", "doc-b"], scenario="two\nlines"), "names its scenario"),
     ({**walk(["doc-a"]), "slides": [{"title": "No view", "beats": [{"say": "x"}]}]}, "names no view"),
     (walk(["doc-b", "doc-a"]), "out of order"),
     (walk(["doc-a", "doc-b", "doc-a"]), "out of order"),
