@@ -378,7 +378,7 @@ _WALK = {"png": _png, "gif": _gif, "jpeg": _jpeg, "webp": _webp}
 
 # -- SVG --------------------------------------------------------------------------------
 
-_PIXELS = re.compile(r"\s*(\d+(?:\.\d+)?)(?:px)?\s*")
+_PIXELS = re.compile(r"[ \t]*(\d+(?:\.\d+)?)(?:px)?[ \t]*")   # spaces only: a line separator is no length
 _TRANSFORM = re.compile(r"\s*(\w+)\s*\(([^)]*)\)\s*,?")
 
 
