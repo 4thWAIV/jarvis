@@ -1,6 +1,6 @@
 /** Compact frame for existing host actions. Selection never starts speech or writes an answer.
  *  For a page that reports its slides (a deck), the border is its one navigation, over the deck's own
- *  slides (`navigation`: every lead-in and every question its own, numbered as the deck numbers them):
+ *  slides (`navigation`: every slide and every question its own, numbered as the deck numbers them):
  *  the count follows the slide the page shows (`shown`) and selecting a slide opens it there
  *  (`openSlide`) while no story is told; telling starts at the story slide that holds it
  *  (`storySlideOf`). Any other story page only takes the slide to tell from.
@@ -53,7 +53,7 @@ export function PackageBorder({ info, offered, done, onSaid, part, presentation,
       : mine?.state === "paused" ? t("main.package.story.paused", { slide: mine.slide, slides: mine.slides })
         : mine?.state === "finished" ? t("main.package.story.told")
           : mine?.state === "stopped" ? t("main.package.story.stopped") : "";
-  // A deck's own slides (its lead-ins and its questions each one), else the story's.
+  // A deck's own slides (every slide and every question one), else the story's.
   const pages = navigation(info);
   const slides = pages.map(p => p.title);
   // A view set: the view each chapter is told over, and the lit elements it shows.

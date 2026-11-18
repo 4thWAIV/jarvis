@@ -42,9 +42,6 @@ page (PackageView.tsx) makes the request.
                                             (package_story.js, one copy),
                                             which points and highlights in
                                             its frame
-  GET  /api/packages/presentation-font.css  the bundled font every deck
-                                            links (layout_spec.font_css),
-                                            served once rather than carried
 """
 from __future__ import annotations
 
@@ -97,14 +94,15 @@ def describe(package: Package) -> dict:
             "sources": list(package.sources),
             **({"communication": m.communication} if m.communication else {}),
             "story": story.outline() if story is not None else None,
-            # A deck's own slides, which the border moves through (a
-            # decision's lead-in and its question each one); None for a
+            # A deck's own slides, which the border moves through (each
+            # question one); None for a
             # page that is not a deck, whose border moves through its story.
             "pages": package_inbox.deck_pages(package) if story is not None else None,
             # The standard vote the package carries, shown in the view's head.
             "vote": package_inbox.page_vote(package),
-            # Whether JARVIS proved its layout fits (a deck), or it is a
-            # hand-made page whose layout nobody checked: said in the border.
+            # Whether JARVIS proved its layout (a deck: its pictures, story
+            # targets and renderer), or it is a hand-made page whose layout
+            # nobody checked: said in the border.
             "layout_checked": package.layout_checked,
             # An architecture view set's views, which its chapters move
             # between (language_projection.views_shown); absent otherwise.
@@ -238,11 +236,6 @@ def mount(app: FastAPI,
                         media_type=media_type(HELPER_FILE.name),
                         headers={"Cache-Control": "no-store"})
 
-    async def deck_font():
-        from jarvis import layout_spec
-        return Response(await asyncio.to_thread(layout_spec.font_css), media_type="text/css; charset=utf-8",
-                        headers={"Cache-Control": "max-age=3600"})
-
     async def tell_story(package_id: str, request: Request,
                          body: dict = Body(default_factory=dict)):
         action = str(body.get("action") or "")
@@ -277,8 +270,6 @@ def mount(app: FastAPI,
     app.add_api_route(LOCAL_PATH, open_local_package, methods=["POST"])
     # Before the {package_id} routes, so story.js is never taken for an id.
     app.add_api_route(package_story.HELPER_PATH, story_helper, methods=["GET"])
-    from jarvis import layout_spec
-    app.add_api_route(layout_spec.FONT_PATH, deck_font, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}" + PACKAGE_PAGE_MARK + "{path:path}",
                       page_file, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/results", save_result,

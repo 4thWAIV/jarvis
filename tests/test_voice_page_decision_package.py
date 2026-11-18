@@ -60,7 +60,7 @@ def test_a_decision_deck_votes_tells_stops_resumes_and_navigates(tmp_path):
         for check in ("the package frame is", "the deck's own styles are in force",
                       "every vote control is visible",
                       "the border does not say its layout was not checked",
-                      "the deck is drawn in the font JARVIS serves", *NAVIGATION):
+                      "the deck is drawn in the system font, none loaded", *NAVIGATION):
             assert has(result, size, check), (size, check, result.passed)
     for check in ("first time: the story waits at where", "first time: the story waits at when",
                   "first time: every question answered, in order (where, when)",
@@ -69,7 +69,7 @@ def test_a_decision_deck_votes_tells_stops_resumes_and_navigates(tmp_path):
                   "stop by the brain's tool during narration: stopped within 1s",
                   "stop by the brain's tool while waiting: stopped within 1s",
                   "stop again: the brain is told it is already stopped",
-                  "resume: picked up at slide 4",
+                  "resume: picked up at slide 3",
                   "list_packages found it by its title's words"):
         assert has(result, None, check), (check, result.passed)
     assert list((tmp_path / "check" / "flow").glob("*waiting-where.png"))

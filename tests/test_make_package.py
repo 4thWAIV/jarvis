@@ -152,13 +152,12 @@ def test_a_compare_picture_is_a_known_field(tmp_path):
     assert dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent) == []
 
 
-def test_every_slide_over_the_word_limit_is_listed(tmp_path):
-    deck = presentation()
-    long = " ".join(["word"] * 70)
-    deck["slides"] = [{"title": "One", "blocks": [{"p": long[:270]}, {"p": long[:270]}]},
-                      {"title": "Two", "blocks": [{"p": long[:270]}, {"p": long[:270]}]}]
+def test_every_decision_part_over_its_word_limit_is_listed(tmp_path):
+    deck = small_deck()
+    for d in deck["decisions"]:
+        d["reason"] = " ".join(["word"] * 45)
     found = dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent)
-    assert sum("words; at most 60" in p for p in found) == 2
+    assert sum("a reason has 45 words; at most 40" in p for p in found) == 2
 
 
 # -- a hand-made folder -----------------------------------------------------------------
@@ -272,7 +271,6 @@ def test_a_deck_that_declares_the_vote_is_refused(tmp_path, capsys, decision, sa
     content = presentation() | {"decisions": [{
         "id": decision, "question": "Is it clear?", "reason": "So he can say.",
         "recommended": "got-it", "text_only": "A reply is not a choice between looks at all.",
-        "why_you": "It is yours.", "evidence": ["It is here."],
         "options": [{"id": "got-it", "name": "Got it", "says": "Clear."},
                     {"id": "questions", "name": "I have questions", "says": "Ask."}]}]}
     assert mp.main([str(write_yaml(tmp_path, content)), "--check-only"]) == 1
@@ -299,7 +297,6 @@ def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, qu
     content = presentation() | {"decisions": [{
         "id": question, "question": "Approve it?", "reason": "It is done.",
         "recommended": "approve", "text_only": "A verdict is a reply, not a choice between looks.",
-        "why_you": "Only you approve.", "evidence": ["Every check passed."],
         "options": [{"id": "approve", "name": "Approve", "says": "Done."},
                     {"id": "hold", "name": "Hold", "says": "Not yet."}]}]}
     deck = mp.deck_of(write(tmp_path, content))
@@ -449,7 +446,7 @@ def test_a_build_refused_after_the_author_reports_on_work_without_a_package(tmp_
     assert "deck.css is not JARVIS's own" in body["says"]
 
 
-# -- a briefing: the opening and each decision's lead-in --------------------------------
+# -- a briefing: its purpose, conclusion and an opening of words ------------------------
 
 def refused_for(tmp_path, deck) -> str:
     with pytest.raises(dp.Refused) as refused:
@@ -460,7 +457,7 @@ def refused_for(tmp_path, deck) -> str:
 def test_a_well_formed_briefing_is_accepted(tmp_path):
     deck = mp.deck_of(write(tmp_path, small_deck()))
     assert deck["purpose"] == "Two decisions on the team lunch."
-    assert [s.get("lead_in") for s in deck["slides"] if s.get("lead_in")] == ["where", "when"]
+    assert [s.get("id") for s in deck["slides"]] == ["s1"], "JARVIS adds no lead-in slide"
     assert mp.deck_of(write(tmp_path, presentation()))["conclusion"]
 
 
@@ -495,111 +492,74 @@ def test_a_deck_that_opens_on_a_decision_is_refused(tmp_path):
     del deck["slides"]
     assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
     deck["slides"] = [{"decision": "where"}]
-    assert "opens on decision 'where''s lead-in" in refused_for(tmp_path, deck)
+    assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
 
 
-def test_the_opening_must_show_its_conclusion_and_say_its_purpose(tmp_path):
+def test_the_opening_is_told_and_its_words_are_the_author_s(tmp_path):
+    """The opening needs a narration; whether its words repeat the
+    conclusion or the purpose is not counted."""
     deck = small_deck()
     opening = deck["slides"][0]
     opening["blocks"][0] = {"lead": "Lunch is on Friday."}
     del opening["say"]
     opening["title"] = "Friday"
     said = refused_for(tmp_path, deck)
-    assert "it does not show the conclusion" in said
-    assert "neither it nor its narration says the purpose" in said
     assert "it has no `say`" in said
-    # A close paraphrase is enough: most of its words, any order and case.
-    opening["blocks"][0] = {"lead": "At noon we EAT in the office: nobody books tables."}
-    opening["say"] = "These are two decisions about the team's lunch."
+    assert "does not show the conclusion" not in said and "says the purpose" not in said
+    opening["say"] = "Lunch is on Friday."
     mp.deck_of(write(tmp_path, deck))
 
 
-def test_metadata_alone_is_not_an_opening(tmp_path):
-    """The fields are there, but the first slide says neither."""
-    deck = presentation()
-    deck["slides"] = deck["slides"][1:]
-    said = refused_for(tmp_path, deck)
-    assert "does not show the conclusion" in said and "says the purpose" in said
-
-
-def test_a_decision_without_its_lead_in_is_refused(tmp_path):
+def test_a_slide_s_words_are_not_counted(tmp_path):
+    """No slide is refused for its number of words; its characters are
+    still capped (decision_package.CAPS)."""
     deck = small_deck()
-    del deck["decisions"][0]["why_you"]
-    deck["decisions"][1]["evidence"] = []
-    said = refused_for(tmp_path, deck)
-    assert "Decision where: it has no lead-in (why_you)" in said
-    assert "Decision when: it has no lead-in (evidence)" in said
+    deck["slides"][0]["blocks"].append({"p": " ".join(["word"] * 50)})
+    deck["slides"][0]["blocks"].append({"p": " ".join(["more"] * 50)})
+    mp.deck_of(write(tmp_path, deck))
+
+
+@pytest.mark.parametrize("field", ["why_you", "evidence"])
+def test_a_decision_carries_no_lead_in_fields(tmp_path, field):
+    """JARVIS draws no lead-in slide: a decision's why_you and evidence are
+    no fields of it."""
     deck = small_deck()
-    deck["decisions"][0]["evidence"] = ["One.", "Two.", "Three.", "Four."]
-    assert "4 lines of evidence; at most 3" in refused_for(tmp_path, deck)
+    deck["decisions"][0][field] = "It is yours." if field == "why_you" else ["It is here."]
+    assert f"{field!r} is not a field of a decision" in refused_for(tmp_path, deck)
+    deck = small_deck()
+    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
+                           "blocks": [{"p": "Mine."}]})
+    assert "'lead_in' is not a field of a slide" in refused_for(tmp_path, deck)
 
 
-def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
+def test_each_decision_is_told_and_asked_on_its_own_slide(tmp_path):
     deck = mp.deck_of(write(tmp_path, small_deck()))
-    order = [s.get("lead_in") and f"lead-{s['lead_in']}" or s.get("decision") or s["id"]
-             for s in deck["slides"]]
-    assert order == ["s1", "lead-where", "where", "lead-when", "when"]
-    lead = deck["slides"][1]
-    assert lead["blocks"][0] == {"lead": "Where do we eat?"}
-    assert "It is your team's lunch." in lead["say"] and "Lunch is on Friday." in lead["say"]
-    # The lead-in is told as its decision's own story slide's first beat, so
-    # the story asks, waits and resumes there: never the question without it.
     deck["decisions"][0]["options"][0]["opens"] = ["when"]
     told = dp.builder().story(deck)["slides"]
     assert [s.get("waits") for s in told] == [None, "where", "when", None]
     where, when = told[1], told[2]
     assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
-    assert where["beats"][0]["targets"] == ["#lead-where h2"]
-    assert "It is your team's lunch." in where["beats"][0]["say"]
-    assert where["beats"][1]["actions"] == [{"click": "#go-3"}]
-    assert "target" not in where, "each part goes to its own slide"
-    assert when["beats"][0]["actions"] == [{"click": "#go-4"}]
+    assert where["target"] == "#d-where"
+    assert when["beats"][0]["actions"] == [{"click": "#go-3"}]
     assert when["asks_when"] == {"question": "where", "answers": ["in"]}
     from jarvis import package_story
     story = package_story.parse(package_story.encode(dp.builder().story(deck)))
     record = {"where": {"answer": "in"}}
-    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
+    assert story.open_questions(record) == [3], "resume picks the when slide"
 
 
 def test_the_border_moves_through_every_slide_the_deck_draws(tmp_path):
-    """The border navigates the deck's own slides: each lead-in, each
-    question and the vote is its own page, numbered as the deck numbers
-    them, while the story still tells a lead-in with its question."""
+    """The border navigates the deck's own slides: each question and the
+    vote is its own page, numbered as the deck numbers them."""
     deck = mp.deck_of(write(tmp_path, small_deck()))
     pages = dp.builder().pages(deck)
     told = dp.builder().story(deck)["slides"]
     assert [p["opener"] for p in pages] == [f"#go-{n}" for n in range(1, len(pages) + 1)]
-    assert [p["asks"] for p in pages] == [None, None, "where", None, "when", None], \
+    assert [p["asks"] for p in pages] == [None, "where", "when", None], \
         "no slide asks the vote: it is asked at Done"
     assert pages[-1]["title"] == "Your answers"
-    assert pages[1]["title"] != pages[2]["title"], "a lead-in is not named as its question"
-    assert len(told) < len(pages), "the story still folds each lead-in into its question"
     opened = {o for s in told for b in s["beats"] for kind, o in
               ((k, v) for a in b.get("actions", []) for k, v in a.items()) if kind == "click"}
     assert opened <= {p["opener"] for p in pages}
-
-
-def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):
-    deck = small_deck() | {"language": "es"}
-    lead = mp.deck_of(write(tmp_path, deck))["slides"][1]
-    assert lead["title"] == "Antes de decidir: Where"
-
-
-def test_a_lead_in_slide_is_never_written_by_hand(tmp_path):
-    deck = small_deck()
-    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
-                           "blocks": [{"p": "Mine."}]})
-    assert "Slide 2: a lead-in slide is made from its decision's question" in \
-        refused_for(tmp_path, deck)
-
-
-def test_evidence_lines_are_strings_with_words(tmp_path):
-    deck = small_deck()
-    deck["decisions"][0]["evidence"] = ["Fine.", "  "]
-    assert "Decision where: it has no lead-in (evidence)" in refused_for(tmp_path, deck)
-    deck["decisions"][0]["evidence"] = ["x" * 161]
-    assert "the evidence is 161 characters; at most 160" in refused_for(tmp_path, deck)
-    deck["decisions"][0]["evidence"], deck["decisions"][0]["why_you"] = ["Fine."], "y" * 161
-    assert "the why_you is 161 characters; at most 160" in refused_for(tmp_path, deck)
 
 

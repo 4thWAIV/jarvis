@@ -1137,21 +1137,14 @@ EXEMPT = {
         "titles and names) for the command that runs it; nothing it builds reaches "
         "the brain"),
     "decision_package.too_many_words": (
-        "it lists the author's own slides and decisions over the word limits, by their "
-        "own ids and titles, for the agent that ran the command"),
+        "it lists the author's own decisions over the word limits, by their own ids, "
+        "for the agent that ran the command"),
     "decision_package.opening_problems": (
         "it lists what keeps the author's own first slide from being an opening, quoting "
-        "the author's own title, purpose and conclusion, for the agent that ran the "
-        "command"),
-    "decision_package.lead_in_problems": (
-        "it lists the author's own decisions missing their lead-in, by their own ids, for "
-        "the agent that ran the command"),
+        "the author's own title and decision ids, for the agent that ran the command"),
     "decision_package._slide_where": (
-        "it names one of the author's own slides by its own title, or a lead-in by its "
-        "decision's own id, in the command's refusals"),
-    "decision_package.lead_in_slide": (
-        "it builds a lead-in slide from the author's own decision fields into the deck "
-        "the command builds; nothing it builds reaches the brain"),
+        "it names one of the author's own slides by its own title in the command's "
+        "refusals"),
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
@@ -1165,15 +1158,10 @@ EXEMPT = {
         'it writes JARVIS\'s own layout spec numbers and named layout ids into presentation.css; no session record or brain header is involved'),
     'make_package.fill_assets': (
         'it writes the author\'s own asset ids, sizes and hashes back into the author\'s presentation.yaml and prints them to the author command; never a trusted session header'),
-    'presentation_proof.prove_slides': (
-        'it measures authored slide words against the bundled font and returns compiler failures naming source member ids; package content, never a trusted brain header'),
     'presentation_proof.prove_targets': (
         'it compares the generated story\'s selectors with the compiler\'s target index and returns failures naming slide titles; package content, never a trusted brain header'),
     'presentation_source._semantics': (
         'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
-    'presentation_source.draw_opening': (
-        'it draws the author\'s own situation fields and conclusion as the deck\'s first slide, '
-        'with JARVIS\'s fixed labels; package content, never a trusted session or brain header'),
     'package_reader.before_the_ask': (
         'it turns the built deck\'s own slide titles, words and narration into the text the '
         'cold reader session is given; package content, never a trusted session or brain header'),

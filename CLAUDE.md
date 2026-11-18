@@ -1190,7 +1190,7 @@ a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
 draws no strip, Previous, Next or status of its own; it says each slide
 it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
 border moves through the deck's own slides (`describe`'s `pages`,
-`package_inbox.deck_pages` over the shared deck's `pages`: every lead-in,
+`package_inbox.deck_pages` over the shared deck's `pages`: every slide,
 question and the vote its own, numbered as the deck numbers them, a
 question marked in Chapters; `packages.ts` `navigation`, the story's
 slides for a page that is no deck) and counts itself on the one it shows;
@@ -1326,28 +1326,21 @@ theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
 (`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
 named layouts from one spec (`presentation_assets/layout-spec.json`,
 `layout_spec.py`, which generates the deck's CSS; `--check` fails when they
-differ) and one bundled font (Inter, SIL OFL, `font_metrics.py`'s width
-table, `layout_spec.font_css`, its one place, served once by JARVIS at
-`layout_spec.FONT_PATH` and linked by every deck rather than carried in it;
-a deck opened outside JARVIS falls back to the system font), and proves without a browser (`presentation_proof.py`) that
-every title, text, table and bar slot holds its words at every frame from
-662 x 489 to 1600 x 900, that every picture is real and readable from its
-bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn
-size and label floor at the smallest frame; `--fill-assets` writes each
-asset's size and hash), that the story points only at what is drawn and
-that the renderer files are JARVIS's own; the proof goes in the package
-(`.jarvis/layout-proof.json`, with the language it was built in). Every
-deck is a briefing (`decision_package.briefing_problems`: its `purpose`
-and one-sentence `conclusion`, an opening that shows them, and each
-decision's `why_you` and `evidence`, drawn as its lead-in slide before it).
-A deck that asks a decision gives its `situation` (`subject`, `happened`,
-`approved_before`, `changes`; refused when any is missing,
-`presentation_source.NEEDS_SITUATION`), from which JARVIS draws its first
-slide (`presentation_source.draw_opening`, `jarvis-opening`, the
-`opening` layout: the subject, what happened, what he approved before,
-what changes for him and the bottom line, in the deck's language,
-`decision_package.SITUATION_WORDS`, at most `new_deck.OPENING_WORDS`),
-told with the purpose. An architecture package's opening is its
+differ), its words in a designed system font stack (`presentation.css`:
+the system's interface font, no font shipped or served, so words are not
+measured; `decision_package.CAPS` keeps them within reason), and proves
+without a browser (`presentation_proof.py`) that every picture is real and
+readable from its bytes at every frame from 662 x 489 to 1600 x 900
+(`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn size
+and label floor; `--fill-assets` writes each asset's size and hash), that
+the story points only at what is drawn and that the renderer files are
+JARVIS's own; the proof goes in the package (`.jarvis/layout-proof.json`,
+`presentation-proof/2`, with the language it was built in). Every deck is
+a briefing (`decision_package.briefing_problems`: its `purpose` and
+one-sentence `conclusion`, and a first slide of words, not a decision or
+data first, with its narration); what the slides say is the author's,
+never counted against those fields, and JARVIS draws no slide of its own
+before the author's or before a decision. An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
 `work_packages.recognise`) is for a working tool. No package goes through
@@ -1376,8 +1369,8 @@ by click and by decide.py, the story waiting at every question, Stop within
 Previous and count over every slide (`test_voice_page_decision_package.py`),
 and `test_voice_page_layout_model.py` draws a hard fixture deck (long
 words, a table, two pictures, four columns, pictured options, Spanish)
-across the frame range and holds every slot's drawn height to the proof's
-model within 0.2 px. A page JARVIS did not lay out (a hand-made page, an
+across the frame range and holds every picture's drawn size to the proof's
+model within 0.5 px. A page JARVIS did not lay out (a hand-made page, an
 architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).

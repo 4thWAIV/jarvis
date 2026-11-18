@@ -35,15 +35,11 @@ def test_the_six_questions_are_the_skill_s_own():
 def test_the_reader_sees_only_the_slides_before_the_first_decision(tmp_path):
     deck = built(tmp_path)
     slides = package_reader.before_the_ask(deck)
-    assert slides.startswith("Slide 1: Team lunch\n"), "JARVIS's opening first"
-    assert "What happened: The restaurant now needs a booking" in slides
-    assert "Bottom line: Eat in the office at noon" in slides
-    assert "Slide 2: Two decisions on the team lunch" in slides
+    assert slides.startswith("Slide 1: Two decisions on the team lunch\n"), "the author's opening first"
     assert "JARVIS says: Two decisions on the team lunch." in slides
     assert "[Picture: A picture]" in slides
-    assert "Before you decide" not in slides and "Where do we eat?" not in slides, \
-        "no lead-in and no question"
-    assert "Slide 3" not in slides
+    assert "Where do we eat?" not in slides, "no question"
+    assert "Slide 2" not in slides
 
 
 def run(coro):

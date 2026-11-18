@@ -10,8 +10,9 @@ docs/making-a-package.md is the whole of how to use it. In short:
 - PRESENTATION.yaml (presentation/1) is a deck: the author writes words,
   structure, pictures by path, narration and decisions, and names one of
   JARVIS's layouts for each slide (layout_spec); JARVIS lays it out in its
-  own theme and bundled font and proves, without a browser, that every
-  word and picture fits at every frame (presentation_proof). With
+  own theme and proves, without a browser, that every picture is real and
+  readable at every frame, the story points only at what the deck draws
+  and the renderer is its own (presentation_proof). With
   `decisions` it is a decision package, else a presentation; both carry
   the standard vote (package_inbox.vote: Approve / Reject with his words),
   asked at the package view's Done, never as a slide. Got it is retired: a
@@ -106,18 +107,8 @@ PRESENTATION_EXAMPLE = {
     "decisions": [],
 }
 EXAMPLE = {**PRESENTATION_EXAMPLE, "id": "team-lunch-choice", "title": "Team lunch",
-           "situation": {"subject": "Friday's team lunch, which the team has eaten at a restaurant "
-                                    "until now.",
-                         "happened": "The restaurant now needs a booking by Wednesday, and nobody "
-                                     "has booked.",
-                         "approved_before": "You approved a monthly team lunch in March; where it "
-                                            "is held was never decided.",
-                         "changes": "Your answer sets where the team eats on Friday, and who "
-                                    "books or orders."},
            "slides": [*PRESENTATION_EXAMPLE["slides"], {"id": "where", "type": "decision", "decision": "where-to-eat"}],
            "decisions": [{"id": "where-to-eat", "question": "Where do we eat on Friday?",
-                          "why_you": "It is your team's day and your budget.",
-                          "evidence": ["The restaurant needs a booking by Wednesday."],
                           "options": [{"id": "office", "name": "In the office", "says": "Food is brought in."},
                                       {"id": "restaurant", "name": "A restaurant", "says": "A short walk away."}],
                           "recommended": "office", "reason": "Nobody has to book a table.",
@@ -172,8 +163,7 @@ def prepare_deck(raw: dict, source_dir: Path) -> dict:
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
     # A briefing (dp.briefing_problems): its purpose and conclusion as the
-    # author wrote them, the opening that shows them and each decision's
-    # lead-in. The standard vote is JARVIS's own and needs none.
+    # author wrote them, and an opening of words with its narration.
     problems = dp.problems_of(deck, source_dir) + dp.briefing_problems(raw, deck)
     if not problems:
         problems += dp.story_problems(deck)
@@ -618,7 +608,7 @@ def fill_assets(source: Path) -> list[str]:
 # -- what is refused -----------------------------------------------------------------
 
 JSON_DECK_RETIRED = ("A deck is written as presentation.yaml (presentation/1): JARVIS lays it out "
-                     "and proves it fits. content.json decks are no longer made; "
+                     "and proves it. content.json decks are no longer made; "
                      "python -m jarvis.make_package --example presentation prints one to start from.")
 
 

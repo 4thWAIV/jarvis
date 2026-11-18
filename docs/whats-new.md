@@ -68,12 +68,20 @@ Return after a Stop goes back to the sentence it cut off, and Continue on a
 paused story goes on from that sentence rather than the start of the slide. If the
 package has been replaced by a newer version since you asked, JARVIS says
 so instead of taking you to a place that no longer exists.
-## Every package that asks you something opens on where things stand
 
-A deck that asks you to decide something now opens on a slide JARVIS draws
-itself: what it is about, what happened and why, what you already approved
-that it touches, what changes for you if you say yes, and the bottom line.
-An agent cannot send one without all four. Before it reaches you, a second
+## Decks are the author's own words, with no slides JARVIS adds
+
+JARVIS no longer adds a "Before you decide" slide ahead of each question,
+and no longer refuses a deck whose first slide does not repeat most of the
+words of its purpose and conclusion, or a slide with more than 60 words.
+What a deck says, and in what order, is its author's to write; a deck still
+opens on words with JARVIS speaking over them, never on a question or a
+table. Decks draw in your system's own font, so nothing ships a font of its
+own.
+
+## A fresh reader checks a package before it reaches you
+
+Before a package reaches you, a second
 fresh reader that was not there is given only the slides before the first
 question and must be able to say what it is about, what you approved
 before, what happened, what the options are and what changes under each,
@@ -81,15 +89,16 @@ what is recommended and what you are asked. What it cannot answer goes back
 to the author once; a package a reader still cannot follow never reaches
 you.
 
-## JARVIS lays out every deck and proves it fits
+## JARVIS lays out every deck and checks its pictures
 
 Decks are no longer laid out by the agent that wrote them or checked by
 photographing them in a browser. The agent writes the words, pictures and
-questions; JARVIS draws every slide in its own layouts and font and works
-out, before anything is sent, that every word and picture fits at every
+questions; JARVIS draws every slide in its own layouts and works out,
+before anything is sent, that every picture is real and readable at every
 size the package view can be, from the smallest centre view to a whole
-screen. Your JARVIS works it out again when a deck arrives and opens none
-that does not fit. A page an agent made by hand, which JARVIS did not lay
+screen, and that the story points only at what the deck shows. Your JARVIS
+works it out again when a deck arrives and opens none that does not
+pass. A page an agent made by hand, which JARVIS did not lay
 out, says "Layout not checked" in its bar.
 
 ## Every slide of a deck is in its navigation

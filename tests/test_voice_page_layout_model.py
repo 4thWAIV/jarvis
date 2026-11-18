@@ -1,15 +1,14 @@
-"""JARVIS proves a deck fits without a browser (jarvis/presentation_proof.py):
-the height every text and table slot needs is computed from the bundled
-font's widths and the layout spec. This test holds that model to the
-browser: a hard fixture deck (long words, a table, two pictures, a
-comparison of four, a decision with picture options, in Spanish) is built
-as make_package builds it and drawn in headless Chromium at frames across
-the whole range, and the height the browser gives each slot's words is the
-height the model computed, within MODEL_PX, once the proof's small width
-margin (layout_spec's "width_margin", kept for subpixel rounding) is taken
-off; with it on, the proof never needs less than the browser draws. A
-change to the CSS, the font or the renderer that the model does not follow
-fails here, in CI.
+"""JARVIS proves a deck's pictures without a browser
+(jarvis/presentation_proof.py): the size every picture is drawn at is
+computed from its own bytes (picture_proof) and the layout spec's slot
+boxes. This test holds that model to the browser: a hard fixture deck (long
+words, a table, two pictures, a comparison of four, a picture beside words,
+a decision with picture options, in Spanish) is built as make_package builds
+it and drawn in headless Chromium at frames across the whole range, and the
+size the browser draws each picture is the size the proof computed, within
+MODEL_PX. A change to the CSS or the renderer that the model does not follow
+fails here, in CI. A slide's words are drawn in the system font stack and
+are not modelled.
 
 A browser page test: run with `pytest -m page` (see pytest.ini)."""
 from __future__ import annotations
@@ -20,14 +19,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis import layout_spec, make_package as mp, picture_proof, presentation_proof
-from jarvis.presentation_schema import ContentSlide, TableObject, TextObject
+from jarvis import layout_spec, make_package as mp, picture_proof
+from jarvis.presentation_schema import ContentSlide, ImageObject
 from jarvis.presentation_source import read_source
 
 pytestmark = pytest.mark.page
 
-# How far the browser's height may be from the model's, in px.
-MODEL_PX = 0.2
+# How far the browser's drawn size may be from the model's, in px.
+MODEL_PX = 0.5
 
 # The frames drawn: the range's corners, its middle, and where the deck unit
 # switches from the frame's width to its height.
@@ -85,11 +84,6 @@ def hard_deck(folder: Path) -> Path:
         "purpose": "Comprobar que el modelo de altura coincide con el navegador.",
         "conclusion": "El modelo y el navegador dan la misma altura en cada marco.",
         "language": "es", "requires": ["presentation-core/1"], "assets": assets,
-        "situation": {
-            "subject": "Una baraja de prueba con palabras largas, tablas y cuatro columnas.",
-            "happened": "Se cambió cómo JARVIS dibuja las barajas; ahora lo calcula sin navegador.",
-            "approved_before": "Usted aprobó que JARVIS calcule el diseño sin navegador.",
-            "changes": "Si el modelo se aparta del navegador, esta prueba falla en CI."},
         "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
                         "revision": "1", "description": "Datos inventados para la prueba."}],
         "slides": [
@@ -130,8 +124,6 @@ def hard_deck(folder: Path) -> Path:
         ],
         "decisions": [{
             "id": "elegir-ruta", "question": "¿Qué ruta probamos?",
-            "why_you": "Usted decide el presupuesto de la prueba.",
-            "evidence": ["Las dos rutas están listas."],
             "options": [{"id": "plantada", "name": "La plantada", "says": "Plantas en la calle.",
                          "picture": "opcion-a"},
                         {"id": "pavimentada", "name": "La pavimentada", "says": "Como ahora.",
@@ -143,35 +135,13 @@ def hard_deck(folder: Path) -> Path:
     return source
 
 
-# What the browser drew for one slot: the height of its words (each block's
-# box and the space after it), or of its table.
+# What the browser drew for one picture: its size inside its slot, contained.
 DRAWN = """id => {
-  const slot = document.getElementById(id);
-  const table = slot.querySelector("table");
-  if (table) return table.getBoundingClientRect().height;
-  let total = 0;
-  for (const child of slot.children) {
-    total += child.getBoundingClientRect().height + parseFloat(getComputedStyle(child).marginBottom);
-  }
-  return total;
+  const img = document.getElementById(id).querySelector("img");
+  const box = img.getBoundingClientRect();
+  const scale = Math.min(box.width / img.naturalWidth, box.height / img.naturalHeight);
+  return [img.naturalWidth * scale, img.naturalHeight * scale];
 }"""
-
-
-def modelled(obj, slot_box, frame, margin: bool = True) -> float:
-    """The proof's height for `obj`; without its width margin when `margin`
-    is False."""
-    if not margin:
-        spec = layout_spec.spec()
-        spec["text"]["width_margin"] = 0
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(layout_spec, "spec", lambda: spec)
-            return modelled(obj, slot_box, frame)
-    u = layout_spec.unit(frame)
-    width, _ = layout_spec.frame_box(slot_box, frame)
-    measured = (presentation_proof.table_height(obj, width, u) if isinstance(obj, TableObject)
-                else presentation_proof.text_height(obj, width, u))
-    assert not isinstance(measured, str), measured
-    return measured
 
 
 @pytest.fixture(scope="module")
@@ -182,7 +152,7 @@ def built(tmp_path_factory):
     return package, read_source(package / "source.yaml", built=True, language="es")
 
 
-def test_the_browser_draws_every_slot_the_height_the_model_computed(built):
+def test_the_browser_draws_every_picture_the_size_the_proof_computed(built):
     from playwright.sync_api import sync_playwright
     package, source = built
     checked, off = 0, []
@@ -192,34 +162,29 @@ def test_the_browser_draws_every_slot_the_height_the_model_computed(built):
             page = browser.new_page()
             page.route("**/api/packages/story.js", lambda route: route.fulfill(
                 body="", content_type="application/javascript"))
-            # The bundled font JARVIS serves to every deck (layout_spec.FONT_PATH).
-            page.route("**" + layout_spec.FONT_PATH, lambda route: route.fulfill(
-                body=layout_spec.font_css(), content_type="text/css"))
             for frame in FRAMES:
                 page.set_viewport_size({"width": int(frame[0]), "height": int(frame[1])})
                 page.goto((package / "index.html").as_uri())
                 page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
-                page.evaluate("async () => { await document.fonts.ready; }")
-                assert page.evaluate("document.fonts.check('18px \"JARVIS Deck\"')"), \
-                    "the bundled font is the one drawn"
+                page.wait_for_function("[...document.images].every(img => img.complete)")
                 for slide in source.document.slides:
                     if not isinstance(slide, ContentSlide):
                         continue
                     boxes = layout_spec.boxes(slide.layout, {o.slot for o in slide.objects})
                     for obj in slide.objects:
-                        if not isinstance(obj, (TextObject, TableObject)):
+                        if not isinstance(obj, ImageObject):
                             continue
-                        dom = "presentation-main-" + obj.id
-                        drawn = page.evaluate(DRAWN, dom)
-                        exact = modelled(obj, boxes[obj.slot], frame, margin=False)
-                        proof = modelled(obj, boxes[obj.slot], frame)
+                        drawn = page.evaluate(DRAWN, "presentation-main-" + obj.id)
+                        model = picture_proof.drawn(source.pictures[obj.asset],
+                                                    layout_spec.frame_box(boxes[obj.slot], frame))
                         checked += 1
-                        if abs(drawn - exact) > MODEL_PX or proof < drawn - MODEL_PX:
-                            off.append(f"{frame[0]}x{frame[1]} {obj.id}: drawn {drawn:.2f} px, "
-                                       f"model {exact:.2f} px, proof {proof:.2f} px")
+                        if any(abs(d - m) > MODEL_PX for d, m in zip(drawn, model)):
+                            off.append(f"{frame[0]}x{frame[1]} {obj.id}: drawn "
+                                       f"{drawn[0]:.2f} x {drawn[1]:.2f} px, model "
+                                       f"{model[0]:.2f} x {model[1]:.2f} px")
         finally:
             browser.close()
-    assert checked >= len(FRAMES) * 10, checked
+    assert checked == len(FRAMES) * 3, checked
     assert not off, "\n".join(off)
 
 

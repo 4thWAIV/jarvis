@@ -710,7 +710,7 @@ async def _check_layout(d: Deck, label: str) -> None:
     pictures_bad = 0
     unfollowed = []
     # The border moves through the deck's own slides and counts as the deck
-    # numbers them: every lead-in, question and the vote its own.
+    # numbers them: every slide, question and the vote its own.
     total = len(slides)
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
@@ -992,11 +992,10 @@ async def _check_border(d: Deck, label: str) -> None:
     d.result.expect(all(icon["name"] and icon["width"] == 32 and icon["height"] == 32 for icon in icons),
                     f"{label}: frame icons have names and 32-pixel targets",
                     f"{label}: frame icon geometry or names differ: {icons}")
-    drawn_in = await d.js("""async () => { await document.fonts.ready;
-        return [...document.fonts].filter(f => f.family.replace(/"/g, "") === "JARVIS Deck"
-                                          && f.status === "loaded").length === 2; }""")
-    d.result.expect(drawn_in, f"{label}: the deck is drawn in the font JARVIS serves",
-                    f"{label}: the bundled font JARVIS serves did not load in the frame")
+    drawn_in = await d.js("""() => [...document.fonts].length === 0
+        && getComputedStyle(document.body).fontFamily.includes("-apple-system")""")
+    d.result.expect(drawn_in, f"{label}: the deck is drawn in the system font, none loaded",
+                    f"{label}: the deck loads a font, or is not drawn in the system font stack")
     unchecked = await border.locator(".package-unchecked").count()
     d.result.expect(unchecked == 0, f"{label}: the border does not say its layout was not checked",
                     f"{label}: a deck JARVIS proved says \"Layout not checked\"")
@@ -1037,7 +1036,7 @@ async def _check_border(d: Deck, label: str) -> None:
     await choice.select_option("1")
     await d.page.keyboard.press("Escape")
     # Next and Previous step one slide of the deck at a time, so every
-    # lead-in, every question and the vote is reached in turn.
+    # slide, every question and the vote is reached in turn.
     step = {way: view.locator(f"[data-package-step={way}]") for way in ("next", "previous")}
     if await step["next"].count():
         missed = []

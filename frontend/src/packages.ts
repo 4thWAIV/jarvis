@@ -102,8 +102,8 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
-  /** A deck's own slides in its order and numbering (a decision's lead-in
-   *  and its question each one), which the border moves through; null for
+  /** A deck's own slides in its order and numbering (each question one),
+   *  which the border moves through; null for
    *  a page that is not a deck, whose border moves through its story. */
   pages?: DeckPage[] | null;
   /** The standard vote a page (not a deck) carries, with his answer so far

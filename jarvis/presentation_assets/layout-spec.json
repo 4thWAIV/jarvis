@@ -2,17 +2,16 @@
   "about": "JARVIS's one layout spec for every deck it draws. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
   "frame": {"min": [662, 489], "max": [1600, 900]},
   "unit": {"width": 880, "height": 640},
-  "text": {"min_px": 13, "max_px": 25, "width_margin": 0.02},
+  "text": {"min_px": 13, "max_px": 25},
   "styles": {
-    "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35, "face": "regular"},
-    "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2, "face": "bold"},
-    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35, "face": "regular", "pad": [8, 4]}
+    "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35},
+    "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2},
+    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35}
   },
   "control": {"min_px": 32},
   "picture": {"min_px": 60, "stretch_max": 2},
   "slide": {"width": 824, "gap": 8},
   "slot_padding": 4,
-  "paragraph_gap": 0.35,
   "pictures": {
     "content": {"width": 824, "height": 300, "gap": 14},
     "context": {"width": 290, "height": 220},
