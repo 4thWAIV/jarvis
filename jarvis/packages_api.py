@@ -30,8 +30,14 @@ page (PackageView.tsx) makes the request.
                                             from now on no longer shows it
   POST /api/packages/{id}/story             {"action": "tell", "slide"?},
                                             {"action": "resume"}, {"action":
-                                            "stop"} or {"action": "status"}:
-                                            its story
+                                            "stop"}, {"action": "status"},
+                                            {"action": "ask", "view"?},
+                                            {"action": "return"} or {"action":
+                                            "place"}: its story, and Ask and
+                                            Return (story_teller.py)
+  POST /api/packages/{id}/view              {"view"}: what its frame shows now
+                                            (package_place.View), which an
+                                            Ask keeps
   GET  /api/packages/story.js               the helper a story page loads
                                             (package_story.js, one copy),
                                             which points and highlights in
@@ -47,7 +53,7 @@ from typing import Awaitable, Callable, Optional
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from jarvis import data_paths, package_story, story_teller, web_auth, work_packages
+from jarvis import data_paths, package_place, package_story, story_teller, web_auth, work_packages
 from jarvis.web_auth import PACKAGE_PAGE_MARK, PACKAGE_PAGE_PREFIX
 from jarvis.work_packages import Package, PackageError
 
@@ -126,12 +132,13 @@ async def _body(request: Request, limit: int) -> bytes:
 
 def mount(app: FastAPI,
           open_page: Callable[[str], Awaitable[tuple[Package | None, str]]],
-          story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]],
+          story: Callable[..., Awaitable[tuple[bool, str]]],
           open_received: Callable[[uuid.UUID, uuid.UUID],
                                   Awaitable[tuple[Package | None, bool, str]]],
           open_local: Callable[[str, bool], Awaitable[tuple[Package | None, bool, str]]],
           close_page: Callable[[str], Awaitable[None]],
-          saved: Optional[Callable[[Package], None]] = None) -> None:
+          saved: Optional[Callable[[Package], None]] = None,
+          seen: Optional[Callable[[str, "package_place.View"], None]] = None) -> None:
     """`open_page(reference)` opens a page package in every page's centre
     area: (the package, "") or (None, why not). `story(action, reference,
     slide)` tells or stops its story: (done, what was done or why not).
@@ -143,7 +150,8 @@ def mount(app: FastAPI,
     ever asked for on his click (`his_click`).
     `close_page(reference)` forgets the package a newly connected page shows.
     `saved(package)` is told after the frame has saved a result (the inbox
-    reads a deck's answers again)."""
+    reads a deck's answers again). `seen(reference, view)` keeps what its
+    frame reports it shows (story_teller.StoryTeller.seen)."""
 
     on_saved = saved
 
@@ -226,16 +234,32 @@ def mount(app: FastAPI,
 
     async def tell_story(package_id: str, request: Request,
                          body: dict = Body(default_factory=dict)):
-        if str(body.get("action") or "") not in (story_teller.STOP, story_teller.STATUS) \
+        action = str(body.get("action") or "")
+        if action not in (story_teller.STOP, story_teller.STATUS, story_teller.PLACE) \
                 and not his_click(request):
             return JSONResponse({"error": NOT_HIS_ACT}, status_code=403)
         slide = body.get("slide")
         if slide is not None and (not isinstance(slide, int) or isinstance(slide, bool)):
             return JSONResponse({"error": "slide is a number, from 1."}, status_code=400)
-        done, said = await story(str(body.get("action") or ""), package_id, slide)
+        view = body.get("view")
+        if view is not None:
+            try:
+                package_place.view_from(view)
+            except package_place.ViewError as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+        done, said = await story(action, package_id, slide, view=view)
         if not done:
             return JSONResponse({"error": said}, status_code=409)
         return {"said": said}
+
+    async def frame_view(package_id: str, body: dict = Body(default_factory=dict)):
+        try:
+            view = package_place.view_from(body.get("view"))
+        except package_place.ViewError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        if seen is not None:
+            seen(package_id, view)
+        return Response(status_code=204)
 
     app.add_api_route("/api/packages", list_packages, methods=["GET"])
     app.add_api_route(RECEIVED_PATH, open_received_package, methods=["POST"])
@@ -251,4 +275,6 @@ def mount(app: FastAPI,
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/page", close_package_page,
                       methods=["DELETE"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/story", tell_story,
+                      methods=["POST"])
+    app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/view", frame_view,
                       methods=["POST"])

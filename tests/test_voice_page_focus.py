@@ -7,7 +7,7 @@ about, by what a real browser draws:
               it, and the border fades without the pointer and comes back
               when the pointer reaches it or keyboard focus enters it; with
               reduced motion or Steady it stays
-  decision    a question opened from Questions in the vote row, and one the
+  decision    a question opened from the border's Questions icon, and one the
               story waits on: the part it is about stays lit (its box,
               reported by the frame's helper through the bridge, within
               2 px of the element's own) and the rest dims to 55 percent;
@@ -310,7 +310,7 @@ async def test_a_question_opened_from_questions_is_presented_beside_its_part(
         browser, page = await _opened(p, page_url, focus_app, voice)
         try:
             opener = page.locator(QUESTIONS)
-            await async_api.expect(opener).to_have_text("Questions: 2 to answer")
+            await async_api.expect(opener).to_have_attribute("aria-label", "Questions: 2 to answer")
             await opener.focus()
             await page.keyboard.press("Enter")
             layer = page.locator(".package-focus[data-kind='decision']")
@@ -345,7 +345,7 @@ async def test_a_question_opened_from_questions_is_presented_beside_its_part(
             assert record["route"]["answer"] == "a" and record["route"]["note"] == "Shorter wins."
             await async_api.expect(card.get_by_role("button", name="Route A (recommended)")) \
                 .to_have_attribute("aria-pressed", "true")
-            await async_api.expect(opener).to_have_text("Questions: 1 to answer")
+            await async_api.expect(opener).to_have_attribute("aria-label", "Questions: 1 to answer")
 
             # Next: a question about the whole document, dimmed lightly, the card centred.
             await card.get_by_role("button", name="Next", exact=True).click()

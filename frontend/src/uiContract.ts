@@ -4775,7 +4775,10 @@ export const UI_CONTRACT = {
         "questionNext",
         "doneAsk",
         "doneAnyway",
-        "doneNotYet"
+        "doneNotYet",
+        "ask",
+        "goBack",
+        "signOff"
       ],
       "presentations": [
         {

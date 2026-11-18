@@ -78,6 +78,9 @@ MODES = {CONVERSATION: "skill", AGENT: "brief", PAGE: "entry"}
 _JARVIS_FIELDS = ("purpose", "returns", "runs", *MODES.values())
 # The optional story a page package tells (package_story.py).
 STORY = "story"
+# The standard vote a page package carries (package_inbox.VOTE_ID), named in
+# its package.json by make_package.
+VOTE = "approve-package"
 # The room a page package's page is made for (package.json `layout`): the
 # centre as it is, or "wide", made for the takeover (the page offers to let
 # it take over the page; he chooses). Only a page package has one.
@@ -101,7 +104,9 @@ class Manifest:
     """A package's package.json. `runs` is one of MODES; the file it needs
     (`skill`, `brief` or `entry`) is required, the other two optional. A
     page package may name a `story` file too, and the `layout` its page is
-    made for (LAYOUTS; "centre" when it says none)."""
+    made for (LAYOUTS; "centre" when it says none). `vote` is the standard
+    vote a page carries (VOTE, his approval of the package), asked at the
+    package view's Done, never as a slide: make_package sets it."""
     name: str
     version: str
     purpose: str
@@ -114,6 +119,7 @@ class Manifest:
     layout: str = LAYOUTS[0]
     understanding: Optional[dict[str, str]] = None
     communication: Optional[dict] = None
+    vote: Optional[str] = None
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -167,6 +173,11 @@ class Manifest:
             if not isinstance(communication, dict) or communication.get("kind") not in {"general", "architecture"}:
                 raise PackageError("Its communication metadata must declare general or architecture.")
             fields["communication"] = communication
+        vote = body.get("vote")
+        if vote is not None:
+            if vote != VOTE or runs != PAGE:
+                raise PackageError(f"Its package.json's vote is not {VOTE!r} on a page package.")
+            fields["vote"] = vote
         return cls(returns=tuple(returns), runs=runs, understanding=understanding or None, **fields)
 
     def named_files(self) -> dict[str, str]:
@@ -180,6 +191,7 @@ class Manifest:
                            **({"layout": self.layout} if self.layout != LAYOUTS[0] else {}),
                            **({"understanding": self.understanding} if self.understanding else {}),
                            **({"communication": self.communication} if self.communication is not None else {}),
+                           **({"vote": self.vote} if self.vote else {}),
                            "returns": list(self.returns)}, indent=2)
 
 

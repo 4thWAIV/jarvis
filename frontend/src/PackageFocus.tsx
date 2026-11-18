@@ -12,7 +12,7 @@
  * targets is visible), the whole view is dimmed and the card is centred.
  *
  * A decision (a question the story waits on, or one he opened from the
- * vote row) dims to 55 percent around its part; a narrated beat dims to 35
+ * border's Questions icon) dims to 55 percent around its part; a narrated beat dims to 35
  * percent around the beat's targets, with JARVIS's words for it; the
  * architecture explanation is a wider card centred over the whole view,
  * dimmed to 25 percent, scrolling within it. The dim and the light take no

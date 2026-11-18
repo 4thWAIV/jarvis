@@ -44,6 +44,31 @@ that added it can remove it. Settings, Updates now shows the exact commit
 JARVIS is running and says when the checkout has moved on so that a
 restart would run something newer; JARVIS can tell you the same.
 
+## Approve or reject a package at its check mark
+
+Approve and Reject are no longer a row under the package's bar or a slide
+at its end: they are on the check mark at the upper right. Press it and a
+small card opens with Approve, Reject (with your words on what to change)
+and a plain sign-off; Approve or Reject records your answer and signs the
+package off in one go. The package's own questions, when it asks any, open
+from a Questions icon in the bar, so the slides keep the whole space.
+
+## Ask about what you are looking at, then go back to exactly that point
+
+A package's bar has an Ask button. Press it, or start talking over JARVIS
+while he tells a package's story, and he stops at the sentence he was on
+and keeps exactly where you are: the slide, how far down the page you had
+scrolled, and the part you clicked or selected, which he is given so he can
+answer about it. You can ask from somewhere else in the package too, and
+each place is kept. Return, beside Ask with how many places are kept, takes
+you back one place at a time: the page comes back as it was first, then he
+says that interrupted sentence again from its start. A story that was
+paused or waiting for your answer stays so. Stop keeps your place too, so
+Return after a Stop goes back to the sentence it cut off, and Continue on a
+paused story goes on from that sentence rather than the start of the slide. If the
+package has been replaced by a newer version since you asked, JARVIS says
+so instead of taking you to a place that no longer exists.
+
 ## Every slide of a deck is in its navigation
 
 A deck's Chapters, Previous and Next now go through every slide the deck

@@ -152,7 +152,7 @@ class Teller:
 
     def __init__(self, harness):
         from jarvis.story_teller import StoryTeller
-        self.h, self.frames = harness, []
+        self.h, self.frames, self.others = harness, [], []
 
         async def open_page(reference):
             try:
@@ -161,7 +161,9 @@ class Teller:
                 return None, str(e)
 
         async def announce(frame):
-            self.frames.append(frame)
+            # The story's own frames; Ask and Return's (package_asks,
+            # package_return) apart.
+            (self.frames if frame["type"] == "package_story" else self.others).append(frame)
         self.teller = StoryTeller(lambda: harness.sched, open_page, announce)
 
     def states(self):
@@ -266,7 +268,7 @@ def test_the_page_and_the_brain_tell_it_through_one_function(wired, deck, monkey
     from jarvis.story_teller import Told
     server, calls = wired.server, []
 
-    async def act(action, reference, slide=None, by="on the page"):
+    async def act(action, reference, slide=None, by="on the page", view=None):
         calls.append((action, reference, slide))
         package = work_packages.find(reference)
         if action == "stop":

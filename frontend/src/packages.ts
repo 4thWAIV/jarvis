@@ -228,7 +228,43 @@ export interface StoryState {
   state: "telling" | "waiting" | "paused" | "finished" | "stopped";
   slide: number;
   slides: number;
+  /** The beat of the slide being heard, or to go on from. */
+  beat?: number;
   question?: string;
+}
+
+/** What a package's frame shows (package_place.View): the deck slide on
+ *  screen (its opener), where each scrolled part is, the part he selected
+ *  with its words and his selection in them, and what had keyboard focus.
+ *  The frame's helper reports it (package_story.js `place`). */
+export interface FrameView {
+  page: string | null;
+  scroll: { at: string; x: number; y: number }[];
+  part: string | null;
+  words: string;
+  selection: [number, number] | null;
+  selected: string;
+  focused: string | null;
+}
+
+/** A place he asked from (story_teller.py's Ask), as the server tells the
+ *  page: the last is the one Return goes back to. */
+export interface AskedPlace {
+  package: string;
+  state: string;
+  slide: number | null;
+  beat: number | null;
+  speaking: boolean;
+  page: string | null;
+}
+
+/** Going back to a place (the server's `package_return`): the view to bring
+ *  up in its frame, and what the story had revealed there first. */
+export interface ReturnTo {
+  package: string;
+  view: FrameView;
+  revealed: Record<string, string>[];
+  seq: number;
 }
 
 /** Whether a story in this state is running: Stop ends it. */
@@ -242,6 +278,18 @@ export const storyCue = createStore<StoryCue | null>(null);
 
 /** The story the server last spoke of, or none. */
 export const storyState = createStore<StoryState | null>(null);
+
+/** The places he can go back to, the last on top (`package_asks`). */
+export const packageAsks = createStore<AskedPlace[]>([]);
+
+/** A place being gone back to, until its frame has brought it up. */
+export const returnTo = createStore<ReturnTo | null>(null);
+let returns = 0;
+
+/** The server's `package_return` frame. */
+export function returnToPlace(msg: Omit<ReturnTo, "seq">): void {
+  returnTo.set({ ...msg, seq: ++returns });
+}
 
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
@@ -422,19 +470,43 @@ export async function openLocalPackage(path: string): Promise<Said | null> {
   }
 }
 
-/** Tell its story from `slide` (from 1), resume it from the first question
- *  with no answer, or stop it: null once done, else why not. */
-export async function tellStory(id: string, action: "tell" | "resume" | "stop",
-                                slide?: number): Promise<Said | null> {
+/** Tell its story from `slide` (from 1), resume it from the place kept (else
+ *  the first question with no answer), stop it, Ask (keep where he is, with
+ *  what its frame shows) or Return (to the last place kept): null once done,
+ *  else why not. */
+export async function tellStory(id: string, action: "tell" | "resume" | "stop" | "ask" | "return",
+                                slide?: number, view?: FrameView | null): Promise<Said | null> {
   try {
     await answer(await fetch(`${base(id)}/story`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(slide ? { action, slide } : { action }),
+      body: JSON.stringify({ action, ...(slide ? { slide } : {}), ...(view ? { view } : {}) }),
     }));
     return null;
   } catch (e) {
     return original(e);
   }
+}
+
+// What a frame shows, sent to the server once it has stayed the same this
+// long (an Ask sends it at once).
+const VIEW_SETTLES_MS = 300;
+let viewTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Tell the server what package `id`'s frame shows now, so an Ask made by
+ *  voice keeps it too; sent once it settles. */
+export function reportView(id: string, view: FrameView): void {
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => {
+    void fetch(`${base(id)}/view`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ view }),
+    }).catch(() => undefined);
+  }, VIEW_SETTLES_MS);
+}
+
+/** His Ask: keep where he is in package `id` (what its frame shows now). */
+export function askAbout(id: string, view: FrameView | null): Promise<Said | null> {
+  clearTimeout(viewTimer);
+  return tellStory(id, "ask", undefined, view);
 }
 
 /** Where its entry is served, to its frame. */

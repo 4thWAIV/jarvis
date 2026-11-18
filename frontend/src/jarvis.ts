@@ -34,8 +34,8 @@ import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale, t } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
 import { startUiClient } from "./uiClient";
-import { packageClosed, showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
-         type StoryState } from "./packages";
+import { packageAsks, packageClosed, returnToPlace, showPackage, storyCue, storyState, type AskedPlace,
+         type PackageInfo, type ReturnTo, type StoryCue, type StoryState } from "./packages";
 import { showMember } from "./bundles";
 import { BUNDLE_VIEW_FRAME } from "./bundleContract";
 
@@ -504,6 +504,12 @@ export function startJarvis(orb: Orb): void {
       // A story started, moved to a slide, finished or stopped
       // (story_teller.py): the package's Tell the story and Stop follow it.
       storyState.set(msg as unknown as StoryState);
+    } else if (type === "package_asks") {
+      // The places he can go back to (story_teller.py's Ask): Return shows.
+      packageAsks.set(Array.isArray(msg.asks) ? msg.asks as unknown as AskedPlace[] : []);
+    } else if (type === "package_return") {
+      // Back to a place he asked from: its frame brings the view up.
+      if (typeof msg.package === "string") returnToPlace(msg as unknown as Omit<ReturnTo, "seq">);
     } else if (type === "stop") {
       // Stop speaking from anywhere: this page's Stop came back, the brain's
       // stop_speaking, or he talked over JARVIS.

@@ -1174,9 +1174,8 @@ retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
 attention item; the brain calls `package_results` and `draft_message` once
 he agrees. The presentation first: in `PackageView.tsx` the icon border
 (`PackageBorder.tsx`: the story's controls, chapters, More, Done, Take
-over, Close) is the only bar, with under it only the vote row
-(`.package-vote-row`: Questions and the standard vote's Approve and
-Reject) and, for an architecture package, one row of links
+over, Close, and Questions while the package asks its own) is the only
+bar, with under it nothing but, for an architecture package, one row of links
 (`.package-tools`: its source, checker evidence and explanation); the
 package's own page takes the rest of the view, its whole width. There is
 no side column: nothing goes beside or above the page, and with nothing
@@ -1221,7 +1220,7 @@ when there is no part). Where a part is comes only from the frame's helper
 (`story.focus` {key, rect} through the bridge; the page asks for a
 question's part with `focus.show` {key, targets}), never from the frame's
 DOM. Every question is asked in a card: one opens when the story waits on
-it, or when he presses Questions in the vote row (the first he has not
+it, or when he presses the border's Questions icon (the first he has not
 answered); its part is the waiting slide's targets (`Story.outline`'s
 `focus`: its beats' targets, else its own element), dimmed to 55 percent
 around it; its card (`QuestionItem` over one `usePackageQuestions`, so
@@ -1229,8 +1228,9 @@ every answer goes through the inbox's one answer route) has the question,
 why him, the evidence, the options with the recommended one marked, his
 words and what is recorded, and "Question N of M" with Back and Next
 through the sequence (his approval of a design first, then the story's
-other questions that apply, then the standard vote, whose card is
-`VoteControls`; Next after the last closes). An answer leaves the card on
+other questions that apply; Next after the last closes; the standard vote
+is asked at Done, and in this card only while a story built before still
+waits on it, `VoteControls`). An answer leaves the card on
 its question with what is recorded. An architecture package's Read the
 explanation opens it as a wider card centred over the whole view,
 scrolling within it. A told beat (its cue carries `say`) lights its
@@ -1268,12 +1268,37 @@ WAITING, as running state the server knows (which question), until the
 answers file has a new answer (a Choose saved through the bridge, or
 `scripts/decide.py`), and goes on once `conversation_floor` is idle; an
 answered question is passed over unless told from its own slide; `resume`
-starts at the first with no answer. His speaking over a slide PAUSES it
+goes on from where a running story is paused or waiting
+(`StoryTeller._kept`: that beat told again, or its question waited on
+again), else the first with no answer. His speaking over a slide PAUSES it
 (on a waiting slide it waits), never ends it, so Stop always finds it. Stop
-ends it told, paused or waiting: the page's Stop, the tool, `_stop_speaking`
+ends it told, paused or waiting, and keeps its place for Return (`Ended.place`, on the stack below): the page's Stop, the tool, `_stop_speaking`
 (hush), a whole utterance of `Vocabulary.stop_words` (checked after
 `user_final`, before the brain hears it) and closing its page; a second
 stop says it is already stopped (`StoryTeller.ended`), never "no story".
+Ask and Return (the approved Restore place choice): a place
+(`package_place.Place`) is the story's slide and beat (the first beat not
+all played, `story_teller._cut_beat`, from the scheduler's own outcomes),
+what it was doing, whether its words were sounding, and the frame's view
+(`package_place.View`: the deck slide's opener, each scrolled part, the part
+he clicked or selected with its words and his selection, keyboard focus),
+which the helper reports as `place` and the page keeps on the server
+(`POST /api/packages/<id>/view`, `StoryTeller.seen`), and its revision
+(`revision_of`: the zip's SHA-256 or an architecture revision). Ask (the
+border's Ask, `POST .../story` `{"action": "ask", "view"}`, his click, and
+the brain's `tell_package_story` action `ask`) keeps it on a stack
+(`StoryTeller.asks`, at most `MAX_ASKS`, a `package_asks` frame) and pauses
+words that were sounding; his speaking over a slide and a Stop keep their
+place too.
+The brain gets the part walled (`server._place_said`; action `place` says
+where he is, kept nowhere). Return (the border's Return with its count, the
+action `return`) pops the last: refused and set aside when its package is
+gone, `superseded` (`server._package_superseded`) or not its revision;
+otherwise the page is opened, a `package_return` frame has the frame bring
+the view back first (`place.restore`: `package_place.revealed`, the slide,
+scrolling, selection, focus; `place.restored`), and only then a place whose
+words were sounding is told again from its beat; a paused, waiting or
+stopped story stays so (`_settle_at`).
 Each chunk carries its beat as `cue` on its `audio` frame (the way
 `capture` rides); the page sets `packages.storyCue` when that chunk STARTS
 playing and clears it when the beat's last chunk is played or the voice
@@ -1375,15 +1400,21 @@ one last, his approval of the package, `package_inbox.vote`
 words saying what to change, `needs_words`, held to it by the answer route,
 `record_story_answer`, the shared deck's deck.js and decide.py, and a Work
 item's answer, `package_inbox.bare_reject`; Aprobar and Rechazar in
-Spanish, `_VOTE_WORDS`), at its end, in the deck's or
-story's language, else the language in force as it is built
-(`make_package.built_language`, `language_setting.saved`; a page's own
-story is in its own language, English when it names none): a deck as one
-more decision, a page as its story's last slide (`with_vote_slide`,
-`vote_slide`) waiting on its answers file, after any questions of its
-own (a review package's `approve-item` and a merge package's `merge-pr`
-included). Only an architecture package's `approve-architecture`, which
-`package_story.compose` puts last in place of the vote, takes its place. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
+Spanish, `_VOTE_WORDS`), in the deck's or story's language, else the
+language in force, asked only at the package view's Done, never as a
+slide (Tim, 2026-11-17: space is used carefully): package.json names it
+(`vote`, `work_packages.Manifest.vote`; the shared deck's `new_deck.manifest`
+for every deck, `make_package._with_vote` for every page), and
+`package_inbox.carries_vote`, `questions` (`_standard_vote` after the
+package's own questions, a review package's `approve-item` and a merge
+package's `merge-pr` included) and `record_vote` (JARVIS writes his answer
+where the package keeps its others, its story's answers file else
+results/decisions.json and a deck's decisions.js; `records_vote_itself`)
+carry it. A deck or story built before, which asks it on a slide, carries
+it there and that slide still answers it. An architecture package's story
+is still composed by `package_story.compose` with the vote (or
+`approve-architecture`) as its last slide, bound into its canonical
+revision. Got it is retired (Tim, 2026-11-14): nothing offers, accepts or
 records `understood` (`got-it`, `questions`) for any package.
 `make_package.refuse_vote_ids` refuses a deck decision or story slide that
 asks it (and a deck that declares `approve-package` itself), the answer
@@ -1393,24 +1424,27 @@ as carrying the approval: its story through `package_story.current`
 (`Package.story()`), its deck through `package_inbox.current_deck`
 (`questions`, and its deck-data.js as served to its own page,
 `deck_data_shown`), its answer written by JARVIS under `approve-package`
-(`record_deck_vote`, since its own decide.py knows only the old id); the
+(`record_vote`, since its own decide.py knows only the old id); the
 architecture gate still recognises a story composed then
 (`package_story.compose`'s `legacy`). An answer given to Got it before
 stays on record and is read back (`_legacy_question`, `page_vote`'s
 `answer_name`; `story_teller.read_answers` lets it stand for the slide),
-never asked again. Every package that carries it, a deck as well as a
-page, has Approve and Reject (a field for his words, then Send) in the
-package view's head beside Done, outside the frame (`PackageView.tsx`
-`VoteControls`, from `describe`'s `vote`, `package_inbox.page_vote`); they
-post to the inbox's answer route, which takes only his click
-(`packages_api.his_click`), and `_answer_inbox_decision` refreshes the
-package shown so a reload shows his answer. A deck asks its own questions
-on its own slides, and the vote on its last one as well as in the head.
-A page's vote is read from that file (`package_inbox.questions`,
-`_story_questions`) and his answer written there
-(`record_story_answer`, from `_answer_inbox_decision` when there is no
-decide.py), so the Work tab, voice and the sign-off capture treat it as a
-deck's. At sign-off a Reject on a package sent with `--work` is also that
+never asked again. Every package that carries it has its vote at Done,
+the check mark in the border, outside the frame (`PackageView.tsx`
+`DoneControl`, from `describe`'s `vote`, `package_inbox.page_vote`):
+pressed, it opens a card anchored to it with Approve and Reject (a field
+for his words, then Send; `VoteControls`), each recorded through the
+inbox's answer route, which takes only his click
+(`packages_api.his_click`), and the package signed off in the same act
+(`signOff`), with a plain sign-off beside them and a place kept for the
+rule on questions left unanswered (`data-slot="unanswered"`); Escape or
+the check mark again closes it and focus goes back to the check mark. A
+package with no vote is signed off at once. `_answer_inbox_decision`
+refreshes the package shown so a reload shows his answer. A deck asks its
+own questions on its own slides. The vote is read through
+`package_inbox.questions` and written by `record_vote` (from
+`_answer_inbox_decision`, and `record_story_answer` for a page), so the
+Work tab, voice and the sign-off capture treat it as any question. At sign-off a Reject on a package sent with `--work` is also that
 item's decision `approve-package-<inbox id>`, asked and answered at once in
 his words (`server._inbox_questions_on_work`, `_rejected`; an I have
 questions given before Got it was retired, `understood-<inbox id>`), and
@@ -1466,7 +1500,8 @@ the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_p
 questions still unanswered (`package_inbox.unanswered`: applying, no answer
 that stands) it asks him once first (Tim's decision done-on-unanswered):
 the route answers 409 with `unanswered` (each id and question) and the page
-names them (`DoneAsk`: Done anyway, Not yet), the tool says which by id;
+names them in Done's card (`DoneControl`'s `DoneAsk`: Done anyway, Not
+yet), the tool says which by id;
 nothing is done until `confirm` (his Done anyway, or the tool's `confirm`
 on his yes), and then the waits on them end as closed unanswered and the
 capture names them. A package with no inbox row (unpacked
@@ -3200,7 +3235,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   story, and the story helper
 - `package_story.py` / `story_teller.py` / `package_story.js` — A page
   package's story: its format and cues, the one service that tells and
-  stops it, and the helper that rings its targets inside the frame
+  stops it (and keeps and returns to his place, Ask and Return), and the
+  helper that rings its targets inside the frame and reports and restores
+  where he is
+- `package_place.py` — Where he is in a package: the place Ask keeps and
+  Return restores, the frame's view, and the revision it is in
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open

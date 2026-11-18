@@ -138,10 +138,10 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
         # Each decision is led in by its own slide (why it is his, its evidence).
         assert shots == ["01-s1.png", "02-lead-where.png", "03-d-where.png",
-                         "04-lead-when.png", "05-d-when.png", "06-d-approve-package.png",
-                         "07-answers.png", "package-border.png"]
+                         "04-lead-when.png", "05-d-when.png", "06-answers.png",
+                         "package-border.png"], "no slide asks the vote: it is asked at Done"
     for check in ("first time: the story waits at where", "first time: the story waits at when",
-                  "first time: every question answered, in order (where, when, approve-package)",
+                  "first time: every question answered, in order (where, when)",
                   "stop by the page during narration: stopped within 1s",
                   "stop by the page while waiting: stopped within 1s",
                   "stop by the brain's tool during narration: stopped within 1s",
@@ -166,10 +166,11 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
     assert "Nothing is shown until he asks for it." in said
 
 
-def test_the_command_checks_a_presentation_and_its_one_vote(
+def test_the_command_checks_a_presentation_whose_vote_is_asked_at_done(
         tmp_path, stand_in, capsys, authored_package_source):
-    """A presentation asks nothing of its own, so it ends with the standard
-    vote (Approve, or Reject with his words), checked as any deck's vote is."""
+    """A presentation asks nothing on its slides: its standard vote is asked
+    at the package view's Done, so the check tells its story to the end and
+    finds no slide asking anything."""
     from jarvis import make_package as mp
     reason = dashboard_page.why_unavailable()
     if reason:
@@ -192,16 +193,11 @@ def test_the_command_checks_a_presentation_and_its_one_vote(
                       "a slide chosen in the border's Chapters opens in the deck"):
             assert any(f"ok: {size}: " in line and check in line for line in lines), \
                 (size, check, said)
-        assert any(f"ok: {size}: " in line and "every vote control is visible" in line
-                   for line in lines), (size, said)
         shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
-        assert shots == ["01-s1.png", "02-s2.png", "03-s3.png", "04-d-approve-package.png",
-                         "05-answers.png", "package-border.png"]
-    for check in ("the story went on to its end", "every beat told pointed",
-                  "the story waits at approve-package",
-                  "every question answered, in order (approve-package)",
-                  "stop by the page while waiting: stopped within 1s",
-                  "resume: answered approve-package first"):
+        assert shots[:3] == ["01-s1.png", "02-s2.png", "03-s3.png"], shots
+        assert not any("approve-package" in name for name in shots), shots
+    assert "the story waits at approve-package" not in said, "no slide waits on the vote"
+    for check in ("the story went on to its end", "every beat told pointed"):
         assert any(line.startswith("  ok: ") and check in line for line in lines), (check, said)
     [(path, _, body)] = stand_in.posts
     assert path.partition("?")[0] == "/api/messages"

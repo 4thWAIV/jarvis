@@ -285,9 +285,14 @@ def story(deck: dict) -> dict:
 
 
 def manifest(deck: dict) -> dict:
-    voting = {"skill": "SKILL.md", "returns": RETURNS} if deck.get("decisions") else {"returns": []}
+    # A deck with no decisions returns only his vote's record.
+    voting = {"skill": "SKILL.md", "returns": RETURNS} if deck.get("decisions") \
+        else {"returns": RETURNS[:1]}
+    # Every deck carries his vote on the package itself (approve-package),
+    # asked at the package view's Done, never as a slide of its own.
     return {"name": deck["name"], "version": deck["version"], "purpose": deck["purpose"],
-            "runs": "page", "entry": "index.html", "story": "story.json", **voting}
+            "runs": "page", "entry": "index.html", "story": "story.json", **voting,
+            "vote": "approve-package"}
 
 
 def write(path: Path, text: str) -> None:

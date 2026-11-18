@@ -1225,6 +1225,13 @@ EXEMPT = {
     "server._package_story": (
         "it says what the teller did, by its fixed states, slide numbers, JARVIS's "
         "package id and JARVIS's own words for who stopped it; no story text"),
+    "server._place_said": (
+        "it says the teller's own state, slide and beat numbers, JARVIS's package id and its "
+        "revision hash above the wall; the slide titles, the page shown and the part he "
+        "selected are the sender's words and go back only inside an untrusted block"),
+    "story_teller._start": (
+        "its log line names only JARVIS's package id and slide and beat numbers; it reads "
+        "the kept place's state only to compare it with the teller's own fixed WAITING"),
     "story_teller._stop_locked": (
         "its note to the brain names only slide numbers, JARVIS's package id and JARVIS's "
         "own words for who stopped it; the slides' titles stay behind the status wall"),
