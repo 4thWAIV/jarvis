@@ -413,6 +413,7 @@ export const rightEn = {
   "right.subsystem.said.knowledgeRestarting": "Restarting: {reason}",
   "right.subsystem.said.knowledgeNotUp": "Not up yet",
   "right.subsystem.said.knowledgeNotAnswering": "Not answering its health check",
+  "right.subsystem.said.knowledgeOpening": "Opening the records ({age} so far)",
   "right.subsystem.said.knowledgeIngestOff": "Switched off",
   "right.subsystem.said.knowledgeReadOnly": "Read only: {problem}",
   "right.subsystem.said.knowledgeOk": { one: "Running; {count} chunk indexed", other: "Running; {count} chunks indexed" },

@@ -35,6 +35,7 @@ class FakeSupervisor:
         self.ticks = 0
         self.paced = []
         self.restarts = 0
+        self.failures = 0
         self.last_reason = None
         self.last_health = {"state": "ok", "store": {"writable": True}, "keyword": {"chunks": 7},
                             "vectors": {"embedder": None}}
@@ -198,8 +199,9 @@ def test_start_engine_waits_for_its_health(monkeypatch):
     monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
     sup = SlowSupervisor(answers_after=3)
     rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
-    assert asyncio.run(rt.start_engine(wait=5)) is True
+    assert asyncio.run(rt.start_engine(wait=5)) == kr.OPENED
     assert sup.started == 1 and sup.looks == 4 and rt.started
+    assert rt.opening_for() is None and rt.health()["opening_for"] is None
 
 
 def test_start_engine_gives_up_waiting_but_not_on_the_engine(monkeypatch):
@@ -207,8 +209,63 @@ def test_start_engine_gives_up_waiting_but_not_on_the_engine(monkeypatch):
     monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
     sup = SlowSupervisor(answers_after=10 ** 9)
     rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
-    assert asyncio.run(rt.start_engine(wait=0.05)) is False
+    assert asyncio.run(rt.start_engine(wait=0.05)) == kr.OPENING
     assert sup.state == "running" and rt.health()["state"] == "running"
+    assert rt.health()["opening_for"] >= 0.05 and rt.open_failure is None
+
+
+def test_a_slow_engine_is_waited_for_past_the_first_wait(monkeypatch):
+    """Still opening when startup's wait ends, it is kept and waited for:
+    the first answer after it is OPENED, never a failure."""
+    monkeypatch.setattr(kr, "READY_POLL_SEC", 0.001)
+    monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
+    sup = SlowSupervisor(answers_after=10 ** 9)
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
+
+    async def scenario():
+        assert await rt.start_engine(wait=0.02) == kr.OPENING
+        sup.answers_after = sup.looks + 5            # it answers a little later
+        return await rt.wait_open()
+    assert asyncio.run(scenario()) == kr.OPENED
+    assert sup.started == 1 and rt.opened and rt.health()["opening_for"] is None
+
+
+def test_an_engine_that_never_answers_fails_at_the_open_bound(monkeypatch):
+    monkeypatch.setattr(kr, "READY_POLL_SEC", 0.001)
+    monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
+    monkeypatch.setattr(kc, "OPEN_BOUND_SEC", 0.1)
+    sup = SlowSupervisor(answers_after=10 ** 9)
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
+
+    async def scenario():
+        assert await rt.start_engine(wait=0.01) == kr.OPENING
+        return await rt.wait_open()
+    assert asyncio.run(scenario()) == kr.FAILED
+    assert rt.open_failure.startswith("it had not answered") and rt.open_failure.endswith("after it started")
+
+
+class _Dying:
+    """A child that has exited at once, every time."""
+    pid, returncode, stdin = 4343, 1, None
+
+    def poll(self):
+        return 1
+
+
+def test_an_engine_that_keeps_exiting_while_it_opens_fails_with_why(monkeypatch):
+    """The real supervisor restarts it each time; past the exits the
+    backoff allows, the wait ends failed, saying so."""
+    monkeypatch.setattr(kr, "READY_POLL_SEC", 0.001)
+    monkeypatch.setattr(kr, "end_leftover_ingest", lambda: None)
+    monkeypatch.setattr(kc, "end_previous_engine", lambda: None)
+    monkeypatch.setattr(kc, "RESTART_BACKOFF_SEC", (0.0,))
+    spawned = []
+    sup = kc.Supervisor(spawn=lambda: spawned.append(1) or _Dying(), budget_mb=384,
+                        health=lambda: (_ for _ in ()).throw(kc.EngineUnavailable("down")))
+    rt = kr.KnowledgeRuntime(floor_busy=lambda: False, supervisor=sup)
+    assert asyncio.run(rt.start_engine(wait=5)) == kr.FAILED
+    assert rt.open_failure == f"it exited {kc.OPENING_EXITS_MAX + 1} times while opening"
+    assert len(spawned) > kc.OPENING_EXITS_MAX and sup.health()["reason"] == "exited with 1"
 
 
 def test_with_knowledge_off_no_ingest_pass_starts_and_no_proposals_are_read(monkeypatch):
@@ -246,10 +303,10 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
             made.append(self)
 
         async def start_engine(self):
-            return True
+            return kr.OPENED
     monkeypatch.setattr(kr, "KnowledgeRuntime", Runtime)
     monkeypatch.setattr(server, "knowledge", None)
-    asyncio.run(server.start_knowledge_engine())
+    assert asyncio.run(server.start_knowledge_engine()) is True
     assert made == [] and server.knowledge is None          # conftest: autostart off
     monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "1")
     hold_setting("knowledge_enabled", "0")
@@ -262,9 +319,9 @@ def test_the_server_starts_the_engine_first_and_only_when_autostart_is_on(monkey
 
 
 def test_the_server_does_not_start_without_its_engine_and_says_why(monkeypatch):
-    """Its records live in the engine: an engine that never answers stops
-    startup with the supervisor's reason and the end of the engine's own
-    log, and the engine it started is stopped."""
+    """Its records live in the engine: an engine that failed while it opened
+    stops startup with why, the supervisor's reason and the end of the
+    engine's own log, and the engine it started is stopped."""
     from jarvis import data_paths, server
     data_paths.knowledge_engine_log_path().write_text("line one\nthe engine's last words\n")
     stopped = []
@@ -279,8 +336,10 @@ def test_the_server_does_not_start_without_its_engine_and_says_why(monkeypatch):
         def __init__(self, **kw):
             self.supervisor = Supervisor()
 
+        open_failure = "it exited 5 times while opening"
+
         async def start_engine(self):
-            return False
+            return kr.FAILED
 
         async def stop(self):
             stopped.append(True)
@@ -292,6 +351,33 @@ def test_the_server_does_not_start_without_its_engine_and_says_why(monkeypatch):
         asyncio.run(server.start_knowledge_engine())
     said = str(refused.value)
     assert "exited with 1" in said and "the engine's last words" in said and stopped == [True]
+    assert "it exited 5 times while opening" in said
+
+
+def test_a_slow_engine_is_kept_and_startup_goes_on_without_it(monkeypatch):
+    from jarvis import server
+    stopped = []
+
+    class Runtime:
+        def __init__(self, **kw):
+            pass
+
+        async def start_engine(self):
+            return kr.OPENING
+
+        async def stop(self):
+            stopped.append(True)
+    monkeypatch.setattr(kr, "KnowledgeRuntime", Runtime)
+    monkeypatch.setattr(server, "knowledge", None)
+    monkeypatch.setenv("JARVIS_ENGINE_AUTOSTART", "1")
+    assert asyncio.run(server.start_knowledge_engine()) is False
+    assert stopped == [] and isinstance(server.knowledge, Runtime)
+
+
+def test_an_opening_engine_is_not_down_on_its_row():
+    s = sd.knowledge({"state": "running", "engine": None, "opening_for": 75.0}, 0)
+    assert s.state == sd.DEGRADED
+    assert {c.id: c.said.code for c in s.checks}["process"] == "knowledgeOpening"
 
 
 def test_the_engine_listens_without_a_reverse_name_lookup(monkeypatch):
@@ -328,7 +414,8 @@ def test_the_engine_is_started_before_the_rest_of_startup():
     # The rest of startup is `_start_on_records`, run once the records are in
     # the engine (at once, or after the records move, records_move.py).
     source = inspect.getsource(server.lifespan)
-    assert source.index("await start_knowledge_engine()") < source.index("_start_records_now()")
+    assert source.index("await start_knowledge_engine()") < source.index("_open_records()")
+    assert "_start_records_now()" in inspect.getsource(server._open_records)
     assert "_start_on_records()" in inspect.getsource(server._start_records_now)
     assert "_start_on_records()" in inspect.getsource(server._move_records_then_start)
     assert "run_store.init_db()" in inspect.getsource(server._start_on_records)

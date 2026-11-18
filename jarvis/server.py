@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, NoReturn, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -2662,30 +2662,48 @@ def _offer_knowledge_seeds() -> None:
         log.warning("knowledge seeds could not be offered", exc_info=True)
 
 
-async def start_knowledge_engine() -> None:
+async def start_knowledge_engine() -> bool:
     """The engine first, before the rest of startup: started, and waited for
     up to knowledge_client.READY_WAIT_SEC, off the event loop's thread.
-    JARVIS's records live in it, so nothing that needs them starts without
-    it: an engine that has not answered by then raises `EngineNotUp` with the
-    supervisor's reason and the end of the engine's own log, which `lifespan`
-    turns into the records gate's failed state (records_move.ENGINE): the
-    server stays up, every route that needs the records answers 503 with the
-    reason, and the page shows it with Try again."""
+    True once it answered (or with no engine to start); False while it is
+    still opening, slow but not failed: the engine and its supervisor keep
+    running and `lifespan` serves the records gate's opening state while
+    `_open_records_then_start` waits on. JARVIS's records live in it, so
+    nothing that needs them starts without it: an engine that failed
+    (`_engine_failed`) raises `EngineNotUp`, which `lifespan` turns into the
+    records gate's failed state (records_move.ENGINE): the server stays up,
+    every route that needs the records answers 503 with the reason, and the
+    page shows it with Try again."""
     global knowledge
     from jarvis import knowledge_runtime
     if not knowledge_client.autostart():
-        return
+        return True
     knowledge = knowledge_runtime.KnowledgeRuntime(floor_busy=_knowledge_floor_busy)
     # Every record goes to the engine this server started, and no other.
     from jarvis.knowledge.uds import EngineUDS
     supervisor = getattr(knowledge, "supervisor", None)
     if supervisor is not None:
         records.bind(EngineUDS(supervisor.client.transport, deadline=records.DEADLINE_SEC))
-    if await knowledge.start_engine():
+    outcome = await knowledge.start_engine()
+    if outcome == knowledge_runtime.OPENED:
         log.info("knowledge engine: up")
-        return
+        return True
+    if outcome == knowledge_runtime.OPENING:
+        log.warning("knowledge engine: still opening after %.0f s; waiting up to %.0f s in all, "
+                    "and starting everything that needs the records the moment it answers",
+                    knowledge_client.READY_WAIT_SEC, knowledge_client.OPEN_BOUND_SEC)
+        return False
+    await _engine_failed()
+
+
+async def _engine_failed() -> NoReturn:
+    """The engine failed while it opened (`KnowledgeRuntime.open_failure`):
+    stopped, with the supervisor's reason and the end of the engine's own
+    log raised as `EngineNotUp`."""
+    global knowledge
     sup = knowledge.supervisor.health()
-    words = (f"the knowledge engine did not answer within {knowledge_client.READY_WAIT_SEC:.0f} s "
+    words = (f"the knowledge engine did not open the records: "
+             f"{getattr(knowledge, 'open_failure', None) or 'it did not answer'} "
              f"(state {sup['state']}, restarts {sup['restarts']}, last reason {sup['reason']}); "
              f"JARVIS's records live there, so it does not start without it. The engine's log "
              f"({data_paths.knowledge_engine_log_path()}) ends:\n{knowledge_client.engine_log_tail()}")
@@ -3292,14 +3310,53 @@ async def _move_records_then_start() -> None:
     records_move.started()
 
 
-async def _start_records_now() -> None:
+async def _start_records_now() -> bool:
     """Everything that needs the records, with no move first; a failure
-    leaves the server up saying why, with Try again (records_move.START)."""
+    leaves the server up saying why, with Try again (records_move.START).
+    True once it started."""
     try:
         await _start_on_records()
     except Exception as e:
         log.exception("startup on the records failed")
         records_move.failed(f"{type(e).__name__}: {e}", records_move.START)
+        return False
+    return True
+
+
+async def _open_records() -> None:
+    """The engine has answered: jarvis.db into it, once, proven both ways
+    before any store is touched (records_cutover.py), then everything that
+    needs the records. The move takes minutes on a large file, so it runs in
+    the background (`_records_task`) while the server serves, saying the
+    records are moving (records_move.py); a move it cannot prove leaves the
+    server up saying why. Otherwise the gate waits (`STARTING`) while the
+    rest starts, and opens once it has."""
+    global _records_task
+    if await asyncio.to_thread(records_cutover.needed):
+        records_move.begin()
+        _records_task = _spawn(_move_records_then_start())
+        return
+    records_move.opened()
+    if await _start_records_now():
+        records_move.started()
+
+
+async def _open_records_then_start() -> None:
+    """The engine was still opening when startup's wait ended: wait on, to
+    knowledge_client.OPEN_BOUND_SEC of its start, while the gate says the
+    records are opening; the moment it answers, everything that needs them
+    starts with no Try again. Failed only when the engine really failed
+    (records_move.ENGINE, with the reason)."""
+    from jarvis import knowledge_runtime
+    outcome = await knowledge.wait_open()
+    if outcome != knowledge_runtime.OPENED:
+        try:
+            await _engine_failed()
+        except knowledge_client.EngineNotUp as e:
+            records_move.failed(str(e), records_move.ENGINE)
+        return
+    log.info("knowledge engine: up, after %.0f s", time.monotonic() - knowledge.opening_since)
+    await _open_records()
 
 
 async def _start_on_records() -> None:
@@ -3488,24 +3545,21 @@ async def lifespan(application: FastAPI):
     _on_records_begun = False
     records_move.reset()
     # The knowledge engine before anything else; the page waits for it. One
-    # that does not come up leaves the server up saying why, with Try again
-    # on the page (records_move.ENGINE), never a server that is not there.
+    # still opening after knowledge_client.READY_WAIT_SEC is slow, not
+    # failed: the server serves, saying the records are opening, and starts
+    # everything the moment it answers (`_open_records_then_start`). One
+    # that failed leaves the server up saying why, with Try again on the
+    # page (records_move.ENGINE), never a server that is not there.
     try:
-        await start_knowledge_engine()
+        up = await start_knowledge_engine()
     except knowledge_client.EngineNotUp as e:
         records_move.failed(str(e), records_move.ENGINE)
-    # jarvis.db into the engine, once, proven both ways before any store is
-    # touched (records_cutover.py). It takes minutes on a large file, so the
-    # server serves meanwhile, saying the records are moving, and starts
-    # everything that needs them once they are (records_move.py); a move it
-    # cannot prove leaves the server up saying why.
-    if not records_move.ready():
-        pass
-    elif await asyncio.to_thread(records_cutover.needed):
-        records_move.begin()
-        _records_task = _spawn(_move_records_then_start())
     else:
-        await _start_records_now()
+        if up:
+            await _open_records()
+        else:
+            records_move.opening(getattr(knowledge, "opening_since", None))
+            _records_task = _spawn(_open_records_then_start())
 
     yield
 
