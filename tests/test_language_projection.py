@@ -327,7 +327,9 @@ def test_a_story_that_points_waits_for_a_kit_page_that_loads_the_helper(draft, t
             language_projection.project(envelope, tmp_path / "p", MARKDOWN, pointing, PURPOSE, "en")
 
 
-@pytest.mark.parametrize("purpose", ["", "two\nlines\x00", "x" * 301, None])
+@pytest.mark.parametrize("purpose", ["", "two\nlines\x00", None])
 def test_a_fresh_author_projection_needs_the_handoff_purpose(draft, tmp_path, purpose):
+    """No purpose, or one that cannot be printed, is refused; its length is
+    not counted (the 300-character cap went with the stand-in rules)."""
     with pytest.raises(language_documents.DocumentError, match="handoff purpose"):
         language_projection.project(envelope_of(draft), tmp_path / "p", MARKDOWN, None, purpose, "en")

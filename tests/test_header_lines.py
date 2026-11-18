@@ -491,6 +491,16 @@ EXEMPT = {
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
         "that Markdown as untrusted; complete access and hostile delimiters are driven by "
         "test_package_understanding.py"),
+    'make_package._job_command': ("it is the package job's own record and command output for the sending agent (package_jobs.py), printed as JSON to that agent's own terminal; the project is the agent's own folder name, never a spoken or brain header. Driven by tests/test_package_jobs.py"),
+    'package_author.read_questions': ("it reads the fresh author's questions file into the job record for its own sender; ids are checked against a fixed slug pattern and nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.answer': ("it is the package job's own record and command output for the sending agent (package_jobs.py), its state a fixed word from STATES in a refusal to the answering agent; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.ended': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it moves a job whose process died to refused with fixed words and the log path; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.package_answer': ("it is the package job's own record and command output for the sending agent (package_jobs.py), its refusals name the job id and its fixed state words to the answering agent alone; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.package_start': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it records the caller's own working folder so the detached job runs where the agent ran it; nothing is printed into a header. Driven by tests/test_package_jobs.py"),
+    'package_jobs.package_status': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it reads the job's state, a fixed word, to decide whether its process died; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.resuming': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it composes the message that resumes the author with its sender's answers by question id, for that author session only, never the brain. Driven by tests/test_package_jobs.py"),
+    'package_jobs.run': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it prints the job's fixed state word into the job's own log when there is nothing to run; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.unanswered_message': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it tells the resumed author which of its own questions go to Tim as UNANSWERED, by question id, never the brain or the voice. Driven by tests/test_package_jobs.py"),
     "codex_runtime._request": "Formats a fixed internal RPC method in a timeout/error, never a spoken header or brain instruction; runtime failures expose only the exception class in inventory JSON.",
     "codex_runtime.event_evidence": "Formats a provider event-method name as evidence-source metadata; no text delta or tool argument is retained and the inventory tool output is taint-wrapped.",
     "session_watch.build_snapshot": "Formats provider discovery failure metadata from a configured provider name and exception class; the inventory exposes it as JSON through the taint-wrapped list_workers tool, not a spoken line.",
@@ -1122,11 +1132,9 @@ EXEMPT = {
     "work_store._apply_piece": (
         "it writes a piece into the Work record and prints nothing but its refusals, "
         "whose only values are the checked key, a fixed state or a fixed who kind"),
-    # The decision package command (decision_package.py) and its check in an
-    # isolated JARVIS (decision_check.py): the `id`, `title` and `state` they
-    # read are the deck author's own content file, the package's id that
-    # JARVIS assigned, and the story frames' fixed states, never a session's
-    # record or a run row; and everything they build is printed to the
+    # The decision package command (decision_package.py): the `id` and
+    # `title` it reads are the deck author's own content, never a session's
+    # record or a run row; and everything it builds is printed to the
     # terminal of the agent that ran the command, never given to the brain.
     "decision_package.problems_of": (
         "it lists what is wrong with the author's own content file, by its own "
@@ -1138,51 +1146,24 @@ EXEMPT = {
         "it fills in what the author's own content file left out (ids from its own "
         "titles and names) for the command that runs it; nothing it builds reaches "
         "the brain"),
-    "decision_package.too_many_words": (
-        "it lists the author's own slides and decisions over the word limits, by their "
-        "own ids and titles, for the agent that ran the command"),
-    "decision_package.opening_problems": (
-        "it lists what keeps the author's own first slide from being an opening, quoting "
-        "the author's own title, purpose and conclusion, for the agent that ran the "
-        "command"),
-    "decision_package.lead_in_problems": (
-        "it lists the author's own decisions missing their lead-in, by their own ids, for "
-        "the agent that ran the command"),
     "decision_package._slide_where": (
-        "it names one of the author's own slides by its own title, or a lead-in by its "
-        "decision's own id, in the command's refusals"),
-    "decision_package.lead_in_slide": (
-        "it builds a lead-in slide from the author's own decision fields into the deck "
-        "the command builds; nothing it builds reaches the brain"),
+        "it names one of the author's own slides by its own title in the command's "
+        "refusals"),
     "decision_package.unknown_keys": (
         "it lists misspelt fields in the author's own content file, by its own decision "
         "ids, for the agent that ran the command"),
-    "decision_check._check": (
-        "it records pass and fail lines naming the package id and the deck's own "
-        "title for the command's printout; nothing reaches the brain"),
-    "decision_check.open": (
-        "it opens the package in the isolated JARVIS by the deck's own title and records "
-        "that tool's answer in the command's printout, never the live brain's"),
-    "decision_check._check_first_time": (
-        "it records, in the command's printout, the deck's own decision ids and the "
-        "story frames' fixed states from the isolated JARVIS"),
-    "decision_check._check_stop": (
-        "it records, in the command's printout, the story frames' fixed states and the "
-        "isolated JARVIS's own tool answers"),
-    "decision_check._stopped_within": (
-        "it records, in the command's printout, whether the story frame said stopped "
-        "and the isolated JARVIS's status answer"),
-    "decision_check._check_resume": (
-        "it records, in the command's printout, the deck's own decision ids and the "
-        "isolated JARVIS's resume answer and story frames"),
     'make_package.make_presentation': (
         'it builds the archive filename from schema-validated presentation id and version, and returns the authored title as package metadata; compiler refusals go to the author command, never a trusted session header'),
     'presentation._deck': (
         'it projects the authored presentation into shared deck data, including chart labels and values; that content stays package content, never a trusted session or run header'),
     'presentation._targets': (
         'it builds accessible names and provenance entries for authored slide objects, including chart labels and units; these are JSON package data and DOM text, never trusted brain headers'),
-    'presentation_check.check_layout': (
-        'it checks an isolated generated page and records source member ids and browser geometry in measurements.json; no session record is read and no result becomes a trusted brain header'),
+    'layout_spec.generated_css': (
+        'it writes JARVIS\'s own layout spec numbers and named layout ids into presentation.css; no session record or brain header is involved'),
+    'make_package.fill_assets': (
+        'it writes the author\'s own asset ids, sizes and hashes back into the author\'s presentation.yaml and prints them to the author command; never a trusted session header'),
+    'presentation_proof.prove_targets': (
+        'it compares the generated story\'s selectors with the compiler\'s target index and returns failures naming slide titles; package content, never a trusted brain header'),
     'presentation_source._semantics': (
         'it validates authored YAML identities and references and produces compiler diagnostics for that source; its id fields are schema-validated source members, never session identities'),
     'presentation_source.identities': (
@@ -1190,6 +1171,10 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "agent_mcp._research": (
+        "it hands an agent's own MCP client the text JARVIS's /api/agent-tool answered, "
+        "which walls other people's words exactly as for the brain (the same handlers); it "
+        "reaches no live-brain header; driven by test_agent_tools.py"),
     "make_package.withdraw": (
         "the command line: it prints the inbox id JARVIS answered with (an id, "
         "package_inbox.ID's shape) and fixed words to its own runner's terminal; "
@@ -1202,14 +1187,6 @@ EXEMPT = {
         "the inner unit of package_inbox.withdraw (and the inbox's other writers): "
         "its refusal names only JARVIS's own inbox id and goes back to the "
         "requester; driven by test_wait_links.py"),
-    "make_package.finish": (
-        "the factory's private author continuation compares fixed review states and sends "
-        "build diagnostics back to that same author; it prints only to its CLI, never a "
-        "trusted header in the live brain; refusal paths are tested in test_make_package.py"),
-    "package_author.review": (
-        "the private author review reads fixed acceptance states and records archive member "
-        "names in a JSON request file; these do not enter live-brain headers; malformed and "
-        "missing inspection receipts are driven by test_package_visual_review.py"),
     "make_package.deck_kind": (
         "it reads the deck's decision ids only to compare them with the vote's own id, and "
         "returns one of two fixed words, presentation or decision package"),

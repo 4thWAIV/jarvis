@@ -170,6 +170,9 @@ class BrainConfig:
     model: str | None = "sonnet"
     effort: str | None = "low"
     authoring: bool = False  # fresh package author; voice defaults stay restricted
+    # A package author's own session continued (package_jobs: the sender's
+    # answers to its questions): Claude's `--resume`, Codex's thread/resume.
+    resume: Optional[str] = None
     claude_path: Optional[str] = None       # the anthropic provider's `claude`
     codex_path: Optional[str] = None        # the openai provider's `codex`
     turn_timeout: float = 90.0

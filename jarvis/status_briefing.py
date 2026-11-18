@@ -10,12 +10,12 @@ command reads each named Work item through the same functions the brain's
 `work_store.events`), never from an agent's memory, and writes two files
 into `--out`:
 
-  handoff.json          the make_package handoff (`purpose`, `audience`,
-                        `questions`, `evidence`), with the composition
-                        itself as `briefing` and the one decision it asks,
+  handoff.json          the make_package handoff (`question`, `work`,
+                        `evidence`, `decisions`: package_author.read_handoff),
+                        the evidence file first, asking one decision,
                         `approve-status`: Approve (the status is complete
                         and accurate) or Reject (with his words on what is
-                        missing or wrong), with its lead-in
+                        missing or wrong)
   status-evidence.json  the composition in full, every fact with the
                         evidence the record holds for it
 
@@ -294,14 +294,11 @@ APPROVE, REJECT = "approve", "reject"
 
 
 def decision(briefing: dict) -> dict:
-    """The one decision the briefing asks, with its lead-in (the question,
-    why it is his, and the evidence it rests on)."""
+    """The one decision the briefing asks, with the evidence it rests on."""
     since = briefing["since"]
     return {
         "id": DECISION_ID,
         "question": "Is this status complete and accurate?",
-        "why_you": "You steer this work: what you approve or correct here is what the "
-                   "agents work to next.",
         "evidence": [f"./{EVIDENCE}: every fact read from the Work record, each with its "
                      f"commit, PR or path, since {since}."],
         "options": [
@@ -315,8 +312,9 @@ def decision(briefing: dict) -> dict:
 
 def handoff(briefing: dict) -> dict:
     """make_package's handoff (package_author.read_handoff's shape) for the
-    briefing: the evidence file first, then every piece of evidence the
-    facts carry, each once."""
+    briefing: its question, the items, the evidence file first, then every
+    piece of evidence the facts carry, each once, and its one decision. The
+    fresh author works out the rest from the evidence file and his record."""
     items = briefing["items"]
     titles = "; ".join(f"{i['title']} ({i['id']})" for i in items)
     evidence = ["./" + EVIDENCE]
@@ -328,26 +326,10 @@ def handoff(briefing: dict) -> dict:
                     if text not in evidence:
                         evidence.append(text)
     return {
-        "purpose": f"Status of {titles}: what needs Tim first, then what is moving, then "
-                   f"what is done since {briefing['since']}.",
-        "audience": "Tim, who owns this work and sees each item's row on the Work tab, but "
-                    "not the causes, holds and evidence behind it.",
-        "questions": [
-            "What needs me first, and what happens if it waits?",
-            "What holds each held or stalled piece, who is on it and since when?",
-            "What is moving now, and on what evidence?",
-            f"What finished since {briefing['since']}, and where is the evidence?",
-        ],
-        "evidence": evidence,
-        "decision": decision(briefing),
-        "shape": ("A status presentation (human-package-author, Status presentations): "
-                  "problems before progress; per item, what needs Tim first, then what is "
-                  "moving, then what is done since the time given; every fact with its "
-                  "evidence from the record; an item that needs nothing of him says so in "
-                  "one line; no recap of what he can see on the Work tab without its cause. "
-                  "It ends with the one decision given, approve-status, with its lead-in."),
+        "question": f"Is the status of {titles} since {briefing['since']} complete and accurate?",
         "work": [i["id"] for i in items],
-        "briefing": briefing,
+        "evidence": evidence,
+        "decisions": [decision(briefing)],
     }
 
 

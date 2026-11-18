@@ -1,7 +1,14 @@
-"""Checking a built decision package end to end in a real, isolated JARVIS,
-before it goes to Tim (decision_package.py).
+"""A deck's behaviour in a real, isolated JARVIS: the page tests' harness.
 
-The isolated JARVIS is JARVIS's own server (decision_check_server.py) in a
+No package goes through a browser on its way to Tim: JARVIS lays every deck
+out and proves it fits without one (presentation_proof), and his JARVIS
+makes that proof again as it arrives. What only a browser can show (the
+shared deck's voting, the story waiting at each question, Stop and resume,
+the border's navigation) is proven here on fixture decks, by the page
+tests (tests/test_voice_page_decision_package.py), so every change to the
+shared deck, the story helper or the package view is checked in CI.
+
+The isolated JARVIS is JARVIS's own server (tests/isolated_jarvis_server.py) in a
 child process on a free loopback port above 19000, with its own temporary
 data folder, its settings held for it (a stand-in Fish key, its own
 speech models folder), no speech model and the brain never spawned. The voice page is built with vite into a cached temporary
@@ -227,7 +234,7 @@ class Isolated:
         env = env_names.child(drop=("JARVIS_DECISION_CHECK_SERVER",), **wiring)
         with self.log.open("wb") as log:
             self.process = subprocess.Popen(
-                [sys.executable, "-m", "jarvis.decision_check_server", "--port", str(self.port),
+                [sys.executable, "-m", "tests.isolated_jarvis_server", "--port", str(self.port),
                  "--language", language, "--page", str(page),
                  "--settings", json.dumps(held)],
                 cwd=str(data_paths.SOURCE_ROOT), env=env, stdout=log, stderr=log,
@@ -318,8 +325,7 @@ MEASURE = """
   const slide = document.querySelector("#track > .slide.current");
   const s = stage.getBoundingClientRect(), box = slide.getBoundingClientRect();
   const presentation = window.PRESENTATION;
-  const textMin = presentation ? presentation.document.theme.minimumPx : MIN;
-  const textMax = presentation ? Infinity : MAX;
+  const textMin = MIN, textMax = MAX;
   const say = (el) => (el.textContent || el.placeholder || el.tagName).trim().replace(/\\s+/g, " ").slice(0, 40);
   if (s.left < -1 || s.top < -1 || s.right > innerWidth + 1 || s.bottom > innerHeight + 1)
     problems.push(`the deck (${Math.round(s.width)} x ${Math.round(s.height)}) does not fit the frame (${innerWidth} x ${innerHeight})`);
@@ -704,7 +710,7 @@ async def _check_layout(d: Deck, label: str) -> None:
     pictures_bad = 0
     unfollowed = []
     # The border moves through the deck's own slides and counts as the deck
-    # numbers them: every lead-in, question and the vote its own.
+    # numbers them: every slide, question and the vote its own.
     total = len(slides)
     for n, (slide_id, decision) in enumerate(slides, 1):
         await d.fit()
@@ -746,47 +752,6 @@ async def _check_layout(d: Deck, label: str) -> None:
     if not pictures_bad:
         result.passed.append(f"{label}: every picture, on every slide, is drawn at least "
                              f"{MIN_PICTURE_PX} px each way")
-
-
-async def _check_page(d: Deck, label: str) -> None:
-    """Inspect the entry and each story view using the shipped story helper.
-
-    Story actions identify tabs and expanded views; hidden pictures must become
-    visible in one of those views. The same author checks coverage afterwards.
-    """
-    async def capture(name):
-        problems = await d.js(PICTURES, {"deferHidden": True, "scroll": True})
-        shot = d.shots / label / f"{name}.png"
-        await d.iframe.screenshot(path=str(shot))
-        d.result.screenshots.append(shot)
-        d.result.failures.extend(f"{label} {name}: {p} [{shot}]" for p in problems)
-        # Keep every image's actual view, including images above the last scroll.
-        for n, img in enumerate(await d.inner.locator("img, svg, canvas").all(), 1):
-            if await img.is_visible() and await img.evaluate("el => !!el.__jarvisPictureSeen"):
-                await img.scroll_into_view_if_needed()
-                shot = d.shots / label / f"{name}-image-{n}.png"
-                await d.iframe.screenshot(path=str(shot))
-                d.result.screenshots.append(shot)
-
-    await capture("entry")
-    if d.parsed:
-        for number in range(1, len(d.parsed.slides) + 1):
-            for _, cue in d.parsed.cues(d.package_id, number):
-                # The reader's existing story helper performs show/click actions.
-                if cue["actions"] or cue["targets"]:
-                    await d.page.evaluate("""cue => document.querySelector('#package-view iframe')
-                        .contentWindow.postMessage({...cue, jarvis: 'package', type: 'story.cue'}, '*')""", cue)
-                    await asyncio.sleep(.8)  # helper's bounded smooth-scroll/missing-target delay
-                    missing = await d.page.evaluate("() => window.__packageMissing || []")
-                    if missing:
-                        d.result.failures.append(f"{label}: story view {cue['beat']} is missing {missing}")
-                    await capture("beat-" + cue["beat"])
-    d.result.failures.extend(f"{label}: package file {failure}" for failure in sorted(set(d.refused)))
-    unseen = await d.js("() => (" + PICTURE_ELEMENTS + """ )(document)
-        .filter(img => !img.__jarvisPictureSeen)
-        .map(img => img.getAttribute('src') || img.id || img.tagName.toLowerCase())""")
-    d.result.expect(not unseen, f"{label}: page image views inspected",
-                    f"{label}: required pictures never visible in the entry or story views: {unseen}")
 
 
 async def _answer(d: Deck, question: str, option: str, by_click: bool) -> tuple[bool, str]:
@@ -1027,6 +992,13 @@ async def _check_border(d: Deck, label: str) -> None:
     d.result.expect(all(icon["name"] and icon["width"] == 32 and icon["height"] == 32 for icon in icons),
                     f"{label}: frame icons have names and 32-pixel targets",
                     f"{label}: frame icon geometry or names differ: {icons}")
+    drawn_in = await d.js("""() => [...document.fonts].length === 0
+        && getComputedStyle(document.body).fontFamily.includes("-apple-system")""")
+    d.result.expect(drawn_in, f"{label}: the deck is drawn in the system font, none loaded",
+                    f"{label}: the deck loads a font, or is not drawn in the system font stack")
+    unchecked = await border.locator(".package-unchecked").count()
+    d.result.expect(unchecked == 0, f"{label}: the border does not say its layout was not checked",
+                    f"{label}: a deck JARVIS proved says \"Layout not checked\"")
     before = d.answers()
     chapters = view.locator("[data-package-menu=chapters]")
     await chapters.click()
@@ -1064,7 +1036,7 @@ async def _check_border(d: Deck, label: str) -> None:
     await choice.select_option("1")
     await d.page.keyboard.press("Escape")
     # Next and Previous step one slide of the deck at a time, so every
-    # lead-in, every question and the vote is reached in turn.
+    # slide, every question and the vote is reached in turn.
     step = {way: view.locator(f"[data-package-step={way}]") for way in ("next", "previous")}
     if await step["next"].count():
         missed = []
@@ -1105,18 +1077,9 @@ async def _in_browser(jarvis: Isolated, deck: dict, story: dict,
                 try:
                     if not await d.open(window, frame_size):
                         continue
-                    if deck.get("slides") is None:
-                        await d.page.evaluate("""() => {
-                            window.__packageMissing = [];
-                            window.addEventListener('message', e => {
-                                if (e.data?.type === 'story.missing') window.__packageMissing.push(e.data);
-                            });
-                        }""")
-                        await _check_page(d, label)
-                    else:
-                        await _check_border(d, label)
-                        await _check_layout(d, label)
-                    if n == 0 and deck.get("slides") is not None:
+                    await _check_border(d, label)
+                    await _check_layout(d, label)
+                    if n == 0:
                         # The story's behaviour, once, at the larger size. A
                         # presentation (no decisions) has no question to wait
                         # at, stop at or resume from: it is told to the end.
@@ -1222,7 +1185,7 @@ async def _fit_frame(page, iframe, frame_size: tuple[int, int]) -> tuple[int, in
 
 # -- the whole check --------------------------------------------------------------------
 
-def check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, str],
+def check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
           session: str) -> Result:
     """Check the zip in an isolated JARVIS; screenshots go under `folder`.
     It is signed with the agent's own key (`signer`, for `session`), which
@@ -1247,7 +1210,7 @@ def seed(data: Path, public_key: str, session: str, *, kit_directory: Path | Non
         agent_key_store.onboard(session, "decision check")
 
 
-def _check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, str],
+def _check(archive: Path, deck: dict, folder: Path, signer: tuple[Path, str],
            session: str) -> Result:
     from jarvis.decision_package import deliver, says_of
     result = Result()
@@ -1258,10 +1221,6 @@ def _check(archive: Path, deck: dict | None, folder: Path, signer: tuple[Path, s
         with bundle_archive.open_archive(archive) as z:
             listing = bundle_archive.list_members(z)
             manifest = json.loads(z.read(listing.root + "package.json"))
-        if manifest["runs"] != "page":
-            result.passed.append("No HTML entry; supplied reader attachments require author inspection.")
-            return result
-        deck = deck or {"title": manifest["name"].replace("-", " ")}
         dist = built_page()
         # Signed by the agent's key, which the isolated JARVIS knows as an
         # onboarded agent's, as the live one does (seeded before it starts).

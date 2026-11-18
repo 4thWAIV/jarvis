@@ -12,6 +12,7 @@ import os
 import sys
 
 WARMUP = "(system) Warm-up. Reply with exactly: OK"
+RESUMED = False     # thread/resume was asked for, not thread/start
 
 
 def log(**entry):
@@ -75,6 +76,13 @@ def app_server():
         elif method == "thread/start":
             log(thread=params)
             out({"id": rid, "result": {"thread": {"id": "thread-1"}, "model": params.get("model")}})
+        elif method == "thread/resume":
+            # The same thread goes on (a package author answered by its sender).
+            global RESUMED
+            RESUMED = True
+            log(resume=params)
+            out({"id": rid, "result": {"thread": {"id": params.get("threadId")},
+                                       "model": params.get("model")}})
         elif method == "mcpServerStatus/list":
             out({"id": rid, "result": {"data": [
                 {"name": "jarvis", "tools": {"capture": {}, "list_agents": {}}},

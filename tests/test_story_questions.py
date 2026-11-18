@@ -151,7 +151,6 @@ def test_an_authored_story_is_read_strictly(bad, said):
     ([{**SURFACE, "options": options("sign", "sign")}, FOLLOW], "two options with one id"),
     ([{**SURFACE, "options": options("sign", "later")}, FOLLOW], "may not be later"),
     ([{**SURFACE, "recommended": "maybe"}, FOLLOW], "recommended is not one of its options"),
-    ([{**SURFACE, "question": "x" * 121}, FOLLOW], "longer than 120"),
     ([SURFACE, FOLLOW, {**FOLLOW, "id": "nobody-asks"}], "no slide waits for it"),
 ])
 def test_a_malformed_question_is_refused_once_composed(questions, said):

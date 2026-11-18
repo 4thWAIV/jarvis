@@ -143,17 +143,15 @@ def test_an_agent_sends_a_message_about_its_work_item(wired):
 @pytest.mark.parametrize("body", [
     {"says": "Do you approve the plan?"},
     {"says": "Which one? I need to know."},
-    {"says": "The plan is ready.", "question": "Approve it"},
-    {"says": "The plan is ready.", "options": ["yes", "no"]},
 ])
-def test_a_question_without_a_package_is_refused(wired, body):
+def test_a_question_without_a_package_is_sent(wired, body):
+    """A message is never refused for asking him something without a package."""
     server, *_, folder, home = wired
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
     wid = _start_work(client, agent, folder)
     r = _post(client, agent, body, wid)
-    assert r.status_code == 409 and "inside a package" in r.json()["error"]
-    assert cl.work_threads() == []
+    assert r.status_code == 200, r.text
 
 
 def test_a_question_mark_inside_a_url_asks_nothing(wired):
@@ -417,5 +415,4 @@ def test_the_command_signs_and_sends(wired, monkeypatch, capsys):
     assert cl.get(sent).about == wid
     assert message.main(["--general", "--as", PLAN, "A note about no item."]) == 0
     assert cl.get(int(capsys.readouterr().out.strip())).about is None
-    assert message.main(["--work", wid, "--as", PLAN, "Shall I go on?"]) == 1
-    assert "inside a package" in capsys.readouterr().err
+    assert message.main(["--work", wid, "--as", PLAN, "Shall I go on?"]) == 0

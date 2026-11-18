@@ -2,6 +2,57 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## No more word counts on what agents write you
+
+JARVIS no longer refuses a package for the length of a title, a question,
+a reason or a slide, for a first slide that is not a summary, or for an SVG
+picture that does not state its own size (JARVIS reads it). An agent's
+message is no longer refused for asking you something without a package,
+and a package for a Work item is no longer refused for asking you nothing.
+Nor is a message refused for being long, a decision for a short reason
+why its options have no pictures, or a handoff, purpose or scenario for
+running past one line. What stays: every decision offers at least two
+options, every picture is big enough to read, and a package's spoken
+story runs about fifteen minutes at most.
+
+## Briefing judges remember what they asked
+
+The judges that check a briefing before it is written keep their own
+session from round to round. Each sees what it asked before and what the
+author said back, checks that its earlier ask was met, and may not fail a
+briefing for undoing something it asked for itself; it quotes that ask
+and the author may keep its answer.
+
+## Agents can look things up in JARVIS before they write to you
+
+Installing the talk-to-jarvis skill (Diagnostics, Setup's Install skill, or
+`python -m jarvis.session_skill install`) now also gives your Claude Code
+and Codex sessions JARVIS's own tools. With them an agent sends you a
+message, reports its work and workflows, and starts a package without a
+shell command, each signed with its own key exactly as its commands are. It
+can also read what JARVIS knows (what you said and decided, your messages,
+the Work list, packages, runs, workflows, the knowledge engine, projects
+and folders) through the same reading tools JARVIS itself uses, with other
+people's words kept apart the same way, so what it sends you starts from
+what you already know. Every agent you have accepted can read; nothing an
+agent does through these tools changes what you are looking at or what
+JARVIS treats as read.
+
+What agents may do is now one plain file, `agent-rights.json` in JARVIS's
+data folder: the rights every accepted agent has, and any agent's extra or
+removed rights by its session id or name. A change there applies to every
+agent at once; a file JARVIS cannot read is ignored (with a note in its
+log) in favour of the standard rights it ships with.
+
+## Agents ask before they guess
+
+An agent's package is now made as a job: the agent gets on with its work
+while a fresh author researches and writes the package, using JARVIS's own
+records of what you said and decided. When the author needs a fact only the
+sending agent has, it asks that agent and waits for the answer, then goes on
+in the same session. Anything still unknown after two rounds of questions
+reaches you marked UNANSWERED instead of being guessed.
+
 ## Architecture in several views at once
 
 An architecture package can now carry several checked views of the same
@@ -68,6 +119,45 @@ Return after a Stop goes back to the sentence it cut off, and Continue on a
 paused story goes on from that sentence rather than the start of the slide. If the
 package has been replaced by a newer version since you asked, JARVIS says
 so instead of taking you to a place that no longer exists.
+
+## Decks are the author's own words, with no slides JARVIS adds
+
+JARVIS no longer adds a "Before you decide" slide ahead of each question,
+and no longer refuses a deck whose first slide does not repeat most of the
+words of its purpose and conclusion, or a slide with more than 60 words.
+What a deck says, and in what order, is its author's to write; a deck still
+opens on words with JARVIS speaking over them, never on a question or a
+table. Decks draw in your system's own font, so nothing ships a font of its
+own.
+
+## Every briefing is prepared, edited and judged before it is written
+
+An agent now gives the package author only its question, the Work item and
+the evidence; it can no longer hand over a purpose, an audience note or a
+slide order. Before any slide, the author writes down whether you would
+want this at all, what you already know, the background you lack, the
+first ten questions you would ask with a source for each answer (or
+"unanswered"), and a score for every fact by how much it changes your
+answer. The briefing follows those scores, most relevant first. Three
+editors then cut talk about the briefing and hedges, tighten wording and
+replace vague claims with exact facts, logging every change; four judges
+ask whether you care, whether the decision is ready, whether the background
+is right and whether the order follows the scores. What fails goes back to
+the same author, at most three times, and a briefing that still fails never
+reaches you. Every package carries its prep, script and edits, and every
+judge's answer is recorded so it can be compared with your own verdict.
+
+## JARVIS lays out every deck and checks its pictures
+
+Decks are no longer laid out by the agent that wrote them or checked by
+photographing them in a browser. The agent writes the words, pictures and
+questions; JARVIS draws every slide in its own layouts and works out,
+before anything is sent, that every picture is real and readable at every
+size the package view can be, from the smallest centre view to a whole
+screen, and that the story points only at what the deck shows. Your JARVIS
+works it out again when a deck arrives and opens none that does not
+pass. A page an agent made by hand, which JARVIS did not lay
+out, says "Layout not checked" in its bar.
 
 ## Every slide of a deck is in its navigation
 

@@ -399,8 +399,7 @@ def title_of(package: Package) -> str:
 # file, each in the deck's or story's language. JARVIS reads a page's vote
 # from that file (`questions`) and records his answer there
 # (`record_story_answer`), since a page has no decide.py. An agent or a
-# conversation package cannot carry one, so it may not name a Work item;
-# make_package and the inbox route refuse in `no_vote`'s words.
+# conversation package carries none, and may still name a Work item.
 #
 # Got it is retired (Tim, 2026-11-14: "I do not want any more Got it
 # packages"). The old vote (`understood`: `got-it`, `questions`) is never
@@ -728,18 +727,6 @@ def asks_approval(package: Package) -> bool:
 
 # Where make_package keeps a page's answers when its story names none.
 STORY_ANSWERS = f"{work_packages.RESULTS}/{RECORD}"
-# The runs that can carry a vote.
-VOTING_RUNS = (work_packages.PAGE,)
-
-
-def asks_a_question(deck_data: Optional[dict],
-                    story: Optional[package_story.Story]) -> bool:
-    """Whether a deck's content or a story asks him at least one question."""
-    if isinstance(deck_data, dict) and any(isinstance(d, dict)
-                                           for d in deck_data.get("decisions") or []):
-        return True
-    return story is not None and story.answers is not None and any(
-        s.waits for s in story.slides)
 
 
 def _story_of(package: Package) -> Optional[package_story.Story]:
@@ -747,12 +734,6 @@ def _story_of(package: Package) -> Optional[package_story.Story]:
         return package.story()
     except PackageError:
         return None
-
-
-def asks_him(package: Package) -> bool:
-    """`asks_a_question` for an unpacked package: its deck's decisions (a
-    decision package only) or its story's waiting slides."""
-    return bool(questions(package)) or asks_a_question(None, _story_of(package))
 
 
 def _story_questions(package: Package) -> list[Question]:
@@ -924,21 +905,6 @@ def page_vote(package: Package) -> Optional[dict]:
             "answer_name": standard.answered_words() if standard and standard.answer else "",
             "note": standard.answer["note"] if standard and standard.answer else "",
             "asks": [ask(q) for q in declared]}
-
-
-def no_vote(work_id: str, runs: str) -> str:
-    """The refusal: a package for a Work item that does not carry his vote."""
-    if runs not in VOTING_RUNS:
-        article = "an" if runs[:1] in "aeiou" else "a"
-        return (f"It names work item {work_id}, but {article} {runs} package cannot carry "
-                f"Tim's vote, "
-                f"and every package for a Work item must. Send it without --work, or send "
-                f"what he should answer as a deck or a page package, which carry the vote. "
-                f"Nothing was delivered.")
-    return (f"It names work item {work_id} but asks Tim nothing, and every package must carry "
-            f"his vote. Make it with python -m jarvis.make_package, which adds the standard "
-            f"vote (Approve / Reject) to every deck and page. Nothing "
-            f"was delivered.")
 
 
 def summary(package: Package) -> str:

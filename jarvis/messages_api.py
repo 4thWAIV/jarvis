@@ -57,14 +57,6 @@ from jarvis import (agent_rights, conversation_log, package_inbox, package_inbox
                     packages_api, report_keys, reporters, web_auth, work_store)
 
 MESSAGES_PATH = "/api/messages"
-# A message says something short; anything longer is a package's.
-SAYS_MAX = 2000
-# The fields a request would ask a decision with: a decision is only ever
-# inside a carried package (`asks`).
-DECISION_FIELDS = ("decision", "question", "options", "recommendation")
-# A sentence that ends in a question mark: "?" before a space or the end.
-# (A "?" inside a word or a URL's query asks nothing.)
-_QUESTION = re.compile(r"\?(?=\s|$)")
 # The states his mark may give; answered is given only by his answer going.
 MARKS = (conversation_log.MessageState.READ, conversation_log.MessageState.DONE)
 
@@ -77,24 +69,14 @@ class Refused(ValueError):
         self.status = status
 
 
-def asks(says: str, body: dict) -> bool:
-    """Whether a request asks him something: it names a decision's fields,
-    or a sentence of what it says ends in a question mark."""
-    return any(body.get(f) not in (None, "", []) for f in DECISION_FIELDS) or \
-        bool(_QUESTION.search(says))
-
-
 def read_request(body) -> tuple[str, Optional[bytes]]:
     """(what it says, the package's bytes or None) from a request's body,
-    or Refused: words, short; a decision only with a package."""
+    or Refused: it says nothing, or its package is not a zip in base64."""
     if not isinstance(body, dict):
         raise Refused("A message is a JSON object: says, and package when it carries one.", 400)
     says = str(body.get("says") or "").strip()
     if not says:
         raise Refused("A message says something: give says.", 400)
-    if len(says) > SAYS_MAX:
-        raise Refused(f"A message says something short (at most {SAYS_MAX} characters); "
-                      f"put the rest in a package and carry it.", 413)
     package = None
     if body.get("package"):
         try:
@@ -104,10 +86,6 @@ def read_request(body) -> tuple[str, Optional[bytes]]:
         if len(package) > package_inbox_api.MAX_BYTES:
             raise Refused(f"The zip is over {package_inbox_api.MAX_BYTES} bytes, the most a "
                           f"package may be.", 413)
-    if package is None and asks(says, body):
-        raise Refused("A decision or a question goes to him only inside a package that shows "
-                      "him what he needs to decide (make it with python -m jarvis.make_package "
-                      "and carry it with --package). Nothing was sent.")
     return says, package
 
 

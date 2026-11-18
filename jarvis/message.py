@@ -12,9 +12,8 @@ something short, and may carry a package (`--package`, a zip made with
 `--work` it goes to his Inbox, which JARVIS refuses while you have a piece
 on an open item (it names the item).
 
-A decision or a question is never sent bare: it goes inside a package that
-shows him what he needs to decide. A message that asks something (a
-sentence ending in "?") without `--package` is refused.
+A decision goes inside a package that shows him what he needs to decide
+(make_package); a message that asks something without one is still sent.
 
 Prints the message's id. Exits 1 when JARVIS refuses it, saying why. A
 message JARVIS does not answer in time is asked about by its key and sent

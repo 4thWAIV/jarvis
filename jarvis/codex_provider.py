@@ -189,30 +189,61 @@ def config_toml(mcp_servers: dict) -> str:
         'web_search = "live"',
     ]
     for name, spec in sorted(mcp_servers.items()):
+        if isinstance(spec, dict) and spec.get("command"):
+            lines += mcp_server_toml(name, spec)
+    return "\n".join(lines) + "\n"
+
+
+def _servers_of(mcp_config: Optional[Path]) -> dict:
+    """The `mcpServers` of an mcp.json, or none when it cannot be read."""
+    if not mcp_config:
+        return {}
+    try:
+        return json.loads(Path(mcp_config).read_text()).get("mcpServers") or {}
+    except (OSError, ValueError) as e:
+        log.warning(f"codex: could not read {mcp_config}: {e}")
+        return {}
+
+
+def config_overrides(mcp_servers: dict) -> list[str]:
+    """The MCP servers as `-c` overrides of the user's own Codex home, for
+    a package author (which runs on that home, never JARVIS's config.toml):
+    each server's command, args and env, approved as a whole server."""
+    argv: list[str] = []
+    for name, spec in sorted(mcp_servers.items()):
         if not isinstance(spec, dict) or not spec.get("command"):
             continue
         table = f"mcp_servers.{_toml_key(name)}"
-        lines += ["", f"[{table}]", f"command = {_toml_value(spec['command'])}"]
+        values = {"command": spec["command"], "default_tools_approval_mode": "approve"}
         if spec.get("args"):
-            lines.append(f"args = {_toml_value(list(spec['args']))}")
-        lines.append('default_tools_approval_mode = "approve"')
-        if spec.get("env"):
-            lines += ["", f"[{table}.env]"]
-            lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sorted(spec["env"].items())]
-    return "\n".join(lines) + "\n"
+            values["args"] = list(spec["args"])
+        for key, value in values.items():
+            argv += ["-c", f"{table}.{key}={_toml_value(value)}"]
+        for key, value in sorted((spec.get("env") or {}).items()):
+            argv += ["-c", f"{table}.env.{_toml_key(key)}={_toml_value(value)}"]
+    return argv
+
+
+def mcp_server_toml(name: str, spec: dict) -> list[str]:
+    """One MCP server (an mcp.json entry: command, args, env) as config.toml
+    lines, approved as a whole server: the brain's, and the agent server
+    session_skill installs in the user's own Codex home."""
+    table = f"mcp_servers.{_toml_key(name)}"
+    lines = ["", f"[{table}]", f"command = {_toml_value(spec['command'])}"]
+    if spec.get("args"):
+        lines.append(f"args = {_toml_value(list(spec['args']))}")
+    lines.append('default_tools_approval_mode = "approve"')
+    if spec.get("env"):
+        lines += ["", f"[{table}.env]"]
+        lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sorted(spec["env"].items())]
+    return lines
 
 
 def write_config(mcp_config: Optional[Path]) -> Path:
     """Write the Codex home's config.toml, 0600: it holds a copy of every
     `env` block of the user's connections, as mcp.json does."""
-    servers = {}
-    if mcp_config:
-        try:
-            servers = json.loads(Path(mcp_config).read_text()).get("mcpServers") or {}
-        except (OSError, ValueError) as e:
-            log.warning(f"codex: could not read {mcp_config}: {e}")
     path = data_paths.codex_home() / "config.toml"
-    private_files.replace(path, config_toml(servers).encode("utf-8"))
+    private_files.replace(path, config_toml(_servers_of(mcp_config)).encode("utf-8"))
     return path
 
 
@@ -339,6 +370,8 @@ class CodexSession:
             out, _ = await listing.communicate()
             self.disabled = features_to_disable(out.decode(errors="replace"))
         argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
+        if self.config.authoring:
+            argv += config_overrides(_servers_of(self.config.mcp_config))
         self.proc = await asyncio.create_subprocess_exec(
             *argv, cwd=str(self.config.home), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
@@ -349,12 +382,21 @@ class CodexSession:
             await self._call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
                              timeout=self.config.warmup_timeout)
             self._notify("initialized")
-            started = await self._call("thread/start", {
+            settings = {
                 "model": self.config.model, "cwd": str(self.config.home),
                 "approvalPolicy": "never",
                 "sandbox": "workspace-write" if self.config.authoring else "read-only",
                 "developerInstructions": instructions,
-            }, timeout=self.config.warmup_timeout)
+            }
+            if self.config.resume:
+                # The same thread goes on (a package author answered by its
+                # sender): its rollout, and so its transcript, is the same.
+                started = await self._call("thread/resume", {"threadId": self.config.resume,
+                                                             **settings},
+                                           timeout=self.config.warmup_timeout)
+            else:
+                started = await self._call("thread/start", settings,
+                                           timeout=self.config.warmup_timeout)
             thread = started.get("thread") or {}
             self.thread_id = thread.get("id")
             self._rollout = Path(thread["path"]) if thread.get("path") else None

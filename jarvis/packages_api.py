@@ -94,12 +94,16 @@ def describe(package: Package) -> dict:
             "sources": list(package.sources),
             **({"communication": m.communication} if m.communication else {}),
             "story": story.outline() if story is not None else None,
-            # A deck's own slides, which the border moves through (a
-            # decision's lead-in and its question each one); None for a
+            # A deck's own slides, which the border moves through (each
+            # question one); None for a
             # page that is not a deck, whose border moves through its story.
             "pages": package_inbox.deck_pages(package) if story is not None else None,
             # The standard vote the package carries, shown in the view's head.
             "vote": package_inbox.page_vote(package),
+            # Whether JARVIS proved its layout (a deck: its pictures, story
+            # targets and renderer), or it is a hand-made page whose layout
+            # nobody checked: said in the border.
+            "layout_checked": package.layout_checked,
             # An architecture view set's views, which its chapters move
             # between (language_projection.views_shown); absent otherwise.
             **({"views": views} if (views := language_projection.views_shown(package)) else {})}

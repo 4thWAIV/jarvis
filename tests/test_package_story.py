@@ -79,7 +79,6 @@ def test_the_example_story_is_checked_and_each_beat_first_shows_its_slide(deck):
     (_story(title=""), "title is missing"),
     (_story(slides=[{"title": "x", "beats": [{"say": "a", "actions": [{"type": "x"}]}]}]),
      "Slide 1, beat 1's action 1 is not one of"),
-    (_story(slides=[{"title": "x", "beats": [{"say": "a" * 801}]}]), "longer than 800"),
     (_story(slides=[{"title": "x", "beats": [{"say": "a", "targets": ["#a\n#b"]}]}]),
      "is not one line"),
     (_story(slides=[{"title": "x", "beats": [{"say": "a", "targets": "#a"}]}]),

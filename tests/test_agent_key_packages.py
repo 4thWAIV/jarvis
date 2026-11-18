@@ -224,7 +224,8 @@ def test_a_decision_package_needs_its_signed_check_statement(wired, marks, tmp_p
     deck = {**SKILL, "name": "a-deck"}
     files = {"SKILL.md": "x", "deck-data.js": "window.DECK = {}", "scripts/decide.py": "x"}
     r = send(client, agent, signed_zip(tmp_path, agent, deck, files=files), session=PLAN)
-    assert r.status_code == 409 and "not passed its check" in r.json()["error"]
+    assert r.status_code == 409 and "has not been proven" in r.json()["error"], \
+        "a deck with no layout proof needs the old checked statement"
     ok = signed_zip(tmp_path, agent, {**deck, "version": "1.0.1"}, files=files,
                     statements=(package_signature.DECISION_CHECKED,))
     assert send(client, agent, ok, session=PLAN).status_code == 200

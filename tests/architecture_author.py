@@ -1,7 +1,9 @@
 """A stand-in `claude` that authors an architecture document's explanation
-the way the real fresh author is told to (package_author._assignment): it
-reads the document folder the prompt names (a view set's first view's),
-writes package/UNDERSTANDING.md
+the way the real fresh author is told to (package_author._assignment): its
+first turn writes the briefing's prep and script, an ask of the briefing's
+editors and judges is answered passing (author_fixtures.passing_reply), and
+the deck turn reads the document folder the prompt names (a view set's
+first view's), writes package/UNDERSTANDING.md
 (and package/story.json, copied from `AUTHOR_TEST_STORY` when it is set),
 runs the exact check command the prompt gives as a real subprocess, and
 records that call and its real output in its own transcript under
@@ -18,12 +20,18 @@ ROOT = Path(__file__).resolve().parent.parent
 FAKE_BRAIN = Path(__file__).parent / "fixtures" / "fake_brain.py"
 
 ACTION = '''
-    if text.startswith('Inspect the rendered package'):
+    _sys = __import__('sys')
+    _sys.path.insert(0, {root!r})
+    from tests.author_fixtures import passing_reply as _passing, write_prep as _prep
+    # The session's first prompt, which its transcript begins with (the
+    # fresh author's, author_proof.fresh), kept for the turn that checks.
+    if not os.path.exists('first-prompt.txt'):
+        open('first-prompt.txt', 'w').write(text)
+    if 'prep.md and script.md now' in text:
         from pathlib import Path as _P
-        _sys = __import__('sys')
-        _sys.path.insert(0, {root!r})
-        from tests.author_fixtures import accept_visual_review as _accept
-        _accept(_P(text.split('Read ', 1)[1].split('. Open EVERY', 1)[0]))
+        _prep(_P('.'))
+    elif _passing(text) is not None:
+        text = _passing(text)       # an editor's or judge's ask: echoed back as its answer
     if '--check-only --document' in text:
         import json as _json, re as _re, subprocess as _sp, time as _time
         from pathlib import Path as _P
@@ -50,7 +58,7 @@ ACTION = '''
                / _sw.encode_cwd(os.getcwd()) / (SESSION_ID + '.jsonl'))
         _at.parent.mkdir(parents=True, exist_ok=True)
         _at.write_text(''.join(_json.dumps(o) + '\\n' for o in _lines(
-            'claude', SESSION_ID, '', _time.time(), prompt=text,
+            'claude', SESSION_ID, '', _time.time(), prompt=open('first-prompt.txt').read(),
             printed=_run.stdout.strip(), ran=_cmd)))
 '''
 

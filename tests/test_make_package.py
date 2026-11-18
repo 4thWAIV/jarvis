@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import (data_paths, decision_check, decision_package as dp, make_package as mp,
+from jarvis import (data_paths, decision_package as dp, make_package as mp,
                     package_inbox)
+from tests import deck_fixtures
+from tests.deck_fixtures import write_yaml
 from tests.test_decision_package import _Delivery, small_deck, write
 
 EXAMPLES = Path(__file__).parent.parent / "examples" / "packages"
@@ -23,7 +25,7 @@ pytestmark = pytest.mark.usefixtures("authored_package_source")
 
 
 def presentation() -> dict:
-    return json.loads(json.dumps(mp.PRESENTATION_EXAMPLE))
+    return json.loads(json.dumps(deck_fixtures.PRESENTATION))
 
 
 @pytest.fixture(autouse=True)
@@ -33,55 +35,63 @@ def session_key():
     return agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent sess-1")
 
 
-def passing_check(monkeypatch, seen=None):
-    def check(archive, deck, out, signer=None, session=""):
-        if seen is not None:
-            seen.append(deck)
-        return decision_check.Result(passed=["everything"])
-    monkeypatch.setattr(decision_check, "check", check)
+def built_deck(out: Path) -> dict:
+    """The deck data of the one package built in `out`."""
+    [archive] = out.glob("*.zip")
+    text = zipfile.ZipFile(archive).read("deck-data.js").decode()
+    return json.loads(text.split("=", 1)[1].strip().rstrip(";"))
 
 
 # -- a presentation ---------------------------------------------------------------------
 
 def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path, monkeypatch, capsys):
-    delivery, seen = _Delivery(), []
+    delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    passing_check(monkeypatch, seen)
-    assert mp.main([str(write(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
+    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "sess-1",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     archive = tmp_path / "out" / "team-lunch-moved-1.0.0.zip"
     z = zipfile.ZipFile(archive)
     assert "scripts/decide.py" not in z.namelist(), "no slide asks the vote: JARVIS records it"
     package = json.loads(z.read("package.json"))
-    understood = {f: "UNDERSTANDING.md" for f in (
-        "deck-data.js", "deck.css", "deck.js", "index.html", "story.json")}
+    understood = package.pop("understanding")
+    assert {"deck-data.js", "deck.css", "deck.js", "index.html", "story.json",
+            "presentation.css", "source.yaml"} <= set(understood)
+    assert set(understood.values()) == {"UNDERSTANDING.md"}
     assert package == {"name": "team-lunch-moved", "version": "1.0.0",
                        "purpose": "Tell the team where Friday's lunch is now.", "runs": "page", "entry": "index.html",
                        "story": "story.json", "returns": ["results/decisions.json"],
-                       "vote": "approve-package",
-                       "brief": "UNDERSTANDING.md", "understanding": understood}
-    assert not seen[0].get("decisions"), "the vote is no decision of the deck"
+                       "vote": "approve-package", "brief": "UNDERSTANDING.md"}
+    assert not built_deck(tmp_path / "out").get("decisions"), "the vote is no decision of the deck"
     story = json.loads(z.read("story.json"))
     titles = [s["title"] for s in story["slides"]]
-    assert titles[:3] == ["Friday's lunch has moved", "What changed", "What you need to do"], \
+    assert titles[:2] == ["Friday's lunch has moved", "What changed"], \
         "its own slides first, its opening first of all"
     assert not any(s.get("waits") for s in story["slides"]), "the vote is asked at Done"
-    assert len(seen) == 1 and len(delivery.calls) == 1
+    assert len(delivery.calls) == 1
     assert "Built a presentation" in capsys.readouterr().out
 
 
 def test_a_deck_with_neither_slides_nor_decisions_is_refused(tmp_path, capsys):
-    assert mp.main([str(write(tmp_path, {"title": "Nothing"})), "--check-only"]) == 1
-    assert "neither decisions nor slides" in capsys.readouterr().out
+    assert mp.main([str(write_yaml(tmp_path, {"title": "Nothing"})), "--check-only"]) == 1
+    assert "at least 1 item" in capsys.readouterr().out
 
 
 def test_the_presentation_example_is_valid(tmp_path, capsys):
     assert mp.main(["--example", "presentation"]) == 0
-    content = tmp_path / "content.json"
+    content = tmp_path / "presentation.yaml"
     content.write_text(capsys.readouterr().out)
     assert mp.main([str(content), "--check-only"]) == 0
-    assert "a presentation, ending with the standard vote" in capsys.readouterr().out
+    assert "a presentation, carrying the standard vote" in capsys.readouterr().out
+    assert mp.main(["--example"]) == 0
+    content.write_text(capsys.readouterr().out)
+    assert mp.main([str(content), "--check-only"]) == 0
+    assert "a decision package, 1 decision(s)" in capsys.readouterr().out
+
+
+def test_a_content_json_deck_is_refused_naming_presentation_yaml(tmp_path, capsys):
+    assert mp.main([str(write(tmp_path, small_deck())), "--check-only"]) == 1
+    assert mp.JSON_DECK_RETIRED in capsys.readouterr().out
 
 
 # -- what is worked out -----------------------------------------------------------------
@@ -89,8 +99,7 @@ def test_the_presentation_example_is_valid(tmp_path, capsys):
 def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    passing_check(monkeypatch)
-    assert mp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert mp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "sess-1", "--workflow", "wf-1",
                     "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, body)] = delivery.calls
@@ -110,8 +119,7 @@ def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, c
 def test_says_is_the_message_s_words(tmp_path, monkeypatch):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    passing_check(monkeypatch)
-    assert mp.main([str(write(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert mp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
                     "--session", "sess-1", "--says", "Two choices on the lunch.",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(_url, _token, body)] = delivery.calls
@@ -144,13 +152,11 @@ def test_a_compare_picture_is_a_known_field(tmp_path):
     assert dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent) == []
 
 
-def test_every_slide_over_the_word_limit_is_listed(tmp_path):
-    deck = presentation()
-    long = " ".join(["word"] * 70)
-    deck["slides"] = [{"title": "One", "blocks": [{"p": long[:270]}, {"p": long[:270]}]},
-                      {"title": "Two", "blocks": [{"p": long[:270]}, {"p": long[:270]}]}]
-    found = dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent)
-    assert sum("words; at most 60" in p for p in found) == 2
+def test_no_decision_part_is_refused_for_its_words(tmp_path):
+    deck = small_deck()
+    for d in deck["decisions"]:
+        d["reason"] = " ".join(["word"] * 45)
+    assert dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent) == []
 
 
 # -- a hand-made folder -----------------------------------------------------------------
@@ -180,17 +186,15 @@ def built_story(out: Path) -> dict:
 
 
 def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch):
-    delivery, seen = _Delivery(), []
+    delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    passing_check(monkeypatch, seen)
-    assert mp.main([str(write(tmp_path / "in", presentation())), "--work", "work-1",
+    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--work", "work-1",
                     "--out", str(tmp_path / "out"), "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, _body)] = delivery.calls
-    assert "work=work-1" in url and not seen[0].get("decisions")
+    assert "work=work-1" in url and not built_deck(tmp_path / "out").get("decisions")
 
 
 def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path, monkeypatch):
-    passing_check(monkeypatch)
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     folder = tmp_path / "in" / "Plain Page"
@@ -211,7 +215,6 @@ def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path, monke
 
 
 def test_a_page_s_own_story_is_kept_as_it_is_and_the_vote_asked_at_done(tmp_path, monkeypatch):
-    passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
@@ -268,15 +271,13 @@ def test_a_deck_that_declares_the_vote_is_refused(tmp_path, capsys, decision, sa
     content = presentation() | {"decisions": [{
         "id": decision, "question": "Is it clear?", "reason": "So he can say.",
         "recommended": "got-it", "text_only": "A reply is not a choice between looks at all.",
-        "why_you": "It is yours.", "evidence": ["It is here."],
         "options": [{"id": "got-it", "name": "Got it", "says": "Clear."},
                     {"id": "questions", "name": "I have questions", "says": "Ask."}]}]}
-    assert mp.main([str(write(tmp_path, content)), "--check-only"]) == 1
+    assert mp.main([str(write_yaml(tmp_path, content)), "--check-only"]) == 1
     assert said in capsys.readouterr().out
 
 
 def test_a_page_whose_story_asks_got_it_is_refused(tmp_path, monkeypatch, capsys):
-    passing_check(monkeypatch)
     monkeypatch.setattr(dp, "post", _Delivery())
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
@@ -296,7 +297,6 @@ def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, qu
     content = presentation() | {"decisions": [{
         "id": question, "question": "Approve it?", "reason": "It is done.",
         "recommended": "approve", "text_only": "A verdict is a reply, not a choice between looks.",
-        "why_you": "Only you approve.", "evidence": ["Every check passed."],
         "options": [{"id": "approve", "name": "Approve", "says": "Done."},
                     {"id": "hold", "name": "Hold", "says": "Not yet."}]}]}
     deck = mp.deck_of(write(tmp_path, content))
@@ -304,23 +304,19 @@ def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, qu
     assert mp.deck_kind(deck) == "decision package"
 
 
-@pytest.mark.parametrize("check_only", [False, True])
-def test_a_conversation_package_for_a_work_item_is_refused(tmp_path, monkeypatch, capsys,
-                                                          check_only):
+def test_a_conversation_package_for_a_work_item_goes(tmp_path, monkeypatch):
+    """A package for a Work item that asks nothing is no longer refused:
+    what follows his sign-off is the workflow's to carry on."""
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     folder = tmp_path / "in" / "Say Notes"
     folder.mkdir(parents=True)
     (folder / "SKILL.md").write_text("Say the notes.\n")
     (folder / "package.json").write_text(json.dumps({"purpose": "Say the notes."}))
-    argv = [str(folder), "--out", str(tmp_path / "out"), "--session", "sess-1",
-            "--deliver-to", "http://127.0.0.1:19999"]
-    assert mp.main(argv + ["--work", "work-1"] + (["--check-only"] if check_only else [])) == 1
-    out = capsys.readouterr().out
-    assert "names work item work-1, but a conversation package cannot carry Tim's vote" in out
-    assert "Send it without --work" in out and delivery.calls == []
-    assert mp.main(argv) == 0, "with no Work item it goes"
-    assert len(delivery.calls) == 1
+    assert mp.main([str(folder), "--out", str(tmp_path / "out"), "--session", "sess-1",
+                    "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    [(url, _, _)] = delivery.calls
+    assert "work=work-1" in url
 
 
 def test_an_agent_package_for_a_work_item_goes_with_its_work_key(tmp_path, monkeypatch):
@@ -353,7 +349,6 @@ def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
 def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    passing_check(monkeypatch)
     assert mp.main([str(page_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--project", "globe", "--session", "sess-1",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
@@ -402,25 +397,28 @@ def test_every_hand_made_example_passes_as_it_is(tmp_path, example):
 
 
 def test_the_old_command_name_is_the_same_command(tmp_path, capsys):
-    assert dp.main([str(write(tmp_path, presentation())), "--check-only"]) == 0
+    assert dp.main([str(write_yaml(tmp_path, presentation())), "--check-only"]) == 0
     assert "a presentation" in capsys.readouterr().out
 
 
-def test_every_deck_is_signed_as_checked_a_presentation_too(
+def test_every_deck_carries_its_proof_and_is_signed_a_presentation_too(
         tmp_path, monkeypatch, session_key):
-    """A presentation carries the standard vote (PR 89), so it is checked
-    and signed exactly as a decision package is: no "only as sent" path."""
-    from jarvis import package_signature
+    """A presentation carries the standard vote (PR 89), so it is proven
+    and signed exactly as a decision package is: no browser, no "only as
+    sent" path, and his JARVIS makes the proof again as it arrives."""
+    from jarvis import package_signature, presentation_proof
     monkeypatch.setattr(dp, "post", _Delivery())
-    passing_check(monkeypatch)
     for name, deck in (("d", small_deck()), ("p", presentation())):
         out = tmp_path / name / "out"
-        assert mp.main([str(write(tmp_path / name, deck)), "--out", str(out),
+        assert mp.main([str(write_yaml(tmp_path / name, deck)), "--out", str(out),
                         "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
         [archive] = out.glob("*.zip")
         signed = package_signature.read(archive)
         assert signed.session == "sess-1" and signed.checks(session_key[1])
+        # Also signed as checked, for a JARVIS from before the proof.
         assert package_signature.DECISION_CHECKED in signed.statements
+        with zipfile.ZipFile(archive) as z:
+            assert json.loads(z.read(presentation_proof.PROOF_FILE))["proven"]
 
 
 def test_a_deck_given_as_a_folder_is_refused(tmp_path):
@@ -429,24 +427,23 @@ def test_a_deck_given_as_a_folder_is_refused(tmp_path):
     assert "made from its content file" in " ".join(refused.value.problems)
 
 
-def test_bounded_image_failure_reports_on_existing_work_without_a_package(tmp_path, monkeypatch):
-    delivery, checks = _Delivery(), []
+def test_a_build_refused_after_the_author_reports_on_work_without_a_package(tmp_path, monkeypatch):
+    from jarvis import presentation_proof
+    delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    def failed(*args):
-        checks.append(args)
-        return decision_check.Result(failures=["entry: picture missing.svg did not load"])
-    monkeypatch.setattr(decision_check, "check", failed)
-    assert mp.main([str(write(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
+    def refused(source, out):
+        raise dp.Refused(["deck.css is not JARVIS's own."])
+    monkeypatch.setattr(mp, "make_presentation", refused)
+    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
                     "--session", "sess-1", "--work", "image-work",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 1
-    assert len(checks) == 2
     [(url, signer, body)] = delivery.calls
     assert url.endswith("/api/messages?work=image-work")
     assert signer is not None and "package" not in body
-    assert "picture missing.svg did not load" in body["says"]
+    assert "deck.css is not JARVIS's own" in body["says"]
 
 
-# -- a briefing: the opening and each decision's lead-in --------------------------------
+# -- a briefing: its purpose, conclusion and an opening of words ------------------------
 
 def refused_for(tmp_path, deck) -> str:
     with pytest.raises(dp.Refused) as refused:
@@ -457,181 +454,68 @@ def refused_for(tmp_path, deck) -> str:
 def test_a_well_formed_briefing_is_accepted(tmp_path):
     deck = mp.deck_of(write(tmp_path, small_deck()))
     assert deck["purpose"] == "Two decisions on the team lunch."
-    assert [s.get("lead_in") for s in deck["slides"] if s.get("lead_in")] == ["where", "when"]
+    assert [s.get("id") for s in deck["slides"]] == ["s1"], "JARVIS adds no lead-in slide"
     assert mp.deck_of(write(tmp_path, presentation()))["conclusion"]
 
 
-@pytest.mark.parametrize("field", ["purpose", "conclusion"])
-def test_a_deck_without_its_purpose_or_conclusion_is_refused(tmp_path, field):
+@pytest.mark.parametrize("change", [
+    lambda d: d.pop("conclusion"),
+    lambda d: d.update(conclusion=d["conclusion"] + " Then we vote."),
+    lambda d: d["slides"][0]["blocks"].insert(0, {"table": {"head": ["Day", "People"],
+                                                            "rows": [["Friday", "9"]]}}),
+    lambda d: d["slides"][0].pop("say"),
+    lambda d: d["slides"][0]["blocks"].extend({"p": " ".join(["word"] * 50)} for _ in range(3)),
+])
+def test_the_first_slide_and_the_words_are_the_author_s(tmp_path, change):
+    """No rule shapes the first slide (words first, a narration, the
+    conclusion shown), asks for a one-sentence conclusion, or counts a
+    slide's words."""
     deck = small_deck()
-    del deck[field]
-    said = refused_for(tmp_path, deck)
-    assert f'The deck has no {field}: write "{field}": one sentence' in said
-    deck[field] = "   "
-    assert f"The deck has no {field}" in refused_for(tmp_path, deck)
-
-
-def test_a_conclusion_is_one_sentence(tmp_path):
-    deck = small_deck()
-    deck["conclusion"] += " Then we vote."
-    assert "conclusion is more than one sentence" in refused_for(tmp_path, deck)
-
-
-def test_a_deck_that_opens_on_data_is_refused(tmp_path):
-    deck = small_deck()
-    deck["slides"][0]["blocks"].insert(0, {"table": {"head": ["Day", "People"],
-                                                     "rows": [["Friday", "9"]]}})
-    said = refused_for(tmp_path, deck)
-    assert "the opening: it starts with a table, data before its purpose" in said
-    deck["slides"][0]["blocks"][0] = {"facts": [{"n": "9", "text": "people"}]}
-    assert "it starts with facts" in refused_for(tmp_path, deck)
-
-
-def test_a_deck_that_opens_on_a_decision_is_refused(tmp_path):
-    deck = small_deck()
-    del deck["slides"]
-    assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
-    deck["slides"] = [{"decision": "where"}]
-    assert "opens on decision 'where''s lead-in" in refused_for(tmp_path, deck)
-
-
-def test_the_opening_must_show_its_conclusion_and_say_its_purpose(tmp_path):
-    deck = small_deck()
-    opening = deck["slides"][0]
-    opening["blocks"][0] = {"lead": "Lunch is on Friday."}
-    del opening["say"]
-    opening["title"] = "Friday"
-    said = refused_for(tmp_path, deck)
-    assert "it does not show the conclusion" in said
-    assert "neither it nor its narration says the purpose" in said
-    assert "it has no `say`" in said
-    # A close paraphrase is enough: most of its words, any order and case.
-    opening["blocks"][0] = {"lead": "At noon we EAT in the office: nobody books tables."}
-    opening["say"] = "These are two decisions about the team's lunch."
+    change(deck)
     mp.deck_of(write(tmp_path, deck))
 
 
-def test_metadata_alone_is_not_an_opening(tmp_path):
-    """The fields are there, but the first slide says neither."""
-    deck = presentation()
-    deck["slides"] = deck["slides"][1:]
-    said = refused_for(tmp_path, deck)
-    assert "does not show the conclusion" in said and "says the purpose" in said
-
-
-def test_a_decision_without_its_lead_in_is_refused(tmp_path):
+@pytest.mark.parametrize("field", ["why_you", "evidence"])
+def test_a_decision_carries_no_lead_in_fields(tmp_path, field):
+    """JARVIS draws no lead-in slide: a decision's why_you and evidence are
+    no fields of it."""
     deck = small_deck()
-    del deck["decisions"][0]["why_you"]
-    deck["decisions"][1]["evidence"] = []
-    said = refused_for(tmp_path, deck)
-    assert "Decision where: it has no lead-in (why_you)" in said
-    assert "Decision when: it has no lead-in (evidence)" in said
+    deck["decisions"][0][field] = "It is yours." if field == "why_you" else ["It is here."]
+    assert f"{field!r} is not a field of a decision" in refused_for(tmp_path, deck)
     deck = small_deck()
-    deck["decisions"][0]["evidence"] = ["One.", "Two.", "Three.", "Four."]
-    assert "4 lines of evidence; at most 3" in refused_for(tmp_path, deck)
+    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
+                           "blocks": [{"p": "Mine."}]})
+    assert "'lead_in' is not a field of a slide" in refused_for(tmp_path, deck)
 
 
-def test_a_lead_in_is_drawn_and_told_before_its_decision(tmp_path):
+def test_each_decision_is_told_and_asked_on_its_own_slide(tmp_path):
     deck = mp.deck_of(write(tmp_path, small_deck()))
-    order = [s.get("lead_in") and f"lead-{s['lead_in']}" or s.get("decision") or s["id"]
-             for s in deck["slides"]]
-    assert order == ["s1", "lead-where", "where", "lead-when", "when"]
-    lead = deck["slides"][1]
-    assert lead["blocks"][0] == {"lead": "Where do we eat?"}
-    assert "It is your team's lunch." in lead["say"] and "Lunch is on Friday." in lead["say"]
-    # The lead-in is told as its decision's own story slide's first beat, so
-    # the story asks, waits and resumes there: never the question without it.
     deck["decisions"][0]["options"][0]["opens"] = ["when"]
     told = dp.builder().story(deck)["slides"]
     assert [s.get("waits") for s in told] == [None, "where", "when", None]
     where, when = told[1], told[2]
     assert where["beats"][0]["actions"] == [{"click": "#go-2"}]
-    assert where["beats"][0]["targets"] == ["#lead-where h2"]
-    assert "It is your team's lunch." in where["beats"][0]["say"]
-    assert where["beats"][1]["actions"] == [{"click": "#go-3"}]
-    assert "target" not in where, "each part goes to its own slide"
-    assert when["beats"][0]["actions"] == [{"click": "#go-4"}]
+    assert where["target"] == "#d-where"
+    assert when["beats"][0]["actions"] == [{"click": "#go-3"}]
     assert when["asks_when"] == {"question": "where", "answers": ["in"]}
     from jarvis import package_story
     story = package_story.parse(package_story.encode(dp.builder().story(deck)))
     record = {"where": {"answer": "in"}}
-    assert story.open_questions(record) == [3], "resume picks the when slide, lead-in first"
+    assert story.open_questions(record) == [3], "resume picks the when slide"
 
 
 def test_the_border_moves_through_every_slide_the_deck_draws(tmp_path):
-    """The border navigates the deck's own slides: each lead-in, each
-    question and the vote is its own page, numbered as the deck numbers
-    them, while the story still tells a lead-in with its question."""
+    """The border navigates the deck's own slides: each question and the
+    vote is its own page, numbered as the deck numbers them."""
     deck = mp.deck_of(write(tmp_path, small_deck()))
     pages = dp.builder().pages(deck)
     told = dp.builder().story(deck)["slides"]
     assert [p["opener"] for p in pages] == [f"#go-{n}" for n in range(1, len(pages) + 1)]
-    assert [p["asks"] for p in pages] == [None, None, "where", None, "when", None], \
+    assert [p["asks"] for p in pages] == [None, "where", "when", None], \
         "no slide asks the vote: it is asked at Done"
     assert pages[-1]["title"] == "Your answers"
-    assert pages[1]["title"] != pages[2]["title"], "a lead-in is not named as its question"
-    assert len(told) < len(pages), "the story still folds each lead-in into its question"
     opened = {o for s in told for b in s["beats"] for kind, o in
               ((k, v) for a in b.get("actions", []) for k, v in a.items()) if kind == "click"}
     assert opened <= {p["opener"] for p in pages}
 
 
-def test_a_spanish_decision_s_lead_in_is_in_spanish(tmp_path):
-    deck = small_deck() | {"language": "es"}
-    lead = mp.deck_of(write(tmp_path, deck))["slides"][1]
-    assert lead["title"] == "Antes de decidir: Where"
-
-
-def test_a_lead_in_slide_is_never_written_by_hand(tmp_path):
-    deck = small_deck()
-    deck["slides"].append({"title": "Before you decide", "lead_in": "where",
-                           "blocks": [{"p": "Mine."}]})
-    assert "Slide 2: a lead-in slide is made from its decision's question" in \
-        refused_for(tmp_path, deck)
-
-
-def test_evidence_lines_are_strings_with_words(tmp_path):
-    deck = small_deck()
-    deck["decisions"][0]["evidence"] = ["Fine.", "  "]
-    assert "Decision where: it has no lead-in (evidence)" in refused_for(tmp_path, deck)
-    deck["decisions"][0]["evidence"] = ["x" * 161]
-    assert "the evidence is 161 characters; at most 160" in refused_for(tmp_path, deck)
-    deck["decisions"][0]["evidence"], deck["decisions"][0]["why_you"] = ["Fine."], "y" * 161
-    assert "the why_you is 161 characters; at most 160" in refused_for(tmp_path, deck)
-
-
-def test_yaml_uses_same_author_visual_repair_and_fresh_staging(tmp_path, monkeypatch):
-    """Both reviewed attempts compile YAML; only the accepted archive delivers."""
-    import shutil
-    from jarvis import package_author
-    from tests.author_fixtures import accept_visual_review
-
-    source_dir = tmp_path / 'source'
-    shutil.copytree(EXAMPLES.parent / 'presentations/street', source_dir)
-    source = source_dir / 'presentation.yaml'
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, 'post', delivery)
-    passing_check(monkeypatch)
-    reviewed = []
-    shared_review = package_author.review
-
-    async def review(authored_source, archive, result, turn, folder):
-        reviewed.append(archive)
-        async def reply(prompt):
-            request = Path(prompt.split('Read ', 1)[1].split('. Open EVERY', 1)[0])
-            accept_visual_review(request, status='repair' if len(reviewed) == 1 else 'accepted')
-        return await shared_review(authored_source, archive, result, reply, folder)
-
-    monkeypatch.setattr(package_author, 'review', review)
-    out = tmp_path / 'out'
-    assert mp.main([str(source), '--out', str(out), '--session', 'sess-1',
-                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
-    assert len(reviewed) == 2 and reviewed[0] != reviewed[1]
-    assert [path.parent.name for path in reviewed] == ['review-1', 'review-2']
-    assert len(delivery.calls) == 1
-    delivered = json.loads((out / 'delivery.json').read_text())
-    assert delivered['zip'] == str(reviewed[-1])
-    with zipfile.ZipFile(reviewed[-1]) as package:
-        receipt = json.loads(package.read('.jarvis/visual-review.json'))
-        assert receipt['review']['status'] == 'accepted'
-        assert package.read('source.yaml') == source.read_bytes()

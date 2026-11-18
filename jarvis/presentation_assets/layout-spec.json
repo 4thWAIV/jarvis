@@ -1,0 +1,43 @@
+{
+  "about": "JARVIS's one layout spec for every deck it draws. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
+  "frame": {"min": [662, 489], "max": [1600, 900]},
+  "unit": {"width": 880, "height": 640},
+  "text": {"min_px": 13, "max_px": 25},
+  "styles": {
+    "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35},
+    "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2},
+    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35}
+  },
+  "control": {"min_px": 32},
+  "picture": {"min_px": 60, "stretch_max": 2},
+  "slide": {"width": 824, "gap": 8},
+  "slot_padding": 4,
+  "pictures": {
+    "content": {"width": 824, "height": 300, "gap": 14},
+    "context": {"width": 290, "height": 220},
+    "compare": {"width": 824, "height": 200},
+    "option": {"width": 824, "height": 120, "gap": 12, "padding": 24, "columns_max": 4}
+  },
+  "title": [28, 14, 824, 72],
+  "layouts": {
+    "opening": {"slots": {"words": [28, 94, 824, 534]}, "required": ["words"]},
+    "title-and-body": {"slots": {"body": [28, 94, 824, 534]}, "required": ["body"]},
+    "picture-and-words": {"slots": {"words": [28, 94, 330, 534], "picture": [374, 94, 478, 534]},
+                          "required": ["words", "picture"]},
+    "two-pictures": {"slots": {"first": [28, 94, 404, 400], "second": [448, 94, 404, 400],
+                               "words": [28, 510, 824, 118]}, "required": ["first", "second"]},
+    "comparison": {"columns": {"slots": ["first", "second", "third", "fourth"], "box": [28, 94, 824, 400], "gap": 16},
+                   "slots": {"words": [28, 510, 824, 118]}, "required": ["first", "second"]},
+    "table": {"slots": {"table": [28, 94, 824, 420], "words": [28, 530, 824, 98]}, "required": ["table"]}
+  },
+  "accepts": {
+    "words": ["text"],
+    "body": ["text", "table", "bar", "vector", "image"],
+    "picture": ["image", "vector", "bar"],
+    "first": ["image", "vector", "bar", "text"],
+    "second": ["image", "vector", "bar", "text"],
+    "third": ["image", "vector", "bar", "text"],
+    "fourth": ["image", "vector", "bar", "text"],
+    "table": ["table"]
+  }
+}

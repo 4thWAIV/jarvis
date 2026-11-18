@@ -54,11 +54,9 @@ from jarvis import decision_package as _dp, spoken_words
 STORY_MAX_BYTES = 256 * 1024
 MAX_SLIDES = 60
 MAX_BEATS = 40            # in one slide
-MAX_SAY_CHARS = 800       # one beat's words
 MAX_TARGETS = 12          # in one beat
 MAX_ACTIONS = 6           # in one beat
 MAX_SELECTOR_CHARS = 400
-MAX_TITLE_CHARS = 200
 # What a beat may do to the page before its targets are pointed at:
 # `show` scrolls an element into view, `click` clicks one (a detail view's
 # opener or its close button).
@@ -99,7 +97,6 @@ SLIDE_FIELDS = ("title", "target", "beats", "waits", "asks_when", "view")
 # view's document id, and the story names the one concrete scenario it walks
 # through every view in turn.
 DOCUMENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}")
-SCENARIO_MAX_CHARS = 300
 BEAT_FIELDS = ("say", "targets", "actions")
 
 
@@ -240,11 +237,13 @@ def _about(slide: Slide) -> list[str]:
     return targets or ([slide.target] if slide.target else [])
 
 
-def _text(value, what: str, limit: int) -> str:
+def _text(value, what: str, limit: int | None = None) -> str:
+    """Words the author wrote: present and free of control characters. Only
+    a selector has a limit; the story file's own size bounds the rest."""
     if not isinstance(value, str) or not value.strip():
         raise StoryError(f"{what} is missing.")
     value = value.strip()
-    if len(value) > limit:
+    if limit is not None and len(value) > limit:
         raise StoryError(f"{what} is longer than {limit} characters.")
     if any(ord(c) < 32 and c not in "\n\t" for c in value):
         raise StoryError(f"{what} has control characters in it.")
@@ -281,7 +280,7 @@ def _beat(raw, where: str) -> Beat:
                              f"{', '.join(f'{{{a!r}: selector}}' for a in ACTIONS)}.")
         kind, selector = next(iter(action.items()))
         actions.append((kind, _selector(selector, f"{where}'s action {n}")))
-    return Beat(_text(raw.get("say"), f"{where}'s say", MAX_SAY_CHARS), targets, tuple(actions))
+    return Beat(_text(raw.get("say"), f"{where}'s say"), targets, tuple(actions))
 
 
 def _question(value, what: str) -> str:
@@ -300,13 +299,6 @@ def _asks_when(raw, where: str) -> Optional[tuple[str, tuple[str, ...]]]:
             tuple(_question(a, f"{where}'s asks_when answer") for a in answers))
 
 
-def _line(value, what: str, limit: int) -> str:
-    text = _text(value, what, limit)
-    if "\n" in text:
-        raise StoryError(f"{what} is not one line.")
-    return text
-
-
 def _declared(raw, n: int) -> Declared:
     """One question a story declares: {"id", "question", "options": [{"id",
     "name", "says"}], "recommended"?, "reason"?, "context"?}, held to the
@@ -323,11 +315,9 @@ def _declared(raw, n: int) -> Declared:
                          f"standard vote is added by the factory, and an ordinary question is "
                          f"never a review.")
     where = f"Question {ident}"
-    question = _line(raw.get("question"), f"{where}'s question", _dp.CAPS["question"])
-    reason = ("" if raw.get("reason") is None
-              else _line(raw["reason"], f"{where}'s reason", _dp.CAPS["reason"]))
-    context = ("" if raw.get("context") is None
-               else _line(raw["context"], f"{where}'s context", _dp.CAPS["context"]))
+    question = _text(raw.get("question"), f"{where}'s question")
+    reason = "" if raw.get("reason") is None else _text(raw["reason"], f"{where}'s reason")
+    context = "" if raw.get("context") is None else _text(raw["context"], f"{where}'s context")
     options = []
     for m, o in enumerate(_list(raw.get("options"), f"{where}'s options", MAX_OPTIONS,
                                 required=True), 1):
@@ -337,10 +327,8 @@ def _declared(raw, n: int) -> Declared:
         oid = _question(o.get("id"), f"{owhere}'s id")
         if oid in _dp.RESERVED:
             raise StoryError(f"{owhere}'s id may not be {', '.join(_dp.RESERVED)}.")
-        options.append(Option(oid, _line(o.get("name"), f"{owhere}'s name",
-                                         _dp.CAPS["option name"]),
-                              _line(o.get("says"), f"{owhere}'s says",
-                                    _dp.CAPS["option says"])))
+        options.append(Option(oid, _text(o.get("name"), f"{owhere}'s name"),
+                              _text(o.get("says"), f"{owhere}'s says")))
     if len(options) < 2:
         raise StoryError(f"{where} needs at least two options.")
     if len({o.id for o in options}) != len(options):
@@ -379,7 +367,7 @@ def parse(raw: bytes) -> Story:
         if view is not None and (not isinstance(view, str) or not DOCUMENT_ID.fullmatch(view)):
             raise StoryError(f"{where}'s view is not a document id.")
         slides.append(Slide(
-            _text(raw_slide.get("title"), f"{where}'s title", MAX_TITLE_CHARS),
+            _text(raw_slide.get("title"), f"{where}'s title"),
             None if target is None else _selector(target, f"{where}'s target"),
             tuple(_beat(b, f"{where}, beat {m}") for m, b in enumerate(beats, 1)),
             None if waits is None else _question(waits, f"{where}'s waits"),
@@ -405,8 +393,8 @@ def parse(raw: bytes) -> Story:
         if q.id not in asked:
             raise StoryError(f"Question {q.id} is declared, but no slide waits for it.")
     scenario = ("" if body.get("scenario") is None
-                else _line(body["scenario"], "The story's scenario", SCENARIO_MAX_CHARS))
-    return Story(_text(body.get("title"), "The story's title", MAX_TITLE_CHARS), language,
+                else _text(body["scenario"], "The story's scenario"))
+    return Story(_text(body.get("title"), "The story's title"), language,
                  tuple(slides), answers, declared, scenario)
 
 
@@ -542,10 +530,9 @@ def walk_problem(story: Optional[dict], views: tuple[str, ...]) -> Optional[str]
         return (f"A view set of {len(views)} views needs a story that walks one concrete "
                 f"scenario through every view in turn.")
     scenario = story.get("scenario")
-    if not isinstance(scenario, str) or not scenario.strip() or "\n" in scenario.strip() \
-            or len(scenario.strip()) > SCENARIO_MAX_CHARS:
+    if not isinstance(scenario, str) or not scenario.strip():
         return (f"A view set's story names its scenario: the one concrete input it walks "
-                f"through every view, in one line of at most {SCENARIO_MAX_CHARS} characters.")
+                f"through every view.")
     for n, view in enumerate(named, 1):
         if view not in views:
             return (f"Slide {n} names no view of this set: every slide of a view set's story "

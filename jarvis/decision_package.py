@@ -37,62 +37,17 @@ SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
 LANGUAGES = ("en", "es")
 
-# The most characters each piece of a slide may have. The deck lays a slide
-# out to the frame in units that keep its proportions from the smallest
-# frame to the largest, so words past these do not fit at a readable size
-# in the smallest; the check in a real frame (decision_check.py) is the
-# final word on fitting.
-CAPS = {
-    "title": 80,          # the deck's title and a content slide's title
-    "short": 16,          # a slide's name in the border's Chapters
-    "question": 120,
-    "reason": 160,
-    "context": 200,
-    "option name": 40,
-    "option says": 140,
-    "text": 280,          # one paragraph, point, fact, caption or table cell
-    "slide": 700,         # every word on one content slide
-    "purpose": 200,       # what the package is for (deck/0.1 `purpose`)
-    "conclusion": 200,    # the answer or the ask, one sentence (deck/0.1 `conclusion`)
-    "why_you": 160,       # why a decision is his and not an agent's
-    "evidence": 160,      # one line of a decision's evidence
-}
+# A slide's name in the border's Chapters is worked out from its title,
+# cut to this many characters (short_of): a fit the program makes, never
+# a limit on what the author writes.
+CAPS = {"short": 16}
 
-# A decision whose options are not pictured says why in at least this many
-# words ("text_only"); it should be rare.
-TEXT_ONLY_WORDS = 5
+# How long the story told over a deck may run, estimated from its words at
+# an unhurried speaking pace: a longer one is a deck to split, not to sit
+# through.
+SPOKEN_WORDS_PER_SEC = 2.5
+SPOKEN_MAX_SEC = 15 * 60
 
-# A decision's evidence: this many lines at most (its lead-in slide shows
-# them all, under the slide's word limit).
-EVIDENCE_LINES = 3
-
-# The opening's close-paraphrase test (opening_problems): of the distinct
-# words of at least OPENING_WORD_LETTERS letters, folded (spoken_words), this
-# share must be on the first slide: the conclusion's among the words it
-# shows, the purpose's among those and its narration together.
-OPENING_WORD_LETTERS = 4
-CONCLUSION_SHARE = 0.8
-PURPOSE_SHARE = 0.6
-
-# The words of the lead-in slide made from a decision's own fields
-# (lead_in_slide), in the deck's language.
-LEAD_IN_WORDS = {
-    "en": {"title": "Before you decide: {short}", "why": "Why it is yours:",
-           "evidence": "What it rests on:"},
-    "es": {"title": "Antes de decidir: {short}", "why": "Por qué le toca a usted:",
-           "evidence": "En qué se apoya:"},
-}
-
-IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
-
-# An SVG says its own size: its root <svg> has width and height, each a
-# positive number of pixels ("320" or "320px"). One without them (a viewBox
-# alone, or a percentage) has no size of its own in an <img> and can draw as
-# nothing, so a slide showing it is blank (docs/making-a-package.md).
-SVG_HEAD_BYTES = 64 * 1024
-_SVG_ROOT = re.compile(rb"<svg\b([^>]*)>", re.IGNORECASE)
-_SVG_ATTR = re.compile(rb"""([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-_SVG_PIXELS = re.compile(r"(\d+(?:\.\d+)?|\.\d+)(?:px)?")
 
 
 class Refused(Exception):
@@ -129,12 +84,6 @@ def _text(value) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _capped(problems: list[str], where: str, kind: str, value) -> None:
-    text = _text(value)
-    if len(text) > CAPS[kind]:
-        problems.append(f"{where}: the {kind} is {len(text)} characters; at most {CAPS[kind]}.")
-
-
 def _block_texts(block: dict) -> list[str]:
     """Every line of words one content block shows."""
     out = [_text(block.get(k)) for k in ("p", "lead", "note", "caption")]
@@ -151,37 +100,56 @@ def _block_texts(block: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _is_image(path: Path) -> bool:
-    head = path.read_bytes()[:1024]
-    if head.startswith(IMAGE_MAGIC) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
-        return True
-    return _is_svg(path, head)
+def placed_pictures(deck: dict):
+    """Every picture the deck names, with the place the shared deck draws it
+    in (layout_spec.picture_box): (path, role, how many side by side)."""
+    def src(pic):
+        return pic if isinstance(pic, str) else (pic or {}).get("src", "")
+
+    for s in deck.get("slides") or []:
+        for b in (s.get("blocks") or []) if isinstance(s, dict) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("picture"):
+                yield src(b["picture"]), "content", 1
+            many = b.get("pictures") or []
+            for pic in many:
+                yield src(pic), "content", len(many)
+    for d in deck.get("decisions") or []:
+        if not isinstance(d, dict):
+            continue
+        if d.get("picture"):
+            yield src(d["picture"]), "context", 1
+        if d.get("compare"):
+            yield src(d["compare"]), "compare", 1
+        options = [o for o in d.get("options") or [] if isinstance(o, dict)]
+        for o in options:
+            if o.get("picture"):
+                yield src(o["picture"]), "option", len(options)
 
 
-def _is_svg(path: Path, head: bytes) -> bool:
-    return path.suffix.lower() == ".svg" and b"<svg" in head
-
-
-def svg_size_problem(path: Path) -> str:
-    """Why an SVG has no size of its own ("" when its root <svg> gives width
-    and height in pixels, or it is no SVG), by the rule above SVG_HEAD_BYTES."""
-    with open(path, "rb") as f:
-        head = f.read(SVG_HEAD_BYTES)
-    if not _is_svg(path, head[:1024]):
-        return ""
-    root = _SVG_ROOT.search(head)
-    attrs = {m.group(1).lower(): (m.group(2) if m.group(2) is not None else m.group(3))
-             for m in _SVG_ATTR.finditer(root.group(1))} if root else {}
-    bad = []
-    for name in (b"width", b"height"):
-        value = (attrs.get(name) or b"").decode("utf-8", "replace")
-        size = _SVG_PIXELS.fullmatch(value.strip())
-        if not size or float(size.group(1)) <= 0:
-            bad.append(f"{name.decode()}={value!r}" if value else f"no {name.decode()}")
-    if not bad:
-        return ""
-    return (f"its <svg> has {' and '.join(bad)}: give the root <svg> width and height in "
-            f"pixels (for example width=\"320\" height=\"220\"), or it can draw as nothing")
+def picture_problems(deck: dict, folder: Path) -> list[str]:
+    """Each picture proven real (picture_proof) and readable where the deck
+    draws it, without a browser."""
+    from jarvis import layout_spec, picture_proof
+    problems, proven = [], {}
+    for pic, role, count in placed_pictures(deck):
+        p = Path(pic)
+        if not pic or p.is_absolute() or ".." in p.parts:
+            problems.append(f"Picture {pic!r} must be a path beside the content file.")
+            continue
+        if pic not in proven:
+            try:
+                proven[pic] = picture_proof.prove(folder / p)
+            except picture_proof.PictureProblem as error:
+                proven[pic] = None
+                problems.append(f"Picture {pic}: {error}." if (folder / p).exists()
+                                else f"Picture {pic} is not at {folder / p}.")
+        if proven[pic] is not None:
+            drawn = picture_proof.drawn_problem(proven[pic], layout_spec.picture_box(role, count))
+            if drawn:
+                problems.append(f"Picture {pic}: {drawn}.")
+    return list(dict.fromkeys(problems))
 
 
 def problems_of(deck: dict, folder: Path) -> list[str]:
@@ -190,7 +158,6 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
     for field in ("name", "version", "purpose", "title"):
         if not _text(deck.get(field)).strip():
             problems.append(f"The deck has no {field}.")
-    _capped(problems, "The deck", "title", deck.get("title"))
     if deck.get("language", "en") not in LANGUAGES:
         problems.append(f"The language is {deck.get('language')!r}; it is one of "
                         f"{', '.join(LANGUAGES)}.")
@@ -216,15 +183,9 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             problems.append(f"{where}: two decisions have this id.")
         if not _text(d.get("question")).strip():
             problems.append(f"{where}: it has no question.")
-        _capped(problems, where, "question", d.get("question"))
-        _capped(problems, where, "short", d.get("short"))
-        _capped(problems, where, "context", d.get("context"))
         reason = _text(d.get("reason")).strip()
         if not reason:
             problems.append(f"{where}: it has no reason for its recommendation.")
-        elif "\n" in reason:
-            problems.append(f"{where}: its reason must be one line.")
-        _capped(problems, where, "reason", reason)
 
         options = d.get("options")
         if not isinstance(options, list) or len(options) < 2:
@@ -245,8 +206,6 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             for field in ("name", "says"):
                 if not _text(o.get(field)).strip():
                     problems.append(f"{owhere}: it has no {field}.")
-            _capped(problems, owhere, "option name", o.get("name"))
-            _capped(problems, owhere, "option says", o.get("says"))
             for child in o.get("opens") or []:
                 if child not in ids or child == ident:
                     problems.append(f"{owhere}: it opens {child!r}, which is not another "
@@ -263,13 +222,13 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         # so, and why, as text_only.
         unpictured = [o.get("id") for o in options if isinstance(o, dict) and not o.get("picture")]
         reason = d.get("text_only")
-        if unpictured and not (isinstance(reason, str) and len(reason.split()) >= TEXT_ONLY_WORDS):
+        if unpictured and not (isinstance(reason, str) and reason.strip()):
             problems.append(
                 f"{where}: option{'s' if len(unpictured) > 1 else ''} "
                 f"{', '.join(map(str, unpictured))} {'have' if len(unpictured) > 1 else 'has'} "
                 f"no picture. Every option needs a picture of what he would see; only a "
                 f"choice that truly cannot be pictured may say so with \"text_only\": "
-                f"\"<why, in at least {TEXT_ONLY_WORDS} words>\". Only real product choices "
+                f"\"<why>\". Only real product choices "
                 f"go to Tim: decide technical details yourself.")
 
     for n, s in enumerate(deck.get("slides") or [], 1):
@@ -280,70 +239,36 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             if s["decision"] not in ids:
                 problems.append(f"Slide {n} places decision {s['decision']!r}, which is not one.")
             continue
-        where = _slide_where(n, s)
         if not _text(s.get("title")).strip():
             problems.append(f"Slide {n}: it has no title.")
-        _capped(problems, where, "title", s.get("title"))
-        _capped(problems, where, "short", s.get("short"))
-        texts = [t for b in s.get("blocks") or [] if isinstance(b, dict) for t in _block_texts(b)]
-        for t in texts:
-            if len(t) > CAPS["text"]:
-                problems.append(f"{where}: a line is {len(t)} characters; at most "
-                                f"{CAPS['text']}: {t[:40]}…")
-        total = sum(map(len, texts)) + len(_text(s.get("title")))
-        if total > CAPS["slide"]:
-            problems.append(f"{where}: it has {total} characters of words; at most "
-                            f"{CAPS['slide']}. Split it into two slides.")
-    problems += too_many_words(deck)
 
-    for pic in builder().pictures_of(deck) if not problems else []:
-        p = Path(pic)
-        if not pic or p.is_absolute() or ".." in p.parts:
-            problems.append(f"Picture {pic!r} must be a path beside the content file.")
-        elif not (folder / p).is_file():
-            problems.append(f"Picture {pic} is not at {folder / p}.")
-        elif not _is_image(folder / p):
-            problems.append(f"Picture {pic} is not a PNG, JPEG, GIF, WebP or SVG image.")
-        elif (unsized := svg_size_problem(folder / p)):
-            problems.append(f"Picture {pic}: {unsized}.")
+    if not problems:
+        problems += picture_problems(deck, folder)
     return problems
 
 
+def story_problems(deck: dict) -> list[str]:
+    """The story JARVIS will tell over the deck, made by the shared deck's
+    own rules and package_story's, and how long it runs when spoken (about
+    fifteen minutes at most); [] when it can be told."""
+    from jarvis import package_story
+    module = builder()
+    try:
+        story = module.story(deck)
+        package_story.parse(package_story.encode(story))
+    except (module.Bad, package_story.StoryError) as error:
+        return [f"The story told over it: {error}"]
+    words = sum(len(beat["say"].split()) for slide in story["slides"] for beat in slide["beats"])
+    seconds = words / SPOKEN_WORDS_PER_SEC
+    if seconds > SPOKEN_MAX_SEC:
+        return [f"The story told over it runs about {seconds / 60:.0f} minutes ({words} words); "
+                f"at most {SPOKEN_MAX_SEC // 60}. Say less, or split it into two packages."]
+    return []
+
+
 def _slide_where(n: int, s: dict) -> str:
-    """How a problem names a content slide: a lead-in slide made from a
-    decision's fields by the decision, since those are what the author
-    wrote."""
-    if s.get("lead_in"):
-        return (f"Decision {s['lead_in']}'s lead-in (its question, why_you and evidence "
-                f"together)")
+    """How a problem names a content slide."""
     return f"Slide {n} ({_text(s.get('title')) or 'no title'})"
-
-
-def too_many_words(deck: dict) -> list[str]:
-    """Every slide and decision part over the builder's word limits
-    (new_deck.SLIDE_WORDS, DECISION_WORDS), all at once: the builder itself
-    stops at the first."""
-    deck_builder, out = builder(), []
-    for n, s in enumerate(deck.get("slides") or [], 1):
-        if not isinstance(s, dict) or "decision" in s:
-            continue
-        count = sum(deck_builder.block_words(b) for b in s.get("blocks") or []
-                    if isinstance(b, dict))
-        if count > deck_builder.SLIDE_WORDS:
-            out.append(f"{_slide_where(n, s)}: it has {count} words; at most "
-                       f"{deck_builder.SLIDE_WORDS}. "
-                       + ("Shorten them." if s.get("lead_in") else "Split it into two slides."))
-    for n, d in enumerate(deck.get("decisions") or [], 1):
-        if not isinstance(d, dict):
-            continue
-        parts = [(f, d.get(f)) for f in ("question", "reason", "context")]
-        parts += [("says", o.get("says")) for o in d.get("options") or [] if isinstance(o, dict)]
-        for field, text in parts:
-            count, limit = deck_builder.words(text), deck_builder.DECISION_WORDS[field]
-            if count > limit:
-                out.append(f"Decision {d.get('id') or n}: a {field} has {count} words; "
-                           f"at most {limit}.")
-    return out
 
 
 def validate(content: Path) -> dict:
@@ -364,10 +289,9 @@ def validate(content: Path) -> dict:
 KEYS = {
     "deck": ("name", "version", "purpose", "conclusion", "title", "language", "slides",
              "decisions", "understanding"),
-    "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision", "lead_in"),
+    "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
-                 "picture", "compare", "say", "text_only", "why_you", "evidence",
-                 "needs_words"),
+                 "picture", "compare", "say", "text_only", "needs_words"),
     "option": ("id", "name", "says", "picture", "opens", "recommended"),
 }
 
@@ -441,9 +365,6 @@ def expand(deck: dict) -> dict:
     - `recommended`: the option's id, or its name, or `"recommended": true` on
       exactly one option.
     - `opens` and a slide's `decision`: a decision's id, short name or question.
-    - `evidence` given as one line: a list of that line.
-    - A decision with `why_you` and `evidence`: its lead-in slide
-      (lead_in_slide), placed just before the decision's own slide.
     """
     deck = copy.deepcopy(deck)
     if not isinstance(deck, dict):
@@ -493,196 +414,10 @@ def expand(deck: dict) -> dict:
                 del o["recommended"]
             if isinstance(o.get("opens"), list):
                 o["opens"] = [resolve(c) for c in o["opens"]]
-        if isinstance(d.get("evidence"), str):
-            d["evidence"] = [d["evidence"]]
-    return with_lead_ins(deck)
-
-
-# -- 1c. the briefing ------------------------------------------------------------------
-# Every deck an agent sends is a briefing in decision-memo order (deck/0.1's
-# document `purpose` and `conclusion`): it opens with what it is for and its
-# bottom line, and every decision is preceded by its lead-in. The fields
-# are checked here, and so is what the slides show of them: metadata alone
-# says nothing about what he sees.
-
-def lead_in_slide(deck: dict, d: dict) -> dict:
-    """The slide before a decision's own, made from its fields: the
-    question, why it is his (`why_you`) and what it rests on (`evidence`),
-    and JARVIS saying the same."""
-    words = LEAD_IN_WORDS.get(deck.get("language", "en"), LEAD_IN_WORDS["en"])
-    question, why = _text(d.get("question")).strip(), _text(d.get("why_you")).strip()
-    evidence = [_text(e).strip() for e in d.get("evidence") or []]
-    return {"id": f"lead-{d['id']}", "lead_in": d["id"],
-            "title": words["title"].format(short=_text(d.get("short")) or d["id"]),
-            "short": short_name(d.get("short") or question),
-            "say": " ".join([question, why, *evidence]),
-            "blocks": [{"lead": question},
-                       {"p": f"**{words['why']}** {why}"},
-                       {"note": words["evidence"]},
-                       {"points": evidence}]}
-
-
-def with_lead_ins(deck: dict) -> dict:
-    """The deck with each decision that gives `why_you` and `evidence` led
-    in by its lead-in slide, just before where its own slide is drawn: its
-    placement in `slides`, else (placed nowhere) after every slide, in the
-    order deck.js draws unplaced decisions. A deck already led in is left
-    as it is."""
-    slides = deck.get("slides")
-    if slides is not None and not isinstance(slides, list):
-        return deck
-    slides = list(slides or [])
-    led = {s.get("lead_in") for s in slides if isinstance(s, dict)}
-    placed = {s.get("decision") for s in slides if isinstance(s, dict)}
-    for d in deck.get("decisions") or []:
-        if (not isinstance(d, dict) or d.get("id") in led or not _text(d.get("why_you")).strip()
-                or not d.get("evidence") or not isinstance(d.get("evidence"), list)):
-            continue
-        slide = lead_in_slide(deck, d)
-        if d["id"] in placed:
-            at = next(n for n, s in enumerate(slides)
-                      if isinstance(s, dict) and s.get("decision") == d["id"])
-            slides.insert(at, slide)
-        else:
-            slides += [slide, {"decision": d["id"]}]
-    if slides:
-        deck["slides"] = slides
     return deck
 
 
-def _content_words(text: str) -> set[str]:
-    """The words the opening's paraphrase test counts: folded, at least
-    OPENING_WORD_LETTERS letters, no ** or ` marks."""
-    from jarvis import spoken_words
-    found = spoken_words.folded_words(re.sub(r"\*\*|`", "", _text(text)))
-    return {w for w in found if len(w) >= OPENING_WORD_LETTERS} or set(found)
-
-
-def carries(text: str, shown: str, share: float) -> bool:
-    """Whether `shown` carries `text`, word for word or closely
-    paraphrased: at least `share` of `text`'s distinct content words
-    (_content_words) are among `shown`'s."""
-    wanted = _content_words(text)
-    if not wanted:
-        return False
-    return len(wanted & _content_words(shown)) >= share * len(wanted)
-
-
-def _said(slide: dict) -> str:
-    """What JARVIS says over a content slide: its `say`, or its beats'."""
-    beats = [_text(b.get("say")) for b in slide.get("beats") or [] if isinstance(b, dict)]
-    return " ".join([_text(slide.get("say")), *beats]).strip()
-
-
-def one_sentence(text: str) -> bool:
-    """One line, ending at most once in . ! ? or …, whatever follows it."""
-    return "\n" not in text and len(re.split(r"(?<=[.!?…])\s+(?=\S)", text.strip())) == 1
-
-
-def briefing_problems(given: dict, deck: dict) -> list[str]:
-    """Everything that keeps the deck from being a briefing: the author's
-    own `purpose` and `conclusion` (`given`, the content as written, since
-    expand works out a purpose from the title), the opening and each
-    decision's lead-in (`deck`, expanded). [] when it is one."""
-    problems: list[str] = []
-    for field, tells in (
-            ("purpose", "one sentence saying what the package is for, in the reader's "
-                        "terms (\"Decide how JARVIS opens a package\")"),
-            ("conclusion", "one sentence giving the answer or the ask (\"Approve the "
-                           "opening check so every package says why it came\")")):
-        value = _text(given.get(field)).strip() if isinstance(given, dict) else ""
-        if not value:
-            problems.append(f"The deck has no {field}: write \"{field}\": {tells}.")
-            continue
-        _capped(problems, "The deck", field, value)
-    conclusion = _text(given.get("conclusion")).strip() if isinstance(given, dict) else ""
-    if conclusion and not one_sentence(conclusion):
-        problems.append("The deck's conclusion is more than one sentence: give the answer or "
-                        "the ask in one; the rest belongs on the slides.")
-    for n, slide in enumerate(given.get("slides") or [] if isinstance(given, dict) else [], 1):
-        if isinstance(slide, dict) and "lead_in" in slide:
-            problems.append(f"Slide {n}: a lead-in slide is made from its decision's question, "
-                            f"why_you and evidence; remove this one and give those fields.")
-    return problems + opening_problems(deck) + lead_in_problems(deck)
-
-
-def opening_problems(deck: dict) -> list[str]:
-    """The first slide drawn is the opening: not a decision or a lead-in,
-    words first (no table or facts as its first block), its title and blocks
-    showing the conclusion, those and its narration carrying the purpose,
-    and a narration."""
-    from jarvis import package_inbox
-    slides = [s for s in deck.get("slides") or [] if isinstance(s, dict)]
-    asks = [d for d in deck.get("decisions") or []
-            if isinstance(d, dict) and d.get("id") not in package_inbox.VOTE_IDS]
-    fix = ("Start with an opening slide: its title says what the package is for, a `lead` "
-           "block states the conclusion, and its `say` tells both and why they matter to him.")
-    first = slides[0] if slides else None
-    if first is None or "decision" in first:
-        what = f"decision {first['decision']!r}" if first else (
-            f"decision {asks[0].get('id')!r}" if asks else "nothing")
-        return [f"The deck opens on {what}, not on its purpose. {fix}"]
-    if first.get("lead_in"):
-        return [f"The deck opens on decision {first['lead_in']!r}'s lead-in, not on its "
-                f"purpose. {fix}"]
-    where = f"Slide 1 ({_text(first.get('title')) or 'no title'}), the opening"
-    problems: list[str] = []
-    blocks = [b for b in first.get("blocks") or [] if isinstance(b, dict)]
-    if not blocks:
-        problems.append(f"{where}: it has no blocks. {fix}")
-    elif "table" in blocks[0] or "facts" in blocks[0]:
-        problems.append(f"{where}: it starts with {'a table' if 'table' in blocks[0] else 'facts'}"
-                        f", data before its purpose. Say the conclusion in words first, and "
-                        f"move the data to a later slide titled with the claim it supports.")
-    said = _said(first)
-    if not said:
-        problems.append(f"{where}: it has no `say`. JARVIS tells it: give what he hears, the "
-                        f"purpose, the conclusion and why it matters, in two or three sentences.")
-    shown = " ".join([_text(first.get("title"))]
-                     + [t for b in blocks for t in _block_texts(b)])
-    conclusion, purpose = _text(deck.get("conclusion")), _text(deck.get("purpose"))
-    if conclusion.strip() and not carries(conclusion, shown, CONCLUSION_SHARE):
-        problems.append(f"{where}: it does not show the conclusion ({conclusion.strip()!r}). "
-                        f"Put it, or a close paraphrase of it, in the slide's title or a block.")
-    if purpose.strip() and not carries(purpose, f"{shown} {said}", PURPOSE_SHARE):
-        problems.append(f"{where}: neither it nor its narration says the purpose "
-                        f"({purpose.strip()!r}). Say what the package is for in its title, a "
-                        f"block or its `say`.")
-    return problems
-
-
-def lead_in_problems(deck: dict) -> list[str]:
-    """Each decision but the standard vote needs its lead-in: `why_you`,
-    one line, and `evidence`, one to EVIDENCE_LINES lines; expand draws
-    them, with the question, on the slide before the decision's."""
-    from jarvis import package_inbox
-    problems: list[str] = []
-    for n, d in enumerate(deck.get("decisions") or [], 1):
-        if not isinstance(d, dict) or d.get("id") in package_inbox.VOTE_IDS:
-            continue
-        where = f"Decision {d.get('id') or n}"
-        why, evidence = _text(d.get("why_you")).strip(), d.get("evidence")
-        lines = ([_text(e).strip() for e in evidence] if isinstance(evidence, list) else [])
-        missing = [f for f, ok in (("why_you", why), ("evidence", lines and all(lines)))
-                   if not ok]
-        if missing:
-            problems.append(
-                f"{where}: it has no lead-in ({' and '.join(missing)}). Before its choices he "
-                f"needs the question, why it is his to decide and not an agent's "
-                f"(\"why_you\": one line), and what it rests on (\"evidence\": one to "
-                f"{EVIDENCE_LINES} lines of fact).")
-            continue
-        if "\n" in why:
-            problems.append(f"{where}: its why_you must be one line.")
-        _capped(problems, where, "why_you", why)
-        if len(lines) > EVIDENCE_LINES:
-            problems.append(f"{where}: it has {len(lines)} lines of evidence; at most "
-                            f"{EVIDENCE_LINES}. Keep the ones that change his answer.")
-        for line in lines:
-            _capped(problems, where, "evidence", line)
-    return problems
-
-
+# -- 1c. the briefing ------------------------------------------------------------------
 EXAMPLE = {
     "title": "Team lunch",
     "purpose": "Choose where the team eats on Friday.",
@@ -697,9 +432,6 @@ EXAMPLE = {
     ],
     "decisions": [
         {"question": "Where do we eat on Friday?",
-         "why_you": "It is your team's day and your budget.",
-         "evidence": ["The restaurant needs a booking by Wednesday.",
-                      "The office caterer needs a day's notice."],
          "options": [{"name": "In the office", "says": "Food is brought in.",
                       "picture": "pictures/office.png", "recommended": True},
                      {"name": "A restaurant", "says": "A short walk away.",

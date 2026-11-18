@@ -102,13 +102,17 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
-  /** A deck's own slides in its order and numbering (a decision's lead-in
-   *  and its question each one), which the border moves through; null for
+  /** A deck's own slides in its order and numbering (each question one),
+   *  which the border moves through; null for
    *  a page that is not a deck, whose border moves through its story. */
   pages?: DeckPage[] | null;
   /** The standard vote a page (not a deck) carries, with his answer so far
    *  (package_inbox.page_vote), or null. */
   vote?: PageVote | null;
+  /** Whether JARVIS proved its page's layout fits (a deck); false for a
+   *  hand-made page, whose border says "Layout not checked". Missing from an
+   *  older JARVIS's frame. */
+  layout_checked?: boolean;
   /** The room its page is made for: "wide" offers to take over the page.
    *  Missing from an older JARVIS's frame: the centre. */
   layout?: "centre" | "wide";

@@ -548,20 +548,38 @@ def authored_package_source(monkeypatch):
     test_package_author separately exercises the mandatory gate and both real
     provider adapters. This fixture is opt-in, never a global author bypass:
     the source is left as a fresh author leaves it, its receipt beside it
-    and its own transcript showing its last check (tests/author_fixtures).
+    and its own transcript showing its last check, with its briefing's
+    prep, script and edits (tests/author_fixtures); what the factory asks
+    the author again is in the list this returns.
     """
     from jarvis import package_author
     from tests.author_fixtures import authored
 
+    asked: list[str] = []
+
     def prepare(handoff, engine, out, **kw):
-        authored(kw["source"], engine or "claude")
+        try:
+            authored(kw["source"], engine or "claude")
+        except ValueError:
+            pass        # a source its own check refuses: the build says why
         if kw.get("finish"):
             import asyncio
-            from tests.author_fixtures import accept_visual_review
+
             async def turn(prompt):
-                if prompt.startswith("Inspect the rendered package"):
-                    request = Path(prompt.split("Read ", 1)[1].split(". Open EVERY", 1)[0])
-                    accept_visual_review(request)
+                asked.append(prompt)
             asyncio.run(kw["finish"](kw["source"], turn))
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)
+    return asked
+
+
+@pytest.fixture
+def briefing_passes(monkeypatch):
+    """Every editor of a briefing proposes nothing and every judge passes
+    (briefing_prep.ASK): for tests of what happens after the briefing. The
+    stand-in, with the prompts it was given, is what this returns."""
+    from jarvis import briefing_prep
+    from tests.author_fixtures import passing_judges
+    ask = passing_judges()
+    monkeypatch.setattr(briefing_prep, "ASK", ask)
+    return ask

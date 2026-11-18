@@ -1,145 +1,67 @@
-"""The decision package command's post-author check, on a small deck, in a real
-isolated JARVIS (jarvis/decision_check.py): its own server process on a free
-port above 19000, the voice page built by vite, a headless Chromium on its
-real package frame at both centre sizes, voting checked, and the story
-taken as a first-time user (waiting at each question, answered by click and
-by voice), stopped from the page and the brain's tool, and resumed. It then delivers to a stand-in JARVIS on loopback,
-never the live one, and the stand-in sees exactly one delivery to its package inbox, with the
-token, of the bytes of the zip that was checked."""
+"""What only a browser can show of a deck, proven on fixture decks in a real,
+isolated JARVIS (tests/isolated_jarvis.py): its own server process on a
+free port above 19000, the voice page built by vite, a headless Chromium on
+its real package frame at the centre's two sizes and two of the whole
+width. No package goes through a browser on its way to Tim (JARVIS proves
+every deck's layout without one, presentation_proof); these tests prove,
+for every change to the shared deck, the story helper and the package view,
+that the deck JARVIS builds still votes by click and by decide.py, that its
+story waits at every question, stops within a second from the page and the
+brain's tool and resumes, and that the border's Chapters, Next, Previous and
+count move through every slide the deck draws."""
 from __future__ import annotations
-
-import base64
-import json
-import threading
-from http.server import BaseHTTPRequestHandler
 
 import pytest
 
-from jarvis import data_paths, decision_package as dp
-from tests import dashboard_page
-from tests.loopback_server import LoopbackThreadingHTTPServer
-from tests.test_decision_package import small_deck, write
+from jarvis import make_package as mp
+from tests import dashboard_page, isolated_jarvis
+from tests.deck_fixtures import write_yaml
+from tests.test_decision_package import small_deck
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 # The isolated JARVIS checks the deck's signature with the real ssh-keygen,
 # so the agent's key here is a real one too (conftest fakes it otherwise).
 pytestmark = [pytest.mark.page, pytest.mark.ssh_keygen]
 
+SIZES = ("809x589", "662x489", "1600x900", "1280x713")
 
-@pytest.mark.parametrize('show_detail', [True, False])
-def test_custom_page_renders_entry_and_expanded_story_views_before_delivery(
-        tmp_path, stand_in, authored_package_source, show_detail, capsys):
-    from jarvis import agent_keys, make_package as mp, package_signature
-    import zipfile
-    folder = tmp_path / 'source'
-    folder.mkdir()
-    (folder / 'index.html').write_text('''<!doctype html><h1>Two views</h1>
-        <img src="diagram.svg" width="200" height="120">
-        <button id="open" onclick="document.querySelector('#detail').hidden=false">Details</button>
-        <section id="detail" hidden><img src="diagram.svg" width="200" height="120"></section>
-        <script src="/api/packages/story.js"></script>''')
-    (folder / 'diagram.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120"><rect width="200" height="120" fill="green"/><text x="10" y="60" fill="white">Readable diagram</text></svg>')
-    (folder / 'about.md').write_text('# Two views\nThe page has a diagram and an expanded detail with the same diagram.')
-    (folder / 'story.json').write_text(json.dumps({
-        'title': 'Two views', 'slides': [{'title': 'Details', 'beats': [
-            {'say': 'Open the detailed diagram.', 'actions': ([{'click': '#open'}, {'show': '#detail'}] if show_detail else []),
-             'targets': ['#detail']}]}]}))
-    (folder / 'package.json').write_text(json.dumps({
-        'name': 'two-views', 'purpose': 'Explain both views.', 'runs': 'page', 'entry': 'index.html',
-        'story': 'story.json', 'brief': 'about.md',
-        'understanding': {name: 'about.md' for name in ('index.html', 'diagram.svg', 'story.json')}}))
-    agent_keys.make_pair(agent_keys.key_folder('sess-1'), 'jarvis-agent')
-    out = tmp_path / 'out'
-    code = mp.main([str(folder), '--out', str(out), '--session', 'sess-1',
-                    '--deliver-to', stand_in.url])
-    if not show_detail:
-        assert code == 1
-        assert "required pictures never visible" in capsys.readouterr().out
-        assert stand_in.posts == []
-        return
-    assert code == 0
-    for size in ('809x589', '662x489'):
-        shots = out / 'review-1' / 'check' / size
-        assert (shots / 'entry.png').is_file()
-        assert (shots / 'beat-1.1.png').is_file()
-        assert (shots / 'beat-1.1-image-2.png').is_file()
-    with zipfile.ZipFile(out / 'two-views-1.0.0.zip') as z:
-        receipt = json.loads(z.read('.jarvis/visual-review.json'))
-        assert receipt['review']['status'] == 'accepted'
-        assert receipt['machine_passed']
-    assert len(stand_in.posts) == 1
-    assert package_signature.read(out / 'two-views-1.0.0.zip').files_match
+# What the border must do at every size (incident: decision slides missing
+# from the border's navigation).
+NAVIGATION = ("the border's count followed the deck",
+              "a slide chosen in the border's Chapters opens in the deck",
+              "Chapters lists every slide of the deck, each question marked",
+              "Next and Previous reach every slide of the deck in turn")
 
 
-class _StandIn:
-    """POST /api/messages as JARVIS answers a message carrying a package,
-    recorded: the request in, the message, the package and its inbox row out
-    (messages_api.py)."""
-
-    def __init__(self):
-        self.posts: list[tuple[str, str, bytes]] = []
-        stand_in = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
-
-            def do_POST(self):                     # noqa: N802 (stdlib contract)
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                stand_in.posts.append((self.path, self.headers.get("Authorization", ""), body))
-                answer = json.dumps({"message": {"id": 41}, "package": {"id": "team-lunch-local1"},
-                                     "arrived": True,
-                                     "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(answer)))
-                self.end_headers()
-                self.wfile.write(answer)
-
-        self.server = LoopbackThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-
-
-@pytest.fixture
-def stand_in():
-    s = _StandIn()
-    yield s
-    s.server.shutdown()
-
-
-def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
-        tmp_path, stand_in, capsys, authored_package_source):
+def checked(tmp_path, deck: dict) -> isolated_jarvis.Result:
+    """`deck` written as presentation.yaml, built as make_package builds it
+    (laid out and proven by JARVIS), and checked in an isolated JARVIS."""
     reason = dashboard_page.why_unavailable()
     if reason:
         pytest.skip(reason)
-    content = write(tmp_path / "in", small_deck())
-    out = tmp_path / "out"
-    from jarvis import agent_keys, package_signature
-    _private, public = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
-    code = dp.main([str(content), "--out", str(out), "--session", "sess-1",
-                    "--deliver-to", stand_in.url])
-    said = capsys.readouterr().out
-    if "Executable doesn't exist" in said:          # pragma: no cover
+    from jarvis import agent_keys
+    made = mp.make_presentation(write_yaml(tmp_path / "in", deck), tmp_path / "out")
+    signer = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
+    result = isolated_jarvis.check(made.archive, made.deck, tmp_path / "check", signer, "sess-1")
+    if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
         pytest.skip("no Playwright Chromium")
-    assert code == 0, said
+    assert result.ok, result.failures
+    return result
 
-    # The two centre sizes and two of the whole width: the deck fills each,
-    # and the border is its navigation at each.
-    for size in ("809x589", "662x489", "1600x900", "1280x713"):
+
+def has(result, size: str | None, check: str) -> bool:
+    prefix = f"{size}: " if size else ""
+    return any(line.startswith(prefix) and check in line for line in result.passed)
+
+
+def test_a_decision_deck_votes_tells_stops_resumes_and_navigates(tmp_path):
+    result = checked(tmp_path, small_deck())
+    for size in SIZES:
         for check in ("the package frame is", "the deck's own styles are in force",
-                      "slides fill the frame, fit", "every vote control is visible",
-                      "every picture, on every slide", "the border's count followed the deck",
-                      "a slide chosen in the border's Chapters opens in the deck",
-                      "Chapters lists every slide of the deck, each question marked",
-                      "Next and Previous reach every slide of the deck in turn"):
-            assert any(f"ok: {size}: " in line and check in line
-                       for line in said.splitlines()), (size, check, said)
-        shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
-        # Each decision is led in by its own slide (why it is his, its evidence).
-        assert shots == ["01-s1.png", "02-lead-where.png", "03-d-where.png",
-                         "04-lead-when.png", "05-d-when.png", "06-answers.png",
-                         "package-border.png"], "no slide asks the vote: it is asked at Done"
+                      "every vote control is visible",
+                      "the border does not say its layout was not checked",
+                      "the deck is drawn in the system font, none loaded", *NAVIGATION):
+            assert has(result, size, check), (size, check, result.passed)
     for check in ("first time: the story waits at where", "first time: the story waits at when",
                   "first time: every question answered, in order (where, when)",
                   "stop by the page during narration: stopped within 1s",
@@ -147,140 +69,23 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(
                   "stop by the brain's tool during narration: stopped within 1s",
                   "stop by the brain's tool while waiting: stopped within 1s",
                   "stop again: the brain is told it is already stopped",
-                  "resume: picked up at slide 3"):
-        assert any(f"ok: {check}" in line for line in said.splitlines()), (check, said)
-    assert list((out / "review-1" / "check" / "flow").glob("*waiting-where.png"))
-    assert "list_packages found it by its title's words" in said
-
-    [(path, authorization, body)] = stand_in.posts
-    assert path.partition("?")[0] == "/api/messages", "a package is a message carrying it"
-    assert authorization.startswith(agent_keys.SCHEME), "signed with the session's own key"
-    sent = json.loads(body)
-    assert base64.b64decode(sent["package"]) == (out / "lunch-decisions-1.0.0.zip").read_bytes()
-    assert sent["says"].startswith("Decision package: ")
-    signed = package_signature.read(out / "lunch-decisions-1.0.0.zip")
-    assert signed.checks(public) and package_signature.DECISION_CHECKED in signed.statements, \
-        "signed as checked, once the isolated JARVIS seeded with its key passed it"
-    assert "Sent to Tim as message 41, carrying it; in his package inbox as pkg-0123456789ab" \
-        in said
-    assert "Nothing is shown until he asks for it." in said
+                  "resume: picked up at slide 3",
+                  "list_packages found it by its title's words"):
+        assert has(result, None, check), (check, result.passed)
+    assert list((tmp_path / "check" / "flow").glob("*waiting-where.png"))
 
 
-def test_the_command_checks_a_presentation_whose_vote_is_asked_at_done(
-        tmp_path, stand_in, capsys, authored_package_source):
-    """A presentation asks nothing on its slides: its standard vote is asked
-    at the package view's Done, so the check tells its story to the end and
-    finds no slide asking anything."""
-    from jarvis import make_package as mp
-    reason = dashboard_page.why_unavailable()
-    if reason:
-        pytest.skip(reason)
-    content = write(tmp_path / "in", json.loads(json.dumps(mp.PRESENTATION_EXAMPLE)))
-    out = tmp_path / "out"
-    from jarvis import agent_keys
-    agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
-    code = mp.main([str(content), "--out", str(out), "--session", "sess-1",
-                    "--deliver-to", stand_in.url])
-    said = capsys.readouterr().out
-    if "Executable doesn't exist" in said:          # pragma: no cover
-        pytest.skip("no Playwright Chromium")
-    assert code == 0, said
-    lines = said.splitlines()
-    for size in ("809x589", "662x489", "1600x900", "1280x713"):
+def test_a_presentation_asks_nothing_on_its_slides(tmp_path):
+    """A presentation asks nothing of its own, and its standard vote is asked
+    at the package view's Done, never on a slide: the story is told to its
+    end and no slide waits on the vote."""
+    from tests.test_make_package import presentation
+    result = checked(tmp_path, presentation())
+    for size in SIZES:
         for check in ("opened it by its title", "the package frame is",
-                      "the deck's own styles are in force", "slides fill the frame, fit",
-                      "the border's count followed the deck",
-                      "a slide chosen in the border's Chapters opens in the deck"):
-            assert any(f"ok: {size}: " in line and check in line for line in lines), \
-                (size, check, said)
-        shots = sorted(p.name for p in (out / "review-1" / "check" / size).glob("*.png"))
-        assert shots[:3] == ["01-s1.png", "02-s2.png", "03-s3.png"], shots
-        assert not any("approve-package" in name for name in shots), shots
-    assert "the story waits at approve-package" not in said, "no slide waits on the vote"
+                      "the deck's own styles are in force", *NAVIGATION):
+            assert has(result, size, check), (size, check, result.passed)
     for check in ("the story went on to its end", "every beat told pointed"):
-        assert any(line.startswith("  ok: ") and check in line for line in lines), (check, said)
-    [(path, _, body)] = stand_in.posts
-    assert path.partition("?")[0] == "/api/messages"
-    assert base64.b64decode(json.loads(body)["package"]) == \
-        (out / "team-lunch-moved-1.0.0.zip").read_bytes()
-
-
-def test_the_check_fails_a_deck_whose_styles_do_not_load(tmp_path):
-    """A deck whose deck.css never reaches the frame is the browser's default
-    black text, every slide stacked: the check fails it before any slide is
-    measured, so it is never delivered."""
-    import zipfile
-    from jarvis import decision_check, make_package as mp
-    reason = dashboard_page.why_unavailable()
-    if reason:
-        pytest.skip(reason)
-    made = mp.make_deck(write(tmp_path / "in", small_deck()), tmp_path / "out")
-    bare = tmp_path / "bare.zip"
-    with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(bare, "w") as dst:
-        for item in src.infolist():
-            if item.filename.rsplit("/", 1)[-1] != "deck.css":
-                body = src.read(item)
-                if item.filename.rsplit("/", 1)[-1] == "package.json":
-                    manifest = json.loads(body)
-                    # Keep the declared member list valid so this test reaches
-                    # the browser's missing-styles check rather than ingestion.
-                    manifest["understanding"].pop("deck.css")
-                    body = json.dumps(manifest).encode()
-                dst.writestr(item, body)
-    from jarvis import agent_keys
-    signer = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
-    result = decision_check.check(bare, made.deck, tmp_path / "check", signer, "sess-1")
-    if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
-        pytest.skip("no Playwright Chromium")
-    assert not result.ok
-    assert any("809x589: the deck is not styled: deck.css " in f
-               for f in result.failures), result.failures
-    assert any("it is not laid out to the frame" in f for f in result.failures), result.failures
-    assert not any("slides fill the frame" in line or "styles are in force" in line
-                   for line in result.passed), result.passed
-    assert (tmp_path / "check" / "809x589" / "unstyled.png").is_file()
-
-
-def test_the_check_fails_a_slide_whose_picture_draws_as_nothing(tmp_path):
-    """A slide picture is measured as drawn, at both sizes, with the same
-    minimum as an option's: an SVG with no size of its own (which the
-    command refuses before it builds) draws as nothing, and the check fails
-    the deck rather than pass a blank slide."""
-    import zipfile
-    from jarvis import agent_keys, decision_check, make_package as mp
-    reason = dashboard_page.why_unavailable()
-    if reason:
-        pytest.skip(reason)
-    deck = small_deck()
-    deck["slides"][0]["blocks"][1]["picture"] = "pictures/blank.svg"
-    folder = tmp_path / "in"
-    content = write(folder, deck)
-    (folder / "pictures" / "blank.svg").write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
-        '<rect width="320" height="200" fill="#38bdf8"/></svg>')
-    made = mp.make_deck(content, tmp_path / "out")
-    unsized = tmp_path / "unsized.zip"
-    with zipfile.ZipFile(made.archive) as src, zipfile.ZipFile(unsized, "w") as dst:
-        for item in src.infolist():
-            body = src.read(item)
-            if item.filename.endswith("deck.css"):
-                body += (b'\n.pictures > .picture {flex:0 1 auto} .pictures > .picture img {width:auto}'
-                         b'\n.slide.content.fill .picture {flex:0 1 auto}'
-                         b' .slide.content.fill .picture img {flex:none; width:auto; height:auto}')
-            if item.filename.endswith("pictures/blank.svg"):
-                body = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
-                        b'<rect width="320" height="200" fill="#38bdf8"/></svg>')
-            dst.writestr(item, body)
-    signer = agent_keys.make_pair(agent_keys.key_folder("sess-1"), "jarvis-agent")
-    result = decision_check.check(unsized, made.deck, tmp_path / "check", signer, "sess-1")
-    if any("Executable doesn't exist" in f for f in result.failures):   # pragma: no cover
-        pytest.skip("no Playwright Chromium")
-    assert not result.ok
-    # Measured at the first size, which ends the check (the passing deck
-    # above is measured at both).
-    assert any(f.startswith("809x589 slide 1 (s1) pictures: picture 1 (pictures/blank.svg) "
-                            "is drawn 0 x 0px, under 60px") for f in result.failures), \
-        result.failures
-    assert not any("every picture" in line for line in result.passed), result.passed
-    assert not any("option " in f and "pictures:" in f for f in result.failures), \
-        "the options' sized pictures pass"
+        assert has(result, None, check), (check, result.passed)
+    assert not has(result, None, "the story waits at approve-package"), \
+        "no slide waits on the vote"

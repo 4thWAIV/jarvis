@@ -1,5 +1,5 @@
 """An architecture package with its author's story, in the actual PackageView
-at the checker's window sizes (decision_check.SIZES): the handoff's purpose
+at the checker's window sizes (isolated_jarvis.SIZES): the handoff's purpose
 in its head, the story's declared questions answered there by click (with
 his words) and by voice, a follow-up asked only once his answer opens it,
 the standard vote once, the author's explanation read in place (rendered,
@@ -17,8 +17,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from jarvis import (data_paths, decision_check, language_documents, language_projection,
+from jarvis import (data_paths, language_documents, language_projection,
                     make_package, package_inbox, work_packages)
+from tests import isolated_jarvis
 from tests.test_brain_page_parity import wired  # noqa: F401  (a fixture)
 from tests.test_language_documents import draft, installed_kit  # noqa: F401  (fixtures)
 from tests.package_cards import CARD, open_question
@@ -103,8 +104,8 @@ async def test_a_walkthrough_s_questions_purpose_and_explanation_in_the_actual_v
     trace: list[dict] = []
     async with page_playwright as playwright, httpx.AsyncClient(base_url=base, timeout=60) as http:
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
-        for n, (window, _frame) in enumerate(decision_check.SIZES):
-            last = n == len(decision_check.SIZES) - 1
+        for n, (window, _frame) in enumerate(isolated_jarvis.SIZES):
+            last = n == len(isolated_jarvis.SIZES) - 1
             context = await browser.new_context(viewport={"width": window[0], "height": window[1]})
             page = await context.new_page()
             await page.add_init_script(FAKE_TRANSCRIPTION)
@@ -252,7 +253,7 @@ async def test_his_approval_of_the_design_in_the_actual_view(
     package = work_packages.find(package_inbox.get(inbox_id).package_id)
     subject = package_inbox.subject_of(package)
     trace: list[dict] = [{"subject": subject}]
-    window = decision_check.SIZES[-1][0]
+    window = isolated_jarvis.SIZES[-1][0]
     async with page_playwright as playwright, httpx.AsyncClient(base_url=base, timeout=60) as http:
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
         page = await browser.new_page(viewport={"width": window[0], "height": window[1]})

@@ -160,8 +160,6 @@ def test_document_and_revision_go_together(tmp_path):
 def factory(through_the_route, monkeypatch, tmp_path):
     """make_package's author is the stand-in claude (tests/architecture_author)
     and its delivery goes to this test's JARVIS, signed as it is sent."""
-    from tests.test_make_package import passing_check
-    passing_check(monkeypatch)
     hold_setting("claude_path", str(architecture_author.install(tmp_path / "bin")))
     monkeypatch.setenv("AUTHOR_TEST_CLAUDE_ROOT", str(session_watch.config_roots()[0]))
 
@@ -179,9 +177,7 @@ def factory(through_the_route, monkeypatch, tmp_path):
 
 def handoff(tmp_path):
     path = tmp_path / "handoff.json"
-    path.write_text(json.dumps({"purpose": "Explain the proposed document store",
-                                "audience": "Tim, who decides whether it is built",
-                                "questions": ["What does it own?"],
+    path.write_text(json.dumps({"question": "Explain the proposed document store",
                                 "evidence": ["the architecture document"]}))
     return path
 
@@ -216,7 +212,7 @@ def test_a_checked_document_reaches_the_inbox_author_proven_and_grounds(
                                           "markdown_sha256": hashlib.sha256(authored).hexdigest(),
                                           "purpose": "Explain the proposed document store"}
     assert package.manifest.purpose == "Explain the proposed document store", \
-        "the package states the handoff's purpose"
+        "the package states the handoff's question"
     assert work_packages.page_file(package, "source.yaml").decode() == draft["source"]
     assert work_packages.page_file(package, "index.html") == open(
         checked["references"]["view"], "rb").read()

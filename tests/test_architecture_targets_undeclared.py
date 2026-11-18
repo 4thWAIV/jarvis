@@ -49,7 +49,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import decision_check, language_documents, language_kit as lk
+from tests import isolated_jarvis
+from jarvis import language_documents, language_kit as lk
 
 ROOT = Path(__file__).resolve().parent.parent
 GRANT, HELLO, BEGIN = "IGrantStore", "IWindowsHelloNativeOps", "BeginVerification"
@@ -153,7 +154,7 @@ def kit(tmp_path_factory):
         yield None
         return
     data = tmp_path_factory.mktemp("kit-data")
-    with decision_check._data_dir(data):
+    with isolated_jarvis._data_dir(data):
         installed = lk.stage(Path(asset), lk.Release(lk.PINNED_VERSION, lk.PINNED_COMMIT,
                                                      lk.PINNED_DIGEST, ("gate", "release")))
     yield data, installed
@@ -202,7 +203,7 @@ def test_no_document_declares_either_target(kit):
              for problem in textual_problems(document)]
     if kit is not None:
         data, installed = kit
-        with decision_check._data_dir(data):
+        with isolated_jarvis._data_dir(data):
             for name, document in documents:
                 rendered = installed.run("render", document.encode("utf-8")[:lk.MAX_SOURCE_BYTES])
                 if rendered.view is None:

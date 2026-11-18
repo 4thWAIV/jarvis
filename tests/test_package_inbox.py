@@ -257,14 +257,12 @@ def work_item(tmp_path):
     pytest.param(lambda tmp: page_zip(), id="a page with no story"),
     pytest.param(lambda tmp: story_zip(TOLD), id="a story that waits for nothing"),
 ])
-def test_a_page_for_a_work_item_that_asks_nothing_is_refused(
+def test_a_page_for_a_work_item_that_asks_nothing_is_taken(
         wired, shown, marks, record, tmp_path, work_item, data):
+    """No longer refused: what follows his sign-off is the workflow's."""
     r = send(wired, data(tmp_path), work=work_item.id)
-    assert r.status_code == 409, r.text
-    said = r.json()["error"]
-    assert f"names work item {work_item.id} but asks Tim nothing" in said
-    assert "make_package, which adds the standard vote" in said
-    assert package_inbox.listing() == [] and record.pending_count() == 0 and shown == []
+    assert r.status_code == 200, r.text
+    assert len(package_inbox.listing()) == 1 and shown == []
 
 
 def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
@@ -289,10 +287,8 @@ def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
                             {"name": "say", "version": "1.0.0", "purpose": "Say.",
                              "runs": "conversation", "skill": "SKILL.md",
                              "returns": ["results/**"]})
-    r = send(wired, conversation, work=work_item.id)
-    assert r.status_code == 409 and "a conversation package cannot carry Tim's vote" in \
-        r.json()["error"]
-    assert send(wired, conversation).status_code == 200, "with no Work item it is taken"
+    assert send(wired, conversation, work=work_item.id).status_code == 200, \
+        "a conversation package for a Work item is taken too"
 
 
 def test_a_package_for_a_work_item_that_asks_is_taken(
@@ -311,19 +307,19 @@ def test_a_package_that_asks_nothing_and_names_no_work_item_is_taken(
 
 
 def presentation_zip(tmp_path) -> bytes:
-    """A presentation as make_package builds it, with the vote added, signed
-    as checked by an onboarded agent's key."""
-    content = tmp_path / "presentation" / "content.json"
+    """A presentation as make_package builds it, laid out and proven by
+    JARVIS with the vote added, signed by an onboarded agent's key."""
+    import yaml
+    content = tmp_path / "presentation" / "presentation.yaml"
     content.parent.mkdir()
-    content.write_text(json.dumps(make_package.PRESENTATION_EXAMPLE))
+    content.write_text(yaml.safe_dump(make_package.PRESENTATION_EXAMPLE))
     out = tmp_path / "presentation" / "out"
     out.mkdir()
-    made = make_package.make_deck(content, out)
+    made = make_package.make_presentation(content, out)
     from tests.agent_key_fixtures import onboarded_auth
     agent = onboarded_auth(session="sess-1").agent
     from tests.author_fixtures import sign_authored
-    sign_authored(made.archive, made.archive, agent, "sess-1",
-                           (package_signature.DECISION_CHECKED,))
+    sign_authored(made.archive, made.archive, agent, "sess-1")
     return made.archive.read_bytes()
 
 

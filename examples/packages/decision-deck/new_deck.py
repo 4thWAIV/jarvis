@@ -33,11 +33,6 @@ VOTING = ("SKILL.md", "scripts/decide.py")
 DATA_PREFIX = "window.DECK = "
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RETURNS = ["results/decisions.json", "results/decisions.md"]
-SAY_MAX = 800
-# Words a slide may carry, so no slide is a wall of text: a content slide's
-# body, and each part of a decision. Split a longer slide in two.
-SLIDE_WORDS = 60
-DECISION_WORDS = {"question": 30, "reason": 40, "context": 40, "says": 40}
 
 
 class Bad(Exception):
@@ -75,35 +70,6 @@ def pictures_of(deck: dict) -> list[str]:
 
 def words(text) -> int:
     return len(re.sub(r"\*\*|`", "", str(text or "")).split())
-
-
-def block_words(b: dict) -> int:
-    n = sum(words(b.get(k)) for k in ("p", "lead", "note", "caption"))
-    for pt in b.get("points", []):
-        n += words(pt) if isinstance(pt, str) else words(pt.get("b")) + words(pt.get("text"))
-    for f in b.get("facts", []):
-        n += words(f.get("n")) + words(f.get("text"))
-    for pic in b.get("pictures", []):
-        n += words(pic.get("caption"))
-    table = b.get("table") or {}
-    for row in [table.get("head") or []] + list(table.get("rows") or []):
-        n += sum(words(c) for c in row)
-    return n
-
-
-def check_words(deck: dict) -> None:
-    for s in deck.get("slides", []):
-        if "decision" in s:
-            continue
-        n = sum(block_words(b) for b in s.get("blocks", []))
-        if n > SLIDE_WORDS:
-            raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {SLIDE_WORDS}. Split it in two.")
-    for d in deck.get("decisions", []):
-        parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
-        parts += [("says", o.get("says")) for o in d["options"]]
-        for field, text in parts:
-            if words(text) > DECISION_WORDS[field]:
-                raise Bad(f"{d['id']}'s {field} has {words(text)} words; at most {DECISION_WORDS[field]}.")
 
 
 def check(deck: dict, source_dir: Path) -> None:
@@ -153,7 +119,6 @@ def check(deck: dict, source_dir: Path) -> None:
             raise Bad(f"A slide places decision {s['decision']!r}, which is not one.")
         if "decision" not in s and not s.get("title"):
             raise Bad("Every content slide needs a title.")
-    check_words(deck)
     for pic in pictures_of(deck):
         p = Path(pic)
         if not pic or p.is_absolute() or ".." in p.parts:
@@ -181,8 +146,7 @@ def pages(deck: dict) -> list[dict]:
     through them: its opener (#go-N, the deck's own numbering), its title as
     deck.js names it, and the decision it asks (None for a content slide or
     the answers slide). The story tells over these; the border navigates
-    them, so a decision's lead-in and its question are each a slide of their
-    own."""
+    them, so each question is a slide of its own."""
     by_id = {d["id"]: d for d in deck.get("decisions", []) if isinstance(d, dict)}
     out = []
     for n, s in enumerate(order(deck), 1):
@@ -193,9 +157,7 @@ def pages(deck: dict) -> list[dict]:
         elif "answers" in s:
             out.append({"opener": f"#go-{n}", "title": "Your answers", "asks": None})
         else:
-            # A lead-in by its own title ("Before you decide: ..."), so it is
-            # never named the same as the question it leads to.
-            title = s.get("title") if s.get("lead_in") else s.get("short") or s.get("title")
+            title = s.get("short") or s.get("title")
             out.append({"opener": f"#go-{n}", "title": title or "", "asks": None})
     return out
 
@@ -220,22 +182,14 @@ def story(deck: dict) -> dict:
     decision slide is explained, then asks, then waits (`waits`) until
     results/decisions.json has its answer; a child question is asked only
     once its parent has an answer that opens it (`asks_when`). A
-    decision's lead-in slide (a content slide whose `lead_in` names it) is
-    told as the first beat of that decision's own story slide, never on its
-    own: the story asks, waits and resumes at that slide, so the question is
-    never asked, the first time or on resume, without its lead-in. A
     presentation (no decisions) is told straight through."""
     decisions = deck.get("decisions", [])
     by_id = {d["id"]: d for d in decisions}
     opened = parents(deck)
     ask = ASK.get(deck.get("language", "en"), ASK["en"])
-    lead_ins = {s["lead_in"]: (n, s) for n, s in enumerate(order(deck), 1)
-                if s.get("lead_in") in by_id}
     slides = []
     for n, s in enumerate(order(deck), 1):
         go = {"click": f"#go-{n}"}
-        if s.get("lead_in") in by_id:
-            continue                         # told with its decision, below
         if "decision" in s:
             d = by_id[s["decision"]]
             k = decisions.index(d) + 1
@@ -249,16 +203,6 @@ def story(deck: dict) -> dict:
             ]
             slide = {"title": d.get("short") or d["id"], "target": f"#d-{d['id']}",
                      "waits": d["id"], "beats": beats}
-            if d["id"] in lead_ins:
-                # Its lead-in first, on its own slide. Each beat then goes
-                # to its slide itself (the first of each part clicks it), so
-                # the story slide names no one target to show on every beat.
-                ln, lead = lead_ins[d["id"]]
-                lid = lead.get("id") or f"s{ln}"
-                beats.insert(0, {"say": spoken(lead.get("say") or lead["title"]),
-                                 "actions": [{"click": f"#go-{ln}"}],
-                                 "targets": [f"#{lid} h2"]})
-                del slide["target"]
             if d["id"] in opened:
                 slide["asks_when"] = opened[d["id"]]
             slides.append(slide)
@@ -276,10 +220,6 @@ def story(deck: dict) -> dict:
                 beats = [{"say": spoken(s.get("say") or s["title"]), "actions": [go],
                           "targets": [f"#{sid} h2"]}]
             slides.append({"title": s.get("short") or s["title"], "target": f"#{sid}", "beats": beats})
-    for slide in slides:
-        for b in slide["beats"]:
-            if len(b["say"]) > SAY_MAX:
-                raise Bad(f"A beat on {slide['title']} is over {SAY_MAX} characters.")
     return {"title": deck["title"], "language": deck.get("language", "en"),
             "answers": RETURNS[0], "slides": slides}
 

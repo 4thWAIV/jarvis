@@ -1,41 +1,27 @@
 # Handoff and return
 
-The factory handoff input is defined only in `docs/making-a-package.md`. Use the guidance below to prepare that input and its evidence, and to write the author’s Markdown return notes. Link existing records instead of copying them. Omit irrelevant detail; write `unknown` where a consequential fact is missing.
+## Sender to author
 
-## Origin to author
+The sender's handoff JSON gives only what the author cannot work out itself (`docs/making-a-package.md` defines it):
 
-| Field | What the fresh author needs |
+| Field | What it is |
 |---|---|
-| Owner and return route | Originating session, existing Work item/piece and optional workflow; who will review, deliver and handle answers. |
-| Assignment and authority | Package purpose; source-only or delivery; assigned folder; approved scope and exact approval-record location. Identify proposals still awaiting approval. |
-| Audience | Who is reading, what they already know, what they do not know, relevant terminology and accessibility/language preferences. Distinguish observed knowledge from assumptions. |
-| History and prior approvals | What the reader already decided or approved that this touches (record locations), and what has happened since, including failures and their causes. The author restates these for the reader; the origin must not leave them out because the reader "already knows". |
-| Human questions | What the reader wants to understand or do. Include the question behind the requested artifact, not just “make slides.” |
-| Desired decision | The real choice and what an answer would authorize, or `information only`. Name any known constraints without inventing a decision to fill the field. |
-| Raw evidence | Accessible files, code, data, source URLs and exact revisions when available; current tests and their actual outputs; material counterevidence. Explain how to reproduce a finding when it matters. |
-| Origin findings | Conclusions, recommendation and uncertainty, clearly labeled as the origin's account. Include abandoned assumptions when they could otherwise mislead. |
-| Missing information | Open questions, attempted research, known access limitations and who can supply the missing fact. |
-| Delivery context | Current JARVIS production-guide location, existing package name if replacing one, association IDs and human-answer owner. |
+| `question` | The question or decision for Tim. |
+| `work` | Its Work item id, or a list of them. |
+| `evidence` | References the answer rests on: files, commits, PRs, CI runs, records. Relative paths are relative to the handoff file. |
+| `decisions` | Optional: the decisions it asks, as decision objects. |
+| `approval` | Architecture documents only: `true` asks Tim to approve the design. |
 
-A suggested slide order (`shape`) is input, not instruction: the author follows the skill's decision-memo order (situation, what was already decided, what happened and why, options and what changes, the decision, detail last) wherever the two disagree, and says what it changed.
+`purpose`, `conclusion`, `audience`, `questions` and any structure (`shape`, `slides`, `outline`, `order`, `situation`) are refused, each with its reason: the author works out the answer, what Tim knows and lacks, his questions and the order from its own research and prep. A complete-looking handoff is no reason to accept its claims.
 
-The origin does not have to finish all research before handing off. It must give the author access to evidence and identify assumptions rather than hide them. The author researches the human's questions independently and returns a readiness finding. Receiving a complete-looking handoff is not grounds for accepting its claims.
-
-## Fresh-author invocation
-
-Use the existing package factory's handoff entrypoint described in `docs/making-a-package.md`. The factory creates a new session on the caller's own engine and supplies this skill. The author returns source only; the original command owns checking and delivery with the caller's original session, Work and workflow association. No manual second-agent launch or other-engine fallback is needed.
-
-## Author to owner
+## Author to sender
 
 Return one result containing:
 
-- **Readiness:** `ready-for-delivery`, `needs-evidence` or `needs-scope-decision`. These describe package readiness, not human approval or Work completion. A source-only result can be content-ready with rendered checks still pending; say that explicitly.
-- **Artifacts:** package source entry, referenced assets, supporting evidence, revision or commit, and the exact production-guide path used.
-- **Human answer:** a short account of what the package enables the reader to understand or decide. Include the decision keys and precise authorized effect if it asks anything.
-- **Reconciliation:** material corrections to the origin's findings, each with evidence. List remaining unknowns, whether they block a decision and the owner/next action for each.
-- **Review:** comprehension findings separately from source validation, rendered frame, narration and vote checks. Link actual output or screenshots; identify tests not run.
-- **Ownership:** the recipient who now has the work, remaining delivery action, Work/workflow association and answer route. If already authorized and delivered, return actual package/inbox identifiers and delivery receipt. Otherwise say `not delivered`.
+- **Readiness:** `ready-for-delivery`, `needs-evidence` or `needs-scope-decision`. These describe the package, not Tim's approval or the Work item's completion.
+- **Artifacts:** the package source, its assets, prep.md, script.md, edits.md, and the production-guide path used.
+- **What it enables:** what the package lets Tim understand or decide, with the decision keys and exactly what each answer authorizes.
+- **Corrections:** material corrections to the sender's account, each with evidence; unknowns, whether they block a decision, and who can settle each.
+- **What ran:** the editors' and judges' rounds, the check's output, and anything not tested.
 
-The owner opens the returned source and resolves `needs-evidence` or `needs-scope-decision` before presenting an affected choice. They give factual corrections back to the author with evidence; they do not require preserving the earlier conclusion. They accept the author handoff explicitly or identify what is missing. For a ready package, the owner executes the production command in their own session so replies return to the responsible session, associates the existing Work item, and records evidence and the appropriate Work state using the existing reporting tools. Do not invent a new queue or set the user's completion state yourself.
-
-After delivery, use the existing package-linked wait when a human answer is required. Read the recorded answer by its decision key, preserve unanswered decisions as unanswered, and execute only its actual scope. Record content fixes and work still due. A package sign-off reports review; a scoped build vote supplies build authority. Keep those meanings separate through follow-through.
+The sender's command builds, proves and delivers the package with its own session, Work item and workflow, so his answers come back to it. A finished authoring turn does not complete the Work item.

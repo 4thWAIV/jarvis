@@ -10,6 +10,7 @@ Handles:
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import itertools
 import json
@@ -98,6 +99,7 @@ from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
 from jarvis import bundle_archive
 from jarvis import reporters
+from jarvis import agent_rights
 from jarvis import make_package
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
@@ -4568,7 +4570,7 @@ def _revoke_agent_key(key, by: str, why: str):
 def _key_json(key) -> dict:
     """A key as the page and the brain read it: its row and its rights."""
     return {**key.public(), "rights": [dataclasses.asdict(g) for g in
-                                       agent_key_store.grants(key.principal)]}
+                                       agent_rights.granted(key.principal)]}
 
 
 # How long before its submission a key's submit command may have been
@@ -4834,6 +4836,19 @@ def _tool_reply(ok: bool, text: str, image: dict | None = None) -> dict:
 
 # Populated by Task 6 and Task 7. name -> callable(arguments: dict) -> str
 TOOL_HANDLERS: dict = {}
+
+# Who is calling a tool: None for the brain (whose turns are his), else the
+# onboarded agent's principal, set by `api_agent_tool` for the call. A tool
+# an agent calls gives it the same answer, walled the same way, but touches
+# nothing of his turn: no taint on the brain's turn, no message he is "on",
+# no update waiting to be seen, no "that session".
+_tool_caller: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "tool_caller", default=None)
+
+
+def _for_him() -> bool:
+    """The tool running now was called by the brain, in a turn of his."""
+    return _tool_caller.get() is None
 TOOL_HANDLERS["show_on_screen"] = tool_show_on_screen
 
 
@@ -5159,8 +5174,9 @@ def _mark_untrusted_source(source: Optional[str]) -> None:
     """The turn now holds somebody else's words from `source`: what
     `_mark_the_turn_untrusted` does for a reading tool, and what a tool
     that only sometimes gives back other people's words (several messages
-    that fit, to ask which) does when it does. Never raises."""
-    if not source:
+    that fit, to ask which) does when it does. Never raises. An agent's
+    call marks nothing: the brain's turn read nothing."""
+    if not source or not _for_him():
         return
     try:
         marker = getattr(brain_instance, "mark_untrusted_content", None)
@@ -5229,16 +5245,58 @@ async def internal_tool(request: Request):
         tool_activity.activity.end(call, stage)
 
 
+@app.post(agent_rights.AGENT_TOOL_PATH)
+async def api_agent_tool(request: Request):
+    """An onboarded agent's call of one of the brain's tools (agent_mcp.py):
+    signed with its own key, admitted by the gate only for a right that
+    covers this route, and then only for a tool its rights name
+    (`agent_rights.allows_tool`). Answered by the brain's own handler
+    through `_dispatch_tool`, capped and walled as the brain's answer is,
+    with the agent as the caller (`_tool_caller`). The tool token, a page
+    and a work-item key are refused."""
+    principal = web_auth.principal(request.scope) or ""
+    if not principal.startswith(reporters.AGENT_PREFIX):
+        return JSONResponse({"error": "Only an onboarded agent, signing with its own key, "
+                                      "calls JARVIS's tools here."}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return _tool_reply(False, "Unreadable request.")
+    if not isinstance(body, dict):
+        return _tool_reply(False, "Request body must be an object.")
+    tool = str(body.get("tool", ""))
+    args = body.get("arguments") or {}
+    if not isinstance(args, dict):
+        return _tool_reply(False, "Arguments must be an object.")
+    handler = TOOL_HANDLERS.get(tool)
+    if handler is None or not await asyncio.to_thread(agent_rights.allows_tool, principal, tool):
+        return JSONResponse({"error": f"Refused: this agent's rights do not cover the tool "
+                                      f"{tool!r}."}, status_code=403)
+    token = _tool_caller.set(principal)
+    try:
+        reply, stage = await _dispatch_tool(tool, handler, args)
+    finally:
+        _tool_caller.reset(token)
+    log.info("agent tool: %s called %s (%s)", principal, tool, stage)
+    return reply
+
+
 async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
     """Run one named tool through the gates: its reply, and how the call
-    ended for the activity feed (refused, failed or completed)."""
-    if brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
+    ended for the activity feed (refused, failed or completed). An agent's
+    call (`_tool_caller`) is never an acting tool's: those wait on his own
+    turn, which an agent's call never is."""
+    if not _for_him():
+        if tool in ACTING_TOOLS:
+            return (_tool_reply(False, "not_allowed_for_agents — only he can make "
+                                       "that happen."), tool_activity.REFUSED)
+    elif brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
         # The attention digest is read-only: its facts are in its prompt,
         # and no tool, reading or acting, runs in that turn.
         return (_tool_reply(False, "not_allowed_in_digest — no tools in a digest turn."),
                 tool_activity.REFUSED)
 
-    if tool in ACTING_TOOLS:
+    if tool in ACTING_TOOLS and _for_him():
         origin = brain_instance.current_origin if brain_instance else None
         if origin != "user":
             return (_tool_reply(
@@ -5919,7 +5977,8 @@ def tool_read_session_reply(args: dict) -> str:
     session, problem, _reason = _resolve_or_explain(str(args.get("name") or ""))
     if problem:
         return problem
-    last_mentioned_session = session.session_id
+    if _for_him():
+        last_mentioned_session = session.session_id
     name = _said_name(session, "That session")
     reply = _session_reply(session)
     if not reply:
@@ -6286,7 +6345,8 @@ _message_on: Optional[int] = None
 
 def _on_message(item_id) -> None:
     global _message_on
-    _message_on = int(item_id)
+    if _for_him():
+        _message_on = int(item_id)
 
 
 def _message_meant(args: dict) -> tuple:
@@ -6666,7 +6726,7 @@ def _read_to_him(kind: str, source_id) -> None:
     it is (conversation_log), if any, waits to be read, until he has heard
     the reply that reads it. Never raises."""
     if (_turn_reads is None or brain_instance is None
-            or brain_instance.current_origin != "user"):
+            or brain_instance.current_origin != "user" or not _for_him()):
         return
     if attention_record is not None:
         try:
@@ -6690,7 +6750,7 @@ def _message_read_to_him(item) -> None:
     if update is not None:
         _read_to_him(*update)
     if _turn_reads is not None and brain_instance is not None \
-            and brain_instance.current_origin == "user":
+            and brain_instance.current_origin == "user" and _for_him():
         read = (_MESSAGE_READ, str(item.id), None)
         if read not in _turn_reads:
             _turn_reads.append(read)
@@ -9382,7 +9442,9 @@ def tool_list_packages(args: dict) -> str:
         return ("No packages have been opened here, sir." if not words else
                 "No package here is called that; list_packages without a name lists them all.")
     lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
-             f"{', with a story' if p.manifest.story else ''}, {p.manifest.purpose}"
+             f"{', with a story' if p.manifest.story else ''}"
+             f"{', layout not checked' if p.manifest.runs == work_packages.PAGE and not p.layout_checked else ''}"
+             f", {p.manifest.purpose}"
              for p in packages]
     what = (f"{len(lines)} package{'s' if len(lines) != 1 else ''} "
             f"{'unpacked here' if not words else 'here have those words'}, newest first; "
@@ -9959,11 +10021,6 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
-    if work_id and not package_inbox.asks_him(package) and \
-            package.manifest.runs != work_packages.AGENT:
-        # A package for a Work item carries his vote (package_inbox.no_vote);
-        # an agent package's is asked on the item as it arrives.
-        return None, None, package_inbox.no_vote(work_id, package.manifest.runs)
     if status == _GOOD_SIGNER and signed.work_key:
         _work_key_from_package(package, signed, key, work_id)
     if signer is not None and source and key is not None and \
@@ -10118,23 +10175,45 @@ def _package_signer(signed):
 
 
 def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
-    """Why this zip may not be unpacked here, or None: only a decision
-    package needs proof it passed its end-to-end check, which is its
-    onboarded signer's statement (package_signature.DECISION_CHECKED). An
-    isolated check JARVIS (decision_check_server) takes the signature of
-    the key it was seeded with alone, since it is the check."""
+    """Why this deck may not be unpacked here, or None. Every deck comes
+    signed by an onboarded agent's key; one JARVIS laid out carries its
+    source and layout proof, which is made again here, without a browser
+    (presentation_proof.reprove): it unpacks only when it proves. A deck
+    from before (no proof) is admitted on its signer's statement that it
+    passed the old end-to-end check (package_signature.DECISION_CHECKED).
+    An isolated JARVIS of the page tests (tests/isolated_jarvis_server) takes the signature of
+    the key it was seeded with alone."""
     try:
         if not decision_stamp.is_decision_package(zip_path):
             return None
+        proven = decision_stamp.carries_proof(zip_path)
     except (OSError, ValueError) as e:
         return f"It could not be read: {e}"
-    if key is not None and signed is not None and (
-            package_signature.DECISION_CHECKED in signed.statements
-            or env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1"):
+    refused = ("This is a deck that has not been proven: decks reach him only through "
+               "python -m jarvis.make_package, which lays them out, proves they fit and then "
+               "signs them with your key.")
+    if key is None or signed is None:
+        return refused
+    if env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1":
         return None
-    return ("This is a decision package that has not passed its check: decision packages "
-            "reach him only through python -m jarvis.make_package, which checks them end to "
-            "end and then signs them with your key.")
+    if proven:
+        return _deck_proof_problem(zip_path)
+    return None if package_signature.DECISION_CHECKED in signed.statements else refused
+
+
+def _deck_proof_problem(zip_path: Path) -> Optional[str]:
+    """The deck's layout proof made again from its own bytes, or why not."""
+    from jarvis import presentation_proof
+    with tempfile.TemporaryDirectory(prefix="deck-proof-") as temporary:
+        try:
+            with bundle_archive.open_archive(zip_path) as archive:
+                listing = bundle_archive.list_members(archive)
+                folder = bundle_archive.extract(archive, listing, Path(temporary) / "deck",
+                                                folder=listing.wrapper)
+        except (OSError, bundle_archive.ArchiveError) as e:
+            return f"It could not be read: {e}"
+        problems = presentation_proof.reprove(folder)
+    return ("Its layout does not prove here: " + " ".join(problems[:3])) if problems else None
 
 
 def _admit_agent_package(zip_path: Path, signed, status: str,
@@ -10152,7 +10231,7 @@ def _admit_agent_package(zip_path: Path, signed, status: str,
     author. Not affected: an unsigned or held package (their own rules), a
     person's (`_open_received_package` never asks), JARVIS's own (it signs
     nothing), the same bytes already unpacked here, and the isolated
-    check JARVIS (decision_check_server), which is the check. Blocking."""
+    JARVIS of the page tests (tests/isolated_jarvis_server). Blocking."""
     if status != _GOOD_SIGNER or signed is None or \
             env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1" or \
             work_packages.already_here(zip_path):
@@ -14503,7 +14582,7 @@ def _key_line(key, names: dict) -> str:
     when = (f", since {time.strftime('%d %B %H:%M', time.localtime(key.onboarded_at))} "
             f"({key.onboarded_by})" if key.onboarded_at and key.state == "onboarded" else "")
     rights = ", ".join(g.right + ("" if g.scope == "*" else f" ({g.scope})")
-                       for g in agent_key_store.grants(key.principal))
+                       for g in agent_rights.granted(key.principal))
     return (f"- {who}: key {key.fingerprint} {state}{when}"
             + (f"; rights: {rights}" if rights and key.state == "onboarded" else ""))
 

@@ -44,10 +44,9 @@ WIRING_NAMES: dict[str, str] = {
     "JARVIS_TOOL_TOKEN_FILE": "the tool token's file, for the brain's MCP child",
     "JARVIS_AGENT_SESSION": "an agent's own session id, for its JARVIS commands",
     "JARVIS_ACCESS_KEY": "a legacy access key for workflow_report, until the cut-over",
-    "JARVIS_DECISION_CHECK_SERVER": "marks the isolated decision-check JARVIS",
+    "JARVIS_DECISION_CHECK_SERVER": "marks the isolated JARVIS the page tests run",
     "JARVIS_URL": "the JARVIS an agent's command talks to, when it is not this Mac's own",
-    "JARVIS_DATA_DIR": "the data folder of an isolated instance (a test, the decision "
-                       "check)",
+    "JARVIS_DATA_DIR": "the data folder of an isolated instance (a test)",
     "JARVIS_PYTHON": "the Python a package's command runs with",
     "JARVIS_SOURCE": "JARVIS's source folder, for a package's command",
     "PACKAGE_DIR": "a package's own folder, for its command",
@@ -60,6 +59,8 @@ WIRING_NAMES: dict[str, str] = {
 
 PLATFORM_NAMES: dict[str, str] = {
     "CLAUDE_CODE_MESSAGING_TOKEN": "given by Claude Code to a session's own commands",
+    "CLAUDE_CODE_SESSION_ID": "the session Claude Code runs a command or MCP server in, which "
+                              "the agent MCP server signs as",
     "CLAUDECODE": "set by Claude Code inside a session, scrubbed from children",
     "CLAUDE_CONFIG_DIR": "Claude Code's home, when not ~/.claude",
     "CODEX_HOME": "Codex's home, when not ~/.codex",

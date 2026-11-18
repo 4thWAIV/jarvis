@@ -155,8 +155,9 @@ again. The plan refuses too little free disk first
   An onboarded agent signs each request with its own key instead (see
   "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
   (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
-  `packages`, `watch`), never the voice socket, settings or
-  `/internal/tool`. Access keys, which agents carried before
+  `packages`, `watch`, `research`), never the voice socket, settings or
+  `/internal/tool`; `research` reaches the brain's reading tools through
+  `POST /api/agent-tool` alone (see "Agent tools"). Access keys, which agents carried before
   (`access_keys.py` is gone), are accepted only while the cut-over guard
   waits (`legacy_access.py`): until none in `access-keys.json` has been
   used for seven days (counted per day and label in the
@@ -199,12 +200,24 @@ pending. Proven, it is `waiting`: a silent attention item (`agent_key`)
 and "New key" on the agent's box. Switching the agent on is Tim's act of
 onboarding it (his answer, Q1): `server._set_agent_active`, shared by the
 page's switch and the brain's `set_agent_active`, onboards the waiting key,
-recorded with the time and `page` or `voice`, gives it
-`agent_rights.DEFAULT_RIGHTS` (`work`, `workflows`, `packages`, `watch`,
-his answer, Q2) when the agent has none, revokes the session's older key,
-and adopts an access-key label naming exactly that agent
+recorded with the time and `page` or `voice`, revokes the session's older
+key, and adopts an access-key label naming exactly that agent
 (`_adopted_label`), so its earlier decisions stay its own
-(`reporters.aliases`). An active agent whose key waits shows its switch
+(`reporters.aliases`). Onboarding copies no rights onto the agent: an
+onboarded agent's rights come from ONE plain file, read on every check
+(`agent_rights.current`, cached and read again whenever the file changes):
+the data folder's `agent-rights.json`, made from the shipped
+`jarvis/agent_rights.json` when missing, holding `standard` (the rights
+every onboarded agent has: `work`, `workflows`, `packages`, `watch`, his
+answer, Q2, and `research`, the one package system's) and `agents`, the
+exceptions by session id or name, each `add` and `remove`
+(`agent_rights.granted`, what `allows`, `tools_of`, the agent's thread and
+`agent_keys` read). A file that cannot be read or names no right is logged
+and the shipped default used. Rights stored on an agent before (when
+onboarding copied them) count only where they differ from what it copied
+then (`LEGACY_STANDARD`), as exceptions; nothing moves them. A work-item
+key's rights stay its own document's grants. A plain file with no Settings control, by his decision (2026-11-18).
+An active agent whose key waits shows its switch
 off, so switching it on accepts it. Signed requests (`Authorization:
 JARVIS-Signature key=, created=, nonce=, body=, sig=` over
 `jarvis-request@v1`, method, path, query, Host, created, nonce and body
@@ -479,9 +492,8 @@ message was about) and a person's message. An agent sends one with `POST
 `python -m jarvis.message --work <id> "<text>" [--package <zip>] [--as
 <session id>]`): `{"says", "package"?}` (base64 zip, received through
 `_receive_inbox_package` with `carried`, so the message is the package's one
-message). A request that asks something (a decision field, `decision`,
-`question`, `options`, `recommendation`, or a sentence ending in "?") without
-a package is refused (`messages_api.asks`); one with no `work` from an agent
+message). A message is never refused for asking something without a
+package; one with no `work` from an agent
 with a piece not done on an open item is refused naming the item(s)
 (`work_store.open_items_of`) unless it says it is about none (`general=1`,
 `--general` on `jarvis.message` and `make_package`, his Inbox; never with
@@ -637,6 +649,45 @@ commands and paths (`{{message}}`, `{{make_package}}`, `{{agent_key}}`,
 the reporters) into every Claude Code config root and the user's Codex home;
 an agent must reinstall it to learn the route. Preflight's `session_skill`
 check only reports whether it is there and current.
+
+## Agent tools
+An agent reaches JARVIS through MCP tools as well as its commands
+(`agent_mcp.py`, a stdio server built on `jarvis_mcp.py`'s JSON-RPC, no new
+dependency). `session_skill.install` puts it in every home as the
+user-scope server `jarvis` (`agent_mcp.entry()`: this install's Python,
+checkout and certificate): a Claude Code root's `.claude.json`
+(`~/.claude.json` for `~/.claude`) under `mcpServers`, the Codex home's
+`config.toml` between two marker lines (`codex_provider.mcp_server_toml`);
+the rest of either file is kept, one it cannot read is left alone, and
+`status()` (preflight's `session_skill` check, Diagnostics' Install skill)
+covers them too. Every call is signed with the agent's own key, never the
+tool token, as the session in `JARVIS_AGENT_SESSION`, else
+`CLAUDE_CODE_SESSION_ID` (Claude Code's own), else the call's `as_session`
+(a Codex session gives it). The brain's reading tools an agent's rights name
+(`agent_rights.TOOLS`; the `research` right: `conversation_history`,
+`messages_to_him`, `recall`, `package_inbox`, `list_packages`,
+`package_results`, `work_status`, `work_detail`, `work_context`,
+`workflow_status`, `run_status`, `knowledge_search`, `knowledge_status`,
+`search_repo`, `repo_overview`, `project_notes`, `project_history`,
+`list_folders`, `browse_folder`, `read_folder_file`, `list_agents`,
+`read_message_reply`, `read_session_reply`; none an acting tool) go to `POST
+/api/agent-tool` (`server.api_agent_tool`): an onboarded agent's signature
+only (the tool token, a page and a work-item key are refused 403), a tool
+its grants for every target name (`agent_rights.allows_tool`), answered by
+the brain's own handler through `_dispatch_tool`, capped and walled as for
+the brain, with the agent as `server._tool_caller`: an agent's call never
+runs an acting tool and touches nothing of his turn (`_for_him`: no taint on
+the brain's turn, no message he is on, no update waiting to be seen, no
+"that session"), and is logged with its principal. The agent commands are
+tools calling the command's own `main` with the same command line
+(`agent_mcp.COMMANDS`: `send_message` is `jarvis.message`; `work_start`,
+`work_update`, `work_piece`, `work_end_wait`, `work_close`, `work_answer`,
+`work_answers` are `work_report.py`'s; `workflow_start`, `workflow_event`,
+`workflow_answer` `workflow_report.py`'s; `retrieve_attachment`;
+`language_document`), so each lands through its own route and right; the
+package job tools (`package_start`, `package_status`, `package_answer`) call
+`package_jobs.py`. `agent_key` stays a command. The talk-to-jarvis skill
+teaches the tools beside the commands.
 
 ## The workflow monitor
 A long workflow (a phased build, a run of several agents) reports every
@@ -882,10 +933,10 @@ these records, never from an agent's memory: `python -m jarvis.status_briefing
 --work <id> [--work <id> ...] --out <folder> [--since <time>]`
 (`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
 `need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
-`work_status` reads them) writes `handoff.json` (a make_package handoff, the
-composition as its `briefing`, asking one decision, `approve-status`:
-approve, or reject with his words on what is missing or wrong, with its
-lead-in) and `status-evidence.json`, and nothing
+`work_status` reads them) writes `handoff.json` (a make_package handoff:
+its question, the items, the evidence file first, and one decision,
+`approve-status`: approve, or reject with his words on what is missing or
+wrong) and `status-evidence.json`, and nothing
 else: per item, what needs him first (his acts, every held piece and what
 holds it, stalled pieces, the item stalled or answered with no follow-up,
 each with who and since when; or one line that nothing needs him), then
@@ -1190,7 +1241,7 @@ a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
 draws no strip, Previous, Next or status of its own; it says each slide
 it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
 border moves through the deck's own slides (`describe`'s `pages`,
-`package_inbox.deck_pages` over the shared deck's `pages`: every lead-in,
+`package_inbox.deck_pages` over the shared deck's `pages`: every slide,
 question and the vote its own, numbered as the deck numbers them, a
 question marked in Chapters; `packages.ts` `navigation`, the story's
 slides for a page that is no deck) and counts itself on the one it shows;
@@ -1313,35 +1364,90 @@ story waits for an answer, pauses or ends (`StoryTeller._told`). The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
 (a page with a story). Every package an agent sends Tim is made with
-one command, `python -m jarvis.make_package <content.json | folder>`
+one command, `python -m jarvis.make_package <presentation.yaml | folder>`
 (`make_package.py`), and `docs/making-a-package.md` is the only place
-that says how: a deck's content (a decision package, or a presentation
-when it has no decisions; `decision_package.py` reads, expands and checks
-it, refusing an SVG picture whose root has no width and height in pixels
-(`svg_size_problem`), the shared deck's `new_deck.py` builds it; every deck is a briefing,
-`decision_package.briefing_problems`: its own `purpose` and one-sentence
-`conclusion` (deck/0.1's), a first slide of words that shows the
-conclusion and with its narration carries the purpose, and each decision's
-`why_you` and `evidence`, drawn as its lead-in slide before it; an
-architecture package's opening is its document's, its explanation opening
-with the purpose and conclusion) or a hand-made package's
-folder (only `purpose` given; read back through
-`work_packages.recognise`). A deck is checked end to end in an isolated
-JARVIS (`decision_check.py`, `decision_check_server.py`: layout at both
-sizes, every picture on every slide drawn at least `MIN_PICTURE_PX` each
-way at both sizes (`PICTURES`), and the story told to the end; for a decision package also voting,
-the story waiting at every question as a first-time user answers by click
-and by decide.py, Stop within 1 s from the page and the tool, and resume).
-The isolated JARVIS is seeded with the agent's public key
-(`decision_check.seed`, `JARVIS_DECISION_CHECK_SERVER`), so the deck signed
-by that key unpacks there. Only then is it signed for the live JARVIS, a
-decision package with the statement that it passed
-(`package_signature.DECISION_CHECKED`), and delivered unshown to his
-package inbox. Every unpack (`server._decision_problem`) refuses a decision
-package (`deck-data.js` and `scripts/decide.py`, the shared deck's,
-`decision_stamp.MARKS`) without that statement signed by an onboarded
-agent's key, so no other way delivers one.
+that says how: a deck (a decision package, or a presentation when it has
+no decisions) is one `presentation.yaml` (presentation/1,
+`presentation_schema.py`, read by `presentation_source.read_source`;
+`content.json` decks are refused, `JSON_DECK_RETIRED`): the author writes
+words, structure, pictures by path, narration and decisions and names one
+of JARVIS's layouts for each slide and a slot for each object, never a
+theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
+`presentation.compile_deck` lays it out onto the shared deck
+(`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
+named layouts from one spec (`presentation_assets/layout-spec.json`,
+`layout_spec.py`, which generates the deck's CSS; `--check` fails when they
+differ), its words in a designed system font stack (`presentation.css`:
+the system's interface font, no font shipped or served, so words are not
+measured; `decision_package.CAPS` keeps them within reason), and proves
+without a browser (`presentation_proof.py`) that every picture is real and
+readable from its bytes at every frame from 662 x 489 to 1600 x 900
+(`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn size
+and label floor; `--fill-assets` writes each asset's size and hash), that
+the story points only at what is drawn and that the renderer files are
+JARVIS's own; the proof goes in the package (`.jarvis/layout-proof.json`,
+`presentation-proof/2`, with the language it was built in). What the
+slides say, how long and in what order, is the author's: no rule counts
+words or characters or shapes the first slide, and JARVIS draws no slide
+of its own before the author's or before a decision; what stays checked is
+at least two options a decision, every picture readable where drawn (an
+SVG's size read from its width and height, else its viewBox) and a story of
+about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
+document's, its explanation opening with the purpose and conclusion; a
+hand-made package's folder (only `purpose` given; read back through
+`work_packages.recognise`) is for a working tool. No package goes through
+a browser on its way to Tim: make_package builds the author's source once
+(no screenshot review), from a briefing that passed its editors and
+judges before the deck was written (`briefing_prep.py`, below). Only then
+is it signed with the session's key and
+delivered unshown to his package inbox. Every unpack
+(`server._decision_problem`) refuses a deck (`deck-data.js` and
+`scripts/decide.py`, the shared deck's, `decision_stamp.MARKS`) not signed
+by an onboarded agent's key, and makes a carried proof again from the
+zip's own bytes (`presentation_proof.reprove`), opening none that does not
+prove; a deck from before, with no proof, is admitted on its signer's old
+statement that it passed the end-to-end check
+(`package_signature.DECISION_CHECKED`). What only a browser shows is held
+in CI on fixture decks, never in a package's path: the page tests' isolated
+JARVIS (`tests/isolated_jarvis.py`, `tests/isolated_jarvis_server.py`,
+seeded with the agent's key, `JARVIS_DECISION_CHECK_SERVER`) proves voting
+by click and by decide.py, the story waiting at every question, Stop within
+1 s from the page and the tool, resume, and the border's Chapters, Next,
+Previous and count over every slide (`test_voice_page_decision_package.py`),
+and `test_voice_page_layout_model.py` draws a hard fixture deck (long
+words, a table, two pictures, four columns, pictured options, Spanish)
+across the frame range and holds every picture's drawn size to the proof's
+model within 0.5 px. A page JARVIS did not lay out (a hand-made page, an
+architecture package's) says "Layout not checked" in its border
+(`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
+says the same).
 `python -m jarvis.decision_package` is the command's old name.
+The sender's handoff gives only the question for Tim, its Work item, the
+evidence references and any decisions (`package_author.read_handoff`);
+`purpose`, `conclusion`, `audience`, `questions` and any structure are
+refused with the reason. The fresh author writes the briefing before any
+slide (`briefing_prep.py`): `prep.md` (does Tim care; what he knows, from
+his record; the background he lacks; his first ten questions, sourced or
+UNANSWERED; every fact scored 1-5) and `script.md` (ordered by those
+scores), or `not-for-tim.md`, which sends nothing. At most `ROUNDS` (3)
+rounds: three editors (`EDITORS`: cut, tighten, specifics; each one call
+to the author's engine, each edit held to its rule, applied and logged
+before/after in `edits.md`) then four judges (`JUDGES`: cares, decision
+ready, background, order), each a typed question through `decide(question_id,
+text, context) -> {answer, probability}` (yes/no, choice or 0-10, asked
+`ASKS` times; the probability the share that agreed; every call recorded at
+`/briefing/decisions/<id>.decision` with its input digest and the package by
+its author session); findings go back to the same author session, and a
+script that still fails is refused with them. Each ask is a juror that
+keeps its own session across the rounds (`briefing_prep.Seat`, resumed in
+its own folder): from round 2 it is shown what it said and the author's
+reply, judges first whether its earlier ask was met (`earlier_met`), and
+never fails the script for a problem that would reverse its own earlier
+ask, quoting it instead (`reverses`), which goes back to the author as an
+ask it may keep its answer to. Only then is the deck
+written, from the script alone; `prep.md`, `script.md` and `edits.md` go in
+the zip under `.jarvis/briefing/` (`briefing_prep.carry`, from
+`make_package.with_author`).
 An agent's package proves a fresh author wrote it (Tim's decision
 `receiver-check`, `author_proof.py`): make_package's fresh author
 (`package_author.py`) ends with its own `--check-only`, which prints the
@@ -1361,10 +1467,28 @@ author session vouches for one package's bytes
 (`agent_key_store.bind_author`, migration 4), so a new revision needs a new
 author. A person's package, JARVIS's own, the same bytes already here and
 the isolated check JARVIS are not asked.
+A package is also made as a job (`package_jobs.py`; `make_package --start`,
+`--status`, `--answer`, and the agent MCP server's `package_start`,
+`package_status`, `package_answer`): one `job` document,
+`/packages/jobs/<id>.job` (records), each step a version (`queued`,
+`researching`, `writing`, `checking`, `waiting_on_sender`, `delivered`,
+`refused`), its process detached (`python -m jarvis.package_jobs run <id>`,
+`SPAWN`), a process that ended without finishing read as refused. The
+author is started with the agent MCP server alone (`author-mcp.json`,
+`package_author.agent_mcp_config`: `python -m jarvis.agent_mcp`, signed as
+the sending session by `JARVIS_AGENT_SESSION`). An author that needs facts
+only its sender has writes `author-blocked.json`
+(`package_author.read_questions`); the job waits on the sender, who answers
+by question id, and resumes the SAME author session (`BrainConfig.resume`:
+Claude's `--resume`, Codex's `thread/resume`), so `author_proof` reads the
+transcript it began; after `MAX_ROUNDS` (2) the author writes the package
+with what is still unanswered marked UNANSWERED. Without a job, its
+questions refuse the package.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
-jarvis.make_package` checks and builds it, then sends it as a message
+jarvis.make_package` checks, builds and proves it (a deck laid out and
+proven by JARVIS from a judged briefing, see "Work packages"), then sends it as a message
 carrying it, `POST /api/messages?work=&project=&workflow=&source=`
 (`decision_package.deliver`, signed with the sending session's key; see
 "One channel"), whose route hands the bytes to `_receive_inbox_package`;
@@ -1453,11 +1577,9 @@ the capture names it. An agent package sent with `--work` carries its work-item 
 standard question as the item's decision `approve-package-<inbox id>`,
 asked by its sending agent (`server._ask_vote_on_work`), on its Messages tab;
 Reject there needs his words too.
-A conversation package cannot carry a vote, so one that names a work item
-is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
-the route, which checks the signature first and then refuses any other
-package for a work item that asks nothing (`asks_him`). One that names no
-work item may ask nothing. Nothing
+A package for a work item that asks nothing (a conversation or agent
+package, which carry no vote) is not refused: what follows his sign-off
+is the workflow's to carry on. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of its record: one document per arrival,
 `/packages/<inbox id>.package` (records), each change (no words of the
@@ -2280,7 +2402,7 @@ still opening then is kept and waited for while the page says the records
 are opening (see "Records"), up to `OPEN_BOUND_SEC` (10 minutes). JARVIS's
 records live in it, so until it answers nothing that needs them starts,
 and one that fails (`knowledge_client.EngineNotUp`, with the supervisor's reason and the end of
-the engine's log; the decision check's failure carries the same tail), but
+the engine's log; the page tests' isolated JARVIS's failure carries the same tail), but
 the server stays up: `lifespan` puts the records gate in its failed state
 (`records_move.failed(..., records_move.ENGINE)`), so every gated route
 answers 503 with that reason and the page shows it ("JARVIS could not open
@@ -2938,6 +3060,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
   forwards `tools/call` to `POST /internal/tool`
+- `agent_mcp.py` — Stdio MCP server exposing JARVIS's tools to agents:
+  the brain's reading tools through the signed `POST /api/agent-tool`, the
+  agent commands' own `main`s, the package job tools (see "Agent tools")
+- `package_jobs.py` — A package as a job: start, status and answer, the
+  functions the agent's package tools call
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
@@ -3088,6 +3215,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   author), and the error package for something held
 - `author_proof.py` — Proof that a fresh author session wrote an agent's
   package: the source digest, the claim and the author's own transcript
+- `briefing_prep.py` — The forced briefing pipeline: the typed questions
+  (`decide`), the editors, the judges and their rounds over the author's
+  prep.md and script.md, and carrying them in the package
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   the one way to reach Tim (a signed message, every decision a package)
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
@@ -3220,8 +3350,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
 - `make_package.py` — The one command an agent makes and sends a package
-  with (see `docs/making-a-package.md`); `decision_package.py` reads,
-  expands, checks, builds and delivers a deck's content
+  with (see `docs/making-a-package.md`); `presentation.py` /
+  `presentation_source.py` / `presentation_proof.py` / `layout_spec.py` /
+  `picture_proof.py` compile, lay out and prove a deck without a browser;
+  `briefing_prep.py` the briefing before it; `decision_package.py` reads,
+  expands, checks, builds and delivers the shared deck's data
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see
   "The package inbox"); `frontend/src/packageInbox.ts` is the page's side
@@ -3405,14 +3538,15 @@ None of these is for a person to set; each is listed in `env_names.py`.
   `JARVIS_PORT`, `JARVIS_SCHEME` (published by `server.main`),
   `JARVIS_TOOL_URL`, `JARVIS_TOOL_TOKEN_FILE` (the brain's MCP child),
   `JARVIS_AGENT_SESSION`, `JARVIS_ACCESS_KEY`, `JARVIS_URL` (an agent's
-  commands), `JARVIS_DECISION_CHECK_SERVER`, `JARVIS_DATA_DIR` (the data
-  folder of an isolated instance: a test, the decision check),
+  commands), `JARVIS_DECISION_CHECK_SERVER` (the page tests' isolated
+  JARVIS), `JARVIS_DATA_DIR` (the data folder of an isolated instance: a
+  test),
   `JARVIS_PYTHON`, `JARVIS_SOURCE`, `PACKAGE_DIR` (a package's command),
   `MSYS_NO_PATHCONV`, `JARVIS_API_TARGET`, `JARVIS_VITE_PORT` (a parent
   pointing Vite at an isolated JARVIS), `PYTHONPATH` (the checkout's
   parent, in the brain's MCP child's `env`).
 - PLATFORM, read to find things or to scrub them from a child:
-  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SESSION_ID`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `HOME`, `PATH`,
   `TMPDIR`, `USER`, `PYTHONUNBUFFERED`, `CODEX_API_KEY`, and by prefix
   `ANTHROPIC_*` (read by nothing but the scrub: `claude_env.child_env()`

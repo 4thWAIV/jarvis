@@ -223,6 +223,14 @@ class Package:
         return self.folder.name
 
     @property
+    def layout_checked(self) -> bool:
+        """A page JARVIS laid out and proved (a deck: its layout proof,
+        presentation_proof); False for a hand-made page, whose own layout
+        nobody checked. Only a page has a layout."""
+        from jarvis import presentation_proof
+        return (self.folder / presentation_proof.PROOF_FILE).is_file()
+
+    @property
     def source(self) -> str:
         """The start of the attachment id it was first unpacked from."""
         return (self.sources[0] if self.sources else self.id.rsplit("-", 1)[-1])[:8]
