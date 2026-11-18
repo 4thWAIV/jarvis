@@ -2,6 +2,21 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Agents can look things up in JARVIS before they write to you
+
+Installing the talk-to-jarvis skill (Diagnostics, Setup's Install skill, or
+`python -m jarvis.session_skill install`) now also gives your Claude Code
+and Codex sessions JARVIS's own tools. With them an agent sends you a
+message, reports its work and workflows, and starts a package without a
+shell command, each signed with its own key exactly as its commands are. It
+can also read what JARVIS knows (what you said and decided, your messages,
+the Work list, packages, runs, workflows, the knowledge engine, projects
+and folders) through the same reading tools JARVIS itself uses, with other
+people's words kept apart the same way, so what it sends you starts from
+what you already know. An agent you accept from now on can read; nothing an
+agent does through these tools changes what you are looking at or what
+JARVIS treats as read.
+
 ## Every package that asks you something opens on where things stand
 
 A deck that asks you to decide something now opens on a slide JARVIS draws

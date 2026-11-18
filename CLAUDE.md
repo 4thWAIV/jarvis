@@ -142,8 +142,9 @@ again. The plan refuses too little free disk first
   An onboarded agent signs each request with its own key instead (see
   "Agent keys"): admitted as `BY_AGENT_KEY` only within its rights
   (`agent_rights.py`: `captures`, `agents`, `runs`, `workflows`, `work`,
-  `packages`, `watch`), never the voice socket, settings or
-  `/internal/tool`. Access keys, which agents carried before
+  `packages`, `watch`, `research`), never the voice socket, settings or
+  `/internal/tool`; `research` reaches the brain's reading tools through
+  `POST /api/agent-tool` alone (see "Agent tools"). Access keys, which agents carried before
   (`access_keys.py` is gone), are accepted only while the cut-over guard
   waits (`legacy_access.py`): until none in `access-keys.json` has been
   used for seven days (counted per day and label in the
@@ -188,7 +189,7 @@ onboarding it (his answer, Q1): `server._set_agent_active`, shared by the
 page's switch and the brain's `set_agent_active`, onboards the waiting key,
 recorded with the time and `page` or `voice`, gives it
 `agent_rights.DEFAULT_RIGHTS` (`work`, `workflows`, `packages`, `watch`,
-his answer, Q2) when the agent has none, revokes the session's older key,
+his answer, Q2, and `research`, the one package system's) when the agent has none, revokes the session's older key,
 and adopts an access-key label naming exactly that agent
 (`_adopted_label`), so its earlier decisions stay its own
 (`reporters.aliases`). An active agent whose key waits shows its switch
@@ -619,6 +620,45 @@ commands and paths (`{{message}}`, `{{make_package}}`, `{{agent_key}}`,
 the reporters) into every Claude Code config root and the user's Codex home;
 an agent must reinstall it to learn the route. Preflight's `session_skill`
 check only reports whether it is there and current.
+
+## Agent tools
+An agent reaches JARVIS through MCP tools as well as its commands
+(`agent_mcp.py`, a stdio server built on `jarvis_mcp.py`'s JSON-RPC, no new
+dependency). `session_skill.install` puts it in every home as the
+user-scope server `jarvis` (`agent_mcp.entry()`: this install's Python,
+checkout and certificate): a Claude Code root's `.claude.json`
+(`~/.claude.json` for `~/.claude`) under `mcpServers`, the Codex home's
+`config.toml` between two marker lines (`codex_provider.mcp_server_toml`);
+the rest of either file is kept, one it cannot read is left alone, and
+`status()` (preflight's `session_skill` check, Diagnostics' Install skill)
+covers them too. Every call is signed with the agent's own key, never the
+tool token, as the session in `JARVIS_AGENT_SESSION`, else
+`CLAUDE_CODE_SESSION_ID` (Claude Code's own), else the call's `as_session`
+(a Codex session gives it). The brain's reading tools an agent's rights name
+(`agent_rights.TOOLS`; the `research` right: `conversation_history`,
+`messages_to_him`, `recall`, `package_inbox`, `list_packages`,
+`package_results`, `work_status`, `work_detail`, `work_context`,
+`workflow_status`, `run_status`, `knowledge_search`, `knowledge_status`,
+`search_repo`, `repo_overview`, `project_notes`, `project_history`,
+`list_folders`, `browse_folder`, `read_folder_file`, `list_agents`,
+`read_message_reply`, `read_session_reply`; none an acting tool) go to `POST
+/api/agent-tool` (`server.api_agent_tool`): an onboarded agent's signature
+only (the tool token, a page and a work-item key are refused 403), a tool
+its grants for every target name (`agent_rights.allows_tool`), answered by
+the brain's own handler through `_dispatch_tool`, capped and walled as for
+the brain, with the agent as `server._tool_caller`: an agent's call never
+runs an acting tool and touches nothing of his turn (`_for_him`: no taint on
+the brain's turn, no message he is on, no update waiting to be seen, no
+"that session"), and is logged with its principal. The agent commands are
+tools calling the command's own `main` with the same command line
+(`agent_mcp.COMMANDS`: `send_message` is `jarvis.message`; `work_start`,
+`work_update`, `work_piece`, `work_end_wait`, `work_close`, `work_answer`,
+`work_answers` are `work_report.py`'s; `workflow_start`, `workflow_event`,
+`workflow_answer` `workflow_report.py`'s; `retrieve_attachment`;
+`language_document`), so each lands through its own route and right; the
+package job tools (`package_start`, `package_status`, `package_answer`) call
+`package_jobs.py`. `agent_key` stays a command. The talk-to-jarvis skill
+teaches the tools beside the commands.
 
 ## The workflow monitor
 A long workflow (a phased build, a run of several agents) reports every
@@ -2873,6 +2913,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   user's Claude subscription, fed over stdin as stream-json
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
   forwards `tools/call` to `POST /internal/tool`
+- `agent_mcp.py` — Stdio MCP server exposing JARVIS's tools to agents:
+  the brain's reading tools through the signed `POST /api/agent-tool`, the
+  agent commands' own `main`s, the package job tools (see "Agent tools")
+- `package_jobs.py` — A package as a job: start, status and answer, the
+  functions the agent's package tools call
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
@@ -3347,7 +3392,7 @@ None of these is for a person to set; each is listed in `env_names.py`.
   pointing Vite at an isolated JARVIS), `PYTHONPATH` (the checkout's
   parent, in the brain's MCP child's `env`).
 - PLATFORM, read to find things or to scrub them from a child:
-  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SESSION_ID`, `CLAUDECODE`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `HOME`, `PATH`,
   `TMPDIR`, `USER`, `PYTHONUNBUFFERED`, `CODEX_API_KEY`, and by prefix
   `ANTHROPIC_*` (read by nothing but the scrub: `claude_env.child_env()`
