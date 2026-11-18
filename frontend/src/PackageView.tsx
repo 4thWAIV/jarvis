@@ -24,7 +24,9 @@
  * seconds without the pointer and comes back when the pointer reaches it
  * or keyboard focus enters it; with reduced motion or Steady it stays.
  *
- * Done in the border signs it off (DoneButton), for every package. The
+ * Done in the border signs it off (DoneButton), for every package; with
+ * questions still unanswered it asks him once first, naming them, with
+ * Done anyway and Not yet (DoneAsk). The
  * vote row under the border holds the standard vote on the package itself
  * (a deck's too, beside its own slide), Approve and Reject (VoteControls): the inbox's
  * answer route, his click, the same answer as his voice and the Work tab
@@ -66,7 +68,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Fo
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge, type Bridge, type FrameRect } from "./packageBridge";
-import { answerInbox, signOff } from "./packageInbox";
+import { answerInbox, signOff, type Unanswered } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
 import { declarationsIn, entryUrl, navigation, packageFileUrl, packageVote, readPackageText, storyCue, storyRunning, storyState, tellStory,
          viewFolder, viewShown, type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
@@ -91,6 +93,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const t = useT();
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
+  // Done found questions unanswered: asked once, until Done anyway or Not yet.
+  const [left, setLeft] = useState<Unanswered[] | null>(null);
   const [listening, setListening] = useState(false);
   const [presentation, setPresentation] = useState(false);
   // Made for the wider layout, or its page asked for room: Take over is lit.
@@ -108,7 +112,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const [chosenView, setChosenView] = useState<string | null>(null);
   const [lit, setLit] = useState<string[]>([]);
   const view = viewShown(info, chosenView);
-  useEffect(() => { setReading(false); setPresentation(false); setShown(null); setChosenView(null); setLit([]); }, [info.id]);
+  useEffect(() => { setReading(false); setPresentation(false); setShown(null); setChosenView(null); setLit([]); setLeft(null); }, [info.id]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   // Where the frame says each focused part is, by key ("beat:<beat>", or
@@ -294,7 +298,8 @@ export function PackageView({ info }: { info: PackageInfo }) {
           if (opener) bridge.current?.openSlide(opener);
         })}
         command={(type, value) => frame.current?.contentWindow?.postMessage({jarvis: "package", type, enabled: value}, "*")}
-        done={<DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />} />
+        done={<DoneButton id={info.id} onSaid={setSaid} onUnanswered={setLeft} target={ui.part("done")} />} />
+      {left && <DoneAsk id={info.id} left={left} onSaid={setSaid} onClose={() => setLeft(null)} part={ui.part} />}
       {(asking || (info.vote?.question && !voteInCard)) &&
         <div className="package-vote-row">
           {asking &&
@@ -433,8 +438,9 @@ function Narration({ info, beat, paused, slide, onSaid, pauseRef }: {
  *  `signOff`, the Queue row's Done and the brain's sign_off_package too).
  *  It sits in the head, outside the package's frame, so no package can hide
  *  or press it. Once signed off the server closes this view on every page. */
-function DoneButton({ id, onSaid, target }: {
-  id: string; onSaid: (s: Said | null) => void; target: (el: Element | null) => void }) {
+function DoneButton({ id, onSaid, onUnanswered, target }: {
+  id: string; onSaid: (s: Said | null) => void; onUnanswered: (left: Unanswered[]) => void;
+  target: (el: Element | null) => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   return (
@@ -442,9 +448,47 @@ function DoneButton({ id, onSaid, target }: {
             disabled={busy} ref={target} title={t("main.package.doneTitle")} aria-label={t("main.package.done")}
             onClick={() => {
               setBusy(true);
-              void signOff(id).then((why) => { setBusy(false); onSaid(why); });
+              void signOff(id).then((why) => {
+                setBusy(false);
+                if (Array.isArray(why)) { onSaid(null); onUnanswered(why); } else onSaid(why);
+              });
             }}>
       <PackageIcon name="done"/></button>
+  );
+}
+
+/** Done with questions unanswered: which ones (the sender's words, as
+ *  text), asked once. Done anyway signs it off (what waits on them ends as
+ *  closed unanswered); Not yet leaves it as it was. The brain's
+ *  sign_off_package asks the same and confirms the same way. */
+function DoneAsk({ id, left, onSaid, onClose, part }: {
+  id: string; left: Unanswered[]; onSaid: (s: Said | null) => void; onClose: () => void;
+  part: (name: "doneAsk" | "doneAnyway" | "doneNotYet") => (el: Element | null) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="package-done-ask" role="alertdialog" aria-labelledby="package-done-ask-head" ref={part("doneAsk")}>
+      <p className="package-done-ask-head" id="package-done-ask-head">
+        {t("main.package.doneAsk.head", { count: left.length })}</p>
+      <ul className="package-done-ask-list">
+        {left.map((q) => <li key={q.id}>{q.question || q.id}</li>)}
+      </ul>
+      <p className="package-done-ask-note">{t("main.package.doneAsk.note")}</p>
+      <div className="package-ask-options">
+        <button type="button" className="settings-btn primary" data-ui-action="domain" disabled={busy}
+                ref={part("doneAnyway")}
+                onClick={() => {
+                  setBusy(true);
+                  void signOff(id, true).then((why) => {
+                    setBusy(false);
+                    onClose();
+                    onSaid(Array.isArray(why) ? null : why);
+                  });
+                }}>{t("main.package.doneAsk.anyway")}</button>
+        <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
+                ref={part("doneNotYet")} onClick={onClose}>{t("main.package.doneAsk.notYet")}</button>
+      </div>
+    </div>
   );
 }
 

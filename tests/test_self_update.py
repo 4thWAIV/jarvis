@@ -1029,3 +1029,34 @@ def test_a_recorded_server_that_cannot_be_reached_is_not_updated_under(monkeypat
     with pytest.raises(SystemExit, match=r"recorded https://\[::1\]:8341 .*not updating under it"):
         update_cli.main([])
     assert repos.head() == before
+
+
+# --- the commit this process runs ------------------------------------------
+
+def test_the_running_commit_is_the_one_noted_at_start_and_a_moved_checkout_is_said(
+        repos, monkeypatch):
+    monkeypatch.setattr(self_update, "_running", None)
+    assert self_update.running_json()["commit"] is None, "nothing noted yet"
+    started = repos.head()
+    assert self_update.note_running().sha == started
+    status = self_update.check()
+    assert (status.running.sha, status.restart_needed) == (started, False)
+    assert self_update.running_json() == {
+        "commit": started, "name": started[:7], "title": status.running.title,
+        "checkout": started, "restart_needed": False}
+    _commit(repos.checkout, {"local.txt": "moved"}, "A local commit")
+    moved = self_update.check()
+    assert moved.running.sha == started and moved.restart_needed
+    head, details = self_update.describe(moved)
+    assert details[0].startswith(f"Running {started[:7]}")
+    assert any("a restart runs that" in line for line in details)
+    ran = self_update.running_json()
+    assert ran["commit"] == started and ran["checkout"] != started and ran["restart_needed"]
+    assert self_update.Status.from_json(moved.to_json()).running.sha == started
+
+
+def test_an_installed_copy_runs_no_known_commit(monkeypatch):
+    monkeypatch.setattr(self_update, "is_checkout", lambda: False)
+    assert self_update.note_running() is None
+    assert self_update.running_json() == {"commit": None, "name": None, "title": "",
+                                          "checkout": None, "restart_needed": False}

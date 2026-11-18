@@ -160,11 +160,15 @@ async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_
         assert await page.evaluate(
             "() => document.querySelector('.right-tabs [aria-selected=true]').title") == "Inbox"
 
-        # The Inbox: the Work item with a new message, one line; no Packages section.
+        # The Inbox: the Work item with a new message, one line; and his open
+        # packages listed, each with who sent it, its item and where it stands.
         work_line = page.locator(f".inbox-work-row")
         await async_api.expect(work_line).to_contain_text("Office tea service")
         await async_api.expect(work_line).to_contain_text("1 new")
-        await async_api.expect(page.locator(".queue-packages")).to_have_count(0)
+        listed = page.locator(f".inbox-packages [data-inbox-id='{inbox_id}']")
+        await async_api.expect(listed.locator(".row-person")).to_have_text("chitauri")
+        await async_api.expect(listed.locator(".row-side")).to_contain_text("Not opened")
+        await async_api.expect(listed.locator(".row-side")).to_contain_text(f"for {item.id}")
         await _shot(page, "1-arrived-inbox")
 
         # It opens the item's Messages tab: the message, from its proven
@@ -211,8 +215,16 @@ async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_
         done = page.locator("#package-view .package-head .package-done")
         await async_api.expect(done).to_be_visible()
         assert await page.locator("#package-view iframe .package-done").count() == 0
+        # Questions are unanswered: Done names them and asks once.
         await done.click()
+        ask = page.locator("#package-view .package-done-ask")
+        await async_api.expect(ask).to_be_visible()
+        await async_api.expect(ask.locator(".package-done-ask-list li").first).to_be_visible()
+        assert package_inbox.get(inbox_id).is_open, "nothing is done before his Done anyway"
+        await _shot(page, "5-done-asks")
+        await ask.get_by_role("button", name="Done anyway").click()
         await async_api.expect(page.locator("#package-view")).to_have_count(0)
+        await async_api.expect(page.locator(f".inbox-packages [data-inbox-id='{inbox_id}']")).to_have_count(0)
         assert await until_async(lambda: (package_inbox.get(inbox_id).closed_why,
                                           bool(package_inbox.get(inbox_id).signed_off_at))
                                  == (package_inbox.SIGNED_OFF, True)), package_inbox.get(inbox_id)

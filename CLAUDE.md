@@ -507,7 +507,12 @@ line is its first new message's first line. The right panel's Queue tab is
 the Inbox (`InboxMessages.tsx` above people's threads, signed in or not):
 each Work item with new messages as one line opening its Messages tab
 (`inboxWork`), then the messages with no item that are not done
-(`inboxMessage`); the Packages section is gone. Updates waiting
+(`inboxMessage`), then his open packages (`InboxPackages.tsx`, `inboxPackage`:
+every package not closed, newest first, from `GET /api/packages/inbox`
+through `packageInbox.ts` `openPackages`: title, sender, Work item,
+questions unanswered and where it stands, with Open, his click, through
+`_open_inbox_package`; the brain's `package_inbox` reads the same rows).
+Updates waiting
 (`UpdatesNotice.tsx`) lists only JARVIS's own facts: an update that is a
 message is counted in one line, "3 new messages" (agents' new messages and
 people's waiting unread), whose Open is `right.tab.select` to the Inbox; the
@@ -661,9 +666,14 @@ which record each as done "on the page" or "by voice".
 Nothing waits on him once he has answered (`wait_links.py`). A
 `wait_started` names what will answer it with `--until` (`detail.until`,
 kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
-first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
-signs it off or sets it aside) or `package:<id>:<decision>`; anything else
-stays words. His answer by any route (the workflow's or a Work item's
+first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until it
+closes: he signs it off or sets it aside, or its sender withdraws it) or
+`package:<id>:<decision>`; anything else stays words. A package closed with
+a decision unanswered (signed off on his Done anyway, set aside, withdrawn)
+ends a wait on that decision too, recorded `closed_unanswered`, never as his
+answer (`wait_links.CLOSED_UNANSWERED`, `Answer.at_link`; the close's
+answer is `package_inbox.closing_answer`, which the sweep's
+`_package_answer` uses as well), his approval of a design included. His answer by any route (the workflow's or a Work item's
 decision, page or voice; a package decision through its decide.py,
 `_inbox_recount`; his finishing with a package, signed off or set aside)
 ends every wait linked to it in the same
@@ -705,7 +715,10 @@ its place, and walled for the brain), the pieces it comes after (`--after
 key[,key]`: pieces of the same item, never itself or a circle; `waits_for`
 the ones not done) and its evidence (`--evidence`, repeatable, added to
 what it has: a commit, an absolute path or an http(s) URL, told apart by
-shape and never opened). The detail lists the pieces in dependency order,
+shape and never opened, each recording its reporter as `by`); `--drop-evidence`
+(repeatable) removes one, only by the reporter that reported it (for
+evidence from before, the piece's latest reporter), as a report on the
+record (`evidence_dropped`, `work_store._drop_evidence`). The detail lists the pieces in dependency order,
 numbered, a URL as a link and a commit or path with Copy.
 The detail is tabbed (`work.tab.select`; `work.open` takes a `tab`):
 Messages (first: the item's conversation, its decisions answered there; see
@@ -1436,7 +1449,14 @@ list and no shell (`_answer_inbox_decision`: the acting
 `answer_package_decision` and `POST .../answer`, which the Work tab uses).
 Signing a package off is one function, `_sign_off_package`, for every kind
 of package: the Done in the head of its view (`PackageView.tsx`, outside
-the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_package`. A package with no inbox row (unpacked
+the frame, `POST /api/packages/{package_id}/signoff`) and the acting `sign_off_package`. With
+questions still unanswered (`package_inbox.unanswered`: applying, no answer
+that stands) it asks him once first (Tim's decision done-on-unanswered):
+the route answers 409 with `unanswered` (each id and question) and the page
+names them (`DoneAsk`: Done anyway, Not yet), the tool says which by id;
+nothing is done until `confirm` (his Done anyway, or the tool's `confirm`
+on his yes), and then the waits on them end as closed unanswered and the
+capture names them. A package with no inbox row (unpacked
 some other way, an older local one) is given one there and then
 (`package_inbox.adopt`). Whatever he answered goes back: each answered
 question as the workflow's own `decision_needed` then `decision_made`
@@ -1461,6 +1481,14 @@ of the message that carried it back once that has gone.
 .../close`) sets one aside with nothing sent back; in the same write every
 wait linked to it ends (`wait_links.settle`, how `dismissed`) and its item's
 vote closes, not answered (`where` dismissed; `package_inbox._ended`).
+Its sender may take it back while it is open (Tim's decision
+sender-withdraws): `python -m jarvis.make_package --withdraw <inbox id>
+--session <id>` posts `POST /api/packages/inbox/{id}/withdraw` signed with
+that session's key (the `packages` right), and `_withdraw_inbox_package`
+(`package_inbox.withdraw`) takes it only from the session proven to have
+sent it (`from_session`): closed `withdrawn`, its waits ended and its vote
+closed (`where` withdrawn) in the same write, as the asker's act, its view
+closed and its message done; nothing goes back.
 `package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
 is a message on that work item's Messages tab, what he chose in it shown
@@ -2327,6 +2355,13 @@ with the reason, when not on main, with modified tracked files, with local
 commits not on origin/main, with untracked files the update would add
 (renames included), or when the latest commit's CI has not passed; an
 installed copy or another origin is told why it is not offered.
+The commit the server runs is HEAD as it started (`self_update.note_running`
+in `lifespan`, `running`): `/api/health`'s `commit`
+(`self_update.running_json`: sha, name, title, the checkout's HEAD now and
+`restart_needed` once the checkout has moved), the check's `running` and
+`restart_needed`, shown in Settings, Updates (with "restart it to run
+that") and said by `update_status` and `jarvis_settings` (sha and name
+only).
 `GET /api/update` is the check, with the versions and the current one, and
 `POST /api/update` (optional `{"version": ...}`) the update, then the
 restart (page origin or tool token; no access-key category). The restart is

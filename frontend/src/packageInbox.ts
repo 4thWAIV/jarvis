@@ -22,6 +22,7 @@
  * is the sender's words, drawn as plain text.
  */
 
+import { liveRead } from "./liveRead";
 import { type Said } from "./locale";
 import { packagesChanged, showOpenedPackage, type PackageInfo } from "./packages";
 import { workChanged } from "./work";
@@ -48,7 +49,7 @@ export interface InboxEntry {
   workflow_id: string | null;
   work_id: string | null;
   state: InboxState;
-  closed_why: "signed_off" | "dismissed" | "superseded" | null;
+  closed_why: "signed_off" | "dismissed" | "superseded" | "withdrawn" | null;
   signed_off_at: number | null;
   arrived_at: number;
   closed_at: number | null;
@@ -81,6 +82,17 @@ export interface InboxDetail {
 }
 
 const base = (id: string) => `/api/packages/inbox/${encodeURIComponent(id)}`;
+
+/** His open packages, newest first (GET /api/packages/inbox), read again on
+ *  every `packages` hint: the Inbox's Packages section (InboxPackages.tsx). */
+export const openPackages = liveRead(async () => {
+  const res = await fetch("/api/packages/inbox");
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || !Array.isArray(body.packages)) {
+    throw new Error(String(body?.error ?? `GET /api/packages/inbox: ${res.status}`));
+  }
+  return body.packages as InboxEntry[];
+}, [packagesChanged]);
 
 async function answer<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
@@ -131,15 +143,26 @@ export async function answerInbox(id: string, decision: string, option: string,
   }
 }
 
+/** A question Done would leave unanswered: its id and the sender's words. */
+export interface Unanswered {
+  id: string;
+  question: string;
+}
+
 /** His Done: the package, by its own id, signed off. Null once done (the
- *  view closes and a capture to read back appears in Conversation), else
- *  why not. */
-export async function signOff(packageId: string): Promise<Said | null> {
-  try {
-    await post(`/api/packages/${encodeURIComponent(packageId)}/signoff`);
-    changed();
-    return null;
-  } catch (e) {
-    return original(e);
+ *  view closes and a capture to read back appears in Conversation); the
+ *  questions still unanswered when it asks him once first (nothing done:
+ *  `confirm` is his Done anyway); else why not. */
+export async function signOff(packageId: string, confirm = false): Promise<Said | Unanswered[] | null> {
+  const response = await fetch(`/api/packages/${encodeURIComponent(packageId)}/signoff`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm }),
+  }).catch((e: Error) => e);
+  if (response instanceof Error) return original(response);
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 409 && Array.isArray(body.unanswered) && body.unanswered.length) {
+    return body.unanswered as Unanswered[];
   }
+  if (!response.ok) return { original: String(body.error ?? `the server answered ${response.status}`) };
+  changed();
+  return null;
 }
