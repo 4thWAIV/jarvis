@@ -894,7 +894,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         # package for a Work item carries a key for that item alone.
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
-        sign(made.archive, signer, args.session, (), grant, author.as_dict())
+        # A deck JARVIS laid out and proved also says it passed its check
+        # (DECISION_CHECKED), so a JARVIS from before the proof, which
+        # admits a deck only on that statement, admits it too; one with the
+        # proof makes the proof again and needs no statement.
+        statements = (package_signature.DECISION_CHECKED,) if made.deck is not None else ()
+        sign(made.archive, signer, args.session, statements, grant, author.as_dict())
         delivered = dp.deliver(made.archive, args.deliver_to,
                                args.says.strip() or dp.says_of(made.title, made.kind),
                                project=args.project, workflow=args.workflow, work=args.work,
