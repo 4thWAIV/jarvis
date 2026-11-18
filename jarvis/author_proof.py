@@ -288,6 +288,24 @@ def _is_check(call: str) -> bool:
     return "make_package" in call and "--check-only" in call
 
 
+def _command_run(obj: dict) -> Optional[tuple[str, str]]:
+    """(its command, all it printed) of a command Codex records as finished
+    on this line (`item_completed` with a CommandExecution item), else None.
+    A command that outlives its first wait hands its output back to a later
+    poll of its session (`write_stdin`), so the tool call that started it
+    never carries its output; this record holds the command and its whole
+    output together."""
+    if obj.get("type") != "event_msg":
+        return None
+    p = obj.get("payload") or {}
+    item = p.get("item") if isinstance(p, dict) and p.get("type") == "item_completed" else None
+    if not isinstance(item, dict) or item.get("type") != "CommandExecution":
+        return None
+    command = item.get("command")
+    command = " ".join(map(str, command)) if isinstance(command, list) else _text(command)
+    return command, _text(item.get("aggregated_output") or item.get("stdout") or "")
+
+
 def _lines_with(path: Path, needles: tuple[bytes, ...]) -> Iterator[dict]:
     """Each JSON object of the transcript, from its first line to its last,
     whose line holds one of `needles`; the rest are passed over unparsed.
@@ -315,15 +333,22 @@ def checked(path: Path, digest: str, at: float) -> bool:
     the author's later work."""
     checks: set[str] = set()
     want = MARK + digest
+    def in_window(obj: dict) -> bool:
+        when = _when(obj)
+        return when is not None and at - WINDOW_SEC <= when <= at + SLACK_SEC
+
     for obj in _lines_with(path, (b"--check-only", want.encode())):
         for cid, call in _calls(obj):
             if _is_check(call):
                 checks.add(cid)
         for cid, output in _results(obj):
-            when = _when(obj)
-            if cid in checks and want in output and when is not None and \
-                    at - WINDOW_SEC <= when <= at + SLACK_SEC:
+            if cid in checks and want in output and in_window(obj):
                 return True
+        # Codex: the check's command and its output, recorded together once
+        # it finished (its output may have come back on a later poll).
+        run = _command_run(obj)
+        if run is not None and _is_check(run[0]) and want in run[1] and in_window(obj):
+            return True
     return False
 
 
