@@ -37,6 +37,20 @@ No browser runs anywhere in a package's path. A deck is laid out by JARVIS and p
 
 For source validation while authoring, use `python -m jarvis.make_package <presentation.yaml | folder> --check-only`; `python -m jarvis.make_package presentation.yaml --fill-assets` writes each picture's SHA-256, kind and size into the source (it rewrites the YAML, so comments are not kept). This never launches a model or delivers. Creation without a handoff is refused. `--example` also remains model-free. Install the shared skills into existing Claude and Codex homes with `python -m jarvis.session_skill install`.
 
+## As a job: start, follow, answer
+
+The command waits for the author, which can take many minutes and may need facts only you have. Started as a job it does not hold your turn:
+
+```bash
+python -m jarvis.make_package --start --handoff handoff.json --engine <claude|codex> --session <your session id> [--work <id> | --general]
+python -m jarvis.make_package --status <job id>
+python -m jarvis.make_package --answer <job id> --reply <question id>=<your answer> [--reply ...] --session <your session id>
+```
+
+`--start` prints `{"job": ..., "state": "queued"}` at once and builds the package in a process of its own, with exactly the steps above. `--status` prints the job's record: its `state` (`queued`, `researching`, `writing`, `checking`, `waiting_on_sender`, `delivered` or `refused`), the author's questions and your answers by round, what went to Tim unanswered, the delivery (`result`) or why it was refused (`problems`), and its log. The agent MCP server's `package_start`, `package_status` and `package_answer` tools make the same calls (`jarvis/package_jobs.py`).
+
+The author researches with JARVIS's read tools (the agent MCP server, signed as your session, within your rights). When it still needs facts only you can give, it asks them (`author-blocked.json`: each question an `id`, the `question` and `why` it matters) and the job waits on you (`waiting_on_sender`). Answer by question id; the job goes on with the same author session (Claude Code's `--resume`, Codex's `thread/resume`), so its transcript, which proves it wrote the package, is the one it began. A question you leave unanswered, and anything still asked after two rounds, is written into the package marked UNANSWERED, for Tim to see. Run without `--start`, an author that asks questions refuses the package, printing them.
+
 ## Author understanding
 
 Every package supplies Markdown explaining its human content and supporting files. The author supplies the meaning; the factory checks that the declared coverage exists and is readable. It does not infer or certify a PDF, diagram or page's meaning.

@@ -6,8 +6,11 @@ coding profile. The originating process owns validation and delivery afterwards.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import re
+import sys
 import time
 import tempfile
 from dataclasses import dataclass
@@ -120,18 +123,22 @@ def _assignment(document: Document | None) -> str:
 
 class FreshSession:
     """One new provider session in its own folder, with the coding profile
-    (authoring) and no resume or fallback: the fresh author, and the cold
-    reader that checks what it wrote (package_reader). `identity` is the
-    session the provider reports; every turn must keep it."""
+    (authoring) and no fallback: the fresh author, and the cold reader that
+    checks what it wrote (package_reader). `identity` is the session the
+    provider reports; every turn must keep it. `resume` continues a fresh
+    author's own session (package_jobs: its sender answered its questions),
+    never another's; `mcp_config` is the servers it may use (agent_mcp)."""
 
-    def __init__(self, folder: Path, choice: engine_choice.Choice, transcript: Path):
+    def __init__(self, folder: Path, choice: engine_choice.Choice, transcript: Path, *,
+                 resume: str | None = None, mcp_config: Path | None = None):
         self.folder, self.choice, self.transcript = folder, choice, transcript
         self.identity: str | None = None
         self.model: str | None = None
         provider = brain_provider.provider(ENGINES[choice.engine])
         settings_service.load()     # this command's own process: his saved program paths
         config = BrainConfig(home=folder, provider=provider.name, model=choice.model, effort=None,
-                             authoring=True, warmup_timeout=60, turn_timeout=60,
+                             authoring=True, resume=resume, mcp_config=mcp_config,
+                             warmup_timeout=60, turn_timeout=60,
                              claude_path=settings_service.value("claude_path") or None,
                              codex_path=settings_service.value("codex_path") or None)
         self.done = asyncio.get_running_loop().create_future()
@@ -181,36 +188,152 @@ class FreshSession:
         await self.child.close(5)
 
 
+# What a blocked author writes: the questions only its sender can answer
+# (package_jobs asks them), and, optionally, its words on the gap.
+QUESTIONS = "author-blocked.json"
+BLOCKED = "author-blocked.md"
+QUESTION_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
+QUESTIONS_MAX = 10
+QUESTION_CHARS = 1000
+# The agent MCP server the author uses, signed as the sending agent
+# (agent_mcp: JARVIS's read tools for research, through that agent's key).
+AGENT_MCP = "jarvis_agent"
+INSTRUCTIONS = ("You are an independent human-package-author producing source for the existing "
+                "package factory.")
+
+
+class WaitingOnSender(Exception):
+    """The author asked its sender questions (package_jobs): its session is
+    left as it is, to be resumed with the answers."""
+
+
+def blocked(folder: Path) -> bool:
+    return (folder / QUESTIONS).exists() or (folder / BLOCKED).exists()
+
+
+def read_questions(folder: Path) -> list[dict]:
+    """The blocked author's questions, structured: each an `id` (a short
+    slug), the `question` and `why` it matters. An author that wrote only
+    its words on the gap (author-blocked.md) has asked one question, those
+    words."""
+    try:
+        raw = json.loads((folder / QUESTIONS).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raw = None
+    except (OSError, ValueError) as error:
+        raise OSError(f"The author's {QUESTIONS} cannot be read: {error}") from None
+    if raw is None:
+        try:
+            words = (folder / BLOCKED).read_text(encoding="utf-8").strip()
+        except OSError:
+            words = ""
+        if not words:
+            raise OSError(f"The author stopped without saying what it needs ({BLOCKED}).")
+        return [{"id": "q1", "question": words[:QUESTION_CHARS], "why": ""}]
+    items = raw.get("questions") if isinstance(raw, dict) else None
+    if not isinstance(items, list) or not items or len(items) > QUESTIONS_MAX:
+        raise OSError(f"The author's {QUESTIONS} needs 1 to {QUESTIONS_MAX} questions.")
+    questions, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise OSError(f"Each question in {QUESTIONS} is an object.")
+        ident, text = str(item.get("id") or ""), str(item.get("question") or "").strip()
+        if not QUESTION_ID.fullmatch(ident) or ident in seen or not text:
+            raise OSError(f"Each question in {QUESTIONS} has its own short id (lowercase "
+                          f"letters, digits, hyphens) and words.")
+        seen.add(ident)
+        questions.append({"id": ident, "question": text[:QUESTION_CHARS],
+                          "why": str(item.get("why") or "").strip()[:QUESTION_CHARS]})
+    return questions
+
+
+def clear_questions(folder: Path) -> None:
+    for name in (QUESTIONS, BLOCKED):
+        (folder / name).unlink(missing_ok=True)
+
+
+def agent_mcp_config(folder: Path, session: str) -> Path:
+    """The author's mcp.json: only the agent MCP server, signed as the
+    sending agent's session, so the author researches with JARVIS's read
+    tools within that agent's rights (part of the strict config: no other
+    server of the user's)."""
+    config = {"mcpServers": {AGENT_MCP: {
+        "command": sys.executable,
+        "args": ["-P", "-m", "jarvis.agent_mcp"],
+        "env": {"PYTHONPATH": str(data_paths.PACKAGE_DIR.parent),
+                "JARVIS_AGENT_SESSION": session}}}}
+    path = folder / "author-mcp.json"
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+WRITING_POLL_SEC = 2.0
+
+
+def _has_source(folder: Path) -> bool:
+    return any((folder / name).exists() for name in ("presentation.yaml", "package"))
+
+
+async def _note_writing(folder: Path, job, noted: list) -> None:
+    """Tell the job once the author's source appears (writing)."""
+    while not _has_source(folder):
+        await asyncio.sleep(WRITING_POLL_SEC)
+    noted.append(True)
+    job.writing()
+
+
 async def author(handoff: Path, engine: str, out: Path, *, source: Path | None = None,
                  timeout: float = 1800, session: str = "", work: str = "",
-                 workflow: str = "", document: Document | None = None, finish=None) -> Path:
-    """One new session, no resume or fallback; return only its own package
-    source (for a `document`, its package/ explanation). `finish(source,
-    turn)` builds it; `turn` is another turn of the same author."""
+                 workflow: str = "", document: Document | None = None, finish=None,
+                 job=None) -> Path:
+    """One fresh session, no fallback; return only its own package source
+    (for a `document`, its package/ explanation). `finish(source, turn)`
+    builds it; `turn` is another turn of the same author.
+
+    With a `job` (package_jobs), an author that needs facts only its sender
+    has asks them (WaitingOnSender) and is resumed, the same session, once
+    they are answered (`job.resuming`); past the job's rounds it is told to
+    write the package with them unanswered. Without one, it is refused."""
     evidence = read_handoff(handoff)
     if engine not in ENGINES:
         raise Refused(["Choose the caller's own engine with --engine claude or --engine codex."])
     if not session:
         raise Refused(["Give --session for the originating session's answer route."])
-    # The author goes on his setting for package authors (Settings, Brains):
-    # the caller's own engine unless he chose otherwise, or a brain in token
-    # stress gives way (engine_choice).
-    choice = engine_choice.choose("package_author", requester=engine)
-    folder = out / "author"
-    # A rerun must not accidentally deliver stale output from a failed author.
-    folder.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
-    receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
-               "origin_session": session, "work": work,
-               "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
-               "source_folder": str(folder), "status": "started"}
+    resuming = job.resuming if job is not None else None
+    if resuming:
+        # The same author goes on, on its own engine and in its own folder.
+        choice = engine_choice.Choice(resuming["author_engine"], resuming.get("author_model"),
+                                      "resumed")
+        folder = Path(resuming["source_folder"])
+        try:
+            receipt = json.loads((folder / "author-receipt.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            receipt = {}
+        receipt.update(status="resumed", resumed_at=time.time())
+        clear_questions(folder)
+    else:
+        # The author goes on his setting for package authors (Settings, Brains):
+        # the caller's own engine unless he chose otherwise, or a brain in token
+        # stress gives way (engine_choice).
+        choice = engine_choice.choose("package_author", requester=engine)
+        folder = out / "author"
+        # A rerun must not accidentally deliver stale output from a failed author.
+        folder.mkdir(parents=True, exist_ok=True)
+        folder = Path(tempfile.mkdtemp(prefix="source-", dir=folder))
+        receipt = {"engine": choice.engine, "requester_engine": engine, "chosen_by": choice.why,
+                   "origin_session": session, "work": work,
+                   "workflow": workflow, "handoff": str(handoff), "started_at": time.time(),
+                   "source_folder": str(folder), "status": "started"}
     if document is not None:
         receipt["document"] = {"document_id": document.document_id, "revision": document.revision}
     child = None
     prompt = (author_proof.PROMPT_HEAD + " You are the fresh author; do not launch another "
               "author. Read " + str(SKILL)
               + " and the production guide " + str(GUIDE) + ". Independently research the "
-              "handoff evidence and answer its audience's questions. The handoff is at "
+              "handoff evidence and answer its audience's questions. JARVIS's read tools "
+              "(the " + AGENT_MCP + " MCP server: his conversation, messages, Work items, "
+              "packages, knowledge search, repositories and folders) are yours for that "
+              "research. The handoff is at "
               + str(handoff) + "; resolve its relative evidence paths from " + str(handoff.parent)
               + ". " + _assignment(document) +
               "Run that check yourself last, after your final change: JARVIS admits the "
@@ -218,8 +341,12 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
               "The supplied skill, guide and command are sufficient even if no user skill copy "
               "has been installed. Do not deliver, invoke creation without "
               "--check-only, modify application code or send messages. The originating command "
-              "owns building, proving and delivery. If evidence prevents a truthful package, "
-              "write author-blocked.md explaining the precise gap and do not create source. "
+              "owns building, proving and delivery. If a truthful package needs facts that "
+              "neither the evidence nor JARVIS's tools hold, and only the sending agent can "
+              "give, write " + QUESTIONS + " as {\"questions\": [{\"id\": \"short-slug\", "
+              "\"question\": \"...\", \"why\": \"what the answer changes in the package\"}]}, "
+              "at most " + str(QUESTIONS_MAX) + ", and stop without creating source: the sender "
+              "answers them in this same session. "
               "Do not ask for an invented product decision.\n\nHandoff:\n"
               + json.dumps(evidence, ensure_ascii=False, indent=2))
     if source:
@@ -228,15 +355,54 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     async def turn(message):
         await child.turn(message, timeout)
 
+    noted: list = []
+
+    async def watched(work_of):
+        """One author turn, the job told when its source appears (looked
+        for while the turn runs, and once more as it ends)."""
+        if job is None or noted:
+            await work_of
+            return
+        watcher = asyncio.create_task(_note_writing(folder, job, noted))
+        try:
+            await work_of
+        finally:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
+        if not noted and _has_source(folder):
+            noted.append(True)
+            job.writing()
+
     try:
-        child = FreshSession(folder, choice, folder / "author-response.txt")
-        await child.start("You are an independent human-package-author producing source for "
-                          "the existing package factory.", prompt, timeout)
+        mcp_config = agent_mcp_config(folder, session)
+        child = FreshSession(folder, choice, folder / "author-response.txt",
+                             resume=resuming["author_session"] if resuming else None,
+                             mcp_config=mcp_config)
+        if job is not None:
+            job.researching(folder=str(folder), author_engine=choice.engine,
+                            author_model=choice.model)
+        await watched(child.start(INSTRUCTIONS, resuming["message"] if resuming else prompt,
+                                  timeout))
         receipt["author_session"], receipt["model"] = child.identity, child.model
         if not child.identity or child.identity == session:
             raise OSError("Author did not report a distinct fresh session identity.")
-        if (folder / "author-blocked.md").exists():
-            raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
+        if resuming and child.identity != resuming["author_session"]:
+            raise OSError("The resumed author is not the same session that asked.")
+        if blocked(folder):
+            questions = read_questions(folder)
+            if job is None:
+                raise OSError("Author needs evidence: " + "; ".join(
+                    q["question"] for q in questions) + f" ({folder})")
+            if job.ask(questions, author_session=child.identity):
+                receipt.update(status="waiting", questions=questions)
+                raise WaitingOnSender(questions)
+            # No rounds left: Tim sees what is not known, marked so.
+            clear_questions(folder)
+            await watched(child.turn(job.unanswered_message(questions), timeout))
+            if blocked(folder):
+                raise OSError("Author still needs evidence after every question round: "
+                              + "; ".join(q["question"] for q in read_questions(folder)))
         if document is None and (folder / "content.json").exists():
             from jarvis.make_package import JSON_DECK_RETIRED
             raise OSError("Author wrote content.json. " + JSON_DECK_RETIRED)

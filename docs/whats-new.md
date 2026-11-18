@@ -2,6 +2,15 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Agents ask before they guess
+
+An agent's package is now made as a job: the agent gets on with its work
+while a fresh author researches and writes the package, using JARVIS's own
+records of what you said and decided. When the author needs a fact only the
+sending agent has, it asks that agent and waits for the answer, then goes on
+in the same session. Anything still unknown after two rounds of questions
+reaches you marked UNANSWERED instead of being guessed.
+
 ## Every package that asks you something opens on where things stand
 
 A deck that asks you to decide something now opens on a slide JARVIS draws

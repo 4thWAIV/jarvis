@@ -38,13 +38,27 @@ def only_engine(request, tmp_path, monkeypatch):
     original = (FIXTURES / ('fake_brain.py' if engine == 'claude' else 'fake_codex.py')).read_text()
     start = 'def reply(text):' if engine == 'claude' else 'def turn(rid, text):'
     session = 'SESSION_ID' if engine == 'claude' else '"thread-1"'
+    resumed = "'--resume' in sys.argv" if engine == 'claude' else 'RESUMED'
     # The author writes its source, then (as the real one is told to) checks
     # it last with --check-only, which its own transcript records.
     action = f'''
     with open('received-prompt.txt', 'w') as output:
         output.write(text)
     mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
-    if mode in ('source', 'edited-after-check'):
+    # ask:N asks its sender questions on its first N turns, then writes source;
+    # every turn is logged with whether its session was resumed.
+    _asked = int(open('asked-count').read()) if os.path.exists('asked-count') else 0
+    with open('turns.log', 'a') as output:
+        output.write(json.dumps({{'text': text, 'resumed': {resumed}}}) + '\\n')
+    if mode.startswith('ask:') and _asked < int(mode[4:]):
+        with open('asked-count', 'w') as output:
+            output.write(str(_asked + 1))
+        with open('author-blocked.json', 'w') as output:
+            json.dump({{'questions': [
+                {{'id': 'release-date', 'question': 'When did the release go out?',
+                  'why': 'The conclusion depends on it.'}},
+                {{'id': 'owner', 'question': 'Who owns the fix?', 'why': ''}}]}}, output)
+    elif mode in ('source', 'edited-after-check') or mode.startswith('ask:'):
         import sys as _sys
         from pathlib import Path as _Path
         _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
@@ -118,11 +132,20 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     assert str(pa.SKILL) in prompt and str(source) in prompt
     assert pa.session_skill._module("make_package", cert=False) in prompt
     assert 'do not launch another author' in prompt
+    # The author has the agent MCP server alone, signed as the sending agent.
+    config = json.loads((receipt_path.parent / 'author-mcp.json').read_text())
+    [(name, server)] = config['mcpServers'].items()
+    assert name == pa.AGENT_MCP and server['args'][-2:] == ['-m', 'jarvis.agent_mcp']
+    assert server['env']['JARVIS_AGENT_SESSION'] == 'origin-session'
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
         start = next(row for row in log if 'argv' in row)
         assert start['codex_home'] == str(tmp_path / 'caller-codex-home')
-        assert start['argv'] == ['app-server']
+        assert start['argv'][0] == 'app-server'
+        overrides = start['argv'][2::2]
+        assert f'{pa.AGENT_MCP}.env.JARVIS_AGENT_SESSION="origin-session"' in \
+            ' '.join(overrides)
+        assert all(flag == '-c' for flag in start['argv'][1::2])
         thread = next(row['thread'] for row in log if 'thread' in row)
         assert thread['sandbox'] == 'workspace-write'
         assert 'resume' not in thread

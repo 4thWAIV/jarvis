@@ -3,7 +3,14 @@
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
                                   [--check-only] [--fill-assets] [--example [decisions|presentation]]
-                                  [--document ID --revision REV]
+                                  [--document ID --revision REV] [--start]
+    python -m jarvis.make_package --status JOB
+    python -m jarvis.make_package --answer JOB --reply ID=TEXT [--reply ID=TEXT ...]
+
+`--start` makes it as a job (package_jobs.py): the job id comes back at once
+and the package is built in a process of its own; `--status` follows it, and
+when the author has asked its sender questions (waiting_on_sender) `--answer`
+gives the answers and the same author goes on.
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
@@ -641,6 +648,37 @@ def refuse_json_deck(source: Path) -> None:
 
 # -- the command -----------------------------------------------------------------------
 
+def _job_command(parser, args) -> int:
+    """--start, --status and --answer: package_jobs' calls, as the agent MCP
+    server's tools make them, printed as JSON."""
+    from jarvis import package_jobs
+    try:
+        if args.status:
+            result = package_jobs.package_status(args.status)
+        elif args.answer:
+            answers = {}
+            for reply in args.reply:
+                key, eq, text = reply.partition("=")
+                if not eq:
+                    parser.error("--reply takes ID=TEXT")
+                answers[key.strip()] = text
+            result = package_jobs.package_answer(args.answer, answers,
+                                                 session=args.session or None)
+        else:
+            if args.handoff is None:
+                parser.error("--start needs --handoff")
+            result = package_jobs.package_start(
+                args.handoff, args.work or None, args.general, session=args.session or None,
+                engine=args.engine, project=args.project, workflow=args.workflow,
+                says=args.says, out=args.out, source=args.source, document=args.document,
+                revision=args.revision, deliver_to=args.deliver_to)
+    except package_jobs.JobError as error:
+        print(f"Refused: {error}")
+        return 1
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_package") -> int:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -683,8 +721,21 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                              "author")
     parser.add_argument("--revision", default="",
                         help="the exact checked revision of --document")
+    parser.add_argument("--start", action="store_true",
+                        help="make it as a job: print its id at once and build it in a process "
+                             "of its own (package_jobs); follow it with --status")
+    parser.add_argument("--status", metavar="JOB", default="",
+                        help="print a package job's record (its state, the author's questions)")
+    parser.add_argument("--answer", metavar="JOB", default="",
+                        help="answer a package job's questions with --reply ID=TEXT; the same "
+                             "author goes on")
+    parser.add_argument("--reply", action="append", default=[], metavar="ID=TEXT",
+                        help="one answer to --answer's job, by the question's id")
     parser.add_argument("--deliver-to", default=dp.LIVE, help=argparse.SUPPRESS)
+    parser.add_argument("--job", default="", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.status or args.answer or args.start:
+        return _job_command(parser, args)
     if bool(args.document) != bool(args.revision):
         parser.error("--document and --revision go together")
     if args.work and args.general:
@@ -702,7 +753,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"There is nothing at {source}.")
         return 1
     built = False
-    signer = None
+    signer = job = None
+    from jarvis import package_author
     try:
         if args.fill_assets:
             if not is_presentation(source):
@@ -746,7 +798,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
-        from jarvis import package_author
+        if args.job:
+            from jarvis import package_jobs
+            job = package_jobs.Progress(args.job)
         envelope = document = None
         if args.document:
             from jarvis import agent_keys
@@ -775,6 +829,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             import asyncio
             from jarvis import package_reader
             nonlocal made, author, built
+            if job is not None:
+                job.checking()
             if envelope is None:
                 check_vote(authored_source, args.work)
                 refuse_json_deck(authored_source)
@@ -805,15 +861,21 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
 
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
-                                        document=document, finish=finish)
+                                        document=document, finish=finish, job=job)
         if made is None or author is None:
             raise dp.Refused(["The fresh author's source was not built."])
         if author_proof.source_digest(source) != author.source:
             raise dp.Refused(["The source changed after it was built; build it again."])
+    except package_author.WaitingOnSender as asked:
+        print(f"Waiting on the sender's answers to job {args.job}: "
+              + "; ".join(f"{q['id']}: {q['question']}" for q in asked.args[0]))
+        return 0
     except dp.Refused as e:
         print("Not delivered. These need changing:" if built else "Not built. These need changing:")
         for line in e.problems:
             print(f"  - {line}")
+        if job is not None:
+            job.refused(e.problems)
         if built and args.work and signer:
             from jarvis import message
             text = "Package not delivered: " + "; ".join(e.problems)
@@ -839,6 +901,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                                general=args.general)
     except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
         print(f"Not delivered: {e}")
+        if job is not None:
+            job.refused([f"Not delivered: {e}"])
         return 1
     package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]
     answers = (data_paths.packages_dir() / package_id / "results" / "decisions.json"
@@ -850,6 +914,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
               "document": args.document or None, "revision": args.revision or None,
               "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    if job is not None:
+        job.delivered(record)
     print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)
           + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
