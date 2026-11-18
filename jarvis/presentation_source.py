@@ -11,9 +11,9 @@ import yaml
 from pydantic import ValidationError
 
 from jarvis import layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, Cue, Ellipse, ImageObject,
-                                       Paragraph, Presentation, Rectangle, Run, ShapePath,
-                                       SourceRef, TableObject, TextObject, VectorObject)
+from jarvis.presentation_schema import (BarObject, ContentSlide, Ellipse, ImageObject,
+                                       Presentation, Rectangle, ShapePath, TableObject,
+                                       TextObject, VectorObject)
 
 
 _NUMBER = re.compile(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?\Z")
@@ -69,8 +69,7 @@ def read_source(path: Path, built: bool = False, language: str | None = None) ->
 
     `built` reads the source.yaml inside a built package, where file
     evidence is frozen under reference-evidence/ rather than at its locator.
-    `language` is the one the deck is built in when its source names none
-    (the opening's words, draw_opening)."""
+    `language` is the one the deck is built in when its source names none."""
     from jarvis.repo_read import READ_MAX_FILE_BYTES
     path = path.resolve()
     locations: dict[tuple, tuple[int, int]] = {}
@@ -154,61 +153,7 @@ def read_source(path: Path, built: bool = False, language: str | None = None) ->
         raise DeckCompileError(tuple(diagnostics)) from None
     _semantics(source, data, built)
     source.language = source.document.language or language or "en"
-    draw_opening(source)
     return source
-
-
-# The opening JARVIS draws from `situation`: its slide's and words' ids,
-# which no author's id may take.
-OPENING_ID = "jarvis-opening"
-OPENING_WORDS = OPENING_ID + "-words"
-SITUATION_FIELDS = ("subject", "happened", "approved_before", "changes")
-NEEDS_SITUATION = (
-    "A deck that asks something opens with where things stand, which JARVIS draws as its "
-    "first slide: give `situation` with subject (what this is about, named and explained "
-    "for someone coming from other work), happened (what changed or failed, and why), "
-    "approved_before (what he already approved that this touches, or that nothing was) "
-    "and changes (what changes for him if he says yes).")
-
-
-def draw_opening(source: Source) -> None:
-    """A deck that asks something opens on where things stand: JARVIS draws
-    its first slide from the author's `situation` and `conclusion`, in its
-    `opening` layout (what it is about, what happened, what he approved
-    before, what changes for him, then the bottom line), told with the
-    purpose. Refused when the deck asks a decision and gives no situation."""
-    from jarvis.decision_package import SITUATION_WORDS
-    doc = source.document
-    if doc.situation is None:
-        if doc.decisions:
-            source.fail("production", NEEDS_SITUATION, ("decisions",))
-        return
-    for ident in (OPENING_ID, OPENING_WORDS):
-        if ident in source.nodes:
-            source.fail("reference", f"{ident!r} names the opening JARVIS draws; give yours "
-                        f"another id.", member=ident)
-    words = SITUATION_WORDS.get(source.language, SITUATION_WORDS["en"])
-    situation = doc.situation
-
-    def paragraph(n: int, text: str, label: str | None = None) -> Paragraph:
-        runs = [Run(id=f"{OPENING_WORDS}-{n}-label", text=label + " ", emphasis="strong")] if label else []
-        runs.append(Run(id=f"{OPENING_WORDS}-{n}", text=text, emphasis="normal"))
-        return Paragraph(id=f"{OPENING_WORDS}-p{n}", role="paragraph", runs=runs)
-
-    shown = ([paragraph(1, situation.subject)]
-             + [paragraph(n, getattr(situation, name), words[name])
-                for n, name in enumerate(SITUATION_FIELDS[1:], 2)]
-             + [paragraph(len(SITUATION_FIELDS) + 1, doc.conclusion, words["conclusion"])])
-    text = TextObject(id=OPENING_WORDS, type="text", slot="words",
-                      source=SourceRef(reference=doc.references[0].id), paragraphs=shown)
-    opening = ContentSlide(
-        id=OPENING_ID, type="content", title=doc.title, layout="opening", objects=[text],
-        readingOrder=[OPENING_WORDS], notes="", short=words["short"],
-        narration=[Cue(id=OPENING_ID + "-cue", focus=[OPENING_WORDS],
-                       say=f"{doc.purpose} {situation.subject}")])
-    doc.slides.insert(0, opening)
-    for member in [OPENING_ID, OPENING_WORDS] + [p.id for p in shown]:
-        source.nodes.setdefault(member, ("situation",))
 
 
 NO_LAYOUT = ("JARVIS lays out every deck: a source names one of its layouts on each content "
@@ -386,7 +331,7 @@ def data_at(path, data):
 
 def _asset(source: Source, asset) -> None:
     relative = Path(asset.path)
-    reserved = {"index.html", "deck.css", "deck.js", "deck-data.js", "story.json", "package.json", "SKILL.md", "UNDERSTANDING.md", "presentation.js", "presentation.css", "presentation-font.css", "presentation-data.js", "source.yaml", "target-index.json"}
+    reserved = {"index.html", "deck.css", "deck.js", "deck-data.js", "story.json", "package.json", "SKILL.md", "UNDERSTANDING.md", "presentation.js", "presentation.css", "presentation-data.js", "source.yaml", "target-index.json"}
     if not relative.parts or relative.as_posix() in reserved or relative.parts[0] in {".jarvis", "results", "scripts", "reference-evidence"} or ".." in relative.parts:
         source.fail("asset", "Asset path collides with generated package files or traverses directories.", member=asset.id)
     path = source.path.parent / asset.path

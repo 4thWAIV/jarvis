@@ -212,7 +212,7 @@ class Package:
 
     @property
     def layout_checked(self) -> bool:
-        """A page JARVIS laid out and proved fits (a deck: its layout proof,
+        """A page JARVIS laid out and proved (a deck: its layout proof,
         presentation_proof); False for a hand-made page, whose own layout
         nobody checked. Only a page has a layout."""
         from jarvis import presentation_proof

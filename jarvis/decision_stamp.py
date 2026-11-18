@@ -2,7 +2,8 @@
 
 A decision package (a zip holding `deck-data.js` and `scripts/decide.py`)
 reaches Tim only through `python -m jarvis.make_package`, which lays it out,
-proves it fits (presentation_proof) and signs it with the agent's own key;
+proves it (presentation_proof: its pictures, story targets and renderer) and
+signs it with the agent's own key;
 the receiving JARVIS makes that proof again from the zip's own bytes
 (server._decision_problem). A deck from before carries no proof and is
 admitted on its signer's statement that it passed the old end-to-end check
@@ -27,8 +28,8 @@ def _files(archive: zipfile.ZipFile) -> dict:
     return {path[len(root):]: m for path, m in listing.files().items() if path.startswith(root)}
 
 
-# What a deck JARVIS laid out carries: its source and the static proof that
-# it fits (presentation_proof), which the receiving JARVIS makes again.
+# What a deck JARVIS laid out carries: its source and its static proof
+# (presentation_proof), which the receiving JARVIS makes again.
 PROVEN = ("source.yaml", ".jarvis/layout-proof.json", "target-index.json")
 
 

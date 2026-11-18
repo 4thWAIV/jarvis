@@ -36,14 +36,12 @@ def small_deck() -> dict:
                     "say": "Two decisions on the team lunch. I suggest the office at noon."}],
         "decisions": [
             {"id": "where", "short": "Where", "question": "Where do we eat?",
-             "why_you": "It is your team's lunch.", "evidence": ["Lunch is on Friday."],
              "options": [{"id": "in", "name": "In the office", "says": "Food brought in.",
                           "picture": "pictures/plate.svg"},
                          {"id": "out", "name": "A restaurant", "says": "A walk away.",
                           "picture": "pictures/plate.svg"}],
              "recommended": "in", "reason": "Nobody has to book a table."},
             {"id": "when", "short": "When", "question": "What time?",
-             "why_you": "It moves your afternoon.", "evidence": ["The stand-up is at one."],
              "options": [{"id": "noon", "name": "Noon", "says": "Before the stand-up.",
                           "picture": "pictures/plate.svg"},
                          {"id": "one", "name": "One o'clock", "says": "After it.",
@@ -176,17 +174,17 @@ def test_refused_content_is_not_built_or_delivered(tmp_path, monkeypatch, capsys
     assert delivery.calls == [] and not list((tmp_path / "out").glob("*.zip"))
 
 
-def test_a_deck_that_does_not_fit_delivers_nothing(tmp_path, monkeypatch, capsys):
+def test_a_deck_whose_picture_cannot_be_read_delivers_nothing(tmp_path, monkeypatch, capsys):
     from tests.deck_fixtures import write_yaml
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    deck = small_deck()
-    deck["slides"][0]["blocks"].insert(1, {"p": "Unbreakable" * 10})
+    banner = ('<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="20">'
+              '<rect width="4000" height="20" fill="#38bdf8"/></svg>\n')
     _key()
-    assert dp.main([str(write_yaml(tmp_path / "in", deck)),
+    assert dp.main([str(write_yaml(tmp_path / "in", small_deck(), svg=banner)),
                     "--out", str(tmp_path / "out"), "--session", "abc"]) == 1
     said = capsys.readouterr().out
-    assert "Not delivered" in said and "wider than" in said
+    assert "cannot be read" in said
     assert delivery.calls == []
 
 
@@ -251,7 +249,6 @@ def brief() -> dict:
         "conclusion": "Eat in the office at noon.",
         "decisions": [
             {"question": "Where do we eat on Friday?",
-             "why_you": "It is your team's lunch.", "evidence": "Nobody has booked yet.",
              "options": [{"name": "In the office", "says": "Food is brought in.",
                           "recommended": True, "opens": ["What time?"],
                           "picture": "pictures/plate.svg"},
@@ -259,7 +256,6 @@ def brief() -> dict:
                           "picture": "pictures/plate.svg"}],
              "reason": "Nobody has to book a table."},
             {"short": "When", "question": "What time?",
-             "why_you": "It moves your afternoon.", "evidence": ["The stand-up is at one."],
              "text_only": "A time of day has no picture that shows it.",
              "options": [{"name": "Noon", "says": "Before the stand-up."},
                          {"name": "None", "says": "Whenever."}],
@@ -281,18 +277,13 @@ def test_the_short_form_is_filled_in_and_valid(tmp_path):
     assert where["options"][0]["opens"] == ["when"] and "recommended" not in where["options"][0]
     assert [o["id"] for o in when["options"]] == ["noon", "none-option"]
     assert when["recommended"] == "noon"
-    assert [s.get("lead_in") or s.get("decision") or "opening" for s in deck["slides"]] == [
-        "opening", "when", "when", where["id"], where["id"]]
-    assert where["evidence"] == ["Nobody has booked yet."], "one line of evidence is a list"
+    assert [s.get("decision") or "opening" for s in deck["slides"]] == ["opening", "when"]
 
 
 def test_a_full_form_deck_passes_through_expansion_unchanged():
     deck = small_deck()
     expanded = dp.expand(deck)
-    # Only each decision's lead-in slide is added, before its decision's.
-    assert {**expanded, "slides": [s for s in expanded["slides"] if not s.get("lead_in")]} == {
-        **deck, "slides": deck["slides"] + [{"decision": "where"}, {"decision": "when"}]}
-    assert dp.expand(expanded) == expanded, "a deck already led in is left as it is"
+    assert expanded == deck
     example = dp.read(EXAMPLE / "deck-data.js")
     assert dp.expand(example) == example
 

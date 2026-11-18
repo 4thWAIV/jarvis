@@ -30,14 +30,6 @@ PRESENTATION = {
 }
 
 
-# Where things stand, for a test deck that asks something (JARVIS draws its
-# opening from it: presentation_source.draw_opening).
-SITUATION = {"subject": "Friday's team lunch, which has been at a restaurant until now.",
-             "happened": "The restaurant now needs a booking, and nobody has booked.",
-             "approved_before": "You approved a monthly team lunch; where was never decided.",
-             "changes": "Your answers set where and when the team eats on Friday."}
-
-
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "x"
 
@@ -113,8 +105,6 @@ def presentation_of(deck: dict, folder: Path) -> dict:
         for field in ("picture", "compare"):
             if d.get(field):
                 d[field] = asset(d[field])
-        if isinstance(d.get("evidence"), str):
-            d["evidence"] = [d["evidence"]]
         decisions.append(d)
         if d["id"] not in placed:
             slides.append({"id": f"place-{d['id']}", "type": "decision", "decision": d["id"]})
@@ -127,8 +117,6 @@ def presentation_of(deck: dict, folder: Path) -> dict:
            "slides": slides, "decisions": decisions}
     if "language" not in deck:
         out.pop("language")
-    if deck.get("situation") or decisions:
-        out["situation"] = deck.get("situation") or dict(SITUATION)
     return out
 
 

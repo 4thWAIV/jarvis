@@ -35,14 +35,12 @@
 #stage { width:100%; height:100%; }
 .top,.bottom { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .track { inset:0; }
-/* JARVIS draws every presentation/1 deck: one bundled font (served by JARVIS at
-   layout_spec.FONT_PATH, layout_spec.font_css), sized by the layout spec's styles, with nothing the
-   text proof (presentation_proof) does not model: no kerning, ligatures,
-   hyphenation, letter spacing or case changes. */
+/* JARVIS draws every presentation/1 deck in the system's own interface font
+   (San Francisco on a Mac, Segoe UI on Windows, then the common sans-serifs),
+   sized by the layout spec's styles. No font ships with JARVIS or a deck. */
 html { --body:var(--deck-body); --heading:var(--deck-heading); }
-body, button, select, input { font-family:"JARVIS Deck", sans-serif; }
-body, .slide { font-kerning:none; font-variant-ligatures:none; font-feature-settings:"kern" 0, "liga" 0, "calt" 0;
-  hyphens:none; letter-spacing:0; text-transform:none; overflow-wrap:normal; word-break:normal; }
+body, button, select, input { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  "Helvetica Neue", Helvetica, Arial, sans-serif; }
 h2, h3, b, strong, th { font-weight:700; }
 .slide.presentation-slide { padding:0; overflow:hidden; }
 .presentation-title { position:absolute; box-sizing:border-box; margin:0; font-size:var(--deck-heading);

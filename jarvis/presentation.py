@@ -8,12 +8,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import (decision_package as dp, layout_spec, package_story, package_understanding,
-                    presentation_proof)
+from jarvis import decision_package as dp, package_story, package_understanding, presentation_proof
 from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, SourceRef, TableObject,
                                         TextObject, VectorObject)
-from jarvis.presentation_source import (OPENING_ID, DeckCompileError, DeckDiagnostic, Source,
-                                        read_source)
+from jarvis.presentation_source import DeckCompileError, DeckDiagnostic, Source, read_source
 
 ASSETS = Path(__file__).with_name("presentation_assets")
 
@@ -97,7 +95,6 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.append({"p":obj.alt})
         slides.append({"id":"presentation-slide-" + slide.id,"title":slide.title,"blocks":blocks,
                        **({"short":slide.short} if slide.short else {}),
-                       **({"opening":True} if slide.id == OPENING_ID else {}),
                        "beats":[{"say":cue.say,"targets":[selectors[t] for t in cue.focus]} for cue in slide.narration]})
     decisions=[]
     for decision in doc.decisions:
@@ -118,10 +115,10 @@ def _deck(source: Source, targets: list[dict]) -> dict:
 
 
 def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story: dict) -> None:
-    """The static proof on the built folder: text fit and pictures at every
-    frame, story targets and template bytes; written into the package as
+    """The static proof on the built folder: pictures at every frame, story
+    targets and template bytes; written into the package as
     .jarvis/layout-proof.json, or DeckCompileError naming each failure."""
-    failures, tightest = presentation_proof.prove_slides(parsed, parsed.pictures)
+    failures = presentation_proof.prove_pictures(parsed, parsed.pictures)
     failures += presentation_proof.prove_targets(story, targets, deck)
     failures += presentation_proof.prove_templates(folder)
     if failures:
@@ -129,7 +126,7 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
             "layout", failure.message, member=failure.member if failure.member in parsed.nodes else None,
             profile=f"{failure.frame[0]:.0f}x{failure.frame[1]:.0f}" if failure.frame else None)
             for failure in failures))
-    presentation_proof.write(folder, presentation_proof.record(parsed, failures, tightest))
+    presentation_proof.write(folder, presentation_proof.record(parsed, failures))
 
 
 def compile_deck(source: Path, output: Path) -> CompiledDeck:
@@ -176,7 +173,7 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
             entry=folder/"index.html"
-            html=entry.read_text().replace('<link rel="stylesheet" href="deck.css">','<link rel="stylesheet" href="deck.css">\n  <link rel="stylesheet" href="'+layout_spec.FONT_PATH+'">\n  <link rel="stylesheet" href="presentation.css">')
+            html=entry.read_text().replace('<link rel="stylesheet" href="deck.css">','<link rel="stylesheet" href="deck.css">\n  <link rel="stylesheet" href="presentation.css">')
             html=html.replace('<script src="deck.js"></script>','<script src="presentation-data.js"></script>\n  <script src="presentation.js"></script>\n  <script src="deck.js"></script>')
             entry.write_text(html,encoding="utf-8")
             manifest_path=folder/"package.json"
@@ -184,7 +181,7 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
             brief=folder/manifest["brief"]
             with brief.open("a",encoding="utf-8") as stream:
                 stream.write("\n## Presentation source\n\nThe following exact source model supplies the visible objects, their reading order, named members, provenance and narration. "
-                             "presentation.js renders those objects in JARVIS's named layouts; presentation.css (generated from the layout spec) places them, and .jarvis/layout-proof.json records the static proof that they fit. source.yaml preserves the authored bytes. "
+                             "presentation.js renders those objects in JARVIS's named layouts; presentation.css (generated from the layout spec) places them, and .jarvis/layout-proof.json records the static proof of their pictures, story targets and renderer files. source.yaml preserves the authored bytes. "
                              "target-index.json binds each member to its source revision and generated element. The existing deck.js owns navigation and all answer recording.\n\n```json\n"+json.dumps(model,indent=2,ensure_ascii=False)+"\n```\n")
             for path in builder.zip_package.files(folder):
                 relative=path.relative_to(folder).as_posix()
