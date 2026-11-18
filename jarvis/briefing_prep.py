@@ -20,6 +20,14 @@ it, follow-up questions last). Then, at most `ROUNDS` times:
 - whatever did not pass goes back to the SAME author session as one more
   turn, and it revises prep.md and script.md.
 
+Each judge's asks are jurors that keep their own session across the rounds
+(`Seat`: resumed each round, never a fresh judge with no memory): from
+round 2 a juror is shown its own earlier answer and reason and the author's
+reply to the findings, judges first whether what it asked before was met,
+and may raise a new problem only when it does not reverse an earlier ask of
+its own; one that would is quoted (`reverses`) and goes back to the author
+as an ask it may keep its earlier answer to, never a reason to fail.
+
 A script that passes every judge, with nothing sent back to the prep, is
 the only thing the deck may be written from (`DECK_STEP`). One that cannot
 pass in `ROUNDS` rounds is refused with the judges' findings. prep.md,
@@ -160,6 +168,33 @@ def _ask_prompt(question: Question, text: str, context: dict) -> str:
         "\n\n--- script.md ---\n" + text)
 
 
+def _juror_prompt(question: Question, text: str, context: dict, seat: "Seat") -> str:
+    """A juror's first ask, or from round 2 the same juror's next turn: its
+    own earlier answers, the author's reply to the findings, and the same
+    question about the revised script, judged against what it asked before."""
+    if not seat.said:
+        return _ask_prompt(question, text, context)
+    earlier = "\n".join(f"- Round {s['round']}: you answered {json.dumps(s['answer'])}: "
+                         f"{s['why'] or '(no reason given)'}" for s in seat.said)
+    reply = str((context.get("replies") or {}).get(context.get("round", 0) - 1) or "").strip()
+    return (
+        f"Round {context.get('round')}. You are the same juror as before, answering the same "
+        "question about the revised briefing. What you said before:\n" + earlier +
+        "\n\nThe author's reply to the findings it was given:\n" +
+        (reply or "(the author gave no reply in words; read the revised files)") +
+        "\n\nFirst judge whether each problem you raised before is met in the revised script. "
+        "Then answer the question. You may raise a new problem only when it does not reverse "
+        "something you asked for earlier. If a problem you see would reverse one of your earlier "
+        "asks, do not fail the script for it: quote that earlier ask in \"reverses\"; the "
+        "author may keep its earlier answer to it. Answer only from the prep and the script "
+        "below.\n\nThe question: " + question.asks + "\n\nReply with one JSON object and "
+        "nothing else: {\"answer\": " + question.form() + ", \"why\": <one sentence, quoting "
+        "the script or prep where it falls short, or saying why it passes>, \"earlier_met\": "
+        "<true if every problem you raised before is met, else false>, \"reverses\": <your "
+        "earlier ask, quoted, that a problem you see would reverse, or null>}.\n\n--- prep.md "
+        "---\n" + str(context.get("prep") or "") + "\n\n--- script.md ---\n" + text)
+
+
 def _last_json(text: str):
     """The last whole (outermost) JSON object in a model's reply, or None."""
     decoder = json.JSONDecoder()
@@ -189,7 +224,12 @@ def _answer_of(question: Question, reply: str) -> Optional[dict]:
         answer = int(answer)
     if not question.valid(answer):
         return None
-    return {"answer": answer, "why": str(value.get("why") or "").strip()[:1000]}
+    reverses = value.get("reverses")
+    return {"answer": answer, "why": str(value.get("why") or "").strip()[:1000],
+            "earlier_met": value.get("earlier_met") if isinstance(value.get("earlier_met"), bool)
+            else None,
+            "reverses": str(reverses).strip()[:1000] if isinstance(reverses, str)
+            and reverses.strip() else None}
 
 
 def agreement(question: Question, answers: list) -> tuple:
@@ -211,18 +251,39 @@ def agreement(question: Question, answers: list) -> tuple:
     return answer, best / len(answers)
 
 
-async def _ask_engine(prompt: str, choice, folder: Path, timeout: float = ASK_TIMEOUT_SEC) -> str:
-    """One fresh session of the author's engine choice, one turn; its reply."""
+@dataclass
+class Seat:
+    """One juror's own session, kept across the rounds: where it runs and
+    the session the provider named, resumed on its next ask; and what it
+    answered each round (`said`)."""
+    home: Optional[Path] = None
+    session: Optional[str] = None
+    said: list = field(default_factory=list)
+
+
+async def _ask_engine(prompt: str, choice, folder: Path, timeout: float = ASK_TIMEOUT_SEC,
+                      seat: Optional[Seat] = None) -> str:
+    """One turn of the author's engine choice; its reply. A new session,
+    or with a `seat` that has one, that juror's own session resumed in its
+    own folder (a session is resumed where it began)."""
     from jarvis.package_author import FreshSession
     folder.mkdir(parents=True, exist_ok=True)
-    home = Path(tempfile.mkdtemp(prefix="ask-", dir=folder))
-    reply = home / "reply.txt"
+    if seat is not None and seat.home is not None:
+        home = seat.home
+    else:
+        home = Path(tempfile.mkdtemp(prefix="ask-", dir=folder))
+    reply = home / f"reply-{len(list(home.glob('reply-*.txt'))) + 1}.txt"
     session = None
     try:
-        session = FreshSession(home, choice, reply)
+        session = FreshSession(home, choice, reply,
+                               resume=seat.session if seat is not None else None)
         session.role = "briefing judge"
         await session.start("You answer one narrow question about a briefing and reply with "
                             "JSON only.", prompt, timeout)
+        if seat is not None:
+            if seat.session and session.identity != seat.session:
+                raise OSError("A juror's resumed session is not its own.")
+            seat.home, seat.session = home, session.identity
         return reply.read_text(encoding="utf-8") if reply.exists() else ""
     finally:
         if session is not None:
@@ -263,19 +324,26 @@ async def adecide(question_id: str, text: str, context: dict) -> dict:
     question = QUESTIONS.get(question_id)
     if question is None:
         raise ValueError(f"No typed question {question_id!r}.")
-    prompt = _ask_prompt(question, text, context)
     limit = context.get("limit") or asyncio.Semaphore(ASK_AT_ONCE)
     folder = Path(context.get("folder") or tempfile.mkdtemp(prefix="briefing-asks-"))
+    # Each ask is a juror with its own seat, kept across the rounds of one
+    # briefing (`context["seats"]`, made by `run`); with none, a new one.
+    seats = context.get("seats", {})
+    jurors = [seats.setdefault((question_id, n), Seat()) for n in range(ASKS)]
 
-    async def once() -> Optional[dict]:
+    async def once(seat: Seat) -> Optional[dict]:
+        prompt = _juror_prompt(question, text, context, seat)
         async with limit:
             try:
-                reply = await ASK(prompt, context.get("choice"), folder)
+                reply = await ASK(prompt, context.get("choice"), folder, seat=seat)
             except (OSError, RuntimeError, TimeoutError):
                 return None
-        return _answer_of(question, reply)
+        said = _answer_of(question, reply)
+        if said is not None:
+            seat.said.append({"round": context.get("round"), **said})
+        return said
 
-    asked = [a for a in await asyncio.gather(*(once() for _ in range(ASKS))) if a is not None]
+    asked = [a for a in await asyncio.gather(*(once(s) for s in jurors)) if a is not None]
     if not asked:
         raise Refused([f"No ask of the {question_id} question gave an answer that could be "
                        f"read."])
@@ -283,6 +351,7 @@ async def adecide(question_id: str, text: str, context: dict) -> dict:
     record = _record(question, text, context, asked, answer, probability)
     return {"answer": answer, "probability": probability,
             "why": [a["why"] for a in asked if a["answer"] == answer and a["why"]],
+            "reverses": [a["reverses"] for a in asked if a.get("reverses")],
             "record": record}
 
 
@@ -512,7 +581,16 @@ def _findings(verdicts: dict[str, dict]) -> list[str]:
     return out
 
 
-def _back_to_author(round_no: int, edits: list[Edited], findings: list[str]) -> str:
+def _reversals(verdicts: dict[str, dict]) -> list[str]:
+    """What jurors would have reversed of their own earlier asks: told to
+    the author as asks it may keep its earlier answer to, never a failure."""
+    return [f"{judge}: a juror saw a problem that would reverse its own earlier ask "
+            f"({_quoted(asked)}): you may keep your earlier answer to that ask."
+            for judge, decided in verdicts.items() for asked in decided.get("reverses") or []]
+
+
+def _back_to_author(round_no: int, edits: list[Edited], findings: list[str],
+                    kept: list[str] = ()) -> str:
     lines = [f"Round {round_no} of at most {ROUNDS}. The editors' changes are in script.md "
              f"and logged in {EDITS}; keep them."]
     back = [c for e in edits for c in e.to_prep]
@@ -525,17 +603,24 @@ def _back_to_author(round_no: int, edits: list[Edited], findings: list[str]) -> 
     if findings:
         lines.append("The judges did not pass the script:")
         lines += [f"- {f}" for f in findings]
+    if kept:
+        lines.append("These would reverse what a juror asked of you before; keep your earlier "
+                     "answer to them if you choose:")
+        lines += [f"- {k}" for k in kept]
     lines.append("Revise prep.md and script.md in place, keeping prep.md's headings, and "
                  "write nothing else yet: no deck.")
     return "\n".join(lines)
 
 
-async def run(folder: Path, turn: Callable[[str], Awaitable[None]], context: dict) -> dict:
+async def run(folder: Path, turn: Callable[[str], Awaitable[Optional[str]]],
+              context: dict) -> dict:
     """The rounds over the author's prep and script in `folder`. `turn`
-    is another turn of the same author session. Returns what each round's
-    judges said; Refused when the script cannot pass in `ROUNDS` rounds."""
+    is another turn of the same author session, returning what it said.
+    Every juror keeps its seat across the rounds (`seats`), and sees the
+    author's reply (`replies`, by round). Returns what each round's judges
+    said; Refused when the script cannot pass in `ROUNDS` rounds."""
     _read_step(folder)
-    context = dict(context, limit=asyncio.Semaphore(ASK_AT_ONCE))
+    context = dict(context, limit=asyncio.Semaphore(ASK_AT_ONCE), seats={}, replies={})
     context.setdefault("folder", str(folder.parent / (folder.name + "-asks")))
     (folder / EDITS).touch()
     rounds = []
@@ -552,12 +637,14 @@ async def run(folder: Path, turn: Callable[[str], Awaitable[None]], context: dic
         rounds.append({"round": round_no, "edits": sum(len(e.applied) for e in edits),
                        "to_prep": len(back),
                        "judges": {j: {"answer": v["answer"], "probability": v["probability"],
-                                      "record": v["record"]} for j, v in verdicts.items()}})
+                                      "record": v["record"], "reverses": v["reverses"]}
+                                  for j, v in verdicts.items()}})
         if not findings and not back:
             return {"status": "passed", "rounds": rounds, "sha256": digests(folder)}
         if round_no == ROUNDS:
             break
-        await turn(_back_to_author(round_no, edits, findings))
+        said = await turn(_back_to_author(round_no, edits, findings, _reversals(verdicts)))
+        context["replies"][round_no] = said if isinstance(said, str) else ""
         _read_step(folder)
     left = findings or ["specifics: vague claims still went back to the prep in the last round "
                         "(" + EDITS + ")."]

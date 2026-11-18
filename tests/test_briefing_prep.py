@@ -18,7 +18,7 @@ def replies(*texts):
     given = list(texts)
     prompts = []
 
-    async def ask(prompt, choice, folder, timeout=0):
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
         prompts.append(prompt)
         return given.pop(0) if len(given) > 1 else given[0]
     ask.prompts = prompts
@@ -159,6 +159,7 @@ class Author:
         self.turns.append(message)
         if self.revise:
             self.revise(self.folder)
+        return f"Revised after turn {len(self.turns)}: slide 4 now explains the context."
 
 
 def engine(fail_rounds: dict, edits: dict | None = None):
@@ -167,7 +168,7 @@ def engine(fail_rounds: dict, edits: dict | None = None):
     passing = passing_judges()
     state = {"round": 0, "prompts": []}
 
-    async def ask(prompt, choice, folder, timeout=0):
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
         state["prompts"].append(prompt)
         if prompt.startswith("You are the cut editor"):
             state["round"] += 1
@@ -227,6 +228,75 @@ def test_vague_claims_go_back_to_the_prep_before_it_passes(tmp_path, monkeypatch
     assert '"The failed test": which test' in author.turns[0]
     assert "## Slide 1. Approve?" in (folder / bp.SCRIPT).read_text(), "the editor's change applied"
     assert '1. "Approve it?" -> "Approve?"' in (folder / bp.EDITS).read_text()
+
+
+def jurors(fail_first: str, round_2: dict):
+    """Every juror's session kept in its seat (a stand-in session id given
+    on its first ask, as the engine names it): `fail_first`'s jurors fail
+    round 1; in round 2 each juror of a judge answers `round_2[judge]`."""
+    passing = passing_judges()
+    state = {"round": 0, "asked": []}
+
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
+        if prompt.startswith("You are the cut editor"):
+            state["round"] += 1
+        if seat is not None:
+            state["asked"].append((state["round"], id(seat), seat.session, prompt))
+            if seat.session is None:
+                seat.session = f"juror-{len(state['asked'])}"
+            for judge, reply in round_2.items():
+                if bp.QUESTIONS[judge].asks in prompt and state["round"] == 2:
+                    return reply
+            question = bp.QUESTIONS[fail_first]
+            if question.asks in prompt and state["round"] == 1:
+                return said("no", "slide 5 needs its context just before it")
+        return await passing(prompt, choice, folder)
+    ask.state = state
+    return ask
+
+
+def test_each_juror_keeps_its_session_and_is_shown_its_own_ask_and_the_reply(
+        tmp_path, monkeypatch):
+    """A juror is never a fresh judge with no memory: from round 2 the same
+    seat (its session resumed) is asked, shown what it said and the
+    author's reply, and judges whether its earlier ask was met."""
+    folder = tmp_path / "author"
+    write_prep(folder)
+    monkeypatch.setattr(bp, "ASK", jurors("decision_ready", {}))
+    author = Author(folder)
+    assert run(folder, author)["status"] == "passed"
+    asked = bp.ASK.state["asked"]
+    first = {seat for rnd, seat, _, _ in asked if rnd == 1}
+    second = [(seat, session, prompt) for rnd, seat, session, prompt in asked if rnd == 2]
+    assert len(first) == len(bp.JUDGES) * bp.ASKS
+    assert {seat for seat, _, _ in second} == first, "the same jurors, round after round"
+    assert all(session for _, session, _ in second), "each resumed by its own session"
+    [prompt] = [p for _, _, p in second if bp.QUESTIONS["decision_ready"].asks in p][:1]
+    assert prompt.startswith("Round 2. You are the same juror")
+    assert "slide 5 needs its context just before it" in prompt, "its own earlier ask"
+    assert "Revised after turn 1: slide 4 now explains the context." in prompt, \
+        "the author's reply to it"
+    assert '"earlier_met"' in prompt and '"reverses"' in prompt
+
+
+def test_a_reversal_is_quoted_and_never_fails_the_script(tmp_path, monkeypatch):
+    """A juror that would reverse its own earlier ask quotes it; the author
+    may keep its answer, and the script still passes on the juror's answer."""
+    folder = tmp_path / "author"
+    write_prep(folder)
+    reverses = json.dumps({"answer": "yes", "why": "it passes", "earlier_met": True,
+                           "reverses": "slide 5 needs its context just before it"})
+    monkeypatch.setattr(bp, "ASK", jurors("decision_ready",
+                                          {"decision_ready": reverses,
+                                           "order": said(2, "the order slipped")}))
+    author = Author(folder)
+    result = run(folder, author)
+    assert result["status"] == "passed" and len(result["rounds"]) == 3
+    assert result["rounds"][1]["judges"]["decision_ready"]["answer"] == "yes"
+    kept = author.turns[1]
+    assert "keep your earlier answer" in kept and "slide 5 needs its context" in kept
+    assert "decision_ready: answered" not in kept, "the reversal is no failure"
+    assert "order: answered 2" in kept
 
 
 def test_three_failed_rounds_refuse_with_the_judges_findings(tmp_path, monkeypatch):

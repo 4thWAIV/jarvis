@@ -151,7 +151,7 @@ def passing_judges(edits: dict | None = None):
     prompts it was given are on `.prompts`."""
     prompts: list[str] = []
 
-    async def ask(prompt, choice, folder, timeout=0):
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
         prompts.append(prompt)
         reply = passing_reply(prompt, edits)
         if reply is None:

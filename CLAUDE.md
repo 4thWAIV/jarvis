@@ -1438,7 +1438,13 @@ text, context) -> {answer, probability}` (yes/no, choice or 0-10, asked
 `ASKS` times; the probability the share that agreed; every call recorded at
 `/briefing/decisions/<id>.decision` with its input digest and the package by
 its author session); findings go back to the same author session, and a
-script that still fails is refused with them. Only then is the deck
+script that still fails is refused with them. Each ask is a juror that
+keeps its own session across the rounds (`briefing_prep.Seat`, resumed in
+its own folder): from round 2 it is shown what it said and the author's
+reply, judges first whether its earlier ask was met (`earlier_met`), and
+never fails the script for a problem that would reverse its own earlier
+ask, quoting it instead (`reverses`), which goes back to the author as an
+ask it may keep its answer to. Only then is the deck
 written, from the script alone; `prep.md`, `script.md` and `edits.md` go in
 the zip under `.jarvis/briefing/` (`briefing_prep.carry`, from
 `make_package.with_author`).

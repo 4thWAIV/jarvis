@@ -53,7 +53,7 @@ def _text_list(value) -> bool:
 
 
 def read_handoff(path: Path) -> dict:
-    """The sender's handoff: `question` (nonempty, one line), `evidence`
+    """The sender's handoff: `question` (nonempty), `evidence`
     (a nonempty list of references), optional `work` (an id or a list of
     ids), `decisions` (a list of decision objects) and, for an architecture
     document, `approval`. Anything else is refused, saying why."""
@@ -72,9 +72,8 @@ def read_handoff(path: Path) -> dict:
                             + ", ".join(HANDOFF_KEYS[:-1]) + " (and approval for an "
                             "architecture document).")
     question = value.get("question")
-    if not isinstance(question, str) or not question.strip() or "\n" in question.strip():
-        problems.append("Author handoff needs question: the question or decision for Tim, "
-                        "as one line of text.")
+    if not isinstance(question, str) or not question.strip():
+        problems.append("Author handoff needs question: the question or decision for Tim.")
     if not _text_list(value.get("evidence")):
         problems.append("Author handoff needs a nonempty evidence list of text: files, "
                         "commits, PRs and CI runs the answer rests on.")
@@ -193,7 +192,7 @@ def _set_assignment(documents: tuple[Document, ...]) -> str:
             "that needs his decision is stated as a problem first (what cannot be checked and "
             "what goes wrong because of it), then its options and what each changes for him. "
             "You must also write package/story.json, the walk-through JARVIS tells over the "
-            "views: name in its `scenario` one concrete input (one line), and walk that same "
+            "views: name in its `scenario` one concrete input, and walk that same "
             "input through every view in turn, in the order above: every slide names its "
             "`view` (the document id), each view is told whole before the next, and every view "
             "has at least one slide. Declare any questions the reader should answer in its "
@@ -488,11 +487,19 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
             raise OSError("Author still needs evidence after every question round: "
                           + "; ".join(q["question"] for q in read_questions(folder)))
 
-    async def turn(message):
+    async def turn(message) -> str:
         """Another turn of the same author: a revision of its briefing, the
-        deck step or a repair, each followed by the question check."""
+        deck step or a repair, each followed by the question check. Returns
+        what the author said in it."""
+        transcript = folder / "author-response.txt"
+        before = transcript.stat().st_size if transcript.exists() else 0
         await watched(child.turn(message, timeout))
         await answered()
+        if not transcript.exists():
+            return ""
+        with transcript.open("rb") as said:
+            said.seek(before)
+            return said.read().decode("utf-8", errors="replace")
 
     try:
         mcp_config = agent_mcp_config(folder, session)
