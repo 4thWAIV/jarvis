@@ -191,11 +191,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
 
     handoff = tmp_path / "handoff.json"
     handoff.write_text(json.dumps({
-        "purpose": "Explain the proposed architecture inbox", "audience": "Tim",
-        "questions": ["What holds an architecture package?",
-                      "Walk Tim through the page in a story, and ask him in it, as a declared "
-                      "question, whether the inbox should keep a package after sign-off.",
-                      "Tim is asked to approve this design: say what he would be approving."],
+        "question": "Explain the proposed architecture inbox",
         "approval": True,
         "evidence": [str(source)]}))
     out = tmp_path / "out"
@@ -243,7 +239,7 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     assert result["understanding"]["origin"] == "fresh-author"
     assert "ArchitectureInbox" in result["understanding"]["text"]
     assert frame["package"]["purpose"] == "Explain the proposed architecture inbox", \
-        "the package states the handoff's purpose"
+        "the package states the handoff's question"
 
     # The author's story, composed once with the vote, asks its questions in
     # the head; answers chosen here (this JARVIS only, never Tim's) return by

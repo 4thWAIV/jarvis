@@ -80,6 +80,7 @@ def authored(source: Path, engine: str = "claude", session: str | None = None,
     """`source` as a fresh author left it: its receipt beside it
     (package_author's) and its own transcript showing its last check."""
     session = session or new_session(engine)
+    write_briefing(source.parent)
     (source.parent / "author-receipt.json").write_text(json.dumps(
         {"engine": engine, "author_session": session, "status": "authored",
          "source": str(source)}))
@@ -111,19 +112,50 @@ def sign_authored(raw: Path, target: Path, agent, session: str, statements=(),
     return claim
 
 
-def cold_reader(*misses: list[str]):
-    """A stand-in for package_reader.read: each read answers every question
-    but those its turn's list in `misses` names (as `missing`). The decks
-    it was given are on `.decks`."""
-    from jarvis import package_reader
-    reads = list(misses)
-    decks: list[dict] = []
+def write_briefing(folder: Path) -> None:
+    """The prep, script and edits a fresh author leaves beside its source
+    (briefing_prep), which every package carries."""
+    from jarvis import briefing_prep
+    write_prep(folder)
+    (folder / briefing_prep.EDITS).write_text("## round 1, cut\n\nNo changes.\n")
 
-    async def read(deck, requester, out, attempt, timeout=0):
-        decks.append(deck)
-        missing = reads.pop(0) if reads else []
-        return [{"question": q, "answered": q not in missing, "answer": "",
-                 "missing": "it never says" if q in missing else ""}
-                for q in package_reader.QUESTIONS]
-    read.decks = decks
-    return read
+
+def write_prep(folder: Path, script: str = "## Slide 1. Approve the result\n") -> None:
+    """A prep with every section the pipeline asks for, and its script."""
+    from jarvis import briefing_prep
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / briefing_prep.PREP).write_text("# Prep\n\n" + "".join(
+        f"## {section}\n\nFact (source: receipt.json).\n\n"
+        for section in briefing_prep.PREP_SECTIONS))
+    (folder / briefing_prep.SCRIPT).write_text(script)
+
+
+def passing_reply(prompt: str, edits: dict | None = None) -> str | None:
+    """What a stand-in engine answers an ask of briefing_prep: each editor
+    proposes `edits` by editor id (none by default) and every judge passes;
+    None for a prompt that is no such ask."""
+    from jarvis import briefing_prep
+    for editor in briefing_prep.EDITORS:
+        if prompt.startswith(f"You are the {editor.id} editor"):
+            return json.dumps((edits or {}).get(editor.id) or {"edits": []})
+    for question in briefing_prep.QUESTIONS.values():
+        if question.asks in prompt:
+            answer = (question.at_least if question.kind == briefing_prep.SCALE
+                      else question.passing[0])
+            return json.dumps({"answer": answer, "why": "it passes"})
+    return None
+
+
+def passing_judges(edits: dict | None = None):
+    """A stand-in for briefing_prep.ASK answering as `passing_reply`. The
+    prompts it was given are on `.prompts`."""
+    prompts: list[str] = []
+
+    async def ask(prompt, choice, folder, timeout=0):
+        prompts.append(prompt)
+        reply = passing_reply(prompt, edits)
+        if reply is None:
+            raise AssertionError("an ask the stand-in does not know")
+        return reply
+    ask.prompts = prompts
+    return ask

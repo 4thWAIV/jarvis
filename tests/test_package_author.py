@@ -18,8 +18,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def handoff(tmp_path):
     path = tmp_path / 'handoff.json'
-    path.write_text(json.dumps({'purpose': 'Explain the result', 'audience': 'A busy reader',
-                               'questions': ['What changed?'], 'evidence': ['receipt.json']}))
+    path.write_text(json.dumps({'question': 'Approve the result?', 'work': 'origin-work',
+                               'evidence': ['receipt.json']}))
     return path
 
 
@@ -41,10 +41,19 @@ def only_engine(request, tmp_path, monkeypatch):
     # The author writes its source, then (as the real one is told to) checks
     # it last with --check-only, which its own transcript records.
     action = f'''
-    with open('received-prompt.txt', 'w') as output:
-        output.write(text)
+    with open('received-prompt.txt', 'a') as output:
+        output.write(text + '\\n---turn---\\n')
     mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
-    if mode in ('source', 'edited-after-check'):
+    if 'prep.md and script.md now' in text and mode != 'deck-first':
+        import sys as _sys
+        _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
+        from pathlib import Path as _Path
+        from tests.author_fixtures import write_prep as _prep
+        if mode == 'not-for-tim':
+            _Path('not-for-tim.md').write_text('Nothing in it needs him.')
+        else:
+            _prep(_Path('.'))
+    elif mode in ('source', 'edited-after-check', 'deck-first'):
         import sys as _sys
         from pathlib import Path as _Path
         _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
@@ -74,10 +83,10 @@ def only_engine(request, tmp_path, monkeypatch):
     default_setting("claude_path")
     default_setting("codex_path")
     monkeypatch.setenv('AUTHOR_TEST_CONTENT', presentation_yaml(tmp_path))
-    # The cold reader is its own session (package_reader; tests/test_package_reader).
-    from jarvis import package_reader
-    from tests.author_fixtures import cold_reader
-    monkeypatch.setattr(package_reader, 'read', cold_reader())
+    # The briefing's editors and judges are asks of their own (briefing_prep).
+    from jarvis import briefing_prep
+    from tests.author_fixtures import passing_judges
+    monkeypatch.setattr(briefing_prep, 'ASK', passing_judges())
     monkeypatch.setenv('FAKE_CODEX_LOG', str(tmp_path / 'codex.log'))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'caller-codex-home'))
     from jarvis import session_watch
@@ -118,6 +127,12 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     assert str(pa.SKILL) in prompt and str(source) in prompt
     assert pa.session_skill._module("make_package", cert=False) in prompt
     assert 'do not launch another author' in prompt
+    first, deck = prompt.split('---turn---')[:2]
+    assert 'prep.md and script.md now' in first and 'presentation.yaml in your' not in first, \
+        "the first turn writes the briefing's prep and script, no deck"
+    assert deck.strip().startswith('The script passed') and 'presentation.yaml' in deck, \
+        "the deck is asked of the same session only once its script passed"
+    assert receipt['briefing']['status'] == 'passed'
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
         start = next(row for row in log if 'argv' in row)
@@ -275,15 +290,20 @@ async def test_author_timeout_closes_session_and_preserves_failure(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch):
+async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch,
+                                                          briefing_passes):
     from jarvis.brain_provider import SessionInfo, TurnEnded
+    from tests.author_fixtures import write_prep
     class Session:
         turns = 0
         async def open(self, instructions):
             pass
         async def send(self, text):
             self.turns += 1
-            (self.config.home / 'presentation.yaml').write_text('title: x\n')
+            if self.turns == 1:
+                write_prep(self.config.home)
+            else:
+                (self.config.home / 'presentation.yaml').write_text('title: x\n')
             self.event(self, SessionInfo('fresh-author' if self.turns == 1 else 'replacement', None))
             self.event(self, TurnEnded(0, 0))
         async def close(self, timeout):
@@ -300,3 +320,71 @@ async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch
     with pytest.raises(dp.Refused, match='author session changed'):
         await pa.author(handoff(tmp_path), 'codex', tmp_path / 'out', session='origin', finish=finish)
     assert child.closed
+
+
+def test_the_package_carries_the_briefing_it_was_written_from(only_engine, origin_key, tmp_path,
+                                                              monkeypatch):
+    """prep.md, script.md and edits.md travel under .jarvis/briefing/."""
+    import zipfile
+    from jarvis import briefing_prep
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, 'post', delivery)
+    out = tmp_path / 'out'
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(out),
+                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
+    [(_, _, body)] = delivery.calls
+    sent = tmp_path / 'sent.zip'
+    sent.write_bytes(base64.b64decode(body['package']))
+    [folder] = [p.parent for p in out.glob('author/*/author-receipt.json')]
+    with zipfile.ZipFile(sent) as z:
+        carried = {n.split('.jarvis/briefing/')[1]: z.read(n) for n in z.namelist()
+                   if '.jarvis/briefing/' in n}
+    assert carried == {name: (folder / name).read_bytes() for name in briefing_prep.FILES}
+
+
+@pytest.mark.parametrize('mode, said', [
+    ('deck-first', 'before its script passed'),
+    ('not-for-tim', 'Not sent: the author found Tim would not want this now. '
+                    'Nothing in it needs him.'),
+])
+def test_no_package_comes_of_a_briefing_that_did_not_go_first(only_engine, mode, said, tmp_path,
+                                                             monkeypatch, capsys):
+    monkeypatch.setenv('AUTHOR_TEST_MODE', mode)
+    monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('delivered'))
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin', '--out', str(tmp_path / 'out')]) == 1
+    assert said in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('extra, reason', [
+    ({'purpose': 'Explain'}, 'may not give purpose: the author states the answer itself'),
+    ({'conclusion': 'Approve it'}, 'may not give conclusion'),
+    ({'audience': 'Tim'}, "may not give audience: the author reads Tim's record"),
+    ({'questions': ['Why?']}, 'may not give questions'),
+    ({'shape': 'Slides 1-3 background'}, "never a sender's structure"),
+    ({'structure': ['a', 'b']}, "never a sender's structure"),
+    ({'notes': 'x'}, 'a handoff is only question, work, evidence, decisions'),
+])
+def test_a_handoff_gives_only_question_work_evidence_and_decisions(tmp_path, monkeypatch, extra,
+                                                                  reason):
+    path = handoff(tmp_path)
+    path.write_text(json.dumps({**json.loads(path.read_text()), **extra}))
+    monkeypatch.setattr(pa.brain_provider, 'provider', lambda *a: pytest.fail('engine launched'))
+    with pytest.raises(dp.Refused) as refused:
+        pa.prepare(path, 'claude', tmp_path / 'out', session='origin')
+    assert any(reason in p for p in refused.value.problems), refused.value.problems
+
+
+def test_a_narrow_handoff_reads(tmp_path):
+    path = tmp_path / 'handoff.json'
+    path.write_text(json.dumps({'question': 'Merge PR 171?', 'work': ['w1', 'w2'],
+                                'evidence': ['PR 171', 'CI run 9123'],
+                                'decisions': [{'id': 'merge', 'question': 'Merge it?'}]}))
+    assert pa.read_handoff(path)['question'] == 'Merge PR 171?'
+    for bad in ({'question': '', 'evidence': ['x']}, {'question': 'a\nb', 'evidence': ['x']},
+                {'question': 'Q?', 'evidence': []}, {'question': 'Q?', 'evidence': ['x'], 'work': 3},
+                {'question': 'Q?', 'evidence': ['x'], 'decisions': ['merge']}):
+        path.write_text(json.dumps(bad))
+        with pytest.raises(dp.Refused):
+            pa.read_handoff(path)

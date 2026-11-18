@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import settings_service
-from jarvis import author_proof, brain_provider, data_paths, engine_choice, session_skill
+from jarvis import (author_proof, brain_provider, briefing_prep, data_paths, engine_choice,
+                    session_skill)
 from jarvis.brain import BrainConfig
 from jarvis.decision_package import Refused
 
@@ -23,21 +24,64 @@ SKILL = data_paths.PACKAGE_DIR / "session_skills" / "human-package-author" / "SK
 GUIDE = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 
 
+# What a sender's handoff gives (briefing_prep's pipeline does the rest):
+# the question or decision for Tim, its Work item, the evidence it rests on
+# (files, commits, PRs, CI runs) and any decisions it asks.
+HANDOFF_KEYS = ("question", "work", "evidence", "decisions", "approval")
+# What a handoff may no longer carry, and why: the fresh author works these
+# out itself from Tim's record and the evidence.
+NOT_TAKEN = {
+    "purpose": "the author states the answer itself, from its own prep; give the question",
+    "conclusion": "the author states the answer itself, from its own prep; give the question",
+    "audience": "the author reads Tim's record for what he knows and lacks",
+    "questions": "the author works out his first ten questions itself; give your one question",
+    "shape": "the author orders the briefing by its prep's fact scores, never a sender's structure",
+    "structure": "the author orders the briefing by its prep's fact scores, never a sender's structure",
+    "slides": "the author orders the briefing by its prep's fact scores, never a sender's structure",
+    "outline": "the author orders the briefing by its prep's fact scores, never a sender's structure",
+    "order": "the author orders the briefing by its prep's fact scores, never a sender's structure",
+    "situation": "the author works out what he lacks from his record",
+}
+
+
+def _text_list(value) -> bool:
+    return isinstance(value, list) and bool(value) and all(
+        isinstance(item, str) and item.strip() for item in value)
+
+
 def read_handoff(path: Path) -> dict:
+    """The sender's handoff: `question` (nonempty, one line), `evidence`
+    (a nonempty list of references), optional `work` (an id or a list of
+    ids), `decisions` (a list of decision objects) and, for an architecture
+    document, `approval`. Anything else is refused, saying why."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise Refused([f"Cannot read author handoff {path}: {error}"]) from None
-    problems = []
     if not isinstance(value, dict):
         raise Refused(["Author handoff must be a JSON object."])
-    for key in ("purpose", "audience"):
-        if not isinstance(value.get(key), str) or not value[key].strip():
-            problems.append(f"Author handoff needs {key} as nonempty text.")
-    for key in ("questions", "evidence"):
-        if (not isinstance(value.get(key), list) or not value[key]
-                or any(not isinstance(item, str) or not item.strip() for item in value[key])):
-            problems.append(f"Author handoff needs a nonempty {key} list of text.")
+    problems = []
+    for key in value:
+        if key in NOT_TAKEN:
+            problems.append(f"The handoff may not give {key}: {NOT_TAKEN[key]}.")
+        elif key not in HANDOFF_KEYS:
+            problems.append(f"The handoff may not give {key}: a handoff is only "
+                            + ", ".join(HANDOFF_KEYS[:-1]) + " (and approval for an "
+                            "architecture document).")
+    question = value.get("question")
+    if not isinstance(question, str) or not question.strip() or "\n" in question.strip():
+        problems.append("Author handoff needs question: the question or decision for Tim, "
+                        "as one line of text.")
+    if not _text_list(value.get("evidence")):
+        problems.append("Author handoff needs a nonempty evidence list of text: files, "
+                        "commits, PRs and CI runs the answer rests on.")
+    work = value.get("work")
+    if work is not None and not (isinstance(work, str) and work.strip()) and not _text_list(work):
+        problems.append("Author handoff's work is a Work item id or a list of them.")
+    decisions = value.get("decisions")
+    if decisions is not None and (not isinstance(decisions, list)
+                                  or not all(isinstance(d, dict) for d in decisions)):
+        problems.append("Author handoff's decisions is a list of decision objects.")
     if "approval" in value and not isinstance(value["approval"], bool):
         problems.append("Author handoff's approval is true (ask Tim to approve the architecture "
                         "design) or false.")
@@ -81,28 +125,17 @@ def _assignment(document: Document | None) -> str:
                 "one of its layouts on each content slide and a slot for each object, never a theme, "
                 "rectangle, size or style (the guide lists them; python -m jarvis.make_package "
                 "presentation.yaml --fill-assets writes each picture's size and hash). Put supporting "
-                "assets alongside that source, and your evidence/review notes in evidence.md. A deck follows the skill's "
-                "decision-memo order (what it is about and where it stands, what was already "
-                "decided, what happened and why, the options and what changes, then the "
-                "decision, technical detail last), gives its \"purpose\" and one-sentence "
-                "\"conclusion\" (the bottom line, never a bare request) and, when it asks "
-                "anything, its \"situation\" (subject, happened, approved_before, changes), "
-                "which JARVIS draws as its first slide (without one, its own first slide "
-                "is an opening that shows both), and gives each decision its "
-                "\"why_you\" and \"evidence\" "
-                "(docs/making-a-package.md). A handoff's suggested shape is input; where it "
-                "disagrees with that order, follow the order. Validate with this "
+                "assets alongside that source, and your evidence/review notes in evidence.md. Give it "
+                "the fields docs/making-a-package.md requires, worded from script.md. Validate with this "
                 "installation’s exact command: " + session_skill._module("make_package", cert=False)
                 + " <source> --check-only. ")
     return ("This package explains one checked canonical architecture document. Its exact "
             "revision is in " + str(document.folder) + ": source.yaml is the canonical YAML, "
             "view.html its rendered page, check.json the checker's evidence and document.json "
             "its identity, coverage and what lies outside the language. JARVIS projects that "
-            "exact revision into the package itself, with the handoff's purpose as its purpose; "
-            "you write its plain explanation, package/UNDERSTANDING.md, for the handoff's "
-            "audience and questions, in the skill's decision-memo order: open it with what the "
-            "architecture is for, the problem or question it serves, why it is in front of "
-            "him now and what he will decide at the end; walk one concrete input through "
+            "exact revision into the package itself, with the handoff's question as its purpose; "
+            "you write its plain explanation, package/UNDERSTANDING.md, from script.md and in "
+            "its order: the answer and the ask first; walk one concrete input through "
             "the architecture as the skill says, and say plainly what its coverage leaves "
             "unresolved or outside the language. A gap that needs his decision is stated as "
             "a problem first (what cannot be checked and what goes wrong because of it), "
@@ -118,10 +151,23 @@ def _assignment(document: Document | None) -> str:
             + document.revision + ". ")
 
 
+CHECK_LAST = ("Run that check yourself last, after your final change: JARVIS admits the "
+              "package only when your own final check printed exactly the source delivered.")
+
+
+def _not_written_yet(folder: Path) -> None:
+    """Refuse a package (a deck, or a package/ folder) written before the
+    script passed: the deck is written only from the passed script."""
+    if any(p.exists() for p in (folder / "presentation.yaml", folder / "package",
+                                folder / "content.json")):
+        raise OSError("Author wrote its package before its script passed the editors and "
+                      "judges: the deck is written only from the passed script.")
+
+
 class FreshSession:
     """One new provider session in its own folder, with the coding profile
-    (authoring) and no resume or fallback: the fresh author, and the cold
-    reader that checks what it wrote (package_reader). `identity` is the
+    (authoring) and no resume or fallback: the fresh author, and each ask of
+    a briefing's editors and judges (briefing_prep). `identity` is the
     session the provider reports; every turn must keep it."""
 
     def __init__(self, folder: Path, choice: engine_choice.Choice, transcript: Path):
@@ -185,7 +231,10 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
                  timeout: float = 1800, session: str = "", work: str = "",
                  workflow: str = "", document: Document | None = None, finish=None) -> Path:
     """One new session, no resume or fallback; return only its own package
-    source (for a `document`, its package/ explanation). `finish(source,
+    source (for a `document`, its package/ explanation). Its first turn
+    writes the briefing's prep and script; briefing_prep's editors and
+    judges correct them, their findings coming back to this same session,
+    and only a passed script is turned into the package. `finish(source,
     turn)` builds it; `turn` is another turn of the same author."""
     evidence = read_handoff(handoff)
     if engine not in ENGINES:
@@ -209,12 +258,10 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
     child = None
     prompt = (author_proof.PROMPT_HEAD + " You are the fresh author; do not launch another "
               "author. Read " + str(SKILL)
-              + " and the production guide " + str(GUIDE) + ". Independently research the "
-              "handoff evidence and answer its audience's questions. The handoff is at "
+              + " and the production guide " + str(GUIDE) + ". Research the handoff's question "
+              "yourself, from Tim's record and the evidence, with your tools. The handoff is at "
               + str(handoff) + "; resolve its relative evidence paths from " + str(handoff.parent)
-              + ". " + _assignment(document) +
-              "Run that check yourself last, after your final change: JARVIS admits the "
-              "package only when your own final check printed exactly the source delivered. "
+              + ". " + briefing_prep.FIRST_STEP + " "
               "The supplied skill, guide and command are sufficient even if no user skill copy "
               "has been installed. Do not deliver, invoke creation without "
               "--check-only, modify application code or send messages. The originating command "
@@ -235,6 +282,16 @@ async def author(handoff: Path, engine: str, out: Path, *, source: Path | None =
         receipt["author_session"], receipt["model"] = child.identity, child.model
         if not child.identity or child.identity == session:
             raise OSError("Author did not report a distinct fresh session identity.")
+        if (folder / "author-blocked.md").exists():
+            raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
+        # The briefing first (briefing_prep): its editors and judges, their
+        # findings back to this same session, before any slide is written.
+        _not_written_yet(folder)
+        receipt["status"] = "briefing"
+        receipt["briefing"] = await briefing_prep.run(
+            folder, turn, {"choice": choice, "package": child.identity})
+        _not_written_yet(folder)
+        await turn(briefing_prep.DECK_STEP + _assignment(document) + CHECK_LAST)
         if (folder / "author-blocked.md").exists():
             raise OSError("Author needs evidence: " + str(folder / "author-blocked.md"))
         if document is None and (folder / "content.json").exists():
@@ -289,6 +346,6 @@ def claim_of(source: Path) -> author_proof.Claim:
 
 def prepare(handoff: Path | None, engine: str | None, out: Path, **kwargs) -> Path:
     if handoff is None:
-        raise Refused(["Creation requires --handoff with purpose, audience, questions and evidence; "
+        raise Refused(["Creation requires --handoff with the question, its Work item and evidence; "
                        "the factory launches a fresh author before building. Use --check-only to validate source."])
     return asyncio.run(author(handoff.resolve(), engine or "", out, **kwargs))

@@ -1169,12 +1169,6 @@ EXEMPT = {
     'presentation_source.draw_opening': (
         'it draws the author\'s own situation fields and conclusion as the deck\'s first slide, '
         'with JARVIS\'s fixed labels; package content, never a trusted session or brain header'),
-    'package_reader.before_the_ask': (
-        'it turns the built deck\'s own slide titles, words and narration into the text the '
-        'cold reader session is given; package content, never a trusted session or brain header'),
-    'package_reader.read': (
-        'it records the cold reader\'s own session id and the questions it missed in the '
-        'factory\'s receipt file; nothing reaches the live brain'),
     'presentation_source.identities': (
         'it walks authored YAML mappings to index source ids and raises a duplicate-id compiler diagnostic with the source location; no session record or live brain header is involved'),
     "make_package.main": (
