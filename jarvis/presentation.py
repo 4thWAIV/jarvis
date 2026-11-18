@@ -162,7 +162,6 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                 shutil.copy2(parsed.path.parent/asset.path,path)
             for name in ("presentation.js","presentation.css"):
                 shutil.copy2(ASSETS/name,folder/name)
-            (folder/layout_spec.FONT_CSS).write_text(layout_spec.font_css(),encoding="utf-8")
             frozen = {}
             for reference in parsed.document.references:
                 if reference.kind == "file":
@@ -177,7 +176,7 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
             entry=folder/"index.html"
-            html=entry.read_text().replace('<link rel="stylesheet" href="deck.css">','<link rel="stylesheet" href="deck.css">\n  <link rel="stylesheet" href="presentation-font.css">\n  <link rel="stylesheet" href="presentation.css">')
+            html=entry.read_text().replace('<link rel="stylesheet" href="deck.css">','<link rel="stylesheet" href="deck.css">\n  <link rel="stylesheet" href="'+layout_spec.FONT_PATH+'">\n  <link rel="stylesheet" href="presentation.css">')
             html=html.replace('<script src="deck.js"></script>','<script src="presentation-data.js"></script>\n  <script src="presentation.js"></script>\n  <script src="deck.js"></script>')
             entry.write_text(html,encoding="utf-8")
             manifest_path=folder/"package.json"

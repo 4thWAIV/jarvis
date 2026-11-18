@@ -1276,8 +1276,9 @@ theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
 named layouts from one spec (`presentation_assets/layout-spec.json`,
 `layout_spec.py`, which generates the deck's CSS; `--check` fails when they
 differ) and one bundled font (Inter, SIL OFL, `font_metrics.py`'s width
-table, embedded as `presentation-font.css` by `layout_spec.font_css`, its
-one place), and proves without a browser (`presentation_proof.py`) that
+table, `layout_spec.font_css`, its one place, served once by JARVIS at
+`layout_spec.FONT_PATH` and linked by every deck rather than carried in it;
+a deck opened outside JARVIS falls back to the system font), and proves without a browser (`presentation_proof.py`) that
 every title, text, table and bar slot holds its words at every frame from
 662 x 489 to 1600 x 900, that every picture is real and readable from its
 bytes (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn

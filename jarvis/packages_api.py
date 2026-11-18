@@ -36,6 +36,9 @@ page (PackageView.tsx) makes the request.
                                             (package_story.js, one copy),
                                             which points and highlights in
                                             its frame
+  GET  /api/packages/presentation-font.css  the bundled font every deck
+                                            links (layout_spec.font_css),
+                                            served once rather than carried
 """
 from __future__ import annotations
 
@@ -223,6 +226,11 @@ def mount(app: FastAPI,
                         media_type=media_type(HELPER_FILE.name),
                         headers={"Cache-Control": "no-store"})
 
+    async def deck_font():
+        from jarvis import layout_spec
+        return Response(await asyncio.to_thread(layout_spec.font_css), media_type="text/css; charset=utf-8",
+                        headers={"Cache-Control": "max-age=3600"})
+
     async def tell_story(package_id: str, request: Request,
                          body: dict = Body(default_factory=dict)):
         if str(body.get("action") or "") not in (story_teller.STOP, story_teller.STATUS) \
@@ -241,6 +249,8 @@ def mount(app: FastAPI,
     app.add_api_route(LOCAL_PATH, open_local_package, methods=["POST"])
     # Before the {package_id} routes, so story.js is never taken for an id.
     app.add_api_route(package_story.HELPER_PATH, story_helper, methods=["GET"])
+    from jarvis import layout_spec
+    app.add_api_route(layout_spec.FONT_PATH, deck_font, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}" + PACKAGE_PAGE_MARK + "{path:path}",
                       page_file, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/results", save_result,

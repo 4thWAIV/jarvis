@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from jarvis import layout_spec
 from jarvis.presentation_source import OPENING_ID, DeckCompileError, read_source
 
 EXAMPLE = Path(__file__).parents[1] / "examples/presentations/street"
@@ -220,6 +221,8 @@ def presentation_page(source, tmp_path):
             helper = EXAMPLE.parents[2] / 'jarvis/package_story.js'
             page.route('**/api/packages/story.js', lambda route: route.fulfill(
                 body=helper.read_text(), content_type='application/javascript'))
+            page.route('**' + layout_spec.FONT_PATH, lambda route: route.fulfill(
+                body=layout_spec.font_css(), content_type='text/css'))
             page.goto((compiled.package_source / 'index.html').as_uri())
             page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
             page.evaluate('async()=>{await document.fonts.ready;}')
@@ -501,3 +504,13 @@ def test_a_situation_too_long_for_the_opening_is_refused_by_the_proof(source, tm
     with pytest.raises(DeckCompileError) as refused:
         compile_deck(source, tmp_path / "out")
     assert "situation" in str(refused.value)
+
+
+def test_a_deck_links_the_font_jarvis_serves_and_carries_none(source, tmp_path):
+    from jarvis import layout_spec
+    from jarvis.presentation import compile_deck
+    made = compile_deck(source, tmp_path / "out")
+    html = (made.package_source / "index.html").read_text()
+    assert f'<link rel="stylesheet" href="{layout_spec.FONT_PATH}">' in html
+    assert not (made.package_source / "presentation-font.css").exists()
+    assert not any(p.stat().st_size > 600_000 for p in made.package_source.rglob("*") if p.is_file())

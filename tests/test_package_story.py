@@ -321,6 +321,15 @@ def test_the_helper_is_served_from_its_one_copy_and_named_in_the_outline(wired, 
     assert b'src="/api/packages/story.js"' in (deck.folder / "index.html").read_bytes()
 
 
+def test_the_deck_font_is_served_once_by_jarvis(wired):
+    """Every deck links the bundled font JARVIS serves (layout_spec.FONT_PATH)
+    rather than carrying its own copy."""
+    from jarvis import layout_spec
+    r = wired.client.get(layout_spec.FONT_PATH)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
+    assert r.text == layout_spec.font_css() and r.text.count("@font-face") == 2
+
+
 def test_a_waiting_slide_names_the_part_its_question_is_about():
     """The focus layer lights what a question is about: the waiting slide's
     beats' targets, once each, else the slide's own element, else nothing."""

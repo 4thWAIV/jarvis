@@ -56,7 +56,7 @@ def test_a_presentation_ends_with_the_standard_vote(tmp_path, monkeypatch, capsy
     package = json.loads(z.read("package.json"))
     understood = package.pop("understanding")
     assert {"SKILL.md", "deck-data.js", "deck.css", "deck.js", "index.html", "scripts/decide.py",
-            "story.json", "presentation.css", "presentation-font.css", "source.yaml"} <= set(understood)
+            "story.json", "presentation.css", "source.yaml"} <= set(understood)
     assert set(understood.values()) == {"UNDERSTANDING.md"}
     assert package == {"name": "team-lunch-moved", "version": "1.0.0",
                        "purpose": "Tell the team where Friday's lunch is now.", "runs": "page", "entry": "index.html",

@@ -251,7 +251,6 @@ def template_hashes() -> dict[str, str]:
     files = {name: (deck / name).read_bytes() for name in ("deck.css", "deck.js", "scripts/decide.py")}
     for name in ("presentation.css", "presentation.js"):
         files[name] = (layout_spec.ASSETS / name).read_bytes()
-    files[layout_spec.FONT_CSS] = layout_spec.font_css().encode()
     return {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
 
 

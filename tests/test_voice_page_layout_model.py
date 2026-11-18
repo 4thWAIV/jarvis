@@ -192,6 +192,9 @@ def test_the_browser_draws_every_slot_the_height_the_model_computed(built):
             page = browser.new_page()
             page.route("**/api/packages/story.js", lambda route: route.fulfill(
                 body="", content_type="application/javascript"))
+            # The bundled font JARVIS serves to every deck (layout_spec.FONT_PATH).
+            page.route("**" + layout_spec.FONT_PATH, lambda route: route.fulfill(
+                body=layout_spec.font_css(), content_type="text/css"))
             for frame in FRAMES:
                 page.set_viewport_size({"width": int(frame[0]), "height": int(frame[1])})
                 page.goto((package / "index.html").as_uri())
