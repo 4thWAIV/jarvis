@@ -409,7 +409,7 @@ def project(envelope: dict, folder: Path, understanding: bytes | None = None,
         if not understanding.strip() or len(understanding) > kit.MAX_SOURCE_BYTES:
             raise docs.DocumentError("The authored understanding must contain text and fit within 1 MiB.")
         if not purpose_of(purpose):
-            raise docs.DocumentError("The handoff has no purpose (its question) to state.")
+            raise docs.DocumentError("The handoff purpose (its question) has no text that can be stated.")
         purpose = purpose_of(purpose)
         canonical["understanding"] = {"origin": FRESH_AUTHOR, "member": MEMBER,
                                       "markdown_sha256": kit.sha256(understanding), "purpose": purpose}
