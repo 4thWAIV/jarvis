@@ -195,7 +195,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("send_message", "jarvis.message",
             "Send the user a message about the Work item it belongs to (python -m "
             "jarvis.message). It lands on that item's Messages; with general, in his Inbox. "
-            "A question or decision is never sent bare: carry it in a package. Prints the "
+            "A decision goes inside a package that shows it (package_start). Prints the "
             "message's id.",
             {"says": {**_STR, "description": "What it says, short."},
              "work": {**_STR, "description": "The Work item it is about."},
