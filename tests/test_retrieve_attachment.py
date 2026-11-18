@@ -11,19 +11,23 @@ BASE = f'/api/team/messages/{MESSAGE}'
 ARGS = ['--message', MESSAGE, '--attachment', ATTACHMENT, '--as', 'origin']
 
 
-@pytest.mark.parametrize('scope,allowed', [('*', True), ('work:owned', False)])
-def test_retrieval_right_and_scope(monkeypatch, scope, allowed):
+@pytest.mark.parametrize('principal,allowed', [('agent:origin', True), ('workkey:fp1', False)])
+def test_retrieval_right_and_scope(monkeypatch, principal, allowed):
+    """An onboarded agent's packages right (from the rights file, every
+    target) retrieves; a work-item key's grant scoped to one item does not."""
     from jarvis import agent_key_store
-    monkeypatch.setattr(agent_key_store, 'grants', lambda _: [SimpleNamespace(right='packages', scope=scope)])
+    monkeypatch.setattr(agent_key_store, 'is_onboarded', lambda session: session == 'origin')
+    monkeypatch.setattr(agent_key_store, 'grants', lambda who: [] if who.startswith('agent:') else
+                        [SimpleNamespace(right='packages', scope='work:owned')])
     for path in (f'{BASE}/files/{ATTACHMENT}/location',
                  f'{BASE}/files/{ATTACHMENT}/download',
                  f'{BASE}/attachments/{ATTACHMENT}/bundle'):
-        assert agent_rights.allows('agent:origin', 'POST', path, 'work=owned') is allowed
+        assert agent_rights.allows(principal, 'POST', path, 'work=owned') is allowed
     for path in (f'{BASE}/files/{ATTACHMENT}/reveal',
                  f'{BASE}/attachments/{ATTACHMENT}/repair',
                  f'{BASE}/attachments/{ATTACHMENT}/bundle/members/a/show',
                  '/api/team/messages/drafts', '/internal/tool', '/api/restart'):
-        assert not agent_rights.allows('agent:origin', 'POST', path)
+        assert not agent_rights.allows(principal, 'POST', path)
 
 
 @pytest.mark.parametrize('engine', ['claude', 'codex'])
