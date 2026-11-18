@@ -50,6 +50,24 @@ SCROLL_AND_PICK = """([y, target]) => {
 }"""
 
 
+async def _hearing_places(page) -> None:
+    """From now on, the page keeps every `place` its frame reports. Its
+    listener is added after the bridge's, so a place seen here is one the
+    bridge already holds for the next Ask."""
+    await page.evaluate("""() => { window.__places = [];
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.jarvis === 'package' && e.data.type === 'place') window.__places.push(e.data);
+      }); }""")
+
+
+async def _place_heard(page, y: int, part: str) -> None:
+    """Waits until the frame has told the page it is scrolled to `y` with
+    `part` chosen."""
+    await page.wait_for_function(
+        """([y, part]) => window.__places.some((p) => (p.part || '').endsWith(part)
+             && p.scroll.some((s) => s.at && s.y === y))""", arg=[y, part], timeout=10000)
+
+
 async def _told_from(page, voice, after: int, timeout: float = 30) -> dict:
     """The first audio frame sent after `after` frames: its cue."""
     for _ in range(int(timeout / 0.05)):
@@ -80,8 +98,9 @@ async def test_ask_pauses_at_the_beat_nests_and_return_brings_each_place_back(
 
             # A second Ask, from elsewhere in the page: scrolled to the
             # second slide, its third step chosen. The story stays paused.
+            await _hearing_places(page)
             await _inner(page).evaluate(SCROLL_AND_PICK, [700, "[data-step='3']"])
-            await asyncio.sleep(0.8)                      # the frame says so, the page sends it
+            await _place_heard(page, 700, "li:nth-of-type(3)")
             await page.click(ASK)
             assert await _wait(lambda: len(server.story_teller.asks) == 2)
             inner = server.story_teller.asks[-1]
@@ -97,7 +116,12 @@ async def test_ask_pauses_at_the_beat_nests_and_return_brings_each_place_back(
             await frame.locator(".tea[data-detail='black']").evaluate("(b) => b.click()")
 
             # Return by keyboard: the inner place, its scrolling, no words.
+            # The count moves as the server keeps the place, before the
+            # page's Ask has its answer; Return stays disabled until then,
+            # and a disabled button takes no focus and no Enter.
+            await async_api.expect(page.locator(BACK)).to_be_enabled()
             await page.focus(BACK)
+            await async_api.expect(page.locator(BACK)).to_be_focused()
             await page.keyboard.press("Enter")
             await _inner(page).wait_for_function(
                 f"Math.abs(document.querySelector('.deck').scrollTop - {kept_at}) <= 2",
