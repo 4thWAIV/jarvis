@@ -521,9 +521,17 @@ async def edit(editor: Editor, folder: Path, context: dict) -> Edited:
     script_path = folder / SCRIPT
     script = script_path.read_text(encoding="utf-8")
     prep = (folder / PREP).read_text(encoding="utf-8")
+    # Each editor keeps its own session across the rounds, as the jurors do
+    # (a Seat in the rounds' `seats`): from round 2 it is told it is the
+    # same editor and the script was revised since its last pass.
+    seat = context.get("seats", {}).setdefault(("editor", editor.id), Seat())
+    prompt = _edit_prompt(editor, script, prep)
+    if seat.session:
+        prompt = (f"Round {context.get('round')}. You are the same {editor.id} editor as before; "
+                  f"the author revised prep.md and script.md since your last edits, which are "
+                  f"in the script now. Your rule and the files follow.\n\n" + prompt)
     try:
-        reply = await _asked(_edit_prompt(editor, script, prep), context.get("choice"),
-                             Path(context["folder"]))
+        reply = await _asked(prompt, context.get("choice"), Path(context["folder"]), seat=seat)
     except (OSError, RuntimeError, TimeoutError) as error:
         raise Refused([f"The {editor.id} editor did not finish: {error}"]) from None
     proposed = _last_json(reply or "")

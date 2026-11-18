@@ -187,10 +187,10 @@ def engine(fail_rounds: dict, edits: dict | None = None):
 
     async def ask(prompt, choice, folder, timeout=0, seat=None):
         state["prompts"].append(prompt)
-        if prompt.startswith("You are the cut editor"):
+        if "You are the cut editor" in prompt:
             state["round"] += 1
         for editor in bp.EDITORS:
-            if prompt.startswith(f"You are the {editor.id} editor"):
+            if f"You are the {editor.id} editor" in prompt:
                 return json.dumps((edits or {}).get(editor.id) if state["round"] == 1
                                   and edits and editor.id in edits else {"edits": []})
         for judge, rounds in fail_rounds.items():
@@ -255,9 +255,10 @@ def jurors(fail_first: str, round_2: dict):
     state = {"round": 0, "asked": []}
 
     async def ask(prompt, choice, folder, timeout=0, seat=None):
-        if prompt.startswith("You are the cut editor"):
+        if "You are the cut editor" in prompt:
             state["round"] += 1
-        if seat is not None:
+        judged = any(q.asks in prompt for q in bp.QUESTIONS.values())
+        if seat is not None and judged:
             state["asked"].append((state["round"], id(seat), seat.session, prompt))
             if seat.session is None:
                 seat.session = f"juror-{len(state['asked'])}"
@@ -294,6 +295,29 @@ def test_each_juror_keeps_its_session_and_is_shown_its_own_ask_and_the_reply(
     assert "Revised after turn 1: slide 4 now explains the context." in prompt, \
         "the author's reply to it"
     assert '"earlier_met"' in prompt and '"reverses"' in prompt
+
+
+def test_each_editor_keeps_its_session_across_the_rounds(tmp_path, monkeypatch):
+    """An editor is no fresh session each round either: round 2 asks the same
+    editor's seat, resumed, and tells it so."""
+    folder = tmp_path / "author"
+    write_prep(folder)
+    seen = []
+    judges = jurors("decision_ready", {})
+
+    async def ask(prompt, choice, folder, timeout=0, seat=None):
+        for editor in bp.EDITORS:
+            if f"You are the {editor.id} editor" in prompt and seat is not None:
+                seen.append((editor.id, id(seat), seat.session, prompt))
+                seat.session = seat.session or f"editor-{editor.id}"
+        return await judges(prompt, choice, folder, timeout, seat)
+    monkeypatch.setattr(bp, "ASK", ask)
+    assert run(folder, Author(folder))["status"] == "passed"
+    for editor in bp.EDITORS:
+        mine = [s for s in seen if s[0] == editor.id]
+        assert len(mine) == 2 and mine[0][1] == mine[1][1], "the same seat both rounds"
+        assert mine[0][2] is None and mine[1][2] == f"editor-{editor.id}", "resumed"
+        assert mine[1][3].startswith(f"Round 2. You are the same {editor.id} editor")
 
 
 def test_a_reversal_is_quoted_and_never_fails_the_script(tmp_path, monkeypatch):

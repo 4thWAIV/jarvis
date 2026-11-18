@@ -136,7 +136,7 @@ def passing_reply(prompt: str, edits: dict | None = None) -> str | None:
     None for a prompt that is no such ask."""
     from jarvis import briefing_prep
     for editor in briefing_prep.EDITORS:
-        if prompt.startswith(f"You are the {editor.id} editor"):
+        if f"You are the {editor.id} editor" in prompt:
             return json.dumps((edits or {}).get(editor.id) or {"edits": []})
     for question in briefing_prep.QUESTIONS.values():
         if question.asks in prompt:
