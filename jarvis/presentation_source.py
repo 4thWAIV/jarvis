@@ -198,8 +198,6 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
         if isinstance(slide, ContentSlide) and slide.id + "-title" in source.nodes:
             source.fail("reference", f"{slide.id}-title names slide {slide.id}'s title, which JARVIS "
                         f"draws; give the object another id.", member=slide.id + "-title")
-    if not isinstance(doc.slides[0], ContentSlide):
-        source.fail("production", "The opening must be a content slide.", ("slides", 0))
     references = {ref.id for ref in doc.references}
     assets = {asset.id: asset for asset in doc.assets}
     decisions = {decision.id: decision for decision in doc.decisions}

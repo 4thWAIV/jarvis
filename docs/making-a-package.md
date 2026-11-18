@@ -114,20 +114,20 @@ python -m jarvis.make_package --example               # a decision package
 python -m jarvis.make_package --example presentation  # a presentation
 ```
 
-Write only the substance. Every deck is a briefing in decision-memo order. The opening says what it is about, where it stands, its bottom line and what Tim will decide at the end. Then come what he already decided that it touches, what happened and why, the options and what changes for him under each, and the decision. Technical detail comes last, after the decision or in the evidence. The fresh author's skill (`human-package-author`) says how to write each part; the command checks only the opening (see [The opening](#the-opening)).
+Write only the substance. Every deck is a briefing in decision-memo order. The opening says what it is about, where it stands, its bottom line and what Tim will decide at the end. Then come what he already decided that it touches, what happened and why, the options and what changes for him under each, and the decision. Technical detail comes last, after the decision or in the evidence. The fresh author's skill (`human-package-author`) says how to write each part; the command does not check how you write it.
 
 | field | what it is |
 |---|---|
 | `version`, `requires` | `presentation/1` and `[presentation-core/1]`. |
 | `id`, `title` | The package's name (a slug) and title. Tim opens it by saying "Open the <title> package." |
-| `purpose` | Required. One sentence: what the package is for, in Tim's terms; at most 200 characters. |
-| `conclusion` | Required. One sentence: the bottom line, what was found and what is recommended, worded for someone new to the work (never a bare "Approve X"); at most 200 characters. |
+| `purpose` | Required. One sentence: what the package is for, in Tim's terms. |
+| `conclusion` | Required. One sentence: the bottom line, what was found and what is recommended, worded for someone new to the work (never a bare "Approve X"). |
 | `language` | `en` or `es`, the language its story is told in. |
 | `assets` | Each picture: `id`, `path` beside the source, `sha256`, `mime`, `width`, `height` (all written by `--fill-assets`) and its `source` reference. |
 | `references` | The evidence: `id`, `kind` (`authored-example`, `file` or `url`), `locator`, `revision`, `description`. Every object and picture names one as its `source`. |
 | `slides` | In order. A content slide: `id`, `type: content`, `title` (JARVIS draws it at the top), `layout` (below), `objects` each with its `slot`, `readingOrder` (every object once), `narration` (cues: `id`, `say`, `focus` naming what is lit), `notes`, and optional `short` (its name in the border's Chapters). A decision's place: `{id, type: decision, decision: <id>}`. |
 | objects | `text` (`paragraphs`, each `role` paragraph, heading, bullet or numbered, of `runs` with `emphasis` normal, strong or italic), `image` (an `asset`, `alt`, `fit: contain`), `vector` (shapes in a `viewBox`), `bar` (labelled values on a domain from zero) and `table` (`head`, `rows` of `cells`, optional `rowHeads`, `alt`). |
-| `decisions` | Each has its `question`, at least two `options`, the `recommended` option's id, and the one-line `reason`. Optional: `needs_words` (the option ids whose answer needs his words), `context` (a line of background), `picture` (an asset beside the options), `compare` (an asset comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
+| `decisions` | Each has its `question`, at least two `options`, the `recommended` option's id, and the `reason`. Optional: `needs_words` (the option ids whose answer needs his words), `context` (background), `picture` (an asset beside the options), `compare` (an asset comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
 | options | Each has an `id`, a `name`, what it `says` and a `picture` (an asset) of what he would see, required unless the decision is `text_only`; optional `opens`: the follow-up decisions asked only when this option is chosen. |
 
 The layouts, each slot holding one object (a slot left out is left empty; the required ones must be filled):
@@ -151,24 +151,19 @@ JARVIS proves every deck without a browser (`jarvis/presentation_proof.py`), in 
 - **The story points only at what is drawn,** and every decision and option it names exists.
 - **The renderer is JARVIS's own,** byte for byte: no package carries a changed template.
 
-Words are not measured: no font ships with JARVIS or a deck, and each draws in the system's own interface font (San Francisco on a Mac, Segoe UI on Windows, then the common sans-serifs), every word 13 to 25 px. The character limits below keep a slide's words within reason. The numbers are one spec, `jarvis/presentation_assets/layout-spec.json`, from which the deck's CSS is generated (`python -m jarvis.layout_spec`; `--check` fails when they differ).
+Words are not measured: no font ships with JARVIS or a deck, and each draws in the system's own interface font (San Francisco on a Mac, Segoe UI on Windows, then the common sans-serifs), every word 13 to 25 px. The numbers are one spec, `jarvis/presentation_assets/layout-spec.json`, from which the deck's CSS is generated (`python -m jarvis.layout_spec`; `--check` fails when they differ).
 
-Pictures are PNG, JPEG, GIF, WebP or SVG files, given as paths beside the source. JARVIS proves each one without a browser (`jarvis/picture_proof.py`): its kind is what its bytes say, and it is read whole (a PNG's every chunk and its pixel rows, a GIF's every block and its image data, a JPEG's every segment to its end marker, a WebP's container), so a cut-short or damaged file is refused with its name. An SVG gives its size: its root `<svg>` has `width` and `height` in pixels (`width="320" height="220"`, or `320px`), a `viewBox` of the same shape when it has one, only static drawing elements, every label's `font-size` in pixels and no transform on a label but a translate or a uniform scale. Each picture must also be readable where it is drawn: at the smallest frame (662 x 489) it is drawn contained in its place, never past twice its own size, and under 60 px either way, or with a label under 13 px, it is refused. A picture much wider or taller than its place, or a tiny one, is the usual cause: give it a shape nearer its place's.
+Pictures are PNG, JPEG, GIF, WebP or SVG files, given as paths beside the source. JARVIS proves each one without a browser (`jarvis/picture_proof.py`): its kind is what its bytes say, and it is read whole (a PNG's every chunk and its pixel rows, a GIF's every block and its image data, a JPEG's every segment to its end marker, a WebP's container), so a cut-short or damaged file is refused with its name. An SVG's size is read from it: its `width` and `height` in pixels when it gives them, else its `viewBox` (one of the two is needed, or it has no size); a `viewBox` given with both has the same shape. It holds only static drawing elements, every label's `font-size` in pixels and no transform on a label but a translate or a uniform scale. Each picture must also be readable where it is drawn: at the smallest frame (662 x 489) it is drawn contained in its place, never past twice its own size, and under 60 px either way, or with a label under 13 px, it is refused. A picture much wider or taller than its place, or a tiny one, is the usual cause: give it a shape nearer its place's.
 
-### The opening
+### What is yours to write
 
-The command refuses a deck that is not a briefing, naming what to write. These are the rules (`decision_package.briefing_problems`), the same for a decision package and a presentation:
+What each slide says, how long it is and in what order is the author's: no rule counts its words or characters, requires a kind of first slide, draws a slide from fields of the source, or adds a slide before a decision. What stays checked: each decision has at least two options, every picture is readable where it is drawn, and the story JARVIS tells over the deck runs about fifteen minutes at most.
 
-- **`purpose` and `conclusion`** are written by you, both nonempty, the conclusion one sentence. They are deck/0.1's document fields of the same names.
-- **The first slide is the opening.** It is a content slide of yours, usually in the `opening` layout: not a decision. It holds words, never a table or chart first: data comes after the opening, on slides titled with the claim it supports. Its `narration` is what JARVIS tells over it, and it must have one.
-
-What the opening and each slide say is the author's to write: no rule counts their words against the purpose or the conclusion, draws a slide from fields of the source, or adds a slide before a decision.
-
-`python -m jarvis.make_package --example` prints an opening that passes.
+`python -m jarvis.make_package --example` prints a deck that passes.
 
 Worked out for you, and never needed: its `version` (one past the highest of that name already delivered), each decision's `short` name, the story JARVIS tells, `package.json`, the answering skill and `decide.py`.
 
-No slide may be a wall of text. The limits are 80 characters for a title, 16 for a short name, 120 for a question, 160 for a reason, 40 for an option's name and 140 for what it says; 280 for any one line and 700 for a whole slide; and 30 words for a question, and 40 for a reason, context or what an option says. A field the source does not know is refused with its line and column. Split a long slide into two.
+A field the source does not know is refused with its line and column.
 
 ## A folder
 

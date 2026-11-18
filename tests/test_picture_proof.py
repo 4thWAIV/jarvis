@@ -69,7 +69,7 @@ def _webp_wrong_length():
     (_gif_no_trailer(), "trailer"),
     (_jpeg_no_eoi(), "EOI"),
     (_webp_wrong_length(), "says it is"),
-    (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>', "width and height in pixels"),
+    (b'<svg xmlns="http://www.w3.org/2000/svg"/>', "draws as nothing"),
 ], ids=["png-truncated", "png-crc", "png-idat-short", "gif-trailer", "jpeg-eoi", "webp-riff",
         "svg-no-size"])
 def test_a_broken_picture_is_refused_saying_why(raw, words):

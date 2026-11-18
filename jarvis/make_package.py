@@ -170,9 +170,7 @@ def prepare_deck(raw: dict, source_dir: Path) -> dict:
     deck = dp.expand(raw)
     if "version" not in raw and dp._text(deck.get("name")).strip():
         deck["version"] = next_version(deck["name"])
-    # A briefing (dp.briefing_problems): its purpose and conclusion as the
-    # author wrote them, and an opening of words with its narration.
-    problems = dp.problems_of(deck, source_dir) + dp.briefing_problems(raw, deck)
+    problems = dp.problems_of(deck, source_dir)
     if not problems:
         problems += dp.story_problems(deck)
     if not problems:
@@ -569,23 +567,6 @@ def add_work_key(archive: Path, work_id: str) -> dict:
     return {"public_key": public, "work": work_id}
 
 
-# -- his vote ---------------------------------------------------------------------------
-
-def check_vote(source: Path, work: str) -> None:
-    """Every package carries his vote: every deck and page carries the
-    standard one, asked at Done. An agent package for a Work item carries it on
-    the item itself (its work-item key's package; server._receive_package_zip
-    asks the standard vote there as it arrives). A conversation package
-    cannot, so it may not name a Work item (package_inbox.no_vote, which the
-    inbox route says too)."""
-    if not work or not source.is_dir():
-        return
-    from jarvis import package_inbox, work_packages
-    runs = manifest_of(source)["runs"]
-    if runs not in package_inbox.VOTING_RUNS + (work_packages.AGENT,):
-        raise dp.Refused([package_inbox.no_vote(work, runs)])
-
-
 # -- a presentation's pictures --------------------------------------------------------
 
 def fill_assets(source: Path) -> list[str]:
@@ -791,7 +772,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
-            check_vote(source, args.work)
             if is_presentation(source):
                 from jarvis.presentation import compile_deck
                 from jarvis.presentation_source import DeckCompileError
@@ -800,7 +780,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         compiled = compile_deck(source, Path(temporary))
                         deck = dp.read(compiled.package_source / "deck-data.js")
                     kind = deck_kind(deck)
-                    asks = ("ending with the standard vote (Approve / Reject)" if kind == "presentation"
+                    asks = ("carrying the standard vote (Approve / Reject), asked at Done" if kind == "presentation"
                             else f"{len(deck.get('decisions') or [])} decision(s)")
                     print(f"The content is right: a {kind}, {asks}, package {deck['name']}-"
                           f"{deck['version']}; its references, pictures, story and layout proven.")
@@ -854,7 +834,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             if job is not None:
                 job.checking()
             if envelope is None:
-                check_vote(authored_source, args.work)
                 refuse_json_deck(authored_source)
             built = True        # the author's source is taken: a refusal now is reported on --work
             if envelope is not None:

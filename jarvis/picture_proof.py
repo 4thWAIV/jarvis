@@ -428,18 +428,26 @@ def _svg(raw: bytes) -> Picture:
                 raise PictureProblem("its SVG has an executable, linked or styled attribute")
             if "url(" in value.lower() and not re.fullmatch(r"url\(#[a-zA-Z_][\w.-]*\)", value):
                 raise PictureProblem("its SVG refers to something outside it")
+    # Its size is read, never asked for: width and height in pixels where it
+    # gives them, else its viewBox's own size.
     width, height = _number(root.attrib.get("width", "")), _number(root.attrib.get("height", ""))
-    if not width or not height:
-        raise PictureProblem("its <svg> needs width and height in pixels (for example "
-                             "width=\"320\" height=\"220\"), or it can draw as nothing")
     view = root.attrib.get("viewBox")
-    unit = 1.0
+    view_w = view_h = None
     if view is not None:
         try:
             _, _, view_w, view_h = (float(v) for v in re.split(r"[\s,]+", view.strip()))
         except ValueError:
             raise PictureProblem("its viewBox is not four numbers") from None
-        if view_w <= 0 or view_h <= 0 or abs(view_w / view_h - width / height) > 0.01 * width / height:
+        if view_w <= 0 or view_h <= 0:
+            raise PictureProblem("its viewBox has no size, so it draws as nothing")
+    if not width or not height:
+        if view_w is None:
+            raise PictureProblem("it has neither a width and height nor a viewBox, so it has "
+                                 "no size and draws as nothing")
+        width, height = view_w, view_h
+    unit = 1.0
+    if view_w is not None:
+        if abs(view_w / view_h - width / height) > 0.01 * width / height:
             raise PictureProblem("its viewBox has a different shape from its width and height")
         unit = width / view_w
     return Picture("svg", width, height, _labels(root, unit))

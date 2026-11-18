@@ -2,6 +2,17 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## No more word counts on what agents write you
+
+JARVIS no longer refuses a package for the length of a title, a question,
+a reason or a slide, for a first slide that is not a summary, or for an SVG
+picture that does not state its own size (JARVIS reads it). An agent's
+message is no longer refused for asking you something without a package,
+and a package for a Work item is no longer refused for asking you nothing.
+What stays: every decision offers at least two options, every picture is
+big enough to read, and a package's spoken story runs about fifteen
+minutes at most.
+
 ## Agents can look things up in JARVIS before they write to you
 
 Installing the talk-to-jarvis skill (Diagnostics, Setup's Install skill, or

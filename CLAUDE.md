@@ -492,9 +492,8 @@ message was about) and a person's message. An agent sends one with `POST
 `python -m jarvis.message --work <id> "<text>" [--package <zip>] [--as
 <session id>]`): `{"says", "package"?}` (base64 zip, received through
 `_receive_inbox_package` with `carried`, so the message is the package's one
-message). A request that asks something (a decision field, `decision`,
-`question`, `options`, `recommendation`, or a sentence ending in "?") without
-a package is refused (`messages_api.asks`); one with no `work` from an agent
+message). A message is never refused for asking something without a
+package; one with no `work` from an agent
 with a piece not done on an open item is refused naming the item(s)
 (`work_store.open_items_of`) unless it says it is about none (`general=1`,
 `--general` on `jarvis.message` and `make_package`, his Inbox; never with
@@ -1387,12 +1386,13 @@ readable from its bytes at every frame from 662 x 489 to 1600 x 900
 and label floor; `--fill-assets` writes each asset's size and hash), that
 the story points only at what is drawn and that the renderer files are
 JARVIS's own; the proof goes in the package (`.jarvis/layout-proof.json`,
-`presentation-proof/2`, with the language it was built in). Every deck is
-a briefing (`decision_package.briefing_problems`: its `purpose` and
-one-sentence `conclusion`, and a first slide of words, not a decision or
-data first, with its narration); what the slides say is the author's,
-never counted against those fields, and JARVIS draws no slide of its own
-before the author's or before a decision. An architecture package's opening is its
+`presentation-proof/2`, with the language it was built in). What the
+slides say, how long and in what order, is the author's: no rule counts
+words or characters or shapes the first slide, and JARVIS draws no slide
+of its own before the author's or before a decision; what stays checked is
+at least two options a decision, every picture readable where drawn (an
+SVG's size read from its width and height, else its viewBox) and a story of
+about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
 `work_packages.recognise`) is for a working tool. No package goes through
@@ -1571,11 +1571,9 @@ the capture names it. An agent package sent with `--work` carries its work-item 
 standard question as the item's decision `approve-package-<inbox id>`,
 asked by its sending agent (`server._ask_vote_on_work`), on its Messages tab;
 Reject there needs his words too.
-A conversation package cannot carry a vote, so one that names a work item
-is refused (`package_inbox.no_vote`) by `make_package.check_vote` and by
-the route, which checks the signature first and then refuses any other
-package for a work item that asks nothing (`asks_him`). One that names no
-work item may ask nothing. Nothing
+A package for a work item that asks nothing (a conversation or agent
+package, which carry no vote) is not refused: what follows his sign-off
+is the workflow's to carry on. Nothing
 calls `_open_package_page` on arrival. `package_inbox.py` is the only
 writer of its record: one document per arrival,
 `/packages/<inbox id>.package` (records), each change (no words of the

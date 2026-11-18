@@ -1146,12 +1146,6 @@ EXEMPT = {
         "it fills in what the author's own content file left out (ids from its own "
         "titles and names) for the command that runs it; nothing it builds reaches "
         "the brain"),
-    "decision_package.too_many_words": (
-        "it lists the author's own decisions over the word limits, by their own ids, "
-        "for the agent that ran the command"),
-    "decision_package.opening_problems": (
-        "it lists what keeps the author's own first slide from being an opening, quoting "
-        "the author's own title and decision ids, for the agent that ran the command"),
     "decision_package._slide_where": (
         "it names one of the author's own slides by its own title in the command's "
         "refusals"),
@@ -1177,6 +1171,10 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
+    "agent_mcp._research": (
+        "it hands an agent's own MCP client the text JARVIS's /api/agent-tool answered, "
+        "which walls other people's words exactly as for the brain (the same handlers); it "
+        "reaches no live-brain header; driven by test_agent_tools.py"),
     "make_package.withdraw": (
         "the command line: it prints the inbox id JARVIS answered with (an id, "
         "package_inbox.ID's shape) and fixed words to its own runner's terminal; "

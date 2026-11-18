@@ -10021,11 +10021,6 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
     except (work_packages.PackageError, OSError) as e:
         return None, None, str(e)
-    if work_id and not package_inbox.asks_him(package) and \
-            package.manifest.runs != work_packages.AGENT:
-        # A package for a Work item carries his vote (package_inbox.no_vote);
-        # an agent package's is asked on the item as it arrives.
-        return None, None, package_inbox.no_vote(work_id, package.manifest.runs)
     if status == _GOOD_SIGNER and signed.work_key:
         _work_key_from_package(package, signed, key, work_id)
     if signer is not None and source and key is not None and \

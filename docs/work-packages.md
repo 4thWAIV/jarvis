@@ -153,7 +153,7 @@ with the reason if it is not valid.
 | `title` | The story's name. |
 | `language` | `en` (the default) or `es`. JARVIS tells it only while it is speaking that language. |
 | `slides` | The slides, in order, at most 60. Each has a `title` (shown in the slide list, and to the brain so he can ask for a slide by name), an optional `target` (the slide's own element: every beat of the slide first scrolls it into view) and its `beats`, in order, at most 40. |
-| `say` | A beat's words, at most 800 characters. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
+| `say` | A beat's words. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
 | `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. A precise target, one naming `data-declaration` or `data-member`, is ringed only when it matches exactly one element; matching none or several, it is reported and nothing is ringed. |
 | `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
 | `answers` | Optional: `results/<name>.json`, a JSON object in the package's results keyed by question id (a decision deck's `results/decisions.json`). Needed when any slide `waits`. |

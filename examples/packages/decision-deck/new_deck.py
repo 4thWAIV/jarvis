@@ -33,10 +33,6 @@ VOTING = ("SKILL.md", "scripts/decide.py")
 DATA_PREFIX = "window.DECK = "
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RETURNS = ["results/decisions.json", "results/decisions.md"]
-SAY_MAX = 800
-# Words each part of a decision may carry, so its slide is never a wall of
-# text.
-DECISION_WORDS = {"question": 30, "reason": 40, "context": 40, "says": 40}
 
 
 class Bad(Exception):
@@ -74,15 +70,6 @@ def pictures_of(deck: dict) -> list[str]:
 
 def words(text) -> int:
     return len(re.sub(r"\*\*|`", "", str(text or "")).split())
-
-
-def check_words(deck: dict) -> None:
-    for d in deck.get("decisions", []):
-        parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
-        parts += [("says", o.get("says")) for o in d["options"]]
-        for field, text in parts:
-            if words(text) > DECISION_WORDS[field]:
-                raise Bad(f"{d['id']}'s {field} has {words(text)} words; at most {DECISION_WORDS[field]}.")
 
 
 def check(deck: dict, source_dir: Path) -> None:
@@ -132,7 +119,6 @@ def check(deck: dict, source_dir: Path) -> None:
             raise Bad(f"A slide places decision {s['decision']!r}, which is not one.")
         if "decision" not in s and not s.get("title"):
             raise Bad("Every content slide needs a title.")
-    check_words(deck)
     for pic in pictures_of(deck):
         p = Path(pic)
         if not pic or p.is_absolute() or ".." in p.parts:
@@ -234,10 +220,6 @@ def story(deck: dict) -> dict:
                 beats = [{"say": spoken(s.get("say") or s["title"]), "actions": [go],
                           "targets": [f"#{sid} h2"]}]
             slides.append({"title": s.get("short") or s["title"], "target": f"#{sid}", "beats": beats})
-    for slide in slides:
-        for b in slide["beats"]:
-            if len(b["say"]) > SAY_MAX:
-                raise Bad(f"A beat on {slide['title']} is over {SAY_MAX} characters.")
     return {"title": deck["title"], "language": deck.get("language", "en"),
             "answers": RETURNS[0], "slides": slides}
 

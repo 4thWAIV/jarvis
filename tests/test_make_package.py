@@ -82,11 +82,11 @@ def test_the_presentation_example_is_valid(tmp_path, capsys):
     content = tmp_path / "presentation.yaml"
     content.write_text(capsys.readouterr().out)
     assert mp.main([str(content), "--check-only"]) == 0
-    assert "a presentation, ending with the standard vote" in capsys.readouterr().out
+    assert "a presentation, carrying the standard vote" in capsys.readouterr().out
     assert mp.main(["--example"]) == 0
     content.write_text(capsys.readouterr().out)
     assert mp.main([str(content), "--check-only"]) == 0
-    assert "a decision package, 2 decision(s)" in capsys.readouterr().out
+    assert "a decision package, 1 decision(s)" in capsys.readouterr().out
 
 
 def test_a_content_json_deck_is_refused_naming_presentation_yaml(tmp_path, capsys):
@@ -152,12 +152,11 @@ def test_a_compare_picture_is_a_known_field(tmp_path):
     assert dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent) == []
 
 
-def test_every_decision_part_over_its_word_limit_is_listed(tmp_path):
+def test_no_decision_part_is_refused_for_its_words(tmp_path):
     deck = small_deck()
     for d in deck["decisions"]:
         d["reason"] = " ".join(["word"] * 45)
-    found = dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent)
-    assert sum("a reason has 45 words; at most 40" in p for p in found) == 2
+    assert dp.problems_of(dp.expand(deck), write(tmp_path, deck).parent) == []
 
 
 # -- a hand-made folder -----------------------------------------------------------------
@@ -241,7 +240,8 @@ def in_force(language: str) -> None:
 ])
 def test_the_vote_at_done_is_in_the_deck_s_language_else_the_one_in_force(
         tmp_path, monkeypatch, given, saved, words):
-    in_force(saved)
+    from jarvis import spoken_words
+    monkeypatch.setattr(spoken_words, "_active", saved)
     deck = mp.deck_of(write(tmp_path, presentation() | ({"language": given} if given else {})))
     assert not deck.get("decisions")
     folder = tmp_path / "page"
@@ -304,23 +304,19 @@ def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, qu
     assert mp.deck_kind(deck) == "decision package"
 
 
-@pytest.mark.parametrize("check_only", [False, True])
-def test_a_conversation_package_for_a_work_item_is_refused(tmp_path, monkeypatch, capsys,
-                                                          check_only):
+def test_a_conversation_package_for_a_work_item_goes(tmp_path, monkeypatch):
+    """A package for a Work item that asks nothing is no longer refused:
+    what follows his sign-off is the workflow's to carry on."""
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     folder = tmp_path / "in" / "Say Notes"
     folder.mkdir(parents=True)
     (folder / "SKILL.md").write_text("Say the notes.\n")
     (folder / "package.json").write_text(json.dumps({"purpose": "Say the notes."}))
-    argv = [str(folder), "--out", str(tmp_path / "out"), "--session", "sess-1",
-            "--deliver-to", "http://127.0.0.1:19999"]
-    assert mp.main(argv + ["--work", "work-1"] + (["--check-only"] if check_only else [])) == 1
-    out = capsys.readouterr().out
-    assert "names work item work-1, but a conversation package cannot carry Tim's vote" in out
-    assert "Send it without --work" in out and delivery.calls == []
-    assert mp.main(argv) == 0, "with no Work item it goes"
-    assert len(delivery.calls) == 1
+    assert mp.main([str(folder), "--out", str(tmp_path / "out"), "--session", "sess-1",
+                    "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    [(url, _, _)] = delivery.calls
+    assert "work=work-1" in url
 
 
 def test_an_agent_package_for_a_work_item_goes_with_its_work_key(tmp_path, monkeypatch):
@@ -461,61 +457,20 @@ def test_a_well_formed_briefing_is_accepted(tmp_path):
     assert mp.deck_of(write(tmp_path, presentation()))["conclusion"]
 
 
-@pytest.mark.parametrize("field", ["purpose", "conclusion"])
-def test_a_deck_without_its_purpose_or_conclusion_is_refused(tmp_path, field):
+@pytest.mark.parametrize("change", [
+    lambda d: d.pop("conclusion"),
+    lambda d: d.update(conclusion=d["conclusion"] + " Then we vote."),
+    lambda d: d["slides"][0]["blocks"].insert(0, {"table": {"head": ["Day", "People"],
+                                                            "rows": [["Friday", "9"]]}}),
+    lambda d: d["slides"][0].pop("say"),
+    lambda d: d["slides"][0]["blocks"].extend({"p": " ".join(["word"] * 50)} for _ in range(3)),
+])
+def test_the_first_slide_and_the_words_are_the_author_s(tmp_path, change):
+    """No rule shapes the first slide (words first, a narration, the
+    conclusion shown), asks for a one-sentence conclusion, or counts a
+    slide's words."""
     deck = small_deck()
-    del deck[field]
-    said = refused_for(tmp_path, deck)
-    assert f'The deck has no {field}: write "{field}": one sentence' in said
-    deck[field] = "   "
-    assert f"The deck has no {field}" in refused_for(tmp_path, deck)
-
-
-def test_a_conclusion_is_one_sentence(tmp_path):
-    deck = small_deck()
-    deck["conclusion"] += " Then we vote."
-    assert "conclusion is more than one sentence" in refused_for(tmp_path, deck)
-
-
-def test_a_deck_that_opens_on_data_is_refused(tmp_path):
-    deck = small_deck()
-    deck["slides"][0]["blocks"].insert(0, {"table": {"head": ["Day", "People"],
-                                                     "rows": [["Friday", "9"]]}})
-    said = refused_for(tmp_path, deck)
-    assert "the opening: it starts with a table, data before its purpose" in said
-    deck["slides"][0]["blocks"][0] = {"facts": [{"n": "9", "text": "people"}]}
-    assert "it starts with facts" in refused_for(tmp_path, deck)
-
-
-def test_a_deck_that_opens_on_a_decision_is_refused(tmp_path):
-    deck = small_deck()
-    del deck["slides"]
-    assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
-    deck["slides"] = [{"decision": "where"}]
-    assert "The deck opens on decision 'where'" in refused_for(tmp_path, deck)
-
-
-def test_the_opening_is_told_and_its_words_are_the_author_s(tmp_path):
-    """The opening needs a narration; whether its words repeat the
-    conclusion or the purpose is not counted."""
-    deck = small_deck()
-    opening = deck["slides"][0]
-    opening["blocks"][0] = {"lead": "Lunch is on Friday."}
-    del opening["say"]
-    opening["title"] = "Friday"
-    said = refused_for(tmp_path, deck)
-    assert "it has no `say`" in said
-    assert "does not show the conclusion" not in said and "says the purpose" not in said
-    opening["say"] = "Lunch is on Friday."
-    mp.deck_of(write(tmp_path, deck))
-
-
-def test_a_slide_s_words_are_not_counted(tmp_path):
-    """No slide is refused for its number of words; its characters are
-    still capped (decision_package.CAPS)."""
-    deck = small_deck()
-    deck["slides"][0]["blocks"].append({"p": " ".join(["word"] * 50)})
-    deck["slides"][0]["blocks"].append({"p": " ".join(["more"] * 50)})
+    change(deck)
     mp.deck_of(write(tmp_path, deck))
 
 

@@ -37,23 +37,10 @@ SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
 LANGUAGES = ("en", "es")
 
-# The most characters each piece of a slide may have. The deck lays a slide
-# out to the frame in units that keep its proportions from the smallest
-# frame to the largest, so words past these do not fit at a readable size
-# in the smallest.
-CAPS = {
-    "title": 80,          # the deck's title and a content slide's title
-    "short": 16,          # a slide's name in the border's Chapters
-    "question": 120,
-    "reason": 160,
-    "context": 200,
-    "option name": 40,
-    "option says": 140,
-    "text": 280,          # one paragraph, point, fact, caption or table cell
-    "slide": 700,         # every word on one content slide
-    "purpose": 200,       # what the package is for (deck/0.1 `purpose`)
-    "conclusion": 200,    # the answer or the ask, one sentence (deck/0.1 `conclusion`)
-}
+# A slide's name in the border's Chapters is worked out from its title,
+# cut to this many characters (short_of): a fit the program makes, never
+# a limit on what the author writes.
+CAPS = {"short": 16}
 
 # How long the story told over a deck may run, estimated from its words at
 # an unhurried speaking pace: a longer one is a deck to split, not to sit
@@ -98,12 +85,6 @@ def read(content: Path) -> dict:
 
 def _text(value) -> str:
     return value if isinstance(value, str) else ""
-
-
-def _capped(problems: list[str], where: str, kind: str, value) -> None:
-    text = _text(value)
-    if len(text) > CAPS[kind]:
-        problems.append(f"{where}: the {kind} is {len(text)} characters; at most {CAPS[kind]}.")
 
 
 def _block_texts(block: dict) -> list[str]:
@@ -180,7 +161,6 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
     for field in ("name", "version", "purpose", "title"):
         if not _text(deck.get(field)).strip():
             problems.append(f"The deck has no {field}.")
-    _capped(problems, "The deck", "title", deck.get("title"))
     if deck.get("language", "en") not in LANGUAGES:
         problems.append(f"The language is {deck.get('language')!r}; it is one of "
                         f"{', '.join(LANGUAGES)}.")
@@ -206,15 +186,9 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             problems.append(f"{where}: two decisions have this id.")
         if not _text(d.get("question")).strip():
             problems.append(f"{where}: it has no question.")
-        _capped(problems, where, "question", d.get("question"))
-        _capped(problems, where, "short", d.get("short"))
-        _capped(problems, where, "context", d.get("context"))
         reason = _text(d.get("reason")).strip()
         if not reason:
             problems.append(f"{where}: it has no reason for its recommendation.")
-        elif "\n" in reason:
-            problems.append(f"{where}: its reason must be one line.")
-        _capped(problems, where, "reason", reason)
 
         options = d.get("options")
         if not isinstance(options, list) or len(options) < 2:
@@ -235,8 +209,6 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             for field in ("name", "says"):
                 if not _text(o.get(field)).strip():
                     problems.append(f"{owhere}: it has no {field}.")
-            _capped(problems, owhere, "option name", o.get("name"))
-            _capped(problems, owhere, "option says", o.get("says"))
             for child in o.get("opens") or []:
                 if child not in ids or child == ident:
                     problems.append(f"{owhere}: it opens {child!r}, which is not another "
@@ -270,21 +242,8 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             if s["decision"] not in ids:
                 problems.append(f"Slide {n} places decision {s['decision']!r}, which is not one.")
             continue
-        where = _slide_where(n, s)
         if not _text(s.get("title")).strip():
             problems.append(f"Slide {n}: it has no title.")
-        _capped(problems, where, "title", s.get("title"))
-        _capped(problems, where, "short", s.get("short"))
-        texts = [t for b in s.get("blocks") or [] if isinstance(b, dict) for t in _block_texts(b)]
-        for t in texts:
-            if len(t) > CAPS["text"]:
-                problems.append(f"{where}: a line is {len(t)} characters; at most "
-                                f"{CAPS['text']}: {t[:40]}…")
-        total = sum(map(len, texts)) + len(_text(s.get("title")))
-        if total > CAPS["slide"]:
-            problems.append(f"{where}: it has {total} characters of words; at most "
-                            f"{CAPS['slide']}. Split it into two slides.")
-    problems += too_many_words(deck)
 
     if not problems:
         problems += picture_problems(deck, folder)
@@ -293,9 +252,8 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
 
 def story_problems(deck: dict) -> list[str]:
     """The story JARVIS will tell over the deck, made by the shared deck's
-    own rules (new_deck.story: each beat at most its SAY_MAX characters)
-    and package_story's limits, and how long it runs when spoken; [] when
-    it can be told."""
+    own rules and package_story's, and how long it runs when spoken (about
+    fifteen minutes at most); [] when it can be told."""
     from jarvis import package_story
     module = builder()
     try:
@@ -314,24 +272,6 @@ def story_problems(deck: dict) -> list[str]:
 def _slide_where(n: int, s: dict) -> str:
     """How a problem names a content slide."""
     return f"Slide {n} ({_text(s.get('title')) or 'no title'})"
-
-
-def too_many_words(deck: dict) -> list[str]:
-    """Every decision part over the builder's word limits
-    (new_deck.DECISION_WORDS), all at once: the builder itself stops at the
-    first."""
-    deck_builder, out = builder(), []
-    for n, d in enumerate(deck.get("decisions") or [], 1):
-        if not isinstance(d, dict):
-            continue
-        parts = [(f, d.get(f)) for f in ("question", "reason", "context")]
-        parts += [("says", o.get("says")) for o in d.get("options") or [] if isinstance(o, dict)]
-        for field, text in parts:
-            count, limit = deck_builder.words(text), deck_builder.DECISION_WORDS[field]
-            if count > limit:
-                out.append(f"Decision {d.get('id') or n}: a {field} has {count} words; "
-                           f"at most {limit}.")
-    return out
 
 
 def validate(content: Path) -> dict:
@@ -481,74 +421,6 @@ def expand(deck: dict) -> dict:
 
 
 # -- 1c. the briefing ------------------------------------------------------------------
-# Every deck an agent sends is a briefing (deck/0.1's document `purpose` and
-# `conclusion`): it opens on words, not on a decision or data, with its
-# narration.
-
-def _said(slide: dict) -> str:
-    """What JARVIS says over a content slide: its `say`, or its beats'."""
-    beats = [_text(b.get("say")) for b in slide.get("beats") or [] if isinstance(b, dict)]
-    return " ".join([_text(slide.get("say")), *beats]).strip()
-
-
-def one_sentence(text: str) -> bool:
-    """One line, ending at most once in . ! ? or …, whatever follows it."""
-    return "\n" not in text and len(re.split(r"(?<=[.!?…])\s+(?=\S)", text.strip())) == 1
-
-
-def briefing_problems(given: dict, deck: dict) -> list[str]:
-    """Everything that keeps the deck from being a briefing: the author's
-    own `purpose` and `conclusion` (`given`, the content as written, since
-    expand works out a purpose from the title) and the opening (`deck`,
-    expanded). [] when it is one."""
-    problems: list[str] = []
-    for field, tells in (
-            ("purpose", "one sentence saying what the package is for, in the reader's "
-                        "terms (\"Decide how JARVIS opens a package\")"),
-            ("conclusion", "one sentence giving the answer or the ask (\"Approve the "
-                           "opening check so every package says why it came\")")):
-        value = _text(given.get(field)).strip() if isinstance(given, dict) else ""
-        if not value:
-            problems.append(f"The deck has no {field}: write \"{field}\": {tells}.")
-            continue
-        _capped(problems, "The deck", field, value)
-    conclusion = _text(given.get("conclusion")).strip() if isinstance(given, dict) else ""
-    if conclusion and not one_sentence(conclusion):
-        problems.append("The deck's conclusion is more than one sentence: give the answer or "
-                        "the ask in one; the rest belongs on the slides.")
-    return problems + opening_problems(deck)
-
-
-def opening_problems(deck: dict) -> list[str]:
-    """The first slide drawn is the opening: not a decision, words first (no
-    table or facts as its first block), and a narration."""
-    from jarvis import package_inbox
-    slides = [s for s in deck.get("slides") or [] if isinstance(s, dict)]
-    asks = [d for d in deck.get("decisions") or []
-            if isinstance(d, dict) and d.get("id") not in package_inbox.VOTE_IDS]
-    fix = ("Start with an opening slide: its title says what the package is for, a `lead` "
-           "block states the conclusion, and its `say` tells both and why they matter to him.")
-    first = slides[0] if slides else None
-    if first is None or "decision" in first:
-        what = f"decision {first['decision']!r}" if first else (
-            f"decision {asks[0].get('id')!r}" if asks else "nothing")
-        return [f"The deck opens on {what}, not on its purpose. {fix}"]
-    where = f"Slide 1 ({_text(first.get('title')) or 'no title'}), the opening"
-    problems: list[str] = []
-    blocks = [b for b in first.get("blocks") or [] if isinstance(b, dict)]
-    if not blocks:
-        problems.append(f"{where}: it has no blocks. {fix}")
-    elif "table" in blocks[0] or "facts" in blocks[0]:
-        problems.append(f"{where}: it starts with {'a table' if 'table' in blocks[0] else 'facts'}"
-                        f", data before its purpose. Say the conclusion in words first, and "
-                        f"move the data to a later slide titled with the claim it supports.")
-    said = _said(first)
-    if not said:
-        problems.append(f"{where}: it has no `say`. JARVIS tells it: give what he hears, the "
-                        f"purpose, the conclusion and why it matters, in two or three sentences.")
-    return problems
-
-
 EXAMPLE = {
     "title": "Team lunch",
     "purpose": "Choose where the team eats on Friday.",

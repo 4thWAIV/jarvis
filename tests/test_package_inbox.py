@@ -257,14 +257,12 @@ def work_item(tmp_path):
     pytest.param(lambda tmp: page_zip(), id="a page with no story"),
     pytest.param(lambda tmp: story_zip(TOLD), id="a story that waits for nothing"),
 ])
-def test_a_page_for_a_work_item_that_asks_nothing_is_refused(
+def test_a_page_for_a_work_item_that_asks_nothing_is_taken(
         wired, shown, marks, record, tmp_path, work_item, data):
+    """No longer refused: what follows his sign-off is the workflow's."""
     r = send(wired, data(tmp_path), work=work_item.id)
-    assert r.status_code == 409, r.text
-    said = r.json()["error"]
-    assert f"names work item {work_item.id} but asks Tim nothing" in said
-    assert "make_package, which adds the standard vote" in said
-    assert package_inbox.listing() == [] and record.pending_count() == 0 and shown == []
+    assert r.status_code == 200, r.text
+    assert len(package_inbox.listing()) == 1 and shown == []
 
 
 def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
@@ -289,10 +287,8 @@ def test_an_agent_package_for_a_work_item_has_its_vote_asked_on_the_item(
                             {"name": "say", "version": "1.0.0", "purpose": "Say.",
                              "runs": "conversation", "skill": "SKILL.md",
                              "returns": ["results/**"]})
-    r = send(wired, conversation, work=work_item.id)
-    assert r.status_code == 409 and "a conversation package cannot carry Tim's vote" in \
-        r.json()["error"]
-    assert send(wired, conversation).status_code == 200, "with no Work item it is taken"
+    assert send(wired, conversation, work=work_item.id).status_code == 200, \
+        "a conversation package for a Work item is taken too"
 
 
 def test_a_package_for_a_work_item_that_asks_is_taken(

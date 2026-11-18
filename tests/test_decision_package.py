@@ -88,13 +88,8 @@ def test_every_problem_is_listed_at_once(tmp_path):
     (lambda d: d["decisions"][0]["options"][1].update(id="in"), "two options have this id"),
     (lambda d: d["decisions"][0]["options"][0].update(says=""), "it has no says"),
     (lambda d: d["decisions"][0].update(question=""), "it has no question"),
-    (lambda d: d["decisions"][0].update(reason="One.\nTwo."), "its reason must be one line"),
-    (lambda d: d["decisions"][0].update(question="Why " * 40), "the question is 160"),
     (lambda d: d["decisions"][0]["options"][0].update(opens=["nowhere"]), "opens 'nowhere'"),
     (lambda d: d["slides"].append({"decision": "nowhere"}), "places decision 'nowhere'"),
-    (lambda d: d["slides"][0]["blocks"].append({"p": "word " * 70}), "a line is 350"),
-    (lambda d: d["slides"][0]["blocks"].extend({"p": "word " * 50} for _ in range(3)),
-     "Split it into two slides"),
     (lambda d: d.update(language="fr"), "The language is 'fr'"),
 ])
 def test_each_rule_refuses(tmp_path, change, said):
@@ -102,6 +97,20 @@ def test_each_rule_refuses(tmp_path, change, said):
     change(deck)
     found = problems(tmp_path, deck)
     assert any(said in p for p in found), found
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d["decisions"][0].update(reason="One.\nTwo."),
+    lambda d: d["decisions"][0].update(question="Why " * 40),
+    lambda d: d["slides"][0]["blocks"].append({"p": "word " * 70}),
+    lambda d: d["slides"][0]["blocks"].extend({"p": "word " * 50} for _ in range(3)),
+])
+def test_no_length_of_the_author_s_words_is_refused(tmp_path, change):
+    """How long a question, reason, line or slide is, and how many lines a
+    reason has, is the author's: no character or word count refuses it."""
+    deck = small_deck()
+    change(deck)
+    assert problems(tmp_path, deck) == []
 
 
 def test_pictures_must_be_images_beside_the_content(tmp_path):
@@ -120,26 +129,32 @@ def test_pictures_must_be_images_beside_the_content(tmp_path):
     assert problems(tmp_path, deck) == []
 
 
-@pytest.mark.parametrize("root,said", [
-    ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">', "no width and no height"),
-    ('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="200">', "width='100%'"),
-    ('<svg xmlns="http://www.w3.org/2000/svg" width="320">', "no height"),
-    ('<svg xmlns="http://www.w3.org/2000/svg" width="0" height="200">', "width='0'"),
+@pytest.mark.parametrize("root", [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">',
+    '<svg xmlns="http://www.w3.org/2000/svg" width="320px" height="200">',
 ])
-def test_an_svg_with_no_size_of_its_own_is_refused_on_a_slide_and_an_option(
-        tmp_path, root, said):
-    """An <svg> without width and height in pixels can draw as nothing: a
-    blank slide that passed every check. Refused wherever it is pictured."""
+def test_an_svg_s_size_is_read_from_it(tmp_path, root):
+    """An SVG need not state its size in pixels: JARVIS reads its width and
+    height, else its viewBox."""
+    deck = small_deck()
+    content = write(tmp_path, deck)
+    (tmp_path / "pictures" / "plate.svg").write_text(root + '<rect width="10" height="10"/></svg>')
+    assert dp.problems_of(deck, content.parent) == []
+
+
+@pytest.mark.parametrize("root", [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="320">',
+    '<svg xmlns="http://www.w3.org/2000/svg" width="0" height="200">',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0 200">',
+])
+def test_an_svg_with_no_size_at_all_is_refused(tmp_path, root):
+    """One with neither a size nor a viewBox, or a size of zero, draws as
+    nothing: a blank slide that passed every check."""
     deck = small_deck()
     content = write(tmp_path, deck)
     (tmp_path / "pictures" / "plate.svg").write_text(root + '<rect width="10" height="10"/></svg>')
     found = dp.problems_of(deck, content.parent)
-    assert any("Picture pictures/plate.svg" in p and "width and height in pixels"
-               in p for p in found), (said, found)
-    (tmp_path / "pictures" / "plate.svg").write_text(
-        "<?xml version='1.0'?>\n<svg xmlns='http://www.w3.org/2000/svg' width='320px' "
-        "height=\"200\" viewBox='0 0 320 200'><rect width='10' height='10'/></svg>")
-    assert dp.problems_of(deck, content.parent) == []
+    assert any("Picture pictures/plate.svg" in p and "draws as nothing" in p for p in found), found
 
 
 def test_it_builds_with_the_shared_builder(tmp_path):
@@ -312,7 +327,7 @@ def test_check_only_validates_and_stops(tmp_path, monkeypatch, capsys):
     from tests.deck_fixtures import write_yaml
     monkeypatch.setattr(dp, "post", lambda *a, **k: pytest.fail("delivered"))
     assert dp.main([str(write_yaml(tmp_path, small_deck())), "--check-only"]) == 0
-    assert "3 decision(s), package lunch-decisions-1.0.0" in capsys.readouterr().out
+    assert "2 decision(s), package lunch-decisions-1.0.0" in capsys.readouterr().out
     assert not list(tmp_path.glob("*.zip"))
 
 
