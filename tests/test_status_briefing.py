@@ -143,14 +143,14 @@ def test_the_handoff_is_one_make_package_takes(sb, folder, tmp_path):
     assert handed["evidence"][0] == "./status-evidence.json"
     assert "commit a1b2c3d" in handed["evidence"] and PR in handed["evidence"]
     assert handed["work"] == [item.id]
-    asked = handed["decision"]
-    assert asked != "information only" and asked["id"] == "approve-status"
+    assert handed["question"].startswith("Is the status of ")
+    [asked] = handed["decisions"]
+    assert asked["id"] == "approve-status"
     assert [(o["id"], o["says"], o.get("needs_words", False)) for o in asked["options"]] == [
         ("approve", "Approve: this status is complete and accurate", False),
         ("reject", "Reject: say what is missing or wrong", True)]
-    assert asked["question"] and "steer" in asked["why_you"]
+    assert asked["question"] and "why_you" not in asked
     assert asked["evidence"][0].startswith("./status-evidence.json")
-    assert all(len(line) <= 160 for line in [asked["why_you"], *asked["evidence"]])
     assert (out / "status-evidence.json").exists()
     assert json.loads((out / "status-evidence.json").read_text())["items"][0]["id"] == item.id
     assert sorted(p.name for p in out.iterdir()) == ["handoff.json", "status-evidence.json"]

@@ -523,7 +523,7 @@ def sign(archive: Path, signer: tuple[Path, str], session: str,
 
 def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
     """The fresh author's claim for this package: its authored source put in
-    the zip (`.jarvis/author/`), and the claim checked here first exactly as
+    the zip (`.jarvis/author/`) with its briefing (`.jarvis/briefing/`), and the claim checked here first exactly as
     the receiving JARVIS checks it (author_proof.problem), so a source
     changed after the author's own last check is never delivered."""
     import time
@@ -533,6 +533,10 @@ def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
         author_proof.attach(made.archive, source)
     except (OSError, ValueError) as e:
         raise dp.Refused([f"The authored source could not be added: {e}"]) from None
+    # Its briefing travels with it: the prep, script and edits it was
+    # written from (briefing_prep), beside the author's source.
+    from jarvis import briefing_prep
+    briefing_prep.carry(made.archive, source.parent)
     why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
     if why:
         raise dp.Refused([why])
@@ -690,7 +694,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                     "docs/making-a-package.md has everything.")
     parser.add_argument("source", type=Path, nargs="?",
                         help="existing source to validate with --check-only or give the fresh author as evidence")
-    parser.add_argument("--handoff", type=Path, help="JSON evidence, audience and questions for the fresh author")
+    parser.add_argument("--handoff", type=Path, help="JSON: the question for Tim, its work item and evidence, for the fresh author")
     parser.add_argument("--engine", choices=("claude", "codex"), help="the originating session’s own engine")
     parser.add_argument("--example", nargs="?", const="decisions",
                         choices=("decisions", "presentation"),
@@ -716,7 +720,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="what the message carrying it says, one or two short sentences "
                              "(default: its kind and title)")
     parser.add_argument("--out", type=Path, default=None,
-                        help="where the package, its zip, the author's source and the cold reader's answers go "
+                        help="where the package, its zip and the author's source and briefing go "
                              "(default: a new temporary folder)")
     parser.add_argument("--document", action="append", default=[],
                         help="a canonical architecture document (python -m "
@@ -844,12 +848,8 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         async def finish(authored_source, turn):
             """Build the author's source: a deck is laid out and proven by
             JARVIS (presentation_proof) as it compiles, with no browser and
-            no screenshot review, then read cold (package_reader): what the
-            reader cannot answer from the slides before the first decision
-            goes back to the author once, and the deck is built again.
-            Anything refused is said."""
-            import asyncio
-            from jarvis import package_reader
+            no screenshot review. Its briefing was judged before it was
+            written (briefing_prep). Anything refused is said."""
             nonlocal made, author, built
             if job is not None:
                 job.checking()
@@ -858,21 +858,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 refuse_json_deck(authored_source)
             built = True        # the author's source is taken: a refusal now is reported on --work
             if envelope is not None:
-                # The package states the handoff's purpose: the originating
-                # session's, never the author's (it is bound in canonical.json).
+                # The package states the handoff's question as its purpose:
+                # the originating session's, never the author's (it is bound
+                # in canonical.json).
                 handed = package_author.read_handoff(args.handoff)
-                made = make_architecture(envelope, authored_source, out, handed["purpose"],
+                made = make_architecture(envelope, authored_source, out, handed["question"],
                                          handed.get("approval") is True, more)
             elif is_presentation(authored_source):
-                async def rebuild() -> dict:
-                    nonlocal made
-                    shutil.rmtree(out / "compiled", ignore_errors=True)
-                    made = await asyncio.to_thread(make_presentation, authored_source, out)
-                    return made.deck
-                await rebuild()
-                read = await package_reader.check(made.deck, args.engine, out / "reader",
-                                                  turn, rebuild)
-                print(f"A cold reader followed it ({read['attempts']} read(s)).")
+                made = make_presentation(authored_source, out)
             else:
                 made = make_folder(authored_source, out)
             author = with_author(made, authored_source, args.session)

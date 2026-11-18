@@ -882,10 +882,10 @@ these records, never from an agent's memory: `python -m jarvis.status_briefing
 --work <id> [--work <id> ...] --out <folder> [--since <time>]`
 (`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
 `need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
-`work_status` reads them) writes `handoff.json` (a make_package handoff, the
-composition as its `briefing`, asking one decision, `approve-status`:
-approve, or reject with his words on what is missing or wrong, with its
-lead-in) and `status-evidence.json`, and nothing
+`work_status` reads them) writes `handoff.json` (a make_package handoff:
+its question, the items, the evidence file first, and one decision,
+`approve-status`: approve, or reject with his words on what is missing or
+wrong) and `status-evidence.json`, and nothing
 else: per item, what needs him first (his acts, every held piece and what
 holds it, stalled pieces, the item stalled or answered with no follow-up,
 each with who and since when; or one line that nothing needs him), then
@@ -1345,14 +1345,9 @@ document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
 `work_packages.recognise`) is for a working tool. No package goes through
 a browser on its way to Tim: make_package builds the author's source once
-(no screenshot review), then a cold reader (`package_reader.py`, a second
-fresh session on the package author's engine choice, its own prompt) is
-given only the words of the slides before the first decision
-(`before_the_ask`) and must answer the skill's six cold-read questions
-(`QUESTIONS`); what it cannot answer goes back to the author once
-(another turn of the same author, `package_author.FreshSession`), the deck
-is built and read again, and a second miss refuses the package with the
-reader's answers. Only then is it signed with the session's key and
+(no screenshot review), from a briefing that passed its editors and
+judges before the deck was written (`briefing_prep.py`, below). Only then
+is it signed with the session's key and
 delivered unshown to his package inbox. Every unpack
 (`server._decision_problem`) refuses a deck (`deck-data.js` and
 `scripts/decide.py`, the shared deck's, `decision_stamp.MARKS`) not signed
@@ -1375,6 +1370,26 @@ architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).
 `python -m jarvis.decision_package` is the command's old name.
+The sender's handoff gives only the question for Tim, its Work item, the
+evidence references and any decisions (`package_author.read_handoff`);
+`purpose`, `conclusion`, `audience`, `questions` and any structure are
+refused with the reason. The fresh author writes the briefing before any
+slide (`briefing_prep.py`): `prep.md` (does Tim care; what he knows, from
+his record; the background he lacks; his first ten questions, sourced or
+UNANSWERED; every fact scored 1-5) and `script.md` (ordered by those
+scores), or `not-for-tim.md`, which sends nothing. At most `ROUNDS` (3)
+rounds: three editors (`EDITORS`: cut, tighten, specifics; each one call
+to the author's engine, each edit held to its rule, applied and logged
+before/after in `edits.md`) then four judges (`JUDGES`: cares, decision
+ready, background, order), each a typed question through `decide(question_id,
+text, context) -> {answer, probability}` (yes/no, choice or 0-10, asked
+`ASKS` times; the probability the share that agreed; every call recorded at
+`/briefing/decisions/<id>.decision` with its input digest and the package by
+its author session); findings go back to the same author session, and a
+script that still fails is refused with them. Only then is the deck
+written, from the script alone; `prep.md`, `script.md` and `edits.md` go in
+the zip under `.jarvis/briefing/` (`briefing_prep.carry`, from
+`make_package.with_author`).
 An agent's package proves a fresh author wrote it (Tim's decision
 `receiver-check`, `author_proof.py`): make_package's fresh author
 (`package_author.py`) ends with its own `--check-only`, which prints the
@@ -1415,7 +1430,7 @@ questions refuse the package.
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
 jarvis.make_package` checks, builds and proves it (a deck laid out and
-proven by JARVIS and read by the cold reader, see "Work packages"), then sends it as a message
+proven by JARVIS from a judged briefing, see "Work packages"), then sends it as a message
 carrying it, `POST /api/messages?work=&project=&workflow=&source=`
 (`decision_package.deliver`, signed with the sending session's key; see
 "One channel"), whose route hands the bytes to `_receive_inbox_package`;
@@ -3139,6 +3154,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   author), and the error package for something held
 - `author_proof.py` — Proof that a fresh author session wrote an agent's
   package: the source digest, the claim and the author's own transcript
+- `briefing_prep.py` — The forced briefing pipeline: the typed questions
+  (`decide`), the editors, the judges and their rounds over the author's
+  prep.md and script.md, and carrying them in the package
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   the one way to reach Tim (a signed message, every decision a package)
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
@@ -3274,7 +3292,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   with (see `docs/making-a-package.md`); `presentation.py` /
   `presentation_source.py` / `presentation_proof.py` / `layout_spec.py` /
   `picture_proof.py` compile, lay out and prove a deck without a browser;
-  `package_reader.py` is the cold reader; `decision_package.py` reads,
+  `briefing_prep.py` the briefing before it; `decision_package.py` reads,
   expands, checks, builds and delivers the shared deck's data
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see

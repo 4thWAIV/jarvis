@@ -1,7 +1,9 @@
 """A stand-in `claude` that authors an architecture document's explanation
-the way the real fresh author is told to (package_author._assignment): it
-reads the document folder the prompt names (a view set's first view's),
-writes package/UNDERSTANDING.md
+the way the real fresh author is told to (package_author._assignment): its
+first turn writes the briefing's prep and script, an ask of the briefing's
+editors and judges is answered passing (author_fixtures.passing_reply), and
+the deck turn reads the document folder the prompt names (a view set's
+first view's), writes package/UNDERSTANDING.md
 (and package/story.json, copied from `AUTHOR_TEST_STORY` when it is set),
 runs the exact check command the prompt gives as a real subprocess, and
 records that call and its real output in its own transcript under
@@ -18,6 +20,14 @@ ROOT = Path(__file__).resolve().parent.parent
 FAKE_BRAIN = Path(__file__).parent / "fixtures" / "fake_brain.py"
 
 ACTION = '''
+    _sys = __import__('sys')
+    _sys.path.insert(0, {root!r})
+    from tests.author_fixtures import passing_reply as _passing, write_prep as _prep
+    if 'prep.md and script.md now' in text:
+        from pathlib import Path as _P
+        _prep(_P('.'))
+    elif _passing(text) is not None:
+        text = _passing(text)       # an editor's or judge's ask: echoed back as its answer
     if '--check-only --document' in text:
         import json as _json, re as _re, subprocess as _sp, time as _time
         from pathlib import Path as _P

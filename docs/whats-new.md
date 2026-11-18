@@ -88,15 +88,22 @@ opens on words with JARVIS speaking over them, never on a question or a
 table. Decks draw in your system's own font, so nothing ships a font of its
 own.
 
-## A fresh reader checks a package before it reaches you
+## Every briefing is prepared, edited and judged before it is written
 
-Before a package reaches you, a second
-fresh reader that was not there is given only the slides before the first
-question and must be able to say what it is about, what you approved
-before, what happened, what the options are and what changes under each,
-what is recommended and what you are asked. What it cannot answer goes back
-to the author once; a package a reader still cannot follow never reaches
-you.
+An agent now gives the package author only its question, the Work item and
+the evidence; it can no longer hand over a purpose, an audience note or a
+slide order. Before any slide, the author writes down whether you would
+want this at all, what you already know, the background you lack, the
+first ten questions you would ask with a source for each answer (or
+"unanswered"), and a score for every fact by how much it changes your
+answer. The briefing follows those scores, most relevant first. Three
+editors then cut talk about the briefing and hedges, tighten wording and
+replace vague claims with exact facts, logging every change; four judges
+ask whether you care, whether the decision is ready, whether the background
+is right and whether the order follows the scores. What fails goes back to
+the same author, at most three times, and a briefing that still fails never
+reaches you. Every package carries its prep, script and edits, and every
+judge's answer is recorded so it can be compared with your own verdict.
 
 ## JARVIS lays out every deck and checks its pictures
 
