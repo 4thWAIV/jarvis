@@ -45,7 +45,7 @@ Write these sections, each a `## ` heading, in this order (the factory checks th
 
 The briefing in Markdown, slide by slide, in the order of the prep's scores, highest first:
 
-- Slide 1 gives the answer and the ask: what is asked (Approve or Reject, or a choice among named options), the recommendation, by when, and what happens if he does not decide. A report with nothing to decide still asks Approve or Reject of the report.
+- The most relevant information comes first, with the background he needs before each decision; follow-up questions come last.
 - Each slide's title is a sentence stating its finding, with the decisive number in the title or first line.
 - Each decision's own explanation comes immediately before that decision; one decision at a time.
 - Every problem names its object (test, file, PR, run), what it checks or does, why it failed or happens, and what the fix changes.
