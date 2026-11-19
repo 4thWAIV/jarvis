@@ -25,12 +25,52 @@ AGENTS = {"agents": [{"session_id": f"s{i}", "name": f"agent {i}", "active": Tru
                       "state": "idle"} for i in range(30)]}
 
 
-async def _open(p, url, messages):
+# The page's own record of the rays, kept from its start: each time a ray
+# came into the lane or the lane emptied ([performance.now() ms, showing]),
+# and on every frame while one shows, the rays with the geometry they should
+# meet. A busy runner can take seconds to answer a test's question, longer
+# than a ray shows, so what the ray did is read from this record afterwards.
+RAY_RECORD = """(() => {
+  const measure = () => {
+    const orb = document.getElementById('orb-control').getBoundingClientRect();
+    const target = document.querySelector('.agents-list li[data-session-id="s25"] .agent-orb');
+    const t = target && target.getBoundingClientRect();
+    const col = document.getElementById('right-column').getBoundingClientRect();
+    const tabs = document.querySelector('.centre-tabs').getBoundingClientRect();
+    return {orbCentre: orb.left + orb.width / 2,
+            orbMid: orb.top + orb.height / 2, shown: !!target,
+            targetX: t && t.left + t.width / 2, targetY: t && t.top + t.height / 2,
+            laneLeft: col.right, tabsTop: tabs.top,
+            rays: [...document.querySelectorAll('#ray-lane .ray')].map(
+              g => g.querySelector('.ray-core').getAttribute('d'))};
+  };
+  window.__rayTimeline = [];
+  window.__rayFrames = [];
+  let showing = false;
+  const frame = () => {
+    if (!showing) return;
+    window.__rayFrames.push(measure());
+    requestAnimationFrame(frame);
+  };
+  const look = () => {
+    const now = !!document.querySelector('#ray-lane .ray');
+    if (now === showing) return;
+    showing = now;
+    window.__rayTimeline.push([performance.now(), now]);
+    if (now) requestAnimationFrame(frame);
+  };
+  new MutationObserver(look).observe(document, {childList: true, subtree: true});
+})()"""
+
+
+async def _open(p, url, messages, record=False):
     try:
         browser = await p.chromium.launch(headless=True)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    if record:
+        await page.add_init_script(RAY_RECORD)
     await page.route("**/api/agents", lambda route: route.fulfill(
         status=200, content_type="application/json", body=json.dumps(AGENTS)))
 
@@ -76,30 +116,23 @@ def _segments(d):
 async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_orb(page_playwright, page_url):
     async with page_playwright as p:
         browser, page = await _open(p, page_url, [
-            {"type": "agent_message", "session_id": "s25"}])
+            {"type": "agent_message", "session_id": "s25"}], record=True)
         await page.get_by_role("button", name="All", exact=True).click()
-        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
-        info = await settled(page, """() => {
-          const orb = document.getElementById('orb-control').getBoundingClientRect();
-          const target = document.querySelector('.agents-list li[data-session-id="s25"] .agent-orb');
-          const t = target && target.getBoundingClientRect();
-          const col = document.getElementById('right-column').getBoundingClientRect();
-          const tabs = document.querySelector('.centre-tabs').getBoundingClientRect();
-          return {orbCentre: orb.left + orb.width / 2,
-                  orbMid: orb.top + orb.height / 2, shown: !!target,
-                  targetX: t && t.left + t.width / 2, targetY: t && t.top + t.height / 2,
-                  laneLeft: col.right, tabsTop: tabs.top};
-        }""")
+        await page.wait_for_function("window.__rayTimeline.length >= 2", polling=100, timeout=18000)
+        timeline, frames = await page.evaluate("[window.__rayTimeline, window.__rayFrames]")
+        # The first frame that drew the same as the one before it: the layout
+        # had settled with the ray in it.
+        info = next((b for a, b in zip(frames, frames[1:]) if a == b and b["rays"]), None)
+        assert info, frames
         assert info["shown"], "the messaged agent was not brought into view"
-        (ray,) = await settled(page, RAYS)
-        sx, sy, top, cx, ey, ex = _segments(ray["d"])
+        (d,) = info["rays"]
+        sx, sy, top, cx, ey, ex = _segments(d)
         assert abs(sx - info["orbCentre"]) < 1 and abs(sy - info["orbMid"]) < 1, info
         assert 0 < top < info["tabsTop"], info                         # above the centre tabs
         assert info["laneLeft"] < cx < 1440, info                      # in the right-hand lane
         assert abs(ex - info["targetX"]) < 1 and abs(ey - info["targetY"]) < 1, info
-        await page.wait_for_timeout(4000)
-        assert await page.evaluate(RAYS), "the ray should still be showing at four seconds"
-        await page.wait_for_function("!document.querySelector('#ray-lane .ray')", timeout=8000)
+        (came, _), (went, _) = timeline[:2]
+        assert went - came >= 4000, f"the ray should still be showing at four seconds: {timeline}"
         await browser.close()
 
 
