@@ -285,6 +285,7 @@ class Supervisor:
         self.restarts = 0            # every restart since this server started
         self.failures = 0            # deaths in a row, for the backoff
         self.ping_failures = 0
+        self._answered = False       # has the engine started last answered yet
         self._restart_at: Optional[float] = None
         self._running_since: Optional[float] = None
         self.last_reason: Optional[str] = None
@@ -308,6 +309,7 @@ class Supervisor:
             return
         self.state = "running"
         self.ping_failures = 0
+        self._answered = False
         self.last_health = None
         self._running_since = self._clock()
         log.info("knowledge engine started, pid %s", self.proc.pid)
@@ -323,6 +325,15 @@ class Supervisor:
         if self.proc.poll() is not None:
             return self._schedule_restart(now, f"exited with {self.proc.returncode}")
         if not self._healthy():
+            if not self._answered:
+                # Still opening (about 40 s on a full data folder): a missed
+                # ping is not a hang until it has answered once, or until
+                # OPEN_BOUND_SEC has passed without an answer.
+                if self._running_since is not None and now - self._running_since >= OPEN_BOUND_SEC:
+                    self._end_child()
+                    return self._schedule_restart(
+                        now, f"had not answered {OPEN_BOUND_SEC:.0f} s after it started")
+                return self.state
             self.ping_failures += 1
             if self.ping_failures >= PING_FAILURES_MAX:
                 self._end_child()
@@ -344,7 +355,10 @@ class Supervisor:
         except (EngineUnavailable, KnowledgeRefused):
             return False
         self.last_health = body if isinstance(body, dict) else None
-        return isinstance(body, dict) and body.get("state") in ("ok", "degraded")
+        if isinstance(body, dict) and body.get("state") in ("ok", "degraded"):
+            self._answered = True
+            return True
+        return False
 
     def _schedule_restart(self, now: float, reason: str) -> str:
         """Restart at once the first time, then after a short, capped delay
