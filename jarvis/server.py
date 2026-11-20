@@ -11145,22 +11145,36 @@ PACKAGE_JOBS_LOOP = "package jobs"
 JARVIS_SENDER, JARVIS_NAME = "jarvis", "JARVIS"
 
 
+def _missing_links(workflow_id: str, work_id: str) -> list[str]:
+    """What a package request names that JARVIS has no record of: the
+    workflow and the Work item it goes to (`--work`). Only that they exist;
+    a closed one is the run's Error to tell, never a refusal. The Work items
+    the handoff is about are the gather step's material, never checked here."""
+    missing = []
+    if workflow_id and workflow_store.snapshot(workflow_id) is None:
+        missing.append(f"There is no workflow {workflow_id}; nothing was taken.")
+    if work_id and work_store.get(work_id) is None:
+        missing.append(f"There is no Work item {work_id}; nothing was taken.")
+    return missing
+
+
 def _accept_package_request(session: str, work: str, general: bool, body: dict) -> dict:
     """An onboarded agent's signed request for a package (the page has no
     part in it): checked at once, else refused with every problem
     (package_request.Refused) and nothing recorded. Only what
     workflow.yaml record_and_start checks: the handoff (package_request.
-    check), not both a Work item and none, and the engine. The package's
-    Work item is `--work`, else the one the handoff names
-    (package_request.work_of). Taken, JARVIS records who asked
+    check), not both a Work item and none, the Work item and workflow it
+    names existing (`_missing_links`), and the engine. The package's
+    Work item is `--work` alone (none with `--general` or no `--work`); the
+    handoff's `work` (one id or a list) is what the package is about, kept on
+    the request for the gather step and never where it goes. Taken, JARVIS records who asked
     (`agent:<session>`, from the signature), the package and its first
     run's job (package_jobs.accept), and starts the run in its own
     process. Blocking."""
     handoff = body.get("handoff")
     request = package_request.check(handoff)
-    named = package_request.work_of(request)
     problems = []
-    if general and (work or named):
+    if general and work:
         problems.append("A package is for one Work item or for none (--general), not both.")
     workflow = str(body.get("workflow") or "").strip()
     source = str(body.get("source") or "").strip()
@@ -11173,9 +11187,9 @@ def _accept_package_request(session: str, work: str, general: bool, body: dict) 
     engine = str(body.get("engine") or "").strip()
     if engine and engine not in brain_provider.ENGINES:
         problems.append("The engine is " + " or ".join(brain_provider.ENGINES) + ".")
+    problems.extend(_missing_links(workflow, work))
     if problems:
         raise package_request.Refused(problems)
-    work = work or named
     if not engine:
         key = agent_key_store.for_session(session)
         engine = key.provider if key is not None and key.provider in brain_provider.ENGINES else ""

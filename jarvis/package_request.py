@@ -24,7 +24,10 @@ JSON object of exactly these fields:
   purpose         optional: the sender's own reason (what it needs from Tim,
                   why, what it does after his answer), labelled the sender's.
   recommendation  optional: the sender's recommendation, labelled the same.
-  work            optional, as before: a Work item id or a list of them.
+  work            optional, as before: a Work item id or a list of them, the
+                  Work items the package is ABOUT, kept as a list of ids for
+                  the gather step to read as material. It never decides where
+                  the package goes: that is `--work` (or none, `--general`).
   approval        optional, as before: an architecture document's approval.
 
 `conclusion` and `audience` are refused (the sender's view is its labelled
@@ -209,9 +212,15 @@ def check(value) -> dict:
             problems.append(f"{key}, when given, is your words.")
         sender[key] = _text(value.get(key)) or None
     work = value.get("work")
-    if work is not None and not _text(work) and not (
-            isinstance(work, list) and work and all(_text(w) for w in work)):
-        problems.append("The handoff's work is a Work item id or a list of them.")
+    about: list[str] = []
+    if work is not None:
+        if _text(work):
+            about = [_text(work)]
+        elif isinstance(work, list) and work and all(_text(w) for w in work):
+            about = [_text(w) for w in work]
+        else:
+            problems.append("The handoff's work is a Work item id or a list of them: the "
+                            "Work items the package is about.")
     if "approval" in value and not isinstance(value["approval"], bool):
         problems.append("The handoff's approval is true (ask Tim to approve the architecture "
                         "design) or false.")
@@ -219,18 +228,7 @@ def check(value) -> dict:
         raise Refused(problems)
     return {"questions": asked, "evidence": entries,
             "from_the_sender": {"label": FROM_THE_SENDER, "answers": said, **sender},
-            "work": work, "approval": value.get("approval") is True}
-
-
-def work_of(request: dict) -> str:
-    """The Work item a checked request's handoff names (its `work`, as
-    before: an id, or a list of them) when it names one; "" when it names
-    none or several, since which of several a package belongs to is not
-    decided."""
-    work = request.get("work")
-    named = [work] if isinstance(work, str) else list(work or [])
-    named = [w.strip() for w in named if isinstance(w, str) and w.strip()]
-    return named[0] if len(named) == 1 else ""
+            "work": about, "approval": value.get("approval") is True}
 
 
 def questions_text(request: dict) -> str:

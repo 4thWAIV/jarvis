@@ -1506,15 +1506,20 @@ sender's `options`; questions and decisions are one list), `evidence`
 (typed entries of the 14 types, `evidence_types.FIELDS`: a `file` checked
 to be there and its SHA-256 and size recorded as it is taken; `label` the
 one type a model resolves; the situation is one of them), optional
-`purpose` and `recommendation`, and `work` and `approval` as before (the
-Work item `--work` names, else the one the handoff's `work` names,
-`package_request.work_of`, is the package's);
+`purpose` and `recommendation`, `work` (one Work item id or a list: the
+items the package is about, kept as a list of ids on the request as the
+gather step's material, never where the package goes) and `approval` as
+before. The package's Work item is `--work` alone; `--general`, or no
+`--work`, is none (his Inbox);
 everything from the sender is kept labelled as the sender's
 (`from_the_sender`, `options_from_the_sender`). `conclusion`, `audience`
 and any structure are refused, `question`, `decisions` and `situation` say
 where they went, and a bad request is refused at once, every problem
 listed (400 `problems`), nothing recorded; beside the handoff only what
-record_and_start checks (not both a Work item and none, the engine). Taken
+record_and_start checks (not both `--work` and `--general`, the engine)
+and that the `--work` item and `--workflow` named exist
+(`server._missing_links`; a closed item is not refused, its run's Error is
+told by message). Taken
 (`server._accept_package_request`), JARVIS records who asked from the signature
 (`requested_by`, `agent:<session id>`), makes the package id and its first
 run id and records the job, one job one run, with its run

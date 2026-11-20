@@ -5,8 +5,9 @@ each calls the server's one function for it.
         {"handoff": {...}, "engine"?, "project"?, "workflow"?, "source"?,
          "documents"?: [[document, revision], ...]}: an onboarded agent asks
         for a package, signed with its own key (agent_rights `packages`;
-        `work` in the query so the right's scope sees it; with none, the
-        Work item the handoff names). Checked at once:
+        `work` in the query so the right's scope sees it, the one Work item
+        the package goes to; the handoff's own `work` is only what it is
+        about). Checked at once:
         a bad request is refused (400, `problems`) and nothing is recorded.
         Taken, JARVIS records who asked from the signature and the job with
         its run, starts the run itself and answers {job, package, run,

@@ -177,11 +177,16 @@ def test_an_entry_is_resolved_by_gather_not_refused_as_it_is_taken(tmp_path):
     assert f["path"] == str(locked)
 
 
-def test_the_work_item_a_handoff_names():
-    assert pr.work_of({"work": "work-1"}) == "work-1"
-    assert pr.work_of({"work": ["work-1"]}) == "work-1"
-    assert pr.work_of({"work": None}) == ""
-    assert pr.work_of({"work": ["work-1", "work-2"]}) == "", "which of several is not decided"
+def test_the_work_items_a_handoff_is_about_are_kept_as_a_list(tmp_path):
+    """The handoff's work, one id or several, is what the package is about:
+    kept as a list of ids for gather, whichever form it came in."""
+    assert pr.check(handoff(tmp_path, work="work-1"))["work"] == ["work-1"]
+    assert pr.check(handoff(tmp_path, work=["work-1", " work-2 "]))["work"] == ["work-1",
+                                                                                "work-2"]
+    assert pr.check(handoff(tmp_path))["work"] == []
+    with pytest.raises(pr.Refused):
+        pr.check(handoff(tmp_path, work=["work-1", ""]))
+    assert not hasattr(pr, "work_of"), "nothing in the handoff says where the package goes"
 
 
 def test_a_relative_file_is_read_from_the_handoff_s_own_folder(tmp_path, monkeypatch):
@@ -252,8 +257,6 @@ def test_a_bad_request_is_refused_at_once_and_nothing_is_recorded(wired, tmp_pat
     assert spawned == [] and pj._jobs([["state", "in", list(pj.STATES)]]) == []
     r = agent.post(client, pr.ROUTE + "?work=work-1&general=1", {"handoff": handoff(tmp_path)})
     assert r.status_code == 400 and "not both" in r.text and spawned == []
-    r = ask(client, agent, {"handoff": handoff(tmp_path, work="work-1")})
-    assert r.status_code == 400 and "not both" in r.text and spawned == []
     r = ask(client, agent, {"handoff": handoff(tmp_path), "engine": "gpt"})
     assert r.status_code == 400 and "engine" in r.text and spawned == []
 
@@ -275,21 +278,43 @@ def test_a_request_is_checked_only_as_record_and_start_says(wired, tmp_path, spa
     assert pj.get(r.json()["job"])["work"] == work
 
 
-def test_the_handoff_s_work_item_is_the_package_s(wired, tmp_path, spawned):
+def test_the_package_s_work_item_is_work_alone_never_the_handoff_s(wired, tmp_path,
+                                                                    spawned):
+    """--work is where the package goes; the handoff's work is only what it
+    is about, kept on the request for gather."""
     server, *_, folder, home = wired
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
-    work = _start_work(client, agent, folder)
-    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path, work=work)})
+    about = _start_work(client, agent, folder)
+    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path, work=about)})
     assert r.status_code == 200, r.text
     taken = r.json()
     doc = pj.get(taken["job"])
-    assert doc["work"] == work
-    assert pj.path_of(doc) == f"/work/{work}/packages/{taken['package']}/runs/run-1/run.job"
-    r = agent.post(client, pr.ROUTE + "?work=work-given",
-                   {"handoff": handoff(tmp_path, work=work)})
-    assert r.status_code == 200 and pj.get(r.json()["job"])["work"] == "work-given", \
-        "--work is the package's Work item when given"
+    assert doc["work"] is None, "no --work: no Work item, whatever the handoff is about"
+    assert doc["request"]["work"] == [about]
+    assert pj.path_of(doc) == f"/packages/{taken['package']}/runs/run-1/run.job"
+    r = ask(client, agent, {"handoff": handoff(tmp_path, work=[about, "work-elsewhere"])})
+    assert r.status_code == 200, "--general with the handoff about Work items is not both"
+    doc = pj.get(r.json()["job"])
+    assert doc["work"] is None and doc["request"]["work"] == [about, "work-elsewhere"]
+    given = _start_work(client, agent, folder)
+    r = agent.post(client, pr.ROUTE + f"?work={given}",
+                   {"handoff": handoff(tmp_path, work=about)})
+    assert r.status_code == 200 and pj.get(r.json()["job"])["work"] == given, \
+        "--work is the package's Work item"
+
+
+def test_a_request_naming_what_does_not_exist_is_refused_at_once(wired, tmp_path, spawned):
+    """A Work item or workflow JARVIS has no record of is refused as the
+    request comes in, never left to fail at delivery."""
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    r = ask(client, agent, {"handoff": handoff(tmp_path)}, work="work-nowhere")
+    assert r.status_code == 400 and "no Work item work-nowhere" in r.text
+    r = ask(client, agent, {"handoff": handoff(tmp_path), "workflow": "wf-nowhere"})
+    assert r.status_code == 400 and "no workflow wf-nowhere" in r.text
+    assert spawned == [] and pj._jobs([["state", "in", list(pj.STATES)]]) == []
 
 
 def test_only_an_onboarded_agent_s_own_key_asks(wired, tmp_path, spawned):
