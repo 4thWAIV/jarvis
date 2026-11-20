@@ -36,8 +36,8 @@ unexpectedly, and a run whose process ended without finishing it, each put
 the job in ERROR with the step, the reason in plain words, what was tried
 and what would fix it (`error`). The server then tells everyone
 (server._package_job_errored): the Work item goes to Error, else Tim gets a
-message; JARVIS has an update; the agent reads it all on its job
-(`status`). More than ERROR_RATE_MAX of packages ending in Error is a major
+message; JARVIS has an update; the asking agent gets a message from JARVIS
+in its session saying it all, and reads the same on its job (`status`). More than ERROR_RATE_MAX of packages ending in Error is a major
 problem with the package system (`error_rate`).
 """
 from __future__ import annotations
@@ -70,6 +70,7 @@ STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
 # Each step's program, "module:function", called with the job's record;
 # it returns WAITING when it asked the sender and waits on the answers,
 # raises Blocked when it cannot go on. A step with none is not built yet.
+# The deliver step signs with JARVIS's own key (`sign`).
 PRODUCERS: dict[str, str] = {}
 # At most five rounds of questions to the sender (Tim, 2026-11-19).
 MAX_ROUNDS = 5
@@ -77,10 +78,6 @@ MAX_ROUNDS = 5
 SENDER_WAIT_SEC = 2 * 3600.0
 # More than 1 package in 100 ending in Error is a major problem (Tim, 2026-11-19).
 ERROR_RATE_MAX = 1 / 100
-ANSWER_CHARS = 4000
-# How long a queued job may wait for its process to say it runs before it
-# is taken as never started.
-START_GRACE_SEC = 60.0
 LOG = "job.log"
 JARVIS = "jarvis"
 
@@ -247,7 +244,7 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
     for key, value in answers.items():
         if not isinstance(value, str) or not value.strip():
             raise JobError(f"The answer to {key} is words.")
-        given[key] = value.strip()[:ANSWER_CHARS]
+        given[key] = value.strip()
 
     def write(d):
         if d["state"] != WAITING:
@@ -277,6 +274,14 @@ def ask(job_id: str, questions: list[dict]) -> bool:
     return asked["now"]
 
 
+def sign(doc: dict, source: Path, target: Path, statements: tuple[str, ...] = ()) -> None:
+    """Sign the package the run made with JARVIS's own key, naming who
+    asked (`requested_by`, proven as the request was taken): the deliver
+    step's signature (workflow.yaml deliver, decided "signing")."""
+    from jarvis import package_signature
+    package_signature.sign_as_jarvis(source, target, doc["requested_by"], statements)
+
+
 def delivered(job_id: str, result: dict) -> dict:
     return _change(job_id, DELIVERED, lambda d: d.update(state=DELIVERED, result=result,
                                                          pid=None))
@@ -295,9 +300,11 @@ def error(job_id: str, step: str, reason: str, tried: str, fix: str) -> dict:
     return _change(job_id, ERROR, write)
 
 
-def told(job_id: str) -> dict:
-    """Everyone has been told of the job's Error."""
-    return _change(job_id, "told", lambda d: d.update(told=True))
+def told(job_id: str, message: Optional[int] = None) -> dict:
+    """Everyone has been told of the job's Error; `message` is JARVIS's
+    message to the asking agent that told it (run_store's id)."""
+    return _change(job_id, "told",
+                   lambda d: d.update(told=True, told_agent_message=message))
 
 
 # -- what the server looks after ---------------------------------------------------------
@@ -332,8 +339,7 @@ def overdue(now: Optional[float] = None) -> list[dict]:
                     f"{len(doc['rounds'])}) and waited 2 hours.",
                     "The sending agent answers the questions (package_answer) and asks for a "
                     "new run, or tells Tim why it cannot."))
-        elif (not _alive(doc.get("pid")) if doc.get("pid") else
-              now - doc["updated_at"] > START_GRACE_SEC):
+        elif doc.get("pid") and not _alive(doc["pid"]):
             moved.append(error(
                 doc["id"], step, "The run's process ended without finishing it.",
                 f"JARVIS ran the {step} step in its own process (log: {doc['log']}).",
@@ -385,8 +391,17 @@ SPAWN: Callable[[dict], int] = _spawn_detached
 
 
 def start(doc: dict) -> dict:
-    """Start the run's process; the job names its pid."""
-    pid = SPAWN(doc)
+    """Start the run's process; the job names its pid. A process that
+    cannot be started puts the job in Error, saying why."""
+    step = doc.get("step") or STEPS[0]
+    try:
+        pid = SPAWN(doc)
+    except OSError as e:
+        return error(doc["id"], step, f"The run's process could not be started: {e}",
+                     f"JARVIS started python -m jarvis.package_jobs run {doc['id']} in "
+                     f"{doc['folder']}.",
+                     "Fix what stopped the process starting (the error says what); once it "
+                     "is fixed, a new run.")
     return _change(doc["id"], "started", lambda d: d.update(pid=pid))
 
 

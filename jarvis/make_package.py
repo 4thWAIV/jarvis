@@ -55,8 +55,8 @@ can accompany the handoff as evidence; --check-only validates source without a m
 The command builds the author's unchanged result (a deck is proven as it
 compiles; no browser runs anywhere in a package's path, and his JARVIS
 makes the proof again as it arrives), then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
-messages_api.py): on the Work item `--work` names (else his Inbox), saying
-`--says`, unpacked in his package inbox (package_inbox.py), never shown and
+messages_api.py): on the Work item `--work` names (else his Inbox), with
+words the command writes, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
 who his answers go back to; `--workflow` names the workflow it is for.
 Anything it cannot decide it refuses, saying what to change. Nothing is
@@ -696,7 +696,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                     "docs/making-a-package.md has everything.")
     parser.add_argument("source", type=Path, nargs="?",
                         help="existing source to validate with --check-only or give the fresh author as evidence")
-    parser.add_argument("--handoff", type=Path, help="JSON: the question for Tim, its work item and evidence, for the fresh author")
+    parser.add_argument("--handoff", type=Path,
+                        help="JSON: the handoff in its one form (package_request.py: "
+                             "sender_answers, questions, typed evidence)")
     parser.add_argument("--engine", choices=("claude", "codex"), help="the originating session’s own engine")
     parser.add_argument("--example", nargs="?", const="decisions",
                         choices=("decisions", "presentation"),
@@ -852,9 +854,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 # The package states the handoff's question as its purpose:
                 # the originating session's, never the author's (it is bound
                 # in canonical.json).
+                from jarvis import package_request
                 handed = package_author.read_handoff(args.handoff)
-                made = make_architecture(envelope, authored_source, out, handed["question"],
-                                         handed.get("approval") is True, more)
+                made = make_architecture(envelope, authored_source, out,
+                                         package_request.questions_text(handed),
+                                         handed["approval"], more)
             elif is_presentation(authored_source):
                 made = make_presentation(authored_source, out)
             else:

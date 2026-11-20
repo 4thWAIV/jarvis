@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import urllib.parse
 from pathlib import Path
 from typing import Optional
@@ -76,12 +75,8 @@ MOVED = {
 # The label every value from the sender carries where it is kept.
 FROM_THE_SENDER = "the sender's"
 
-_SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
-_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
-# Fields holding a number, and fields holding a commit.
+# Fields holding a number.
 _NUMBERS = ("number",)
-_COMMITS = ("sha",)
 
 
 class Refused(ValueError):
@@ -136,18 +131,10 @@ def _entry(n: int, entry, problems: list[str]) -> Optional[dict]:
         text = _text(value)
         if not text:
             problems.append(f"{where} ({kind}) needs {name}.")
-        elif name == "repo" and not _REPO.fullmatch(text):
-            problems.append(f"{where} ({kind})'s repo is owner/name.")
-        elif name in _COMMITS and not _SHA.fullmatch(text):
-            problems.append(f"{where} ({kind})'s sha is a commit's hex id.")
-        elif name == "url" and urllib.parse.urlsplit(text).scheme not in ("http", "https"):
-            problems.append(f"{where} ({kind})'s url is an http or https address.")
         out[name] = value if name == "text" and text else text
     if kind == "file" and out.get("path"):
         path = Path(out["path"]).expanduser()
-        if not path.is_absolute():
-            problems.append(f"{where} (file)'s path is absolute: {out['path']}.")
-        elif not path.is_file():
+        if not path.is_file():
             problems.append(f"{where} (file): there is no file at {path}.")
         else:
             try:
@@ -164,18 +151,14 @@ def _options(where: str, value, problems: list[str]) -> list[dict]:
     if not isinstance(value, list):
         problems.append(f"{where}'s options is a list of {{id, name, says}}.")
         return []
-    out, seen = [], set()
+    out = []
     for m, option in enumerate(value, 1):
         if not isinstance(option, dict) or set(option) - {"id", "name", "says"}:
             problems.append(f"{where}'s option {m} is {{id, name, says}}.")
             continue
         oid, name, says = (_text(option.get(k)) for k in ("id", "name", "says"))
-        if not _SLUG.fullmatch(oid) or oid in seen:
-            problems.append(f"{where}'s option {m} needs its own id: lowercase letters, digits "
-                            f"and dashes.")
-        if not name or not says:
-            problems.append(f"{where}'s option {m} needs name and says.")
-        seen.add(oid)
+        if not oid or not name or not says:
+            problems.append(f"{where}'s option {m} needs id, name and says.")
         out.append({"id": oid, "name": name, "says": says})
     return out
 
@@ -215,18 +198,15 @@ def check(value) -> dict:
     if not isinstance(questions, list) or not questions:
         problems.append("The handoff needs questions: one or several, each {id, text}.")
     else:
-        seen = set()
         for n, q in enumerate(questions, 1):
             if not isinstance(q, dict) or set(q) - {"id", "text", "options"}:
                 problems.append(f"question {n} is {{id, text, options?}}.")
                 continue
             qid, text = _text(q.get("id")), _text(q.get("text"))
-            if not _SLUG.fullmatch(qid) or qid in seen:
-                problems.append(f"question {n} needs its own id: lowercase letters, digits and "
-                                f"dashes.")
+            if not qid:
+                problems.append(f"question {n} needs id.")
             if not text:
                 problems.append(f"question {n} needs text: the question for Tim.")
-            seen.add(qid)
             asked.append({"id": qid, "text": text,
                           "options_from_the_sender": _options(f"question {n}", q.get("options"),
                                                               problems)})
@@ -257,6 +237,12 @@ def check(value) -> dict:
             "work": work, "approval": value.get("approval") is True}
 
 
+def questions_text(request: dict) -> str:
+    """A checked request's questions for Tim as one text, in the sender's
+    order: what an architecture package states as its purpose."""
+    return " ".join(q["text"] for q in request["questions"])
+
+
 # -- the sender's side ------------------------------------------------------------------
 
 ROUTE = "/api/packages/requests"
@@ -277,6 +263,26 @@ def _answer(response) -> dict:
     return data
 
 
+def read(handoff: Path) -> dict:
+    """The handoff file's JSON as the sender wrote it, each file entry's
+    path taken from the handoff's own folder when it is not absolute (the
+    folder the sender wrote it in, never JARVIS's). Refused when it cannot
+    be read."""
+    handoff = Path(handoff).expanduser()
+    try:
+        handed = json.loads(handoff.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise Refused([f"Cannot read the handoff {handoff}: {e}"]) from None
+    if isinstance(handed, dict) and isinstance(handed.get("evidence"), list):
+        base = handoff.resolve().parent
+        for entry in handed["evidence"]:
+            if isinstance(entry, dict) and entry.get("type") == "file" and \
+                    isinstance(entry.get("path"), str) and entry["path"].strip():
+                path = Path(entry["path"].strip()).expanduser()
+                entry["path"] = str(path if path.is_absolute() else base / path)
+    return handed
+
+
 def start(handoff: Path, *, session: str, work: str = "", general: bool = False,
           engine: str = "", project: str = "", workflow: str = "", source: str = "",
           documents: tuple[tuple[str, str], ...] = ()) -> dict:
@@ -285,10 +291,7 @@ def start(handoff: Path, *, session: str, work: str = "", general: bool = False,
     records who asked from the signature, keeps the job and runs it itself;
     the answer is {job, package, run, state}, or Refused at once."""
     from jarvis.workflow_report import report
-    try:
-        handed = json.loads(Path(handoff).expanduser().read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise Refused([f"Cannot read the handoff {handoff}: {e}"]) from None
+    handed = read(handoff)
     query = urllib.parse.urlencode({k: v for k, v in (
         ("work", work), ("general", "1" if general else "")) if v})
     body = {"handoff": handed, "engine": engine, "project": project, "workflow": workflow,

@@ -10,12 +10,13 @@ command reads each named Work item through the same functions the brain's
 `work_store.events`), never from an agent's memory, and writes two files
 into `--out`:
 
-  handoff.json          the make_package handoff (`question`, `work`,
-                        `evidence`, `decisions`: package_author.read_handoff),
-                        the evidence file first, asking one decision,
-                        `approve-status`: Approve (the status is complete
-                        and accurate) or Reject (with his words on what is
-                        missing or wrong)
+  handoff.json          the make_package handoff (package_request's one
+                        form: `questions`, `work`, typed `evidence`), the
+                        evidence file first, asking one question,
+                        `approve-status`, with the options Approve (the
+                        status is complete and accurate) and Reject (what
+                        is missing or wrong); the sending agent adds its
+                        own `sender_answers` before it asks for the package
   status-evidence.json  the composition in full, every fact with the
                         evidence the record holds for it
 
@@ -282,54 +283,57 @@ def compose(ids: list[str], since: float, now: Optional[float] = None) -> dict:
 
 # ── the handoff ─────────────────────────────────────────────────────────
 
-def _evidence_text(e: dict) -> str:
-    return f"commit {e['value']}" if e["kind"] == "commit" else (
-        f"package {e['value']}" if e["kind"] == "package" else e["value"])
+def _entry(e: dict) -> dict:
+    """A fact's evidence as a typed handoff entry (package_request): a path
+    is a file, a URL a url, a package a package; a commit names no
+    repository, so it is a label, which retrieval resolves."""
+    kind, value = e["kind"], e["value"]
+    if kind == "url":
+        return {"type": "url", "url": value}
+    if kind == "package":
+        return {"type": "package", "id": value}
+    if kind == "commit":
+        return {"type": "label", "text": f"commit {value}"}
+    return {"type": "file", "path": value}
 
 
 # Every package asks Approve or Reject (no information-only package): a
 # status briefing asks him whether the status is complete and accurate.
-DECISION_ID = "approve-status"
+QUESTION_ID = "approve-status"
 APPROVE, REJECT = "approve", "reject"
 
 
-def decision(briefing: dict) -> dict:
-    """The one decision the briefing asks, with the evidence it rests on."""
-    since = briefing["since"]
-    return {
-        "id": DECISION_ID,
-        "question": "Is this status complete and accurate?",
-        "evidence": [f"./{EVIDENCE}: every fact read from the Work record, each with its "
-                     f"commit, PR or path, since {since}."],
-        "options": [
-            {"id": APPROVE, "name": "Approve",
-             "says": "Approve: this status is complete and accurate"},
-            {"id": REJECT, "name": "Reject",
-             "says": "Reject: say what is missing or wrong", "needs_words": True},
-        ],
-    }
-
-
 def handoff(briefing: dict) -> dict:
-    """make_package's handoff (package_author.read_handoff's shape) for the
-    briefing: its question, the items, the evidence file first, then every
-    piece of evidence the facts carry, each once, and its one decision. The
-    fresh author works out the rest from the evidence file and his record."""
+    """make_package's handoff (package_request's one form) for the
+    briefing, all but the sender's own answers: its one question, with the
+    options the sender sees; the items; the evidence file first, then each
+    item, then every piece of evidence the facts carry, each once. The
+    agent that sends it adds `sender_answers`, its own answers to the two
+    questions every sender answers (package_request.QUESTIONS): no program
+    answers them for it."""
     items = briefing["items"]
     titles = "; ".join(f"{i['title']} ({i['id']})" for i in items)
-    evidence = ["./" + EVIDENCE]
+    evidence = [{"type": "file", "path": EVIDENCE}]
+    evidence += [{"type": "work_item", "id": i["id"]} for i in items]
     for item in items:
         for section in ("needs_tim", "moving", "done_since"):
             for fact in item[section]:
                 for e in fact["evidence"]:
-                    text = _evidence_text(e)
-                    if text not in evidence:
-                        evidence.append(text)
+                    entry = _entry(e)
+                    if entry not in evidence:
+                        evidence.append(entry)
     return {
-        "question": f"Is the status of {titles} since {briefing['since']} complete and accurate?",
+        "questions": [{
+            "id": QUESTION_ID,
+            "text": f"Is the status of {titles} since {briefing['since']} complete and "
+                    f"accurate?",
+            "options": [
+                {"id": APPROVE, "name": "Approve",
+                 "says": "Approve: this status is complete and accurate"},
+                {"id": REJECT, "name": "Reject", "says": "Reject: say what is missing or wrong"},
+            ]}],
         "work": [i["id"] for i in items],
         "evidence": evidence,
-        "decisions": [decision(briefing)],
     }
 
 
@@ -391,6 +395,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(refused, file=sys.stderr)
         return 2
     print(path)
+    print("Add your own sender_answers (plainly, why_now: python -m jarvis.make_package's "
+          "handoff, docs/making-a-package.md) to it, then ask for the package with "
+          "python -m jarvis.make_package --start --handoff " + str(path))
     return 0
 
 

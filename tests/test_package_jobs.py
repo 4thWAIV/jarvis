@@ -12,6 +12,7 @@ from jarvis import package_jobs as pj, package_request as pr, records
 from tests.agent_key_fixtures import Agent
 from tests.test_agent_key_packages import _start_work
 from tests.test_agent_keys import DIAG, PLAN, keygen, wired  # noqa: F401
+from tests.test_work_packages import marks  # noqa: F401
 
 ANSWERS = {"plainly": "PR 171 moves Work items into folders. CI passed on it. I do not know "
                       "whether the move is fast on 5,000 items.",
@@ -36,6 +37,16 @@ def handoff(tmp_path, **changes) -> dict:
              "recommendation": "Merge it."}
     value.update(changes)
     return value
+
+
+def handoff_file(path, question: str, **changes):
+    """A handoff in the one form, at `path`, asking `question`: the sender's
+    answers, the question and one content entry. The file's path."""
+    value = {"sender_answers": dict(ANSWERS), "questions": [{"id": "q1", "text": question}],
+             "evidence": [{"type": "content", "text": "What the sender knows."}]}
+    value.update(changes)
+    path.write_text(json.dumps(value))
+    return path
 
 
 @pytest.fixture
@@ -116,12 +127,12 @@ def test_every_one_of_the_fourteen_types_is_taken(tmp_path):
     ({"evidence": []}, "needs evidence"),
     ({"evidence": ["a/file.md"]}, "evidence entry 1 is an object"),
     ({"evidence": [{"type": "path", "path": "/x"}]}, "type is one of"),
-    ({"evidence": [{"type": "file", "path": "relative.md"}]}, "path is absolute"),
     ({"evidence": [{"type": "file", "path": "/no/such/file.md"}]}, "there is no file at"),
-    ({"evidence": [{"type": "pr", "repo": "jarvis", "number": 1}]}, "repo is owner/name"),
     ({"evidence": [{"type": "pr", "repo": "o/r", "number": "one"}]}, "a whole number"),
-    ({"evidence": [{"type": "commit", "repo": "o/r", "sha": "zzz"}]}, "a commit's hex id"),
-    ({"evidence": [{"type": "url", "url": "file:///etc/hosts"}]}, "http or https"),
+    ({"evidence": [{"type": "commit", "repo": "o/r", "sha": ""}]}, "(commit) needs sha"),
+    ({"questions": [{"text": "Merge?"}]}, "question 1 needs id"),
+    ({"questions": [{"id": "m", "text": "Merge?", "options": [{"id": "a", "name": "A"}]}]},
+     "option 1 needs id, name and says"),
     ({"evidence": [{"type": "work_item", "id": "w", "title": "x"}]}, "takes only id"),
     ({"purpose": ""}, "purpose, when given"),
 ])
@@ -129,6 +140,36 @@ def test_a_bad_handoff_is_refused_saying_why(tmp_path, change, said):
     with pytest.raises(pr.Refused) as refused:
         pr.check(handoff(tmp_path, **change))
     assert any(said in p for p in refused.value.problems), refused.value.problems
+
+
+def test_the_handoff_holds_entries_only_to_their_types_fields(tmp_path):
+    """No rule beyond the design's: a repo, a sha, a URL and ids are taken
+    as the sender gives them."""
+    kept = pr.check(handoff(
+        tmp_path,
+        questions=[{"id": "Merge 171", "text": "Merge?",
+                    "options": [{"id": "A", "name": "A", "says": "a"},
+                                {"id": "A", "name": "B", "says": "b"}]},
+                   {"id": "Merge 171", "text": "Again?"}],
+        evidence=[{"type": "pr", "repo": "jarvis", "number": 1},
+                  {"type": "commit", "repo": "jarvis", "sha": "HEAD~1"},
+                  {"type": "url", "url": "docs.example.org/page"}]))
+    assert [e.get("repo") or e.get("url") for e in kept["evidence"]] == [
+        "jarvis", "jarvis", "docs.example.org/page"]
+    assert [q["id"] for q in kept["questions"]] == ["Merge 171", "Merge 171"]
+
+
+def test_a_relative_file_is_read_from_the_handoff_s_own_folder(tmp_path, monkeypatch):
+    folder = tmp_path / "sender"
+    folder.mkdir()
+    (folder / "situation.md").write_text("Where things stand.\n")
+    path = folder / "handoff.json"
+    path.write_text(json.dumps(handoff(tmp_path, evidence=[
+        {"type": "file", "path": "situation.md"}])))
+    monkeypatch.chdir(tmp_path)          # not the sender's folder
+    kept = pr.check(pr.read(path))
+    assert kept["evidence"][0]["path"] == str(folder.resolve() / "situation.md")
+    assert kept["evidence"][0]["sha256"]
 
 
 # -- accepting a request ----------------------------------------------------------------
@@ -259,7 +300,19 @@ def test_a_blocked_run_is_in_error_with_everyone_told(wired, tmp_path, spawned, 
     told = store.get("package_job", job)
     assert told is not None and told.event == "error" and told.facts["step"] == "gather"
     assert told.untrusted["fix"].startswith("Free the knowledge engine")
-    # The agent is told on its job: the step, why, what was tried, what would fix it.
+    # The agent is told: JARVIS's own message to its session, queued on
+    # record and sent once the session is between turns, saying the step,
+    # why, what was tried, what would fix it and what it may do.
+    from jarvis import run_store
+    message_id = pj.get(job)["told_agent_message"]
+    [message] = [m for m in run_store.queued_messages() if m.id == message_id]
+    assert message.session_id == PLAN
+    assert message.text.startswith(server.STEER_SIGNATURE)
+    for words in ("is in Error", "Step: gather", "not indexed within 10 minutes",
+                  "Tried: JARVIS indexed it urgently", "To fix: Free the knowledge engine",
+                  server.PACKAGE_ERROR_NEXT):
+        assert words in message.text
+    # It reads the same on its job.
     seen = agent.get(client, f"{pr.ROUTE}/{job}").json()
     assert seen["state"] == pj.ERROR and set(seen["error"]) >= {"step", "reason", "tried", "fix"}
     assert pj.get(job)["told"] is True
@@ -297,6 +350,10 @@ def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawne
     assert len(said) == 1 and "swarm" in said[0]["says"]
     assert said[0]["from"]["name"] == "JARVIS" and said[0]["from"]["proof"] == "jarvis"
     assert store.get("package_job", job).event == "error"
+    from jarvis import run_store
+    told = [m for m in run_store.queued_messages() if m.id == pj.get(job)["told_agent_message"]]
+    assert told and told[0].session_id == PLAN and "Step: swarm" in told[0].text, \
+        "the agent is told too"
 
 
 def test_a_sender_that_does_not_answer_in_two_hours_puts_the_job_in_error(wired, tmp_path,
@@ -313,6 +370,43 @@ def test_a_sender_that_does_not_answer_in_two_hours_puts_the_job_in_error(wired,
     assert "2 hours" in moved["error"]["reason"]
     with pytest.raises(pj.JobError):
         pj.answer(job, {"which": "late"}, session=PLAN)
+
+
+def test_a_sender_s_answer_is_kept_whole(wired, tmp_path, spawned):
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    pj.ask(job, [{"id": "which", "question": "Which one?"}])
+    long = "word " * 3000
+    doc = pj.answer(job, {"which": long}, session=PLAN)
+    assert doc["rounds"][-1]["answers"]["which"] == long.strip()
+
+
+def test_a_queued_run_is_never_put_in_error_by_a_clock(wired, tmp_path, spawned, monkeypatch):
+    """Only what the design names puts a run in Error: a queued run whose
+    process is running is not timed out."""
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    monkeypatch.setattr(pj, "_alive", lambda pid: True)
+    assert pj.overdue(time.time() + 24 * 3600) == []
+    assert pj.get(job)["state"] == pj.QUEUED
+
+
+def test_a_run_whose_process_cannot_start_is_in_error(wired, tmp_path, monkeypatch):
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+
+    def spawn(doc):
+        raise OSError("no such interpreter")
+    monkeypatch.setattr(pj, "SPAWN", spawn)
+    answer = ask(client, agent, {"handoff": handoff(tmp_path)})
+    assert answer.status_code == 200, answer.text
+    doc = pj.get(answer.json()["job"])
+    assert doc["state"] == pj.ERROR and "no such interpreter" in doc["error"]["reason"]
 
 
 def test_a_run_whose_process_ended_is_in_error(wired, tmp_path, spawned, monkeypatch):
@@ -384,9 +478,65 @@ def test_the_agent_tools_ask_jarvis(monkeypatch, tmp_path):
 
 def test_jarvis_has_its_own_key_made_once_in_its_data_folder(keygen):
     from jarvis import agent_keys, data_paths
+    assert agent_keys.jarvis_public_key() is None, "reading makes nothing"
     private, public = agent_keys.jarvis_key()
     assert private == data_paths.data_dir() / "jarvis" / "agent-keys" / "jarvis" / "id_ed25519"
     assert public.startswith("ssh-ed25519 ")
     assert agent_keys.jarvis_key() == (private, public), "made once"
+    assert agent_keys.jarvis_public_key() == public
     signature = agent_keys.sign(private, agent_keys.PACKAGE, b"bytes")
     assert agent_keys.verify(public, agent_keys.PACKAGE, b"bytes", signature)
+
+
+# -- JARVIS signs what it makes ---------------------------------------------------------
+
+SKILL = {"name": "notes-skill", "version": "1.0.0", "purpose": "Say the notes.",
+         "runs": "conversation", "skill": "SKILL.md", "returns": ["results/**"]}
+
+
+def test_jarvis_signs_the_package_it_makes_and_its_jarvis_admits_it(wired, marks, tmp_path,
+                                                                    spawned):
+    """The deliver step's signature (workflow.yaml deliver, decided
+    "signing"): JARVIS's own key, naming who asked; admitted with the asking
+    agent as its sender, no author proof asked, a deck's checks taken."""
+    from jarvis import agent_keys, package_inbox, package_signature
+    from tests.test_work_packages import make_zip
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    doc = pj.get(ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"])
+    raw = tmp_path / "made.zip"
+    raw.write_bytes(make_zip({"SKILL.md": "Say the notes."}, SKILL))
+    signed_path = tmp_path / "signed.zip"
+    pj.sign(doc, raw, signed_path)
+    signed = package_signature.read(signed_path)
+    assert signed.by_jarvis() and signed.session == package_signature.JARVIS
+    assert signed.requested_by == f"agent:{PLAN}"
+    assert signed.fingerprint == agent_keys.fingerprint(agent_keys.jarvis_public_key())
+    arrival, package, why = server._receive_package_zip(
+        signed_path, package_inbox.Sender("plan"), "", "")
+    assert why == "" and arrival is not None, why
+    assert (arrival.entry.from_session, arrival.entry.sender_evidence) == (
+        PLAN, server.PROVEN_BY_SIGNATURE), "from the agent that asked"
+    # A deck JARVIS signed passes the deck check as an onboarded agent's does.
+    deck = tmp_path / "deck.zip"
+    deck.write_bytes(make_zip({"SKILL.md": "x", "deck-data.js": "window.DECK = {}",
+                               "scripts/decide.py": "x"}, {**SKILL, "name": "a-deck"}))
+    pj.sign(doc, deck, deck, (package_signature.DECISION_CHECKED,))
+    assert server._local_package_problem(deck) is None
+
+
+def test_a_signature_only_naming_jarvis_is_not_jarvis_s(wired, marks, tmp_path):
+    """The session the file names proves nothing: only JARVIS's own key."""
+    from jarvis import agent_keys, package_signature
+    from tests.test_work_packages import make_zip
+    server, *_, home = wired
+    agent = Agent(home, PLAN).onboarded()
+    agent_keys.jarvis_key()
+    raw = tmp_path / "made.zip"
+    raw.write_bytes(make_zip({"SKILL.md": "Say the notes."}, SKILL))
+    package_signature.sign(raw, raw, agent.private, agent.public, package_signature.JARVIS,
+                           requested_by=f"agent:{DIAG}")
+    signed = package_signature.read(raw)
+    assert not signed.by_jarvis()
+    assert server._package_signer(signed)[2] != server._JARVIS_SIGNER

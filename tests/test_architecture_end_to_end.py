@@ -189,11 +189,9 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     checked = json.loads(validated.stdout)["result"]
     assert checked["check"]["ok"] and checked["metadata"]["reported_by"] == f"agent:{session}"
 
-    handoff = tmp_path / "handoff.json"
-    handoff.write_text(json.dumps({
-        "question": "Explain the proposed architecture inbox",
-        "approval": True,
-        "evidence": [str(source)]}))
+    from tests.test_package_jobs import handoff_file
+    handoff = handoff_file(tmp_path / "handoff.json", "Explain the proposed architecture inbox",
+                           approval=True, evidence=[{"type": "file", "path": str(source)}])
     out = tmp_path / "out"
     made = agent(env, "jarvis.make_package", "--document", checked["document_id"],
                  "--revision", checked["revision"], "--handoff", str(handoff),

@@ -12,15 +12,13 @@ from tests.test_make_package import presentation
 from tests.deck_fixtures import presentation_of
 from tests.test_decision_package import _Delivery
 from tests.settings_fixtures import default_setting
+from tests.test_package_jobs import ANSWERS, handoff_file
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def handoff(tmp_path):
-    path = tmp_path / 'handoff.json'
-    path.write_text(json.dumps({'question': 'Approve the result?', 'work': 'origin-work',
-                               'evidence': ['receipt.json']}))
-    return path
+    return handoff_file(tmp_path / 'handoff.json', 'Approve the result?', work='origin-work')
 
 
 def presentation_yaml(folder: Path) -> str:
@@ -384,16 +382,18 @@ def test_no_package_comes_of_a_briefing_that_did_not_go_first(only_engine, mode,
 
 
 @pytest.mark.parametrize('extra, reason', [
-    ({'purpose': 'Explain'}, 'may not give purpose: the author states the answer itself'),
+    ({'question': 'Merge?'}, 'no longer takes question'),
+    ({'decisions': []}, 'questions and decisions are one list'),
     ({'conclusion': 'Approve it'}, 'may not give conclusion'),
-    ({'audience': 'Tim'}, "may not give audience: the author reads Tim's record"),
-    ({'questions': ['Why?']}, 'may not give questions'),
+    ({'audience': 'Tim'}, 'the audience is always Tim'),
     ({'shape': 'Slides 1-3 background'}, "never a sender's structure"),
-    ({'structure': ['a', 'b']}, "never a sender's structure"),
-    ({'notes': 'x'}, 'a handoff is only question, work, evidence, decisions'),
+    ({'sender_answers': None}, 'needs sender_answers'),
+    ({'evidence': ['PR 171']}, 'evidence entry 1 is an object'),
+    ({'notes': 'x'}, 'may not give notes'),
 ])
-def test_a_handoff_gives_only_question_work_evidence_and_decisions(tmp_path, monkeypatch, extra,
-                                                                  reason):
+def test_the_handoff_is_the_one_form_a_request_takes(tmp_path, monkeypatch, extra, reason):
+    """The command reads the same handoff JARVIS takes a request in
+    (package_request): one form, refused for the same reasons."""
     path = handoff(tmp_path)
     path.write_text(json.dumps({**json.loads(path.read_text()), **extra}))
     monkeypatch.setattr(pa.brain_provider, 'provider', lambda *a: pytest.fail('engine launched'))
@@ -402,18 +402,11 @@ def test_a_handoff_gives_only_question_work_evidence_and_decisions(tmp_path, mon
     assert any(reason in p for p in refused.value.problems), refused.value.problems
 
 
-def test_a_narrow_handoff_reads(tmp_path):
-    path = tmp_path / 'handoff.json'
-    path.write_text(json.dumps({'question': 'Merge PR 171?', 'work': ['w1', 'w2'],
-                                'evidence': ['PR 171', 'CI run 9123'],
-                                'decisions': [{'id': 'merge', 'question': 'Merge it?'}]}))
-    assert pa.read_handoff(path)['question'] == 'Merge PR 171?'
-    path.write_text(json.dumps({'question': 'Merge PR 171?\nIt fixes the build.',
-                                'evidence': ['PR 171']}))
-    assert pa.read_handoff(path)['question'].startswith('Merge'), "a question is not held to one line"
-    for bad in ({'question': '', 'evidence': ['x']},
-                {'question': 'Q?', 'evidence': []}, {'question': 'Q?', 'evidence': ['x'], 'work': 3},
-                {'question': 'Q?', 'evidence': ['x'], 'decisions': ['merge']}):
-        path.write_text(json.dumps(bad))
-        with pytest.raises(dp.Refused):
-            pa.read_handoff(path)
+def test_a_handoff_reads_as_jarvis_keeps_it(tmp_path):
+    path = handoff_file(tmp_path / 'handoff.json', 'Merge PR 171?', work=['w1', 'w2'],
+                        purpose='I need his yes to merge.')
+    handed = pa.read_handoff(path)
+    assert [q['text'] for q in handed['questions']] == ['Merge PR 171?']
+    assert handed['work'] == ['w1', 'w2']
+    assert handed['from_the_sender']['answers']['plainly']['answer'] == ANSWERS['plainly']
+    assert handed['from_the_sender']['purpose'] == 'I need his yes to merge.'

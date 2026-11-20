@@ -376,7 +376,10 @@ instead of sent (`server._message_must_wait`), and the session watcher sends
 each session's oldest queued message once it is between turns and has
 answered the one before (`SessionWatcher.send_queued`). Sent mid-turn, Claude
 Code would fold it into the turn under way and its one answer would become
-the reply to both. Queued messages survive a restart. A queued message has
+the reply to both. JARVIS's own words to an agent, never a capture of his (a
+package run's Error, told to the agent that asked for it,
+`server._tell_agent`; see "Package requests"), are written `queued` and
+go the same way. Queued messages survive a restart. A queued message has
 his Cancel and Send now on the agent's thread (`AgentThread.tsx`, through
 `RecordItem`'s `queuedActs`; `POST /api/agent-messages/{id}/queued`) and the
 brain's acting `change_queued_message`, both `server._change_queued_message`
@@ -934,17 +937,18 @@ these records, never from an agent's memory: `python -m jarvis.status_briefing
 --work <id> [--work <id> ...] --out <folder> [--since <time>]`
 (`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
 `need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
-`work_status` reads them) writes `handoff.json` (a make_package handoff:
-its question, the items, the evidence file first, and one decision,
-`approve-status`: approve, or reject with his words on what is missing or
-wrong) and `status-evidence.json`, and nothing
+`work_status` reads them) writes `handoff.json` (a make_package handoff in the one form,
+`package_request`'s, all but the sender's own `sender_answers`: one
+question, `approve-status`, with the options approve and reject; the
+evidence file first, then each item, then every piece of evidence the facts
+carry, typed, a commit a `label`) and `status-evidence.json`, and nothing
 else: per item, what needs him first (his acts, every held piece and what
 holds it, stalled pieces, the item stalled or answered with no follow-up,
 each with who and since when; or one line that nothing needs him), then
 pieces reported working with their latest note, then what finished since
 `--since` (24 hours by default) from the log, every fact with its piece's
-evidence; items needing him first. The session then sends it with
-`make_package --handoff`. `--check` writes nothing and lists pieces with no
+evidence; items needing him first. The session adds its own
+`sender_answers` and then asks for it with `make_package --start --handoff`. `--check` writes nothing and lists pieces with no
 note, and pieces past planned or ready with no evidence (exit 1 when any).
 The Workflows view stays below the list, under its
 own heading. The record is `work_store.py`: one document per item,
@@ -1440,10 +1444,9 @@ architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).
 `python -m jarvis.decision_package` is the command's old name.
-The sender's handoff gives only the question for Tim, its Work item, the
-evidence references and any decisions (`package_author.read_handoff`);
-`purpose`, `conclusion`, `audience`, `questions` and any structure are
-refused with the reason. The fresh author writes the briefing before any
+The sender's handoff is the one form a package request takes (see
+"Package requests"), read and checked by the same code
+(`package_author.read_handoff` over `package_request.read` and `check`). The fresh author writes the briefing before any
 slide (`briefing_prep.py`): `prep.md` (does Tim care; what he knows, from
 his record; the background he lacks; his first ten questions, sourced or
 UNANSWERED; every fact scored 1-5) and `script.md` (ordered by those
@@ -1525,10 +1528,19 @@ Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
 `waiting_on_sender`, at most `MAX_ROUNDS`, five); its answers queue the run
 again. A package's next run (`server._new_package_run`,
 `package_jobs.new_run`) keeps the package id and names the run before it
-(`after`). JARVIS's own key (`agent_keys.jarvis_key`, made once in
-`<data>/jarvis/agent-keys/jarvis/`) is what JARVIS signs the packages it
-makes with. The old `make_package --handoff` without `--start` (the fresh
-author in the sender's process, "Work packages") is what this replaces.
+(`after`). JARVIS signs the packages it makes with its own key
+(`agent_keys.jarvis_key`, made once in `<data>/jarvis/agent-keys/jarvis/`;
+`package_jobs.sign`, `package_signature.sign_as_jarvis`: session `jarvis`,
+`requested_by` the asking agent), never an agent's: `_package_signer` reads
+a signature `Signed.by_jarvis` (JARVIS's own public key,
+`agent_keys.jarvis_public_key`, never the one the file names) as
+`_JARVIS_SIGNER`, its sender the agent `requested_by` names; the unpack
+checks take it (`_decision_problem`'s `vouched`, `_VOUCHED`), and
+`_admit_agent_package` asks no author proof of it. A relative `file` path
+is taken from the handoff file's folder (`package_request.read`). The old
+`make_package --handoff` without `--start` (the fresh author in the
+sender's process, "Work packages") reads the same one form and is what
+this replaces.
 The Error state (design: deliver `error_state`): a run that cannot go on
 (a sender that does not answer within `SENDER_WAIT_SEC`, 2 hours, swept by
 `package_jobs.overdue`; a step's `Blocked`; a step that fails; a run whose
@@ -1542,8 +1554,15 @@ notice, or with no Work item a message to him in his Inbox from JARVIS
 (`package_job`, `error`, the step in its facts and the reason, what was
 tried and the fix walled), with how many packages have ended in Error
 (`package_jobs.error_rate`; more than 1 in 100, `major_problem`, is a major
-problem with the package system, logged as such); the agent reads it all
-on its job. The Work item's Error stays until no package run of it is left
+problem with the package system, logged as such); and the asking agent is
+told: JARVIS's own message to its session (`server._tell_agent`, a
+`queued` message on record, sent by `SessionWatcher.send_queued` once the
+session is between turns and followed as every message is; its id kept
+on the job, `told_agent_message`) saying the step, the reason, what was
+tried, the fix and what it may do (`PACKAGE_ERROR_NEXT`: fix it and ask
+again, or message Tim why it cannot; never go around the package); it
+reads the same on its job. A run whose process cannot be started is in
+Error the same way (`package_jobs.start`). The Work item's Error stays until no package run of it is left
 in Error that no later run followed (`package_jobs.errored_work`,
 `_clear_work_errors`).
 
