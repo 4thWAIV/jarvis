@@ -860,3 +860,20 @@ async def test_a_turn_answered_in_words_alone_is_its_message_and_calls_no_vote()
     assert await swarm.turn("cares_judge", 5) == "Cut s22: it repeats s14."
     assert swarm.conversation == [{"from": "cares_judge", "text": "Cut s22: it repeats s14."}]
     assert swarm.state["cares"] == sessions.OPEN
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_fails_leaves_its_first_message_and_the_others_words_to_give():
+    class Fails:
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            raise sessions.SessionFailed("Connection lost")
+    swarm = sessions.BrainSwarmSession({"order_judge": Fails()},
+                                       [sessions.Question("order", "First?")],
+                                       first={"order_judge": "What Tim knows."})
+    swarm.say("author", "The script.")
+    with pytest.raises(sessions.SessionFailed):
+        await swarm.turn("order_judge", 5)
+    assert not swarm.spoke("order_judge")
+    assert swarm.saved()["seen"]["order_judge"] == 0 and swarm.saved()["introduced"] == []
+    again = swarm._new_for("order_judge")
+    assert again.startswith("What Tim knows.") and again.endswith("author:\nThe script.")

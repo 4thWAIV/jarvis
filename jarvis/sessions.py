@@ -617,17 +617,26 @@ class BrainSwarmSession:
     def _new_for(self, name: str) -> str:
         """Every message of the others since this participant last spoke,
         word for word, each with who said it; on its first turn its own
-        first message and the questions to prove come first."""
+        first message and the questions to prove come first. Nothing is
+        taken as given it until it has answered (`_heard`)."""
         new = [m for m in self.conversation[self._seen[name]:] if m["from"] != name]
-        self._seen[name] = len(self.conversation)
         lead = []
         if name not in self._introduced:
-            self._introduced.add(name)
             lead.append(self._first(name) or "")
             lead.append("The questions to prove, by id:\n" + "\n".join(
                 _tag("question", q.asks, id=q.id) for q in self.questions.values()))
         return "\n\n".join([t for t in lead if t] +
                             [f"{m['from']}:\n{m['text']}" for m in new])
+
+    def _heard(self, name: str) -> None:
+        """A participant answered: everything said so far is given it, its
+        first message among it."""
+        self._seen[name] = len(self.conversation)
+        self._introduced.add(name)
+
+    def spoke(self, name: str) -> bool:
+        """It has answered a turn of the swarm (its session holds it)."""
+        return name in self._introduced
 
     def say(self, name: str, text: str) -> None:
         """A message into the conversation, as it was written (the
@@ -656,7 +665,7 @@ class BrainSwarmSession:
         if not isinstance(answer.get("message"), str) or not answer["message"].strip():
             raise SessionFailed(f"{name}'s turn had no message")
         self.say(name, answer["message"])
-        self._seen[name] = len(self.conversation)
+        self._heard(name)
         await self._called(name, answer.get("call_vote"), timeout)
         return answer["message"]
 
@@ -686,7 +695,7 @@ class BrainSwarmSession:
             cast.append(vote)
             self.say(name, f"Vote on {q.id}: {vote.vote}. {vote.reason}"
                      + (f" Ask the sender: {ask}" if ask else ""))
-            self._seen[name] = len(self.conversation)
+            self._heard(name)
         self.votes += cast
         yes = sum(1 for v in cast if v.vote == YES)
         self.state[q.id] = PROVEN if yes > len(cast) - yes else FAILED
@@ -750,7 +759,7 @@ class BrainSwarmSession:
                                  source=script.name, prep=prep() if prep else "",
                                  conversation=self._new_for(self.editor), call_vote=True)
         self.say(self.editor, out["reply"])
-        self._seen[self.editor] = len(self.conversation)
+        self._heard(self.editor)
         if out["applied"]:
             text = out["text"]
             private_files.replace(script, text.encode("utf-8"))

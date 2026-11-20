@@ -288,8 +288,10 @@ def _kept(run: Run) -> dict:
 
 
 def _keep(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> None:
+    """The swarm's state, and the session of each participant that has
+    answered a turn (one never answered holds nothing to resume)."""
     for name, chat in swarm.participants.items():
-        if getattr(chat, "session", None):
+        if getattr(chat, "session", None) and swarm.spoke(name):
             kept.setdefault("participants", {})[name] = {
                 "session": chat.session, "engine": chat.pick.engine, "model": chat.model}
     kept["swarm"] = swarm.saved()
@@ -475,7 +477,7 @@ def _to_ask(swarm: sessions.BrainSwarmSession) -> list[dict]:
 def _round_add(run: Run, swarm: sessions.BrainSwarmSession, firsts: _Firsts):
     def add(name: str, _text: str, marked: list) -> str:
         firsts.marked = marked
-        if name == "cares_judge" and name in swarm._introduced:
+        if name == "cares_judge" and swarm.spoke(name):
             return _parts_text(new_to_him(run, marked))
         return ""
     return add
