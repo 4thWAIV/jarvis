@@ -275,6 +275,16 @@ def history(path: str, *, fields: Optional[list[str]] = None, limit: int = 10000
     return list(reversed(uds().history(caller, path, limit=limit, fields=fields)))
 
 
+HISTORY_PAGE = 1000
+"""How many versions `versions` reads from the engine a call."""
+
+
+def versions(path: str, *, caller: Caller = JARVIS) -> list[Version]:
+    """Every version of the record, oldest first, however many (a page of
+    the engine's history at a time)."""
+    return list(reversed(uds().versions(caller, path, page=HISTORY_PAGE)))
+
+
 def changes(since: int = 0, *, under: Optional[str] = None, limit: int = 1000,
             caller: Caller = JARVIS) -> dict:
     return uds().changes(caller, since, limit=limit, under=under)
@@ -456,11 +466,6 @@ def write_many(writes: list[tuple[str, dict]], *, by: Caller = JARVIS, change: O
 
 # -- moving a record ------------------------------------------------------------
 
-HISTORY_MAX = 10000
-"""The most versions a record moved with its history may have (the
-engine's own limit on one history read), so a move never cuts one short."""
-
-
 FORGET_DEADLINE_SEC = 1800.0
 """How long forgetting a path a record moves to may take: it compacts what
 held it, on a large engine minutes."""
@@ -482,11 +487,8 @@ class _Step:
 
 def _steps(path: str) -> list[_Step]:
     """Every version of `path`, oldest first, as it was written."""
-    found = history(path, limit=HISTORY_MAX)
-    if len(found) >= HISTORY_MAX:
-        raise MoveFailed(f"{path} has {HISTORY_MAX} versions or more, more than one read gives whole")
     out = []
-    for v in found:
+    for v in versions(path):
         caller = Caller(person=v.by or JARVIS.person, agent=v.agent, model=v.model)
         data = None
         if v.op != "delete":
@@ -505,8 +507,10 @@ def _derived(path: str) -> list:
 
 
 def move(src: str, dst: str) -> int:
-    """Move one record to `dst` with its whole history (the engine has no
-    move): every version of `src` written to `dst` in order, each by whom
+    """Move one record to `dst` with its whole history. The engine has no
+    move, and a transaction has one writer and writes a path once, so the
+    versions cannot be one write (construction-drafts section 4's other
+    way): every version of `src` written to `dst` in order, each by whom
     it was written and with its change and summary (a delete as a delete),
     then `src` deleted (its versions stay until forgotten) with its
     derived links carried, in one write that lands only while `src` is
@@ -540,7 +544,7 @@ def move(src: str, dst: str) -> int:
             tx.put(dst, step.data, content=content, expect_version=n)
         uds().transaction(step.caller, tx, change=step.change, summary=step.summary)
     moved = get(dst)
-    if moved is None or len(history(dst, limit=HISTORY_MAX)) != len(steps) or moved.data != now.data:
+    if moved is None or len(versions(dst)) != len(steps) or moved.data != now.data:
         raise MoveFailed(f"{dst} is not {src} as it was: the move was checked and stopped")
     tx = Transaction().check(dst, expect_version=moved.version).delete(src, expect_version=now.version)
     links = _derived(src)

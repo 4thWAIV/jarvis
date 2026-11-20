@@ -955,14 +955,18 @@ change and its event one write, by `create` and `record`, the only
 writers. Items were at `/work/<id>.work` before; `work_folders.py` moves
 each into its folder at every start, before anything reads one
 (`server._start_on_records`; nothing to move once done): the engine has no
-move, so `records.move` copies every version in order (who wrote it, its
-change and summary, a delete as a delete) to the new path, checks the
-count of versions and the newest data, then deletes the old path (its
-versions kept) with any derived links carried; a move stopped part way is
-taken up where it stopped, an engine snapshot is taken first
+move, and a transaction has one writer and writes a path once, so
+`records.move` copies every version in order (who wrote it, its change and
+summary, a delete as a delete; read whole however many, a page of history
+at a time, `records.versions`) to the new path, checks the count of
+versions and the newest data, then deletes the old path (its versions
+kept) with any derived links carried; a move stopped part way is taken up
+where it stopped, an engine snapshot is taken first
 (`records_cutover.take_snapshot`), and `python -m jarvis.work_folders
 check|forward|back` says where every item is or moves them (back, with
-JARVIS stopped and the code from before). Project works at `/work/works/`
+JARVIS stopped and the code from before): it opens its own data folder's
+engine in its own process (`records.opened_at`), never one an address file
+names, and is refused while an engine runs there. Project works at `/work/works/`
 are not Work items and never move. An item wraps a
 ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`

@@ -337,15 +337,40 @@ class EngineUDS:
         at = when.timestamp() if isinstance(when, datetime) else float(when)
         return self._get({"caller": caller.by(), "path": path, "streams": _streams(streams), "at": at})
 
+    def _history_page(self, caller: Caller, path: Path, limit: int, fields: Optional[list[str]],
+                      before: Optional[int]) -> tuple[list[Version], Optional[int]]:
+        """One page of versions, newest first, and the version to read the
+        next page before (None: no more)."""
+        body: dict = {"caller": caller.by(), "path": path, "limit": limit}
+        if fields is not None:
+            body["fields"] = list(fields)
+        if before is not None:
+            body["before"] = before
+        found = self._call("history", body)[1]
+        return ([Version(**{k: v.get(k) for k in Version.__dataclass_fields__}) for v in found["versions"]],
+                found.get("before"))
+
     def history(self, caller: Caller, path: Path, limit: int = 1000,
                 fields: Optional[list[str]] = None) -> list[Version]:
         """Each version, newest first; with `fields`, each carries those
         data fields as they stood then."""
-        body: dict = {"caller": caller.by(), "path": path, "limit": limit}
-        if fields is not None:
-            body["fields"] = list(fields)
-        found = self._call("history", body)[1]
-        return [Version(**{k: v.get(k) for k in Version.__dataclass_fields__}) for v in found["versions"]]
+        return self._history_page(caller, path, limit, fields, None)[0]
+
+    def versions(self, caller: Caller, path: Path, fields: Optional[list[str]] = None,
+                 page: int = 1000) -> list[Version]:
+        """Every version, newest first, however many: read a page at a
+        time (the engine's `before`), each version once."""
+        out: list[Version] = []
+        seen: set[int] = set()
+        before: Optional[int] = None
+        while True:
+            found, before = self._history_page(caller, path, page, fields, before)
+            for v in found:
+                if v.lsn not in seen:
+                    seen.add(v.lsn)
+                    out.append(v)
+            if before is None:
+                return out
 
     def diff(self, caller: Caller, path: Path, a: int, b: Optional[int] = None) -> dict:
         return self._call("diff", {"caller": caller.by(), "path": path, "from": a, "to": b})[1]

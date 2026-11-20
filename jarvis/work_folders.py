@@ -100,16 +100,27 @@ def move(*, back: bool = False, snapshot: bool = True) -> Moved:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """`python -m jarvis.work_folders [check|forward|back]` (JARVIS stopped)."""
+    """`python -m jarvis.work_folders [check|forward|back]` (JARVIS stopped).
+    It opens the engine of its own data folder in this process
+    (`records.opened_at`), never one an address file names, so a copy of a
+    data folder is moved, never the engine a copied address points at; the
+    engine's lock refuses while JARVIS runs there."""
     args = list(sys.argv[1:] if argv is None else argv) or ["check"]
     if args[0] not in ("check", "forward", "back"):
         print("usage: python -m jarvis.work_folders [check|forward|back]", file=sys.stderr)
         return 2
-    if args[0] != "check":
-        done = move(back=args[0] == "back")
-        print(f"moved {done.items} Work item(s), {done.versions} versions; snapshot {done.snapshot}")
-    now = where()
-    print(f"in their folders: {len(now.in_folders)}; at the old paths: {len(now.at_old_paths)}")
+    from jarvis import data_paths
+    from jarvis.knowledge.engine import EngineLocked
+    try:
+        with records.opened_at(data_paths.knowledge_dir().resolve()):
+            if args[0] != "check":
+                done = move(back=args[0] == "back")
+                print(f"moved {done.items} Work item(s), {done.versions} versions; snapshot {done.snapshot}")
+            now = where()
+            print(f"in their folders: {len(now.in_folders)}; at the old paths: {len(now.at_old_paths)}")
+    except EngineLocked:
+        print("the knowledge engine is running there: stop JARVIS first", file=sys.stderr)
+        return 1
     return 0
 
 

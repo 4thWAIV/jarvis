@@ -41,6 +41,20 @@ def test_a_record_moves_with_every_version_in_order():
     assert records.move("/t/a.work", "/t/a/a.work") == 0      # already moved
 
 
+def test_a_history_longer_than_one_read_moves_whole(monkeypatch):
+    monkeypatch.setattr(records, "HISTORY_PAGE", 3)            # many pages of history
+    for n in range(1, 12):
+        _write("/t/h.work", {"n": n}, change=f"c{n}")
+    _write("/t/h.work", None, delete=True, change="gone")
+    _write("/t/h.work", {"n": 12}, change="again")
+    assert len(records.versions("/t/h.work")) == 13
+    assert [v.version for v in records.versions("/t/h.work")] == list(range(1, 14))
+    before_shape, before_data = _shape("/t/h.work"), _datas("/t/h.work")
+    assert records.move("/t/h.work", "/t/h/h.work") == 13
+    assert _shape("/t/h/h.work") == before_shape
+    assert _datas("/t/h/h.work") == before_data
+
+
 def test_a_stopped_move_is_taken_up_where_it_stopped():
     for n in range(1, 5):
         _write("/t/b.work", {"n": n}, change=f"c{n}")
@@ -114,3 +128,31 @@ def test_the_move_takes_a_snapshot_first(monkeypatch):
     assert work_folders.move().snapshot == "snap-1"
     assert len(taken) == 1
     assert work_folders.move().snapshot is None                  # nothing to move: none taken
+
+
+def test_the_command_moves_its_own_data_folder_never_an_address(tmp_path, monkeypatch, capsys):
+    """The command opens the engine in its own data folder in this process:
+    a copied folder whose address file names another engine is moved itself,
+    and an engine running there refuses it."""
+    from jarvis import data_paths, records_cutover
+    from jarvis.knowledge.engine import Engine
+    folder = tmp_path / "copied-data" / "knowledge"
+    records.uds()                                                    # this test's own engine
+    with records.opened_at(folder):
+        _write("/work/work-cmd.work", {"id": "work-cmd", "title": "t"})
+        _write("/work/work-cmd.work", {"id": "work-cmd", "title": "t2"})
+    monkeypatch.setattr(work_store, "_is_item", lambda data: bool(data and data.get("id")))
+    monkeypatch.setattr(data_paths, "knowledge_dir", lambda: folder)
+    monkeypatch.setattr(records_cutover, "take_snapshot", lambda uds: "snap-1")
+    assert work_folders.main(["forward"]) == 0
+    assert "in their folders: 1; at the old paths: 0" in capsys.readouterr().out
+    assert records._bound is None                                    # the binding put back
+    with records.opened_at(folder):
+        assert len(records.versions(work_store.path_of("work-cmd"))) == 2
+        assert records.get(work_store.old_path_of("work-cmd")) is None
+    engine = Engine.open(folder)
+    try:
+        assert work_folders.main(["check"]) == 1
+        assert "stop JARVIS first" in capsys.readouterr().err
+    finally:
+        engine.close()
