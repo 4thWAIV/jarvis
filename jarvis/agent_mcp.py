@@ -14,7 +14,7 @@ own onboarded key (agent_keys.py), never the tool token:
   `main` with the same arguments the command line takes (message.py,
   work_report.py, workflow_report.py, retrieve_attachment.py,
   language_document.py), so a tool and its command can never differ, and
-  the package job's three functions (package_jobs.py).
+  the sender's three package calls (package_request.py).
 
 The session it signs as is JARVIS_AGENT_SESSION, else the session Claude
 Code says it runs in (CLAUDE_CODE_SESSION_ID), else a tool's `as_session`
@@ -292,24 +292,25 @@ def _command(name: str, arguments: dict) -> tuple[bool, str, None]:
     return ok, text, None
 
 
-# --- package jobs (package_jobs.py) ---------------------------------------
+# --- package requests (package_request.py) ---------------------------------
 
 PACKAGE_SPECS: tuple[dict, ...] = (
     {"name": "package_start",
-     "description": "Start a package for the user from your handoff (a JSON file): returns "
-                    "the job's id at once; the package is researched, written, checked and "
-                    "delivered by its own author. Ask package_status how it stands.",
+     "description": "Ask JARVIS for a package for the user from your handoff (a JSON file): "
+                    "JARVIS checks it at once, then makes the package itself; returns the "
+                    "job, package and run ids at once. Ask package_status how it stands.",
      "inputSchema": {"type": "object", "properties": {
          "handoff": {**_STR, "description": "Absolute path of the handoff JSON."},
          "work": {**_STR, "description": "The Work item it is for."},
          "general": {"type": "boolean", "description": "It is for no Work item."}},
          "required": ["handoff"]}},
     {"name": "package_status",
-     "description": "Where a package job stands: its state, and its author's questions "
-                    "while it waits on you (answer them with package_answer).",
+     "description": "Where a package job stands: its state, the questions it asks you while "
+                    "it waits on you (answer them with package_answer), and, in Error, the "
+                    "step, why, what was tried and what would fix it.",
      "inputSchema": {"type": "object", "properties": {"job": _STR}, "required": ["job"]}},
     {"name": "package_answer",
-     "description": "Answer a package job's waiting questions; its author goes on with them.",
+     "description": "Answer a package job's waiting questions; its run goes on with them.",
      "inputSchema": {"type": "object", "properties": {
          "job": _STR,
          "answers": {"type": "object", "description": "Each question's id and your answer."}},
@@ -318,27 +319,27 @@ PACKAGE_SPECS: tuple[dict, ...] = (
 
 
 def _package(name: str, arguments: dict) -> tuple[bool, str, None]:
-    from jarvis import package_jobs
+    from jarvis import package_request
     session = session_of(arguments)
-    if session:
-        # The job signs as this session (agent_keys.signer_for reads it).
-        env_names.publish("JARVIS_AGENT_SESSION", session)
+    if not session:
+        return False, ("Refused: a package request is signed with your session's key; give "
+                       "as_session."), None
     try:
         if name == "package_start":
-            result = package_jobs.package_start(str(arguments.get("handoff") or ""),
-                                                work=arguments.get("work") or None,
-                                                general=bool(arguments.get("general")),
-                                                session=session or None)
+            result = package_request.start(Path(str(arguments.get("handoff") or "")),
+                                           session=session,
+                                           work=str(arguments.get("work") or ""),
+                                           general=bool(arguments.get("general")))
         elif name == "package_status":
-            result = package_jobs.package_status(str(arguments.get("job") or ""))
+            result = package_request.status(str(arguments.get("job") or ""), session=session)
         else:
             answers = arguments.get("answers")
             if not isinstance(answers, dict):
                 return False, "answers must be an object: each question's id and its answer.", None
-            result = package_jobs.package_answer(str(arguments.get("job") or ""), answers,
-                                                 session=session or None)
-    except package_jobs.JobError as refused:
-        return False, f"Refused: {refused}", None
+            result = package_request.answer(str(arguments.get("job") or ""), answers,
+                                            session=session)
+    except package_request.Refused as refused:
+        return False, "Refused: " + " ".join(refused.problems), None
     except SystemExit as refused:
         return False, str(refused), None
     except Exception as e:

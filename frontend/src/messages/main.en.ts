@@ -1226,6 +1226,8 @@ export const mainEn = {
   "main.updates.event.package_run.failed": "The work package {name} failed",
   "main.updates.event.package_run.timed_out": "The work package {name} ran out of time",
   "main.updates.event.package.arrived": "Package from {name}",
+  // A package run that cannot go on: the step it stopped at; its Work item is in Error.
+  "main.updates.event.package_job.error": "The package {name} asked for is in Error at the {step} step",
   // The reduced line a package gets in Updates waiting: who sent it, its title, how many decisions wait.
   "main.updates.event.arrival.arrived": "A message from {name} arrived",
   "main.updates.event.sign_in.not_signed_in": "This JARVIS is not signed in to a team server",

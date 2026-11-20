@@ -116,16 +116,6 @@ def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, c
         "pkg-0123456789ab", 41, "sess-1")
 
 
-def test_says_is_the_message_s_words(tmp_path, monkeypatch):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
-                    "--session", "sess-1", "--says", "Two choices on the lunch.",
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [(_url, _token, body)] = delivery.calls
-    assert body["says"] == "Two choices on the lunch."
-
-
 def test_the_version_follows_the_highest_already_delivered(tmp_path, monkeypatch):
     for version in ("1.0.0", "1.0.9", "1.0.10"):
         folder = data_paths.packages_dir() / f"team-lunch-moved-{version}-x"

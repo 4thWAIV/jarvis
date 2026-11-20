@@ -316,6 +316,20 @@ def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, s
     return private, normalise(public.read_text(encoding="ascii", errors="replace"))
 
 
+# JARVIS's own key: it signs the packages JARVIS makes itself (workflow.yaml
+# deliver, decided "signing"; who asked is proven by the request's own
+# signature, package_jobs.py).
+JARVIS_KEY = "jarvis"
+
+
+def jarvis_key() -> tuple[Path, str]:
+    """(the private key's path, the public key) of JARVIS's own key pair,
+    made once in its data folder (`<data>/jarvis/agent-keys/jarvis/`, a
+    sensitive name to every folder reader), as an agent's is made."""
+    from jarvis import data_paths
+    return make_pair(key_folder(JARVIS_KEY, data_paths.data_dir()), JARVIS_KEY)
+
+
 def session_key(session_id: str) -> Optional[tuple[Path, str]]:
     """(private key path, public key) the session has made, or None."""
     try:

@@ -83,10 +83,12 @@ PLANNED, READY, WORKING, VERIFYING, WAITING, BLOCKED, DONE = (
     "planned", "ready", "working", "verifying", "waiting_on_tim", "blocked", "done")
 STATES = (PLANNED, READY, WORKING, VERIFYING, WAITING, BLOCKED, DONE)
 # Error: JARVIS holds something sent for the item (a package or a report
-# signed by a key it does not know as an onboarded agent's), with why. Set
-# and cleared only by JARVIS itself (ERROR_RAISED, ERROR_CLEARED), never a
-# reporter; it is the item's state, ahead of everything but done, until the
-# hold is settled (the agent onboarded, or its key refused).
+# signed by a key it does not know as an onboarded agent's), with why, or a
+# package run for the item cannot go on (package_jobs.py). Set and cleared
+# only by JARVIS itself (ERROR_RAISED, ERROR_CLEARED), never a reporter; it
+# is the item's state, ahead of everything but done, until the hold is
+# settled (the agent onboarded, or its key refused) and no package run of
+# the item is left in Error (a new run of that package started).
 ERROR = "error"
 # Held: it cannot go on until what it names is answered or cleared, so it is
 # reported only with what holds it (`until`), and no report moves it on.
@@ -970,7 +972,10 @@ def _apply(doc: dict, item_id: str, kind: str, summary: str, detail: dict, now: 
         return _his_act(doc, kind, detail, now)
     if kind == ERROR_RAISED:
         doc.update(error=summary, error_at=now)
-        return {"held": _one_line(detail.get("held"), SUMMARY_MAX)}
+        # What it is in Error for: something held, or a package run that
+        # cannot go on (package_jobs.py).
+        return {k: _one_line(detail.get(k), SUMMARY_MAX) for k in ("held", "package_run")
+                if detail.get(k) or k == "held"}
     if kind == ERROR_CLEARED:
         doc.update(error="", error_at=None)
         return {"held": _one_line(detail.get("held"), SUMMARY_MAX)}

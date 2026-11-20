@@ -1,161 +1,306 @@
-"""Packages as jobs: `make_package` started, followed and answered without
-holding the sender's turn.
+"""A package's runs: recorded, run by JARVIS itself, and put in Error when
+they cannot go on (workflow.yaml, steps `record_and_start` and `deliver`
+error_state).
 
-An agent's tool call cannot wait on the package author: the author may need
-facts only the sender has, and the sender's model reads nothing until its
-call returns. So `package_start` records a job and starts it in a process of
-its own (`python -m jarvis.package_jobs run <id>`, detached), which runs the
-one factory (`make_package.main`) with the job's arguments, and returns at
-once. The job is one record, `/packages/jobs/<id>.job` (records.py), each
-change a version:
+The sending agent only asks (package_request.py). JARVIS takes its signed
+request (server._accept_package_request): who asked is the signing key's
+agent, `agent:<session id>`, recorded as the request is taken. A package
+has one id and each attempt at it is a run under it; one job is one run,
+and its record lives with its run:
 
-    queued -> researching -> writing -> checking -> delivered
-                  |                        \\-> refused (any step)
-                  v
-          waiting_on_sender (the author's questions) -> queued (answered)
+    /work/<work id>/packages/<package id>/runs/<run id>/run.job
+    /packages/<package id>/runs/<run id>/run.job      (for no Work item)
 
-When the fresh author needs facts it cannot find it writes its questions
-(package_author.read_questions) and stops; the job keeps them and waits on
-the sender, who answers with `package_answer` (the agent MCP server's tool,
-or `make_package --answer`). The job then resumes the SAME author session
-(Claude's --resume, Codex's thread/resume) with the answers, so its
-transcript, which author_proof reads, is the one it began with the author
-prompt. At most `MAX_ROUNDS` rounds are asked; after them the author is told
-to write the package with what is still unanswered marked UNANSWERED, which
-goes to Tim as such. `package_status` reads the record.
+with the run's files on disk at the matching folder (`folder_of`:
+data/work/<work id>/packages/... or data/package/<package id>/runs/...).
+Each change of the job is one version of its record.
+
+The run is produced in JARVIS's own process (`python -m jarvis.package_jobs
+run <job>`, which the server starts, SPAWN), step by step (STEPS: gather,
+mark, research, swarm, deck, deliver), each step the program PRODUCERS
+names for it:
+
+    queued -> running (step) -> delivered
+                 |    ^
+                 v    |  (the sender answered)
+          waiting_on_sender
+                 |
+                 v
+               error   (any step that cannot go on)
+
+A step that asks the sender questions (`ask`) leaves the job waiting on it;
+the sender answers with `answer` (package_answer, make_package --answer).
+At most MAX_ROUNDS rounds are asked. A sender that does not answer within
+SENDER_WAIT_SEC, a step that cannot go on (Blocked), a step that fails
+unexpectedly, and a run whose process ended without finishing it, each put
+the job in ERROR with the step, the reason in plain words, what was tried
+and what would fix it (`error`). The server then tells everyone
+(server._package_job_errored): the Work item goes to Error, else Tim gets a
+message; JARVIS has an update; the agent reads it all on its job
+(`status`). More than ERROR_RATE_MAX of packages ending in Error is a major
+problem with the package system (`error_rate`).
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import os
 import secrets
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from jarvis import data_paths, env_names, records
 
-ROOT = "/packages/jobs/"
 TYPE = "job"
-QUEUED, RESEARCHING, WRITING, CHECKING = "queued", "researching", "writing", "checking"
-WAITING = "waiting_on_sender"
-DELIVERED, REFUSED = "delivered", "refused"
-STATES = (QUEUED, RESEARCHING, WRITING, CHECKING, WAITING, DELIVERED, REFUSED)
-RUNNING = (QUEUED, RESEARCHING, WRITING, CHECKING)
-ENDED = (DELIVERED, REFUSED)
-MAX_ROUNDS = 2
+RECORD_NAME = f"run.{TYPE}"
+WORK_ROOT = "/work"
+PACKAGES_ROOT = "/packages"
+QUEUED, RUNNING, WAITING = "queued", "running", "waiting_on_sender"
+DELIVERED, ERROR = "delivered", "error"
+STATES = (QUEUED, RUNNING, WAITING, DELIVERED, ERROR)
+GOING = (QUEUED, RUNNING)
+ENDED = (DELIVERED, ERROR)
+# The steps a run is produced by, in order (workflow.yaml record_and_start
+# produce).
+STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
+# Each step's program, "module:function", called with the job's record;
+# it returns WAITING when it asked the sender and waits on the answers,
+# raises Blocked when it cannot go on. A step with none is not built yet.
+PRODUCERS: dict[str, str] = {}
+# At most five rounds of questions to the sender (Tim, 2026-11-19).
+MAX_ROUNDS = 5
+# A sender's answer is waited for 2 hours before Error (Tim, 2026-11-19).
+SENDER_WAIT_SEC = 2 * 3600.0
+# More than 1 package in 100 ending in Error is a major problem (Tim, 2026-11-19).
+ERROR_RATE_MAX = 1 / 100
 ANSWER_CHARS = 4000
-# How long a queued job may wait for its process to say it runs before a
-# status read takes it as never started.
+# How long a queued job may wait for its process to say it runs before it
+# is taken as never started.
 START_GRACE_SEC = 60.0
 LOG = "job.log"
+JARVIS = "jarvis"
 
 
 class JobError(ValueError):
     """A job call refused, in words the calling agent reads."""
 
 
-def path_of(job_id: str) -> str:
-    return f"{ROOT}{records.segment(job_id)}.{TYPE}"
+class Blocked(Exception):
+    """A step that cannot go on: which, why in plain words, what was tried
+    and what would fix it."""
+
+    def __init__(self, step: str, reason: str, tried: str, fix: str):
+        super().__init__(reason)
+        self.step, self.reason, self.tried, self.fix = step, reason, tried, fix
 
 
-def _by(doc: dict):
-    return records.by(f"agent:{doc['session']}" if doc.get("session") else "jarvis")
+# -- where a run is ----------------------------------------------------------------------
+
+def _package_folder(work: Optional[str], package: str) -> str:
+    from jarvis import work_store
+    seg = records.segment(package)
+    return (f"{work_store.folder_of(work)}/packages/{seg}" if work
+            else f"{PACKAGES_ROOT}/{seg}")
 
 
-def _read(job_id: str) -> dict:
-    rec = records.get(path_of(job_id)) if isinstance(job_id, str) and job_id else None
-    if rec is None:
+def run_folder(work: Optional[str], package: str, run: str) -> str:
+    """The run's folder in the knowledge engine."""
+    return f"{_package_folder(work, package)}/runs/{records.segment(run)}"
+
+
+def path_of(doc: dict) -> str:
+    """The job's record: `run.job` in its run's folder."""
+    return f"{run_folder(doc.get('work'), doc['package'], doc['run'])}/{RECORD_NAME}"
+
+
+def folder_of(doc: dict) -> Path:
+    """The run's folder on disk, which the content root maps to its run
+    folder in the engine (data/work -> /work, data/package -> /packages)."""
+    if doc.get("work"):
+        base = data_paths.work_dir() / records.segment(doc["work"]) / "packages"
+    else:
+        base = data_paths.package_dir()
+    folder = base / records.segment(doc["package"]) / "runs" / records.segment(doc["run"])
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _jobs(where: list) -> list[dict]:
+    """Every job (a run's record) matching `where`, under both roots."""
+    found = []
+    for root in (WORK_ROOT, PACKAGES_ROOT):
+        for rec in records.scan(root, types=[TYPE], where=where):
+            if rec.data.get("run") and rec.data.get("package"):
+                found.append(rec.data)
+    return found
+
+
+def get(job_id: str) -> dict:
+    if not isinstance(job_id, str) or not job_id:
+        raise JobError("Give the job's id.")
+    found = _jobs([["id", "=", job_id]])
+    if not found:
         raise JobError(f"There is no package job {job_id}.")
-    return rec.data
+    return found[0]
 
 
-def _change(job_id: str, change: str, fn) -> dict:
+def _change(job_id: str, change: str, fn: Callable[[dict], Optional[bool]]) -> dict:
     """One change of the job: `fn(doc)` edits it (returns False: leave it)."""
-    def run(unit):
-        rec = unit.get(path_of(job_id))
+    path = path_of(get(job_id))
+
+    def write(unit):
+        rec = unit.get(path)
         if rec is None:
             raise JobError(f"There is no package job {job_id}.")
         doc = rec.data
         if fn(doc) is False:
             return doc
         doc["updated_at"] = time.time()
-        unit.put(path_of(job_id), doc)
+        unit.put(path, doc)
         return doc
-    return records.atomic(run, by=_by(_read(job_id)), change=change)
+    return records.atomic(write, by=records.by(JARVIS), change=change)
 
 
-# -- what the agent calls ----------------------------------------------------------------
+# -- taking a request --------------------------------------------------------------------
 
-def _engine_of(session: str) -> str:
-    """The engine a session runs on, from where its own transcript is."""
-    from jarvis import author_proof
-    for engine in author_proof.ENGINES:
-        claim = author_proof.Claim(engine, session, "0" * 64)
-        if author_proof._SESSION.fullmatch(session) and author_proof.transcript(claim):
-            return engine
-    raise JobError(f"No Claude Code or Codex transcript of session {session} is on this Mac: "
-                   f"say which engine you run on.")
+def _new_id(prefix: str) -> str:
+    return f"{prefix}-{secrets.token_hex(6)}"
 
 
-def package_start(handoff_path, work: Optional[str] = None, general: bool = False, *,
-                  session: Optional[str] = None, engine: Optional[str] = None,
-                  project: Optional[str] = None, workflow: str = "", says: str = "",
-                  out=None, source=None, document=(), revision=(),
-                  deliver_to: Optional[str] = None) -> dict:
-    """Record a package job for the handoff and start it detached; returns
-    {"job", "state"} at once. The session is the sending agent's
-    (JARVIS_AGENT_SESSION when not given), whose key signs it."""
-    from jarvis import decision_package as dp
-    session = (session or env_names.read("JARVIS_AGENT_SESSION")).strip()
-    if not session:
-        raise JobError("Give the sending session (your session id).")
-    if work and general:
-        raise JobError("A package is for one work item or for none (general), not both.")
-    # One architecture document, or a view set's several, each with its revision.
-    documents = [document] if isinstance(document, str) else list(document or ())
-    revisions = [revision] if isinstance(revision, str) else list(revision or ())
-    documents, revisions = [d for d in documents if d], [r for r in revisions if r]
-    if len(documents) != len(revisions):
-        raise JobError("A document and its revision go together.")
-    handoff = Path(handoff_path).expanduser().resolve()
-    if not handoff.is_file():
-        raise JobError(f"There is no handoff at {handoff}.")
-    engine = engine or _engine_of(session)
-    if engine not in ("claude", "codex"):
-        raise JobError("The engine is claude or codex.")
-    out = Path(out).expanduser().resolve() if out else Path(tempfile.mkdtemp(prefix="package-"))
-    out.mkdir(parents=True, exist_ok=True)
-    argv = ["--handoff", str(handoff), "--engine", engine, "--session", session,
-            "--project", project or Path.cwd().name, "--out", str(out),
-            # Delivered where the agent's own commands and tools reach JARVIS
-            # (JARVIS_URL), never past it to another one.
-            "--deliver-to", deliver_to or env_names.read("JARVIS_URL").strip() or dp.LIVE]
-    for flag, value in (("--work", work), ("--workflow", workflow), ("--says", says)):
-        if value:
-            argv += [flag, str(value)]
-    for named, revised in zip(documents, revisions):
-        argv += ["--document", str(named), "--revision", str(revised)]
-    if general:
-        argv.append("--general")
-    if source:
-        argv.insert(0, str(Path(source).expanduser().resolve()))
-    job_id = "job-" + secrets.token_hex(6)
+def accept(request: dict, *, session: str, work: str = "", general: bool = False,
+           engine: str = "", project: str = "", workflow: str = "", source: str = "",
+           documents: tuple[tuple[str, str], ...] = (), submitted=None) -> dict:
+    """Record a new package's first run for a checked request
+    (package_request.check), asked by `session`'s onboarded key: the
+    package id, its first run id, and the job queued. JARVIS's record,
+    written by JARVIS; who asked is `requested_by`."""
+    package = _new_id("package")
+    return _record_run(package, "run-1", request, session=session, work=work, general=general,
+                       engine=engine, project=project, workflow=workflow, source=source,
+                       documents=documents, submitted=submitted, change="requested")
+
+
+def _record_run(package: str, run: str, request: dict, *, session: str, work: str,
+                general: bool, engine: str, project: str, workflow: str, source: str,
+                documents, submitted, change: str, after: Optional[dict] = None) -> dict:
     now = time.time()
-    doc = {"id": job_id, "state": QUEUED, "session": session, "engine": engine,
-           "work": work or None, "general": bool(general), "handoff": str(handoff),
-           "out": str(out), "argv": argv, "cwd": str(Path.cwd()), "rounds": [],
-           "unanswered": [], "author_session": None, "author_engine": None,
-           "author_model": None, "source_folder": None, "result": None, "problems": [],
-           "pid": None, "log": str(out / LOG), "created_at": now, "updated_at": now}
-    records.atomic(lambda unit: unit.put(path_of(job_id), doc), by=_by(doc), change="started")
-    SPAWN(job_id, doc)
-    return {"job": job_id, "state": QUEUED}
+    doc = {"id": _new_id("job"), "package": package, "run": run, "work": work or None,
+           "general": bool(general), "requested_by": f"agent:{session}", "session": session,
+           "requested_at": (after or {}).get("requested_at") or now,
+           "engine": engine or None, "project": project or "", "workflow": workflow or "",
+           "source": source or "", "documents": [list(d) for d in documents],
+           "request": request, "submitted": submitted, "state": QUEUED, "step": None,
+           "done": [], "rounds": [], "result": None, "error": None, "told": None,
+           "after": (after or {}).get("id"), "pid": None, "created_at": now,
+           "updated_at": now}
+    doc["folder"] = str(folder_of(doc))
+    doc["log"] = str(Path(doc["folder"]) / LOG)
+    records.atomic(lambda unit: unit.put(path_of(doc), doc), by=records.by(JARVIS),
+                   change=change)
+    return doc
 
+
+def new_run(job_id: str, why: str) -> dict:
+    """The next run of the same package (the sender answered a failed run's
+    findings, said what is wrong at its check, or Tim rejected it): the
+    package keeps its id, a new job names the next run id, asked as the
+    first was."""
+    before = get(job_id)
+    runs = _jobs([["package", "=", before["package"]]])
+    n = 1 + max(int(str(d["run"]).rsplit("-", 1)[-1]) for d in runs)
+    return _record_run(before["package"], f"run-{n}", before["request"],
+                       session=before["session"], work=before["work"] or "",
+                       general=before["general"], engine=before["engine"] or "",
+                       project=before["project"], workflow=before["workflow"],
+                       source=before["source"], documents=tuple(map(tuple, before["documents"])),
+                       submitted=before["submitted"], change=f"new run: {why}", after=before)
+
+
+# -- what the sender calls ---------------------------------------------------------------
+
+def status(job_id: str, session: str = "") -> dict:
+    """The job's record; a sender reads only its own."""
+    doc = get(job_id)
+    if session and session != doc["session"]:
+        raise JobError(f"Job {job_id} is session {doc['session']}'s.")
+    return doc
+
+
+def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
+    """The sender's answers to the questions the job asked it, by question
+    id; the job is queued again and goes on. Only its own sender answers."""
+    doc = status(job_id, session)
+    if doc["state"] != WAITING or not doc["rounds"]:
+        raise JobError(f"Job {job_id} is {doc['state']}, not waiting on your answers.")
+    if not isinstance(answers, dict) or not answers:
+        raise JobError("Answer with {question id: your answer}.")
+    asked = {q["id"] for q in doc["rounds"][-1]["questions"]}
+    unknown = sorted(set(answers) - asked)
+    if unknown:
+        raise JobError(f"Job {job_id} asked no question {', '.join(unknown)}; it asked "
+                       f"{', '.join(sorted(asked))}.")
+    given = {}
+    for key, value in answers.items():
+        if not isinstance(value, str) or not value.strip():
+            raise JobError(f"The answer to {key} is words.")
+        given[key] = value.strip()[:ANSWER_CHARS]
+
+    def write(d):
+        if d["state"] != WAITING:
+            raise JobError(f"Job {job_id} is {d['state']}, not waiting on your answers.")
+        d["rounds"][-1].update(answers=given, answered_at=time.time())
+        d["state"] = QUEUED
+    return _change(job_id, "answered", write)
+
+
+# -- what a step calls -------------------------------------------------------------------
+
+def ask(job_id: str, questions: list[dict]) -> bool:
+    """A step's questions to the sender, each {"id", "question"}: True when
+    they are asked (the job waits on the sender); False when every round
+    is used."""
+    asked = {}
+
+    def write(d):
+        if len(d["rounds"]) >= MAX_ROUNDS:
+            asked["now"] = False
+            return False
+        d["rounds"] = d["rounds"] + [{"questions": questions, "asked_at": time.time(),
+                                      "answers": None, "answered_at": None}]
+        d["state"], d["pid"] = WAITING, None
+        asked["now"] = True
+    _change(job_id, "asked", write)
+    return asked["now"]
+
+
+def delivered(job_id: str, result: dict) -> dict:
+    return _change(job_id, DELIVERED, lambda d: d.update(state=DELIVERED, result=result,
+                                                         pid=None))
+
+
+def error(job_id: str, step: str, reason: str, tried: str, fix: str) -> dict:
+    """The job in Error: the step, the reason in plain words, what was
+    tried and what would fix it. The server tells everyone once
+    (`to_tell`, `told`)."""
+    def write(d):
+        if d["state"] in ENDED:
+            return False
+        d.update(state=ERROR, pid=None, told=False,
+                 error={"step": step, "reason": reason, "tried": tried, "fix": fix,
+                        "at": time.time()})
+    return _change(job_id, ERROR, write)
+
+
+def told(job_id: str) -> dict:
+    """Everyone has been told of the job's Error."""
+    return _change(job_id, "told", lambda d: d.update(told=True))
+
+
+# -- what the server looks after ---------------------------------------------------------
 
 def _alive(pid) -> bool:
     if not isinstance(pid, int) or pid <= 0:
@@ -169,182 +314,127 @@ def _alive(pid) -> bool:
     return True
 
 
-def package_status(job: str) -> dict:
-    """The job's record. A job whose process ended without finishing it is
-    refused, saying so (a job always reaches delivered, refused or waiting)."""
-    doc = _read(job)
-    if doc["state"] in RUNNING:
-        gone = (not _alive(doc.get("pid")) if doc.get("pid") else
-                time.time() - doc["updated_at"] > START_GRACE_SEC)
-        if gone:
-            def ended(d):
-                if d["state"] not in RUNNING:
-                    return False
-                d["state"] = REFUSED
-                d["problems"] = [f"The job's process ended without finishing it (see {d['log']})."]
-            doc = _change(job, REFUSED, ended)
-    return doc
+def overdue(now: Optional[float] = None) -> list[dict]:
+    """Put in Error each job that cannot go on any more: its process ended
+    without finishing it, or its sender has not answered within
+    SENDER_WAIT_SEC. The jobs it put in Error."""
+    now = time.time() if now is None else now
+    moved = []
+    for doc in _jobs([["state", "in", [QUEUED, RUNNING, WAITING]]]):
+        step = doc.get("step") or STEPS[0]
+        if doc["state"] == WAITING:
+            asked_at = doc["rounds"][-1]["asked_at"] if doc["rounds"] else doc["updated_at"]
+            if now - asked_at > SENDER_WAIT_SEC:
+                n = len(doc["rounds"][-1]["questions"]) if doc["rounds"] else 0
+                moved.append(error(
+                    doc["id"], step, "The sender did not answer the questions within 2 hours.",
+                    f"JARVIS asked the sending agent {n} question(s) (round "
+                    f"{len(doc['rounds'])}) and waited 2 hours.",
+                    "The sending agent answers the questions (package_answer) and asks for a "
+                    "new run, or tells Tim why it cannot."))
+        elif (not _alive(doc.get("pid")) if doc.get("pid") else
+              now - doc["updated_at"] > START_GRACE_SEC):
+            moved.append(error(
+                doc["id"], step, "The run's process ended without finishing it.",
+                f"JARVIS ran the {step} step in its own process (log: {doc['log']}).",
+                "Read the run's log for the cause; once it is fixed, a new run."))
+    return moved
 
 
-def package_answer(job: str, answers: dict, *, session: Optional[str] = None) -> dict:
-    """The sender's answers to the author's open questions, by question id;
-    the job is queued again and resumes the same author. Only the job's own
-    sender answers (`session`, when the caller is known)."""
-    doc = _read(job)
-    if session and session != doc["session"]:
-        raise JobError(f"Job {job} is session {doc['session']}'s to answer.")
-    if doc["state"] != WAITING or not doc["rounds"]:
-        raise JobError(f"Job {job} is {doc['state']}, not waiting on your answers.")
-    if not isinstance(answers, dict) or not answers:
-        raise JobError("Answer with {question id: your answer}.")
-    asked = {q["id"] for q in doc["rounds"][-1]["questions"]}
-    unknown = sorted(set(answers) - asked)
-    if unknown:
-        raise JobError(f"Job {job} asked no question {', '.join(unknown)}; it asked "
-                       f"{', '.join(sorted(asked))}.")
-    given = {}
-    for key, value in answers.items():
-        if not isinstance(value, str) or not value.strip():
-            raise JobError(f"The answer to {key} is words.")
-        given[key] = value.strip()[:ANSWER_CHARS]
-
-    def answer(d):
-        if d["state"] != WAITING:
-            raise JobError(f"Job {job} is {d['state']}, not waiting on your answers.")
-        d["rounds"][-1].update(answers=given, answered_at=time.time())
-        d["state"] = QUEUED
-    doc = _change(job, "answered", answer)
-    SPAWN(job, doc)
-    return doc
+def to_tell() -> list[dict]:
+    """The jobs in Error whose Error nobody has been told of yet."""
+    return _jobs([["state", "=", ERROR], ["told", "=", False]])
 
 
-# -- the job's own process ---------------------------------------------------------------
+def errored_work() -> set[str]:
+    """The Work items with a package run in Error that no later run of its
+    package has followed (`new_run`)."""
+    return {d["work"] for d in _jobs([["state", "=", ERROR]])
+            if d.get("work") and not _jobs([["after", "=", d["id"]]])}
 
-def _spawn_detached(job_id: str, doc: dict) -> None:
-    """The job's process, detached from the caller (its own session, no
-    terminal), writing to the job's log."""
+
+def error_rate() -> tuple[int, int]:
+    """(packages with a run in Error, packages with a run): more than
+    ERROR_RATE_MAX of them is a major problem with the package system."""
+    runs = _jobs([["state", "in", list(STATES)]])
+    packages = {d["package"] for d in runs}
+    errored = {d["package"] for d in runs if d["state"] == ERROR}
+    return len(errored), len(packages)
+
+
+def major_problem(errored: int, packages: int) -> bool:
+    return packages > 0 and errored / packages > ERROR_RATE_MAX
+
+
+# -- the run's own process ---------------------------------------------------------------
+
+def _spawn_detached(doc: dict) -> int:
+    """The run's process, JARVIS's own (its checkout's code), detached from
+    the server (its own session, no terminal), in the run's folder, writing
+    to the run's log; its pid."""
     env = env_names.child(PYTHONPATH=str(data_paths.PACKAGE_DIR.parent))
     with open(doc["log"], "ab") as log:
-        subprocess.Popen([sys.executable, "-P", "-m", "jarvis.package_jobs", "run", job_id],
-                         cwd=doc.get("cwd") or None, env=env, stdin=subprocess.DEVNULL,
-                         stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                         close_fds=True)
+        child = subprocess.Popen(
+            [sys.executable, "-P", "-m", "jarvis.package_jobs", "run", doc["id"]],
+            cwd=doc["folder"], env=env, stdin=subprocess.DEVNULL, stdout=log,
+            stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+    return child.pid
 
 
-SPAWN = _spawn_detached
+SPAWN: Callable[[dict], int] = _spawn_detached
 
 
-class Progress:
-    """The job as make_package and the author see it (package_author's
-    `job`): each step written to the record as it happens."""
+def start(doc: dict) -> dict:
+    """Start the run's process; the job names its pid."""
+    pid = SPAWN(doc)
+    return _change(doc["id"], "started", lambda d: d.update(pid=pid))
 
-    def __init__(self, job_id: str):
-        self.id = job_id
 
-    def _set(self, change: str, **fields) -> dict:
-        def edit(d):
-            d.update(fields)
-        return _change(self.id, change, edit)
-
-    @property
-    def resuming(self) -> Optional[dict]:
-        """The author to resume, with the message carrying the answers, when
-        the sender has answered its last questions; else None."""
-        doc = _read(self.id)
-        rounds = doc["rounds"]
-        if not rounds or rounds[-1].get("answers") is None or not doc.get("author_session"):
-            return None
-        last = rounds[-1]
-        lines = [f"The sending agent answered your questions (round {len(rounds)} of at most "
-                 f"{MAX_ROUNDS}). Its answers are evidence from the sender:"]
-        missing = []
-        for q in last["questions"]:
-            said = last["answers"].get(q["id"])
-            if said:
-                lines.append(f"- {q['id']} ({q['question']}): {said}")
-            else:
-                missing.append(q)
-        if missing:
-            lines.append("Not answered, so UNANSWERED wherever it matters in the package: "
-                         + "; ".join(f"{q['id']} ({q['question']})" for q in missing))
-        lines.append("Continue the assignment from where you stopped: research, write the "
-                     "source, and run the check last.")
-        return {"author_session": doc["author_session"], "author_engine": doc["author_engine"],
-                "author_model": doc.get("author_model"), "source_folder": doc["source_folder"],
-                "message": "\n".join(lines)}
-
-    def running(self) -> None:
-        self._set("running", pid=os.getpid())
-
-    def researching(self, *, folder: str, author_engine: str,
-                    author_model: Optional[str]) -> None:
-        self._set(RESEARCHING, state=RESEARCHING, source_folder=folder,
-                  author_engine=author_engine, author_model=author_model)
-
-    def authored_by(self, author_session: str) -> None:
-        """The author session, named on the job as soon as it is known."""
-        self._set("author", author_session=author_session)
-
-    def writing(self) -> None:
-        self._set(WRITING, state=WRITING)
-
-    def checking(self) -> None:
-        self._set(CHECKING, state=CHECKING)
-
-    def ask(self, questions: list[dict], *, author_session: str) -> bool:
-        """The author's questions: True when they are asked of the sender
-        (waiting_on_sender); False when every round is used, and they go
-        to Tim unanswered."""
-        asked = {}
-
-        def edit(d):
-            d["author_session"] = author_session
-            if len(d["rounds"]) >= MAX_ROUNDS:
-                d["unanswered"] = d["unanswered"] + questions
-                asked["now"] = False
-                return
-            d["rounds"] = d["rounds"] + [{"questions": questions, "asked_at": time.time(),
-                                          "answers": None, "answered_at": None}]
-            d["state"] = WAITING
-            d["pid"] = None
-            asked["now"] = True
-        _change(self.id, "asked", edit)
-        return asked["now"]
-
-    @staticmethod
-    def unanswered_message(questions: list[dict]) -> str:
-        return ("There are no more question rounds: write the package now from what you have. "
-                "State each of these as UNANSWERED where it matters, so Tim sees what is not "
-                "known: " + "; ".join(f"{q['id']} ({q['question']})" for q in questions)
-                + ". Then run the check last.")
-
-    def delivered(self, result: dict) -> None:
-        self._set(DELIVERED, state=DELIVERED, result=result, pid=None)
-
-    def refused(self, problems: list[str]) -> None:
-        self._set(REFUSED, state=REFUSED, problems=list(problems), pid=None)
+def _producer(step: str) -> Optional[Callable[[dict], Optional[str]]]:
+    named = PRODUCERS.get(step)
+    if not named:
+        return None
+    module, _, function = named.partition(":")
+    return getattr(importlib.import_module(module), function)
 
 
 def run(job_id: str) -> int:
-    """The job's process: the factory with the job's arguments; whatever
-    ends it unexpectedly refuses the job, saying why."""
-    from jarvis import make_package
-    doc = _read(job_id)
+    """The run's process: each step not yet done, in order. A step that
+    cannot go on, or fails, puts the job in Error saying so."""
+    doc = get(job_id)
     if doc["state"] != QUEUED:
         print(f"Job {job_id} is {doc['state']}; nothing to run.")
         return 1
-    progress = Progress(job_id)
-    progress.running()
+    _change(job_id, RUNNING, lambda d: d.update(state=RUNNING, pid=os.getpid()))
+    step = doc.get("step") or STEPS[0]
     try:
-        code = make_package.main(doc["argv"] + ["--job", job_id])
-        if _read(job_id)["state"] in RUNNING:
-            progress.refused([f"The factory stopped without finishing (see {doc['log']})."])
-        return code
-    except BaseException as error:    # noqa: BLE001 - the job must end, whatever ended it
+        for step in STEPS:
+            if step in doc["done"]:
+                continue
+            _change(job_id, step, lambda d, s=step: d.update(step=s))
+            producer = _producer(step)
+            if producer is None:
+                raise Blocked(step, f"The {step} step is not built in this JARVIS yet.",
+                              f"JARVIS took the request and reached the {step} step.",
+                              f"This JARVIS needs the {step} step; until then no package can "
+                              f"be made.")
+            if producer(get(job_id)) == WAITING:
+                return 0
+            doc = _change(job_id, f"{step} done",
+                          lambda d, s=step: d.update(done=d["done"] + [s]))
+        if get(job_id)["state"] == RUNNING:
+            raise Blocked(STEPS[-1], "The deliver step ended without delivering the package.",
+                          "JARVIS ran every step.", "The deliver step must record the delivery.")
+        return 0
+    except Blocked as blocked:
+        error(job_id, blocked.step, blocked.reason, blocked.tried, blocked.fix)
+        return 1
+    except BaseException as failed:    # noqa: BLE001 - the job must end, whatever ended it
         with contextlib.suppress(Exception):
-            if _read(job_id)["state"] in RUNNING:
-                progress.refused([f"The job stopped: {type(error).__name__}: {error}"])
-        if isinstance(error, Exception):
+            error(job_id, step, f"The {step} step failed: {type(failed).__name__}: {failed}",
+                  f"JARVIS ran the {step} step (log: {doc['log']}).",
+                  "Read the run's log for the cause; once it is fixed, a new run.")
+        if isinstance(failed, Exception):
             return 1
         raise
 

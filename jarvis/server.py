@@ -95,6 +95,7 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
+from jarvis import package_jobs, package_jobs_api, package_request
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
@@ -2752,6 +2753,7 @@ async def start_session_watcher() -> None:
     _agents_task = _spawn(_watch_agents())
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
+    _spawn(_watch_package_jobs())
     _subsystems_task = _spawn(_watch_subsystems())
     _follow_usage_poll()
 
@@ -10342,8 +10344,9 @@ def _raise_work_error(work_id: str, held) -> None:
 
 
 def _clear_work_errors(work_ids, how: str) -> None:
-    """The Error of each item whose holds are all settled goes."""
-    still = {h.work_id for h in agent_key_store.held()}
+    """The Error of each item whose holds are all settled, and with no
+    package run left in Error (package_jobs.errored_work), goes."""
+    still = {h.work_id for h in agent_key_store.held()} | package_jobs.errored_work()
     for work_id in sorted({w for w in work_ids if w} - still):
         try:
             item = work_store.record(work_store.WorkEvent(
@@ -11113,6 +11116,143 @@ def _follow_inbox_messages() -> None:
 package_inbox_api.mount(app, package_inbox_api.Calls(
     receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
     sign_off=_sign_off_package, close=_close_inbox_package, withdraw=_withdraw_inbox_package))
+
+
+# --- Package requests and their runs (package_request.py, package_jobs.py) --
+
+# How often the runs are looked after: a run whose process ended, a sender
+# past its answer's wait, and an Error nobody has been told of yet.
+PACKAGE_JOBS_LOOK_SEC = 5.0
+PACKAGE_JOBS_LOOP = "package jobs"
+# What JARVIS's own messages are from, in his Inbox.
+JARVIS_SENDER, JARVIS_NAME = "jarvis", "JARVIS"
+
+
+def _accept_package_request(session: str, work: str, general: bool, body: dict) -> dict:
+    """An onboarded agent's signed request for a package (the page has no
+    part in it): checked at once, else refused with every problem
+    (package_request.Refused, messages_api.Refused) and nothing recorded.
+    Taken, JARVIS records who asked (`agent:<session>`, from the
+    signature), the package and its first run's job (package_jobs.accept),
+    and starts the run in its own process. Blocking."""
+    messages_api.check_about(session, work, general)
+    handoff = body.get("handoff")
+    request = package_request.check(handoff)
+    workflow = str(body.get("workflow") or "").strip()
+    linked = _check_inbox_links(workflow, work)
+    if linked:
+        raise package_request.Refused([linked.replace("nothing was received", "nothing was taken")])
+    problems = []
+    source = str(body.get("source") or "").strip()
+    if source and not Path(source).expanduser().exists():
+        problems.append(f"There is nothing at the source {source}.")
+    documents = body.get("documents") or []
+    if not isinstance(documents, list) or not all(
+            isinstance(d, list) and len(d) == 2 and all(isinstance(x, str) and x.strip()
+                                                        for x in d) for d in documents):
+        problems.append("documents is a list of [document, revision] pairs.")
+        documents = []
+    engine = str(body.get("engine") or "").strip()
+    if engine and engine not in brain_provider.ENGINES:
+        problems.append("The engine is " + " or ".join(brain_provider.ENGINES) + ".")
+    if problems:
+        raise package_request.Refused(problems)
+    if not engine:
+        key = agent_key_store.for_session(session)
+        engine = key.provider if key is not None and key.provider in brain_provider.ENGINES else ""
+    doc = package_jobs.accept(request, session=session, work=work, general=general,
+                              engine=engine, project=str(body.get("project") or "").strip(),
+                              workflow=workflow, source=source,
+                              documents=tuple(tuple(d) for d in documents), submitted=handoff)
+    doc = package_jobs.start(doc)
+    log.info("packages: %s asked for package %s (job %s)%s", doc["requested_by"],
+             doc["package"], doc["id"], f" for {work}" if work else "")
+    return {"job": doc["id"], "package": doc["package"], "run": doc["run"],
+            "state": doc["state"]}
+
+
+def _package_job_status(session: str, job: str) -> dict:
+    return package_jobs.status(job, session)
+
+
+def _answer_package_job(session: str, job: str, answers) -> dict:
+    """The asking agent's answers to its run's questions: the run goes on."""
+    doc = package_jobs.answer(job, answers, session=session)
+    return package_jobs.start(doc)
+
+
+def _new_package_run(job_id: str, why: str) -> dict:
+    """The next run of a package, started (package_jobs.new_run): the Error
+    the run before left on its Work item is cleared once no other remains,
+    and its update is no longer news. Blocking."""
+    errored = package_jobs.get(job_id)["state"] == package_jobs.ERROR
+    doc = package_jobs.new_run(job_id, why)
+    _attention_resolved("package_job", job_id)
+    if errored and doc.get("work"):
+        _clear_work_errors([doc["work"]], f"a new run of package {doc['package']} started")
+    return package_jobs.start(doc)
+
+
+def _package_job_errored(doc: dict) -> None:
+    """A package run that cannot go on, told to everyone once (workflow.yaml
+    deliver error_state): its Work item is set to Error, which is Tim's
+    notice, or, for no Work item, JARVIS's message to him in his Inbox;
+    JARVIS has it as an update (`package_job`, `error`), with how many
+    packages have ended in Error, more than 1 in 100 a major problem; the
+    asking agent reads the step, the reason, what was tried and what would
+    fix it on its job (package_jobs.status). Blocking."""
+    error = doc["error"] or {}
+    name = agent_directory.names_by_session().get(doc["session"]) or doc["session"]
+    said = (f"Error: package {doc['package']} ({doc['run']}), asked for by {name}, stopped at "
+            f"the {error.get('step')} step: {error.get('reason')} Tried: {error.get('tried')} "
+            f"To fix: {error.get('fix')}")
+    item = None
+    if doc.get("work"):
+        try:
+            item = work_store.record(work_store.WorkEvent(
+                doc["work"], work_store.ERROR_RAISED, said, {"package_run": doc["id"]},
+                reporter="jarvis"))
+        except work_store.WorkRefused as e:
+            log.info("packages: work item %s not put in Error (%s)", doc["work"], e)
+    if item is not None:
+        _work_recorded(item, work_store.ERROR_RAISED, None)
+    else:
+        _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.AGENT,
+                        doc["session"], name, said, JARVIS_SENDER,
+                        source_kind=conversation_log.Source.PACKAGE_ERROR, source_id=doc["id"],
+                        sender=JARVIS_SENDER, sender_name=JARVIS_NAME)
+    errored, packages = package_jobs.error_rate()
+    major = package_jobs.major_problem(errored, packages)
+    _attend("package_job", doc["id"], "error",
+            facts={"step": error.get("step"), "package": doc["package"], "run": doc["run"],
+                   "work": doc.get("work") or "", "errored": errored, "packages": packages,
+                   "major_problem": major},
+            untrusted={"agent": name, "reason": error.get("reason"),
+                       "tried": error.get("tried"), "fix": error.get("fix")})
+    if major:
+        log.warning("packages: %s of %s packages have ended in Error, more than 1 in 100: a "
+                    "major problem with the package system", errored, packages)
+    package_jobs.told(doc["id"])
+    log.info("packages: job %s in Error at %s, told", doc["id"], error.get("step"))
+
+
+def _look_after_package_jobs() -> None:
+    """Each run that cannot go on put in Error (package_jobs.overdue), and
+    each Error told once. Blocking."""
+    package_jobs.overdue()
+    for doc in package_jobs.to_tell():
+        _package_job_errored(doc)
+
+
+async def _watch_package_jobs() -> None:
+    async def look() -> None:
+        await asyncio.to_thread(_look_after_package_jobs)
+
+    await _every(PACKAGE_JOBS_LOOK_SEC, PACKAGE_JOBS_LOOP, look)
+
+
+package_jobs_api.mount(app, package_jobs_api.Calls(
+    accept=_accept_package_request, status=_package_job_status, answer=_answer_package_job))
 
 
 # The states as the brain reads them.

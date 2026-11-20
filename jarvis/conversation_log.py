@@ -78,6 +78,7 @@ PROOFS = frozenset({
     "access_key",            # an access key whose label is the agent
     "agent_signature",       # an onboarded agent's key signed it (server.PROVEN_BY_SIGNATURE)
     "team_server",           # the team server's signed-in member
+    "jarvis",                # JARVIS wrote it itself (a package run's Error, package_jobs)
 })
 
 # The kinds of item that are a message from a counterpart to him.
@@ -95,6 +96,7 @@ class Source(StrEnum):
     PACKAGE = "package"                  # the package inbox row's id
     PERSON_MESSAGE = "person_message"    # the team server's message id
     SIGNED = "signed"                    # POST /api/messages: the message's own id
+    PACKAGE_ERROR = "package_error"      # a package run's job id: its Error, for no Work item
 
 
 # Each source's update in the attention record (attention_store: kind, and
@@ -110,6 +112,7 @@ UPDATES: dict[Source, tuple[str, str, bool]] = {
     Source.PACKAGE: ("package", "arrived", False),
     Source.PERSON_MESSAGE: ("arrival", "arrived", False),
     Source.SIGNED: ("message", "arrived", False),
+    Source.PACKAGE_ERROR: ("package_job", "error", False),
 }
 
 

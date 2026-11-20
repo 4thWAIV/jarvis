@@ -29,7 +29,7 @@ def test_the_skill_is_rendered_with_this_install_s_folders(homes):
 
     assert "{{" not in text
     assert "-P -m jarvis.message --cert " in text, "the one way to send him a message"
-    assert "-P -m jarvis.make_package --handoff" in text
+    assert "-P -m jarvis.make_package --start --handoff" in text
     assert str(tmp_path / "data" / "answers") + "/<project>/" in text
     # The two folders, their signatures and the bare decision are gone.
     for gone in ("/data/needs", "/data/messages", " sign <", "needs board", " decision <id>",

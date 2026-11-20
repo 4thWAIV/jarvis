@@ -548,7 +548,8 @@ hint: an agent's box counts its new messages (`needs`,
 `conversation_log.new_by_agent`, `server._new_by_agent`).
 Round 3 moved agents over. `/api/messages` is the one route an agent
 reaches him by: `make_package` posts there (`decision_package.deliver`: JSON
-`says`, `--says` or the package's kind and title, and the zip in base64;
+`says`, the package's kind and title (`--says` is gone: no sender text
+reaches him around the package), and the zip in base64;
 `work`, `project`, `workflow`, `source` in the query, `messages_api.Links`),
 and `POST /api/packages/inbox` refuses an agent's signed request
 (`SEND_AS_MESSAGE`), kept as JARVIS's own path. It is the one route a key
@@ -685,8 +686,8 @@ tools calling the command's own `main` with the same command line
 `work_answers` are `work_report.py`'s; `workflow_start`, `workflow_event`,
 `workflow_answer` `workflow_report.py`'s; `retrieve_attachment`;
 `language_document`), so each lands through its own route and right; the
-package job tools (`package_start`, `package_status`, `package_answer`) call
-`package_jobs.py`. `agent_key` stays a command. The talk-to-jarvis skill
+package tools (`package_start`, `package_status`, `package_answer`) are the
+sender's signed calls in `package_request.py` (see "Package requests"). `agent_key` stays a command. The talk-to-jarvis skill
 teaches the tools beside the commands.
 
 ## The workflow monitor
@@ -1484,23 +1485,67 @@ author session vouches for one package's bytes
 (`agent_key_store.bind_author`, migration 4), so a new revision needs a new
 author. A person's package, JARVIS's own, the same bytes already here and
 the isolated check JARVIS are not asked.
-A package is also made as a job (`package_jobs.py`; `make_package --start`,
-`--status`, `--answer`, and the agent MCP server's `package_start`,
-`package_status`, `package_answer`): one `job` document,
-`/packages/jobs/<id>.job` (records), each step a version (`queued`,
-`researching`, `writing`, `checking`, `waiting_on_sender`, `delivered`,
-`refused`), its process detached (`python -m jarvis.package_jobs run <id>`,
-`SPAWN`), a process that ended without finishing read as refused. The
-author is started with the agent MCP server alone (`author-mcp.json`,
-`package_author.agent_mcp_config`: `python -m jarvis.agent_mcp`, signed as
-the sending session by `JARVIS_AGENT_SESSION`). An author that needs facts
-only its sender has writes `author-blocked.json`
-(`package_author.read_questions`); the job waits on the sender, who answers
-by question id, and resumes the SAME author session (`BrainConfig.resume`:
-Claude's `--resume`, Codex's `thread/resume`), so `author_proof` reads the
-transcript it began; after `MAX_ROUNDS` (2) the author writes the package
-with what is still unanswered marked UNANSWERED. Without a job, its
-questions refuse the package.
+## Package requests
+The package system's new way in (`.agents` design, workflow.yaml steps
+`request` and `record_and_start`; the steps that make the package come
+after it): the sending agent asks and writes nothing of the package.
+`make_package --start --handoff <file> --session <id>` and the agent MCP
+server's `package_start` send the handoff signed with the session's own key
+(`package_request.start`, `POST /api/packages/requests`, the `packages`
+right, at most once by `report_keys`); `--status` / `package_status` and
+`--answer` / `package_answer` are `GET /api/packages/requests/<job>` and
+`POST .../answer`, the asking agent's alone (`package_jobs_api.py`). The
+handoff (`package_request.check`, the one reader, run as JARVIS takes it)
+is `sender_answers` (the two questions every sender answers,
+`package_request.QUESTIONS`, Tim's wording word for word: `plainly` and
+`why_now`), `questions` (one or several, each `id`, `text` and the
+sender's `options`; questions and decisions are one list), `evidence`
+(typed entries of the 14 types, `evidence_types.FIELDS`: a `file` checked
+to be there and its SHA-256 and size recorded as it is taken; `label` the
+one type a model resolves; the situation is one of them), optional
+`purpose` and `recommendation`, and `work` and `approval` as before;
+everything from the sender is kept labelled as the sender's
+(`from_the_sender`, `options_from_the_sender`). `conclusion`, `audience`
+and any structure are refused, `question`, `decisions` and `situation` say
+where they went, and a bad request is refused at once, every problem
+listed (400 `problems`), nothing recorded. Taken
+(`server._accept_package_request`, also `messages_api.check_about` and
+`_check_inbox_links`), JARVIS records who asked from the signature
+(`requested_by`, `agent:<session id>`), makes the package id and its first
+run id and records the job, one job one run, with its run
+(`package_jobs.accept`): `/work/<id>/packages/<package id>/runs/<run
+id>/run.job`, or `/packages/<package id>/runs/<run id>/run.job` with no
+Work item, the run's files at `data/work/<id>/packages/...` or
+`data/package/<package id>/runs/...` (`package_jobs.folder_of`), JARVIS's
+own record. It runs the job itself, in a process of its own
+(`python -m jarvis.package_jobs run <job>`, `SPAWN`, in the run's folder):
+the steps `package_jobs.STEPS` (gather, mark, research, swarm, deck,
+deliver), each the program `PRODUCERS` names; a step not built yet is an
+Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
+`waiting_on_sender`, at most `MAX_ROUNDS`, five); its answers queue the run
+again. A package's next run (`server._new_package_run`,
+`package_jobs.new_run`) keeps the package id and names the run before it
+(`after`). JARVIS's own key (`agent_keys.jarvis_key`, made once in
+`<data>/jarvis/agent-keys/jarvis/`) is what JARVIS signs the packages it
+makes with. The old `make_package --handoff` without `--start` (the fresh
+author in the sender's process, "Work packages") is what this replaces.
+The Error state (design: deliver `error_state`): a run that cannot go on
+(a sender that does not answer within `SENDER_WAIT_SEC`, 2 hours, swept by
+`package_jobs.overdue`; a step's `Blocked`; a step that fails; a run whose
+process ended) is `error`, with the step, the reason in plain words, what
+was tried and what would fix it (`package_jobs.error`). The server's look
+(`_watch_package_jobs`, every `PACKAGE_JOBS_LOOK_SEC`) tells everyone once
+(`server._package_job_errored`, `told`): the Work item is set to Error
+(`work_store.ERROR_RAISED` naming the run, `package_run`), which is Tim's
+notice, or with no Work item a message to him in his Inbox from JARVIS
+(proof `jarvis`, source `package_error`); JARVIS has it as one update
+(`package_job`, `error`, the step in its facts and the reason, what was
+tried and the fix walled), with how many packages have ended in Error
+(`package_jobs.error_rate`; more than 1 in 100, `major_problem`, is a major
+problem with the package system, logged as such); the agent reads it all
+on its job. The Work item's Error stays until no package run of it is left
+in Error that no later run followed (`package_jobs.errored_work`,
+`_clear_work_errors`).
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
@@ -3086,9 +3131,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   forwards `tools/call` to `POST /internal/tool`
 - `agent_mcp.py` — Stdio MCP server exposing JARVIS's tools to agents:
   the brain's reading tools through the signed `POST /api/agent-tool`, the
-  agent commands' own `main`s, the package job tools (see "Agent tools")
-- `package_jobs.py` — A package as a job: start, status and answer, the
-  functions the agent's package tools call
+  agent commands' own `main`s, the package request tools (see "Agent tools")
+- `package_request.py` / `package_jobs.py` / `package_jobs_api.py` — A
+  package request: the sender's typed handoff and its signed calls; each
+  run's job, run by JARVIS, and its Error; the routes (see "Package
+  requests")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
