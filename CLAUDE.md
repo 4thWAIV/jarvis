@@ -1506,14 +1506,16 @@ sender's `options`; questions and decisions are one list), `evidence`
 (typed entries of the 14 types, `evidence_types.FIELDS`: a `file` checked
 to be there and its SHA-256 and size recorded as it is taken; `label` the
 one type a model resolves; the situation is one of them), optional
-`purpose` and `recommendation`, and `work` and `approval` as before;
+`purpose` and `recommendation`, and `work` and `approval` as before (the
+Work item `--work` names, else the one the handoff's `work` names,
+`package_request.work_of`, is the package's);
 everything from the sender is kept labelled as the sender's
 (`from_the_sender`, `options_from_the_sender`). `conclusion`, `audience`
 and any structure are refused, `question`, `decisions` and `situation` say
 where they went, and a bad request is refused at once, every problem
-listed (400 `problems`), nothing recorded. Taken
-(`server._accept_package_request`, also `messages_api.check_about` and
-`_check_inbox_links`), JARVIS records who asked from the signature
+listed (400 `problems`), nothing recorded; beside the handoff only what
+record_and_start checks (not both a Work item and none, the engine). Taken
+(`server._accept_package_request`), JARVIS records who asked from the signature
 (`requested_by`, `agent:<session id>`), makes the package id and its first
 run id and records the job, one job one run, with its run
 (`package_jobs.accept`): `/work/<id>/packages/<package id>/runs/<run
@@ -1555,9 +1557,7 @@ notice, or with no Work item (or one closed or gone, which takes no
 Error, the message saying so) a message to him in his Inbox from JARVIS
 (proof `jarvis`, source `package_error`); JARVIS has it as one update
 (`package_job`, `error`, the step in its facts and the reason, what was
-tried and the fix walled), with how many packages have ended in Error
-(`package_jobs.error_rate`; more than 1 in 100, `major_problem`, is a major
-problem with the package system, logged as such); and the asking agent is
+tried and the fix walled); and the asking agent is
 told: JARVIS's own message to its session (`server._tell_agent`, a
 `queued` message on record, sent by `SessionWatcher.send_queued` once the
 session is between turns and followed as every message is; its id kept

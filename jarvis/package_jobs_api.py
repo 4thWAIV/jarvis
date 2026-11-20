@@ -5,7 +5,8 @@ each calls the server's one function for it.
         {"handoff": {...}, "engine"?, "project"?, "workflow"?, "source"?,
          "documents"?: [[document, revision], ...]}: an onboarded agent asks
         for a package, signed with its own key (agent_rights `packages`;
-        `work` in the query so the right's scope sees it). Checked at once:
+        `work` in the query so the right's scope sees it; with none, the
+        Work item the handoff names). Checked at once:
         a bad request is refused (400, `problems`) and nothing is recorded.
         Taken, JARVIS records who asked from the signature and the job with
         its run, starts the run itself and answers {job, package, run,
@@ -69,8 +70,6 @@ def mount(app: FastAPI, calls: Calls) -> None:
                                            body)
         except package_request.Refused as e:
             return _refused("Not taken: " + " ".join(e.problems), 400, e.problems)
-        except messages_api.Refused as e:
-            return _refused(str(e), e.status)
 
     async def one(job: str, request: Request):
         session = _session(request)

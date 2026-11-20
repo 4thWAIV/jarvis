@@ -11148,21 +11148,22 @@ JARVIS_SENDER, JARVIS_NAME = "jarvis", "JARVIS"
 def _accept_package_request(session: str, work: str, general: bool, body: dict) -> dict:
     """An onboarded agent's signed request for a package (the page has no
     part in it): checked at once, else refused with every problem
-    (package_request.Refused, messages_api.Refused) and nothing recorded.
-    Taken, JARVIS records who asked (`agent:<session>`, from the
-    signature), the package and its first run's job (package_jobs.accept),
-    and starts the run in its own process. Blocking."""
-    messages_api.check_about(session, work, general)
+    (package_request.Refused) and nothing recorded. Only what
+    workflow.yaml record_and_start checks: the handoff (package_request.
+    check), not both a Work item and none, and the engine. The package's
+    Work item is `--work`, else the one the handoff names
+    (package_request.work_of). Taken, JARVIS records who asked
+    (`agent:<session>`, from the signature), the package and its first
+    run's job (package_jobs.accept), and starts the run in its own
+    process. Blocking."""
     handoff = body.get("handoff")
     request = package_request.check(handoff)
-    workflow = str(body.get("workflow") or "").strip()
-    linked = _check_inbox_links(workflow, work)
-    if linked:
-        raise package_request.Refused([linked.replace("nothing was received", "nothing was taken")])
+    named = package_request.work_of(request)
     problems = []
+    if general and (work or named):
+        problems.append("A package is for one Work item or for none (--general), not both.")
+    workflow = str(body.get("workflow") or "").strip()
     source = str(body.get("source") or "").strip()
-    if source and not Path(source).expanduser().exists():
-        problems.append(f"There is nothing at the source {source}.")
     documents = body.get("documents") or []
     if not isinstance(documents, list) or not all(
             isinstance(d, list) and len(d) == 2 and all(isinstance(x, str) and x.strip()
@@ -11174,6 +11175,7 @@ def _accept_package_request(session: str, work: str, general: bool, body: dict) 
         problems.append("The engine is " + " or ".join(brain_provider.ENGINES) + ".")
     if problems:
         raise package_request.Refused(problems)
+    work = work or named
     if not engine:
         key = agent_key_store.for_session(session)
         engine = key.provider if key is not None and key.provider in brain_provider.ENGINES else ""
@@ -11245,9 +11247,7 @@ def _package_job_errored(doc: dict) -> None:
     deliver error_state): its Work item is set to Error, which is Tim's
     notice, or, for no Work item (or one closed or gone, which takes no
     Error), JARVIS's message to him in his Inbox;
-    JARVIS has it as an update (`package_job`, `error`), with how many
-    packages have ended in Error, more than 1 in 100 a major problem; the
-    asking agent is told in a message to its session (`_tell_agent`): the
+    JARVIS has it as an update (`package_job`, `error`); the asking agent is told in a message to its session (`_tell_agent`): the
     step, the reason, what was tried, what would fix it and what it may do
     next (PACKAGE_ERROR_NEXT), and reads the same on its job
     (package_jobs.status). Blocking."""
@@ -11281,17 +11281,11 @@ def _package_job_errored(doc: dict) -> None:
         + (f", Work item {doc['work']}" if doc.get("work") else "") + ") is in Error. "
         f"Step: {error.get('step')}. Reason: {error.get('reason')} Tried: {error.get('tried')} "
         f"To fix: {error.get('fix')} {PACKAGE_ERROR_NEXT}")
-    errored, packages = package_jobs.error_rate()
-    major = package_jobs.major_problem(errored, packages)
     _attend("package_job", doc["id"], "error",
             facts={"step": error.get("step"), "package": doc["package"], "run": doc["run"],
-                   "work": doc.get("work") or "", "errored": errored, "packages": packages,
-                   "major_problem": major},
+                   "work": doc.get("work") or ""},
             untrusted={"agent": name, "reason": error.get("reason"),
                        "tried": error.get("tried"), "fix": error.get("fix")})
-    if major:
-        log.warning("packages: %s of %s packages have ended in Error, more than 1 in 100: a "
-                    "major problem with the package system", errored, packages)
     package_jobs.told(doc["id"], told_agent)
     log.info("packages: job %s in Error at %s, told (message %s to its agent)", doc["id"],
              error.get("step"), told_agent)

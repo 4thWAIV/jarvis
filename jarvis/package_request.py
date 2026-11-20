@@ -36,6 +36,7 @@ and --answer, and the agent MCP server's package tools, call them).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import urllib.parse
@@ -75,10 +76,6 @@ MOVED = {
 # The label every value from the sender carries where it is kept.
 FROM_THE_SENDER = "the sender's"
 
-# Fields holding a number.
-_NUMBERS = ("number",)
-
-
 class Refused(ValueError):
     """A request not taken: `problems` says each thing wrong with it."""
 
@@ -101,8 +98,10 @@ def _hash(path: Path) -> tuple[str, int]:
 
 
 def _entry(n: int, entry, problems: list[str]) -> Optional[dict]:
-    """One evidence entry, typed and with its type's fields; a file's path
-    checked to be a file here, its hash and size recorded."""
+    """One evidence entry, typed and with its type's fields (each kept as
+    the sender gave it, a number as its text); a file's path checked to be
+    a file here, its hash and size recorded. Anything more about an entry
+    is the gather step's to resolve."""
     where = f"evidence entry {n}"
     if not isinstance(entry, dict):
         problems.append(f"{where} is an object: {{type, ...}}.")
@@ -111,22 +110,10 @@ def _entry(n: int, entry, problems: list[str]) -> Optional[dict]:
     if kind not in evidence_types.FIELDS:
         problems.append(f"{where}'s type is one of " + ", ".join(evidence_types.FIELDS) + ".")
         return None
-    names = evidence_types.FIELDS[kind]
-    extra = sorted(set(entry) - {"type", *names})
-    if extra:
-        problems.append(f"{where} ({kind}) takes only " + ", ".join(names)
-                        + "; not " + ", ".join(extra) + ".")
     out: dict = {"type": kind}
-    for name in names:
+    for name in evidence_types.FIELDS[kind]:
         value = entry.get(name)
-        if name in _NUMBERS:
-            number = value if isinstance(value, int) and not isinstance(value, bool) else (
-                int(value) if isinstance(value, str) and value.strip().isdigit() else 0)
-            if number <= 0:
-                problems.append(f"{where} ({kind}) needs {name}: a whole number.")
-            out[name] = number
-            continue
-        if isinstance(value, int) and not isinstance(value, bool) and name == "id":
+        if isinstance(value, int) and not isinstance(value, bool):
             value = str(value)
         text = _text(value)
         if not text:
@@ -137,11 +124,9 @@ def _entry(n: int, entry, problems: list[str]) -> Optional[dict]:
         if not path.is_file():
             problems.append(f"{where} (file): there is no file at {path}.")
         else:
-            try:
+            out["path"] = str(path)
+            with contextlib.suppress(OSError):
                 out["sha256"], out["size"] = _hash(path)
-                out["path"] = str(path)
-            except OSError as e:
-                problems.append(f"{where} (file): {path} cannot be read: {e}.")
     return out
 
 
@@ -235,6 +220,17 @@ def check(value) -> dict:
     return {"questions": asked, "evidence": entries,
             "from_the_sender": {"label": FROM_THE_SENDER, "answers": said, **sender},
             "work": work, "approval": value.get("approval") is True}
+
+
+def work_of(request: dict) -> str:
+    """The Work item a checked request's handoff names (its `work`, as
+    before: an id, or a list of them) when it names one; "" when it names
+    none or several, since which of several a package belongs to is not
+    decided."""
+    work = request.get("work")
+    named = [work] if isinstance(work, str) else list(work or [])
+    named = [w.strip() for w in named if isinstance(w, str) and w.strip()]
+    return named[0] if len(named) == 1 else ""
 
 
 def questions_text(request: dict) -> str:

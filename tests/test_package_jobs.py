@@ -81,7 +81,7 @@ def test_a_handoff_is_kept_typed_and_with_the_senders_words_labelled(tmp_path):
     assert sender["answers"]["why_now"]["question"] == pr.QUESTIONS["why_now"]
     by_type = {e["type"]: e for e in kept["evidence"]}
     assert by_type["file"]["sha256"] and by_type["file"]["size"] > 0, "hashed as it is taken"
-    assert by_type["pr"]["number"] == 171 and by_type["ci_run"]["id"] == "99881"
+    assert by_type["pr"]["number"] == "171" and by_type["ci_run"]["id"] == "99881"
     assert by_type["content"]["text"] == "  Kept exactly as given.  "
     assert by_type["label"]["text"] == "the CI run that failed yesterday"
 
@@ -128,12 +128,10 @@ def test_every_one_of_the_fourteen_types_is_taken(tmp_path):
     ({"evidence": ["a/file.md"]}, "evidence entry 1 is an object"),
     ({"evidence": [{"type": "path", "path": "/x"}]}, "type is one of"),
     ({"evidence": [{"type": "file", "path": "/no/such/file.md"}]}, "there is no file at"),
-    ({"evidence": [{"type": "pr", "repo": "o/r", "number": "one"}]}, "a whole number"),
     ({"evidence": [{"type": "commit", "repo": "o/r", "sha": ""}]}, "(commit) needs sha"),
     ({"questions": [{"text": "Merge?"}]}, "question 1 needs id"),
     ({"questions": [{"id": "m", "text": "Merge?", "options": [{"id": "a", "name": "A"}]}]},
      "option 1 needs id, name and says"),
-    ({"evidence": [{"type": "work_item", "id": "w", "title": "x"}]}, "takes only id"),
     ({"purpose": ""}, "purpose, when given"),
 ])
 def test_a_bad_handoff_is_refused_saying_why(tmp_path, change, said):
@@ -157,6 +155,33 @@ def test_the_handoff_holds_entries_only_to_their_types_fields(tmp_path):
     assert [e.get("repo") or e.get("url") for e in kept["evidence"]] == [
         "jarvis", "jarvis", "docs.example.org/page"]
     assert [q["id"] for q in kept["questions"]] == ["Merge 171", "Merge 171"]
+
+
+def test_an_entry_is_resolved_by_gather_not_refused_as_it_is_taken(tmp_path):
+    """No number rule, no refusal of a field beyond the type's, no refusal
+    of a file that is there but cannot be read: resolving an entry is the
+    gather step's."""
+    locked = tmp_path / "locked.md"
+    locked.write_text("x")
+    locked.chmod(0)
+    try:
+        kept = pr.check(handoff(tmp_path, evidence=[
+            {"type": "pr", "repo": "o/r", "number": "one"},
+            {"type": "work_item", "id": "w", "title": "x"},
+            {"type": "file", "path": str(locked)}]))
+    finally:
+        locked.chmod(0o600)
+    pr_entry, item, f = kept["evidence"]
+    assert pr_entry == {"type": "pr", "repo": "o/r", "number": "one"}
+    assert item == {"type": "work_item", "id": "w"}
+    assert f["path"] == str(locked)
+
+
+def test_the_work_item_a_handoff_names():
+    assert pr.work_of({"work": "work-1"}) == "work-1"
+    assert pr.work_of({"work": ["work-1"]}) == "work-1"
+    assert pr.work_of({"work": None}) == ""
+    assert pr.work_of({"work": ["work-1", "work-2"]}) == "", "which of several is not decided"
 
 
 def test_a_relative_file_is_read_from_the_handoff_s_own_folder(tmp_path, monkeypatch):
@@ -225,8 +250,46 @@ def test_a_bad_request_is_refused_at_once_and_nothing_is_recorded(wired, tmp_pat
     assert any("sender_answers" in p for p in problems)
     assert any("conclusion" in p for p in problems) and any("question" in p for p in problems)
     assert spawned == [] and pj._jobs([["state", "in", list(pj.STATES)]]) == []
-    r = ask(client, agent, {"handoff": handoff(tmp_path)}, work="work-nonesuch")
-    assert r.status_code == 404 and spawned == []
+    r = agent.post(client, pr.ROUTE + "?work=work-1&general=1", {"handoff": handoff(tmp_path)})
+    assert r.status_code == 400 and "not both" in r.text and spawned == []
+    r = ask(client, agent, {"handoff": handoff(tmp_path, work="work-1")})
+    assert r.status_code == 400 and "not both" in r.text and spawned == []
+    r = ask(client, agent, {"handoff": handoff(tmp_path), "engine": "gpt"})
+    assert r.status_code == 400 and "engine" in r.text and spawned == []
+
+
+def test_a_request_is_checked_only_as_record_and_start_says(wired, tmp_path, spawned):
+    """A closed Work item, and no Work item while the agent has a piece on
+    an open one, are not reasons to refuse a request."""
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    work = _start_work(client, agent, folder)
+    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path)})
+    assert r.status_code == 200, r.text
+    assert pj.get(r.json()["job"])["work"] is None
+    from jarvis import work_store
+    work_store.record(work_store.WorkEvent(work, work_store.CLOSED, "Done with it.", {}))
+    r = ask(client, agent, {"handoff": handoff(tmp_path)}, work=work)
+    assert r.status_code == 200, r.text
+    assert pj.get(r.json()["job"])["work"] == work
+
+
+def test_the_handoff_s_work_item_is_the_package_s(wired, tmp_path, spawned):
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    work = _start_work(client, agent, folder)
+    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path, work=work)})
+    assert r.status_code == 200, r.text
+    taken = r.json()
+    doc = pj.get(taken["job"])
+    assert doc["work"] == work
+    assert pj.path_of(doc) == f"/work/{work}/packages/{taken['package']}/runs/run-1/run.job"
+    r = agent.post(client, pr.ROUTE + "?work=work-given",
+                   {"handoff": handoff(tmp_path, work=work)})
+    assert r.status_code == 200 and pj.get(r.json()["job"])["work"] == "work-given", \
+        "--work is the package's Work item when given"
 
 
 def test_only_an_onboarded_agent_s_own_key_asks(wired, tmp_path, spawned):
@@ -476,12 +539,6 @@ def test_a_run_whose_process_ended_is_in_error(wired, tmp_path, spawned, monkeyp
     monkeypatch.setattr(pj, "_alive", lambda pid: False)
     [moved] = pj.overdue()
     assert moved["id"] == job and "ended without finishing" in moved["error"]["reason"]
-
-
-def test_more_than_one_package_in_a_hundred_in_error_is_a_major_problem():
-    assert pj.major_problem(1, 100) is False
-    assert pj.major_problem(2, 100) is True
-    assert pj.major_problem(0, 0) is False
 
 
 # -- the sender's side ------------------------------------------------------------------

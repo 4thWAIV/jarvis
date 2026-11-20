@@ -37,8 +37,7 @@ the job in ERROR with the step, the reason in plain words, what was tried
 and what would fix it (`error`). The server then tells everyone
 (server._package_job_errored): the Work item goes to Error, else Tim gets a
 message; JARVIS has an update; the asking agent gets a message from JARVIS
-in its session saying it all, and reads the same on its job (`status`). More than ERROR_RATE_MAX of packages ending in Error is a major
-problem with the package system (`error_rate`).
+in its session saying it all, and reads the same on its job (`status`).
 """
 from __future__ import annotations
 
@@ -76,8 +75,6 @@ PRODUCERS: dict[str, str] = {}
 MAX_ROUNDS = 5
 # A sender's answer is waited for 2 hours before Error (Tim, 2026-11-19).
 SENDER_WAIT_SEC = 2 * 3600.0
-# More than 1 package in 100 ending in Error is a major problem (Tim, 2026-11-19).
-ERROR_RATE_MAX = 1 / 100
 LOG = "job.log"
 JARVIS = "jarvis"
 
@@ -375,19 +372,6 @@ def errored_work() -> set[str]:
     package has followed (`new_run`)."""
     return {d["work"] for d in _jobs([["state", "=", ERROR]])
             if d.get("work") and not _jobs([["after", "=", d["id"]]])}
-
-
-def error_rate() -> tuple[int, int]:
-    """(packages with a run in Error, packages with a run): more than
-    ERROR_RATE_MAX of them is a major problem with the package system."""
-    runs = _jobs([["state", "in", list(STATES)]])
-    packages = {d["package"] for d in runs}
-    errored = {d["package"] for d in runs if d["state"] == ERROR}
-    return len(errored), len(packages)
-
-
-def major_problem(errored: int, packages: int) -> bool:
-    return packages > 0 and errored / packages > ERROR_RATE_MAX
 
 
 # -- the run's own process ---------------------------------------------------------------
