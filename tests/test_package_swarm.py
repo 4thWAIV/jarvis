@@ -37,7 +37,7 @@ def test_every_search_is_logged_with_the_paths_its_answer_names(tmp_path):
                                            "read_history"]
     assert logged[0]["hits"] == ["/work/w1/packages/p1/evidence/files/a.md",
                                  '/folders/f1/plan "x".md']
-    assert logged[1]["hits"] == ["sess-1:14", "notes/x.md:3"]
+    assert logged[1]["hits"] == ["sess-1", "notes/x.md"], "the source; the line is where in it"
     assert logged[2]["hits"] == ["sess-1"] and logged[2]["role"] == "background_judge"
     assert logged[0]["arguments"] == {"query": "move"} and logged[0]["answer"] == answer
 
@@ -46,9 +46,12 @@ def test_every_search_is_logged_with_the_paths_its_answer_names(tmp_path):
         roots=("/work/w1/packages/p1/evidence",))
     assert used["searches"] == 3
     assert [(u["search"], u["used"]) for u in used["used"]] == [
-        (1, ["/work/w1/packages/p1/evidence/files/a.md"]), (2, ["sess-1:14"]),
+        (1, ["/work/w1/packages/p1/evidence/files/a.md"]), (2, ["sess-1"]),
         (3, ["sess-1"])]
     assert json.loads((tmp_path / research_log.USED).read_text()) == used
+    # A fact citing the history source without a line is the same hit used.
+    no_line = research_log.mark_used(log, "Said on 19 Nov (notes/x.md).")
+    assert [(u["search"], u["used"]) for u in no_line["used"]] == [(2, ["notes/x.md"])]
 
 
 def test_a_role_s_tool_server_logs_every_call_it_answers(tmp_path, monkeypatch):
@@ -83,7 +86,9 @@ class Plan:
         self.opened: list[tuple[str, str | None]] = []
         self.votes: dict[str, list[str]] = {}      # question id prefix -> votes in order
         self.asks: list[str] = []                   # an enough no's ask, per vote
+        self.changed: dict[str, list[str]] = {}     # question id prefix -> reopen judgements
         self.script = "Slide 1. PR 171 moves every Work item (files/situation.md)."
+        self.preps: list[str] = ["Does Tim care: yes."]   # the prep each round, in order
 
     def vote(self, name, qid):
         for prefix, votes in self.votes.items():
@@ -98,9 +103,16 @@ class Plan:
                 if "Write your research in" in text:
                     (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
                 else:
-                    (self.folder / ps.PREP_MD).write_text("Does Tim care: yes.")
+                    prep = self.preps.pop(0) if len(self.preps) > 1 else self.preps[0]
+                    (self.folder / ps.PREP_MD).write_text(prep)
                     (self.folder / ps.SCRIPT_MD).write_text(self.script)
             return {"message": f"{name} speaks", "call_vote": []}
+        if form is sessions.REOPEN_FORM:
+            qid = re.search(r'Did the change touch what it was about\?\n<question id="([^"]+)"',
+                            text).group(1)
+            said = next((judged.pop(0) for prefix, judged in self.changed.items()
+                         if qid.startswith(prefix) and judged), "yes")
+            return {"question": qid, "changed": said, "reason": f"{name} judges {said}"}
         if form in (sessions.VOTE_FORM, sessions.ENOUGH_FORM):
             qid = re.search(r'A vote is called on this question:\n<question id="([^"]+)"',
                             text).group(1)
@@ -289,7 +301,7 @@ def test_the_sender_is_asked_what_research_could_not_answer(marked, plan):
         {"id": "enough-merge-171-1", "question": "When did CI last pass?"},
         {"id": "enough-merge-171-2", "question": "Who reviews?"}]
     kept = json.loads((Path(marked["folder"]) / ps.STATE).read_text())
-    assert kept["swarm"]["rounds"] == 0, "a round of questions is not one of the three"
+    assert kept["swarm"]["rounds"] == 1, "the round that asked is one of the three"
 
     pj.answer(marked["id"], {"enough-merge-171-1": "Tuesday, run 99880."},
               session=job["session"])
@@ -301,6 +313,7 @@ def test_the_sender_is_asked_what_research_could_not_answer(marked, plan):
     said = [m for m in conversation if m["from"] == "sender"]
     assert said == [{"from": "sender", "text": '<answer id="enough-merge-171-1" question="When '
                                                'did CI last pass?">Tuesday, run 99880.</answer>'}]
+    assert json.loads((Path(marked["folder"]) / ps.RESULT).read_text())["rounds"] == 2
 
 
 def test_asking_stops_once_answers_change_nothing_still_open(marked, plan):
@@ -313,6 +326,27 @@ def test_asking_stops_once_answers_change_nothing_still_open(marked, plan):
     job = pj.get(marked["id"])
     assert pj.question_rounds(job) == 1, "the answers changed nothing still open: no more asked"
     assert pj.kind_of(job["rounds"][-1]) == pj.FINDINGS, "three rounds, and the swarm failed"
+    result = json.loads((Path(marked["folder"]) / ps.RESULT).read_text())
+    played = [m for m in result["conversation"] if m == {"from": "author",
+                                                         "text": "author speaks"}]
+    assert result["rounds"] == 3 and len(played) == 1 + 3, \
+        "the research turn and three rounds, the one that asked among them"
+
+
+def test_the_prep_the_author_revises_reaches_the_judges_given_it_each_round(marked, plan):
+    plan.votes = {"order": ["no"] * 5}
+    plan.preps = ["Prep one.", "Prep two.", "Prep three."]
+    plan.script = "Slide 1. PR 171 moves every Work item (files/situation.md)."
+    _research_and_swarm(marked)
+    for name in ("decision_ready_judge", "background_judge"):
+        turns = [t for t in plan.sent[name] if "A vote is called" not in t
+                 and "Did the change touch" not in t]
+        assert "Prep one." in turns[0]
+        assert '<prep file="prep.md">Prep two.</prep>' in turns[1]
+        assert '<prep file="prep.md">Prep three.</prep>' in turns[2]
+    cares = [t for t in plan.sent["cares_judge"] if "A vote is called" not in t
+             and "Did the change touch" not in t]
+    assert all("<prep " not in t for t in cares[1:]), "the cares judge is never given the prep"
 
 
 def test_a_failed_swarm_sends_the_sender_its_findings_and_its_answer_ends_the_run(marked,

@@ -464,6 +464,12 @@ ENOUGH_FORM = _object({**VOTE_FORM["properties"], "ask_sender": {
     "type": "string",
     "description": "With a no: what to ask the sender, that research could not answer. "
                    "Empty with a yes."}})
+# Whether the script's change since a closed question's vote changed what
+# that question was about (workflow.yaml swarm plan.decision: "it reopens if
+# the script changes what it was about"): a judgement, asked of the
+# question's voters and decided as the swarm decides, by majority.
+REOPEN_FORM = _object({"question": _TEXT, "changed": {"type": "string", "enum": [YES, NO]},
+                       "reason": _TEXT})
 
 
 @dataclass
@@ -483,6 +489,12 @@ class Vote:
     called_by: str = "program"      # the participant who called it, or the program
     ask: str = ""                   # an enough question's no: what to ask the sender
     script: str = ""                # the digest of the script it was cast on
+
+
+def _majority(said: list[str]) -> bool:
+    """The swarm's one count: more yes than no (a tie is not a majority)."""
+    yes = sum(1 for s in said if s == YES)
+    return yes > len(said) - yes
 
 
 def script_digest(text: str) -> str:
@@ -541,10 +553,12 @@ class BrainSwarmSession:
     turn in each voter's own session, yes or no with a reason (and, on an
     enough question, what a no would ask the sender); a majority of yes
     proves a question, anything else (a majority of no, a tie) fails it; a
-    question reopens when the script changes what it was about: the script
-    it was closed on is no longer the script (`reopen_changed`), or the
-    sender's answers came (`reopen`). The Theory of Mind reader never votes,
-    and the author not on whether its own script passes.
+    question reopens when the script changes what it was about: once the
+    script is no longer the one it was closed on, its voters judge whether
+    the change touched what it was about, and a majority of them reopens it
+    (`reopen_changed`); or the sender's answers came (`reopen`). The Theory
+    of Mind reader never votes, and the author not on whether its own
+    script passes.
 
     Its state (`saved`, `restore`) is kept between the run's processes, so
     a swarm that waits on the sender goes on where it stopped, each
@@ -565,6 +579,7 @@ class BrainSwarmSession:
         self.state = {q.id: OPEN for q in questions}
         self.closed_by: dict[str, list[Vote]] = {}
         self.votes: list[Vote] = []
+        self.reopenings: list[dict] = []    # each voter's judgement whether a change reopened
         self.conversation: list[dict] = []
         self.rounds = 0
         self.author = author
@@ -697,8 +712,7 @@ class BrainSwarmSession:
                      + (f" Ask the sender: {ask}" if ask else ""))
             self._heard(name)
         self.votes += cast
-        yes = sum(1 for v in cast if v.vote == YES)
-        self.state[q.id] = PROVEN if yes > len(cast) - yes else FAILED
+        self.state[q.id] = PROVEN if _majority([v.vote for v in cast]) else FAILED
         self.closed_by[q.id] = cast
         return self.state[q.id]
 
@@ -707,14 +721,43 @@ class BrainSwarmSession:
         self.state[question] = OPEN
         self.closed_by.pop(question, None)
 
-    def reopen_changed(self) -> list[str]:
-        """Every closed question whose vote was cast on a script that is no
-        longer the script: what it was about changed. The ones reopened."""
-        changed = [qid for qid, cast in self.closed_by.items()
-                   if any(v.script != self.script for v in cast)]
-        for qid in changed:
-            self.reopen(qid)
-        return changed
+    async def reopen_changed(self, timeout: float) -> list[str]:
+        """Each closed question cast on a script that is no longer the
+        script: its voters, each in its own session, judge whether the
+        change touched what the question was about (yes or no with a
+        reason); a majority reopens it, a tie leaves it closed. Whether the
+        script changed at all is a fact (its digest); whether the change
+        touched the question is their judgement. The ones reopened."""
+        reopened = []
+        for qid, cast in list(self.closed_by.items()):
+            if all(v.script == self.script for v in cast):
+                continue
+            q = self.questions[qid]
+            said = []
+            for name in self.voters(qid):
+                sent = "\n\n".join(t for t in (
+                    self._new_for(name),
+                    f"This question was closed ({self.state[qid]}) on an earlier script, and "
+                    f"the script has changed since. Did the change touch what it was about?\n"
+                    + _tag("question", q.asks, id=q.id)) if t)
+                reply = await self.participants[name].ask(sent, timeout,
+                                                          answer_format=REOPEN_FORM)
+                answer = reply.answer or {}
+                changed = str(answer.get("changed") or "").lower()
+                reason = str(answer.get("reason") or "").strip()
+                if changed not in (YES, NO) or not reason:
+                    raise SessionFailed(f"{name}'s judgement on reopening {qid} was not yes or "
+                                        f"no with a reason")
+                said.append(changed)
+                self.reopenings.append({"question": qid, "participant": name,
+                                        "changed": changed, "reason": reason,
+                                        "script": self.script})
+                self.say(name, f"Did the change touch {qid}: {changed}. {reason}")
+                self._heard(name)
+            if _majority(said):
+                self.reopen(qid)
+                reopened.append(qid)
+        return reopened
 
     def asks(self, question: str) -> list[str]:
         """What the votes that closed an enough question said to ask the
@@ -745,8 +788,9 @@ class BrainSwarmSession:
         judges and the Theory of Mind reader respond, the judges from the
         marked script, the reader from the script as Tim would read it, each
         with what `add_for` gives it. Votes a participant calls are held on
-        its turn; then every question whose script changed is reopened and
-        the program calls one on every open question."""
+        its turn; then each closed question the change touched is reopened
+        (`reopen_changed`, its voters' judgement) and the program calls one
+        on every open question."""
         await self.turn(self.author, timeout, add=author_add)
         try:
             text = script.read_text(encoding="utf-8")
@@ -773,7 +817,7 @@ class BrainSwarmSession:
                    else _tag("marked", marked_parts(marked), file=script.name))
             more = add_for(name, text, marked) if add_for else ""
             await self.turn(name, timeout, add="\n\n".join(t for t in (add, more) if t))
-        self.reopen_changed()
+        await self.reopen_changed(timeout)
         await self.vote_open(timeout)
 
     async def round(self, timeout: float, script: Path,
@@ -813,6 +857,7 @@ class BrainSwarmSession:
                                              for v in self.closed_by.get(qid, [])]}
                               for qid, state in self.state.items()],
                 "votes": [dataclasses.asdict(v) for v in self.votes],
+                "reopenings": list(self.reopenings),
                 "conversation": list(self.conversation),
                 "findings": findings, "rounds": self.rounds}
 
@@ -823,6 +868,7 @@ class BrainSwarmSession:
                 "closed_by": {q: [dataclasses.asdict(v) for v in cast]
                               for q, cast in self.closed_by.items()},
                 "votes": [dataclasses.asdict(v) for v in self.votes],
+                "reopenings": list(self.reopenings),
                 "conversation": list(self.conversation), "rounds": self.rounds,
                 "seen": dict(self._seen), "introduced": sorted(self._introduced),
                 "script": self.script}
@@ -834,6 +880,7 @@ class BrainSwarmSession:
         self.closed_by = {q: [Vote(**v) for v in cast]
                           for q, cast in (saved.get("closed_by") or {}).items()}
         self.votes = [Vote(**v) for v in saved.get("votes") or []]
+        self.reopenings = list(saved.get("reopenings") or [])
         self.conversation = list(saved.get("conversation") or [])
         self.rounds = int(saved.get("rounds") or 0)
         self._seen.update({n: int(c) for n, c in (saved.get("seen") or {}).items()

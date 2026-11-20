@@ -475,6 +475,11 @@ EXEMPT = {
         "(open, proven, failed); the call and each vote it writes are turns of the package "
         "swarm's own conversation between role sessions, kept word for word as the design says, "
         "never a brain header, never said"),
+    "sessions.reopen_changed": (
+        "the field it reads is the question's state in the swarm, one of JARVIS's own words "
+        "(open, proven, failed); each voter's judgement it writes is a turn of the package "
+        "swarm's own conversation between role sessions, kept word for word as the design says, "
+        "never a brain header, never said"),
     "package_swarm.questions": (
         "it makes the swarm's questions: each id is the handoff's question id behind a fixed "
         "prefix and its words are the sender's question, which the swarm gives its participants "
@@ -3400,11 +3405,23 @@ def _drive_vote(monkeypatch, tmp_path):
     return role.given
 
 
+def _drive_reopen(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"changed": "no", "reason": "r"})
+    swarm = sessions.BrainSwarmSession({"editor": role},
+                                       [sessions.Question(HOSTILE, HOSTILE)])
+    swarm.closed_by[HOSTILE] = [sessions.Vote(HOSTILE, "editor", "yes", "r", script="before")]
+    swarm.state[HOSTILE] = sessions.PROVEN
+    asyncio.run(swarm.reopen_changed(1.0))
+    return role.given
+
+
 ROLE_PROMPT_DRIVERS = {
     "package_swarm._handoff_questions": _drive_handoff_questions,
     "package_swarm._parts_text": _drive_parts_text,
     "package_swarm._take_answers": _drive_take_answers,
     "sessions.vote (the question called)": _drive_vote,
+    "sessions.reopen_changed (the question judged)": _drive_reopen,
     "sessions.share": _drive_share,
     "sessions._material": _drive_material,
     "sessions.marked_parts": _drive_marked_parts,

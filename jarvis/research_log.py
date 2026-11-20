@@ -27,13 +27,14 @@ USED = "research-used.json"
 # The fields of a JSON answer that name where a hit is (knowledge_search's
 # `key`, a file's `path`, a record's `source` ...).
 _PATH_FIELD = re.compile(r'"(key|path|item|source|file)"\s*:\s*"((?:[^"\\]|\\.)*)"')
-# search_history's lines: `source:line: when: text`.
-_HISTORY_LINE = re.compile(r"^(\S+?:\d+):", re.MULTILINE)
+# search_history's lines: `source:line: when: text`; the hit's path is the
+# source (what read_history reads), the line only where in it.
+_HISTORY_LINE = re.compile(r"^(\S+?):\d+:", re.MULTILINE)
 
 
 def hit_paths(tool: str, arguments: dict, text: str) -> list[str]:
     """The paths an answer names, each once, in its order: the path fields
-    of its JSON, a history search's `source:line`, a history read's source."""
+    of its JSON, a history search's sources, a history read's source."""
     found: list[str] = []
     if tool == "search_history":
         found = _HISTORY_LINE.findall(text or "")

@@ -22,7 +22,9 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
              `prep.md` and `script.md`; the script is marked (MarkingSession,
              the 28 labels, with Tim's material); the editor edits it (the
              program applies only edits whose old text is exactly there);
-             the judges and the reader respond. Votes on every open question
+             the judges and the reader respond; a closed question reopens when
+             its voters judge the script's change touched what it was about.
+             Votes on every open question
              end each round (one a participant calls is held at once), each
              a turn in that participant's own session with a reason; a
              majority closes a question, a tie fails it; the author never
@@ -33,14 +35,15 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
 Each participant is given exactly its share of what Tim knows (tim_knowledge
 who_gets_what): the author and the editor everything, each item marked; the
 decision ready and background judges all the evidence, marked, and the
-prep; the cares and order judges, and the reader, only what he knows and
+prep (again each round, as the author revises it); the cares and order judges, and the reader, only what he knows and
 had access to, kept apart; the cares judge also the script's parts new to
 him (`new_to_him`).
 
 Asking the sender (swarm ask_sender): when an enough question fails, what
 its no votes said to ask goes to the sender (package_jobs.ask; the job
-waits on it, at most 2 hours, then Error). Such a round is a round of
-questions, apart from the swarm's three. Its answers are kept in the
+waits on it, at most 2 hours, then Error). The swarm round that asked is
+one of its three, as every round played is; the round of questions is
+counted apart, toward its own five. Its answers are kept in the
 evidence (sender-answers/) and said into the conversation as the sender's,
 word for word; the enough questions reopen. At most five rounds of
 questions; asking stops once a round of answers changes nothing still
@@ -475,11 +478,21 @@ def _to_ask(swarm: sessions.BrainSwarmSession) -> list[dict]:
 
 
 def _round_add(run: Run, swarm: sessions.BrainSwarmSession, firsts: _Firsts):
+    """What a participant is given each round after its first, beside the
+    script: the prep as the author last wrote it, to every role whose
+    approved material holds it, and to the cares judge the script's parts
+    new to him."""
     def add(name: str, _text: str, marked: list) -> str:
         firsts.marked = marked
-        if name == "cares_judge" and swarm.spoke(name):
-            return _parts_text(new_to_him(run, marked))
-        return ""
+        if not swarm.spoke(name):
+            return ""               # its first message holds them (_Firsts)
+        out = []
+        if "{the prep}" in role_prompts.PLACEHOLDER.findall(
+                role_prompts.PROMPTS[name].material):
+            out.append(sessions._tag("prep", _read(run.prep), file=PREP_MD))
+        if name == "cares_judge":
+            out.append(_parts_text(new_to_him(run, marked)))
+        return "\n\n".join(t for t in out if t)
     return add
 
 
@@ -545,19 +558,17 @@ def swarm(doc: dict) -> Optional[str]:
                     # more asking (decided "questions to the sender").
                     if sorted(swarm_.not_proven()) == sorted(asking.pop("compare")):
                         asking["stopped"] = True
-                if swarm_.passed:
-                    outcome["result"] = swarm_.end_round()
+                # Every round played is one of the three (plan.ends).
+                result = swarm_.end_round()
+                if result is not None:
+                    outcome["result"] = result
                     return
                 ask = [] if asking.get("stopped") else _to_ask(swarm_)
                 if ask and package_jobs.ask(doc["id"], ask):
                     asking["open_when_asked"] = sorted(swarm_.not_proven())
                     outcome["waiting"] = True
                     return
-                result = swarm_.end_round()
                 _keep(run, swarm_, kept)
-                if result is not None:
-                    outcome["result"] = result
-                    return
         finally:
             _keep(run, swarm_, kept)
             await swarm_.close()

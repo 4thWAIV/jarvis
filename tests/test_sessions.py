@@ -665,13 +665,18 @@ async def test_the_editor_s_edits_are_applied_by_the_program(tmp_path):
 # ── the swarm ─────────────────────────────────────────────────────────────
 
 class _Participant:
-    def __init__(self, name, votes=None, calls=None, log=None):
+    def __init__(self, name, votes=None, calls=None, log=None, changed=None):
         self.name, self.votes, self.sent = name, list(votes or []), []
         self.calls, self.log = list(calls or []), log if log is not None else []
+        self.changed = list(changed or [])
 
     async def ask(self, text, timeout, answer_format=None, strict=True):
         self.sent.append(text)
-        if answer_format is sessions.VOTE_FORM:
+        if answer_format is sessions.REOPEN_FORM:
+            said = self.changed.pop(0)
+            self.log.append(f"{self.name} judges {said}")
+            answer = {"question": "q", "changed": said, "reason": f"{self.name} says {said}"}
+        elif answer_format is sessions.VOTE_FORM:
             vote = self.votes.pop(0)
             self.log.append(f"{self.name} votes")
             answer = {"question": "q", "vote": vote, "reason": f"{self.name} says {vote}"}
@@ -769,6 +774,39 @@ async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes
     assert '<script file="script.md">The store broke.</script>' in \
         people["theory_of_mind_reader"].sent[0]
     assert result["result"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_a_closed_question_reopens_only_when_its_voters_judge_the_change_touched_it():
+    people = {"author": _Participant("author", ["yes"], changed=["yes"]),
+              "editor": _Participant("editor", ["yes", "no", "yes"], changed=["no", "yes"]),
+              "cares_judge": _Participant("cares_judge", ["yes", "yes", "yes"],
+                                          changed=["no", "yes"]),
+              "order_judge": _Participant("order_judge", ["no", "no", "no"],
+                                          changed=["no", "no"])}
+    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
+                                                sessions.Question("enough", "Enough?",
+                                                                  author_votes=True)])
+    swarm._script_now("Version one.")
+    assert await swarm.vote("cares", 5) == sessions.PROVEN
+    assert await swarm.vote("enough", 5) == sessions.FAILED          # 2 yes, 2 no
+    assert await swarm.reopen_changed(5) == [], "the script has not changed: nothing to judge"
+    assert not any(p.changed == [] for p in people.values() if p.name != "author")
+    swarm._script_now("Version two.")
+    # cares: editor no, cares judge no, order judge no: the change did not
+    # touch it. enough: author yes, editor yes, cares judge yes, order no.
+    assert await swarm.reopen_changed(5) == ["enough"]
+    assert swarm.state == {"cares": sessions.PROVEN, "enough": sessions.OPEN}
+    assert [(r["question"], r["participant"], r["changed"]) for r in swarm.reopenings] == [
+        ("cares", "editor", "no"), ("cares", "cares_judge", "no"), ("cares", "order_judge", "no"),
+        ("enough", "author", "yes"), ("enough", "editor", "yes"),
+        ("enough", "cares_judge", "yes"), ("enough", "order_judge", "no")]
+    assert "Did the change touch enough: yes. author says yes" in \
+        [m["text"] for m in swarm.conversation]
+    assert swarm.result()["reopenings"] == swarm.reopenings
+    again = sessions.BrainSwarmSession(people, list(swarm.questions.values()))
+    again.restore(swarm.saved())
+    assert again.reopenings == swarm.reopenings
 
 
 def test_each_participant_is_given_exactly_its_share_of_what_tim_knows():

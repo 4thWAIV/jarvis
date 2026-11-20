@@ -1718,7 +1718,9 @@ search under, an earlier run's research copied into `earlier/` by
 the step's Error. Every call a role makes on its own tool server is logged
 there (`role_mcp.py --log`, `research_log.record`: one line a search in
 `research-log.jsonl`, the role, the tool, its arguments, the hits by
-program, `research_log.hit_paths`, and the answer), and once the script
+program, `research_log.hit_paths`: a history search's sources without
+their line numbers, so a fact citing the source is matched, and the
+answer), and once the script
 passes, `research_log.mark_used` records each hit whose path the script
 cites (`research-used.json`). The research right holds `search_history`
 and `read_history` (`agent_rights.TOOLS`), and so do the roles that have
@@ -1734,19 +1736,26 @@ and a no says what to ask the sender, `ENOUGH_FORM`) and the four judges'
 writes or revises `prep.md` and `script.md`; the script is marked
 (MarkingSession, the 28 labels, Tim's material by `package_mark.tim_known`);
 the editor edits it, given the prep (`EditingSession.edit`'s `prep`); the
-judges and the reader respond; every question whose vote was cast on a
-script that is no longer the script reopens (`reopen_changed`,
-`Vote.script`), and the program votes on every open one. Each
+judges and the reader respond; for each closed question cast on a script
+that is no longer the script (`Vote.script`), its voters each judge in
+their own session whether the change touched what it was about
+(`REOPEN_FORM`, yes or no with a reason, kept in `reopenings`), and a
+majority reopens it (`reopen_changed`); then the program votes on every
+open one. Each
 participant's first message is made at its first turn (`_Firsts`): its
 share of the evidence (`evidence`, `sessions.share_values`), the prep for
-the decision ready and background judges, the script for the reader, and
+the decision ready and background judges (and the prep as the author last
+wrote it each round after, `_round_add`, to every role whose approved
+material holds it), the script for the reader, and
 for the cares judge the script's sentences new to him (`new_to_him`, by
 program: a sentence is new unless every evidence file it cites is one he
 knows or had access to; one citing none could not be determined), again
 each round; where the evidence is for one that searches it
 (`evidence_note`). An enough question that fails asks the sender what its
-no votes said (`_to_ask`, `package_jobs.ask`), a round of questions apart
-from the swarm's three (not counted, `end_round` is not called); the
+no votes said (`_to_ask`, `package_jobs.ask`); the swarm round that asked is one of
+its three like every round played (`end_round` first: a third round
+without passing fails the swarm, its asks in the findings), and the round
+of questions counts toward its own five; the
 answers are said into the conversation as the sender's, each in its own
 element, and the enough questions reopen (`_take_answers`); once a round
 of answers leaves the same questions unproven, asking stops (`asking`'s
