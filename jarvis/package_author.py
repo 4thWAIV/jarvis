@@ -27,69 +27,15 @@ SKILL = data_paths.PACKAGE_DIR / "session_skills" / "human-package-author" / "SK
 GUIDE = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 
 
-# What a sender's handoff gives (briefing_prep's pipeline does the rest):
-# the question or decision for Tim, its Work item, the evidence it rests on
-# (files, commits, PRs, CI runs) and any decisions it asks.
-HANDOFF_KEYS = ("question", "work", "evidence", "decisions", "approval")
-# What a handoff may no longer carry, and why: the fresh author works these
-# out itself from Tim's record and the evidence.
-NOT_TAKEN = {
-    "purpose": "the author states the answer itself, from its own prep; give the question",
-    "conclusion": "the author states the answer itself, from its own prep; give the question",
-    "audience": "the author reads Tim's record for what he knows and lacks",
-    "questions": "the author works out his first ten questions itself; give your one question",
-    "shape": "the author orders the briefing by its prep's fact scores, never a sender's structure",
-    "structure": "the author orders the briefing by its prep's fact scores, never a sender's structure",
-    "slides": "the author orders the briefing by its prep's fact scores, never a sender's structure",
-    "outline": "the author orders the briefing by its prep's fact scores, never a sender's structure",
-    "order": "the author orders the briefing by its prep's fact scores, never a sender's structure",
-    "situation": "the author works out what he lacks from his record",
-}
-
-
-def _text_list(value) -> bool:
-    return isinstance(value, list) and bool(value) and all(
-        isinstance(item, str) and item.strip() for item in value)
-
-
 def read_handoff(path: Path) -> dict:
-    """The sender's handoff: `question` (nonempty), `evidence`
-    (a nonempty list of references), optional `work` (an id or a list of
-    ids), `decisions` (a list of decision objects) and, for an architecture
-    document, `approval`. Anything else is refused, saying why."""
+    """The sender's handoff, read and checked as JARVIS takes a request
+    (package_request.read and check: the one handoff form), or Refused
+    saying each problem."""
+    from jarvis import package_request
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise Refused([f"Cannot read author handoff {path}: {error}"]) from None
-    if not isinstance(value, dict):
-        raise Refused(["Author handoff must be a JSON object."])
-    problems = []
-    for key in value:
-        if key in NOT_TAKEN:
-            problems.append(f"The handoff may not give {key}: {NOT_TAKEN[key]}.")
-        elif key not in HANDOFF_KEYS:
-            problems.append(f"The handoff may not give {key}: a handoff is only "
-                            + ", ".join(HANDOFF_KEYS[:-1]) + " (and approval for an "
-                            "architecture document).")
-    question = value.get("question")
-    if not isinstance(question, str) or not question.strip():
-        problems.append("Author handoff needs question: the question or decision for Tim.")
-    if not _text_list(value.get("evidence")):
-        problems.append("Author handoff needs a nonempty evidence list of text: files, "
-                        "commits, PRs and CI runs the answer rests on.")
-    work = value.get("work")
-    if work is not None and not (isinstance(work, str) and work.strip()) and not _text_list(work):
-        problems.append("Author handoff's work is a Work item id or a list of them.")
-    decisions = value.get("decisions")
-    if decisions is not None and (not isinstance(decisions, list)
-                                  or not all(isinstance(d, dict) for d in decisions)):
-        problems.append("Author handoff's decisions is a list of decision objects.")
-    if "approval" in value and not isinstance(value["approval"], bool):
-        problems.append("Author handoff's approval is true (ask Tim to approve the architecture "
-                        "design) or false.")
-    if problems:
-        raise Refused(problems)
-    return value
+        return package_request.check(package_request.read(path))
+    except package_request.Refused as refused:
+        raise Refused(refused.problems) from None
 
 
 @dataclass(frozen=True)

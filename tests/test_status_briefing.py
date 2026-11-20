@@ -135,22 +135,31 @@ def test_a_blocked_piece_says_what_holds_it(sb, folder):
 
 
 def test_the_handoff_is_one_make_package_takes(sb, folder, tmp_path):
-    from jarvis import package_author
+    from jarvis import package_request
     item = _busy_item(folder, str(tmp_path / "speech" / "report.md"))
     out = tmp_path / "briefing"
     path = sb.write([item.id], out, since=time.time() - 3600)
-    handed = package_author.read_handoff(path)
-    assert handed["evidence"][0] == "./status-evidence.json"
-    assert "commit a1b2c3d" in handed["evidence"] and PR in handed["evidence"]
+    written = json.loads(path.read_text())
+    assert "sender_answers" not in written, "no program answers the sender's two questions"
+    assert written["evidence"][:2] == [{"type": "file", "path": "status-evidence.json"},
+                                       {"type": "work_item", "id": item.id}]
+    assert {"type": "label", "text": "commit a1b2c3d"} in written["evidence"]
+    assert {"type": "url", "url": PR} in written["evidence"]
+    with pytest.raises(package_request.Refused, match="sender_answers"):
+        package_request.check(package_request.read(path))
+    (tmp_path / "speech").mkdir(exist_ok=True)
+    (tmp_path / "speech" / "report.md").write_text("The report.\n")
+    written["sender_answers"] = {"plainly": "The status as recorded.",
+                                 "why_now": "He reviews it today."}
+    path.write_text(json.dumps(written))
+    handed = package_request.check(package_request.read(path))
+    assert handed["evidence"][0]["path"] == str(out.resolve() / "status-evidence.json")
     assert handed["work"] == [item.id]
-    assert handed["question"].startswith("Is the status of ")
-    [asked] = handed["decisions"]
-    assert asked["id"] == "approve-status"
-    assert [(o["id"], o["says"], o.get("needs_words", False)) for o in asked["options"]] == [
-        ("approve", "Approve: this status is complete and accurate", False),
-        ("reject", "Reject: say what is missing or wrong", True)]
-    assert asked["question"] and "why_you" not in asked
-    assert asked["evidence"][0].startswith("./status-evidence.json")
+    [asked] = handed["questions"]
+    assert asked["id"] == "approve-status" and asked["text"].startswith("Is the status of ")
+    assert [(o["id"], o["says"]) for o in asked["options_from_the_sender"]] == [
+        ("approve", "Approve: this status is complete and accurate"),
+        ("reject", "Reject: say what is missing or wrong")]
     assert (out / "status-evidence.json").exists()
     assert json.loads((out / "status-evidence.json").read_text())["items"][0]["id"] == item.id
     assert sorted(p.name for p in out.iterdir()) == ["handoff.json", "status-evidence.json"]

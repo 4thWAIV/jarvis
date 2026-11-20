@@ -176,10 +176,9 @@ def factory(through_the_route, monkeypatch, tmp_path):
 
 
 def handoff(tmp_path):
-    path = tmp_path / "handoff.json"
-    path.write_text(json.dumps({"question": "Explain the proposed document store",
-                                "evidence": ["the architecture document"]}))
-    return path
+    from tests.test_package_jobs import handoff_file
+    return handoff_file(tmp_path / "handoff.json", "Explain the proposed document store",
+                        evidence=[{"type": "content", "text": "the architecture document"}])
 
 
 def make(tmp_path, checked, *extra) -> int:

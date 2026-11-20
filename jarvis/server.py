@@ -61,6 +61,7 @@ from jarvis import knowledge_client
 from jarvis import records
 from jarvis import records_cutover
 from jarvis import records_move
+from jarvis import work_folders
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -96,6 +97,7 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
+from jarvis import package_jobs, package_jobs_api, package_request
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
@@ -2753,6 +2755,7 @@ async def start_session_watcher() -> None:
     _agents_task = _spawn(_watch_agents())
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
+    _spawn(_watch_package_jobs())
     _subsystems_task = _spawn(_watch_subsystems())
     _follow_usage_poll()
 
@@ -3379,6 +3382,11 @@ async def _start_on_records() -> None:
     except Exception:
         log.warning("voice settings: not read at startup; the defaults until they are",
                     exc_info=True)
+
+    # Every Work item into its own folder, /work/<id>/<id>.work, with its
+    # whole history, before anything reads one (work_folders.py; nothing
+    # to move once done).
+    await asyncio.to_thread(work_folders.move)
 
     run_store.init_db()
     # The old `dispatches` -> `runs` migration is retired with SQLite: every
@@ -9362,7 +9370,8 @@ def _package_opened(package: "work_packages.Package", fresh: bool, what_next: st
 
 def _local_package_problem(zip_path: Path) -> Optional[str]:
     """Why a zip on this Mac may not be unpacked, or None:
-    `_decision_problem` (its signature's key, if onboarded), then, for one
+    `_decision_problem` (its signature, if an onboarded agent's or JARVIS's
+    own), then, for one
     an onboarded agent signed, `_admit_agent_package`. Refused rather than
     held: the zip stays where it is on his Mac, and opening it again looks
     again."""
@@ -9371,7 +9380,7 @@ def _local_package_problem(zip_path: Path) -> Optional[str]:
     except package_signature.SignatureError as e:
         return str(e)
     _, key, status = _package_signer(signed)
-    return (_decision_problem(zip_path, signed, key if status == _GOOD_SIGNER else None)
+    return (_decision_problem(zip_path, signed, status in _VOUCHED)
             or _admit_agent_package(zip_path, signed, status))
 
 
@@ -10026,7 +10035,7 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     if status == _HELD_SIGNER:
         why = _hold_package(zip_path, signed, key, sender, workflow_id, work_id, source)
         return None, None, why
-    problem = _decision_problem(zip_path, signed, key if status == _GOOD_SIGNER else None)
+    problem = _decision_problem(zip_path, signed, status in _VOUCHED)
     if problem:
         return None, None, problem
     unproven = _admit_agent_package(zip_path, signed, status, at)
@@ -10041,7 +10050,7 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
         return None, None, str(e)
     if status == _GOOD_SIGNER and signed.work_key:
         _work_key_from_package(package, signed, key, work_id)
-    if signer is not None and source and key is not None and \
+    if status == _GOOD_SIGNER and signer is not None and source and key is not None and \
             key.principal.startswith(agent_key_store.AGENT):
         # Which of the agent's subagents ran make_package on it, if one did.
         since = time.time() - MAKE_PACKAGE_WINDOW_SEC
@@ -10143,6 +10152,11 @@ def _file_sha256(path: Path) -> str:
 
 # What a signature makes of its sender (`_package_signer`).
 _UNSIGNED, _GOOD_SIGNER, _HELD_SIGNER = "unsigned", "good", "held"
+# Signed with JARVIS's own key: a package JARVIS made from an agent's
+# request (package_signature.sign_as_jarvis).
+_JARVIS_SIGNER = "jarvis"
+# The signatures that vouch for a package (`_decision_problem`).
+_VOUCHED = (_GOOD_SIGNER, _JARVIS_SIGNER)
 PROVEN_BY_SIGNATURE = "agent_signature"
 
 
@@ -10168,13 +10182,21 @@ def _signer_sender(key, shows=None, since: float = 0.0, what: str = ""
 def _package_signer(signed):
     """(the proven sender or None, the key JARVIS holds or None, how):
     unsigned; good (an onboarded key's, and its files are the ones signed);
-    or held: signed by a key that is not an onboarded agent's (unknown,
-    pending, waiting, revoked) and genuinely that key's, or by a held key
-    whose signature does not check. A signature that does not check for
-    the key it names, by a key JARVIS does not hold, is treated as
-    unsigned: nothing proves anyone made it."""
+    jarvis (JARVIS's own key, a package it made from an agent's request:
+    its sender the agent the signature's `requested_by` names, whose
+    signed request JARVIS proved as it took it; workflow.yaml deliver,
+    decided "signing"); or held: signed by a key that is not an onboarded
+    agent's (unknown, pending, waiting, revoked) and genuinely that key's,
+    or by a held key whose signature does not check. A signature that does
+    not check for the key it names, by a key JARVIS does not hold, is
+    treated as unsigned: nothing proves anyone made it."""
     if signed is None:
         return None, None, _UNSIGNED
+    if signed.by_jarvis():
+        asker = signed.requested_by
+        key = (agent_key_store.for_session(asker[len(agent_key_store.AGENT):])
+               if asker.startswith(agent_key_store.AGENT) else None)
+        return (_signer_sender(key) if key is not None else None), key, _JARVIS_SIGNER
     key = agent_key_store.get(signed.fingerprint)
     if key is not None and key.admitted() and key.principal.startswith(agent_key_store.AGENT):
         if signed.checks(key.public_key):
@@ -10192,9 +10214,11 @@ def _package_signer(signed):
     return None, key, (_HELD_SIGNER if genuine or key is not None else _UNSIGNED)
 
 
-def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
+def _decision_problem(zip_path: Path, signed, vouched: bool) -> Optional[str]:
     """Why this deck may not be unpacked here, or None. Every deck comes
-    signed by an onboarded agent's key; one JARVIS laid out carries its
+    signed (`vouched`) by an onboarded agent's key or JARVIS's own (a
+    package JARVIS made from an agent's request, `_package_signer`); one
+    JARVIS laid out carries its
     source and layout proof, which is made again here, without a browser
     (presentation_proof.reprove): it unpacks only when it proves. A deck
     from before (no proof) is admitted on its signer's statement that it
@@ -10210,7 +10234,7 @@ def _decision_problem(zip_path: Path, signed, key) -> Optional[str]:
     refused = ("This is a deck that has not been proven: decks reach him only through "
                "python -m jarvis.make_package, which lays them out, proves they fit and then "
                "signs them with your key.")
-    if key is None or signed is None:
+    if not vouched or signed is None:
         return refused
     if env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1":
         return None
@@ -10247,8 +10271,9 @@ def _admit_agent_package(zip_path: Path, signed, status: str,
     (author_proof.problem); one author session vouches for one package's
     bytes (agent_key_store.bind_author), so a new revision needs a new
     author. Not affected: an unsigned or held package (their own rules), a
-    person's (`_open_received_package` never asks), JARVIS's own (it signs
-    nothing), the same bytes already unpacked here, and the isolated
+    person's (`_open_received_package` never asks), JARVIS's own (signed
+    with its own key: the sender only asked, so no sender wrote it), the
+    same bytes already unpacked here, and the isolated
     JARVIS of the page tests (tests/isolated_jarvis_server). Blocking."""
     if status != _GOOD_SIGNER or signed is None or \
             env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1" or \
@@ -10354,8 +10379,9 @@ def _raise_work_error(work_id: str, held) -> None:
 
 
 def _clear_work_errors(work_ids, how: str) -> None:
-    """The Error of each item whose holds are all settled goes."""
-    still = {h.work_id for h in agent_key_store.held()}
+    """The Error of each item whose holds are all settled, and with no
+    package run left in Error (package_jobs.errored_work), goes."""
+    still = {h.work_id for h in agent_key_store.held()} | package_jobs.errored_work()
     for work_id in sorted({w for w in work_ids if w} - still):
         try:
             item = work_store.record(work_store.WorkEvent(
@@ -11125,6 +11151,195 @@ def _follow_inbox_messages() -> None:
 package_inbox_api.mount(app, package_inbox_api.Calls(
     receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
     sign_off=_sign_off_package, close=_close_inbox_package, withdraw=_withdraw_inbox_package))
+
+
+# --- Package requests and their runs (package_request.py, package_jobs.py) --
+
+# How often the runs are looked after: a run whose process ended, a sender
+# past its answer's wait, and an Error nobody has been told of yet.
+PACKAGE_JOBS_LOOK_SEC = 5.0
+PACKAGE_JOBS_LOOP = "package jobs"
+# What JARVIS's own messages are from, in his Inbox.
+JARVIS_SENDER, JARVIS_NAME = "jarvis", "JARVIS"
+
+
+def _missing_links(workflow_id: str, work_id: str) -> list[str]:
+    """What a package request names that JARVIS has no record of: the
+    workflow and the Work item it goes to (`--work`). Only that they exist;
+    a closed one is the run's Error to tell, never a refusal. The Work items
+    the handoff is about are the gather step's material, never checked here."""
+    missing = []
+    if workflow_id and workflow_store.snapshot(workflow_id) is None:
+        missing.append(f"There is no workflow {workflow_id}; nothing was taken.")
+    if work_id and work_store.get(work_id) is None:
+        missing.append(f"There is no Work item {work_id}; nothing was taken.")
+    return missing
+
+
+def _accept_package_request(session: str, work: str, general: bool, body: dict) -> dict:
+    """An onboarded agent's signed request for a package (the page has no
+    part in it): checked at once, else refused with every problem
+    (package_request.Refused) and nothing recorded. Only what
+    workflow.yaml record_and_start checks: the handoff (package_request.
+    check), not both a Work item and none, the Work item and workflow it
+    names existing (`_missing_links`), and the engine. The package's
+    Work item is `--work` alone (none with `--general` or no `--work`); the
+    handoff's `work` (one id or a list) is what the package is about, kept on
+    the request for the gather step and never where it goes. Taken, JARVIS records who asked
+    (`agent:<session>`, from the signature), the package and its first
+    run's job (package_jobs.accept), and starts the run in its own
+    process. Blocking."""
+    handoff = body.get("handoff")
+    request = package_request.check(handoff)
+    problems = []
+    if general and work:
+        problems.append("A package is for one Work item or for none (--general), not both.")
+    workflow = str(body.get("workflow") or "").strip()
+    source = str(body.get("source") or "").strip()
+    documents = body.get("documents") or []
+    if not isinstance(documents, list) or not all(
+            isinstance(d, list) and len(d) == 2 and all(isinstance(x, str) and x.strip()
+                                                        for x in d) for d in documents):
+        problems.append("documents is a list of [document, revision] pairs.")
+        documents = []
+    engine = str(body.get("engine") or "").strip()
+    if engine and engine not in brain_provider.ENGINES:
+        problems.append("The engine is " + " or ".join(brain_provider.ENGINES) + ".")
+    problems.extend(_missing_links(workflow, work))
+    if problems:
+        raise package_request.Refused(problems)
+    if not engine:
+        key = agent_key_store.for_session(session)
+        engine = key.provider if key is not None and key.provider in brain_provider.ENGINES else ""
+    doc = package_jobs.accept(request, session=session, work=work, general=general,
+                              engine=engine, project=str(body.get("project") or "").strip(),
+                              workflow=workflow, source=source,
+                              documents=tuple(tuple(d) for d in documents), submitted=handoff)
+    doc = package_jobs.start(doc)
+    log.info("packages: %s asked for package %s (job %s)%s", doc["requested_by"],
+             doc["package"], doc["id"], f" for {work}" if work else "")
+    return {"job": doc["id"], "package": doc["package"], "run": doc["run"],
+            "state": doc["state"]}
+
+
+def _package_job_status(session: str, job: str) -> dict:
+    return package_jobs.status(job, session)
+
+
+def _answer_package_job(session: str, job: str, answers) -> dict:
+    """The asking agent's answers to its run's questions: the run goes on."""
+    doc = package_jobs.answer(job, answers, session=session)
+    return package_jobs.start(doc)
+
+
+def _new_package_run(job_id: str, why: str) -> dict:
+    """The next run of a package, started (package_jobs.new_run): the Error
+    the run before left on its Work item is cleared once no other remains,
+    and its update is no longer news. Blocking."""
+    errored = package_jobs.get(job_id)["state"] == package_jobs.ERROR
+    doc = package_jobs.new_run(job_id, why)
+    _attention_resolved("package_job", job_id)
+    if errored and doc.get("work"):
+        _clear_work_errors([doc["work"]], f"a new run of package {doc['package']} started")
+    return package_jobs.start(doc)
+
+
+# What JARVIS tells an agent whose package run is in Error may do next
+# (workflow.yaml deliver error_state).
+PACKAGE_ERROR_NEXT = ("You may try to fix it and ask for the package again, or send Tim a "
+                      "message saying why you cannot make the package (python -m "
+                      "jarvis.message). Never send what the package was for around it.")
+
+
+def _tell_agent(session: str, name: str, text: str) -> Optional[int]:
+    """JARVIS's own words to an agent's session, queued on record as one
+    message (run_store, signed STEER_SIGNATURE) and sent by the session
+    watcher once the session is between turns (SessionWatcher.send_queued),
+    then followed as every message is. Its id, or None when it could not be
+    recorded. Never raises."""
+    session_state = _snapshot_or_empty().by_id(session)
+    key = agent_key_store.for_session(session)
+    provider = (session_state.provider if session_state is not None
+                else key.provider if key is not None else "")
+    project = session_state.project if session_state is not None else ""
+    try:
+        message_id = run_store.create_message(session, provider, name, project,
+                                              STEER_SIGNATURE + text,
+                                              status=run_store.MessageStatus.QUEUED)
+    except Exception:
+        log.warning("packages: the message to %s could not be recorded", session,
+                    exc_info=True)
+        return None
+    _hint_agents_changed()
+    return message_id
+
+
+def _package_job_errored(doc: dict) -> None:
+    """A package run that cannot go on, told to everyone once (workflow.yaml
+    deliver error_state): its Work item is set to Error, which is Tim's
+    notice, or, for no Work item (or one closed or gone, which takes no
+    Error), JARVIS's message to him in his Inbox;
+    JARVIS has it as an update (`package_job`, `error`); the asking agent is told in a message to its session (`_tell_agent`): the
+    step, the reason, what was tried, what would fix it and what it may do
+    next (PACKAGE_ERROR_NEXT), and reads the same on its job
+    (package_jobs.status). Blocking."""
+    error = doc["error"] or {}
+    name = agent_directory.names_by_session().get(doc["session"]) or doc["session"]
+    said = (f"Error: package {doc['package']} ({doc['run']}), asked for by {name}, stopped at "
+            f"the {error.get('step')} step: {error.get('reason')} Tried: {error.get('tried')} "
+            f"To fix: {error.get('fix')}")
+    item = None
+    if doc.get("work"):
+        try:
+            item = work_store.record(work_store.WorkEvent(
+                doc["work"], work_store.ERROR_RAISED, said, {"package_run": doc["id"]},
+                reporter="jarvis"))
+        except work_store.WorkRefused as e:
+            # Closed (in History) or gone: the Error is never silent, so it
+            # goes to him as a message instead, saying why.
+            log.warning("packages: work item %s not put in Error (%s); Tim is told by "
+                        "message", doc["work"], e)
+            said += f" Work item {doc['work']} could not be put in Error: {e}"
+    if item is not None:
+        _work_recorded(item, work_store.ERROR_RAISED, None)
+    else:
+        _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.AGENT,
+                        doc["session"], name, said, JARVIS_SENDER,
+                        source_kind=conversation_log.Source.PACKAGE_ERROR, source_id=doc["id"],
+                        sender=JARVIS_SENDER, sender_name=JARVIS_NAME)
+    told_agent = _tell_agent(
+        doc["session"], name,
+        f"Your package request (job {doc['id']}, package {doc['package']}, {doc['run']}"
+        + (f", Work item {doc['work']}" if doc.get("work") else "") + ") is in Error. "
+        f"Step: {error.get('step')}. Reason: {error.get('reason')} Tried: {error.get('tried')} "
+        f"To fix: {error.get('fix')} {PACKAGE_ERROR_NEXT}")
+    _attend("package_job", doc["id"], "error",
+            facts={"step": error.get("step"), "package": doc["package"], "run": doc["run"],
+                   "work": doc.get("work") or ""},
+            untrusted={"agent": name, "reason": error.get("reason"),
+                       "tried": error.get("tried"), "fix": error.get("fix")})
+    package_jobs.told(doc["id"], told_agent)
+    log.info("packages: job %s in Error at %s, told (message %s to its agent)", doc["id"],
+             error.get("step"), told_agent)
+
+
+def _look_after_package_jobs() -> None:
+    """Each run that cannot go on put in Error (package_jobs.overdue), and
+    each Error told once. Blocking."""
+    package_jobs.overdue()
+    for doc in package_jobs.to_tell():
+        _package_job_errored(doc)
+
+
+async def _watch_package_jobs() -> None:
+    async def look() -> None:
+        await asyncio.to_thread(_look_after_package_jobs)
+
+    await _every(PACKAGE_JOBS_LOOK_SEC, PACKAGE_JOBS_LOOP, look)
+
+
+package_jobs_api.mount(app, package_jobs_api.Calls(
+    accept=_accept_package_request, status=_package_job_status, answer=_answer_package_job))
 
 
 # The states as the brain reads them.
