@@ -9,7 +9,7 @@ launched the way the main brains are (no more setup than theirs, his word
 2026-11-19): on JARVIS's own settings on both brains, locked down and
 released to exactly its `Release` (his word, 2026-11-20), its own tool
 server holding only its tools, never a sending command (message,
-work_report, package_start).
+work_report, package_start), and no role a shell.
 
 Imported by the role's tool server (role_mcp.py, a child process), so it
 imports nothing heavier than agent_rights.
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from jarvis import agent_rights
+from jarvis import agent_rights, role_lookups
 
 ONE_SHOT = "one_shot"           # one item in, one answer out, nothing kept
 LONG_LIVED = "long_lived"       # keeps its session and is resumed with it
@@ -41,12 +41,10 @@ RETRIEVAL_TOOLS: tuple[str, ...] = (
     "work_status", "work_detail", "package_inbox", "list_packages", "messages_to_him",
     "workflow_status", "run_status")
 
-# And gh, read only, for pull requests, CI runs, commits, issues and
-# branches: the commands Claude's Bash may run (participants.md section 1).
-RETRIEVAL_COMMANDS: tuple[str, ...] = (
-    "gh pr list *", "gh pr view *", "gh run list *", "gh run view *",
-    "gh issue list *", "gh issue view *", "gh search prs *", "gh search issues *",
-    "gh search commits *", "git ls-remote *")
+# And GitHub, read only, for pull requests, CI runs, commits, issues and
+# branches: each a fixed `gh` lookup on its own tool server, never a shell
+# (Tim, 2026-11-20; role_lookups.py).
+RETRIEVAL_LOOKUPS: tuple[str, ...] = role_lookups.NAMES
 
 
 @dataclass(frozen=True)
@@ -60,8 +58,7 @@ class Release:
     The folders it reads are its run's (`Launch.reads`, beside its own run
     folder)."""
     builtins: tuple[str, ...] = ()  # the brain's own tools, by Claude's --tools names
-    tools: tuple[str, ...] = ()     # JARVIS's tools, on its own tool server
-    commands: tuple[str, ...] = ()  # the shell commands it may run
+    tools: tuple[str, ...] = ()     # its tools, on its own tool server
     writes: bool = False            # writes in its run folder (its prep and script)
 
     @property
@@ -72,8 +69,8 @@ class Release:
 
 LOCKDOWN = Release()                # what every role starts from
 
-# The built-in tools that read or write files; Bash is released only to run
-# the role's own commands.
+# The built-in tools that read or write files. No role has a shell on either
+# brain (Tim, 2026-11-20).
 FILE_TOOLS = ("Read", "Write", "Edit", "Grep", "Glob")
 
 
@@ -111,7 +108,7 @@ ROLES: dict[str, Role] = {r.name: r for r in (
     Role("theory_of_mind_reader", 1, "high", "theory_of_mind_reader", LONG_LIVED),
     # The reading steps (participants.md sections 1 to 4).
     Role("retrieval", 3, "low", "retrieval", ONE_SHOT,
-         Release(builtins=("Bash",), tools=RETRIEVAL_TOOLS, commands=RETRIEVAL_COMMANDS)),
+         Release(tools=RETRIEVAL_TOOLS + RETRIEVAL_LOOKUPS)),
     Role("marking", 3, "low", "marking", ONE_SHOT),
     Role("classification", 3, "low", "classification", ONE_SHOT),
     Role("extraction", 4, "low", "extraction", ONE_SHOT),

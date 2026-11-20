@@ -299,17 +299,8 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
     - its file tools: the shell on, under `ROLE_PROFILE`, so a read or a
       write is confined to its folders (measured above) and nothing reaches
       the network; a writer gets the file-editing tool, its run folder
-      writable.
-
-    Raises OSError for a role released to commands: Codex has no list of
-    the commands a shell may run, and the network those commands need
-    reaches every program (measured: with the profile's network on, curl
-    answered 200, and gh, outside `:minimal`, could not run), so they cannot
-    be confined to the role's commands (`roles.Release.commands`)."""
+      writable."""
     release = launch.role.release
-    if release.commands:
-        raise OSError(f"the {launch.role.name} role cannot run on Codex: Codex cannot confine "
-                      f"a shell to its commands ({', '.join(release.commands)})")
     keep = ROLE_KEEP_FEATURES
     config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
                     "web_search": "disabled", "agents": {"enabled": False},

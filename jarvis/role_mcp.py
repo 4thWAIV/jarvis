@@ -2,8 +2,9 @@
 """One role's tools: a stdio MCP server a role session runs (roles.py).
 
 Built on the brain's own server (jarvis_mcp.py) and offering only the
-role's tools (`roles.Role.tools`), never a sending command. Every call goes
-over JARVIS's own tool channel (`POST /internal/tool`, the tool token: the
+role's tools (`roles.Role.tools`), never a sending command. A GitHub lookup
+of retrieval's (`role_lookups.py`) runs here, one fixed `gh` call; every
+other call goes over JARVIS's own tool channel (`POST /internal/tool`, the tool token: the
 role acts as JARVIS) naming the role, and the server answers it only for a
 tool that role has, as a call that is not his turn: no acting tool, no
 taint on the brain's turn (server.internal_tool).
@@ -19,7 +20,7 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis import jarvis_mcp, roles  # noqa: E402
+from jarvis import jarvis_mcp, role_lookups, roles  # noqa: E402
 
 ROLE = ""
 
@@ -27,12 +28,16 @@ ROLE = ""
 def tool_specs(role: str) -> list[dict]:
     """The brain's own specs of exactly this role's tools."""
     wanted = set(roles.role(role).tools)
-    return [s for s in jarvis_mcp.TOOL_SPECS if s["name"] in wanted]
+    return ([s for s in jarvis_mcp.TOOL_SPECS if s["name"] in wanted]
+            + [l.spec for name, l in role_lookups.LOOKUPS.items() if name in wanted])
 
 
 def call(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
     if not roles.allows(ROLE, tool):
         return False, f"The {ROLE} role has no tool called {tool!r}.", None
+    if tool in role_lookups.LOOKUPS:
+        ok, text = role_lookups.call(tool, arguments)
+        return ok, text, None
     return jarvis_mcp._forward(tool, arguments, role=ROLE)
 
 

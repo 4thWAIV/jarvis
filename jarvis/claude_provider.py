@@ -388,8 +388,8 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
     locked down: no built-in tool, no server, no command, nothing asked of
     anyone (`--permission-prompts none`), then released to exactly its
     `roles.Release` (Tim, 2026-11-20, the same definition Codex reads): its
-    built-in tools, its own tool server's tools, its allowed commands, the
-    folders it reads and, for a writer, edits in its run folder. Never
+    built-in tools, its own tool server's tools, the folders it reads and,
+    for a writer, edits in its run folder; no shell. Never
     `--safe-mode` (it drops the role's tool server) or `--bare` (it drops
     the subscription login)."""
     launch = c.role
@@ -405,10 +405,10 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
     ]
     if release.writes:
         cmd += ["--permission-mode", "acceptEdits"]
-    allowed = [f"Bash({command})" for command in release.commands]
+    allowed: list[str] = []
     if launch.mcp_config is not None and release.tools:
         cmd += ["--mcp-config", str(launch.mcp_config)]
-        allowed += [roles.tool_name(tool) for tool in release.tools]
+        allowed = [roles.tool_name(tool) for tool in release.tools]
     if allowed:
         cmd += ["--allowedTools", *allowed]
     for folder in launch.reads:

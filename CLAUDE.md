@@ -3123,10 +3123,11 @@ A session that cannot answer raises
 `SessionFailed`, the step's Error.
 Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
 and its `Release`: every role on either brain starts locked down (no tool,
-no server, no command, no file) and is released for its run to exactly
+no server, no shell, no file) and is released for its run to exactly
 its release, the one definition both brains read (Tim, 2026-11-20; no role
-is exclusive to one brain): its built-in tools, its own tool server's
-tools, its allowed commands and, for a writer, writes in its run folder;
+is exclusive to one brain, and no role has a shell on either): its
+built-in tools, its own tool server's tools and, for a writer, writes in
+its run folder;
 the folders it reads are its run's (`Launch.reads`). The author has the
 research tools (`roles.RESEARCH_TOOLS`, the research right's with
 `search_history` and `read_history`) and Read, Write, Edit, Grep and Glob;
@@ -3135,11 +3136,14 @@ Glob; the decision ready and background judges the research tools and
 Read, Grep and Glob; the Theory of Mind reader and the cares and order
 judges nothing (their material, only what Tim knows and had access to, is
 in their prompt); retrieval its read tools for Work items, packages,
-messages, workflows and runs and Bash for read-only `gh` and `git
-ls-remote` only; marking, classification and extraction nothing. A role's
-JARVIS tools are its own tool server (`role_mcp.py`, `python -m
-jarvis.role_mcp --role <role>`, server name `jarvis_role`), which offers
-only them and calls `/internal/tool` with the tool token naming the role;
+messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
+pull requests, CI runs, issues, searches and branches, each one fixed
+read-only `gh` argument list with what the role gives passed only as data,
+checked by shape, never a shell string); marking, classification and
+extraction nothing. A role's tools are its own tool server (`role_mcp.py`,
+`python -m jarvis.role_mcp --role <role>`, server name `jarvis_role`),
+which offers only them: a GitHub lookup runs there, and every other call
+goes to `/internal/tool` with the tool token naming the role;
 the server answers a role only for its own tools and as a call that is
 never his turn (`_tool_caller` `role:<name>`). Claude launches a role on
 JARVIS's own settings (`claude_provider.role_command`: `--restricted
@@ -3160,10 +3164,9 @@ and reaches only that server's tools, Codex's clock and MCP resource
 listing beside them); a role with file tools has the shell on under the
 `ROLE_PROFILE` permission profile (reads denied everywhere but
 `:minimal`, the folders it reads and its run folder; writes in its run
-folder only, for a writer, with the file-editing tool; no network). A role
-released to commands (retrieval) is not started on Codex: Codex has no
-list of the commands a shell may run, and the network they need reaches
-every program, so they cannot be confined to its commands. On Codex
+folder only, for a writer, with the file-editing tool; no network).
+Retrieval runs on Codex as on Claude, with the code-mode host and its own
+tool server only. On Codex
 0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,
 GPT-6.1 Terra, GPT-6 Luna) and each tier resolves. The approved
 prompts are `role_prompts.py`, word for word, each split into its system

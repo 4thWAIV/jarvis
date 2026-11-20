@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from jarvis import (brain, brains_config, claude_provider, codex_provider, engine_choice,
-                    evidence_types, jarvis_mcp, model_tiers, role_mcp, role_prompts, roles,
-                    sessions, text_parts)
+                    evidence_types, jarvis_mcp, model_tiers, role_lookups, role_mcp,
+                    role_prompts, roles, sessions, text_parts)
 
 FAKE_CODEX = Path(__file__).parent / "fixtures" / "fake_codex.py"
 
@@ -130,10 +130,61 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
 def test_no_role_has_a_sending_command_or_a_tool_the_brain_lacks():
     from jarvis import agent_mcp
     sending = {c.name for c in agent_mcp.COMMANDS} | {s["name"] for s in agent_mcp.PACKAGE_SPECS}
-    known = {s["name"] for s in jarvis_mcp.TOOL_SPECS}
+    known = {s["name"] for s in jarvis_mcp.TOOL_SPECS} | set(role_lookups.NAMES)
     for role in roles.ROLES.values():
         assert not set(role.tools) & sending, role.name
         assert set(role.tools) <= known, (role.name, set(role.tools) - known)
+        assert "Bash" not in role.release.builtins, f"{role.name}: no role has a shell"
+
+
+def test_retrieval_has_its_read_tools_and_its_github_lookups_and_no_shell():
+    retrieval = roles.role("retrieval")
+    assert retrieval.release.builtins == () and not retrieval.release.file_tools
+    assert set(retrieval.tools) == set(roles.RETRIEVAL_TOOLS) | set(role_lookups.NAMES)
+    names = {s["name"] for s in role_mcp.tool_specs("retrieval")}
+    assert names == set(retrieval.tools), "its server offers every one of its tools, no more"
+
+
+def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
+    assert role_lookups.argv("github_pr_view", {"repo": "4thWAIV/jarvis", "number": 176}) == [
+        "pr", "view", "176", "--repo=4thWAIV/jarvis",
+        "--json=" + role_lookups._PR_VIEW_FIELDS]
+    assert role_lookups.argv("github_run_list", {"repo": "o/r", "branch": "main",
+                                                 "commit": "4ffd18b6"})[-2:] == [
+        "--branch=main", "--commit=4ffd18b6"]
+    words = role_lookups.argv("github_search_prs", {"query": "--web; rm -rf /"})
+    assert words[-2:] == ["--", "--web; rm -rf /"], "search words are data after --"
+    assert role_lookups.argv("github_branches", {"repo": "o/r"}) == [
+        "api", "--method=GET", "repos/o/r/branches", "--paginate"]
+    for name, bad in (("github_pr_view", {"repo": "o/r; ls", "number": 1}),
+                      ("github_pr_view", {"repo": "o/r", "number": "1 --web"}),
+                      ("github_run_view", {"repo": "o/r", "run_id": True}),
+                      ("github_run_list", {"repo": "o/r", "branch": "a b"}),
+                      ("github_pr_list", {"repo": "o/r", "state": "draft"}),
+                      ("github_search_commits", {"query": "  "})):
+        with pytest.raises(role_lookups.Refused):
+            role_lookups.argv(name, bad)
+
+
+def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):
+    calls, forwarded = [], []
+
+    async def fake_gh(args, timeout):
+        calls.append(args)
+        return 0, '{"number": 176}', ""
+    monkeypatch.setattr(role_lookups.gh_lookup, "gh_path", lambda: "/usr/bin/gh")
+    monkeypatch.setattr(role_lookups.gh_lookup, "_run_gh", fake_gh)
+    monkeypatch.setattr(jarvis_mcp, "_forward",
+                        lambda tool, args, role="": forwarded.append(tool) or (True, "", None))
+    monkeypatch.setattr(role_mcp, "ROLE", "retrieval")
+    ok, text, _ = role_mcp.call("github_pr_view", {"repo": "o/r", "number": 176})
+    assert ok and text == '{"number": 176}' and calls[0][:3] == ["pr", "view", "176"]
+    ok, text, _ = role_mcp.call("github_pr_view", {"repo": "o/r", "number": "x"})
+    assert not ok and text.startswith("Refused") and len(calls) == 1
+    assert role_mcp.call("work_detail", {"work": "w1"})[0] and forwarded == ["work_detail"]
+    monkeypatch.setattr(role_mcp, "ROLE", "editor")
+    assert not role_mcp.call("github_pr_view", {"repo": "o/r", "number": 1})[0]
+    assert len(calls) == 1, "no other role reaches a lookup"
 
 
 def test_a_role_s_tool_server_offers_only_its_tools(monkeypatch):
@@ -191,7 +242,10 @@ def test_a_one_shot_role_has_its_form_no_session_and_two_turns(tmp_path):
     assert cmd[cmd.index("--max-turns") + 1] == "2"
     retrieval = claude_provider.role_command("claude", _config(tmp_path, "retrieval"), "R")
     allowed = retrieval[retrieval.index("--allowedTools") + 1:]
-    assert "Bash(gh pr view *)" in allowed and roles.tool_name("work_detail") in allowed
+    assert retrieval[retrieval.index("--tools") + 1] == "", "no shell, no built-in tool"
+    assert roles.tool_name("github_pr_view") in allowed
+    assert roles.tool_name("work_detail") in allowed
+    assert not any(a.startswith("Bash") for a in allowed)
     assert "--max-turns" not in retrieval and "--permission-mode" not in retrieval
 
 
@@ -270,10 +324,12 @@ def test_codex_releases_a_role_from_the_lockdown_to_exactly_its_release(tmp_path
         assert "default_permissions" not in config and not config["include_apply_patch_tool"]
 
 
-def test_codex_cannot_confine_a_role_s_commands(tmp_path):
+def test_codex_runs_retrieval_with_its_own_server_and_no_shell(tmp_path):
     launch, _ = _codex_role(tmp_path, "retrieval")
-    with pytest.raises(OSError, match="cannot confine a shell to its commands"):
-        codex_provider.role_release(launch, tmp_path)
+    keep, config, overrides = codex_provider.role_release(launch, tmp_path)
+    assert keep == codex_provider.ROLE_KEEP_FEATURES | {"code_mode_host"}
+    assert "shell_tool" not in keep and "default_permissions" not in config
+    assert overrides and all("jarvis_role" in o for o in overrides if o != "-c")
 
 
 @pytest.mark.asyncio
