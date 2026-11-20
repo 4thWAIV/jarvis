@@ -1517,8 +1517,9 @@ and any structure are refused, `question`, `decisions` and `situation` say
 where they went, and a bad request is refused at once, every problem
 listed (400 `problems`), nothing recorded; beside the handoff only what
 record_and_start checks (not both `--work` and `--general`, the engine)
-and that the `--work` item and `--workflow` named exist
-(`server._missing_links`; a closed item is not refused, its run's Error is
+and that the `--work` item, the Work items the handoff's `work` is about
+and the `--workflow` named exist (`server._missing_links`, each one missing
+named in the one refusal; a closed item is not refused, its run's Error is
 told by message). Taken
 (`server._accept_package_request`), JARVIS records who asked from the signature
 (`requested_by`, `agent:<session id>`), makes the package id and its first

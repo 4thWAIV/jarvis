@@ -28,6 +28,8 @@ JSON object of exactly these fields:
                   Work items the package is ABOUT, kept as a list of ids for
                   the gather step to read as material. It never decides where
                   the package goes: that is `--work` (or none, `--general`).
+                  Each must exist: JARVIS refuses a request naming one it
+                  has no record of (server._missing_links).
   approval        optional, as before: an architecture document's approval.
 
 `conclusion` and `audience` are refused (the sender's view is its labelled

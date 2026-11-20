@@ -293,10 +293,11 @@ def test_the_package_s_work_item_is_work_alone_never_the_handoff_s(wired, tmp_pa
     assert doc["work"] is None, "no --work: no Work item, whatever the handoff is about"
     assert doc["request"]["work"] == [about]
     assert pj.path_of(doc) == f"/packages/{taken['package']}/runs/run-1/run.job"
-    r = ask(client, agent, {"handoff": handoff(tmp_path, work=[about, "work-elsewhere"])})
+    other = _start_work(client, agent, folder)
+    r = ask(client, agent, {"handoff": handoff(tmp_path, work=[about, other])})
     assert r.status_code == 200, "--general with the handoff about Work items is not both"
     doc = pj.get(r.json()["job"])
-    assert doc["work"] is None and doc["request"]["work"] == [about, "work-elsewhere"]
+    assert doc["work"] is None and doc["request"]["work"] == [about, other]
     given = _start_work(client, agent, folder)
     r = agent.post(client, pr.ROUTE + f"?work={given}",
                    {"handoff": handoff(tmp_path, work=about)})
@@ -314,7 +315,35 @@ def test_a_request_naming_what_does_not_exist_is_refused_at_once(wired, tmp_path
     assert r.status_code == 400 and "no Work item work-nowhere" in r.text
     r = ask(client, agent, {"handoff": handoff(tmp_path), "workflow": "wf-nowhere"})
     assert r.status_code == 400 and "no workflow wf-nowhere" in r.text
+    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path, work="work-gone")})
+    assert r.status_code == 400 and "no Work item work-gone" in r.text, \
+        "the Work items the handoff is about must exist too"
     assert spawned == [] and pj._jobs([["state", "in", list(pj.STATES)]]) == []
+
+
+def test_every_missing_work_item_is_named_once_and_a_closed_one_is_taken(wired, tmp_path,
+                                                                         spawned):
+    """Every Work item and workflow that does not exist is named in the one
+    refusal, each once; a closed Work item exists, so the handoff may be
+    about one and nothing is refused for it."""
+    server, *_, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    real = _start_work(client, agent, folder)
+    r = agent.post(client, pr.ROUTE + "?work=work-gone",
+                   {"handoff": handoff(tmp_path, work=["work-gone", real, "work-lost"]),
+                    "workflow": "wf-nowhere"})
+    assert r.status_code == 400
+    problems = r.json()["problems"]
+    assert problems == ["There is no workflow wf-nowhere; nothing was taken.",
+                        "There is no Work item work-gone; nothing was taken.",
+                        "There is no Work item work-lost; nothing was taken."]
+    assert spawned == [] and pj._jobs([["state", "in", list(pj.STATES)]]) == []
+    from jarvis import work_store
+    work_store.record(work_store.WorkEvent(real, work_store.CLOSED, "Done with it.", {}))
+    r = agent.post(client, pr.ROUTE, {"handoff": handoff(tmp_path, work=real)})
+    assert r.status_code == 200, r.text
+    assert pj.get(r.json()["job"])["request"]["work"] == [real]
 
 
 def test_only_an_onboarded_agent_s_own_key_asks(wired, tmp_path, spawned):

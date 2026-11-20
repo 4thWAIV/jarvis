@@ -11163,16 +11163,18 @@ PACKAGE_JOBS_LOOP = "package jobs"
 JARVIS_SENDER, JARVIS_NAME = "jarvis", "JARVIS"
 
 
-def _missing_links(workflow_id: str, work_id: str) -> list[str]:
+def _missing_links(workflow_id: str, work_ids: list[str]) -> list[str]:
     """What a package request names that JARVIS has no record of: the
-    workflow and the Work item it goes to (`--work`). Only that they exist;
-    a closed one is the run's Error to tell, never a refusal. The Work items
-    the handoff is about are the gather step's material, never checked here."""
+    workflow, the Work item it goes to (`--work`) and the Work items the
+    handoff is about (its `work`), each named once. Only that they exist; a
+    closed one is the run's Error to tell (or gather's material), never a
+    refusal."""
     missing = []
     if workflow_id and workflow_store.snapshot(workflow_id) is None:
         missing.append(f"There is no workflow {workflow_id}; nothing was taken.")
-    if work_id and work_store.get(work_id) is None:
-        missing.append(f"There is no Work item {work_id}; nothing was taken.")
+    for work_id in dict.fromkeys(w for w in work_ids if w):
+        if work_store.get(work_id) is None:
+            missing.append(f"There is no Work item {work_id}; nothing was taken.")
     return missing
 
 
@@ -11182,7 +11184,8 @@ def _accept_package_request(session: str, work: str, general: bool, body: dict) 
     (package_request.Refused) and nothing recorded. Only what
     workflow.yaml record_and_start checks: the handoff (package_request.
     check), not both a Work item and none, the Work item and workflow it
-    names existing (`_missing_links`), and the engine. The package's
+    names and the Work items its handoff is about existing (`_missing_links`;
+    construction-drafts part 3, "a bad one refused at once"), and the engine. The package's
     Work item is `--work` alone (none with `--general` or no `--work`); the
     handoff's `work` (one id or a list) is what the package is about, kept on
     the request for the gather step and never where it goes. Taken, JARVIS records who asked
@@ -11205,7 +11208,7 @@ def _accept_package_request(session: str, work: str, general: bool, body: dict) 
     engine = str(body.get("engine") or "").strip()
     if engine and engine not in brain_provider.ENGINES:
         problems.append("The engine is " + " or ".join(brain_provider.ENGINES) + ".")
-    problems.extend(_missing_links(workflow, work))
+    problems.extend(_missing_links(workflow, [work, *request["work"]]))
     if problems:
         raise package_request.Refused(problems)
     if not engine:
