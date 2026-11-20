@@ -393,6 +393,11 @@ class CodexSession:
                 "approvalPolicy": "never",
                 "sandbox": "workspace-write" if self.config.authoring else "read-only",
                 "developerInstructions": instructions,
+                # Codex 0.171.0 offers spawn_agent and its companions to
+                # every thread whatever the `multi_agent` feature says, and a
+                # long-lived thread's subagent runs: switched off, as every
+                # feature JARVIS does not keep is.
+                "config": {"agents": {"enabled": False}},
             }
             if self.config.resume:
                 # The same thread goes on (a package author answered by its
