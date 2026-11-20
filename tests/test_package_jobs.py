@@ -356,6 +356,65 @@ def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawne
         "the agent is told too"
 
 
+def test_a_closed_work_item_s_error_is_a_message_to_tim(wired, tmp_path, spawned):
+    """A run asked for on a Work item that has since closed: the item takes
+    no Error, so Tim is told by JARVIS's message instead, never silently."""
+    server, _hints, store, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    work = _start_work(client, agent, folder)
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}, work=work).json()["job"]
+    from jarvis import messages_api, work_store
+    work_store.record(work_store.WorkEvent(work, work_store.CLOSED, "Done with it.", {}))
+    pj.error(job, "gather", "The evidence was not indexed within 10 minutes.",
+             "JARVIS indexed it urgently and waited 10 minutes.", "A new run.")
+    server._look_after_package_jobs()
+    assert not [e for e in work_store.events(work) if e.kind == work_store.ERROR_RAISED]
+    said = [m for m in messages_api.general_list(None)["messages"]
+            if m["from"]["sender"] == "jarvis"]
+    assert len(said) == 1 and "gather" in said[0]["says"]
+    assert f"Work item {work} could not be put in Error" in said[0]["says"]
+    assert store.get("package_job", job).event == "error"
+    assert pj.get(job)["told"] is True
+
+
+def test_a_run_its_server_never_started_is_in_error(wired, tmp_path, spawned, monkeypatch):
+    """Queued with no process, by a server that has since stopped (between
+    taking the request, or the sender's answer, and starting the run):
+    nothing will start it, so it is in Error and everyone is told. One the
+    server running now queued is its own to start, and left alone."""
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    monkeypatch.setattr(pj, "SPAWN", lambda doc: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        server._accept_package_request(PLAN, "", True, {"handoff": handoff(tmp_path)})
+    [doc] = pj._jobs([["state", "=", pj.QUEUED]])
+    assert doc["pid"] is None
+    assert pj.overdue() == [], "this server queued it; it is about to start it"
+    monkeypatch.setattr(pj, "_this_server", lambda: "a later server")
+    [moved] = pj.overdue()
+    assert moved["id"] == doc["id"] and moved["state"] == pj.ERROR
+    assert "before starting the run's process" in moved["error"]["reason"]
+    server._look_after_package_jobs()
+    assert pj.get(doc["id"])["told"] is True
+
+
+def test_an_answered_job_its_server_never_started_is_in_error(wired, tmp_path, spawned,
+                                                              monkeypatch):
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    pj.ask(job, [{"id": "which", "question": "Which one?"}])
+    doc = pj.answer(job, {"which": "The first."}, session=PLAN)
+    assert (doc["state"], doc["pid"]) == (pj.QUEUED, None)
+    assert pj.overdue() == []
+    monkeypatch.setattr(pj, "_this_server", lambda: "a later server")
+    [moved] = pj.overdue()
+    assert moved["id"] == job and moved["state"] == pj.ERROR
+
+
 def test_a_sender_that_does_not_answer_in_two_hours_puts_the_job_in_error(wired, tmp_path,
                                                                           spawned):
     server, *_, home = wired

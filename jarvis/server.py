@@ -11243,7 +11243,8 @@ def _tell_agent(session: str, name: str, text: str) -> Optional[int]:
 def _package_job_errored(doc: dict) -> None:
     """A package run that cannot go on, told to everyone once (workflow.yaml
     deliver error_state): its Work item is set to Error, which is Tim's
-    notice, or, for no Work item, JARVIS's message to him in his Inbox;
+    notice, or, for no Work item (or one closed or gone, which takes no
+    Error), JARVIS's message to him in his Inbox;
     JARVIS has it as an update (`package_job`, `error`), with how many
     packages have ended in Error, more than 1 in 100 a major problem; the
     asking agent is told in a message to its session (`_tell_agent`): the
@@ -11262,7 +11263,11 @@ def _package_job_errored(doc: dict) -> None:
                 doc["work"], work_store.ERROR_RAISED, said, {"package_run": doc["id"]},
                 reporter="jarvis"))
         except work_store.WorkRefused as e:
-            log.info("packages: work item %s not put in Error (%s)", doc["work"], e)
+            # Closed (in History) or gone: the Error is never silent, so it
+            # goes to him as a message instead, saying why.
+            log.warning("packages: work item %s not put in Error (%s); Tim is told by "
+                        "message", doc["work"], e)
+            said += f" Work item {doc['work']} could not be put in Error: {e}"
     if item is not None:
         _work_recorded(item, work_store.ERROR_RAISED, None)
     else:

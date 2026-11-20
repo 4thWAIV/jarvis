@@ -1544,12 +1544,15 @@ this replaces.
 The Error state (design: deliver `error_state`): a run that cannot go on
 (a sender that does not answer within `SENDER_WAIT_SEC`, 2 hours, swept by
 `package_jobs.overdue`; a step's `Blocked`; a step that fails; a run whose
-process ended) is `error`, with the step, the reason in plain words, what
+process ended; a run queued, by its request or the sender's answer, by a
+server that stopped before starting its process, `queued_by` not this
+server's `records_move.BOOT`) is `error`, with the step, the reason in plain words, what
 was tried and what would fix it (`package_jobs.error`). The server's look
 (`_watch_package_jobs`, every `PACKAGE_JOBS_LOOK_SEC`) tells everyone once
 (`server._package_job_errored`, `told`): the Work item is set to Error
 (`work_store.ERROR_RAISED` naming the run, `package_run`), which is Tim's
-notice, or with no Work item a message to him in his Inbox from JARVIS
+notice, or with no Work item (or one closed or gone, which takes no
+Error, the message saying so) a message to him in his Inbox from JARVIS
 (proof `jarvis`, source `package_error`); JARVIS has it as one update
 (`package_job`, `error`, the step in its facts and the reason, what was
 tried and the fix walled), with how many packages have ended in Error

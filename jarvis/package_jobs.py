@@ -164,6 +164,14 @@ def _change(job_id: str, change: str, fn: Callable[[dict], Optional[bool]]) -> d
 
 # -- taking a request --------------------------------------------------------------------
 
+def _this_server() -> str:
+    """This server process's own id (records_move.BOOT): a job queued by it
+    and not started yet is one it is about to start; queued by a server
+    that has since stopped, nothing will start it."""
+    from jarvis import records_move
+    return records_move.BOOT
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(6)}"
 
@@ -192,7 +200,8 @@ def _record_run(package: str, run: str, request: dict, *, session: str, work: st
            "source": source or "", "documents": [list(d) for d in documents],
            "request": request, "submitted": submitted, "state": QUEUED, "step": None,
            "done": [], "rounds": [], "result": None, "error": None, "told": None,
-           "after": (after or {}).get("id"), "pid": None, "created_at": now,
+           "after": (after or {}).get("id"), "pid": None, "queued_by": _this_server(),
+           "created_at": now,
            "updated_at": now}
     doc["folder"] = str(folder_of(doc))
     doc["log"] = str(Path(doc["folder"]) / LOG)
@@ -250,7 +259,7 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
         if d["state"] != WAITING:
             raise JobError(f"Job {job_id} is {d['state']}, not waiting on your answers.")
         d["rounds"][-1].update(answers=given, answered_at=time.time())
-        d["state"] = QUEUED
+        d["state"], d["queued_by"] = QUEUED, _this_server()
     return _change(job_id, "answered", write)
 
 
@@ -323,8 +332,9 @@ def _alive(pid) -> bool:
 
 def overdue(now: Optional[float] = None) -> list[dict]:
     """Put in Error each job that cannot go on any more: its process ended
-    without finishing it, or its sender has not answered within
-    SENDER_WAIT_SEC. The jobs it put in Error."""
+    without finishing it, it was queued by a server that stopped before
+    starting its process (so nothing ever will), or its sender has not
+    answered within SENDER_WAIT_SEC. The jobs it put in Error."""
     now = time.time() if now is None else now
     moved = []
     for doc in _jobs([["state", "in", [QUEUED, RUNNING, WAITING]]]):
@@ -339,7 +349,15 @@ def overdue(now: Optional[float] = None) -> list[dict]:
                     f"{len(doc['rounds'])}) and waited 2 hours.",
                     "The sending agent answers the questions (package_answer) and asks for a "
                     "new run, or tells Tim why it cannot."))
-        elif doc.get("pid") and not _alive(doc["pid"]):
+        elif not doc.get("pid"):
+            if doc.get("queued_by") != _this_server():
+                moved.append(error(
+                    doc["id"], step,
+                    "JARVIS stopped after taking the request and before starting the run's "
+                    "process, so nothing was running it.",
+                    f"JARVIS queued the run (job {doc['id']}) to start in its own process.",
+                    "A new run of the package; JARVIS starts it."))
+        elif not _alive(doc["pid"]):
             moved.append(error(
                 doc["id"], step, "The run's process ended without finishing it.",
                 f"JARVIS ran the {step} step in its own process (log: {doc['log']}).",
