@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -170,8 +171,10 @@ class BrainChatSession:
                  pick: model_tiers.Pick, reads: tuple[Path, ...] = (),
                  answer_format: Optional[dict] = None, resume: Optional[str] = None,
                  on_log: Optional[Callable[[str], None]] = None,
-                 role_spec: Optional[roles.Role] = None):
+                 role_spec: Optional[roles.Role] = None,
+                 search_log: Optional[Path] = None):
         self.role = role_spec or roles.role(role)
+        self.search_log = Path(search_log) if search_log is not None else None
         self.prompt = prompt
         self.folder = Path(folder)
         self.pick = pick
@@ -209,7 +212,8 @@ class BrainChatSession:
             return None
         path = self.folder / ".jarvis-role" / f"{self.role.name}-mcp.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        body = {"mcpServers": {roles.SERVER_NAME: role_mcp.entry(self.role.name)}}
+        body = {"mcpServers": {roles.SERVER_NAME: role_mcp.entry(self.role.name,
+                                                                  self.search_log)}}
         private_files.replace(path, json.dumps(body, indent=2).encode("utf-8"))
         return path
 
@@ -447,11 +451,24 @@ TURN_FORM = _object({"message": {"type": "string",
                      "call_vote": CALL_VOTE})
 
 
+# The vote on whether there is enough to answer one of the handoff's
+# questions also says, with a no, what to ask the sender (the author's
+# approved prompt: "You do vote on whether there is enough to answer each
+# question, and if not, what to ask the sender"; workflow.yaml swarm
+# ask_sender: "only what the swarm voted it needs and research could not
+# answer").
+ENOUGH_FORM = _object({**VOTE_FORM["properties"], "ask_sender": {
+    "type": "string",
+    "description": "With a no: what to ask the sender, that research could not answer. "
+                   "Empty with a yes."}})
+
+
 @dataclass
 class Question:
     id: str
     asks: str
     author_votes: bool = False      # the author never votes on whether its own script passes
+    enough: bool = False            # is there enough to answer a handoff question (ENOUGH_FORM)
 
 
 @dataclass
@@ -461,6 +478,13 @@ class Vote:
     vote: str
     reason: str
     called_by: str = "program"      # the participant who called it, or the program
+    ask: str = ""                   # an enough question's no: what to ask the sender
+    script: str = ""                # the digest of the script it was cast on
+
+
+def script_digest(text: str) -> str:
+    """The script text a vote was cast on, as its SHA-256."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class SwarmSession(Protocol):
@@ -484,9 +508,22 @@ class SwarmSession(Protocol):
     def reopen(self, question: str) -> None: ...
 
     async def round(self, timeout: float, script: Path,
-                    mark: Callable[[str], Awaitable[list[dict]]]) -> Optional[dict]: ...
+                    mark: Callable[[str], Awaitable[list[dict]]], **parts) -> Optional[dict]: ...
 
     def result(self) -> dict: ...
+
+    def saved(self) -> dict: ...
+
+    def restore(self, saved: dict) -> None: ...
+
+
+# A participant's first message, given on its first turn: its approved
+# prompt's closing material, made when that turn comes (the prep and the
+# script it names exist only once the author has written them).
+FirstMessage = Callable[[str], str]
+# What the program adds to one participant's turn in a round, beside the
+# marked script: (name, the script's text, its marked parts) -> words.
+RoundAdd = Callable[[str, str, list], str]
 
 
 class BrainSwarmSession:
@@ -498,11 +535,17 @@ class BrainSwarmSession:
     (`SHARES`). Any participant may call the vote on a question when its
     discussion settles (`call_vote` on its turn); otherwise the program
     calls one on every open question at the end of each round. A vote is a
-    turn in each voter's own session, yes or no with a reason; a majority
-    of yes proves a question, anything else (a majority of no, a tie) fails
-    it; a question reopens when the script changes what it was about. The
-    Theory of Mind reader never votes, and the author not on whether its
-    own script passes.
+    turn in each voter's own session, yes or no with a reason (and, on an
+    enough question, what a no would ask the sender); a majority of yes
+    proves a question, anything else (a majority of no, a tie) fails it; a
+    question reopens when the script changes what it was about: the script
+    it was closed on is no longer the script (`reopen_changed`), or the
+    sender's answers came (`reopen`). The Theory of Mind reader never votes,
+    and the author not on whether its own script passes.
+
+    Its state (`saved`, `restore`) is kept between the run's processes, so
+    a swarm that waits on the sender goes on where it stopped, each
+    participant's session resumed.
     """
 
     def __init__(self, participants: dict[str, ChatSession], questions: list[Question],
@@ -510,7 +553,7 @@ class BrainSwarmSession:
                  editor: str = "editor",
                  non_voters: tuple[str, ...] = ("theory_of_mind_reader",),
                  material: Optional[list[Known]] = None,
-                 first: Optional[dict[str, str]] = None,
+                 first: "Optional[dict[str, str] | FirstMessage]" = None,
                  editing: Optional[Callable[[ChatSession], "EditingSession"]] = None):
         self.participants = participants
         self.editing = editing or BrainEditingSession
@@ -527,9 +570,10 @@ class BrainSwarmSession:
         self.material = list(material or [])
         self.shares = {name: share(name, self.material) for name in participants
                        if name in SHARES}
-        self._first = dict(first or {})     # each one's first message, sent on its first turn
+        self._first = first if callable(first) else dict(first or {}).get
         self._introduced: set[str] = set()
         self._seen = {name: 0 for name in participants}
+        self.script = ""                    # the digest of the script now (script_digest)
 
     @classmethod
     def for_roles(cls, names: list[str], questions: list[Question], folder: Path, *,
@@ -576,7 +620,7 @@ class BrainSwarmSession:
         lead = []
         if name not in self._introduced:
             self._introduced.add(name)
-            lead.append(self._first.get(name, ""))
+            lead.append(self._first(name) or "")
             lead.append("The questions to prove, by id:\n" + "\n".join(
                 _tag("question", q.asks, id=q.id) for q in self.questions.values()))
         return "\n\n".join([t for t in lead if t] +
@@ -584,7 +628,7 @@ class BrainSwarmSession:
 
     def say(self, name: str, text: str) -> None:
         """A message into the conversation, as it was written (the
-        program's own, or a participant's)."""
+        program's own, the sender's, or a participant's)."""
         self.conversation.append({"from": name, "text": text})
 
     async def _called(self, name: str, ids, timeout: float) -> None:
@@ -617,18 +661,23 @@ class BrainSwarmSession:
         """Every voter votes on one question, each in its own session; the
         question's state after the count."""
         q = self.questions[question]
+        form = ENOUGH_FORM if q.enough else VOTE_FORM
         cast: list[Vote] = []
         for name in self.voters(question):
             sent = "\n\n".join(t for t in (self._new_for(name),
-                                           f"A vote is called on {q.id}: {q.asks}") if t)
-            reply = await self.participants[name].ask(sent, timeout, answer_format=VOTE_FORM)
+                                           "A vote is called on this question:\n"
+                                           + _tag("question", q.asks, id=q.id)) if t)
+            reply = await self.participants[name].ask(sent, timeout, answer_format=form)
             answer = reply.answer or {}
             said = str(answer.get("vote") or "").lower()
             if said not in (YES, NO) or not str(answer.get("reason") or "").strip():
                 raise SessionFailed(f"{name}'s vote on {q.id} was not yes or no with a reason")
-            vote = Vote(q.id, name, said, str(answer["reason"]).strip(), called_by)
+            ask = str(answer.get("ask_sender") or "").strip() if q.enough and said == NO else ""
+            vote = Vote(q.id, name, said, str(answer["reason"]).strip(), called_by, ask,
+                        self.script)
             cast.append(vote)
-            self.say(name, f"Vote on {q.id}: {vote.vote}. {vote.reason}")
+            self.say(name, f"Vote on {q.id}: {vote.vote}. {vote.reason}"
+                     + (f" Ask the sender: {ask}" if ask else ""))
             self._seen[name] = len(self.conversation)
         self.votes += cast
         yes = sum(1 for v in cast if v.vote == YES)
@@ -637,9 +686,24 @@ class BrainSwarmSession:
         return self.state[q.id]
 
     def reopen(self, question: str) -> None:
-        """The script changed what the question was about."""
+        """What the question was about changed: it is open again."""
         self.state[question] = OPEN
         self.closed_by.pop(question, None)
+
+    def reopen_changed(self) -> list[str]:
+        """Every closed question whose vote was cast on a script that is no
+        longer the script: what it was about changed. The ones reopened."""
+        changed = [qid for qid, cast in self.closed_by.items()
+                   if any(v.script != self.script for v in cast)]
+        for qid in changed:
+            self.reopen(qid)
+        return changed
+
+    def asks(self, question: str) -> list[str]:
+        """What the votes that closed an enough question said to ask the
+        sender, each once, in the order given."""
+        return list(dict.fromkeys(v.ask for v in self.closed_by.get(question, [])
+                                  if v.vote == NO and v.ask))
 
     async def vote_open(self, timeout: float) -> None:
         """The program calls a vote on every open question (the end of a
@@ -648,30 +712,41 @@ class BrainSwarmSession:
             if state == OPEN:
                 await self.vote(qid, timeout)
 
-    async def round(self, timeout: float, script: Path,
-                    mark: Callable[[str], Awaitable[list[dict]]]) -> Optional[dict]:
-        """One round (workflow.yaml swarm plan.round): the author revises
-        the script (its file, `script`); the script is marked (`mark`, the
+    def _script_now(self, text: str) -> None:
+        self.script = script_digest(text)
+
+    async def play_round(self, timeout: float, script: Path,
+                         mark: Callable[[str], Awaitable[list[dict]]], *,
+                         author_add: str = "", prep: Optional[Callable[[], str]] = None,
+                         add_for: Optional[RoundAdd] = None) -> None:
+        """One round's turns and votes (workflow.yaml swarm plan.round): the
+        author revises the script (its file, `script`; `author_add` the
+        program's words to it); the script is marked (`mark`, the
         MarkingSession over its text, after each revision); the editor
-        edits, through its own session (EditingSession; the program applies
-        the edits and writes the file); the judges and the Theory of Mind
-        reader respond, the judges from the marked script, the reader from
-        the script as Tim would read it. Votes a participant calls are held
-        on its turn; then the program calls one on every open question.
-        The result once the swarm has passed or had its rounds, else None.
-        """
-        await self.turn(self.author, timeout)
-        text = script.read_text(encoding="utf-8")
+        edits, through its own session (EditingSession, given the prep,
+        `prep()`; the program applies the edits and writes the file); the
+        judges and the Theory of Mind reader respond, the judges from the
+        marked script, the reader from the script as Tim would read it, each
+        with what `add_for` gives it. Votes a participant calls are held on
+        its turn; then every question whose script changed is reopened and
+        the program calls one on every open question."""
+        await self.turn(self.author, timeout, add=author_add)
+        try:
+            text = script.read_text(encoding="utf-8")
+        except OSError as e:
+            raise SessionFailed(f"the author's turn left no script at {script}: {e}") from e
+        self._script_now(text)
         marked = await mark(text)
         editing = self.editing(self.participants[self.editor])
         out = await editing.edit(text, marked, self.share_of(self.editor), timeout,
-                                 source=script.name,
+                                 source=script.name, prep=prep() if prep else "",
                                  conversation=self._new_for(self.editor), call_vote=True)
         self.say(self.editor, out["reply"])
         self._seen[self.editor] = len(self.conversation)
         if out["applied"]:
             text = out["text"]
             private_files.replace(script, text.encode("utf-8"))
+            self._script_now(text)
             marked = await mark(text)
         await self._called(self.editor, out["call_vote"], timeout)
         for name in self.participants:
@@ -679,13 +754,24 @@ class BrainSwarmSession:
                 continue
             add = (_tag("script", text, file=script.name) if name in self.non_voters
                    else _tag("marked", marked_parts(marked), file=script.name))
-            await self.turn(name, timeout, add=add)
+            more = add_for(name, text, marked) if add_for else ""
+            await self.turn(name, timeout, add="\n\n".join(t for t in (add, more) if t))
+        self.reopen_changed()
         await self.vote_open(timeout)
+
+    async def round(self, timeout: float, script: Path,
+                    mark: Callable[[str], Awaitable[list[dict]]], **parts) -> Optional[dict]:
+        """One round (`play_round`), counted: the result once the swarm has
+        passed or had its rounds, else None."""
+        await self.play_round(timeout, script, mark, **parts)
         return self.end_round()
 
     @property
     def passed(self) -> bool:
         return all(s == PROVEN for s in self.state.values())
+
+    def not_proven(self) -> set[str]:
+        return {qid for qid, s in self.state.items() if s != PROVEN}
 
     def end_round(self) -> Optional[dict]:
         """A round is over: the result once the swarm has passed or has had
@@ -700,7 +786,7 @@ class BrainSwarmSession:
     def result(self) -> dict:
         """passed, or not passed with the last findings: each question not
         proven, and the reasons of the votes against it."""
-        findings = [{"question": qid, "state": state,
+        findings = [{"question": qid, "asks": self.questions[qid].asks, "state": state,
                      "against": [dataclasses.asdict(v) for v in self.closed_by.get(qid, [])
                                  if v.vote == NO]}
                     for qid, state in self.state.items() if state != PROVEN]
@@ -712,6 +798,31 @@ class BrainSwarmSession:
                 "votes": [dataclasses.asdict(v) for v in self.votes],
                 "conversation": list(self.conversation),
                 "findings": findings, "rounds": self.rounds}
+
+    # ── kept between the run's processes ─────────────────────────────────
+    def saved(self) -> dict:
+        """Everything the swarm holds but its participants' sessions."""
+        return {"questions": dict(self.state),
+                "closed_by": {q: [dataclasses.asdict(v) for v in cast]
+                              for q, cast in self.closed_by.items()},
+                "votes": [dataclasses.asdict(v) for v in self.votes],
+                "conversation": list(self.conversation), "rounds": self.rounds,
+                "seen": dict(self._seen), "introduced": sorted(self._introduced),
+                "script": self.script}
+
+    def restore(self, saved: dict) -> None:
+        """The swarm as `saved` kept it."""
+        self.state.update({q: s for q, s in (saved.get("questions") or {}).items()
+                              if q in self.state})
+        self.closed_by = {q: [Vote(**v) for v in cast]
+                          for q, cast in (saved.get("closed_by") or {}).items()}
+        self.votes = [Vote(**v) for v in saved.get("votes") or []]
+        self.conversation = list(saved.get("conversation") or [])
+        self.rounds = int(saved.get("rounds") or 0)
+        self._seen.update({n: int(c) for n, c in (saved.get("seen") or {}).items()
+                           if n in self._seen})
+        self._introduced = set(saved.get("introduced") or [])
+        self.script = str(saved.get("script") or "")
 
 
 # ── DecisionSession ───────────────────────────────────────────────────────
@@ -1213,7 +1324,7 @@ class EditingSession(Protocol):
 
     async def edit(self, text: str, marked: list[dict], information: list[Known],
                    timeout: float, source: str = "", conversation: str = "",
-                   call_vote: bool = False) -> dict: ...
+                   call_vote: bool = False, prep: str = "") -> dict: ...
 
 
 class BrainEditingSession:
@@ -1229,14 +1340,17 @@ class BrainEditingSession:
 
     async def edit(self, text: str, marked: list[dict], information: list[Known],
                    timeout: float, source: str = "", conversation: str = "",
-                   call_vote: bool = False) -> dict:
+                   call_vote: bool = False, prep: str = "") -> dict:
         """`conversation`: what the others said since the editor's last turn,
         in a swarm; `call_vote`: its answer may call votes, as any
-        participant's may."""
+        participant's may; `prep`: the author's prep (sessions.yaml
+        EditingSession information: "the package's evidence search and the
+        prep")."""
         material = "\n\n".join(t for t in (
             conversation,
             _tag("script", text, file=source or None),
             marked_parts(marked),
+            _tag("prep", prep) if prep else "",
             "\n".join(_tag("information", k.text, state=k.state, source=k.source or None)
                       for k in information)) if t)
         form = EDIT_FORM if not call_vote else _object(

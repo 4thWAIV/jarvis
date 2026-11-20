@@ -23,14 +23,19 @@ names for it:
     queued -> running (step) -> delivered
                  |    ^
                  v    |  (the sender answered)
-          waiting_on_sender
-                 |
+          waiting_on_sender ---> failed   (it answered a failed swarm's
+                 |                         findings: a new run follows)
                  v
                error   (any step that cannot go on)
 
 A step that asks the sender questions (`ask`) leaves the job waiting on it;
 the sender answers with `answer` (package_answer, make_package --answer).
-At most MAX_ROUNDS rounds are asked. A sender that does not answer within
+At most MAX_ROUNDS rounds of questions are asked. A swarm that fails
+(`failed_swarm`) sends the sender its findings, through the same waiting:
+the server tells it once (`findings_to_tell`) and puts them on the Work
+item; its answer ends the run `failed` and a new run of the package starts
+from the kept research (server._answer_package_job, `new_run`). A sender
+that does not answer within
 SENDER_WAIT_SEC, a step that cannot go on (Blocked), a step that fails
 unexpectedly, and a run whose process ended without finishing it, each put
 the job in ERROR with the step, the reason in plain words, what was tried
@@ -61,9 +66,14 @@ WORK_ROOT = "/work"
 PACKAGES_ROOT = "/packages"
 QUEUED, RUNNING, WAITING = "queued", "running", "waiting_on_sender"
 DELIVERED, ERROR = "delivered", "error"
-STATES = (QUEUED, RUNNING, WAITING, DELIVERED, ERROR)
+# The swarm failed and the sender answered its findings: a new run follows.
+FAILED = "failed"
+STATES = (QUEUED, RUNNING, WAITING, DELIVERED, ERROR, FAILED)
 GOING = (QUEUED, RUNNING)
-ENDED = (DELIVERED, ERROR)
+ENDED = (DELIVERED, ERROR, FAILED)
+# What a round asked the sender: questions the swarm voted it needs, or a
+# failed swarm's findings (workflow.yaml swarm ask_sender, when_it_fails).
+QUESTIONS, FINDINGS = "questions", "findings"
 # The steps a run is produced by, in order (workflow.yaml record_and_start
 # produce).
 STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
@@ -72,7 +82,9 @@ STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
 # raises Blocked when it cannot go on. A step with none is not built yet.
 # The deliver step signs with JARVIS's own key (`sign`).
 PRODUCERS: dict[str, str] = {"gather": "jarvis.package_gather:gather",
-                             "mark": "jarvis.package_mark:mark"}
+                             "mark": "jarvis.package_mark:mark",
+                             "research": "jarvis.package_swarm:research",
+                             "swarm": "jarvis.package_swarm:swarm"}
 # At most five rounds of questions to the sender (Tim, 2026-11-19).
 MAX_ROUNDS = 5
 # A sender's answer is waited for 2 hours before Error (Tim, 2026-11-19).
@@ -277,7 +289,10 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
         if d["state"] != WAITING:
             raise JobError(f"Job {job_id} is {d['state']}, not waiting on your answers.")
         d["rounds"][-1].update(answers=given, answered_at=time.time())
-        d["state"], d["queued_by"] = QUEUED, _this_server()
+        if kind_of(d["rounds"][-1]) == FINDINGS:
+            d["state"], d["pid"] = FAILED, None     # a new run follows (new_run)
+        else:
+            d["state"], d["queued_by"] = QUEUED, _this_server()
     doc = _change(job_id, "answered", write)
     # Kept with the package's evidence too, a file a round, indexed as it is
     # written (workflow.yaml gather layout sender-answers/).
@@ -291,6 +306,18 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
 
 # -- what a step calls -------------------------------------------------------------------
 
+def kind_of(round_: dict) -> str:
+    """What a round asked: QUESTIONS (a round from before kinds is one) or
+    FINDINGS."""
+    return round_.get("kind") or QUESTIONS
+
+
+def question_rounds(doc: dict) -> int:
+    """The rounds of questions asked so far: a failed swarm's findings are
+    not one."""
+    return sum(1 for r in doc.get("rounds") or [] if kind_of(r) == QUESTIONS)
+
+
 def ask(job_id: str, questions: list[dict]) -> bool:
     """A step's questions to the sender, each {"id", "question"}: True when
     they are asked (the job waits on the sender); False when every round
@@ -298,15 +325,34 @@ def ask(job_id: str, questions: list[dict]) -> bool:
     asked = {}
 
     def write(d):
-        if len(d["rounds"]) >= MAX_ROUNDS:
+        if question_rounds(d) >= MAX_ROUNDS:
             asked["now"] = False
             return False
-        d["rounds"] = d["rounds"] + [{"questions": questions, "asked_at": time.time(),
-                                      "answers": None, "answered_at": None}]
+        d["rounds"] = d["rounds"] + [{"kind": QUESTIONS, "questions": questions,
+                                      "asked_at": time.time(), "answers": None,
+                                      "answered_at": None}]
         d["state"], d["pid"] = WAITING, None
         asked["now"] = True
     _change(job_id, "asked", write)
     return asked["now"]
+
+
+def failed_swarm(job_id: str, questions: list[dict], findings: list[dict]) -> dict:
+    """The swarm failed (workflow.yaml swarm when_it_fails): its findings go
+    to the sender, each failed question one to answer, {"id", "question"};
+    the job waits on its answer, which starts a new run. The server tells
+    the sender and the Work item once (`findings_to_tell`)."""
+    def write(d):
+        d["rounds"] = d["rounds"] + [{"kind": FINDINGS, "questions": questions,
+                                      "findings": findings, "asked_at": time.time(),
+                                      "answers": None, "answered_at": None, "told": False}]
+        d["state"], d["pid"] = WAITING, None
+    return _change(job_id, "swarm failed", write)
+
+
+def noted(job_id: str, key: str, value) -> dict:
+    """A step's outcome kept on the job (the swarm's result, its files)."""
+    return _change(job_id, f"{key} noted", lambda d: d.update({key: value}))
 
 
 def sign(doc: dict, source: Path, target: Path, statements: tuple[str, ...] = ()) -> None:
@@ -369,10 +415,15 @@ def overdue(now: Optional[float] = None) -> list[dict]:
             asked_at = doc["rounds"][-1]["asked_at"] if doc["rounds"] else doc["updated_at"]
             if now - asked_at > SENDER_WAIT_SEC:
                 n = len(doc["rounds"][-1]["questions"]) if doc["rounds"] else 0
+                findings = bool(doc["rounds"]) and kind_of(doc["rounds"][-1]) == FINDINGS
                 moved.append(error(
-                    doc["id"], step, "The sender did not answer the questions within 2 hours.",
+                    doc["id"], step,
+                    "The sender did not answer the swarm's findings within 2 hours."
+                    if findings else "The sender did not answer the questions within 2 hours.",
+                    f"JARVIS sent the sending agent the swarm's findings on {n} question(s) "
+                    "and waited 2 hours." if findings else
                     f"JARVIS asked the sending agent {n} question(s) (round "
-                    f"{len(doc['rounds'])}) and waited 2 hours.",
+                    f"{question_rounds(doc)}) and waited 2 hours.",
                     "The sending agent answers the questions (package_answer) and asks for a "
                     "new run, or tells Tim why it cannot."))
         elif not doc.get("pid"):
@@ -394,6 +445,24 @@ def overdue(now: Optional[float] = None) -> list[dict]:
 def to_tell() -> list[dict]:
     """The jobs in Error whose Error nobody has been told of yet."""
     return _jobs([["state", "=", ERROR], ["told", "=", False]])
+
+
+def findings_to_tell() -> list[dict]:
+    """The jobs waiting on the sender with a failed swarm's findings nobody
+    has told it of yet."""
+    return [d for d in _jobs([["state", "=", WAITING]])
+            if d["rounds"] and kind_of(d["rounds"][-1]) == FINDINGS
+            and d["rounds"][-1].get("told") is False]
+
+
+def findings_told(job_id: str, message: Optional[int] = None) -> dict:
+    """The sender has been told of the swarm's findings; `message` is
+    JARVIS's message to it (run_store's id)."""
+    def write(d):
+        if not d["rounds"] or kind_of(d["rounds"][-1]) != FINDINGS:
+            return False
+        d["rounds"][-1].update(told=True, told_agent_message=message)
+    return _change(job_id, "findings told", write)
 
 
 def errored_work() -> set[str]:

@@ -223,10 +223,16 @@ def test_a_session_that_cannot_answer_puts_the_run_in_error(tmp_path, gh, checko
 
 def test_the_run_goes_through_gather_and_mark_to_research(tmp_path, gh, checkout,  # noqa: F811
                                                           transcript, monkeypatch, roles):
+    from jarvis import model_tiers, package_swarm
+
+    def no_model(*_a, **_kw):
+        raise model_tiers.NoModel("none in tier 1")
+    monkeypatch.setattr(package_swarm, "PICK", no_model)    # no real model under test
     doc = _gathered(tmp_path, checkout, monkeypatch)
     assert pj.run(doc["id"]) == 1
     after = pj.get(doc["id"])
     assert after["done"] == ["gather", "mark"] and after["error"]["step"] == "research"
+    assert after["error"]["reason"].startswith("No model could be found for the author")
     assert package_mark.marked(pe.place_of(doc))["files"]
 
 

@@ -674,7 +674,8 @@ tool token, as the session in `JARVIS_AGENT_SESSION`, else
 `workflow_status`, `run_status`, `knowledge_search`, `knowledge_status`,
 `search_repo`, `repo_overview`, `project_notes`, `project_history`,
 `list_folders`, `browse_folder`, `read_folder_file`, `list_agents`,
-`read_message_reply`, `read_session_reply`; none an acting tool) go to `POST
+`read_message_reply`, `read_session_reply`, and the brain's own past
+conversations, `search_history` and `read_history`; none an acting tool) go to `POST
 /api/agent-tool` (`server.api_agent_tool`): an onboarded agent's signature
 only (the tool token, a page and a work-item key are refused 403), a tool
 its grants for every target name (`agent_rights.allows_tool`), answered by
@@ -1533,8 +1534,18 @@ own record. It runs the job itself, in a process of its own
 the steps `package_jobs.STEPS` (gather, mark, research, swarm, deck,
 deliver), each the program `PRODUCERS` names; a step not built yet is an
 Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
-`waiting_on_sender`, at most `MAX_ROUNDS`, five); its answers queue the run
-again. A package's next run (`server._new_package_run`,
+`waiting_on_sender`, at most `MAX_ROUNDS`, five rounds of questions,
+`question_rounds`); its answers queue the run again. A swarm that fails
+sends the sender its findings the same way (`package_jobs.failed_swarm`, a
+round of kind `findings`, never one of the five): the server's look tells
+it once (`server._package_swarm_failed`, `findings_to_tell`,
+`findings_told`): JARVIS's message to its session with each finding to
+answer by its id, and the findings on the Work item as JARVIS's message
+there (proof `jarvis`, source `package_failed`; for no Work item in his
+Inbox), with one update (`package_job`, `failed`); its answer ends the run
+`failed` and starts the package's next run (`_answer_package_job`), which
+starts from the kept research; no answer within 2 hours is Error as any.
+A package's next run (`server._new_package_run`,
 `package_jobs.new_run`) keeps the package id and names the run before it
 (`after`). JARVIS signs the packages it makes with its own key
 (`agent_keys.jarvis_key`, made once in `<data>/jarvis/agent-keys/jarvis/`;
@@ -1693,6 +1704,59 @@ into the engine at once (`package_evidence.index_folder`). The brain's
 (`BrainSummarizationSession`: tier 3, one call, no tools) has no approved
 prompt, effort or engines.json entry yet, so it cannot start and says so:
 what was looked up is written and the summaries wait.
+The research step (`package_swarm.research`, `PRODUCERS["research"]`;
+design: workflow.yaml research) is the author's first turn in its own
+long-lived ChatSession (tier 1, high effort, the research tools), in the
+run's folder: its approved prompt (`package_swarm.system_of`) and its
+material (`_Firsts`: the sender's two answers, the handoff's questions with
+the sender's options labelled, and every stored file whole with what the
+mark step read in it, `author_material`, each with Tim's knowledge state),
+and the program's words saying where it starts from (`research_note`: the
+Work item's research folder, the marked evidence, the evidence path to
+search under, an earlier run's research copied into `earlier/` by
+`_carry_earlier`) and where `research.md` goes; a turn that leaves none is
+the step's Error. Every call a role makes on its own tool server is logged
+there (`role_mcp.py --log`, `research_log.record`: one line a search in
+`research-log.jsonl`, the role, the tool, its arguments, the hits by
+program, `research_log.hit_paths`, and the answer), and once the script
+passes, `research_log.mark_used` records each hit whose path the script
+cites (`research-used.json`). The research right holds `search_history`
+and `read_history` (`agent_rights.TOOLS`), and so do the roles that have
+the research tools (`roles.RESEARCH_TOOLS`).
+The swarm step (`package_swarm.swarm`, `PRODUCERS["swarm"]`; design:
+workflow.yaml swarm) is the author, the editor, the four judges and the
+Theory of Mind reader in one `BrainSwarmSession` (`package_swarm.build`:
+the author picked first, each participant on its role, or resumed on the
+session it had; `CHAT`, `PICK`), its questions the handoff's (is there
+enough to answer each, `enough-<id>`, `Question.enough`: the author votes,
+and a no says what to ask the sender, `ENOUGH_FORM`) and the four judges'
+(their approved words, `judge_asks`). A round (`play_round`): the author
+writes or revises `prep.md` and `script.md`; the script is marked
+(MarkingSession, the 28 labels, Tim's material by `package_mark.tim_known`);
+the editor edits it, given the prep (`EditingSession.edit`'s `prep`); the
+judges and the reader respond; every question whose vote was cast on a
+script that is no longer the script reopens (`reopen_changed`,
+`Vote.script`), and the program votes on every open one. Each
+participant's first message is made at its first turn (`_Firsts`): its
+share of the evidence (`evidence`, `sessions.share_values`), the prep for
+the decision ready and background judges, the script for the reader, and
+for the cares judge the script's sentences new to him (`new_to_him`, by
+program: a sentence is new unless every evidence file it cites is one he
+knows or had access to; one citing none could not be determined), again
+each round; where the evidence is for one that searches it
+(`evidence_note`). An enough question that fails asks the sender what its
+no votes said (`_to_ask`, `package_jobs.ask`), a round of questions apart
+from the swarm's three (not counted, `end_round` is not called); the
+answers are said into the conversation as the sender's, each in its own
+element, and the enough questions reopen (`_take_answers`); once a round
+of answers leaves the same questions unproven, asking stops (`asking`'s
+`stopped`). Passed: the result and the conversation word for word
+(`swarm-result.json`, `conversation.md`), the hits used, and the job's
+`swarm`. After three rounds without passing: the findings
+(`findings_questions`) to the sender (`package_jobs.failed_swarm`). What
+the swarm holds is kept in `swarm.json` (`BrainSwarmSession.saved`,
+`restore`, each participant's session, engine and model) between the run's
+processes.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
@@ -3301,9 +3365,11 @@ again there; a new long-lived Claude session takes a new id on each try,
 never `--resume` of a refused one; after an answer nothing is swept.
 `BrainSwarmSession` is long-lived ChatSessions in one conversation (`for_roles`
 builds them, the author picked first so the judges' Settings option can
-put them on the other brain): each participant sent every new message of
+put them on the other brain; `package_swarm.build` for a package run):
+each participant sent every new message of
 the others word for word, with who said it, and on its first turn its
-first message and the questions to prove by id (`turn`, `say`); each
+first message (given, or made then by a callable) and the questions to
+prove by id (`turn`, `say`); each
 given exactly its share of what Tim knows (`SHARES`, `share`,
 `share_values`, workflow.yaml tim_knowledge who_gets_what: the Theory of
 Mind reader and the cares and order judges know and had access only, kept
@@ -3321,8 +3387,10 @@ default, applied and written by the program, the script marked again
 when they changed it), then the judges (from the marked script) and the Theory of Mind reader (from the script),
 then the program's vote on every open question (`vote_open`) and
 `end_round`, whose result after `ROUNDS_MAX` (3) is passed or not passed
-with the findings; `reopen` when the script changes what a question was
-about. `BrainDecisionSession` asks each question `ASKS` (3) times in
+with the findings (`play_round` is the round without `end_round`); a
+question whose vote was cast on another script reopens (`reopen_changed`),
+and `reopen` reopens one by hand; a vote called names the question inside
+its own element. `BrainDecisionSession` asks each question `ASKS` (3) times in
 one-shot sessions of its own with no tools, the answer most gave and the
 share that agreed (`agreement`); `BrainClassificationSession` scores each
 item against every question plus `background`; `BrainExtractionSession`
@@ -3437,6 +3505,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   mark step, what a program reads in the evidence (each file's type, its
   structured facts, its prose), and the 28 labels a briefing is marked with
   (see "A package's evidence")
+- `package_swarm.py` / `research_log.py` — The research and swarm steps:
+  the author's research turn, the swarm's rounds, votes, questions to the
+  sender and findings, kept between the run's processes; every search a
+  role makes logged, and the hits the passed script used (see "A package's
+  evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

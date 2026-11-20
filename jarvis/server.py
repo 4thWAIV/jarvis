@@ -11233,8 +11233,13 @@ def _package_job_status(session: str, job: str) -> dict:
 
 
 def _answer_package_job(session: str, job: str, answers) -> dict:
-    """The asking agent's answers to its run's questions: the run goes on."""
+    """The asking agent's answers to its run's questions: the run goes on.
+    Its answer to a failed swarm's findings ends that run, and a new run
+    of the package starts from the kept research (workflow.yaml swarm
+    when_it_fails)."""
     doc = package_jobs.answer(job, answers, session=session)
+    if doc["state"] == package_jobs.FAILED:
+        return _new_package_run(job, "the sender answered the swarm's findings")
     return package_jobs.start(doc)
 
 
@@ -11329,12 +11334,46 @@ def _package_job_errored(doc: dict) -> None:
              error.get("step"), told_agent)
 
 
+def _package_swarm_failed(doc: dict) -> None:
+    """A package run whose swarm did not pass, told once (workflow.yaml
+    swarm when_it_fails): the asking agent is sent the findings and what
+    was missing, to answer (package_answer); the findings also go on the
+    Work item, as JARVIS's message on its Messages tab (for no Work item,
+    in Tim's Inbox). Its answer starts a new run (`_answer_package_job`).
+    Blocking."""
+    findings = doc["rounds"][-1]["questions"]
+    name = agent_directory.names_by_session().get(doc["session"]) or doc["session"]
+    listed = "\n".join(f"- {q['id']}: {q['question']}" for q in findings)
+    said = (f"Package {doc['package']} ({doc['run']}), asked for by {name}, did not pass the "
+            f"swarm. Its findings:\n{listed}")
+    _record_inbound(conversation_log.ItemKind.MESSAGE_IN, conversation_log.Counterpart.AGENT,
+                    doc["session"], name, said, JARVIS_SENDER,
+                    source_kind=conversation_log.Source.PACKAGE_FAILED, source_id=doc["id"],
+                    sender=JARVIS_SENDER, sender_name=JARVIS_NAME, about=doc.get("work") or "")
+    told_agent = _tell_agent(
+        doc["session"], name,
+        f"Your package request (job {doc['id']}, package {doc['package']}, {doc['run']}"
+        + (f", Work item {doc['work']}" if doc.get("work") else "") + ") did not pass the "
+        f"swarm. Its findings, each to answer by its id:\n{listed}\nAnswer them with "
+        f"package_answer (make_package --answer {doc['id']} --reply <id>=<your answer>) within "
+        f"2 hours, and a new run of the package starts with your answers.")
+    _attend("package_job", doc["id"], "failed",
+            facts={"package": doc["package"], "run": doc["run"], "work": doc.get("work") or "",
+                   "findings": len(findings)},
+            untrusted={"agent": name})
+    package_jobs.findings_told(doc["id"], told_agent)
+    log.info("packages: job %s did not pass the swarm, told (message %s to its agent)",
+             doc["id"], told_agent)
+
+
 def _look_after_package_jobs() -> None:
     """Each run that cannot go on put in Error (package_jobs.overdue), and
-    each Error told once. Blocking."""
+    each Error and each failed swarm told once. Blocking."""
     package_jobs.overdue()
     for doc in package_jobs.to_tell():
         _package_job_errored(doc)
+    for doc in package_jobs.findings_to_tell():
+        _package_swarm_failed(doc)
 
 
 async def _watch_package_jobs() -> None:

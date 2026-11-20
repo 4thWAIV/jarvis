@@ -111,7 +111,11 @@ TOOLS: dict[str, tuple[str, ...]] = {
         "package_results", "work_status", "work_detail", "work_context", "workflow_status",
         "run_status", "knowledge_search", "knowledge_status", "search_repo", "repo_overview",
         "project_notes", "project_history", "list_folders", "browse_folder",
-        "read_folder_file", "list_agents", "read_message_reply", "read_session_reply"),
+        "read_folder_file", "list_agents", "read_message_reply", "read_session_reply",
+        # The brain's own past conversations (workflow.yaml research
+        # tools_to_add_to_research_right; Tim, 2026-11-18: agents need
+        # access to most MCP services).
+        "search_history", "read_history"),
 }
 
 # The rights file shipped beside this module: the standard rights (Tim's

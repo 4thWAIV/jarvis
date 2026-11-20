@@ -25,11 +25,10 @@ from jarvis import agent_rights, role_lookups
 ONE_SHOT = "one_shot"           # one item in, one answer out, nothing kept
 LONG_LIVED = "long_lived"       # keeps its session and is resumed with it
 
-# The research tools: the research right's (agent_rights.TOOLS) with the
-# brain's own past conversations (workflow.yaml research
+# The research tools: the research right's (agent_rights.TOOLS), the
+# brain's own past conversations among them (workflow.yaml research
 # tools_to_add_to_research_right).
-RESEARCH_TOOLS: tuple[str, ...] = tuple(agent_rights.TOOLS["research"]) + (
-    "search_history", "read_history")
+RESEARCH_TOOLS: tuple[str, ...] = tuple(agent_rights.TOOLS["research"])
 
 # The package's evidence search (workflow.yaml gather scoped_search).
 EVIDENCE_SEARCH: tuple[str, ...] = ("knowledge_search",)

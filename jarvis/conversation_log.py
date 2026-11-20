@@ -97,6 +97,7 @@ class Source(StrEnum):
     PERSON_MESSAGE = "person_message"    # the team server's message id
     SIGNED = "signed"                    # POST /api/messages: the message's own id
     PACKAGE_ERROR = "package_error"      # a package run's job id: its Error, for no Work item
+    PACKAGE_FAILED = "package_failed"    # a package run's job id: its swarm's findings
 
 
 # Each source's update in the attention record (attention_store: kind, and
@@ -113,6 +114,7 @@ UPDATES: dict[Source, tuple[str, str, bool]] = {
     Source.PERSON_MESSAGE: ("arrival", "arrived", False),
     Source.SIGNED: ("message", "arrived", False),
     Source.PACKAGE_ERROR: ("package_job", "error", False),
+    Source.PACKAGE_FAILED: ("package_job", "failed", False),
 }
 
 

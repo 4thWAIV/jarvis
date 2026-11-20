@@ -62,25 +62,25 @@ INDEX = f"{MARK}/marked.json"
 BY_PROGRAM, BY_EXTRACTION = "program", "extraction"
 
 
-def _pick(doc: dict) -> dict:
+def pick_args(doc: dict) -> dict:
     """Each session's model: its role's tier on the brain the run's kind of
-    agent goes on (model_tiers.pick)."""
+    agent goes on (model_tiers.pick), the request's engine its requester."""
     return {"requester": doc.get("engine")}
 
 
 def _extraction(doc: dict):
     from jarvis import sessions
-    return sessions.BrainExtractionSession(Path(doc["folder"]), **_pick(doc))
+    return sessions.BrainExtractionSession(Path(doc["folder"]), **pick_args(doc))
 
 
 def _marking(doc: dict):
     from jarvis import sessions
-    return sessions.BrainMarkingSession(Path(doc["folder"]), **_pick(doc))
+    return sessions.BrainMarkingSession(Path(doc["folder"]), **pick_args(doc))
 
 
 def _classification(doc: dict):
     from jarvis import sessions
-    return sessions.BrainClassificationSession(Path(doc["folder"]), **_pick(doc))
+    return sessions.BrainClassificationSession(Path(doc["folder"]), **pick_args(doc))
 
 
 EXTRACTION: Callable[[dict], object] = _extraction
@@ -210,10 +210,19 @@ def tims_material(file: FileMarks, files: list[FileMarks], rows: list[Row]):
     whole, with its state; and every item he probably does not know named
     by its source and state, without its words (he does not have them)."""
     from jarvis import sessions
-    texts = {f.stored: f.text for f in files}
-    out = [sessions.Known(file.view.text, file.row.knowledge_state, file.stored)]
+    return ([sessions.Known(file.view.text, file.row.knowledge_state, file.stored)]
+            + tim_known(rows, {f.stored: f.text for f in files}, skip=file.stored))
+
+
+def tim_known(rows: list[Row], texts: dict[str, str], skip: str = ""):
+    """Tim's material as the MarkingSession is told it: each stored item he
+    knows or had access to, whole, with its state; each he probably does not
+    know named by its source and state, without its words (he does not have
+    them). `skip`: a stored file given otherwise."""
+    from jarvis import sessions
+    out = []
     for row in rows:
-        if not row.stored or row.stored == file.stored:
+        if not row.stored or row.stored == skip:
             continue
         if row.knowledge_state in (KNOWS, HAD_ACCESS):
             out.append(sessions.Known(texts.get(row.stored, ""), row.knowledge_state, row.stored))

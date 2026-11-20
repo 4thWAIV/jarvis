@@ -1180,6 +1180,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.package_run.timed_out": "El paquete de trabajo {name} se quedó sin tiempo",
   "main.updates.event.package.arrived": "Paquete de {name}",
   "main.updates.event.package_job.error": "El paquete que pidió {name} está en Error en el paso {step}",
+  "main.updates.event.package_job.failed": "El paquete que pidió {name} no pasó el enjambre; sus hallazgos volvieron al agente",
   // La línea reducida de un paquete en Novedades: quién lo envió, su título y cuántas decisiones esperan.
   "main.updates.event.arrival.arrived": "Llegó un mensaje de {name}",
   "main.updates.event.sign_in.not_signed_in": "Este JARVIS no ha iniciado sesión en un servidor de equipo",

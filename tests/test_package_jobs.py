@@ -453,12 +453,13 @@ def test_a_step_not_built_yet_is_an_error_not_a_silent_stop(wired, tmp_path, spa
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
     monkeypatch.setitem(pj.PRODUCERS, "gather", f"{__name__}:gather_done")
-    monkeypatch.setitem(pj.PRODUCERS, "mark", f"{__name__}:gather_done")
+    for step in ("mark", "research", "swarm"):
+        monkeypatch.setitem(pj.PRODUCERS, step, f"{__name__}:gather_done")
     job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
     assert pj.run(job) == 1
     error = pj.get(job)["error"]
-    assert pj.get(job)["done"] == ["gather", "mark"]
-    assert error["step"] == "research" and "not built" in error["reason"]
+    assert pj.get(job)["done"] == ["gather", "mark", "research", "swarm"]
+    assert error["step"] == "deck" and "not built" in error["reason"]
 
 
 def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawned):
@@ -718,3 +719,39 @@ def test_a_signature_only_naming_jarvis_is_not_jarvis_s(wired, marks, tmp_path):
     signed = package_signature.read(raw)
     assert not signed.by_jarvis()
     assert server._package_signer(signed)[2] != server._JARVIS_SIGNER
+
+
+# -- a failed swarm ---------------------------------------------------------------------
+
+def test_a_failed_swarm_s_findings_go_to_the_sender_and_its_answer_starts_a_new_run(
+        wired, tmp_path, spawned):
+    server, _hints, store, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    work = _start_work(client, agent, folder)
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}, work=work).json()["job"]
+    pj.failed_swarm(job, [{"id": "order", "question": "Is the most relevant information "
+                                                      "first? Not proven. order_judge: buried"}],
+                    [{"question": "order"}])
+    server._look_after_package_jobs()
+    # The sender is told, with each finding to answer by its id.
+    from jarvis import conversation_log, run_store, work_store
+    doc = pj.get(job)
+    message_id = doc["rounds"][-1]["told_agent_message"]
+    [message] = [m for m in run_store.queued_messages() if m.id == message_id]
+    assert message.session_id == PLAN and "did not pass the swarm" in message.text
+    assert "- order: Is the most relevant information first? Not proven." in message.text
+    # The findings are on the Work item, as JARVIS's message there; not Error.
+    thread = conversation_log.work_thread(work)
+    assert any("did not pass the swarm" in i.text and i.sender == "jarvis" for i in thread)
+    assert work_store.get(work).state != work_store.ERROR
+    assert store.get("package_job", job).event == "failed"
+    server._look_after_package_jobs()
+    assert pj.findings_to_tell() == [], "told once"
+    # Its answer ends the run, and a new run of the package starts.
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": {"order": "Decision first."}})
+    assert r.status_code == 200 and r.json()["run"] == "run-2"
+    assert pj.get(job)["state"] == pj.FAILED
+    later = pj.get(r.json()["id"])
+    assert later["after"] == job and later["package"] == doc["package"]
+    assert spawned[-1] == later["id"]

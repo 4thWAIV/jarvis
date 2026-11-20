@@ -467,7 +467,7 @@ async def test_a_sweep_with_no_model_left_is_no_model(monkeypatch, tmp_path):
         await chat.once("hello", 5)
     resumed = sessions.BrainChatSession("editor", "R", tmp_path, resume="s-1",
                                    pick=model_tiers.Pick("claude", "fable", 1, "fixed", ["fable"]))
-    monkeypatch.setattr(role_mcp, "entry", lambda role: {"command": "x"})
+    monkeypatch.setattr(role_mcp, "entry", lambda role, log=None: {"command": "x"})
     fake.refused = set()
     await resumed.open()
     assert fake.configs[-1].resume == "s-1" and fake.configs[-1].role.session_id is None

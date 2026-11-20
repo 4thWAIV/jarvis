@@ -475,6 +475,29 @@ EXEMPT = {
         "(open, proven, failed); the call and each vote it writes are turns of the package "
         "swarm's own conversation between role sessions, kept word for word as the design says, "
         "never a brain header, never said"),
+    "package_swarm.questions": (
+        "it makes the swarm's questions: each id is the handoff's question id behind a fixed "
+        "prefix and its words are the sender's question, which the swarm gives its participants "
+        "only inside a <question> element (BrainSwarmSession._new_for and vote); never a brain "
+        "header, never said"),
+    "package_swarm._to_ask": (
+        "it reads each swarm question's state, one of JARVIS's own words (open, proven, failed), "
+        "and keeps what the votes said to ask the sender as data on the job record, which the "
+        "sender reads as its own job's questions; never a brain header, never said"),
+    "package_swarm.go": (
+        "the swarm step's own coroutine: the only field it reads is the job's id, JARVIS's own, "
+        "to ask the sender; what it writes into the conversation is the program's fixed words with "
+        "the run's own file paths; never a brain header, never said"),
+    "package_swarm.swarm": (
+        "the swarm step: the only field it reads is the job's id, JARVIS's own, to keep its outcome "
+        "on the job record and send a failed swarm's findings to the sender as data; never a brain "
+        "header, never said"),
+    "server._package_swarm_failed": (
+        "a failed swarm's findings (the swarm's own votes and reasons) go on the Work item as "
+        "JARVIS's message (read by the brain walled, as every message is) and to the asking "
+        "agent's own session as JARVIS's message (that agent's own request, read by it alone); the "
+        "attention record gets the agent's name as other people's words (untrusted) and counts; "
+        "the job's id is JARVIS's own. Driven by tests/test_package_jobs.py"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "package_author.claim_of": (
@@ -3345,7 +3368,43 @@ def _drive_edit(monkeypatch, tmp_path):
     return role.given
 
 
+def _drive_handoff_questions(monkeypatch, tmp_path):
+    from jarvis import package_swarm
+    return [package_swarm._handoff_questions({"request": {"questions": [
+        {"id": HOSTILE, "text": HOSTILE,
+         "options_from_the_sender": [{"id": HOSTILE, "name": HOSTILE, "says": HOSTILE}]}]}})]
+
+
+def _drive_parts_text(monkeypatch, tmp_path):
+    from jarvis import package_swarm
+    return [package_swarm._parts_text(_hostile_parts())]
+
+
+def _drive_take_answers(monkeypatch, tmp_path):
+    from jarvis import package_jobs, package_swarm, sessions
+    rounds = [{"kind": package_jobs.QUESTIONS, "questions": [{"id": HOSTILE, "question": HOSTILE}],
+               "answers": {HOSTILE: HOSTILE}}]
+    monkeypatch.setattr(package_jobs, "get", lambda job: {"id": job, "rounds": rounds})
+    run = package_swarm.Run({"id": "job-1"}, None, [], {})
+    swarm = sessions.BrainSwarmSession({}, [sessions.Question(HOSTILE, HOSTILE, enough=True)])
+    package_swarm._take_answers(run, swarm, {})
+    return [m["text"] for m in swarm.conversation]
+
+
+def _drive_vote(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"vote": "no", "reason": "r", "ask_sender": ""})
+    swarm = sessions.BrainSwarmSession({"editor": role},
+                                       [sessions.Question(HOSTILE, HOSTILE, enough=True)])
+    asyncio.run(swarm.vote(HOSTILE, 1.0))
+    return role.given
+
+
 ROLE_PROMPT_DRIVERS = {
+    "package_swarm._handoff_questions": _drive_handoff_questions,
+    "package_swarm._parts_text": _drive_parts_text,
+    "package_swarm._take_answers": _drive_take_answers,
+    "sessions.vote (the question called)": _drive_vote,
     "sessions.share": _drive_share,
     "sessions._material": _drive_material,
     "sessions.marked_parts": _drive_marked_parts,
